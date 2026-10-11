@@ -723,6 +723,12 @@ describe('FIN-002: Manual methods', () => {
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         rpc: vi.fn().mockImplementation(() => { claimCalled = true; return Promise.resolve({ data: [], error: null }); }),
+        from: vi.fn().mockImplementation(() => {
+          const chain: Record<string, unknown> = {};
+          ['update', 'eq', 'in', 'select', 'insert'].forEach(m => { chain[m] = vi.fn().mockReturnValue(chain); });
+          chain.select = vi.fn().mockResolvedValue({ data: [{ id: 'p1' }] });
+          return chain;
+        }),
       }),
     }));
     const fetchSpy = vi.spyOn(globalThis, 'fetch');

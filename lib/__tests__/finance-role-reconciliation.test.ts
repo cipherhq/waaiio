@@ -328,12 +328,12 @@ describe('Reseller payout mutations have audit logging', () => {
   const patchSource = readFileSync('app/api/admin/reseller-payouts/[id]/route.ts', 'utf-8');
 
   it('POST creates audit log entry', () => {
-    expect(postSource).toContain('admin_audit_logs');
+    expect(postSource).toContain('logAdminAudit');
     expect(postSource).toContain('generate_reseller_payout');
   });
 
   it('PATCH creates audit log entry', () => {
-    expect(patchSource).toContain('admin_audit_logs');
+    expect(patchSource).toContain('logAdminAudit');
     expect(patchSource).toContain('reseller_payout_');
   });
 
@@ -603,14 +603,15 @@ describe('Reseller audit logging is server-side (D)', () => {
   it('PATCH writes audit log server-side after successful mutation', () => {
     // For approve/reject: audit is after .update(updateData)
     // For mark_paid: audit is after RPC call
-    // Both patterns have 'admin_audit_logs' after the mutation
-    const approveAuditIdx = patchSource.lastIndexOf('admin_audit_logs');
+    // Both patterns have 'logAdminAudit' after the mutation
+    const approveAuditIdx = patchSource.lastIndexOf('logAdminAudit');
     const updateIdx = patchSource.indexOf('.update(updateData)');
     expect(approveAuditIdx).toBeGreaterThan(updateIdx);
   });
 
   it('POST writes audit log server-side after successful insert', () => {
-    const auditIdx = postSource.indexOf('admin_audit_logs');
+    // Skip past the import to find the actual call site
+    const auditIdx = postSource.lastIndexOf('logAdminAudit');
     const insertIdx = postSource.indexOf('.insert({');
     expect(auditIdx).toBeGreaterThan(insertIdx);
   });
@@ -618,7 +619,7 @@ describe('Reseller audit logging is server-side (D)', () => {
   it('audit failure is logged but does not roll back the payout', () => {
     // Audit log write is a separate statement, not inside a transaction/RPC
     // This is accurate — described as server-side logging, not atomic
-    expect(patchSource).toContain('admin_audit_logs');
+    expect(patchSource).toContain('logAdminAudit');
     // The audit insert is NOT inside a try/catch that would undo the payout update
   });
 });

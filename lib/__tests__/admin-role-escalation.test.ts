@@ -164,7 +164,7 @@ describe('requirePlatformAdmin helper', () => {
           ),
           getUser: vi.fn().mockResolvedValue({ data: { user } }),
         },
-        rpc: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true }, error: null }) }),
+        rpc: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: { session_exists: true }, error: null }) }),
         from: vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue({}) }),
       }),
     }));

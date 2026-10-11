@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -192,11 +193,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Audit log (server-side, separate write — failure logged but does not roll back payout)
-    const { error: auditErr } = await service.from('admin_audit_logs').insert({
-      actor_id: auth.id,
+    const { error: auditErr } = await logAdminAudit({
+      actorId: auth.id,
       action: 'generate_reseller_payout',
-      entity_type: 'reseller_payout',
-      entity_id: payout.id,
+      entityType: 'reseller_payout',
+      entityId: payout.id,
       details: {
         reseller_id,
         period_start,
@@ -206,7 +207,7 @@ export async function POST(request: NextRequest) {
       },
     });
     if (auditErr) {
-      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for generate ${payout.id}:`, auditErr.message);
+      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for generate ${payout.id}:`, auditErr);
     }
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout created: ${payout.id} for reseller ${reseller_id}, net=${netAmount}`);

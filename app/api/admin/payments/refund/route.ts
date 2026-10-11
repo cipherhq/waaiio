@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { processRefund } from '@/lib/payments/refund-handler';
-import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -66,12 +66,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Audit log for refund approval
-    const serviceClient = createServiceClient();
-    await serviceClient.from('admin_audit_logs').insert({
-      actor_id: admin.id,
+    await logAdminAudit({
+      actorId: admin.id,
       action: 'refund_approved',
-      entity_type: 'payment',
-      entity_id: paymentId,
+      entityType: 'payment',
+      entityId: paymentId,
       details: {
         business_id: businessId,
         amount,

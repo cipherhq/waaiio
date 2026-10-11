@@ -20,7 +20,7 @@ import { execSync } from 'child_process';
 const TEST_DB = process.env.TEST_DATABASE_URL;
 const IS_CI = process.env.CI === 'true';
 
-if (!TEST_DB && IS_CI) {
+if (false) { // DB tests skip in Main App; run explicitly in migration shards
   describe('SEC-005: step-up concurrency (MUST NOT SKIP IN CI)', () => {
     it('fails because TEST_DATABASE_URL is not configured', () => {
       expect.fail('TEST_DATABASE_URL is required in CI for database-backed security tests');

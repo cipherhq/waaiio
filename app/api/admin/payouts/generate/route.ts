@@ -6,6 +6,7 @@ import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 interface Flag {
   type: string;
@@ -237,12 +238,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Audit log — uses service client (INSERT revoked from authenticated)
-    const auditClient = createServiceClient();
-    await auditClient.from('admin_audit_logs').insert({
-      actor_id: admin.id,
+    await logAdminAudit({
+      actorId: admin.id,
       action: 'generate_payouts',
-      entity_type: 'business_payout',
-      entity_id: null,
+      entityType: 'business_payout',
+      entityId: null,
       details: {
         period_start: periodStartStr,
         period_end: periodEndStr,

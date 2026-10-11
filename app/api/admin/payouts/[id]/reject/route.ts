@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutRejectedEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(
   request: NextRequest,
@@ -65,11 +66,11 @@ export async function POST(
   }
 
   // Audit log
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.id,
+  await logAdminAudit({
+    actorId: admin.id,
     action: 'reject_payout',
-    entity_type: 'business_payout',
-    entity_id: id,
+    entityType: 'business_payout',
+    entityId: id,
     details: {
       business_id: payout.business_id,
       amount: payout.net_amount,

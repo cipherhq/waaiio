@@ -21,6 +21,7 @@
 
 import { createHash } from 'crypto';
 import type { PlatformAdmin } from './admin-auth';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export type StepUpAction =
   | 'payout_approve'
@@ -305,14 +306,14 @@ export async function consumeStepUp(
   }
 
   // Log the step-up consumption
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  logAdminAudit({
+    actorId: admin.userId,
     action: 'step_up_consumed',
-    entity_type: actionType,
-    entity_id: targetId ?? undefined,
+    entityType: actionType,
+    entityId: targetId ?? null,
     details: { step_up_id: stepUpId, action_type: actionType },
-    ip_address: 'server',
-  }).then(() => {}, () => {});
+    ipAddress: 'server',
+  });
 
   return true;
 }

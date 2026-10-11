@@ -107,8 +107,8 @@ async function getVerifiedClaims(
       .maybeSingle();
 
     if (rpcError) return null; // RPC error → deny
-    const row = sessionRow as { exists?: boolean } | null;
-    if (!row || row.exists !== true) return null; // absent/false/malformed → deny
+    const row = sessionRow as { session_exists?: boolean } | null;
+    if (!row || row.session_exists !== true) return null; // absent/false/malformed → deny
   } catch {
     return null; // network/unexpected error → deny
   }
@@ -288,18 +288,15 @@ interface AdminAuthLogEntry {
 }
 
 async function logAdminAuthEvent(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   entry: AdminAuthLogEntry,
 ): Promise<void> {
-  try {
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: entry.actorId ?? null,
-      action: entry.action,
-      entity_type: 'admin_auth',
-      details: entry.details,
-      ip_address: entry.ipAddress,
-    });
-  } catch {
-    // Audit logging failure must not block the auth flow
-  }
+  const { logAdminAudit } = await import('@/lib/admin-audit');
+  await logAdminAudit({
+    actorId: entry.actorId ?? null,
+    action: entry.action,
+    entityType: 'admin_auth',
+    details: entry.details,
+    ipAddress: entry.ipAddress,
+  });
 }

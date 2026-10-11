@@ -18,7 +18,7 @@ import { NextRequest } from 'next/server';
 const mockGetClaims = vi.fn();
 const mockGetUser = vi.fn();
 const mockGetSession = vi.fn();
-const mockRpc = vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true } }) });
+const mockRpc = vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: { session_exists: true } }) });
 const mockInsert = vi.fn().mockReturnValue({ then: (cb: Function) => cb?.() });
 const mockFrom = vi.fn().mockReturnValue({
   insert: mockInsert,
@@ -89,7 +89,7 @@ function mockValidAuth(opts: { sub: string; email?: string; role?: string; aal?:
     error: null,
   });
   // Session existence check
-  mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true }, error: null }) });
+  mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { session_exists: true }, error: null }) });
 }
 
 describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
@@ -135,7 +135,7 @@ describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
     mockGetUser.mockResolvedValueOnce({
       data: { user: { id: 'admin-1', email: 'a@b.com', app_metadata: { role: 'admin' } } }, error: null,
     });
-    mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: false }, error: null }) });
+    mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { session_exists: false }, error: null }) });
     const { requirePlatformAdmin } = await import('../admin-auth');
     expect(await requirePlatformAdmin(adminRequest('revoked-token'))).toBeNull();
   });
@@ -248,7 +248,7 @@ describe('SEC-005 HTTP: cookie token must itself be verified', () => {
       data: { user: { id: 'admin-user-id', email: 'admin@example.test', app_metadata: { role: 'admin' } } },
       error: null,
     });
-    mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true }, error: null }) });
+    mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { session_exists: true }, error: null }) });
     const { requirePlatformAdmin } = await import('../admin-auth');
     const result = await requirePlatformAdmin(cookieRequest());
     expect(result?.aal).toBe('aal2');

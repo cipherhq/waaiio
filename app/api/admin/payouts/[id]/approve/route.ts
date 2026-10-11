@@ -10,6 +10,7 @@ import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { classifyPaystackError, classifyStripeError } from '@/lib/payments/payout-classification';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -464,11 +465,11 @@ async function logAndNotify(
   gatewayTransferCode: string | null,
   reference?: string,
 ) {
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.id,
+  await logAdminAudit({
+    actorId: admin.id,
     action: 'approve_payout',
-    entity_type: 'business_payout',
-    entity_id: payoutId,
+    entityType: 'business_payout',
+    entityId: payoutId,
     details: {
       business_id: payout.business_id,
       amount: payout.net_amount,

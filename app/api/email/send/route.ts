@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email/client';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(request: NextRequest) {
   const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'email-send'), 20, 60_000);
@@ -12,8 +12,6 @@ export async function POST(request: NextRequest) {
   if (!admin) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
-  const supabase = await createClient();
 
   const body = await request.json();
   const { to, subject, html } = body;
@@ -32,11 +30,11 @@ export async function POST(request: NextRequest) {
   }
 
   // Audit log
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  await logAdminAudit({
+    actorId: admin.userId,
     action: 'send_email',
-    entity_type: 'email',
-    entity_id: null,
+    entityType: 'email',
+    entityId: null,
     details: { to, subject },
   });
 

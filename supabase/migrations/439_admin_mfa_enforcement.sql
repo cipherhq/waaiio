@@ -225,12 +225,10 @@ CREATE POLICY "Admins can view audit logs"
   USING (public.is_admin());
 
 -- Drop legacy INSERT policy from M010 (used profiles.role, no aal2).
--- Replace with is_admin() which requires aal2.
+-- SEC-005: All audit writes go through the service client via logAdminAudit().
+-- No authenticated INSERT policy needed — direct PostgREST writes blocked.
 DROP POLICY IF EXISTS "Admins can insert audit logs" ON public.admin_audit_logs;
-CREATE POLICY "Admins can insert audit logs"
-  ON public.admin_audit_logs
-  FOR INSERT
-  WITH CHECK (public.is_admin());
+REVOKE INSERT, UPDATE, DELETE ON public.admin_audit_logs FROM PUBLIC, anon, authenticated;
 
 -- ── ai_usage ──────────────────────────────────────────────────────────────
 -- Old: "ai_usage_admin" (SELECT, profiles.role = 'admin')
@@ -501,7 +499,7 @@ GRANT EXECUTE ON FUNCTION public.cleanup_expired_step_ups() TO service_role;
 -- ════════════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public.check_session_exists(p_session_id uuid)
-RETURNS TABLE (exists boolean)
+RETURNS TABLE (session_exists boolean)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
@@ -509,7 +507,7 @@ AS $$
 BEGIN
   RETURN QUERY SELECT EXISTS (
     SELECT 1 FROM auth.sessions WHERE id = p_session_id
-  ) AS exists;
+  ) AS session_exists;
 END;
 $$;
 

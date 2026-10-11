@@ -148,7 +148,7 @@ describe('PATCH route: mark_paid uses atomic RPC', () => {
   it('checks audit { error } return and logs failure', () => {
     expect(src).toContain('error: auditErr');
     expect(src).toContain('Audit log failed');
-    expect(src).toContain('auditErr.message');
+    expect(src).toContain('auditErr');
   });
 });
 
@@ -185,7 +185,7 @@ describe('POST route: input validation', () => {
   it('checks audit { error } return and logs failure', () => {
     expect(src).toContain('error: auditErr');
     expect(src).toContain('Audit log failed');
-    expect(src).toContain('auditErr.message');
+    expect(src).toContain('auditErr');
   });
 });
 
@@ -382,7 +382,7 @@ describe('Audit failure handling (source verification)', () => {
   it('PATCH logs audit error with logger.error and safe context', () => {
     const auditErrSection = patchSrc.slice(patchSrc.indexOf('if (auditErr)'));
     expect(auditErrSection).toContain('logger.error');
-    expect(auditErrSection).toContain('auditErr.message');
+    expect(auditErrSection).toContain('auditErr');
     expect(auditErrSection).toContain('Audit log failed');
   });
 
@@ -392,14 +392,14 @@ describe('Audit failure handling (source verification)', () => {
   });
 
   it('POST logs audit error with logger.error', () => {
-    expect(postSrc).toContain('auditErr.message');
+    expect(postSrc).toContain('auditErr');
     expect(postSrc).toContain('Audit log failed');
   });
 
   it('mark_paid payout mutation succeeds independently of audit (separate writes)', () => {
     // The audit write is AFTER the RPC return check — payout is already committed
     const rpcReturnIdx = patchSrc.indexOf("return NextResponse.json({ success: true");
-    const auditIdx = patchSrc.indexOf('admin_audit_logs');
+    const auditIdx = patchSrc.indexOf('logAdminAudit');
     // Audit is BEFORE the return (so it runs), but if it fails, the return still happens
     expect(auditIdx).toBeLessThan(rpcReturnIdx);
   });
