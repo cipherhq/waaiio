@@ -3780,13 +3780,6 @@ jobs:
           set -euo pipefail
           export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
 
-          # Re-apply M439 REVOKE — prior test steps (P1-APPT) may have run
-          # "GRANT INSERT,UPDATE,DELETE ON ALL TABLES" to simulate Supabase defaults.
-          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c \
-            "REVOKE INSERT, UPDATE, DELETE ON public.admin_audit_logs FROM PUBLIC, anon, authenticated;
-             REVOKE INSERT, UPDATE, DELETE ON public.business_payouts FROM PUBLIC, anon, authenticated;
-             REVOKE INSERT, UPDATE, DELETE ON public.countries FROM PUBLIC, anon, authenticated;"
-
           echo "Running SEC-005 step-up concurrency + RLS policy inventory DB tests..."
           set +e
           OUTPUT=$(npx vitest run lib/__tests__/admin-step-up-concurrency-db.test.ts lib/__tests__/admin-rls-policy-inventory-db.test.ts 2>&1)

@@ -801,11 +801,14 @@ describeDb('Real PostgreSQL: appointment booking authority', () => {
 
   beforeAll(() => {
     // Grant schema + table access to Supabase roles (Supabase does this automatically,
-    // but CI test DB needs explicit grants for SET LOCAL ROLE tests)
+    // but CI test DB needs explicit grants for SET LOCAL ROLE tests).
+    // SEC-005: grant ONLY on tables this test uses — never ALL TABLES, which
+    // would re-grant DML that M439 deliberately revokes (admin_audit_logs,
+    // business_payouts, countries).
     runSQL(`
       GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
       GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
-      GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+      GRANT INSERT, UPDATE, DELETE ON appointments, bookings, businesses, profiles, services TO authenticated, service_role;
       -- anon: NO direct table access (only RPC EXECUTE grants)
     `);
 
