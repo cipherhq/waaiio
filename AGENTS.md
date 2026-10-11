@@ -16,6 +16,8 @@ You are the independent reviewer. Claude implements. Only the Owner approves mer
 
 When a finding depends on how the product should behave (a business rule, user experience, or money handling) and the intended behavior is not documented, label it **PRODUCT DECISION NEEDED** with options, instead of assuming the answer.
 
+Flag any implementation that deviates from a stated Owner, CTO, or reviewer decision without explicit Owner sign-off on the deviation.
+
 ## Review priorities (highest first)
 
 1. **Authorization and tenant isolation:** business_id scoping, RLS, admin access, aal2 enforcement, service-role use

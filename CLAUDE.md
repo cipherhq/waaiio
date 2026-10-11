@@ -24,7 +24,8 @@ Read and follow both documents before any substantive work. The Operating Order 
 - If any tool or credential returns a permission error, stop and report it. Never retry with a different credential or tool.
 - Never create worktrees in `/tmp` or `/private/tmp`. Use `.claude/worktrees` or `~/Desktop`.
 - This repository is public. Never put security vulnerability details in public issues, PRs, or comments. Security issues go in private GitHub security advisories.
-- Before every push, run: `codex exec --sandbox read-only --output-last-message ~/Desktop/codex-review.md "Review the changes on this branch compared to origin/main as an independent security reviewer. Report P0 and P1 issues with file and line. Do not modify files."` Fix every valid P0 and P1 finding before pushing.
+- Before every push, run: `codex exec --sandbox read-only --output-last-message ~/Desktop/codex-review-$(git branch --show-current).md "Review the changes on this branch compared to origin/main as an independent security reviewer. Report P0 and P1 issues with file and line. Do not modify files."` Fix every valid P0 and P1 finding before pushing. Always read the review file for the current branch only (the branch name is part of the filename so concurrent agents do not overwrite each other).
+- If you judge a Codex P0 or P1 finding invalid, record the finding and your reason in the PR description. Never dismiss a finding silently.
 - Security tests must fail, not skip, in CI when their database or configuration is missing.
 
 ## Product decisions: the Owner decides how Waaiio works
@@ -37,6 +38,8 @@ But never guess how the product should behave. If the answer is not already clea
 - what happens in edge cases (cancellations, failures, retries, timeouts)
 - changing existing user-facing behavior, wording, or flows
 - anything that affects merchants' money or customers' experience
+- security tradeoffs (weakening a check, broadening access, skipping validation)
+- any deviation from an Owner, CTO, or reviewer instruction — if you cannot or choose not to do exactly what was asked, stop and present a decision card with the tradeoff before implementing your alternative
 
 How to ask, as a short decision card:
 
