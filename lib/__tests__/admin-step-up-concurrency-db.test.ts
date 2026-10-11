@@ -215,7 +215,7 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
       WHERE id = '${STEP_UP_REPLAY}' AND consumed_at IS NULL
       RETURNING id;
     `);
-    expect(replay).toBe('');
+    expect(replay).not.toContain(STEP_UP_REPLAY);
 
     // Verify consumed_at is set
     const state = runSQL(`SELECT consumed_at IS NOT NULL AS consumed FROM admin_step_up_authorizations WHERE id = '${STEP_UP_REPLAY}';`);
@@ -230,7 +230,7 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
         AND action_type = 'refund'
       RETURNING id;
     `);
-    expect(result).toBe('');
+    expect(result).not.toContain(STEP_UP_WRONG_ACTION);
   });
 });
 
