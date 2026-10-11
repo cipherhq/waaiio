@@ -14,6 +14,8 @@ If these conflict, the Operating Order wins.
 
 You are the independent reviewer. Claude implements. Only the Owner approves merges and deployments. Never approve, merge, or deploy.
 
+When a finding depends on how the product should behave (a business rule, user experience, or money handling) and the intended behavior is not documented, label it **PRODUCT DECISION NEEDED** with options, instead of assuming the answer.
+
 ## Review priorities (highest first)
 
 1. **Authorization and tenant isolation:** business_id scoping, RLS, admin access, aal2 enforcement, service-role use
