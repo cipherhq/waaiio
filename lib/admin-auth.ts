@@ -90,12 +90,35 @@ async function getVerifiedClaims(
   // Step 3: Identity consistency — getClaims sub must equal getUser id
   if (userData.user.id !== sub) return null;
 
+  // Step 4: Session-existence check — getUser may not reject a token whose
+  // session was revoked but whose JWT has not yet expired (Supabase revokes
+  // refresh tokens on sign-out, but access JWTs remain valid until expiry).
+  // Checking auth.sessions directly catches this window.
+  //
+  // FAIL CLOSED: require a valid session_id AND an explicit { exists: true }.
+  // Missing session_id, RPC errors, permission errors, and malformed
+  // responses all deny access.
+  const sessionId = claims.session_id as string | undefined;
+  if (!sessionId) return null;
+
+  try {
+    const { data: sessionRow, error: rpcError } = await supabase
+      .rpc('check_session_exists', { p_session_id: sessionId })
+      .maybeSingle();
+
+    if (rpcError) return null; // RPC error → deny
+    const row = sessionRow as { exists?: boolean } | null;
+    if (!row || row.exists !== true) return null; // absent/false/malformed → deny
+  } catch {
+    return null; // network/unexpected error → deny
+  }
+
   return {
     userId: sub,
     email: userData.user.email || '',
     appMetadataRole: userData.user.app_metadata?.role,
     aal: claims.aal as string | undefined,
-    sessionId: claims.session_id as string | undefined,
+    sessionId,
     amr: claims.amr as Array<{ method: string; timestamp: number }> | undefined,
   };
 }

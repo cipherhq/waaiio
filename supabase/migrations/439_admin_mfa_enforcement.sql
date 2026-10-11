@@ -224,6 +224,12 @@ CREATE POLICY "Admins can view audit logs"
   FOR SELECT
   USING (public.is_admin());
 
+-- Drop legacy INSERT policy from M010 — all audit writes go through service_role.
+-- The old policy used profiles.role = 'admin' (no aal2, wrong authority source).
+DROP POLICY IF EXISTS "Admins can insert audit logs" ON public.admin_audit_logs;
+-- Revoke INSERT from authenticated — service_role only (granted in M421).
+REVOKE INSERT ON public.admin_audit_logs FROM authenticated;
+
 -- ── ai_usage ──────────────────────────────────────────────────────────────
 -- Old: "ai_usage_admin" (SELECT, profiles.role = 'admin')
 -- Preserves SELECT scope.
@@ -235,11 +241,17 @@ CREATE POLICY "ai_usage_admin"
 
 -- ── business_payouts ──────────────────────────────────────────────────────
 -- Old: "Admins have full access to business_payouts" (ALL, profiles.role = 'admin')
+-- SEC-005: Admin payout reads via PostgREST; writes via service-role routes
+-- with step-up authorization. FOR SELECT prevents direct DML bypass.
 DROP POLICY IF EXISTS "Admins have full access to business_payouts" ON public.business_payouts;
-CREATE POLICY "Admins have full access to business_payouts"
+CREATE POLICY "Admins can view business_payouts"
   ON public.business_payouts
-  FOR ALL
+  FOR SELECT
   USING (public.is_admin());
+
+-- Revoke DML from authenticated — all payout mutations go through
+-- service-role API routes that require step-up authorization.
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.business_payouts FROM PUBLIC, anon, authenticated;
 
 -- ── businesses ────────────────────────────────────────────────────────────
 -- Old: "Admins can view all businesses" (SELECT, profiles.role = 'admin')
@@ -477,6 +489,32 @@ REVOKE EXECUTE ON FUNCTION public.cleanup_expired_step_ups() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.cleanup_expired_step_ups() FROM anon;
 REVOKE EXECUTE ON FUNCTION public.cleanup_expired_step_ups() FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.cleanup_expired_step_ups() TO service_role;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- §6b. check_session_exists(p_session_id UUID) — session revocation check
+--
+-- Called by requirePlatformAdmin to verify the JWT's session still exists
+-- in auth.sessions. Catches the window between session revocation and
+-- JWT expiry where getUser may not reject the token.
+-- ════════════════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.check_session_exists(p_session_id uuid)
+RETURNS TABLE (exists boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  RETURN QUERY SELECT EXISTS (
+    SELECT 1 FROM auth.sessions WHERE id = p_session_id
+  ) AS exists;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.check_session_exists(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.check_session_exists(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.check_session_exists(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.check_session_exists(uuid) TO service_role;
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- §7. Self-verification

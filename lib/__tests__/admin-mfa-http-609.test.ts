@@ -18,6 +18,7 @@ import { NextRequest } from 'next/server';
 const mockGetClaims = vi.fn();
 const mockGetUser = vi.fn();
 const mockGetSession = vi.fn();
+const mockRpc = vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true } }) });
 const mockInsert = vi.fn().mockReturnValue({ then: (cb: Function) => cb?.() });
 const mockFrom = vi.fn().mockReturnValue({
   insert: mockInsert,
@@ -35,6 +36,7 @@ vi.mock('@/lib/supabase/service', () => ({
       getUser: mockGetUser,
       admin: { getUserById: vi.fn().mockResolvedValue({ data: null }) },
     },
+    rpc: mockRpc,
     from: mockFrom,
   }),
 }));
@@ -76,7 +78,7 @@ function adminRequest(token: string, path = 'http://localhost/api/admin/query'):
 // Tests
 // ---------------------------------------------------------------------------
 
-/** Mock both getClaims + getUser for a valid admin with specified claims */
+/** Mock getClaims + getUser + session check for a valid admin */
 function mockValidAuth(opts: { sub: string; email?: string; role?: string; aal?: string; sessionId?: string }) {
   mockGetClaims.mockResolvedValueOnce({
     data: { claims: { sub: opts.sub, aal: opts.aal ?? 'aal2', session_id: opts.sessionId ?? 'sess-123' } },
@@ -86,6 +88,8 @@ function mockValidAuth(opts: { sub: string; email?: string; role?: string; aal?:
     data: { user: { id: opts.sub, email: opts.email ?? 'admin@waaiio.com', app_metadata: { role: opts.role ?? 'admin' } } },
     error: null,
   });
+  // Session existence check
+  mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true }, error: null }) });
 }
 
 describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
@@ -122,6 +126,41 @@ describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
     mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: { message: 'session revoked' } });
     const { requirePlatformAdmin } = await import('../admin-auth');
     expect(await requirePlatformAdmin(adminRequest('revoked'))).toBeNull();
+  });
+
+  it('rejects a session that was revoked (check_session_exists returns false)', async () => {
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'admin-1', aal: 'aal2', session_id: 'revoked-sess' } }, error: null,
+    });
+    mockGetUser.mockResolvedValueOnce({
+      data: { user: { id: 'admin-1', email: 'a@b.com', app_metadata: { role: 'admin' } } }, error: null,
+    });
+    mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: false }, error: null }) });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(adminRequest('revoked-token'))).toBeNull();
+  });
+
+  it('rejects when session_id is missing from JWT claims', async () => {
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'admin-1', aal: 'aal2' /* no session_id */ } }, error: null,
+    });
+    mockGetUser.mockResolvedValueOnce({
+      data: { user: { id: 'admin-1', email: 'a@b.com', app_metadata: { role: 'admin' } } }, error: null,
+    });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(adminRequest('no-session-id'))).toBeNull();
+  });
+
+  it('rejects when check_session_exists RPC errors (fail closed)', async () => {
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'admin-1', aal: 'aal2', session_id: 'sess-err' } }, error: null,
+    });
+    mockGetUser.mockResolvedValueOnce({
+      data: { user: { id: 'admin-1', email: 'a@b.com', app_metadata: { role: 'admin' } } }, error: null,
+    });
+    mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'RPC error' } }) });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(adminRequest('rpc-error-token'))).toBeNull();
   });
 
   it('rejects when getClaims sub does not match getUser id', async () => {
@@ -202,7 +241,6 @@ describe('SEC-005 HTTP: cookie token must itself be verified', () => {
   it('accepts a cookie aal2 session only after validating THAT token server-side', async () => {
     const token = fakeJwt({ sub: 'admin-user-id', aal: 'aal2', session_id: 'sess-cookie' });
     setCookieToken(token);
-    // getClaims + getUser both called on the cookie token
     mockGetClaims.mockResolvedValueOnce({
       data: { claims: { sub: 'admin-user-id', aal: 'aal2', session_id: 'sess-cookie' } }, error: null,
     });
@@ -210,6 +248,7 @@ describe('SEC-005 HTTP: cookie token must itself be verified', () => {
       data: { user: { id: 'admin-user-id', email: 'admin@example.test', app_metadata: { role: 'admin' } } },
       error: null,
     });
+    mockRpc.mockReturnValueOnce({ maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true }, error: null }) });
     const { requirePlatformAdmin } = await import('../admin-auth');
     const result = await requirePlatformAdmin(cookieRequest());
     expect(result?.aal).toBe('aal2');

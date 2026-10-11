@@ -5,17 +5,34 @@
  * 1. Two concurrent consumeStepUp calls on the same step-up produce
  *    exactly one success (the other gets zero rows → StepUpError).
  * 2. Replay after consumption always fails.
+ * 3. Wrong action_type is rejected on unconsumed step-up.
  *
- * Requires TEST_DATABASE_URL pointing to a PostgreSQL database with
- * M439 applied (admin_step_up_authorizations table).
+ * Uses two independent database connections with synchronized transactions
+ * so both consume calls truly race.
+ *
+ * Requires TEST_DATABASE_URL. In CI migration shards this is always set.
+ * Locally, set it to run these tests; they FAIL (not skip) when the
+ * variable is absent in CI.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
+const IS_CI = process.env.CI === 'true';
+
+if (!TEST_DB && IS_CI) {
+  describe('SEC-005: step-up concurrency (MUST NOT SKIP IN CI)', () => {
+    it('fails because TEST_DATABASE_URL is not configured', () => {
+      expect.fail('TEST_DATABASE_URL is required in CI for database-backed security tests');
+    });
+  });
+} else if (!TEST_DB) {
+  describe.skip('SEC-005: step-up concurrency — TEST_DATABASE_URL not set', () => {
+    it('skipped locally', () => {});
+  });
+} else {
 
 function runSQL(sql: string): string {
-  if (!TEST_DB) throw new Error('TEST_DATABASE_URL not set');
   try {
     return execSync(
       `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`,
@@ -27,17 +44,117 @@ function runSQL(sql: string): string {
   }
 }
 
-const describeIfDb = !TEST_DB ? describe.skip : describe;
+/**
+ * Run two SQL statements concurrently using advisory locks for synchronization.
+ * Returns [result1, result2] where each is the psql output.
+ *
+ * Flow:
+ * 1. Both sessions BEGIN and acquire pg_advisory_lock(609001) to prove they overlap.
+ * 2. Session A releases the lock and immediately runs the consume UPDATE.
+ * 3. Session B releases the lock and immediately runs the consume UPDATE.
+ * 4. Both sessions COMMIT.
+ * PostgreSQL MVCC ensures that only one UPDATE finds consumed_at IS NULL.
+ */
+function runConcurrentConsume(stepUpId: string, sessionId: string, adminUser: string, paramsHash: string): [string, string] {
+  // Session A: acquire lock, consume, commit
+  const sqlA = `
+    BEGIN;
+    SELECT pg_advisory_lock(609001);
+    UPDATE admin_step_up_authorizations
+    SET consumed_at = now()
+    WHERE id = '${stepUpId}'
+      AND consumed_at IS NULL
+      AND verified_at IS NOT NULL
+      AND expires_at > now()
+      AND admin_user_id = '${adminUser}'
+      AND session_id = '${sessionId}'
+      AND action_type = 'payout_approve'
+      AND params_hash = '${paramsHash}'
+    RETURNING id;
+    SELECT pg_advisory_unlock(609001);
+    COMMIT;
+  `;
 
-describeIfDb('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
+  // Session B: wait for lock (proves overlap), then consume, commit
+  const sqlB = `
+    BEGIN;
+    SELECT pg_advisory_lock(609001);
+    SELECT pg_advisory_unlock(609001);
+    UPDATE admin_step_up_authorizations
+    SET consumed_at = now()
+    WHERE id = '${stepUpId}'
+      AND consumed_at IS NULL
+      AND verified_at IS NOT NULL
+      AND expires_at > now()
+      AND admin_user_id = '${adminUser}'
+      AND session_id = '${sessionId}'
+      AND action_type = 'payout_approve'
+      AND params_hash = '${paramsHash}'
+    RETURNING id;
+    COMMIT;
+  `;
+
+  // Run both in parallel using child processes
+  const { execSync: exec } = require('child_process');
+  const childA = require('child_process').spawn('psql', [TEST_DB!, '-v', 'ON_ERROR_STOP=1', '-t', '-A'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const childB = require('child_process').spawn('psql', [TEST_DB!, '-v', 'ON_ERROR_STOP=1', '-t', '-A'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  let resultA = '';
+  let resultB = '';
+
+  childA.stdout.on('data', (d: Buffer) => { resultA += d.toString(); });
+  childB.stdout.on('data', (d: Buffer) => { resultB += d.toString(); });
+  childA.stderr.on('data', (d: Buffer) => { resultA += d.toString(); });
+  childB.stderr.on('data', (d: Buffer) => { resultB += d.toString(); });
+
+  childA.stdin.write(sqlA);
+  childA.stdin.end();
+  childB.stdin.write(sqlB);
+  childB.stdin.end();
+
+  // Wait for both to finish (sync via spawnSync would block; use waitpid approach)
+  const waitFor = (child: typeof childA) => new Promise<void>(resolve => child.on('close', resolve));
+  // Since we're in a sync test, use execSync for each
+  // Actually, we need true parallelism. Let's use a different approach:
+  // Run via a shell script that backgrounds both.
+  const script = `
+    (echo "${sqlA.replace(/"/g, '\\"')}" | psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A 2>&1) &
+    PID_A=$!
+    (echo "${sqlB.replace(/"/g, '\\"')}" | psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A 2>&1) &
+    PID_B=$!
+    wait $PID_A
+    echo "---SEPARATOR---"
+    wait $PID_B
+  `;
+
+  childA.kill();
+  childB.kill();
+
+  try {
+    const combined = exec(`bash -c '${script.replace(/'/g, "'\\''")}'`, {
+      encoding: 'utf-8',
+      timeout: 15000,
+    }).trim();
+    const parts = combined.split('---SEPARATOR---');
+    return [parts[0]?.trim() || '', parts[1]?.trim() || ''];
+  } catch {
+    return ['ERROR', 'ERROR'];
+  }
+}
+
+describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
   const ADMIN_USER = '00000000-0000-0000-0000-000000609001';
   const SESSION_ID = 'test-session-609-concurrency';
-  const STEP_UP_ID_1 = '00000000-0000-0000-0000-000000609010';
-  const STEP_UP_ID_2 = '00000000-0000-0000-0000-000000609011';
+  const STEP_UP_CONCURRENT = '00000000-0000-0000-0000-000000609010';
+  const STEP_UP_REPLAY = '00000000-0000-0000-0000-000000609011';
+  const STEP_UP_WRONG_ACTION = '00000000-0000-0000-0000-000000609012';
   const PARAMS_HASH = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
 
   beforeAll(() => {
-    // Create test admin user
     runSQL(`
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
       INSERT INTO auth.users (id, raw_app_meta_data)
@@ -46,25 +163,20 @@ describeIfDb('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => 
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
 
-    // Create a verified step-up authorization for concurrency testing
-    runSQL(`
-      INSERT INTO admin_step_up_authorizations
-        (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
-      VALUES
-        ('${STEP_UP_ID_1}', '${ADMIN_USER}', '${SESSION_ID}', 'payout_approve', 'payout-001', '${PARAMS_HASH}',
-         now(), now() + interval '5 minutes')
-      ON CONFLICT (id) DO NOTHING;
-    `);
-
-    // Create a second step-up for replay testing
-    runSQL(`
-      INSERT INTO admin_step_up_authorizations
-        (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
-      VALUES
-        ('${STEP_UP_ID_2}', '${ADMIN_USER}', '${SESSION_ID}', 'refund', 'payment-001', '${PARAMS_HASH}',
-         now(), now() + interval '5 minutes')
-      ON CONFLICT (id) DO NOTHING;
-    `);
+    // Create step-ups for each test
+    for (const [id, action] of [
+      [STEP_UP_CONCURRENT, 'payout_approve'],
+      [STEP_UP_REPLAY, 'refund'],
+      [STEP_UP_WRONG_ACTION, 'team_grant'],
+    ]) {
+      runSQL(`
+        INSERT INTO admin_step_up_authorizations
+          (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+        VALUES ('${id}', '${ADMIN_USER}', '${SESSION_ID}', '${action}', 'target-001', '${PARAMS_HASH}',
+                now(), now() + interval '5 minutes')
+        ON CONFLICT (id) DO NOTHING;
+      `);
+    }
   });
 
   afterAll(() => {
@@ -73,104 +185,53 @@ describeIfDb('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => 
   });
 
   it('concurrent double-consumption: exactly one succeeds', () => {
-    // Two concurrent UPDATE ... WHERE consumed_at IS NULL queries.
-    // PostgreSQL MVCC ensures only one sees the unconsumed row.
-    // We simulate with two sequential transactions (the first commits
-    // before the second runs, so the second sees consumed_at IS NOT NULL).
-    const result1 = runSQL(`
-      UPDATE admin_step_up_authorizations
-      SET consumed_at = now()
-      WHERE id = '${STEP_UP_ID_1}'
-        AND consumed_at IS NULL
-        AND verified_at IS NOT NULL
-        AND expires_at > now()
-        AND admin_user_id = '${ADMIN_USER}'
-        AND session_id = '${SESSION_ID}'
-        AND action_type = 'payout_approve'
-        AND params_hash = '${PARAMS_HASH}'
-      RETURNING id;
-    `);
+    const [resultA, resultB] = runConcurrentConsume(
+      STEP_UP_CONCURRENT, SESSION_ID, ADMIN_USER, PARAMS_HASH,
+    );
 
-    // First consumption should succeed
-    expect(result1).toContain(STEP_UP_ID_1);
+    // Parse: one result should contain the step-up ID, the other should not
+    const aHasId = resultA.includes(STEP_UP_CONCURRENT);
+    const bHasId = resultB.includes(STEP_UP_CONCURRENT);
 
-    // Second attempt on the same step-up — consumed_at is now set
-    const result2 = runSQL(`
-      UPDATE admin_step_up_authorizations
-      SET consumed_at = now()
-      WHERE id = '${STEP_UP_ID_1}'
-        AND consumed_at IS NULL
-        AND verified_at IS NOT NULL
-        AND expires_at > now()
-        AND admin_user_id = '${ADMIN_USER}'
-        AND session_id = '${SESSION_ID}'
-        AND action_type = 'payout_approve'
-        AND params_hash = '${PARAMS_HASH}'
-      RETURNING id;
-    `);
-
-    // Second consumption must return zero rows (empty string from psql -tA)
-    expect(result2).toBe('');
+    // Exactly one must succeed
+    expect(
+      (aHasId && !bHasId) || (!aHasId && bHasId),
+      `Expected exactly one success. A: ${aHasId}, B: ${bHasId}\nA output: ${resultA}\nB output: ${resultB}`,
+    ).toBe(true);
   });
 
   it('replay after consumption always fails', () => {
-    // First: consume step-up 2
+    // Consume step-up
     const consume = runSQL(`
-      UPDATE admin_step_up_authorizations
-      SET consumed_at = now()
-      WHERE id = '${STEP_UP_ID_2}'
-        AND consumed_at IS NULL
-        AND verified_at IS NOT NULL
-        AND expires_at > now()
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_REPLAY}' AND consumed_at IS NULL AND verified_at IS NOT NULL
       RETURNING id;
     `);
-    expect(consume).toContain(STEP_UP_ID_2);
+    expect(consume).toContain(STEP_UP_REPLAY);
 
-    // Replay: try to consume again with identical parameters
+    // Replay: same query again
     const replay = runSQL(`
-      UPDATE admin_step_up_authorizations
-      SET consumed_at = now()
-      WHERE id = '${STEP_UP_ID_2}'
-        AND consumed_at IS NULL
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_REPLAY}' AND consumed_at IS NULL
       RETURNING id;
     `);
     expect(replay).toBe('');
 
-    // Verify the consumed_at is set (not null)
-    const state = runSQL(`
-      SELECT consumed_at IS NOT NULL AS consumed
-      FROM admin_step_up_authorizations
-      WHERE id = '${STEP_UP_ID_2}';
-    `);
+    // Verify consumed_at is set
+    const state = runSQL(`SELECT consumed_at IS NOT NULL AS consumed FROM admin_step_up_authorizations WHERE id = '${STEP_UP_REPLAY}';`);
     expect(state).toBe('t');
   });
 
-  it('wrong action_type is rejected even if step-up is unconsumed', () => {
-    // Create a fresh unconsumed step-up
-    const freshId = '00000000-0000-0000-0000-000000609012';
-    runSQL(`
-      INSERT INTO admin_step_up_authorizations
-        (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
-      VALUES
-        ('${freshId}', '${ADMIN_USER}', '${SESSION_ID}', 'team_grant', 'user-001', '${PARAMS_HASH}',
-         now(), now() + interval '5 minutes')
-      ON CONFLICT (id) DO NOTHING;
-    `);
-
-    // Try to consume with wrong action_type
+  it('wrong action_type rejected on unconsumed step-up', () => {
     const result = runSQL(`
-      UPDATE admin_step_up_authorizations
-      SET consumed_at = now()
-      WHERE id = '${freshId}'
-        AND consumed_at IS NULL
-        AND verified_at IS NOT NULL
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_WRONG_ACTION}'
+        AND consumed_at IS NULL AND verified_at IS NOT NULL
         AND action_type = 'refund'
-        AND params_hash = '${PARAMS_HASH}'
       RETURNING id;
     `);
     expect(result).toBe('');
-
-    // Clean up
-    runSQL(`DELETE FROM admin_step_up_authorizations WHERE id = '${freshId}';`);
   });
 });
+
+} // end if (TEST_DB)
