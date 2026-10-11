@@ -233,41 +233,57 @@ export default function Payouts() {
     }
   }
 
-  // Reject payout via API route
+  // Reject payout via API route — gated by step-up MFA
   async function handleReject() {
     if (!rejectTarget || !rejectReason) return;
     setRejecting(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        return;
-      }
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/payouts/${rejectTarget.id}/reject`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ reason: rejectReason }),
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/${rejectTarget.id}/reject`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ reason: rejectReason, stepUpId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') {
+            alert('Step-up authorization failed — please try again');
+            return;
+          }
+          alert(data.error || 'Failed to reject payout');
+          return;
+        }
+
+        setRejectTarget(null);
+        setRejectReason('');
+        await loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'payout_reject',
+        targetId: rejectTarget.id,
+        params: { reason: rejectReason },
+        description: `Reject payout for ${rejectTarget.business_name} — ${formatMoney(rejectTarget.net_amount, rejectTarget.country_code)}`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to reject payout');
-        return;
-      }
-
-      setRejectTarget(null);
-      setRejectReason('');
-      await loadData();
     } catch (error) {
       console.error('Reject error:', error);
       alert('Failed to reject payout');
+      stepUp.reset();
     } finally {
       setRejecting(false);
     }

@@ -232,6 +232,133 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
     `);
     expect(result).not.toContain(STEP_UP_WRONG_ACTION);
   });
+
+  // B5: Additional predicate coverage — mirrors consumeStepUp() WHERE clause
+  const STEP_UP_TARGET = '00000005-0000-0000-0000-000000000005';
+  const STEP_UP_ACTOR = '00000005-0000-0000-0000-000000000006';
+  const STEP_UP_SESSION = '00000005-0000-0000-0000-000000000007';
+  const STEP_UP_PARAMS = '00000005-0000-0000-0000-000000000008';
+  const STEP_UP_UNVERIFIED = '00000005-0000-0000-0000-000000000009';
+  const STEP_UP_EXPIRED = '00000005-0000-0000-0000-000000000010';
+  const OTHER_ADMIN = '00000005-0000-0000-0000-aa0000000001';
+  const OTHER_HASH = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+
+  beforeAll(() => {
+    runSQL(`
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id, raw_app_meta_data)
+      VALUES ('${OTHER_ADMIN}', '{"role":"admin"}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = EXCLUDED.raw_app_meta_data;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+    `);
+    // target_id mismatch test
+    runSQL(`INSERT INTO admin_step_up_authorizations
+      (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+      VALUES ('${STEP_UP_TARGET}', '${ADMIN_USER}', '${SESSION_ID}', 'payout_approve', 'target-999', '${PARAMS_HASH}',
+              now(), now() + interval '5 minutes') ON CONFLICT DO NOTHING;`);
+    // actor mismatch test
+    runSQL(`INSERT INTO admin_step_up_authorizations
+      (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+      VALUES ('${STEP_UP_ACTOR}', '${OTHER_ADMIN}', '${SESSION_ID}', 'payout_approve', 'target-001', '${PARAMS_HASH}',
+              now(), now() + interval '5 minutes') ON CONFLICT DO NOTHING;`);
+    // session mismatch test
+    runSQL(`INSERT INTO admin_step_up_authorizations
+      (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+      VALUES ('${STEP_UP_SESSION}', '${ADMIN_USER}', 'wrong-session', 'payout_approve', 'target-001', '${PARAMS_HASH}',
+              now(), now() + interval '5 minutes') ON CONFLICT DO NOTHING;`);
+    // params_hash mismatch test
+    runSQL(`INSERT INTO admin_step_up_authorizations
+      (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+      VALUES ('${STEP_UP_PARAMS}', '${ADMIN_USER}', '${SESSION_ID}', 'payout_approve', 'target-001', '${OTHER_HASH}',
+              now(), now() + interval '5 minutes') ON CONFLICT DO NOTHING;`);
+    // unverified grant
+    runSQL(`INSERT INTO admin_step_up_authorizations
+      (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+      VALUES ('${STEP_UP_UNVERIFIED}', '${ADMIN_USER}', '${SESSION_ID}', 'payout_approve', 'target-001', '${PARAMS_HASH}',
+              NULL, now() + interval '5 minutes') ON CONFLICT DO NOTHING;`);
+    // expired grant
+    runSQL(`INSERT INTO admin_step_up_authorizations
+      (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+      VALUES ('${STEP_UP_EXPIRED}', '${ADMIN_USER}', '${SESSION_ID}', 'payout_approve', 'target-001', '${PARAMS_HASH}',
+              now() - interval '10 minutes', now() - interval '5 minutes') ON CONFLICT DO NOTHING;`);
+  });
+
+  afterAll(() => {
+    runSQL(`DELETE FROM admin_step_up_authorizations WHERE admin_user_id IN ('${ADMIN_USER}', '${OTHER_ADMIN}');`);
+    runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id = '${OTHER_ADMIN}'; ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
+  });
+
+  it('target_id mismatch: consumption with wrong target returns zero rows', () => {
+    const result = runSQL(`
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_TARGET}' AND consumed_at IS NULL AND verified_at IS NOT NULL
+        AND admin_user_id = '${ADMIN_USER}' AND session_id = '${SESSION_ID}'
+        AND action_type = 'payout_approve' AND target_id = 'target-001'
+        AND params_hash = '${PARAMS_HASH}' AND expires_at > now()
+      RETURNING id;
+    `);
+    expect(result).not.toContain(STEP_UP_TARGET);
+  });
+
+  it('actor mismatch: consumption with wrong admin_user_id returns zero rows', () => {
+    const result = runSQL(`
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_ACTOR}' AND consumed_at IS NULL AND verified_at IS NOT NULL
+        AND admin_user_id = '${ADMIN_USER}' AND session_id = '${SESSION_ID}'
+        AND action_type = 'payout_approve' AND target_id = 'target-001'
+        AND params_hash = '${PARAMS_HASH}' AND expires_at > now()
+      RETURNING id;
+    `);
+    expect(result).not.toContain(STEP_UP_ACTOR);
+  });
+
+  it('session mismatch: consumption with wrong session_id returns zero rows', () => {
+    const result = runSQL(`
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_SESSION}' AND consumed_at IS NULL AND verified_at IS NOT NULL
+        AND admin_user_id = '${ADMIN_USER}' AND session_id = '${SESSION_ID}'
+        AND action_type = 'payout_approve' AND target_id = 'target-001'
+        AND params_hash = '${PARAMS_HASH}' AND expires_at > now()
+      RETURNING id;
+    `);
+    expect(result).not.toContain(STEP_UP_SESSION);
+  });
+
+  it('params_hash mismatch: consumption with wrong hash returns zero rows', () => {
+    const result = runSQL(`
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_PARAMS}' AND consumed_at IS NULL AND verified_at IS NOT NULL
+        AND admin_user_id = '${ADMIN_USER}' AND session_id = '${SESSION_ID}'
+        AND action_type = 'payout_approve' AND target_id = 'target-001'
+        AND params_hash = '${PARAMS_HASH}' AND expires_at > now()
+      RETURNING id;
+    `);
+    expect(result).not.toContain(STEP_UP_PARAMS);
+  });
+
+  it('unverified grant: consumption rejected when verified_at IS NULL', () => {
+    const result = runSQL(`
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_UNVERIFIED}' AND consumed_at IS NULL AND verified_at IS NOT NULL
+        AND admin_user_id = '${ADMIN_USER}' AND session_id = '${SESSION_ID}'
+        AND action_type = 'payout_approve' AND target_id = 'target-001'
+        AND params_hash = '${PARAMS_HASH}' AND expires_at > now()
+      RETURNING id;
+    `);
+    expect(result).not.toContain(STEP_UP_UNVERIFIED);
+  });
+
+  it('expired grant: consumption rejected when expires_at < now()', () => {
+    const result = runSQL(`
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_EXPIRED}' AND consumed_at IS NULL AND verified_at IS NOT NULL
+        AND admin_user_id = '${ADMIN_USER}' AND session_id = '${SESSION_ID}'
+        AND action_type = 'payout_approve' AND target_id = 'target-001'
+        AND params_hash = '${PARAMS_HASH}' AND expires_at > now()
+      RETURNING id;
+    `);
+    expect(result).not.toContain(STEP_UP_EXPIRED);
+  });
 });
 
 } // end if (TEST_DB)

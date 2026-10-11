@@ -8,6 +8,7 @@ const VALID_ACTIONS: StepUpAction[] = [
   'payout_approve', 'payout_reject', 'payout_generate', 'provider_config',
   'team_grant', 'team_revoke', 'impersonate', 'refund',
   'reseller_payout_approve', 'reseller_payout_reject', 'reseller_payout_mark_paid',
+  'reseller_payout_generate',
 ];
 
 export async function OPTIONS(request: NextRequest) {

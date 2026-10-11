@@ -164,6 +164,30 @@ describe('PATCH route: mark_paid uses atomic RPC', () => {
   });
 });
 
+describe('POST route: step-up enforcement', () => {
+  const src = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
+
+  it('calls consumeStepUp with reseller_payout_generate before insert', () => {
+    const stepUpIdx = src.indexOf('consumeStepUp');
+    const insertIdx = src.indexOf('.insert(');
+    expect(stepUpIdx).toBeGreaterThan(-1);
+    expect(insertIdx).toBeGreaterThan(stepUpIdx);
+  });
+
+  it('uses reseller_payout_generate action type', () => {
+    expect(src).toContain("'reseller_payout_generate'");
+  });
+
+  it('returns 403 with step_up_required on failure', () => {
+    expect(src).toContain("code: 'step_up_required'");
+    expect(src).toContain('403');
+  });
+
+  it('extracts stepUpId from request body', () => {
+    expect(src).toContain('stepUpId');
+  });
+});
+
 describe('POST route: input validation', () => {
   const src = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
 

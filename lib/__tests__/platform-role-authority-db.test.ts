@@ -88,7 +88,7 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
       GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
       GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
       GRANT INSERT, UPDATE, DELETE ON demo_requests, profiles, businesses,
-        attendance_log, ai_classification_log, admin_impersonation_tokens
+        attendance_log, ai_classification_log
         TO authenticated, service_role;
     `);
 

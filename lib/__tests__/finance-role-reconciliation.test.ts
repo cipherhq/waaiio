@@ -383,6 +383,64 @@ describe('Admin UI — Finance mutation controls hidden', () => {
   });
 });
 
+describe('Admin UI — step-up MFA wired to all payout mutations', () => {
+  const payoutsUI = readFileSync('admin/src/pages/Payouts.tsx', 'utf-8');
+  const resellerUI = readFileSync('admin/src/pages/ResellerPayouts.tsx', 'utf-8');
+
+  it('Payouts.tsx handleReject sends stepUpId in request body', () => {
+    // Find the reject section and verify stepUpId is in the JSON.stringify
+    const rejectSection = payoutsUI.slice(payoutsUI.indexOf('handleReject'));
+    expect(rejectSection).toContain("reason: rejectReason, stepUpId");
+  });
+
+  it('Payouts.tsx handleReject uses payout_reject step-up action', () => {
+    const rejectSection = payoutsUI.slice(payoutsUI.indexOf('handleReject'));
+    expect(rejectSection).toContain("actionType: 'payout_reject'");
+  });
+
+  it('Payouts.tsx handleReject handles step_up_required 403', () => {
+    const rejectSection = payoutsUI.slice(payoutsUI.indexOf('handleReject'));
+    expect(rejectSection).toContain("step_up_required");
+  });
+
+  it('ResellerPayouts.tsx handleAction sends stepUpId in request body', () => {
+    const actionSection = resellerUI.slice(resellerUI.indexOf('handleAction'));
+    expect(actionSection).toContain("action: serverAction, stepUpId");
+  });
+
+  it('ResellerPayouts.tsx handleAction uses dynamic step-up action type', () => {
+    const actionSection = resellerUI.slice(resellerUI.indexOf('handleAction'));
+    expect(actionSection).toContain('reseller_payout_');
+    expect(actionSection).toContain('stepUpAction');
+  });
+
+  it('ResellerPayouts.tsx handleAction handles step_up_required 403', () => {
+    const actionSection = resellerUI.slice(resellerUI.indexOf('handleAction'));
+    expect(actionSection).toContain("step_up_required");
+  });
+
+  it('ResellerPayouts.tsx handleGeneratePayout sends stepUpId', () => {
+    const genSection = resellerUI.slice(resellerUI.indexOf('handleGeneratePayout'));
+    expect(genSection).toContain('stepUpId');
+    expect(genSection).toContain("reseller_payout_generate");
+  });
+
+  it('ResellerPayouts.tsx handleGeneratePayout handles step_up_required 403', () => {
+    const genSection = resellerUI.slice(resellerUI.indexOf('handleGeneratePayout'));
+    expect(genSection).toContain("step_up_required");
+  });
+
+  it('ResellerPayouts.tsx renders StepUpDialog', () => {
+    expect(resellerUI).toContain('<StepUpDialog');
+    expect(resellerUI).toContain('useStepUp');
+  });
+
+  it('Payouts.tsx renders StepUpDialog', () => {
+    expect(payoutsUI).toContain('<StepUpDialog');
+    expect(payoutsUI).toContain('useStepUp');
+  });
+});
+
 // ══════════════════════════════════════════════════════════
 // Payouts.tsx — server-side data path verification
 // ══════════════════════════════════════════════════════════

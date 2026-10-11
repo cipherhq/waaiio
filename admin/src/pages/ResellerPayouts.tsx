@@ -7,6 +7,9 @@ import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtCurrency } from '@/lib/formatters';
 import { Wallet, Plus, Search, AlertCircle, CheckCircle, XCircle, DollarSign, FileText } from 'lucide-react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
+import { useRef } from 'react';
 
 interface Reseller {
   id: string;
@@ -81,6 +84,10 @@ export default function ResellerPayouts() {
 
   // Action loading
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Step-up MFA
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // Summary stats
   const totalPending = payouts.filter(p => p.status === 'pending').reduce((sum, p) => sum + p.net_amount, 0);
@@ -186,7 +193,7 @@ export default function ResellerPayouts() {
     setGenGrossCommission(null);
   }
 
-  // Create payout via authenticated server route (authoritative calculation)
+  // Create payout via authenticated server route — gated by step-up MFA
   async function handleGeneratePayout() {
     if (!genResellerId || !genPeriodStart || !genPeriodEnd) return;
 
@@ -194,81 +201,125 @@ export default function ResellerPayouts() {
     setGenError('');
 
     try {
-      const token = await getAccessToken();
-      if (!token) {
-        setGenError('Session expired — please re-login');
-        return;
-      }
+      const onAuthorized = async (stepUpId: string) => {
+        const token = await getAccessToken();
+        if (!token) {
+          setGenError('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/reseller-payouts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          reseller_id: genResellerId,
-          period_start: genPeriodStart,
-          period_end: genPeriodEnd,
-          holdback_percent: parseFloat(genHoldbackPct) || 0,
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/reseller-payouts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            reseller_id: genResellerId,
+            period_start: genPeriodStart,
+            period_end: genPeriodEnd,
+            holdback_percent: parseFloat(genHoldbackPct) || 0,
+            deductions: parseFloat(genDeductions) || 0,
+            notes: genNotes || null,
+            stepUpId,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') {
+            setGenError('Step-up authorization failed — please try again');
+            return;
+          }
+          setGenError(data.error || 'Failed to create payout');
+          return;
+        }
+
+        setGenerateOpen(false);
+        await loadData();
+      };
+
+      const resellerName = resellers.find(r => r.id === genResellerId)?.company_name || 'reseller';
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'reseller_payout_generate',
+        targetId: genResellerId,
+        params: {
+          reseller_id: genResellerId, period_start: genPeriodStart,
+          period_end: genPeriodEnd, holdback_percent: parseFloat(genHoldbackPct) || 0,
           deductions: parseFloat(genDeductions) || 0,
-          notes: genNotes || null,
-        }),
+        },
+        description: `Generate reseller payout for ${resellerName} (${genPeriodStart} to ${genPeriodEnd})`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setGenError(data.error || 'Failed to create payout');
-        return;
-      }
-
-      setGenerateOpen(false);
-      await loadData();
     } catch {
       setGenError('An unexpected error occurred.');
+      stepUp.reset();
     } finally {
       setGenSaving(false);
     }
   }
 
-  // Approve/reject/mark_paid via authenticated server route
+  // Approve/reject/mark_paid via authenticated server route — gated by step-up MFA
   async function handleAction(payoutId: string, action: 'approve' | 'reject' | 'pay') {
     setActionLoading(payoutId);
+
+    // Map UI action 'pay' to server action 'mark_paid'
+    const serverAction = action === 'pay' ? 'mark_paid' : action;
+    const stepUpAction = `reseller_payout_${serverAction}` as const;
+    const payout = payouts.find(p => p.id === payoutId);
+    const description = payout
+      ? `${action === 'approve' ? 'Approve' : action === 'reject' ? 'Reject' : 'Mark paid'} reseller payout — ${fmtCurrency(payout.net_amount)} for ${payout.company_name}`
+      : `${action} reseller payout`;
+
     try {
-      const token = await getAccessToken();
-      if (!token) {
-        alert('Session expired — please re-login');
-        return;
-      }
+      const onAuthorized = async (stepUpId: string) => {
+        const token = await getAccessToken();
+        if (!token) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      // Map UI action 'pay' to server action 'mark_paid'
-      const serverAction = action === 'pay' ? 'mark_paid' : action;
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/reseller-payouts/${payoutId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action: serverAction, stepUpId }),
+        });
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/reseller-payouts/${payoutId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ action: serverAction }),
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') {
+            alert('Step-up authorization failed — please try again');
+            return;
+          }
+          alert(data.error || `Failed to ${action} payout`);
+          return;
+        }
+
+        // Close detail modal if viewing this payout
+        if (selected?.id === payoutId) {
+          setSelected(null);
+        }
+
+        await loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: stepUpAction,
+        targetId: payoutId,
+        params: { action: serverAction, notes: null },
+        description,
+        onAuthorized,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || `Failed to ${action} payout`);
-        return;
-      }
-
-      // Close detail modal if viewing this payout
-      if (selected?.id === payoutId) {
-        setSelected(null);
-      }
-
-      await loadData();
     } catch (err) {
       console.error(`Failed to ${action} payout:`, err);
+      stepUp.reset();
     } finally {
       setActionLoading(null);
     }
@@ -613,6 +664,18 @@ export default function ResellerPayouts() {
           )}
         </div>
       </DetailModal>
+
+      <StepUpDialog
+        stepUp={stepUp}
+        onSubmitCode={async (code) => {
+          await stepUp.submitCode(code);
+          if (stepUpCallbackRef.current && stepUp.state.stepUpId) {
+            await stepUpCallbackRef.current(stepUp.state.stepUpId);
+            stepUp.reset();
+          }
+        }}
+        onCancel={() => stepUp.reset()}
+      />
     </div>
   );
 }

@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS public.admin_step_up_authorizations (
                                'refund',
                                'reseller_payout_approve',
                                'reseller_payout_reject',
-                               'reseller_payout_mark_paid'
+                               'reseller_payout_mark_paid',
+                               'reseller_payout_generate'
                              )),
   target_id      text,
   params_hash    text        NOT NULL,
@@ -256,6 +257,12 @@ CREATE POLICY "Admins can view business_payouts"
 -- Revoke DML from authenticated — all payout mutations go through
 -- service-role API routes that require step-up authorization.
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.business_payouts FROM PUBLIC, anon, authenticated;
+
+-- Same pattern for reseller_payouts: all writes via service-role API routes.
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.reseller_payouts FROM PUBLIC, anon, authenticated;
+
+-- Impersonation tokens are issued via service-role API only.
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.admin_impersonation_tokens FROM PUBLIC, anon, authenticated;
 
 -- ── businesses ────────────────────────────────────────────────────────────
 -- Old: "Admins can view all businesses" (SELECT, profiles.role = 'admin')

@@ -34,7 +34,8 @@ export type StepUpAction =
   | 'refund'
   | 'reseller_payout_approve'
   | 'reseller_payout_reject'
-  | 'reseller_payout_mark_paid';
+  | 'reseller_payout_mark_paid'
+  | 'reseller_payout_generate';
 
 const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 

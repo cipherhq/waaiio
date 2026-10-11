@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { logAdminAudit } from '@/lib/admin-audit';
 
@@ -66,7 +67,19 @@ export async function POST(request: NextRequest) {
     const service = createServiceClient();
 
     const body = await request.json();
-    const { reseller_id, period_start, period_end, holdback_percent, deductions, notes } = body;
+    const { reseller_id, period_start, period_end, holdback_percent, deductions, notes, stepUpId } = body;
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    try {
+      await consumeStepUp(auth, stepUpId, 'reseller_payout_generate', reseller_id ?? '', {
+        reseller_id: reseller_id ?? null, period_start: period_start ?? null,
+        period_end: period_end ?? null, holdback_percent: holdback_percent ?? null,
+        deductions: deductions ?? null,
+      });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
+    }
 
     if (!reseller_id || !period_start || !period_end) {
       return NextResponse.json({ error: 'reseller_id, period_start, and period_end are required' }, { status: 400 });
