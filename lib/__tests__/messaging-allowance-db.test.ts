@@ -433,7 +433,9 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
       SELECT count(*)::int FROM messaging_allowances WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
+    const lines = count.split('\n').filter(Boolean);
+    expect(lines[lines.length - 2]).toBe('f');
+    expect(parseInt(lines[lines.length - 1])).toBeGreaterThan(0);
   });
 
   it('27. Cross-tenant SELECT denied (allowances)', () => {
@@ -468,7 +470,9 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
       SELECT count(*)::int FROM messaging_allowance_events WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
+    const lines = count.split('\n').filter(Boolean);
+    expect(lines[lines.length - 2]).toBe('f');
+    expect(parseInt(lines[lines.length - 1])).toBeGreaterThan(0);
   });
 
   it('29. Cross-tenant SELECT denied (events)', () => {
