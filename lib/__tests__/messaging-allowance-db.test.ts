@@ -423,7 +423,13 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
     const CLAIMS = `{"sub":"${OWNER_A}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      -- Business ownership remains valid with the requested assurance level;
+      -- admin-only policies must never grant a cross-tenant read.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal1"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM messaging_allowances WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
@@ -434,18 +440,31 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
     const CLAIMS = `{"sub":"${OWNER_B}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      -- Business ownership remains valid with the requested assurance level;
+      -- admin-only policies must never grant a cross-tenant read.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal2"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM messaging_allowances WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    expect(count.split('\n').pop()).toBe('0');
+    const lines = count.split('\n').filter(Boolean);
+    expect(lines.slice(-2)).toEqual(['f', '0']);
   });
 
   it('28. Own-tenant SELECT succeeds (events)', () => {
     const CLAIMS = `{"sub":"${OWNER_A}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      -- Business ownership remains valid with the requested assurance level;
+      -- admin-only policies must never grant a cross-tenant read.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal1"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM messaging_allowance_events WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
@@ -456,11 +475,18 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
     const CLAIMS = `{"sub":"${OWNER_B}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      -- Business ownership remains valid with the requested assurance level;
+      -- admin-only policies must never grant a cross-tenant read.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal2"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM messaging_allowance_events WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    expect(count.split('\n').pop()).toBe('0');
+    const lines = count.split('\n').filter(Boolean);
+    expect(lines.slice(-2)).toEqual(['f', '0']);
   });
 
   // ═══════════════════════════════════════════════════════
