@@ -12,7 +12,7 @@
  *     npx vitest run lib/__tests__/suspension-rpc-acl-db.test.ts
  */
 import { execSync } from 'child_process';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -38,35 +38,55 @@ const ADMIN_UUID = '20000000-0000-0000-0000-000000000287';
 const NON_ADMIN_UUID = '20000000-0000-0000-0000-000000000288';
 
 // JWT claims carry identity/session context only. Authority comes from canonical app_metadata.
-const ADMIN_JWT = `{"sub":"${ADMIN_UUID}","role":"authenticated"}`;
-const NON_ADMIN_JWT = `{"sub":"${NON_ADMIN_UUID}","role":"authenticated"}`;
+const ADMIN_JWT = `{"sub":"${ADMIN_UUID}","role":"authenticated","aal":"aal2"}`;
+const NON_ADMIN_JWT = `{"sub":"${NON_ADMIN_UUID}","role":"authenticated","aal":"aal2"}`;
 
 describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () => {
   let BIZ_ID: string;
+  let originalIsAdminDef: string;
+  let originalJwtDef: string;
+  let mfaHelperPresent = false;
 
   beforeAll(() => {
-    // 0. Restore canonical is_admin() if contaminated by earlier test suites.
-    // The 363 test suite replaces is_admin() with a stub that reads JWT top-level role.
-    // We must restore the canonical definition that reads raw_app_meta_data.
-    // This matches the production definition from Migration 353.
+    // The full CI suite applies M439 before these tests. M439's is_admin()
+    // MUST remain MFA-aware: replacing it with the M353 role-only function
+    // would contaminate all subsequent PostgreSQL RLS tests.
+    originalIsAdminDef = psql("SELECT pg_get_functiondef('public.is_admin()'::regprocedure);");
+    originalJwtDef = psql("SELECT COALESCE((SELECT pg_get_functiondef(to_regprocedure('auth.jwt()'))), '');");
+    mfaHelperPresent = psql("SELECT to_regprocedure('public.has_admin_role(text[])') IS NOT NULL;") === 't';
+
+    if (!mfaHelperPresent) {
+      // Isolated pre-M439 M366 fixture only. Restore its previous function
+      // after the suite; do not change the full-migration security helper.
+      psql(`
+        CREATE OR REPLACE FUNCTION public.is_admin()
+        RETURNS boolean
+        LANGUAGE plpgsql
+        STABLE
+        SECURITY DEFINER
+        SET search_path = ''
+        AS $fn$
+        DECLARE v_role text;
+        BEGIN
+          SELECT raw_app_meta_data ->> 'role' INTO v_role
+          FROM auth.users WHERE id = auth.uid();
+          RETURN COALESCE(v_role = 'admin', false);
+        END;
+        $fn$;
+      `);
+    }
+
+    // Auth stub MUST reflect the active request, including MFA assurance.
+    // Save and restore the existing implementation; this is shared CI DB.
     psql(`
-      CREATE OR REPLACE FUNCTION public.is_admin()
-      RETURNS boolean
-      LANGUAGE plpgsql
-      STABLE
-      SECURITY DEFINER
-      SET search_path = ''
-      AS $fn$
-      DECLARE
-        v_role text;
-      BEGIN
-        SELECT raw_app_meta_data ->> 'role'
-        INTO v_role
-        FROM auth.users
-        WHERE id = auth.uid();
-        RETURN COALESCE(v_role = 'admin', false);
-      END;
-      $fn$;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb
+      LANGUAGE sql STABLE
+      AS $jwt$
+        SELECT COALESCE(
+          NULLIF(current_setting('request.jwt.claims', true), '')::jsonb,
+          '{}'::jsonb
+        )
+      $jwt$;
     `);
 
     // 1. Seed dedicated admin user with canonical raw_app_meta_data.role = 'admin'
@@ -102,12 +122,29 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
     if (!BIZ_ID) throw new Error('No business found for suspension toggle tests');
   });
 
+  afterAll(() => {
+    // Restore BOTH functions, including M439's MFA-aware is_admin().
+    // This is essential for subsequent M367/M368/M369 authorization tests.
+    if (originalJwtDef) psql(originalJwtDef);
+    else psql('DROP FUNCTION IF EXISTS auth.jwt();');
+    if (originalIsAdminDef) psql(originalIsAdminDef);
+  });
+
   // ── 0. Precondition: is_admin() is canonical (reads raw_app_meta_data) ──
 
   it('0. is_admin() reads canonical raw_app_meta_data, not JWT top-level role', () => {
-    // Verify is_admin() source reads raw_app_meta_data
+    // After M439, is_admin() delegates to has_admin_role(). Its own source
+    // need not contain raw_app_meta_data, but the canonical helper MUST.
     const src = psql("SELECT prosrc FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'is_admin';");
-    expect(src).toContain('raw_app_meta_data');
+    if (mfaHelperPresent) {
+      expect(src).toContain('has_admin_role');
+      const canonical = psql("SELECT prosrc FROM pg_proc WHERE oid = 'public.has_admin_role(text[])'::regprocedure;");
+      expect(canonical).toContain('raw_app_meta_data');
+      expect(canonical).toContain('auth.jwt()');
+      expect(canonical).toContain('aal2');
+    } else {
+      expect(src).toContain('raw_app_meta_data');
+    }
 
     // Positive: admin user with raw_app_meta_data.role='admin' → is_admin() = true
     const adminCheck = psql(`
@@ -129,6 +166,27 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
     `);
     const lines2 = nonAdminCheck.split('\n');
     expect(lines2[lines2.length - 1]).toBe('f');
+  });
+
+  it('0b. aal1 Admin denied by the canonical MFA gate and suspension RPC', () => {
+    if (!mfaHelperPresent) return; // Legacy M366 does not yet define MFA.
+    const aal1 = ADMIN_JWT.replace('"aal":"aal2"', '"aal":"aal1"');
+    const helper = psql(`
+      SELECT set_config('request.jwt.claims', '${aal1}', false);
+      SET ROLE authenticated;
+      SELECT auth.jwt()->>'aal', public.is_admin();
+      RESET ROLE;
+    `);
+    expect(helper.split('\n').filter(Boolean).slice(-1)[0]).toBe('aal1|f');
+    const before = psql(`SELECT messaging_suspended FROM businesses WHERE id = '${BIZ_ID}';`);
+    const error = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${aal1}', false);
+      SET ROLE authenticated;
+      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'aal1 must be denied');
+      RESET ROLE;
+    `);
+    expect(error).toContain('requires admin role');
+    expect(psql(`SELECT messaging_suspended FROM businesses WHERE id = '${BIZ_ID}';`)).toBe(before);
   });
 
   // ── 1-3. has_function_privilege assertions ──
