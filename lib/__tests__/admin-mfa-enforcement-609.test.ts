@@ -63,9 +63,12 @@ describe('SEC-005 Layer 2: requirePlatformAdmin aal2 enforcement', () => {
     expect(adminAuthSource).not.toContain('decodeJwtPayload');
   });
 
-  it('does NOT fall back to cookie auth after invalid Bearer token', () => {
-    expect(adminAuthSource).toContain('hasExplicitBearer');
+  it('rejects any Authorization header that is not a valid Bearer token', () => {
+    // Any Authorization header present → never fall back to cookies
+    expect(adminAuthSource).toContain('malformed_authorization_header');
     expect(adminAuthSource).toContain('FAIL CLOSED: do NOT fall back to cookie auth');
+    // Checks length > 7 to reject "Bearer " with empty token
+    expect(adminAuthSource).toContain('authHeader.length <= 7');
   });
 
   it('does NOT trust user.app_metadata.aal or factor enrollment status', () => {

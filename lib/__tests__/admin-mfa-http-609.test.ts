@@ -137,27 +137,48 @@ describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
 
   it('does NOT fall back to cookie auth after invalid Bearer', async () => {
     mockGetClaims.mockResolvedValueOnce({ data: null, error: { message: 'invalid' } });
-
-    // Cookie session exists with valid admin — should NOT be used
-    mockGetSession.mockResolvedValueOnce({
-      data: {
-        session: {
-          access_token: fakeJwt({ sub: 'admin-user-id', aal: 'aal2', session_id: 'sess-456' }),
-          user: {
-            id: 'admin-user-id',
-            email: 'admin@waaiio.com',
-            app_metadata: { role: 'admin' },
-          },
-        },
-      },
-    });
+    mockGetSession.mockResolvedValueOnce({ data: { session: { access_token: 'cookie-token' } } });
 
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest('bad-bearer'));
+    expect(await requirePlatformAdmin(adminRequest('bad-bearer'))).toBeNull();
+    expect(mockGetSession).not.toHaveBeenCalled();
+  });
 
-    // Must return null — do NOT fall back to cookie
-    expect(result).toBeNull();
-    // Cookie session should not have been consulted
+  it('rejects "Bearer " with no token (empty after prefix)', async () => {
+    const req = new NextRequest('http://localhost/api/admin/query', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(req)).toBeNull();
+    expect(mockGetClaims).not.toHaveBeenCalled();
+    expect(mockGetSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects "Bearer" with no space or token', async () => {
+    const req = new NextRequest('http://localhost/api/admin/query', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(req)).toBeNull();
+    expect(mockGetClaims).not.toHaveBeenCalled();
+    expect(mockGetSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-Bearer authorization schemes (Basic, Digest)', async () => {
+    for (const scheme of ['Basic dXNlcjpwYXNz', 'Digest realm="test"', 'Token abc123']) {
+      const req = new NextRequest('http://localhost/api/admin/query', {
+        method: 'POST',
+        headers: { 'Authorization': scheme, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const { requirePlatformAdmin } = await import('../admin-auth');
+      expect(await requirePlatformAdmin(req), `scheme: ${scheme}`).toBeNull();
+    }
+    expect(mockGetClaims).not.toHaveBeenCalled();
     expect(mockGetSession).not.toHaveBeenCalled();
   });
 });

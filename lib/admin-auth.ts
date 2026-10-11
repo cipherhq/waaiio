@@ -129,10 +129,20 @@ export async function requirePlatformAdmin(
   let token: string | undefined;
 
   const authHeader = request.headers.get('Authorization');
-  const hasExplicitBearer = !!(authHeader && authHeader.startsWith('Bearer '));
 
-  if (hasExplicitBearer) {
-    token = authHeader!.replace('Bearer ', '');
+  if (authHeader) {
+    // ANY Authorization header present → Bearer path only, never cookies.
+    // Reject empty, malformed, and non-Bearer schemes fail-closed.
+    if (!authHeader.startsWith('Bearer ') || authHeader.length <= 7) {
+      await logAdminAuthEvent(supabase, {
+        action: 'admin_auth_denied',
+        details: { reason: 'malformed_authorization_header' },
+        ipAddress: getRequestIp(request),
+      });
+      return null;
+    }
+
+    token = authHeader.slice(7); // after "Bearer "
 
     // Validate AND extract claims via getClaims + getUser
     claims = await getVerifiedClaims(supabase, token);
