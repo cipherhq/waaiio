@@ -30,6 +30,9 @@ function psqlMayFail(sql: string): string {
 }
 
 const BIZ_ID = 'b0000000-0000-0000-0000-000000000257';
+// Dedicated tenant non-owner. 000...099 belongs to the #256 Admin
+// fixture and MUST NOT be reused for a non-owner denial test.
+const NON_OWNER_ID = '00000000-0000-0000-0257-000000000099';
 
 describe.skipIf(!canRun)('Message Send Attempts DB Tests (#257 / Migration 367)', () => {
   beforeAll(() => {
@@ -168,10 +171,21 @@ describe.skipIf(!canRun)('Message Send Attempts DB Tests (#257 / Migration 367)'
   // ── RLS ──
 
   it('15. Authenticated non-owner cannot see other business attempts', () => {
+    // Insert an ACTUAL non-privileged Auth identity, rather than reusing
+    // the MFA-aware Admin fixture created by the emergency-stop tests.
+    psql(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES ('${NON_OWNER_ID}', 'non-owner-257@unit.invalid', '{}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{}'::jsonb;
+      INSERT INTO profiles (id, email, role)
+      VALUES ('${NON_OWNER_ID}', 'non-owner-257@unit.invalid', 'restaurant_owner')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    expect(psql(`SELECT COALESCE(raw_app_meta_data->>'role', 'none') FROM auth.users WHERE id='${NON_OWNER_ID}';`)).toBe('none');
     // Insert as superuser
     psql(`INSERT INTO message_send_attempts (id, business_id, recipient_phone) VALUES ('f0000000-0000-0000-0000-000000000257', '${BIZ_ID}', '+1234') ON CONFLICT DO NOTHING;`);
     // Query as a different authenticated user
-    const NON_OWNER = '{"sub":"00000000-0000-0000-0000-000000000099","role":"authenticated"}';
+    const NON_OWNER = `{"sub":"${NON_OWNER_ID}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${NON_OWNER}', false);
       SET ROLE authenticated;
