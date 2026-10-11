@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutRejectedEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(
@@ -21,10 +22,18 @@ export async function POST(
   const supabase = await createClient();
 
   const body = await request.json();
-  const { reason } = body;
+  const { reason, stepUpId } = body;
 
   if (!reason) {
     return NextResponse.json({ error: 'Rejection reason is required' }, { status: 400 });
+  }
+
+  // SEC-005 Layer 4: Consume operation-bound step-up authorization
+  try {
+    await consumeStepUp(admin, stepUpId, 'payout_reject', id, { reason });
+  } catch (err) {
+    const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
   // Fetch the payout

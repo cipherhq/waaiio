@@ -25,12 +25,16 @@ import { logAdminAudit } from '@/lib/admin-audit';
 
 export type StepUpAction =
   | 'payout_approve'
+  | 'payout_reject'
   | 'payout_generate'
   | 'provider_config'
   | 'team_grant'
   | 'team_revoke'
   | 'impersonate'
-  | 'refund';
+  | 'refund'
+  | 'reseller_payout_approve'
+  | 'reseller_payout_reject'
+  | 'reseller_payout_mark_paid';
 
 const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 

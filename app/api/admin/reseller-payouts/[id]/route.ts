@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError, type StepUpAction } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { logAdminAudit } from '@/lib/admin-audit';
 
@@ -21,10 +22,19 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { action, notes } = body;
+    const { action, notes, stepUpId } = body;
 
     if (!action || !['approve', 'reject', 'mark_paid'].includes(action)) {
       return NextResponse.json({ error: 'Invalid action. Must be approve, reject, or mark_paid' }, { status: 400 });
+    }
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    const stepUpAction = `reseller_payout_${action}` as StepUpAction;
+    try {
+      await consumeStepUp(auth, stepUpId, stepUpAction, id, { action, notes: notes ?? null });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
     }
 
     const service = createServiceClient();

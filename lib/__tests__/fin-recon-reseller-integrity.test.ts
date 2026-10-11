@@ -150,6 +150,18 @@ describe('PATCH route: mark_paid uses atomic RPC', () => {
     expect(src).toContain('Audit log failed');
     expect(src).toContain('auditErr');
   });
+
+  it('calls consumeStepUp before any mutation', () => {
+    const stepUpIdx = src.indexOf('consumeStepUp');
+    const rpcIdx = src.indexOf("service.rpc('mark_reseller_payout_paid'");
+    expect(stepUpIdx).toBeGreaterThan(-1);
+    expect(rpcIdx).toBeGreaterThan(stepUpIdx);
+  });
+
+  it('returns 403 with step_up_required code on step-up failure', () => {
+    expect(src).toContain("code: 'step_up_required'");
+    expect(src).toContain('403');
+  });
 });
 
 describe('POST route: input validation', () => {
@@ -202,6 +214,11 @@ const mockUpdateChain = {
   maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'updated', status: 'approved' }, error: null }),
 };
 const mockInsertResult = vi.fn();
+
+vi.mock('@/lib/admin-step-up', () => ({
+  consumeStepUp: vi.fn().mockResolvedValue(true),
+  StepUpError: class StepUpError extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+}));
 
 vi.mock('@/lib/admin-auth', () => ({
   requirePlatformAdmin: vi.fn(async (_req: unknown, opts?: { requiredRole?: string | string[] }) => {
