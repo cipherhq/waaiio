@@ -48,11 +48,15 @@ export async function POST(request: NextRequest) {
     const periodEndStr = periodEnd.toISOString().split('T')[0];
 
     // Get all active platform-managed businesses with verification info
-    const { data: businesses } = await supabase
+    const { data: businesses, error: bizError } = await supabase
       .from('businesses')
       .select('id, created_at, verification_level, payout_limit_monthly, country_code')
       .eq('payout_mode', 'platform_managed')
       .eq('status', 'active');
+
+    if (bizError) {
+      return NextResponse.json({ error: 'Failed to load businesses' }, { status: 500 });
+    }
 
     if (!businesses?.length) {
       return NextResponse.json({ success: true, created: 0, skipped: 0, held: 0, message: 'No platform-managed businesses' });
@@ -64,7 +68,7 @@ export async function POST(request: NextRequest) {
 
     for (const biz of businesses) {
       // Check if payout already exists for this period
-      const { data: existing } = await supabase
+      const { data: existing, error: existingError } = await supabase
         .from('business_payouts')
         .select('id')
         .eq('business_id', biz.id)
@@ -72,17 +76,30 @@ export async function POST(request: NextRequest) {
         .eq('period_end', periodEndStr)
         .maybeSingle();
 
+      // Fail closed: if we can't check for duplicates, skip this business
+      if (existingError) {
+        logger.error('[PAYOUT] Dedup check failed for business', { business_id: biz.id, error: existingError.message });
+        skipped++;
+        continue;
+      }
       if (existing) continue;
 
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
       // Exclude direct transfers — Waaiio never holds those funds (money goes straight to business bank account)
-      const { data: fees } = await supabase
+      const { data: fees, error: feesError } = await supabase
         .from('platform_fees')
         .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
+
+      // Fail closed: if fee data is unavailable, skip (never generate with partial data)
+      if (feesError) {
+        logger.error('[PAYOUT] Fee query failed for business', { business_id: biz.id, error: feesError.message });
+        skipped++;
+        continue;
+      }
 
       // Gross from platform_fees.transaction_amount — only gateway payments (Waaiio holds these funds)
       // Direct transfers are excluded: business already has the money, we only invoice the platform fee
@@ -94,7 +111,7 @@ export async function POST(request: NextRequest) {
       const totalGatewayFees = gatewayFees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
 
       // Still fetch payments for velocity check below
-      const { data: payments } = await supabase
+      const { data: payments, error: paymentsError } = await supabase
         .from('payments')
         .select('created_at')
         .eq('business_id', biz.id)
@@ -102,12 +119,24 @@ export async function POST(request: NextRequest) {
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
 
+      if (paymentsError) {
+        logger.error('[PAYOUT] Payments query failed for business', { business_id: biz.id, error: paymentsError.message });
+        skipped++;
+        continue;
+      }
+
       // Deduct any unapplied payout adjustments (e.g. post-payout refunds)
-      const { data: adjustments } = await supabase
+      const { data: adjustments, error: adjQueryError } = await supabase
         .from('payout_adjustments')
         .select('id, amount')
         .eq('business_id', biz.id)
         .is('applied_to_payout_id', null);
+
+      if (adjQueryError) {
+        logger.error('[PAYOUT] Adjustments query failed for business', { business_id: biz.id, error: adjQueryError.message });
+        skipped++;
+        continue;
+      }
 
       const totalAdjustments = (adjustments || []).reduce((s, a) => s + Number(a.amount || 0), 0);
       const net = Math.max(0, gross - totalFees - totalGatewayFees + totalAdjustments);
@@ -206,7 +235,7 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
-      const { data: newPayout } = await supabase.from('business_payouts').insert({
+      const { data: newPayout, error: insertError } = await supabase.from('business_payouts').insert({
         business_id: biz.id,
         payout_account_id: payoutAccount?.id || null,
         period_start: periodStartStr,
@@ -218,6 +247,12 @@ export async function POST(request: NextRequest) {
         status,
         flags,
       }).select('id').single();
+
+      if (insertError || !newPayout) {
+        logger.error('[PAYOUT] Failed to insert payout for business', { business_id: biz.id, error: insertError?.message });
+        skipped++;
+        continue;
+      }
 
       // Mark adjustments as applied to this payout
       if (newPayout && adjustments && adjustments.length > 0) {

@@ -128,18 +128,26 @@ export async function POST(
   }
 
   // ── Balance verification (includes review_required as reserved) ──
-  const { data: balancePayments } = await serviceClient
+  const { data: balancePayments, error: balanceError } = await serviceClient
     .from('platform_fees')
     .select('transaction_amount, fee_total')
     .eq('business_id', payout.business_id)
     .is('refunded_at', null);
 
-  const { data: priorPayouts } = await serviceClient
+  if (balanceError) {
+    return NextResponse.json({ error: 'Failed to load balance data' }, { status: 500 });
+  }
+
+  const { data: priorPayouts, error: priorError } = await serviceClient
     .from('business_payouts')
     .select('net_amount')
     .eq('business_id', payout.business_id)
     .in('status', ['paid', 'processing', 'approved', 'review_required'])
     .neq('id', id);
+
+  if (priorError) {
+    return NextResponse.json({ error: 'Failed to load prior payout data' }, { status: 500 });
+  }
 
   const totalEarned = (balancePayments || []).reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
   const totalPaidOut = (priorPayouts || []).reduce((sum, p) => sum + Number(p.net_amount), 0);
