@@ -187,34 +187,25 @@ describe('PlatformSettings — absent setting discoverability (#218)', () => {
     expect(screen.getByRole('button', { name: /Create Setting/i })).toBeInTheDocument();
   });
 
-  it('4. Submitting uses save_commercial_config RPC for minimum_bank_transfer, not direct insert', async () => {
-    await navigateToPaymentsTab();
-
-    const row = findUnconfiguredRow('minimum_bank_transfer');
-    expect(row).not.toBeNull();
-    await user.click(within(row!).getByRole('button', { name: /Configure/i }));
-
-    const valueInput = screen.getByPlaceholderText(/\{"NG": 5000/);
-    await user.clear(valueInput);
-    await user.type(valueInput, '{{"NG": 5000, "GH": 5000}');
-
-    await user.click(screen.getByRole('button', { name: /Create Setting/i }));
-
-    // Verify save_commercial_config was called
-    await waitFor(() => {
-      const commercialCall = rpcCalls.find(c => c.fn === 'save_commercial_config');
-      expect(commercialCall).toBeDefined();
-      expect(commercialCall!.args.p_key).toBe('minimum_bank_transfer');
-    });
-
-    // No direct platform_settings insert for this key
-    const directInserts = insertCalls.filter(
-      c => c.table === 'platform_settings' && JSON.stringify(c.data).includes('minimum_bank_transfer'),
+  it('4. Commercial config uses step-up-protected server route (C6), not direct RPC', async () => {
+    // C6: PlatformSettings no longer calls adminDb.rpc('save_commercial_config').
+    // It uses saveCommercialViaStepUp which calls the step-up-protected server route.
+    // Full flow verification requires staging acceptance (prepare → TOTP → verify → execute).
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
     );
-    expect(directInserts).toHaveLength(0);
+    // No direct RPC call
+    expect(src).not.toContain("adminDb.rpc('save_commercial_config'");
+    // Uses step-up-protected server route
+    expect(src).toContain('saveCommercialViaStepUp');
+    expect(src).toContain('/api/admin/platform-settings/commercial');
+    expect(src).toContain("actionType: 'commercial_config'");
   });
 
-  it('5. After creation, placeholder is gone and configured setting renders', async () => {
+  it('5. Configuration UI shows for unconfigured commercial keys', async () => {
+    // C6: Full save flow requires step-up MFA (staging acceptance test).
+    // This test verifies the Configure UI is accessible.
     await navigateToPaymentsTab();
 
     const row = findUnconfiguredRow('minimum_bank_transfer');
@@ -222,27 +213,7 @@ describe('PlatformSettings — absent setting discoverability (#218)', () => {
     await user.click(within(row!).getByRole('button', { name: /Configure/i }));
 
     const valueInput = screen.getByPlaceholderText(/\{"NG": 5000/);
-    await user.clear(valueInput);
-    await user.type(valueInput, '{{"NG": 10000}');
-
-    await user.click(screen.getByRole('button', { name: /Create Setting/i }));
-
-    // After save, loadData re-runs. The mock adds minimum_bank_transfer to mockSettings.
-    // The unconfigured placeholder should be gone; the setting should render as configured.
-    await waitFor(() => {
-      const unconfiguredRow = findUnconfiguredRow('minimum_bank_transfer');
-      expect(unconfiguredRow).toBeNull();
-    });
-
-    // The key should now appear as a configured setting (mono font key label, no amber bg)
-    await waitFor(() => {
-      const allKeyLabels = screen.getAllByText('minimum_bank_transfer');
-      // At least one should be in a configured (non-amber) row
-      const configuredLabel = allKeyLabels.find(el => {
-        const container = el.closest('[class*="px-5"]');
-        return container && !container.className.includes('bg-amber');
-      });
-      expect(configuredLabel).toBeDefined();
-    });
+    expect(valueInput).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Create Setting/i })).toBeInTheDocument();
   });
 });
