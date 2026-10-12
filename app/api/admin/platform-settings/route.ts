@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,15 +73,15 @@ export async function PUT(request: NextRequest) {
 
   // Server-side audit — single source of truth; mutation is not considered
   // successful unless the audit record is persisted.
-  const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  const { error: auditError } = await logAdminAudit({
+    actorId: admin.userId,
     action: 'update_platform_setting',
-    entity_type: 'platform_setting',
-    entity_id: key,
+    entityType: 'platform_setting',
+    entityId: key,
     details: { key, new_value: value },
   });
   if (auditError) {
-    console.error('[PLATFORM_SETTINGS] Audit log failed for PUT:', auditError.message);
+    console.error('[PLATFORM_SETTINGS] Audit log failed for PUT:', auditError);
     return NextResponse.json({ error: 'Setting updated but audit failed — contact engineering' }, { status: 500 });
   }
 
@@ -132,15 +133,15 @@ export async function POST(request: NextRequest) {
   }
 
   // Server-side audit — single source of truth
-  const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  const { error: auditError } = await logAdminAudit({
+    actorId: admin.userId,
     action: 'create_platform_setting',
-    entity_type: 'platform_setting',
-    entity_id: key,
+    entityType: 'platform_setting',
+    entityId: key,
     details: { key, value, description: typeof description === 'string' ? description : null },
   });
   if (auditError) {
-    console.error('[PLATFORM_SETTINGS] Audit log failed for POST:', auditError.message);
+    console.error('[PLATFORM_SETTINGS] Audit log failed for POST:', auditError);
     return NextResponse.json({ error: 'Setting created but audit failed — contact engineering' }, { status: 500 });
   }
 
@@ -186,15 +187,15 @@ export async function DELETE(request: NextRequest) {
   }
 
   // Server-side audit — single source of truth
-  const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  const { error: auditError } = await logAdminAudit({
+    actorId: admin.userId,
     action: 'delete_platform_setting',
-    entity_type: 'platform_setting',
-    entity_id: key,
+    entityType: 'platform_setting',
+    entityId: key,
     details: { key },
   });
   if (auditError) {
-    console.error('[PLATFORM_SETTINGS] Audit log failed for DELETE:', auditError.message);
+    console.error('[PLATFORM_SETTINGS] Audit log failed for DELETE:', auditError);
     return NextResponse.json({ error: 'Setting deleted but audit failed — contact engineering' }, { status: 500 });
   }
 

@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
@@ -100,6 +102,8 @@ export default function Businesses() {
   const [selectedStatus, setSelectedStatus] = useState('');
   const [statusSaving, setStatusSaving] = useState(false);
   const [suspensionSaving, setSuspensionSaving] = useState(false);
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
   // WhatsApp channel assignment
   const [channels, setChannels] = useState<Array<{ id: string; phone_number: string; display_name: string; country_code: string }>>([]);
   const [channelSaving, setChannelSaving] = useState(false);
@@ -314,22 +318,45 @@ export default function Businesses() {
   async function handleToggleSuspension() {
     if (!selected || !isFullAdmin) return;
     const newState = !selected.messaging_suspended;
-    const reason = newState
+    const reasonInput = newState
       ? prompt('Reason for suspending messaging (optional):')
       : prompt('Reason for resuming messaging (optional):');
+    if (reasonInput === null) return;
+    const reason = reasonInput.trim() || null;
     setSuspensionSaving(true);
     try {
-      const { data, error } = await adminDb.rpc('toggle_messaging_suspension', {
-        p_business_id: selected.id,
-        p_suspended: newState,
-        p_reason: reason || null,
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) { alert('Session expired'); return; }
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/businesses/messaging-suspension`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            businessId: selected.id, suspended: newState, reason, stepUpId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') { alert('Step-up authorization failed'); return; }
+          throw new Error(data.error || 'Failed');
+        }
+        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, messaging_suspended: newState } : b));
+        setSelected(prev => prev ? { ...prev, messaging_suspended: newState } : prev);
+      };
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'messaging_suspension',
+        targetId: selected.id,
+        params: { business_id: selected.id, suspended: newState, reason },
+        description: `${newState ? 'Suspend' : 'Resume'} messaging for ${selected.name}`,
+        onAuthorized,
       });
-      if (error) throw error;
-      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, messaging_suspended: newState } : b));
-      setSelected(prev => prev ? { ...prev, messaging_suspended: newState } : prev);
     } catch (err) {
       console.error('Suspension toggle error:', err);
       alert('Failed to toggle messaging suspension');
+      stepUp.reset();
     } finally {
       setSuspensionSaving(false);
     }
@@ -1143,6 +1170,14 @@ export default function Businesses() {
           </div>
         )}
       </DetailModal>
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => { if (stepUpCallbackRef.current) stepUp.submitCode(code, stepUpCallbackRef.current); }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }

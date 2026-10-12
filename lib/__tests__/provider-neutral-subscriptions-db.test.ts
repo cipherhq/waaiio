@@ -39,6 +39,7 @@ function adminContext(adminId: string): string {
   return `
     SELECT set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', false);
     SELECT set_config('request.jwt.claim.sub', '${adminId}', false);
+    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
     SET ROLE authenticated;
   `;
 }
@@ -130,6 +131,14 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   let testUserId: string;
 
   beforeAll(() => {
+    // C6: M439 revokes authenticated EXECUTE on financial RPCs.
+    // Re-grant for internal logic testing. ACL tested in admin-helper-acl-db.
+    psqlMayFail(`
+      GRANT EXECUTE ON FUNCTION save_commercial_config(text, jsonb, text, uuid) TO authenticated;
+      GRANT EXECUTE ON FUNCTION save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) TO authenticated;
+      GRANT EXECUTE ON FUNCTION save_messaging_config(jsonb, jsonb, jsonb, uuid, text) TO authenticated;
+    `);
+
     // Discover admin identity
     adminId = psql('SELECT auth.uid()::text;').trim();
     psqlMayFail(`
@@ -173,6 +182,19 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('4. provider-tx unique index exists', () => {
     expect(psql("SELECT count(*) FROM pg_indexes WHERE indexname='uq_subscription_payment_provider_tx';")).toBe('1');
+  });
+
+  // ── aal1 denial ──
+
+  it('4b. admin with aal1 JWT cannot call save_commercial_config (aal2 required)', () => {
+    const r = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '14'::jsonb);
+      RESET ROLE;
+    `);
+    expect(r).toMatch(/requires admin role|permission denied|aal2/i);
   });
 
   // ── ACL: service_role only ──

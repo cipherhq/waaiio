@@ -5,6 +5,7 @@ import { finalizeOnboarding } from '@/lib/onboarding/finalize';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { initCapabilities } from '@/lib/capabilities/service';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -645,11 +646,11 @@ export async function POST(request: NextRequest) {
         .update({ status: 'active', activated_at: activatedAt, last_error: null })
         .eq('id', assisted.id).eq('status', 'customer_action_required').select('id').maybeSingle();
       if (completed) {
-        const { error: assistedAuditError } = await service.from('admin_audit_logs').insert({
-          actor_id: assisted.created_by_admin_id,
+        const { error: assistedAuditError } = await logAdminAudit({
+          actorId: assisted.created_by_admin_id,
           action: 'admin_onboarding_activated',
-          entity_type: 'admin_onboarding',
-          entity_id: assisted.id,
+          entityType: 'admin_onboarding',
+          entityId: assisted.id,
           details: { target_user_id: user.id, business_id: businessId, plan, completed_by_customer: true },
         });
         if (assistedAuditError) {

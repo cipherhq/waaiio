@@ -86,10 +86,8 @@ describe('S-1 Egress Inventory (#256)', () => {
     expect(recurringVerify).not.toContain('assertMessagingAllowed');
     expect(recurringVerify).not.toContain('messaging_suspended');
 
-    // admin/otp — admin 2FA, no business context
-    const adminOtp = readFileSync(resolve(__dirname, '../../app/api/admin/otp/route.ts'), 'utf-8');
-    expect(adminOtp).not.toContain('assertMessagingAllowed');
-    expect(adminOtp).not.toContain('messaging_suspended');
+    // admin/otp removed by SEC-005 (#609) — replaced by native Supabase MFA.
+    // No WhatsApp messaging in the admin login path anymore.
 
     // auth/otp/send — user login OTP, uses sendAuthenticationTemplate on MetaCloudService directly (not MetaCloudSender)
     const authOtpSend = readFileSync(resolve(__dirname, '../../app/api/auth/otp/send/route.ts'), 'utf-8');
@@ -121,7 +119,7 @@ describe('S-1 Egress Inventory (#256)', () => {
       'lib/channels/payout-nudge-orchestrator.ts', // #257 orchestrator — uses withDirectRouteAttempt with authorizationCheck
       // Platform-scoped exemptions (no business context)
       'app/api/recurring/verify/route.ts',  // platform OTP — explicit exemption
-      'app/api/admin/otp/route.ts',         // admin OTP — explicit exemption
+      // admin/otp removed by SEC-005 (#609)
       'app/api/auth/otp/send/route.ts',     // user login OTP — uses MetaCloudService directly, platform-scoped
       // Edge Functions (guarded via messaging_suspended check)
       'supabase/functions/booking-reminders/index.ts',

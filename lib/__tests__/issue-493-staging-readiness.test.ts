@@ -22,7 +22,7 @@ vi.mock('@/lib/supabase/service', () => ({
 }));
 
 const _adminRef: { admin: boolean } = { admin: false };
-vi.mock('@/lib/admin-auth', () => ({ requirePlatformAdmin: () => Promise.resolve(_adminRef.admin ? { id: 'admin-1', role: 'admin' } : null) }));
+vi.mock('@/lib/admin-auth', () => ({ requirePlatformAdmin: () => Promise.resolve(_adminRef.admin ? { id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' } : null) }));
 vi.mock('@/lib/admin-cors', () => ({ adminCorsHeaders: () => ({}) }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: vi.fn(() => Promise.resolve(null)), getRateLimitKey: () => 'test' }));
 vi.mock('@/lib/cron-auth', () => ({ verifyCronAuth: vi.fn(() => null) }));

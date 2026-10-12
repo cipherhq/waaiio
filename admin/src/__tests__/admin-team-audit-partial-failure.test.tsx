@@ -31,6 +31,22 @@ vi.mock('@/components/AdminLayout', () => ({
   useAdminSession: () => ({ userId: 'admin-1', email: 'admin@test.com', role: 'admin' }),
 }));
 
+// Mock step-up — auto-execute the authorized callback (bypasses TOTP dialog)
+vi.mock('@/hooks/useStepUp', () => ({
+  useStepUp: () => ({
+    state: { phase: 'idle', description: '', error: '', stepUpId: '', challengeId: '', factorId: '' },
+    execute: vi.fn(async (opts: { onAuthorized: (id: string) => Promise<void> }) => {
+      await opts.onAuthorized('test-step-up-id');
+    }),
+    submitCode: vi.fn(),
+    reset: vi.fn(),
+    isActive: false,
+  }),
+}));
+vi.mock('@/components/StepUpDialog', () => ({
+  StepUpDialog: () => null,
+}));
+
 // Mock components used by AdminTeam
 vi.mock('@/components/Pagination', () => ({
   Pagination: () => null,

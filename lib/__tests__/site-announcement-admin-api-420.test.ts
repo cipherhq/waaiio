@@ -48,7 +48,7 @@ describe('#420 Admin site announcement API activation safety', () => {
   beforeEach(() => {
     updateCalls.length = 0;
     requirePlatformAdminMock.mockReset();
-    requirePlatformAdminMock.mockResolvedValue({ userId: 'admin-420' });
+    requirePlatformAdminMock.mockResolvedValue({ userId: 'admin-420', aal: 'aal2', bearerToken: 'test-bearer' });
   });
 
   it('rejects enabling a countdown with no target/headline and performs no update', async () => {

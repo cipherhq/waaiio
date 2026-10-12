@@ -43,6 +43,9 @@ const USERS = {
 // Fixed fixture IDs for deterministic assertions
 const DEMO_ID = 'd0000000-0000-0000-0000-000000000001';
 const TOKEN_ID = 'e0000000-0000-0000-0000-000000000001';
+// Dedicated tenant owner: the platform Admin must NOT own this business.
+// Otherwise a legitimate owner_read policy would mask aal1 Admin-policy denial.
+const BUSINESS_OWNER_ID = '10000000-0000-0000-0000-000000000007';
 
 function jwtClaims(userId: string, role: string): string {
   return `{"sub":"${userId}","role":"${role}","user_metadata":{"role":"${role}"}}`;
@@ -52,11 +55,13 @@ function jwtClaims(userId: string, role: string): string {
 function asRole(userId: string, appMetaRole: string, sql: string): string {
   const raw = psql(`
     SELECT set_config('request.jwt.claims', '${jwtClaims(userId, appMetaRole)}', false);
+    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
     SET ROLE authenticated;
     ${sql}
     RESET ROLE;
   `);
   // First line is always the set_config return (the JWT claims JSON). Strip it.
+  // CREATE OR REPLACE FUNCTION is DDL — produces no output in -tAXq mode.
   const lines = raw.split('\n');
   // Drop the first line (set_config output). Remaining lines are the query result.
   const resultLines = lines.slice(1).filter(l => l.trim() !== '');
@@ -66,6 +71,7 @@ function asRole(userId: string, appMetaRole: string, sql: string): string {
 function asRoleMayFail(userId: string, appMetaRole: string, sql: string): string {
   const raw = psqlMayFail(`
     SELECT set_config('request.jwt.claims', '${jwtClaims(userId, appMetaRole)}', false);
+    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
     SET ROLE authenticated;
     ${sql}
     RESET ROLE;
@@ -75,6 +81,17 @@ function asRoleMayFail(userId: string, appMetaRole: string, sql: string): string
 
 describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
   beforeAll(() => {
+    // Grant DML on tables this test writes to via SET LOCAL ROLE.
+    // SEC-005: never grant ALL TABLES — M439 deliberately revokes DML on
+    // admin_audit_logs, business_payouts, and countries.
+    psql(`
+      GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+      GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+      GRANT INSERT, UPDATE, DELETE ON demo_requests, profiles, businesses,
+        attendance_log, ai_classification_log
+        TO authenticated, service_role;
+    `);
+
     // Seed test users in auth.users with correct app_metadata — MUST succeed
     for (const [role, id] of Object.entries(USERS)) {
       const metaRole = (role === 'ordinary' || role === 'stale') ? null : role;
@@ -98,6 +115,18 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
       if (profResult.includes('ERROR')) throw new Error(`Failed to seed profile ${role}: ${profResult}`);
     }
 
+    // Seed a separate, non-platform-role business owner. Existing tenant RLS
+    // must remain usable at aal1, independently of Admin-only MFA gates.
+    const ownerSeed = psqlMayFail(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES ('${BUSINESS_OWNER_ID}', 'business-owner-217@test.local', '{}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{}'::jsonb;
+      INSERT INTO profiles (id, email, role)
+      VALUES ('${BUSINESS_OWNER_ID}', 'business-owner-217@test.local', 'restaurant_owner')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    if (ownerSeed.includes('ERROR')) throw new Error(`Failed to seed tenant owner: ${ownerSeed}`);
+
     // Seed demo_requests with known ID — MUST succeed
     const demoResult = psqlMayFail(`
       INSERT INTO demo_requests (id, business_name, contact_name, work_email, phone, industry, notes)
@@ -110,8 +139,8 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
     const BIZ_ID = 'b0000000-0000-0000-0000-000000000217';
     const bizResult = psqlMayFail(`
       INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone)
-      VALUES ('${BIZ_ID}', 'Test217', 'test217-' || substr(md5(random()::text), 1, 8), '${USERS.admin}', '1 Test St', 'TestCity', 'TestArea', '+1234567890')
-      ON CONFLICT (id) DO NOTHING;
+      VALUES ('${BIZ_ID}', 'Test217', 'test217-' || substr(md5(random()::text), 1, 8), '${BUSINESS_OWNER_ID}', '1 Test St', 'TestCity', 'TestArea', '+1234567890')
+      ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id;
     `);
     if (bizResult.includes('ERROR')) throw new Error(`Failed to seed business: ${bizResult}`);
 
@@ -267,6 +296,55 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
     expect(result).toContain('t');
   });
 
+  // ── 12b. aal1 denial ──
+
+  it('12b. admin with aal1 JWT sees 0 rows from every seeded platform-admin table (aal2 required)', () => {
+    for (const table of ['demo_requests', 'attendance_log', 'ai_classification_log', 'admin_impersonation_tokens']) {
+      const count = psql(`
+        SELECT set_config('request.jwt.claims', '${jwtClaims(USERS.admin, 'admin')}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+        SET ROLE authenticated;
+        SELECT count(*)::int FROM ${table};
+        RESET ROLE;
+      `);
+      // Strip set_config output line(s) — last non-empty line is the count
+      const lines = count.split('\n').filter(l => l.trim() !== '');
+      expect(parseInt(lines[lines.length - 1] || '0'), `aal1 must not read ${table}`).toBe(0);
+    }
+  });
+
+  it('12bb. business-owner access remains available at aal1 without granting Admin privileges', () => {
+    for (const table of ['attendance_log', 'ai_classification_log']) {
+      const count = psql(`
+        SELECT set_config('request.jwt.claims', '${jwtClaims(BUSINESS_OWNER_ID, 'authenticated')}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+          SELECT '{"aal":"aal1"}'::jsonb;
+        $fn$ LANGUAGE SQL STABLE;
+        SET ROLE authenticated;
+        SELECT count(*)::int FROM ${table} WHERE business_id = 'b0000000-0000-0000-0000-000000000217';
+        RESET ROLE;
+      `);
+      const lines = count.split('\n').filter(Boolean);
+      expect(parseInt(lines[lines.length - 1] || '0'), `owner aal1 access to ${table}`).toBe(1);
+    }
+  });
+
+  it('12c. aal1 cannot use either legacy helper even with canonical Admin role', () => {
+    const output = psql(`
+      SELECT set_config('request.jwt.claims', '${jwtClaims(USERS.admin, 'admin')}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal1"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT public.has_platform_role(ARRAY['admin']);
+      SELECT public.is_support();
+      RESET ROLE;
+    `);
+    const lines = output.split('\n').filter(Boolean);
+    // The first line is the set_config return value; both helpers MUST deny.
+    expect(lines.slice(-2)).toEqual(['f', 'f']);
+  });
+
   // ── 13. is_support per-role behavior ──
 
   it('13. is_support returns correct result from canonical source for all roles', () => {
@@ -278,16 +356,21 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
 
   // ── 14-15. Structural checks ──
 
-  it('14. has_platform_role source reads raw_app_meta_data, not profiles', () => {
-    const src = psql("SELECT prosrc FROM pg_proc WHERE proname = 'has_platform_role';");
-    expect(src).toContain('raw_app_meta_data');
-    expect(src).not.toContain('profiles');
+  it('14. has_platform_role delegates to aal2-gated canonical role authority', () => {
+    const source = psql("SELECT prosrc FROM pg_proc WHERE oid='public.has_platform_role(text[])'::regprocedure;");
+    expect(source).toContain('public.has_admin_role');
+    expect(source).not.toContain('profiles');
+    const canonical = psql("SELECT prosrc FROM pg_proc WHERE oid='public.has_admin_role(text[])'::regprocedure;");
+    expect(canonical).toContain('raw_app_meta_data');
+    expect(canonical).toContain('auth.jwt()');
+    expect(canonical).toContain('aal2');
+    expect(canonical).not.toContain('profiles');
   });
 
-  it('15. is_support source reads canonical, not profiles', () => {
-    const src = psql("SELECT prosrc FROM pg_proc WHERE proname = 'is_support';");
-    expect(src).toContain('raw_app_meta_data');
-    expect(src).not.toContain('profiles');
+  it('15. is_support delegates to aal2-gated canonical authority, not profiles', () => {
+    const source = psql("SELECT prosrc FROM pg_proc WHERE proname = 'is_support';");
+    expect(source).toContain('public.has_admin_role');
+    expect(source).not.toContain('profiles');
   });
 
   // ── 16. Self-escalation blocked ──

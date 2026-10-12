@@ -87,8 +87,12 @@ describe('FIN-001: Payout kill switch (approve route)', () => {
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
     }));
+  vi.doMock('@/lib/admin-step-up', () => ({
+    consumeStepUp: vi.fn().mockResolvedValue(true),
+    StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+  }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
     vi.doMock('@/lib/email/templates', () => ({
       payoutApprovedEmail: vi.fn(),
@@ -492,8 +496,12 @@ describe('FIN-001: Admin query column restrictions', () => {
 
   function mockAdminQuery(role: string, tableData: Record<string, unknown>[]) {
     vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role }),
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role, aal: 'aal2', bearerToken: 'test-bearer' }),
     }));
+  vi.doMock('@/lib/admin-step-up', () => ({
+    consumeStepUp: vi.fn().mockResolvedValue(true),
+    StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+  }));
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         from: vi.fn().mockImplementation(() => {
@@ -762,8 +770,12 @@ describe('FIN-001: Transfer-method allowlist', () => {
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
     }));
+  vi.doMock('@/lib/admin-step-up', () => ({
+    consumeStepUp: vi.fn().mockResolvedValue(true),
+    StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+  }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
     vi.doMock('@/lib/email/templates', () => ({
       payoutApprovedEmail: vi.fn(),

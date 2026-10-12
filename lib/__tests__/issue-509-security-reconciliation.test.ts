@@ -523,7 +523,7 @@ describe('Admin platform-settings route: commercial key rejection', () => {
       id: 'admin-uuid',
       userId: 'admin-uuid',
       email: 'admin@test.com',
-      role: 'admin',
+      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
     });
   }
 
@@ -898,13 +898,16 @@ describe('B3: commercial key classification and client routing contract', () => 
     expect(keyMatches.length).toBe(6); // 3 keys × 2 quotes each
   });
 
-  it('16 individually writable commercial keys use save_commercial_config in handleSave', async () => {
+  it('16 individually writable commercial keys use step-up-protected server route in handleSave', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
       new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
     );
-    // handleSave routes COMMERCIAL_KEYS to save_commercial_config RPC
-    expect(src).toContain("adminDb.rpc('save_commercial_config'");
+    // C6: handleSave routes COMMERCIAL_KEYS through step-up-protected server route
+    expect(src).toContain('saveCommercialViaStepUp');
+    expect(src).toContain('/api/admin/platform-settings/commercial');
+    // No direct adminDb.rpc('save_commercial_config') remaining
+    expect(src).not.toContain("adminDb.rpc('save_commercial_config'");
     // COMMERCIAL_KEYS contains messaging_topup_packages (individually writable)
     const commercialMatch = src.match(/const COMMERCIAL_KEYS\s*=\s*new\s+Set\(\[([^\]]+)\]\)/s);
     expect(commercialMatch).toBeTruthy();

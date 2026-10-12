@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { loadCountries, invalidateCache, type CountryRow } from '@/lib/countries';
 import { logAudit } from '@/lib/auditLog';
@@ -10,6 +10,8 @@ import {
   Globe, Plus, Pencil, Trash2, Save, X, CreditCard, CheckCircle, XCircle,
   Settings, RefreshCw, AlertTriangle,
 } from 'lucide-react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 
 const GATEWAYS = ['paystack', 'stripe', 'flutterwave'] as const;
 const VERIFICATION_LEVELS = ['unverified', 'basic', 'standard', 'full'] as const;
@@ -91,6 +93,8 @@ export default function Countries() {
   const [form, setForm] = useState<FormState>(emptyForm());
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const countryStepUp = useStepUp();
+  const countryStepUpCallback = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // City editor temp state
   const [newCityKey, setNewCityKey] = useState('');
@@ -135,86 +139,83 @@ export default function Countries() {
 
   async function handleSave() {
     if (!canMutate) return;
-    setSaving(true);
-    try {
-      const { data: session } = await supabase.auth.getSession();
-      const userId = session?.session?.user?.id;
-
-      if (editMode) {
-        // Narrow server-side partial update via /api/admin/provider-config update_country action.
-        // This NEVER sends pricing, payment_gateway, currency_code, or provider-owned fields.
-        // Provider refs survive concurrent edits untouched.
-        const res = await adminApiFetch('/api/admin/provider-config', {
-            action: 'update_country',
-            country_code: form.code,
-            fields: {
-              name: form.name.trim(),
-              flag: form.flag.trim(),
-              dialing_code: form.dialing_code.trim(),
-              currency_symbol: form.currency_symbol.trim(),
-              currency_locale: form.currency_locale.trim(),
-              phone_digits: form.phone_digits,
-              phone_pattern: form.phone_pattern.trim(),
-              phone_placeholder: form.phone_placeholder.trim(),
-              is_active: form.is_active,
-              sort_order: form.sort_order,
-              cities: form.cities,
-              verification_tiers: form.verification_tiers,
-              doc_types: form.doc_types,
-            },
-        });
-        const resData = await res.json();
-        if (!res.ok) throw new Error(resData.error || 'Update failed');
-        await logAudit({ action: 'country.update', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
-      } else {
-        const payload = {
-          code: form.code.toUpperCase().trim(),
-          name: form.name.trim(),
-          flag: form.flag.trim(),
-          dialing_code: form.dialing_code.trim(),
-          currency_code: form.currency_code.toUpperCase().trim(),
-          currency_symbol: form.currency_symbol.trim(),
-          currency_locale: form.currency_locale.trim(),
-          payment_gateway: form.payment_gateway,
-          phone_digits: form.phone_digits,
-          phone_pattern: form.phone_pattern.trim(),
-          phone_placeholder: form.phone_placeholder.trim(),
-          is_active: form.is_active,
-          sort_order: form.sort_order,
-          cities: form.cities,
-          pricing: form.pricing,
-          verification_tiers: form.verification_tiers,
-          doc_types: form.doc_types,
-          updated_by: userId || null,
-        };
-        const { error } = await adminDb.from('countries').insert(payload);
-        if (error) throw error;
-        await logAudit({ action: 'country.create', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
+    const countryCode = form.code.toUpperCase().trim();
+    const action = editMode ? 'update_country' : 'create_country';
+    // Snapshot the exact payload BEFORE MFA: no client state may change it later.
+    const fields = editMode ? {
+      name: form.name.trim(), flag: form.flag.trim(),
+      dialing_code: form.dialing_code.trim(), currency_symbol: form.currency_symbol.trim(),
+      currency_locale: form.currency_locale.trim(), phone_digits: form.phone_digits,
+      phone_pattern: form.phone_pattern.trim(), phone_placeholder: form.phone_placeholder.trim(),
+      is_active: form.is_active, sort_order: form.sort_order, cities: form.cities,
+      verification_tiers: form.verification_tiers, doc_types: form.doc_types,
+    } : {
+      code: countryCode, name: form.name.trim(), flag: form.flag.trim(),
+      dialing_code: form.dialing_code.trim(), currency_code: form.currency_code.toUpperCase().trim(),
+      currency_symbol: form.currency_symbol.trim(), currency_locale: form.currency_locale.trim(),
+      payment_gateway: form.payment_gateway, phone_digits: form.phone_digits,
+      phone_pattern: form.phone_pattern.trim(), phone_placeholder: form.phone_placeholder.trim(),
+      is_active: form.is_active, sort_order: form.sort_order, cities: form.cities,
+      pricing: form.pricing, verification_tiers: form.verification_tiers, doc_types: form.doc_types,
+    };
+    const params = { action, country_code: countryCode, fields };
+    const onAuthorized = async (stepUpId: string) => {
+      setSaving(true);
+      try {
+        const res = await adminApiFetch('/api/admin/provider-config', { ...params, stepUpId });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Country change failed');
+        await logAudit({ action: editMode ? 'country.update' : 'country.create',
+          entity_type: 'country', entity_id: countryCode, details: { name: fields.name } });
+        invalidateCache();
+        setShowModal(false);
+        await load();
+      } catch (err) {
+        alert(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        throw err;
+      } finally {
+        setSaving(false);
       }
-
-      invalidateCache();
-      setShowModal(false);
-      await load();
-    } catch (err: unknown) {
-      alert(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setSaving(false);
+    };
+    countryStepUpCallback.current = onAuthorized;
+    try {
+      await countryStepUp.execute({
+        actionType: 'provider_config', targetId: action, params,
+        description: `${editMode ? 'Update' : 'Create'} country ${countryCode}`,
+        onAuthorized,
+      });
+    } catch (err) {
+      alert(`MFA preparation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }
 
   async function handleDelete(code: string) {
     if (!canMutate || !confirm(`Delete country ${code}? This cannot be undone.`)) return;
-    setDeleting(code);
+    const params = { action: 'delete_country', country_code: code };
+    const onAuthorized = async (stepUpId: string) => {
+      setDeleting(code);
+      try {
+        const res = await adminApiFetch('/api/admin/provider-config', { ...params, stepUpId });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Country deletion failed');
+        await logAudit({ action: 'country.delete', entity_type: 'country', entity_id: code });
+        invalidateCache();
+        await load();
+      } catch (err) {
+        alert(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        throw err;
+      } finally {
+        setDeleting(null);
+      }
+    };
+    countryStepUpCallback.current = onAuthorized;
     try {
-      const { error } = await adminDb.from('countries').delete().eq('code', code);
-      if (error) throw error;
-      await logAudit({ action: 'country.delete', entity_type: 'country', entity_id: code });
-      invalidateCache();
-      await load();
-    } catch (err: unknown) {
-      alert(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setDeleting(null);
+      await countryStepUp.execute({
+        actionType: 'provider_config', targetId: 'delete_country', params,
+        description: `Delete country ${code}`, onAuthorized,
+      });
+    } catch (err) {
+      alert(`MFA preparation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }
 
@@ -618,6 +619,19 @@ export default function Countries() {
         </div>
       )}
 
+      <StepUpDialog
+        open={countryStepUp.state.phase === 'awaiting-code' || countryStepUp.state.phase === 'verifying'}
+        description={countryStepUp.state.description}
+        error={countryStepUp.state.error}
+        loading={countryStepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (countryStepUpCallback.current) {
+            void countryStepUp.submitCode(code, countryStepUpCallback.current);
+          }
+        }}
+        onCancel={() => { countryStepUp.reset(); countryStepUpCallback.current = null; }}
+      />
+
       {/* Provider Configuration Panel */}
       <ProviderConfigPanel countries={countries} canMutate={canMutate} onSaved={load} />
     </div>
@@ -634,6 +648,9 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loadingVersion, setLoadingVersion] = useState(false);
+
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // Per-gateway per-tier ref inputs
   const [flwGrowthRef, setFlwGrowthRef] = useState('');
@@ -691,28 +708,50 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       if (pskGrowthRef.trim()) planRefs.growth.paystack = pskGrowthRef.trim();
       if (pskBusinessRef.trim()) planRefs.business.paystack = pskBusinessRef.trim();
 
-      const res = await apiCall({
-        action: 'save_refs',
-        country_code: selectedCode,
-        plan_refs: planRefs,
-        expected_version_id: versionId,
-      });
+      const capturedCode = selectedCode;
+      const capturedVersion = versionId;
+      const capturedRefs = planRefs;
 
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.error === 'config_version_conflict') {
-          setError('Configuration was modified by another admin. Please reload the page.');
-        } else {
-          setError(data.error || data.message || 'Save failed');
+      const onAuthorized = async (stepUpId: string) => {
+        const res = await apiCall({
+          action: 'save_refs',
+          country_code: capturedCode,
+          plan_refs: capturedRefs,
+          expected_version_id: capturedVersion,
+          stepUpId,
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.error === 'config_version_conflict') {
+            setError('Configuration was modified by another admin. Please reload the page.');
+          } else {
+            setError(data.error || data.message || 'Save failed');
+          }
+          return;
         }
-        return;
-      }
 
-      if (data.version_id) setVersionId(data.version_id);
-      setSuccess('Plan refs saved successfully');
-      await onSaved();
+        if (data.version_id) setVersionId(data.version_id);
+        setSuccess('Plan refs saved successfully');
+        await onSaved();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'provider_config',
+        targetId: 'save_refs',
+        params: {
+          action: 'save_refs',
+          country_code: capturedCode,
+          plan_refs: capturedRefs,
+          expected_version_id: capturedVersion,
+        },
+        description: `Save provider plan refs for ${capturedCode}`,
+        onAuthorized,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
+      stepUp.reset();
     } finally {
       setSaving(false);
     }
@@ -725,28 +764,49 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
     setError(null);
     setSuccess(null);
     try {
-      const res = await apiCall({
-        action: 'switch_provider',
-        country_code: selectedCode,
-        new_gateway: newGateway,
-        expected_version_id: versionId,
-      });
+      const capturedCode = selectedCode;
+      const capturedVersion = versionId;
 
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.error === 'config_version_conflict') {
-          setError('Configuration was modified by another admin. Please reload the page.');
-        } else {
-          setError(data.error || data.message || 'Switch failed');
+      const onAuthorized = async (stepUpId: string) => {
+        const res = await apiCall({
+          action: 'switch_provider',
+          country_code: capturedCode,
+          new_gateway: newGateway,
+          expected_version_id: capturedVersion,
+          stepUpId,
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.error === 'config_version_conflict') {
+            setError('Configuration was modified by another admin. Please reload the page.');
+          } else {
+            setError(data.error || data.message || 'Switch failed');
+          }
+          return;
         }
-        return;
-      }
 
-      if (data.version_id) setVersionId(data.version_id);
-      setSuccess(`Switched ${selectedCode} to ${newGateway}`);
-      await onSaved();
+        if (data.version_id) setVersionId(data.version_id);
+        setSuccess(`Switched ${capturedCode} to ${newGateway}`);
+        await onSaved();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'provider_config',
+        targetId: 'switch_provider',
+        params: {
+          action: 'switch_provider',
+          country_code: capturedCode,
+          new_gateway: newGateway,
+          expected_version_id: capturedVersion,
+        },
+        description: `Switch ${capturedCode} payment gateway to ${newGateway}`,
+        onAuthorized,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Switch failed');
+      stepUp.reset();
     } finally {
       setSaving(false);
     }
@@ -891,6 +951,19 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
           </div>
         </>
       )}
+
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (stepUpCallbackRef.current) {
+            stepUp.submitCode(code, stepUpCallbackRef.current);
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }
@@ -997,6 +1070,8 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
   const [configVersionId, setConfigVersionId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const msgStepUp = useStepUp();
+  const msgStepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // Country-scoped state: category rates + Paystack plan codes
   // rates keyed by category (utility, marketing, *, authentication, service)
@@ -1071,31 +1146,53 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     if (!canMutate || !configVersionId) return;
     setSaving(true); setError(''); setSuccess('');
     try {
-      const { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes } =
+      const { messagingPricing, trialCredit, tierIncluded } =
         buildMessagingPayload(countries, currencyState, countryState);
 
-      // Paystack plan codes are now managed ONLY through /api/admin/provider-config
-      // → save_provider_plan_refs with provider preflight. Never submit them here.
-      const { data, error: rpcError } = await adminDb.rpc('save_market_messaging_config', {
-        p_messaging_pricing: messagingPricing,
-        p_trial_credit_minor_by_currency: trialCredit,
-        p_subscription_included_minor_by_tier_currency: tierIncluded,
-        p_paystack_plan_codes: null,
-        p_expected_version_id: configVersionId,
-      });
-
-      if (rpcError) {
-        if (rpcError.message?.includes('config_version_conflict')) {
-          throw new Error('Configuration was modified by another admin. Please reload the page and try again.');
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) throw new Error('Session expired');
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/countries/messaging-config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            messagingPricing, trialCreditMinorByCurrency: trialCredit,
+            subscriptionIncludedMinorByTierCurrency: tierIncluded,
+            paystackPlanCodes: null, expectedVersionId: configVersionId,
+            stepUpId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') throw new Error('Step-up authorization failed');
+          if (data.code === 'version_conflict') throw new Error('Configuration was modified by another admin. Please reload the page and try again.');
+          throw new Error(data.error || 'Save failed');
         }
-        throw new Error(rpcError.message);
-      }
+        setConfigVersionId(data.versionId);
+        setSuccess('Messaging configuration saved successfully');
+        await onSaved();
+      };
 
-      setConfigVersionId(data as string);
-      setSuccess('Messaging configuration saved successfully');
-      await onSaved();
+      msgStepUpCallbackRef.current = onAuthorized;
+      await msgStepUp.execute({
+        actionType: 'messaging_config',
+        targetId: 'messaging_bundle',
+        params: {
+          messaging_pricing: messagingPricing ?? null,
+          trial_credit: trialCredit ?? null,
+          subscription_included: tierIncluded ?? null,
+          paystack_plan_codes: null,
+          expected_version_id: configVersionId ?? null,
+          description: null,
+        },
+        description: 'Save messaging financial configuration',
+        onAuthorized,
+      });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Save failed');
+      msgStepUp.reset();
     } finally {
       setSaving(false);
     }
@@ -1203,6 +1300,14 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
           {saving ? 'Saving...' : 'Save Messaging Config'}
         </button>
       </div>
+      <StepUpDialog
+        open={msgStepUp.state.phase === 'awaiting-code' || msgStepUp.state.phase === 'verifying'}
+        description={msgStepUp.state.description}
+        error={msgStepUp.state.error}
+        loading={msgStepUp.state.phase === 'verifying'}
+        onSubmit={(code) => { if (msgStepUpCallbackRef.current) msgStepUp.submitCode(code, msgStepUpCallbackRef.current); }}
+        onCancel={() => { msgStepUp.reset(); msgStepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }

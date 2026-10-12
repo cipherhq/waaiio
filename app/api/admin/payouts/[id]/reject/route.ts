@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutRejectedEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(
   request: NextRequest,
@@ -19,10 +22,18 @@ export async function POST(
   const supabase = await createClient();
 
   const body = await request.json();
-  const { reason } = body;
+  const { reason, stepUpId } = body;
 
   if (!reason) {
     return NextResponse.json({ error: 'Rejection reason is required' }, { status: 400 });
+  }
+
+  // SEC-005 Layer 4: Consume operation-bound step-up authorization
+  try {
+    await consumeStepUp(admin, stepUpId, 'payout_reject', id, { reason });
+  } catch (err) {
+    const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
   // Fetch the payout
@@ -41,7 +52,9 @@ export async function POST(
   }
 
   // Atomic reject: include status guard in UPDATE to prevent TOCTOU race
-  const { data: updated, error: updateError } = await supabase
+  // SEC-005: uses service client — authenticated DML revoked on business_payouts.
+  const serviceClient = createServiceClient();
+  const { data: updated, error: updateError } = await serviceClient
     .from('business_payouts')
     .update({
       status: 'rejected',
@@ -62,11 +75,11 @@ export async function POST(
   }
 
   // Audit log
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.id,
+  await logAdminAudit({
+    actorId: admin.id,
     action: 'reject_payout',
-    entity_type: 'business_payout',
-    entity_id: id,
+    entityType: 'business_payout',
+    entityId: id,
     details: {
       business_id: payout.business_id,
       amount: payout.net_amount,

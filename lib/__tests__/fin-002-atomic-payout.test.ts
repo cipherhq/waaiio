@@ -120,6 +120,15 @@ function setupMocks(config: MockConfig = {}) {
     createClient: vi.fn().mockResolvedValue({ from: mockFrom }),
   }));
 
+  // Service client mock — used for RPCs and SEC-005 DML on business_payouts
+  const serviceUpdateChain: Record<string, ReturnType<typeof vi.fn>> = {};
+  ['eq', 'in', 'select'].forEach(m => { serviceUpdateChain[m] = vi.fn().mockReturnValue(serviceUpdateChain); });
+  serviceUpdateChain.select = vi.fn().mockResolvedValue({ data: manualUpdateResult });
+
+  const serviceInsertChain: Record<string, ReturnType<typeof vi.fn>> = {};
+  ['select'].forEach(m => { serviceInsertChain[m] = vi.fn().mockReturnValue(serviceInsertChain); });
+  serviceInsertChain.select = vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'new-payout-id' } }) });
+
   vi.doMock('@/lib/supabase/service', () => ({
     createServiceClient: vi.fn().mockReturnValue({
       rpc: vi.fn().mockImplementation((name: string) => {
@@ -137,13 +146,33 @@ function setupMocks(config: MockConfig = {}) {
         if (name === 'mark_payout_review_required') {
           return Promise.resolve({ data: reviewResult, error: null });
         }
+        if (name === 'check_session_exists') {
+          return { maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true }, error: null }) };
+        }
         return Promise.resolve({ data: null, error: null });
+      }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'business_payouts') {
+          return {
+            update: vi.fn().mockReturnValue(serviceUpdateChain),
+            insert: vi.fn().mockReturnValue(serviceInsertChain),
+          };
+        }
+        if (table === 'admin_audit_logs') {
+          return { insert: vi.fn().mockResolvedValue({}) };
+        }
+        return { insert: vi.fn().mockResolvedValue({}), select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
       }),
     }),
   }));
 
   vi.doMock('@/lib/admin-auth', () => ({
-    requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+    requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
+    getSessionIdFromToken: vi.fn().mockReturnValue('test-session-id'),
+  }));
+  vi.doMock('@/lib/admin-step-up', () => ({
+    consumeStepUp: vi.fn().mockResolvedValue(true),
+    StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
   }));
   vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
   vi.doMock('@/lib/email/templates', () => ({
@@ -402,7 +431,7 @@ describe('FIN-002: Timeout → review_required', () => {
         }),
       }),
     }));
-    vi.doMock('@/lib/admin-auth', () => ({ requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }) }));
+    vi.doMock('@/lib/admin-auth', () => ({ requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }) }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('@/lib/email/templates', () => ({ payoutApprovedEmail: vi.fn(), payoutPaidEmail: vi.fn() }));
     vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
@@ -494,7 +523,7 @@ describe('FIN-002: Provider response classification', () => {
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
     }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('@/lib/email/templates', () => ({
@@ -694,6 +723,12 @@ describe('FIN-002: Manual methods', () => {
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         rpc: vi.fn().mockImplementation(() => { claimCalled = true; return Promise.resolve({ data: [], error: null }); }),
+        from: vi.fn().mockImplementation(() => {
+          const chain: Record<string, unknown> = {};
+          ['update', 'eq', 'in', 'select', 'insert'].forEach(m => { chain[m] = vi.fn().mockReturnValue(chain); });
+          chain.select = vi.fn().mockResolvedValue({ data: [{ id: 'p1' }] });
+          return chain;
+        }),
       }),
     }));
     const fetchSpy = vi.spyOn(globalThis, 'fetch');

@@ -32,8 +32,8 @@ function psqlMayFail(sql: string): string {
 
 const BIZ_ID   = 'b0000000-0000-0000-0000-000000000269';
 const BIZ_ID_B = 'b0000000-0000-0000-0000-000000000270';
-const OWNER_A  = '00000000-0000-0000-0000-000000000001';
-const OWNER_B  = '00000000-0000-0000-0000-000000000099';
+const OWNER_A  = '00000000-0000-0000-0259-000000000001';
+const OWNER_B  = '00000000-0000-0000-0259-000000000002';
 const ADMIN_UID = '00000000-0000-0000-0000-0000000000a1';
 const NON_ADMIN_UID = '00000000-0000-0000-0000-000000000077';
 
@@ -43,6 +43,26 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
   let originalAuthUidDef: string;
 
   beforeAll(() => {
+    // The shared DB has unrelated fixture IDs 000...001 and 000...099
+    // promoted to Admin by other suites. These MUST be independent tenant
+    // owners with no platform role, otherwise cross-tenant RLS can be bypassed
+    // through the legitimate Admin SELECT policy.
+    psql(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES
+        ('${OWNER_A}', 'owner-a-0259@unit.invalid', '{}'::jsonb),
+        ('${OWNER_B}', 'owner-b-0259@unit.invalid', '{}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{}'::jsonb;
+      INSERT INTO profiles (id, email, role)
+      VALUES
+        ('${OWNER_A}', 'owner-a-0259@unit.invalid', 'restaurant_owner'),
+        ('${OWNER_B}', 'owner-b-0259@unit.invalid', 'restaurant_owner')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    expect(psql(`
+      SELECT COALESCE(raw_app_meta_data->>'role', 'none')
+      FROM auth.users WHERE id IN ('${OWNER_A}', '${OWNER_B}') ORDER BY id;
+    `)).toBe('none\nnone');
     // Snapshot the exact original auth.uid() definition for hermetic restoration
     originalAuthUidDef = psql(`SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname = 'uid' AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'auth');`);
     // Seed test businesses
@@ -318,6 +338,7 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     const CLAIMS = `{"sub":"${OWNER_A}","role":"authenticated"}`;
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, balance_after_minor)
       VALUES ('${bizAttemptId}', 'reserve', -100, 900);
@@ -340,8 +361,11 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -100, 'included', 900);`);
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;`);
-      const count = psql(`SET ROLE authenticated; SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}'; RESET ROLE;`);
-      expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
+      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
+      const count = psql(`SET ROLE authenticated; SELECT public.is_admin(); SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}'; RESET ROLE;`);
+      const lines = count.split('\n').filter(Boolean);
+      expect(lines[lines.length - 2]).toBe('f');
+      expect(parseInt(lines[lines.length - 1])).toBeGreaterThan(0);
     } finally {
       psqlMayFail(originalAuthUidDef + ';');
     }
@@ -352,8 +376,9 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -100, 'included', 900);`);
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_B}'::UUID; $f$ LANGUAGE SQL STABLE;`);
-      const count = psql(`SET ROLE authenticated; SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}'; RESET ROLE;`);
-      expect(count.split('\n').pop()).toBe('0');
+      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
+      const count = psql(`SET ROLE authenticated; SELECT public.is_admin(); SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}'; RESET ROLE;`);
+      expect(count.split('\n').filter(Boolean).slice(-2)).toEqual(['f', '0']);
     } finally {
       psqlMayFail(originalAuthUidDef + ';');
     }
@@ -366,6 +391,7 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     psqlMayFail(`DELETE FROM auth.users WHERE id = '${NON_ADMIN_UID}';`);
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${NON_ADMIN_UID}'::UUID; $f$ LANGUAGE SQL STABLE;`);
+      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
       const count = psql(`SET ROLE authenticated; SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${pa}'; RESET ROLE;`);
       expect(count.split('\n').pop()).toBe('0');
     } finally {
@@ -380,8 +406,32 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     // → is_admin() returns true → mce_admin_select policy grants access
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${ADMIN_UID}'::UUID; $f$ LANGUAGE SQL STABLE;`);
+      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
       const count = psql(`SET ROLE authenticated; SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${pa}'; RESET ROLE;`);
       expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
+    } finally {
+      psqlMayFail(originalAuthUidDef + ';');
+    }
+  });
+
+  it('25b. Admin with aal1 JWT cannot see platform-scoped cost events (aal2 required)', () => {
+    const pa = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES (NULL, '+1', 'platform') RETURNING id;`);
+    psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${pa}', 'reserve', NULL, 'unpriced', NULL);`);
+    try {
+      psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${ADMIN_UID}'::UUID; $f$ LANGUAGE SQL STABLE;`);
+      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
+      // Check the effective security decision instead of assuming prior
+      // database-test fixtures preserved the Admin helper implementation.
+      const decision = psql(`
+        SET ROLE authenticated;
+        SELECT auth.jwt()->>'aal', public.is_admin(),
+               public.mce_check_owner('${pa}'::uuid);
+        SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${pa}';
+        RESET ROLE;
+      `);
+      const lines = decision.split('\n').filter(Boolean);
+      expect(lines[lines.length - 2], 'aal1 canonical and owner authorization').toBe('aal1|f|f');
+      expect(lines[lines.length - 1], 'aal1 financial ledger access denial').toBe('0');
     } finally {
       psqlMayFail(originalAuthUidDef + ';');
     }
@@ -429,6 +479,7 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     const eventId = psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -50, 'included', 950) RETURNING id;`);
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;`);
+      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
       psqlMayFail(`SET ROLE authenticated; UPDATE message_cost_events SET amount_minor = -999 WHERE id = '${eventId}'; RESET ROLE;`);
     } finally {
       psqlMayFail(originalAuthUidDef + ';');
@@ -442,6 +493,7 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     const eventId = psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -50, 'included', 950) RETURNING id;`);
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;`);
+      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
       psqlMayFail(`SET ROLE authenticated; DELETE FROM message_cost_events WHERE id = '${eventId}'; RESET ROLE;`);
     } finally {
       psqlMayFail(originalAuthUidDef + ';');

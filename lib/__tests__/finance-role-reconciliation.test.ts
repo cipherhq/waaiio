@@ -28,8 +28,13 @@ vi.mock('@/lib/admin-auth', () => ({
       const required = Array.isArray(opts.requiredRole) ? opts.requiredRole : [opts.requiredRole];
       if (!required.includes(role)) return null;
     }
-    return { id: mockAuthId, userId: mockAuthId, email: 'test@example.com', role };
+    return { id: mockAuthId, userId: mockAuthId, email: 'test@example.com', role, aal: 'aal2', bearerToken: 'test-bearer' };
   }),
+}));
+
+vi.mock('@/lib/admin-step-up', () => ({
+  consumeStepUp: vi.fn().mockResolvedValue(true),
+  StepUpError: class StepUpError extends Error { constructor(msg: string) { super(msg); this.name = 'StepUpError'; } },
 }));
 
 const mockSelectResult = vi.fn();
@@ -150,7 +155,7 @@ describe('Business payouts list authorization', () => {
 describe('Business payout generate authorization', () => {
   it('admin generate allowed', async () => {
     mockAuthRole = 'admin';
-    const res = await payoutsGenerateModule.POST(makeRequest('/api/admin/payouts/generate', 'POST'));
+    const res = await payoutsGenerateModule.POST(makeRequest('/api/admin/payouts/generate', 'POST', {}));
     expect(res.status).not.toBe(403);
   });
 
@@ -323,12 +328,12 @@ describe('Reseller payout mutations have audit logging', () => {
   const patchSource = readFileSync('app/api/admin/reseller-payouts/[id]/route.ts', 'utf-8');
 
   it('POST creates audit log entry', () => {
-    expect(postSource).toContain('admin_audit_logs');
+    expect(postSource).toContain('logAdminAudit');
     expect(postSource).toContain('generate_reseller_payout');
   });
 
   it('PATCH creates audit log entry', () => {
-    expect(patchSource).toContain('admin_audit_logs');
+    expect(patchSource).toContain('logAdminAudit');
     expect(patchSource).toContain('reseller_payout_');
   });
 
@@ -375,6 +380,64 @@ describe('Admin UI — Finance mutation controls hidden', () => {
   it('ResellerPayouts Mark as Paid button gated by isFullAdmin', () => {
     const approvedGuards = (resellerUI.match(/approved.*&&.*isFullAdmin/g) || []).length;
     expect(approvedGuards).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('Admin UI — step-up MFA wired to all payout mutations', () => {
+  const payoutsUI = readFileSync('admin/src/pages/Payouts.tsx', 'utf-8');
+  const resellerUI = readFileSync('admin/src/pages/ResellerPayouts.tsx', 'utf-8');
+
+  it('Payouts.tsx handleReject sends stepUpId in request body', () => {
+    // Find the reject section and verify stepUpId is in the JSON.stringify
+    const rejectSection = payoutsUI.slice(payoutsUI.indexOf('handleReject'));
+    expect(rejectSection).toContain("reason: rejectReason, stepUpId");
+  });
+
+  it('Payouts.tsx handleReject uses payout_reject step-up action', () => {
+    const rejectSection = payoutsUI.slice(payoutsUI.indexOf('handleReject'));
+    expect(rejectSection).toContain("actionType: 'payout_reject'");
+  });
+
+  it('Payouts.tsx handleReject handles step_up_required 403', () => {
+    const rejectSection = payoutsUI.slice(payoutsUI.indexOf('handleReject'));
+    expect(rejectSection).toContain("step_up_required");
+  });
+
+  it('ResellerPayouts.tsx handleAction sends stepUpId in request body', () => {
+    const actionSection = resellerUI.slice(resellerUI.indexOf('handleAction'));
+    expect(actionSection).toContain("action: serverAction, stepUpId");
+  });
+
+  it('ResellerPayouts.tsx handleAction uses dynamic step-up action type', () => {
+    const actionSection = resellerUI.slice(resellerUI.indexOf('handleAction'));
+    expect(actionSection).toContain('reseller_payout_');
+    expect(actionSection).toContain('stepUpAction');
+  });
+
+  it('ResellerPayouts.tsx handleAction handles step_up_required 403', () => {
+    const actionSection = resellerUI.slice(resellerUI.indexOf('handleAction'));
+    expect(actionSection).toContain("step_up_required");
+  });
+
+  it('ResellerPayouts.tsx handleGeneratePayout sends stepUpId', () => {
+    const genSection = resellerUI.slice(resellerUI.indexOf('handleGeneratePayout'));
+    expect(genSection).toContain('stepUpId');
+    expect(genSection).toContain("reseller_payout_generate");
+  });
+
+  it('ResellerPayouts.tsx handleGeneratePayout handles step_up_required 403', () => {
+    const genSection = resellerUI.slice(resellerUI.indexOf('handleGeneratePayout'));
+    expect(genSection).toContain("step_up_required");
+  });
+
+  it('ResellerPayouts.tsx renders StepUpDialog', () => {
+    expect(resellerUI).toContain('<StepUpDialog');
+    expect(resellerUI).toContain('useStepUp');
+  });
+
+  it('Payouts.tsx renders StepUpDialog', () => {
+    expect(payoutsUI).toContain('<StepUpDialog');
+    expect(payoutsUI).toContain('useStepUp');
   });
 });
 
@@ -598,14 +661,15 @@ describe('Reseller audit logging is server-side (D)', () => {
   it('PATCH writes audit log server-side after successful mutation', () => {
     // For approve/reject: audit is after .update(updateData)
     // For mark_paid: audit is after RPC call
-    // Both patterns have 'admin_audit_logs' after the mutation
-    const approveAuditIdx = patchSource.lastIndexOf('admin_audit_logs');
+    // Both patterns have 'logAdminAudit' after the mutation
+    const approveAuditIdx = patchSource.lastIndexOf('logAdminAudit');
     const updateIdx = patchSource.indexOf('.update(updateData)');
     expect(approveAuditIdx).toBeGreaterThan(updateIdx);
   });
 
   it('POST writes audit log server-side after successful insert', () => {
-    const auditIdx = postSource.indexOf('admin_audit_logs');
+    // Skip past the import to find the actual call site
+    const auditIdx = postSource.lastIndexOf('logAdminAudit');
     const insertIdx = postSource.indexOf('.insert({');
     expect(auditIdx).toBeGreaterThan(insertIdx);
   });
@@ -613,7 +677,106 @@ describe('Reseller audit logging is server-side (D)', () => {
   it('audit failure is logged but does not roll back the payout', () => {
     // Audit log write is a separate statement, not inside a transaction/RPC
     // This is accurate — described as server-side logging, not atomic
-    expect(patchSource).toContain('admin_audit_logs');
+    expect(patchSource).toContain('logAdminAudit');
     // The audit insert is NOT inside a try/catch that would undo the payout update
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// E. Step-up MFA enforcement (SEC-005 Layer 4)
+// ══════════════════════════════════════════════════════════
+
+describe('Step-up MFA enforced on payout mutations (E)', () => {
+  const rejectSource = readFileSync('app/api/admin/payouts/[id]/reject/route.ts', 'utf-8');
+  const resellerPatchSource = readFileSync('app/api/admin/reseller-payouts/[id]/route.ts', 'utf-8');
+
+  it('payout reject calls consumeStepUp before mutation', () => {
+    const stepUpIdx = rejectSource.indexOf('consumeStepUp');
+    const updateIdx = rejectSource.indexOf('.update(');
+    expect(stepUpIdx).toBeGreaterThan(-1);
+    expect(updateIdx).toBeGreaterThan(stepUpIdx);
+  });
+
+  it('payout reject uses payout_reject action type', () => {
+    expect(rejectSource).toContain("'payout_reject'");
+  });
+
+  it('payout reject binds step-up to payout id and reason', () => {
+    expect(rejectSource).toContain('{ reason }');
+  });
+
+  it('reseller payout PATCH calls consumeStepUp before mutation', () => {
+    const stepUpIdx = resellerPatchSource.indexOf('consumeStepUp');
+    const rpcIdx = resellerPatchSource.indexOf("service.rpc('mark_reseller_payout_paid'");
+    expect(stepUpIdx).toBeGreaterThan(-1);
+    expect(rpcIdx).toBeGreaterThan(stepUpIdx);
+  });
+
+  it('reseller payout uses action-specific step-up types', () => {
+    expect(resellerPatchSource).toContain('reseller_payout_');
+    expect(resellerPatchSource).toContain('stepUpAction');
+  });
+
+  it('reseller payout extracts stepUpId from request body', () => {
+    expect(resellerPatchSource).toContain('stepUpId');
+  });
+
+  it('both routes return 403 with step_up_required code on failure', () => {
+    expect(rejectSource).toContain("code: 'step_up_required'");
+    expect(resellerPatchSource).toContain("code: 'step_up_required'");
+  });
+});
+
+const stepUpMod = await import('@/lib/admin-step-up');
+const mockConsumeStepUp = stepUpMod.consumeStepUp as ReturnType<typeof vi.fn>;
+
+describe('Step-up denial returns 403 (E — route-level)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthRole = 'admin';
+    mockConsumeStepUp.mockResolvedValue(true);
+    mockSelectResult.mockResolvedValue({
+      data: { id: 'p-1', business_id: 'b-1', net_amount: 100, status: 'pending' },
+      error: null,
+    });
+  });
+
+  it('payout reject returns 403 when step-up fails', async () => {
+    mockConsumeStepUp.mockRejectedValueOnce(
+      new Error('Step-up authorization required')
+    );
+    const res = await payoutsRejectModule.POST(
+      makeRequest('/api/admin/payouts/p-1/reject', 'POST', { reason: 'test' }),
+      { params: Promise.resolve({ id: 'p-1' }) }
+    );
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.code).toBe('step_up_required');
+  });
+
+  it('reseller payout approve returns 403 when step-up fails', async () => {
+    mockConsumeStepUp.mockRejectedValueOnce(
+      new Error('Step-up authorization required')
+    );
+    const res = await resellerPayoutsPatchModule.PATCH(
+      makeRequest('/api/admin/reseller-payouts/rp-1', 'PATCH', { action: 'approve' }),
+      { params: Promise.resolve({ id: 'rp-1' }) }
+    );
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.code).toBe('step_up_required');
+  });
+
+  it('reseller payout mark_paid returns 403 when step-up fails', async () => {
+    mockConsumeStepUp.mockRejectedValueOnce(
+      new Error('Step-up authorization required')
+    );
+    const res = await resellerPayoutsPatchModule.PATCH(
+      makeRequest('/api/admin/reseller-payouts/rp-1', 'PATCH', { action: 'mark_paid' }),
+      { params: Promise.resolve({ id: 'rp-1' }) }
+    );
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.code).toBe('step_up_required');
   });
 });

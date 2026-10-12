@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 interface Flag {
   type: string;
@@ -15,6 +18,16 @@ export async function POST(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  }
+
+  const body = await request.json();
+
+  // SEC-005 Layer 4: Consume operation-bound step-up authorization
+  try {
+    await consumeStepUp(admin, body.stepUpId, 'payout_generate', null, { action: 'generate' });
+  } catch (err) {
+    const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
   const supabase = await createClient();
@@ -193,7 +206,9 @@ export async function POST(request: NextRequest) {
         .eq('is_active', true)
         .maybeSingle();
 
-      const { data: newPayout } = await supabase.from('business_payouts').insert({
+      // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
+      const serviceClient = createServiceClient();
+      const { data: newPayout } = await serviceClient.from('business_payouts').insert({
         business_id: biz.id,
         payout_account_id: payoutAccount?.id || null,
         period_start: periodStartStr,
@@ -222,12 +237,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Audit log
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: admin.id,
+    // Audit log — uses service client (INSERT revoked from authenticated)
+    await logAdminAudit({
+      actorId: admin.id,
       action: 'generate_payouts',
-      entity_type: 'business_payout',
-      entity_id: null,
+      entityType: 'business_payout',
+      entityId: null,
       details: {
         period_start: periodStartStr,
         period_end: periodEndStr,

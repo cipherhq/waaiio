@@ -148,7 +148,43 @@ describe('PATCH route: mark_paid uses atomic RPC', () => {
   it('checks audit { error } return and logs failure', () => {
     expect(src).toContain('error: auditErr');
     expect(src).toContain('Audit log failed');
-    expect(src).toContain('auditErr.message');
+    expect(src).toContain('auditErr');
+  });
+
+  it('calls consumeStepUp before any mutation', () => {
+    const stepUpIdx = src.indexOf('consumeStepUp');
+    const rpcIdx = src.indexOf("service.rpc('mark_reseller_payout_paid'");
+    expect(stepUpIdx).toBeGreaterThan(-1);
+    expect(rpcIdx).toBeGreaterThan(stepUpIdx);
+  });
+
+  it('returns 403 with step_up_required code on step-up failure', () => {
+    expect(src).toContain("code: 'step_up_required'");
+    expect(src).toContain('403');
+  });
+});
+
+describe('POST route: step-up enforcement', () => {
+  const src = readFileSync('app/api/admin/reseller-payouts/route.ts', 'utf-8');
+
+  it('calls consumeStepUp with reseller_payout_generate before insert', () => {
+    const stepUpIdx = src.indexOf('consumeStepUp');
+    const insertIdx = src.indexOf('.insert(');
+    expect(stepUpIdx).toBeGreaterThan(-1);
+    expect(insertIdx).toBeGreaterThan(stepUpIdx);
+  });
+
+  it('uses reseller_payout_generate action type', () => {
+    expect(src).toContain("'reseller_payout_generate'");
+  });
+
+  it('returns 403 with step_up_required on failure', () => {
+    expect(src).toContain("code: 'step_up_required'");
+    expect(src).toContain('403');
+  });
+
+  it('extracts stepUpId from request body', () => {
+    expect(src).toContain('stepUpId');
   });
 });
 
@@ -185,7 +221,7 @@ describe('POST route: input validation', () => {
   it('checks audit { error } return and logs failure', () => {
     expect(src).toContain('error: auditErr');
     expect(src).toContain('Audit log failed');
-    expect(src).toContain('auditErr.message');
+    expect(src).toContain('auditErr');
   });
 });
 
@@ -203,6 +239,11 @@ const mockUpdateChain = {
 };
 const mockInsertResult = vi.fn();
 
+vi.mock('@/lib/admin-step-up', () => ({
+  consumeStepUp: vi.fn().mockResolvedValue(true),
+  StepUpError: class StepUpError extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+}));
+
 vi.mock('@/lib/admin-auth', () => ({
   requirePlatformAdmin: vi.fn(async (_req: unknown, opts?: { requiredRole?: string | string[] }) => {
     const role = mockAuthRole.current;
@@ -211,7 +252,7 @@ vi.mock('@/lib/admin-auth', () => ({
       const required = Array.isArray(opts.requiredRole) ? opts.requiredRole : [opts.requiredRole];
       if (!required.includes(role)) return null;
     }
-    return { id: mockAuthId.current, userId: mockAuthId.current, email: 'test@example.com', role };
+    return { id: mockAuthId.current, userId: mockAuthId.current, email: 'test@example.com', role, aal: 'aal2', bearerToken: 'test-bearer' };
   }),
 }));
 
@@ -382,7 +423,7 @@ describe('Audit failure handling (source verification)', () => {
   it('PATCH logs audit error with logger.error and safe context', () => {
     const auditErrSection = patchSrc.slice(patchSrc.indexOf('if (auditErr)'));
     expect(auditErrSection).toContain('logger.error');
-    expect(auditErrSection).toContain('auditErr.message');
+    expect(auditErrSection).toContain('auditErr');
     expect(auditErrSection).toContain('Audit log failed');
   });
 
@@ -392,14 +433,14 @@ describe('Audit failure handling (source verification)', () => {
   });
 
   it('POST logs audit error with logger.error', () => {
-    expect(postSrc).toContain('auditErr.message');
+    expect(postSrc).toContain('auditErr');
     expect(postSrc).toContain('Audit log failed');
   });
 
   it('mark_paid payout mutation succeeds independently of audit (separate writes)', () => {
     // The audit write is AFTER the RPC return check — payout is already committed
     const rpcReturnIdx = patchSrc.indexOf("return NextResponse.json({ success: true");
-    const auditIdx = patchSrc.indexOf('admin_audit_logs');
+    const auditIdx = patchSrc.indexOf('logAdminAudit');
     // Audit is BEFORE the return (so it runs), but if it fails, the return still happens
     expect(auditIdx).toBeLessThan(rpcReturnIdx);
   });

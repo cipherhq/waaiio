@@ -6,6 +6,7 @@ import { cancelSubscription as cancelPaystackSub } from '@/lib/payments/paystack
 import { sendEmail } from '@/lib/email/client';
 import { accountDeletionConfirmationEmail } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 /**
  * Enhanced account deletion endpoint.
@@ -96,11 +97,11 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Audit log BEFORE deletion (deletion cascades and destroys profile data)
-    await serviceClient.from('admin_audit_logs').insert({
-      actor_id: user.id,
+    await logAdminAudit({
+      actorId: user.id,
       action: 'account_deletion',
-      entity_type: 'profile',
-      entity_id: user.id,
+      entityType: 'profile',
+      entityId: user.id,
       details: {
         email: user.email,
         grace_period: gracePeriod,

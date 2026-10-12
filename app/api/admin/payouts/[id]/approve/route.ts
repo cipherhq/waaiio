@@ -6,9 +6,11 @@ import { payoutApprovedEmail, payoutPaidEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { classifyPaystackError, classifyStripeError } from '@/lib/payments/payout-classification';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -40,7 +42,15 @@ export async function POST(
 
   const supabase = await createClient();
   const body = await request.json();
-  const { transfer_method, reference, notes } = body;
+  const { transfer_method, reference, notes, stepUpId } = body;
+
+  // SEC-005 Layer 4: Consume operation-bound step-up authorization
+  try {
+    await consumeStepUp(admin, stepUpId, 'payout_approve', id, { transfer_method, reference: reference ?? null, notes: notes ?? null });
+  } catch (err) {
+    const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
+  }
 
   // FIN-001: Strict transfer-method allowlist
   if (!transfer_method || !ALLOWED_TRANSFER_METHODS.includes(transfer_method as TransferMethod)) {
@@ -156,7 +166,9 @@ export async function POST(
 
   if (!AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
     // Atomic conditional update — verifies exactly one row transitions
-    const { data: manualResult } = await supabase
+    // SEC-005: uses service client — authenticated DML revoked on business_payouts.
+    const serviceClient = createServiceClient();
+    const { data: manualResult } = await serviceClient
       .from('business_payouts')
       .update({
         status: 'paid',
@@ -453,11 +465,11 @@ async function logAndNotify(
   gatewayTransferCode: string | null,
   reference?: string,
 ) {
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.id,
+  await logAdminAudit({
+    actorId: admin.id,
     action: 'approve_payout',
-    entity_type: 'business_payout',
-    entity_id: payoutId,
+    entityType: 'business_payout',
+    entityId: payoutId,
     details: {
       business_id: payout.business_id,
       amount: payout.net_amount,

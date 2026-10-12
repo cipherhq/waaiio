@@ -4,6 +4,7 @@ import { sendEmail } from '@/lib/email/client';
 import { kycApprovedEmail, kycRejectedEmail } from '@/lib/email/templates';
 import { getPayoutLimit, formatPayoutLimit, type CountryCode, type VerificationLevel } from '@/lib/constants';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 const LEVEL_LABELS: Record<string, string> = {
   unverified: 'Unverified',
@@ -92,11 +93,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Audit log
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: admin.userId,
+    await logAdminAudit({
+      actorId: admin.userId,
       action: 'approve_verification',
-      entity_type: 'business',
-      entity_id: business_id,
+      entityType: 'business',
+      entityId: business_id,
       details: { level: verLevel, limit, country_code: cc },
     });
 
@@ -149,11 +150,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Audit log
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: admin.userId,
+    await logAdminAudit({
+      actorId: admin.userId,
       action: 'reject_verification',
-      entity_type: 'business',
-      entity_id: business_id,
+      entityType: 'business',
+      entityId: business_id,
       details: { reason },
     });
 
