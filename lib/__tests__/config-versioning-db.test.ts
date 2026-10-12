@@ -54,15 +54,15 @@ function psqlAsync(sql: string): Promise<string> {
 }
 
 // Admin JWT claims for save_commercial_config()
-const ADMIN_CLAIMS = `{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}`;
+const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
+const ADMIN_CLAIMS = `{"sub":"${ADMIN_ID}","role":"admin","user_metadata":{"role":"admin"}}`;
 
 /** Helper: call save_commercial_config as admin (all in one psql session) */
 function adminSave(key: string, value: string): string {
+  // C6: After M439, authenticated EXECUTE is revoked. Use svc_ wrapper via service_role.
   return psql(`
-    SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
-    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
-    SET ROLE authenticated;
-    SELECT save_commercial_config('${key}', '${value}'::jsonb);
+    SET ROLE service_role;
+    SELECT svc_save_commercial_config('${ADMIN_ID}'::uuid, '${key}', '${value}'::jsonb);
     RESET ROLE;
   `);
 }
@@ -709,39 +709,31 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
   // ── 32. Authenticated non-admin cannot invoke save_commercial_config ──
 
-  it('32. Authenticated non-admin user is rejected by internal is_admin() check', () => {
-    const NON_ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
-    // Create the non-admin user + profile so auth.uid() resolves
-    // In CI with full schema, profiles.id references auth.users.id
-    // CI auth.users stub has only (id, email, raw_app_meta_data) — use minimal columns
-    psqlMayFail("INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-000000000002', 'nonadmin@test.com') ON CONFLICT DO NOTHING;");
-    psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;");
-
+  // C6: After M439, authenticated EXECUTE is revoked on financial RPCs.
+  it('32. Authenticated user denied EXECUTE on save_commercial_config (C6 REVOKE)', () => {
     const err = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${NON_ADMIN_CLAIMS}', false);
-      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '99'::jsonb);
       RESET ROLE;
     `);
-    expect(err).toContain('requires admin role');
+    expect(err).toContain('permission denied for function');
   });
 
-  // ── 33-35. Explicit RPC EXECUTE privilege assertions ──
+  // ── 33-35. Explicit RPC EXECUTE privilege assertions (post-M439) ──
 
   it('33. anon CANNOT execute save_commercial_config', () => {
     const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
-  it('34. authenticated CAN execute save_commercial_config', () => {
+  it('34. authenticated CANNOT execute save_commercial_config (C6 REVOKE)', () => {
     const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
-    expect(canExec).toBe('t');
+    expect(canExec).toBe('f');
   });
 
-  it('35. service_role CANNOT execute save_commercial_config', () => {
+  it('35. service_role CAN execute save_commercial_config (C6 GRANT)', () => {
     const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
-    expect(canExec).toBe('f');
+    expect(canExec).toBe('t');
   });
 
   // ── 36. Structural regression: guard functions use function-owner, not rolsuper ──
