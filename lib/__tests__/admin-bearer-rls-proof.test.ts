@@ -80,9 +80,9 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
       VALUES ('${TEST_USER_ID}', 'rls-test-${TEST_USER_ID.slice(0,8)}@test.local')
       ON CONFLICT (id) DO NOTHING;
 
-      -- Create test business
-      INSERT INTO businesses (id, name, owner_id, status, payout_mode, country_code, verification_level, verification_status)
-      VALUES ('${TEST_BIZ_ID}', 'RLS Test Biz', '${TEST_USER_ID}', 'active', 'platform_managed', 'NG', 'basic', 'unverified')
+      -- Create test business (slug is NOT NULL)
+      INSERT INTO businesses (id, name, slug, owner_id, status, payout_mode, country_code, verification_level, verification_status)
+      VALUES ('${TEST_BIZ_ID}', 'RLS Test Biz', 'rls-test-${TEST_BIZ_ID.slice(0,8)}', '${TEST_USER_ID}', 'active', 'platform_managed', 'NG', 'basic', 'unverified')
       ON CONFLICT (id) DO NOTHING;
 
       -- Create test payout
