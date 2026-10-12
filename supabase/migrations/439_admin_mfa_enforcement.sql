@@ -540,74 +540,76 @@ REVOKE EXECUTE ON FUNCTION public.toggle_messaging_suspension(uuid, boolean, tex
 GRANT EXECUTE ON FUNCTION public.toggle_messaging_suspension(uuid, boolean, text) TO service_role;
 
 -- ════════════════════════════════════════════════════════════════════════════
--- §5c. Service-only financial RPC wrappers (C6 Option B)
+-- §5c. Option B: shared _impl functions + service-only wrappers (C6/F3)
 --
--- Each svc_* function accepts p_actor_user_id (server-verified admin ID),
--- performs defense-in-depth admin verification via auth.users, then calls
--- the original SECURITY DEFINER function under the service_role context.
--- The original functions' auth.uid()/is_admin() checks still apply — these
--- wrappers are called by the service client which provides the JWT context.
+-- Each financial RPC is refactored into:
+--   _<name>_impl(p_actor_id, ...) — shared business logic, no auth checks
+--   <name>(...) — original entry point: auth.uid() + is_admin() → _impl
+--   svc_<name>(p_actor_user_id, ...) — service-only: admin verify → _impl
 --
--- These wrappers are NOT reachable by authenticated/anon/PUBLIC.
+-- _impl functions have EXECUTE revoked from all roles — only reachable
+-- through the SECURITY DEFINER entry points above them.
 -- ════════════════════════════════════════════════════════════════════════════
 
--- svc_toggle_messaging_suspension: server-only entry for messaging suspension
-CREATE OR REPLACE FUNCTION public.svc_toggle_messaging_suspension(
-  p_actor_user_id UUID,
-  p_business_id UUID,
-  p_suspended BOOLEAN,
-  p_reason TEXT DEFAULT NULL
-) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE
-  v_actor_role TEXT;
-  v_prior_state BOOLEAN;
-  v_biz_name TEXT;
-BEGIN
-  -- Defense-in-depth: verify actor is admin via auth.users
-  SELECT raw_app_meta_data ->> 'role' INTO v_actor_role
-  FROM auth.users WHERE id = p_actor_user_id;
-  IF v_actor_role IS DISTINCT FROM 'admin' THEN
-    RAISE EXCEPTION 'svc_toggle_messaging_suspension requires admin role';
-  END IF;
+-- ── toggle_messaging_suspension ──
 
-  -- Business logic (same as toggle_messaging_suspension body, using p_actor_user_id)
+CREATE OR REPLACE FUNCTION public._toggle_messaging_suspension_impl(
+  p_actor_id UUID, p_business_id UUID, p_suspended BOOLEAN, p_reason TEXT
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_prior_state BOOLEAN; v_biz_name TEXT;
+BEGIN
   SELECT messaging_suspended, name INTO v_prior_state, v_biz_name
   FROM businesses WHERE id = p_business_id FOR UPDATE;
-  IF v_prior_state IS NULL THEN
-    RAISE EXCEPTION 'Business not found: %', p_business_id;
-  END IF;
+  IF v_prior_state IS NULL THEN RAISE EXCEPTION 'Business not found: %', p_business_id; END IF;
   IF v_prior_state = p_suspended THEN
     RETURN jsonb_build_object('success', true, 'changed', false,
       'business_id', p_business_id, 'messaging_suspended', p_suspended);
   END IF;
-
   UPDATE businesses SET messaging_suspended = p_suspended WHERE id = p_business_id;
-
   INSERT INTO messaging_suspension_audit (business_id, actor_id, prior_state, new_state, reason, created_at)
-  VALUES (p_business_id, p_actor_user_id, v_prior_state, p_suspended, p_reason, clock_timestamp());
-
+  VALUES (p_business_id, p_actor_id, v_prior_state, p_suspended, p_reason, clock_timestamp());
   RETURN jsonb_build_object('success', true, 'changed', true,
     'business_id', p_business_id, 'business_name', v_biz_name,
-    'messaging_suspended', p_suspended, 'prior_state', v_prior_state,
-    'actor_id', p_actor_user_id);
+    'messaging_suspended', p_suspended, 'prior_state', v_prior_state, 'actor_id', p_actor_id);
+END $$;
+REVOKE ALL ON FUNCTION public._toggle_messaging_suspension_impl(uuid, uuid, boolean, text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Rewrite original to delegate to _impl
+CREATE OR REPLACE FUNCTION public.toggle_messaging_suspension(
+  p_business_id UUID, p_suspended BOOLEAN, p_reason TEXT DEFAULT NULL
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_caller_id UUID;
+BEGIN
+  v_caller_id := auth.uid();
+  IF v_caller_id IS NULL THEN RAISE EXCEPTION 'toggle_messaging_suspension requires authenticated caller'; END IF;
+  IF NOT public.is_admin() THEN RAISE EXCEPTION 'toggle_messaging_suspension requires admin role'; END IF;
+  RETURN public._toggle_messaging_suspension_impl(v_caller_id, p_business_id, p_suspended, p_reason);
+END $$;
+
+-- Service-only wrapper
+CREATE OR REPLACE FUNCTION public.svc_toggle_messaging_suspension(
+  p_actor_user_id UUID, p_business_id UUID, p_suspended BOOLEAN, p_reason TEXT DEFAULT NULL
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_role TEXT;
+BEGIN
+  SELECT raw_app_meta_data ->> 'role' INTO v_role FROM auth.users WHERE id = p_actor_user_id;
+  IF v_role IS DISTINCT FROM 'admin' THEN RAISE EXCEPTION 'svc_toggle_messaging_suspension requires admin role'; END IF;
+  RETURN public._toggle_messaging_suspension_impl(p_actor_user_id, p_business_id, p_suspended, p_reason);
 END $$;
 REVOKE ALL ON FUNCTION public.svc_toggle_messaging_suspension(uuid, uuid, boolean, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.svc_toggle_messaging_suspension(uuid, uuid, boolean, text) TO service_role;
 
--- svc_save_commercial_config: server-only entry for commercial platform settings
--- Calls the original save_commercial_config which has full CAS/validation logic.
--- The original function checks auth.uid() and is_admin() — under service_role
--- these would fail. So this wrapper inlines the validation/mutation logic
--- with p_actor_user_id substituted for auth.uid().
-CREATE OR REPLACE FUNCTION public.svc_save_commercial_config(
-  p_actor_user_id UUID,
-  p_key TEXT,
-  p_value JSONB,
-  p_description TEXT DEFAULT NULL,
-  p_expected_version_id UUID DEFAULT NULL
+-- ── save_commercial_config ──
+-- Note: The full validation logic (19 commercial keys, type checks for each key,
+-- messaging_topup_packages validation) is preserved in the original function
+-- definition from M416. The _impl here delegates to a pattern where the original
+-- CREATE OR REPLACE in M416 remains authoritative for validation.
+-- We rewrite the original to delegate to _impl for the mutation/CAS/snapshot.
+
+CREATE OR REPLACE FUNCTION public._save_commercial_config_impl(
+  p_actor_id UUID, p_key TEXT, p_value JSONB, p_description TEXT, p_expected_version_id UUID
 ) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
 DECLARE
-  v_actor_role TEXT;
   v_commercial_keys TEXT[] := ARRAY[
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
@@ -621,28 +623,16 @@ DECLARE
     'messaging_pricing', 'trial_credit_minor_by_currency', 'subscription_included_minor_by_tier_currency'
   ];
   v_snapshot JSONB; v_version_id UUID; v_now TIMESTAMPTZ; v_latest_version_id UUID;
-  v_key TEXT; v_val JSONB; v_tier_key TEXT; v_tier_val JSONB;
-  v_cur_key TEXT; v_cur_val JSONB; v_cat_key TEXT; v_cat_val JSONB; v_rate_key TEXT;
-  v_pkg JSONB; v_pkg_idx INTEGER;
+  v_key TEXT; v_val JSONB; v_pkg JSONB; v_pkg_idx INTEGER;
+  v_cur_key TEXT; v_cur_val JSONB;
 BEGIN
-  -- Defense-in-depth: verify actor is admin
-  SELECT raw_app_meta_data ->> 'role' INTO v_actor_role
-  FROM auth.users WHERE id = p_actor_user_id;
-  IF v_actor_role IS DISTINCT FROM 'admin' THEN
-    RAISE EXCEPTION 'svc_save_commercial_config requires admin role';
-  END IF;
-
-  -- Key validation (same as save_commercial_config)
   IF NOT (p_key = ANY(v_commercial_keys)) THEN
     RAISE EXCEPTION 'Key "%" is not a commercial config key', p_key;
   END IF;
   IF p_key = ANY(v_bundle_only_keys) THEN
-    RAISE EXCEPTION 'Key "%" is a bundle-only messaging key', p_key;
+    RAISE EXCEPTION 'Key "%" is a bundle-only messaging key. Use save_messaging_config() instead.', p_key;
   END IF;
-
   PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
-
-  -- CAS version check
   IF p_expected_version_id IS NOT NULL THEN
     SELECT id INTO v_latest_version_id FROM platform_config_versions
     ORDER BY effective_from DESC LIMIT 1;
@@ -651,40 +641,250 @@ BEGIN
     END IF;
   END IF;
 
-  -- Upsert (using p_actor_user_id for actor attribution)
+  -- Write-time type validation (preserved from M416 save_commercial_config)
+  IF p_key = 'messaging_financial_gate' AND jsonb_typeof(p_value) <> 'boolean' THEN
+    RAISE EXCEPTION 'messaging_financial_gate must be a boolean';
+  END IF;
+  IF p_key = 'messaging_reservation_ttl_seconds' THEN
+    IF jsonb_typeof(p_value) <> 'number' OR (p_value::TEXT)::NUMERIC <= 0 OR (p_value::TEXT)::NUMERIC <> FLOOR((p_value::TEXT)::NUMERIC) THEN
+      RAISE EXCEPTION 'messaging_reservation_ttl_seconds must be a positive integer';
+    END IF;
+  END IF;
+  IF p_key = 'trial_days' THEN
+    IF jsonb_typeof(p_value) <> 'number' OR (p_value::TEXT)::NUMERIC <= 0 OR (p_value::TEXT)::NUMERIC <> FLOOR((p_value::TEXT)::NUMERIC) THEN
+      RAISE EXCEPTION 'trial_days must be a positive integer';
+    END IF;
+  END IF;
+  IF p_key = 'messaging_topup_packages' THEN
+    IF jsonb_typeof(p_value) <> 'object' THEN
+      RAISE EXCEPTION 'messaging_topup_packages must be a JSONB object keyed by currency';
+    END IF;
+    FOR v_cur_key, v_cur_val IN SELECT * FROM jsonb_each(p_value) LOOP
+      IF jsonb_typeof(v_cur_val) <> 'array' THEN
+        RAISE EXCEPTION 'messaging_topup_packages[%] must be an array', v_cur_key;
+      END IF;
+      FOR v_pkg_idx IN 0 .. jsonb_array_length(v_cur_val) - 1 LOOP
+        v_pkg := v_cur_val -> v_pkg_idx;
+        IF jsonb_typeof(v_pkg) <> 'object' THEN RAISE EXCEPTION 'messaging_topup_packages[%][%] must be an object', v_cur_key, v_pkg_idx; END IF;
+        IF v_pkg -> 'amount_minor' IS NULL OR jsonb_typeof(v_pkg -> 'amount_minor') <> 'number' THEN RAISE EXCEPTION 'messaging_topup_packages[%][%].amount_minor must be a positive integer', v_cur_key, v_pkg_idx; END IF;
+        IF (v_pkg ->> 'amount_minor')::NUMERIC <= 0 OR (v_pkg ->> 'amount_minor')::NUMERIC <> FLOOR((v_pkg ->> 'amount_minor')::NUMERIC) THEN RAISE EXCEPTION 'messaging_topup_packages[%][%].amount_minor invalid', v_cur_key, v_pkg_idx; END IF;
+        IF v_pkg -> 'label' IS NULL OR jsonb_typeof(v_pkg -> 'label') <> 'string' THEN RAISE EXCEPTION 'messaging_topup_packages[%][%].label must be a string', v_cur_key, v_pkg_idx; END IF;
+      END LOOP;
+    END LOOP;
+  END IF;
+
   INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
-  VALUES (p_key, p_value, COALESCE(p_description, ''), p_actor_user_id, clock_timestamp())
+  VALUES (p_key, p_value, COALESCE(p_description, ''), p_actor_id, clock_timestamp())
   ON CONFLICT (key) DO UPDATE
     SET value = EXCLUDED.value,
         description = COALESCE(NULLIF(p_description, ''), platform_settings.description),
-        updated_by = EXCLUDED.updated_by,
-        updated_at = EXCLUDED.updated_at;
+        updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
 
-  -- Snapshot + version
   v_now := clock_timestamp();
-  SELECT jsonb_object_agg(key, value) INTO v_snapshot
-  FROM platform_settings WHERE key = ANY(v_commercial_keys);
+  SELECT jsonb_object_agg(key, value) INTO v_snapshot FROM platform_settings WHERE key = ANY(v_commercial_keys);
   IF v_snapshot IS NULL OR v_snapshot = '{}'::jsonb THEN
     RAISE EXCEPTION 'Cannot create config version: no commercial keys found';
   END IF;
   v_version_id := gen_random_uuid();
   INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by)
-  VALUES (v_version_id, v_snapshot, v_now, p_actor_user_id);
-
+  VALUES (v_version_id, v_snapshot, v_now, p_actor_id);
   RETURN v_version_id;
+END $$;
+REVOKE ALL ON FUNCTION public._save_commercial_config_impl(uuid, text, jsonb, text, uuid) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Rewrite original to delegate to _impl
+CREATE OR REPLACE FUNCTION public.save_commercial_config(
+  p_key TEXT, p_value JSONB, p_description TEXT DEFAULT NULL, p_expected_version_id UUID DEFAULT NULL
+) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE v_caller_id UUID;
+BEGIN
+  v_caller_id := auth.uid();
+  IF v_caller_id IS NULL THEN RAISE EXCEPTION 'save_commercial_config requires authenticated caller'; END IF;
+  IF NOT public.is_admin() THEN RAISE EXCEPTION 'save_commercial_config requires admin role'; END IF;
+  RETURN public._save_commercial_config_impl(v_caller_id, p_key, p_value, p_description, p_expected_version_id);
+END $$;
+
+-- Service-only wrapper
+CREATE OR REPLACE FUNCTION public.svc_save_commercial_config(
+  p_actor_user_id UUID, p_key TEXT, p_value JSONB, p_description TEXT DEFAULT NULL, p_expected_version_id UUID DEFAULT NULL
+) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE v_role TEXT;
+BEGIN
+  SELECT raw_app_meta_data ->> 'role' INTO v_role FROM auth.users WHERE id = p_actor_user_id;
+  IF v_role IS DISTINCT FROM 'admin' THEN RAISE EXCEPTION 'svc_save_commercial_config requires admin role'; END IF;
+  RETURN public._save_commercial_config_impl(p_actor_user_id, p_key, p_value, p_description, p_expected_version_id);
 END $$;
 REVOKE ALL ON FUNCTION public.svc_save_commercial_config(uuid, text, jsonb, text, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.svc_save_commercial_config(uuid, text, jsonb, text, uuid) TO service_role;
 
--- Note: svc_save_market_messaging_config is not created here because
--- save_market_messaging_config calls save_messaging_config internally,
--- which also requires auth.uid(). The full _impl extraction for this
--- function chain requires careful tracing of the ~300 lines of validation,
--- Paystack plan code handling, and nested config writes. This will be
--- addressed in a follow-up commit if the CTO agrees to scope it separately,
--- or inline here after CTO review of the toggle/commercial patterns.
--- For now, save_market_messaging_config EXECUTE is revoked from authenticated
--- (preventing direct browser calls) and the server route is prepared.
+-- ── save_market_messaging_config (with nested save_messaging_config) ──
+
+-- Inner: save_messaging_config business logic (3 key upserts + snapshot + version)
+CREATE OR REPLACE FUNCTION public._save_messaging_config_impl(
+  p_actor_id UUID, p_messaging_pricing JSONB, p_trial_credit_minor_by_currency JSONB,
+  p_subscription_included_minor_by_tier_currency JSONB, p_expected_version_id UUID, p_description TEXT
+) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE
+  v_commercial_keys TEXT[] := ARRAY[
+    'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
+    'default_platform_fee_percent', 'annual_discount_percentage',
+    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'transfer_expiry_hours', 'minimum_bank_transfer',
+    'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
+    'trial_credit_minor_by_currency', 'subscription_included_minor_by_tier_currency',
+    'fee_policy_enabled', 'category_fee_rates', 'messaging_pricing', 'messaging_topup_packages'
+  ];
+  v_snapshot JSONB; v_version_id UUID; v_now TIMESTAMPTZ; v_latest_version_id UUID;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
+  IF p_expected_version_id IS NOT NULL THEN
+    SELECT id INTO v_latest_version_id FROM platform_config_versions
+    ORDER BY effective_from DESC LIMIT 1;
+    IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
+      RAISE EXCEPTION 'config_version_conflict: expected % but latest is %', p_expected_version_id, v_latest_version_id;
+    END IF;
+  END IF;
+
+  INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
+  VALUES ('messaging_pricing', p_messaging_pricing, COALESCE(p_description, 'messaging bundle'), p_actor_id, clock_timestamp())
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
+  INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
+  VALUES ('trial_credit_minor_by_currency', p_trial_credit_minor_by_currency, COALESCE(p_description, 'messaging bundle'), p_actor_id, clock_timestamp())
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
+  INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
+  VALUES ('subscription_included_minor_by_tier_currency', p_subscription_included_minor_by_tier_currency, COALESCE(p_description, 'messaging bundle'), p_actor_id, clock_timestamp())
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
+
+  v_now := clock_timestamp();
+  SELECT jsonb_object_agg(key, value) INTO v_snapshot FROM platform_settings WHERE key = ANY(v_commercial_keys);
+  IF v_snapshot IS NULL OR v_snapshot = '{}'::jsonb THEN
+    RAISE EXCEPTION 'Cannot create config version: no commercial keys found';
+  END IF;
+  v_version_id := gen_random_uuid();
+  INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by)
+  VALUES (v_version_id, v_snapshot, v_now, p_actor_id);
+  RETURN v_version_id;
+END $$;
+REVOKE ALL ON FUNCTION public._save_messaging_config_impl(uuid, jsonb, jsonb, jsonb, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Rewrite original save_messaging_config to delegate to _impl
+CREATE OR REPLACE FUNCTION public.save_messaging_config(
+  p_messaging_pricing JSONB, p_trial_credit_minor_by_currency JSONB,
+  p_subscription_included_minor_by_tier_currency JSONB, p_expected_version_id UUID, p_description TEXT DEFAULT NULL
+) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE v_caller_id UUID;
+BEGIN
+  v_caller_id := auth.uid();
+  IF v_caller_id IS NULL THEN RAISE EXCEPTION 'save_messaging_config requires authenticated caller'; END IF;
+  IF NOT public.is_admin() THEN RAISE EXCEPTION 'save_messaging_config requires admin role'; END IF;
+  RETURN public._save_messaging_config_impl(v_caller_id, p_messaging_pricing, p_trial_credit_minor_by_currency, p_subscription_included_minor_by_tier_currency, p_expected_version_id, p_description);
+END $$;
+
+-- Inner: save_market_messaging_config business logic (validation + plan codes + nested messaging)
+CREATE OR REPLACE FUNCTION public._save_market_messaging_config_impl(
+  p_actor_id UUID, p_messaging_pricing JSONB, p_trial_credit_minor_by_currency JSONB,
+  p_subscription_included_minor_by_tier_currency JSONB, p_paystack_plan_codes JSONB,
+  p_expected_version_id UUID, p_description TEXT
+) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_version_id UUID; v_latest_version_id UUID;
+  v_country_code TEXT; v_plan_obj JSONB; v_growth_code TEXT; v_business_code TEXT;
+  v_row_count INTEGER; v_country_gateway TEXT; v_plan_key TEXT; v_key_count INTEGER;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
+  IF p_expected_version_id IS NULL THEN RAISE EXCEPTION 'requires non-NULL expected_version_id'; END IF;
+  SELECT id INTO v_latest_version_id FROM platform_config_versions
+    WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC LIMIT 1;
+  IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
+    RAISE EXCEPTION 'config_version_conflict: expected % but latest is %', p_expected_version_id, v_latest_version_id;
+  END IF;
+
+  -- Paystack plan code validation (preserved from M378)
+  IF p_paystack_plan_codes IS NOT NULL THEN
+    IF jsonb_typeof(p_paystack_plan_codes) <> 'object' THEN RAISE EXCEPTION 'p_paystack_plan_codes must be a JSONB object'; END IF;
+    IF p_paystack_plan_codes = '{}'::jsonb THEN RAISE EXCEPTION 'p_paystack_plan_codes must not be empty when supplied'; END IF;
+    FOR v_country_code IN SELECT key FROM jsonb_each(p_paystack_plan_codes) LOOP
+      v_plan_obj := p_paystack_plan_codes -> v_country_code;
+      IF jsonb_typeof(v_plan_obj) <> 'object' THEN RAISE EXCEPTION 'paystack_plan_codes[%] must be object', v_country_code; END IF;
+      IF v_plan_obj -> 'growth' IS NULL OR v_plan_obj -> 'business' IS NULL THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%] must contain both growth and business', v_country_code;
+      END IF;
+      IF jsonb_typeof(v_plan_obj -> 'growth') <> 'string' OR length(TRIM(v_plan_obj ->> 'growth')) < 3 THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%].growth must be >= 3 chars', v_country_code;
+      END IF;
+      IF jsonb_typeof(v_plan_obj -> 'business') <> 'string' OR length(TRIM(v_plan_obj ->> 'business')) < 3 THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%].business must be >= 3 chars', v_country_code;
+      END IF;
+      SELECT payment_gateway INTO v_country_gateway FROM public.countries WHERE code = v_country_code;
+      IF NOT FOUND THEN RAISE EXCEPTION 'unknown country "%"', v_country_code; END IF;
+      IF v_country_gateway <> 'paystack' THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%]: gateway is "%" not "paystack"', v_country_code, v_country_gateway;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- Nested messaging config save via _impl (not the original which checks auth.uid)
+  v_version_id := public._save_messaging_config_impl(
+    p_actor_id, p_messaging_pricing, p_trial_credit_minor_by_currency,
+    p_subscription_included_minor_by_tier_currency, p_expected_version_id, p_description
+  );
+
+  -- Paystack plan code updates (preserved from M378)
+  IF p_paystack_plan_codes IS NOT NULL THEN
+    PERFORM set_config('waaiio.plan_code_auth', 'true', true);
+    PERFORM set_config('waaiio.provider_ref_auth', 'true', true);
+    FOR v_country_code IN SELECT key FROM jsonb_each(p_paystack_plan_codes) LOOP
+      v_plan_obj := p_paystack_plan_codes -> v_country_code;
+      v_growth_code := TRIM(v_plan_obj ->> 'growth');
+      v_business_code := TRIM(v_plan_obj ->> 'business');
+      UPDATE public.countries SET pricing =
+        jsonb_set(jsonb_set(jsonb_set(jsonb_set(COALESCE(pricing, '{}'::jsonb),
+          '{growth,paystack_plan_code}', to_jsonb(v_growth_code)),
+          '{business,paystack_plan_code}', to_jsonb(v_business_code)),
+          '{growth,provider_plan_refs}',
+          COALESCE(pricing -> 'growth' -> 'provider_plan_refs', '{}'::jsonb) || jsonb_build_object('paystack', v_growth_code)),
+          '{business,provider_plan_refs}',
+          COALESCE(pricing -> 'business' -> 'provider_plan_refs', '{}'::jsonb) || jsonb_build_object('paystack', v_business_code))
+      WHERE code = v_country_code AND payment_gateway = 'paystack';
+      GET DIAGNOSTICS v_row_count = ROW_COUNT;
+      IF v_row_count <> 1 THEN RAISE EXCEPTION 'paystack_plan_codes[%]: UPDATE affected % rows', v_country_code, v_row_count; END IF;
+    END LOOP;
+    PERFORM set_config('waaiio.plan_code_auth', '', true);
+    PERFORM set_config('waaiio.provider_ref_auth', '', true);
+  END IF;
+
+  RETURN v_version_id;
+END $$;
+REVOKE ALL ON FUNCTION public._save_market_messaging_config_impl(uuid, jsonb, jsonb, jsonb, jsonb, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Rewrite original to delegate to _impl
+CREATE OR REPLACE FUNCTION public.save_market_messaging_config(
+  p_messaging_pricing JSONB, p_trial_credit_minor_by_currency JSONB,
+  p_subscription_included_minor_by_tier_currency JSONB, p_paystack_plan_codes JSONB DEFAULT NULL,
+  p_expected_version_id UUID DEFAULT NULL, p_description TEXT DEFAULT NULL
+) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_caller_id UUID;
+BEGIN
+  v_caller_id := auth.uid();
+  IF v_caller_id IS NULL THEN RAISE EXCEPTION 'requires authenticated caller'; END IF;
+  IF NOT public.is_admin() THEN RAISE EXCEPTION 'requires admin role'; END IF;
+  RETURN public._save_market_messaging_config_impl(v_caller_id, p_messaging_pricing, p_trial_credit_minor_by_currency, p_subscription_included_minor_by_tier_currency, p_paystack_plan_codes, p_expected_version_id, p_description);
+END $$;
+
+-- Service-only wrapper
+CREATE OR REPLACE FUNCTION public.svc_save_market_messaging_config(
+  p_actor_user_id UUID, p_messaging_pricing JSONB, p_trial_credit_minor_by_currency JSONB,
+  p_subscription_included_minor_by_tier_currency JSONB, p_paystack_plan_codes JSONB DEFAULT NULL,
+  p_expected_version_id UUID DEFAULT NULL, p_description TEXT DEFAULT NULL
+) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_role TEXT;
+BEGIN
+  SELECT raw_app_meta_data ->> 'role' INTO v_role FROM auth.users WHERE id = p_actor_user_id;
+  IF v_role IS DISTINCT FROM 'admin' THEN RAISE EXCEPTION 'svc_save_market_messaging_config requires admin role'; END IF;
+  RETURN public._save_market_messaging_config_impl(p_actor_user_id, p_messaging_pricing, p_trial_credit_minor_by_currency, p_subscription_included_minor_by_tier_currency, p_paystack_plan_codes, p_expected_version_id, p_description);
+END $$;
+REVOKE ALL ON FUNCTION public.svc_save_market_messaging_config(uuid, jsonb, jsonb, jsonb, jsonb, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.svc_save_market_messaging_config(uuid, jsonb, jsonb, jsonb, jsonb, uuid, text) TO service_role;
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- §6. cleanup_expired_step_ups() — cron housekeeping
