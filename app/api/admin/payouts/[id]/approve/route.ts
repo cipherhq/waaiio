@@ -65,6 +65,14 @@ export async function POST(
     return NextResponse.json({ error: 'Payout cannot be approved in current status' }, { status: 400 });
   }
 
+  // Block payouts with critical flags that require manual resolution
+  const payoutFlags = Array.isArray(payout.flags) ? payout.flags : [];
+  if (payoutFlags.some((f: { type?: string }) => f.type === 'adjustment_link_failed')) {
+    return NextResponse.json({
+      error: 'This payout has an adjustment_link_failed flag and cannot be approved until the adjustment linkage is manually resolved. See issue #620.',
+    }, { status: 409 });
+  }
+
   // ── Business verification ──
   const { data: bizCheck } = await serviceClient
     .from('businesses')

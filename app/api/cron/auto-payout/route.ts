@@ -458,6 +458,18 @@ export async function GET(request: NextRequest) {
         const coolingDone = age >= COOLING_PERIOD_DAYS;
         const hasAccount = heldAccountSet.has(hp.business_id);
 
+        // Never auto-release payouts with critical flags (e.g. adjustment_link_failed)
+        const hpFlags = Array.isArray(hp.flags) ? hp.flags : [];
+        const hasCriticalFlag = hpFlags.some(
+          (f: { type?: string; severity?: string }) => f.type === 'adjustment_link_failed',
+        );
+        if (hasCriticalFlag) {
+          logger.warn('[AUTO-PAYOUT] Skipping held payout with adjustment_link_failed flag', {
+            payout_id: hp.id, business_id: hp.business_id,
+          });
+          continue;
+        }
+
         if (coolingDone && isVerified && hasAccount) {
           await supabase
             .from('business_payouts')

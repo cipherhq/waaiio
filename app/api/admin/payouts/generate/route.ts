@@ -66,6 +66,7 @@ export async function POST(request: NextRequest) {
     let skipped = 0;
     let held = 0;
     let failed = 0;
+    const needsAttention: string[] = [];
 
     for (const biz of businesses) {
       // Check if payout already exists for this period
@@ -271,13 +272,23 @@ export async function POST(request: NextRequest) {
             message: `Failed to link ${adjIds.length} adjustment(s): ${adjError.message}`,
             severity: 'critical' as const,
           });
-          await supabase
+          const { data: containmentResult, error: containmentError } = await supabase
             .from('business_payouts')
             .update({ status: 'held', flags: existingFlags })
-            .eq('id', newPayout.id);
-          logger.error('[PAYOUT] Adjustment link failed — payout set to held', {
-            payout_id: newPayout.id, business_id: biz.id, adjIds, error: adjError.message,
-          });
+            .eq('id', newPayout.id)
+            .select('id');
+
+          if (containmentError || !containmentResult || containmentResult.length === 0) {
+            logger.error('[PAYOUT] Containment update failed — payout may remain in original status without flag', {
+              payout_id: newPayout.id, business_id: biz.id, adjIds,
+              containment_error: containmentError?.message,
+            });
+            needsAttention.push(newPayout.id);
+          } else {
+            logger.error('[PAYOUT] Adjustment link failed — payout set to held', {
+              payout_id: newPayout.id, business_id: biz.id, adjIds, error: adjError.message,
+            });
+          }
           failed++;
           continue;
         }
@@ -303,6 +314,7 @@ export async function POST(request: NextRequest) {
         payouts_created: created,
         payouts_held: held,
         payouts_failed: failed,
+        needs_attention: needsAttention,
       },
     });
 
@@ -313,6 +325,7 @@ export async function POST(request: NextRequest) {
         created,
         held,
         skipped,
+        needs_attention: needsAttention.length > 0 ? needsAttention : undefined,
         failed,
         period: { start: periodStartStr, end: periodEndStr },
       }, { status: 207 });
