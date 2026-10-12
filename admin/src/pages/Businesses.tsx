@@ -318,9 +318,11 @@ export default function Businesses() {
   async function handleToggleSuspension() {
     if (!selected || !isFullAdmin) return;
     const newState = !selected.messaging_suspended;
-    const reason = newState
+    const reasonInput = newState
       ? prompt('Reason for suspending messaging (optional):')
       : prompt('Reason for resuming messaging (optional):');
+    if (reasonInput === null) return;
+    const reason = reasonInput.trim() || null;
     setSuspensionSaving(true);
     try {
       const onAuthorized = async (stepUpId: string) => {
@@ -332,7 +334,7 @@ export default function Businesses() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({
-            businessId: selected.id, suspended: newState, reason: reason || null, stepUpId,
+            businessId: selected.id, suspended: newState, reason, stepUpId,
           }),
         });
         const data = await res.json();
@@ -347,7 +349,7 @@ export default function Businesses() {
       await stepUp.execute({
         actionType: 'messaging_suspension',
         targetId: selected.id,
-        params: { business_id: selected.id, suspended: newState, reason: reason ?? null },
+        params: { business_id: selected.id, suspended: newState, reason },
         description: `${newState ? 'Suspend' : 'Resume'} messaging for ${selected.name}`,
         onAuthorized,
       });
