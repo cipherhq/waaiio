@@ -74,13 +74,10 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
     // CI auth.users has a handle_new_user trigger that auto-creates profiles.
     // Use the minimal (id, email) INSERT matching engage-e1-schema-db.test.ts.
     const seed = `
-      -- Create test user in auth.users (required for FK references)
+      -- Create test user in auth.users (required for FK references).
+      -- The handle_new_user trigger auto-creates the profiles row.
       INSERT INTO auth.users (id, email)
       VALUES ('${TEST_USER_ID}', 'rls-test-${TEST_USER_ID.slice(0,8)}@test.local')
-      ON CONFLICT (id) DO NOTHING;
-
-      -- Ensure profile exists (trigger may have created it)
-      INSERT INTO profiles (id, display_name) VALUES ('${TEST_USER_ID}', 'RLS Test User')
       ON CONFLICT (id) DO NOTHING;
 
       -- Create test business
