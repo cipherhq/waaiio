@@ -89,6 +89,10 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
       $jwt$;
     `);
 
+    // C6: M439 revokes authenticated EXECUTE on toggle_messaging_suspension.
+    // Re-grant for internal logic testing. ACL tested in admin-helper-acl-db.
+    psqlMayFail(`GRANT EXECUTE ON FUNCTION toggle_messaging_suspension(uuid, boolean, text) TO authenticated;`);
+
     // 1. Seed dedicated admin user with canonical raw_app_meta_data.role = 'admin'
     const adminResult = psqlMayFail(`
       INSERT INTO auth.users (id, email, raw_app_meta_data)

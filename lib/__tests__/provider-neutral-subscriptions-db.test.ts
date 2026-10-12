@@ -131,6 +131,14 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   let testUserId: string;
 
   beforeAll(() => {
+    // C6: M439 revokes authenticated EXECUTE on financial RPCs.
+    // Re-grant for internal logic testing. ACL tested in admin-helper-acl-db.
+    psqlMayFail(`
+      GRANT EXECUTE ON FUNCTION save_commercial_config(text, jsonb, text, uuid) TO authenticated;
+      GRANT EXECUTE ON FUNCTION save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) TO authenticated;
+      GRANT EXECUTE ON FUNCTION save_messaging_config(jsonb, jsonb, jsonb, uuid, text) TO authenticated;
+    `);
+
     // Discover admin identity
     adminId = psql('SELECT auth.uid()::text;').trim();
     psqlMayFail(`

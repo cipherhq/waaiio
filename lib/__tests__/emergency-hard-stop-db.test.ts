@@ -44,6 +44,10 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
+      -- C6: M439 revokes authenticated EXECUTE on toggle_messaging_suspension.
+      -- Re-grant here to test the function's internal logic (CAS, audit, validation).
+      -- The ACL revocation is tested separately in admin-helper-acl-db.test.ts.
+      GRANT EXECUTE ON FUNCTION toggle_messaging_suspension(uuid, boolean, text) TO authenticated;
 
       -- Keep the MFA-enforcing M439 helper intact. Supply an isolated
       -- legacy M363 stub only when that canonical helper does not exist.
@@ -392,9 +396,12 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
 
   // ── EXECUTE privilege ──
 
-  it('13. EXECUTE privilege: PUBLIC revoked, authenticated granted', () => {
-    const acl = psql("SELECT proacl::text FROM pg_proc WHERE proname = 'toggle_messaging_suspension';");
-    expect(acl).toContain('authenticated=X/');
+  it('13. EXECUTE privilege: service_role granted (C6 — authenticated revoked by M439, re-granted for test)', () => {
+    // Post-M439: authenticated EXECUTE is revoked. service_role has EXECUTE.
+    // This test's beforeAll re-grants authenticated for internal logic testing.
+    // The ACL revocation is verified in admin-helper-acl-db.test.ts.
+    const svcExec = psql("SELECT has_function_privilege('service_role', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');");
+    expect(svcExec).toBe('t');
   });
 
   // ── Missing business ──
