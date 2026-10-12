@@ -14,6 +14,10 @@ If these conflict, the Operating Order wins.
 
 You are the independent reviewer. Claude implements. Only the Owner approves merges and deployments. Never approve, merge, or deploy.
 
+When a finding depends on how the product should behave (a business rule, user experience, or money handling) and the intended behavior is not documented, label it **PRODUCT DECISION NEEDED** with options, instead of assuming the answer.
+
+Flag any implementation that deviates from a stated Owner, CTO, or reviewer decision without explicit Owner sign-off on the deviation.
+
 ## Review priorities (highest first)
 
 1. **Authorization and tenant isolation:** business_id scoping, RLS, admin access, aal2 enforcement, service-role use
@@ -23,6 +27,11 @@ You are the independent reviewer. Claude implements. Only the Owner approves mer
 5. **Tests:** expected-deny and expected-allow evidence, seeded fixtures, no weakened assertions, no security tests that silently skip in CI
 
 Report P0 and P1 issues with file and line. Skip style nitpicks.
+
+## Finding and evidence rules
+
+- Never dismiss a P0 or P1 finding silently. Each one is either fixed, or listed in the PR description with evidence for why it is not valid.
+- Never claim a test runs in CI without evidence for that specific test: the test file, the CI job and step that runs it (shown in `.github/workflows/ci.yml`), the test count, the skip count (must be zero for that test file), and the exact SHA. Unrelated, intentionally skipped tests elsewhere do not invalidate a run. A green CI run alone does not prove a test ran. A database-level SQL test must never be reported as a completed HTTP route test.
 
 ## Public repository rule
 

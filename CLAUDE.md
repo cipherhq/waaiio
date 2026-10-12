@@ -18,6 +18,47 @@ Read and follow both documents before any substantive work. The Operating Order 
 4. **No unauthorized merge/deploy/production mutation.** Deployment and production/database mutation are separate authorization phases. Testing authorization is not merge/deploy authorization.
 5. **GitHub-first.** Substantive audits, evidence, and handoffs go to GitHub issues/PRs, not chat. Chat is for short status and owner decisions only.
 
+## Standing safety rules
+
+- `main` is protected by the ruleset **protect-main** (PR plus 11 passing checks). If GitHub rejects a push or merge, stop and report it. Never attempt a workaround.
+- If any tool or credential returns a permission error, stop and report it. Never retry with a different credential or tool.
+- Never create worktrees in `/tmp` or `/private/tmp`. Use `.claude/worktrees` or `~/Desktop`.
+- This repository is public. Never put security vulnerability details in public issues, PRs, or comments. Security issues go in private GitHub security advisories.
+- Before every push, run: `codex exec --sandbox read-only --output-last-message ~/Desktop/codex-review-$(git branch --show-current | tr '/' '-').md "Review the changes on this branch compared to origin/main as an independent security reviewer. Report P0 and P1 issues with file and line. Do not modify files."` Fix every valid P0 and P1 finding before pushing. Always read the review file for the current branch only (the branch name is sanitized with `tr '/' '-'` so concurrent agents do not overwrite each other). Confirm the review file exists and is non-empty before proceeding. If it does not, treat Codex as unavailable.
+- If you judge a Codex P0 or P1 finding invalid, record the finding and your reason in the PR description. Never dismiss a finding silently.
+- If Codex is unavailable (usage limit or error), push so CI runs, state in the PR description that Codex was unavailable, and ChatGPT becomes reviewer of record for that exact SHA. The review gate never disappears. No merge without the reviewer's APPROVED on the exact head SHA.
+- Two-reviewer gate for high-risk changes (money, auth, permissions, data, migrations): Claude chat reviews the report against the code first, then ChatGPT reviews the corrected SHA, then the Owner merges. Docs-only changes need one review. Each reviewer reviews as if it were the only one.
+- Never claim a test runs in CI without evidence for that specific test: the test file, the CI job and step that runs it (shown in `.github/workflows/ci.yml`), the test count, the skip count (must be zero for that test file), and the exact SHA. Unrelated, intentionally skipped tests elsewhere do not invalidate a run. A green CI run alone does not prove a test ran. A database-level SQL test must never be reported as a completed HTTP route test.
+- Never report a requirement as met by substituting a different test or approach. If the required thing is not feasible, stop and say exactly why.
+- Security tests must fail, not skip, in CI when their database or configuration is missing.
+
+## Product decisions: the Owner decides how Waaiio works
+
+Routine engineering work (reading files, running tests, fixing bugs to match existing behavior, refactoring) does not need Owner approval.
+
+But never guess how the product should behave. If the answer is not already clear from existing code, docs, or an Owner decision, ask the Owner first. This includes:
+- how a feature should work, or what a user should see or be able to do
+- business rules (pricing, fees, payouts, refunds, eligibility, limits)
+- what happens in edge cases (cancellations, failures, retries, timeouts)
+- changing existing user-facing behavior, wording, or flows
+- anything that affects merchants' money or customers' experience
+- security tradeoffs (weakening a check, broadening access, skipping validation)
+- any deviation from an Owner, CTO, or reviewer instruction — if you cannot or choose not to do exactly what was asked, stop and present a decision card with the tradeoff before implementing your alternative
+
+How to ask, as a short decision card:
+
+> **PRODUCT DECISION NEEDED:** one line
+>
+> **Context:** what you found and why it is unclear
+>
+> **Options:** A) ...  B) ...  C) Other
+>
+> **My recommendation:** which one, and why
+>
+> **Meanwhile:** what I will keep working on that does not depend on this
+
+Then stop on that item and wait. Never treat silence as approval.
+
 ## Golden Rules
 
 1. **Understand before changing.** Read every file you plan to modify. Trace how it connects to other files. Understand what depends on it. Never edit blind.
@@ -202,7 +243,7 @@ NEXT_PUBLIC_POSTHOG_KEY
 ```
 
 ## Conventions
-- **Always commit and push** — don't ask, just do it
+- **Commit and push to your own feature branch within an approved task.** Never merge, push directly to main, deploy, or mutate staging or production data or schema without explicit Owner authorization for that specific action. Authorization for testing, committing, or pushing a feature branch does not authorize any other action. Stop on permission errors regardless of prior authorization; never switch credentials or execution methods without renewed approval.
 - **No sample data during onboarding** — businesses add their own content
 - **Bot flows need "I've Paid" verification step** for all payment flows
 - **Security:** Never use `VITE_` prefix for secret keys. Validate redirect params. Use `sanitizeFilterValue()` for `.or()` filters.
