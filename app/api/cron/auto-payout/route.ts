@@ -234,10 +234,37 @@ export async function GET(request: NextRequest) {
       // Mark adjustments as applied to this payout
       if (payout && adjustments && adjustments.length > 0) {
         const adjIds = adjustments.map((a) => a.id);
-        await supabase
+        const { error: adjLinkError } = await supabase
           .from('payout_adjustments')
           .update({ applied_to_payout_id: payout.id })
           .in('id', adjIds);
+
+        if (adjLinkError) {
+          // Containment: set payout to held with adjustment_link_failed flag
+          // holdReasons is string[] — convert to structured flags and add the critical one
+          const adjFlags: { type: string; message: string; severity: string }[] = holdReasons.map(
+            (r: string) => ({ type: 'hold_reason', message: r, severity: 'info' }),
+          );
+          adjFlags.push({
+            type: 'adjustment_link_failed',
+            message: `Failed to link ${adjIds.length} adjustment(s): ${adjLinkError.message}`,
+            severity: 'critical',
+          });
+          const { error: containErr } = await supabase
+            .from('business_payouts')
+            .update({ status: 'held', flags: adjFlags })
+            .eq('id', payout.id);
+
+          if (containErr) {
+            logger.withContext({ op: 'auto-payout.containment', payoutId: payout.id, businessId: biz.id })
+              .error('[AUTO-PAYOUT] Containment update failed — payout may remain approved without flag');
+          } else {
+            logger.withContext({ op: 'auto-payout.adj-link', payoutId: payout.id, businessId: biz.id, adjIds: adjIds.join(',') })
+              .error('[AUTO-PAYOUT] Adjustment link failed — payout set to held');
+          }
+          held++;
+          continue;
+        }
       }
 
       generated++;
