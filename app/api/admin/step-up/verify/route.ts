@@ -20,8 +20,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'stepUpId and 6-digit code required' }, { status: 400, headers: cors });
     }
 
-    await verifyStepUp(admin, stepUpId, code);
-    return NextResponse.json({ verified: true }, { headers: cors });
+    const session = await verifyStepUp(admin, stepUpId, code);
+    return NextResponse.json({ verified: true, session }, {
+      headers: { ...cors, 'Cache-Control': 'no-store' },
+    });
   } catch (err) {
     if (err instanceof StepUpError) {
       return NextResponse.json({ error: err.message }, { status: 400, headers: cors });
