@@ -221,55 +221,57 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
       ON CONFLICT (id) DO NOTHING;
     `);
 
-    // Two concurrent sessions: consume step-up, then conditionally mutate payout
-    const consumeAndMutate = (label: string) => `
-      UPDATE admin_step_up_authorizations
-      SET consumed_at = now()
-      WHERE id = '${STEP_UP_MUTATION}'
-        AND consumed_at IS NULL
-        AND verified_at IS NOT NULL
-        AND expires_at > now()
-        AND admin_user_id = '${ADMIN_USER}'
-        AND session_id = '${SESSION_ID}'
-        AND action_type = 'payout_approve'
-        AND target_id = '${PAYOUT_ID}'
-        AND params_hash = '${PARAMS_HASH}'
-      RETURNING id;
-    `;
+    // Two concurrent sessions: consume step-up, then conditionally mutate payout.
+    // Uses DO block to make mutation conditional on successful consume — mirrors
+    // how consumeStepUp() checks row count before the route proceeds to mutate.
+    const consumeAndMutateBlock = `
+      DO $$
+      DECLARE v_consumed_id uuid;
+      BEGIN
+        UPDATE admin_step_up_authorizations
+        SET consumed_at = now()
+        WHERE id = '${STEP_UP_MUTATION}'
+          AND consumed_at IS NULL
+          AND verified_at IS NOT NULL
+          AND expires_at > now()
+          AND admin_user_id = '${ADMIN_USER}'
+          AND session_id = '${SESSION_ID}'
+          AND action_type = 'payout_approve'
+          AND target_id = '${PAYOUT_ID}'
+          AND params_hash = '${PARAMS_HASH}'
+        RETURNING id INTO v_consumed_id;
 
-    // Protected mutation: CAS UPDATE on business_payouts (matches approve route)
-    const mutateSQL = `
-      UPDATE business_payouts
-      SET status = 'approved', updated_at = now()
-      WHERE id = '${PAYOUT_ID}'
-        AND status = 'pending'
-      RETURNING id;
+        IF v_consumed_id IS NOT NULL THEN
+          -- Winner: authorized to perform the protected mutation
+          UPDATE business_payouts
+          SET status = 'approved', updated_at = now()
+          WHERE id = '${PAYOUT_ID}' AND status = 'pending';
+          RAISE NOTICE 'CONSUMED_AND_MUTATED:%', v_consumed_id;
+        ELSE
+          RAISE NOTICE 'DENIED:consume_failed';
+        END IF;
+      END $$;
     `;
 
     const scriptSQL = `
-      -- Session A: lock, consume, mutate if consumed, unlock
-      (psql "${TEST_DB}" -v ON_ERROR_STOP=0 -t -A <<'SQLA'
+      (psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A <<'SQLA'
 BEGIN;
 SELECT pg_advisory_lock(609002);
-${consumeAndMutate('A')}
+${consumeAndMutateBlock}
 SELECT pg_advisory_unlock(609002);
--- Only mutate if step-up was consumed (RETURNING returned a row)
-${mutateSQL}
 COMMIT;
 SQLA
-) &
+) 2>&1 &
 PID_A=$!
 
-      -- Session B: wait for lock, consume, mutate if consumed, commit
-      (psql "${TEST_DB}" -v ON_ERROR_STOP=0 -t -A <<'SQLB'
+      (psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A <<'SQLB'
 BEGIN;
 SELECT pg_advisory_lock(609002);
 SELECT pg_advisory_unlock(609002);
-${consumeAndMutate('B')}
-${mutateSQL}
+${consumeAndMutateBlock}
 COMMIT;
 SQLB
-) &
+) 2>&1 &
 PID_B=$!
 
       wait $PID_A
@@ -283,29 +285,31 @@ PID_B=$!
       combined = exec(`bash -c '${scriptSQL.replace(/'/g, "'\\''")}'`, {
         encoding: 'utf-8', timeout: 15000,
       }).trim();
-    } catch {
-      combined = 'ERROR---SEPARATOR---ERROR';
+    } catch (e: unknown) {
+      const err = e as { stdout?: string; stderr?: string };
+      combined = `ERROR:${err.stdout || ''}${err.stderr || ''}---SEPARATOR---ERROR`;
     }
 
     const parts = combined.split('---SEPARATOR---');
     const outA = parts[0]?.trim() || '';
     const outB = parts[1]?.trim() || '';
 
-    // Exactly one session consumed the step-up
-    const aConsumed = outA.includes(STEP_UP_MUTATION);
-    const bConsumed = outB.includes(STEP_UP_MUTATION);
+    // Exactly one session consumed and mutated
+    const aConsumed = outA.includes('CONSUMED_AND_MUTATED');
+    const bConsumed = outB.includes('CONSUMED_AND_MUTATED');
+    const aDenied = outA.includes('DENIED:consume_failed');
+    const bDenied = outB.includes('DENIED:consume_failed');
+
     expect(
       (aConsumed && !bConsumed) || (!aConsumed && bConsumed),
-      `Exactly one must consume. A: ${aConsumed}, B: ${bConsumed}`,
+      `Exactly one must consume. A consumed: ${aConsumed}, B consumed: ${bConsumed}\nA: ${outA}\nB: ${outB}`,
     ).toBe(true);
 
-    // Exactly one session mutated the payout
-    const aMutated = outA.includes(PAYOUT_ID);
-    const bMutated = outB.includes(PAYOUT_ID);
-    // The winner consumed AND mutated; the loser did neither (CAS on status='pending'
-    // still allows the loser's UPDATE to match if it ran, but only one can consume)
-    // The key guarantee: only the consume-winner's mutation is authorized
-    expect(aMutated || bMutated, 'At least one mutation must succeed').toBe(true);
+    // The loser was explicitly denied
+    expect(
+      aDenied || bDenied,
+      `Loser must be denied. A denied: ${aDenied}, B denied: ${bDenied}`,
+    ).toBe(true);
 
     // Final state: payout is approved exactly once
     const finalStatus = runSQL(`SELECT status FROM business_payouts WHERE id = '${PAYOUT_ID}';`);
