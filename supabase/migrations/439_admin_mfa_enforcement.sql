@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS public.admin_step_up_authorizations (
   target_id      text,
   params_hash    text        NOT NULL,
   challenge_id   uuid,
+  factor_id      uuid,
   verified_at    timestamptz,
   consumed_at    timestamptz,
   expires_at     timestamptz NOT NULL DEFAULT (now() + interval '5 minutes'),
