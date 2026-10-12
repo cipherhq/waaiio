@@ -134,6 +134,18 @@ export function useStepUp() {
         return;
       }
 
+      // GoTrue MFA verify rotates access and refresh tokens. Persist the new
+      // session before the next authenticated request, or auto-refresh may fail.
+      const payload = await verifyRes.json();
+      if (!payload?.session?.access_token || !payload?.session?.refresh_token) {
+        throw new Error('MFA verification did not return a refreshed session');
+      }
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: payload.session.access_token,
+        refresh_token: payload.session.refresh_token,
+      });
+      if (sessionError) throw new Error('Unable to update session after MFA verification');
+
       // Step 3: Execute the authorized operation
       setState(s => ({ ...s, phase: 'executing' }));
       await onAuthorized(state.stepUpId);
