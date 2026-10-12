@@ -190,11 +190,9 @@ describe('PlatformSettings — absent setting discoverability (#218)', () => {
   it('4. Commercial config uses step-up-protected server route (C6), not direct RPC', async () => {
     // C6: PlatformSettings no longer calls adminDb.rpc('save_commercial_config').
     // It uses saveCommercialViaStepUp which calls the step-up-protected server route.
-    // Full flow verification requires staging acceptance (prepare → TOTP → verify → execute).
-    const fs = await import('fs');
-    const src = fs.readFileSync(
-      new URL('../pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
-    );
+    const { readFileSync } = await import('fs');
+    const { resolve } = await import('path');
+    const src = readFileSync(resolve('src/pages/PlatformSettings.tsx'), 'utf-8');
     // No direct RPC call
     expect(src).not.toContain("adminDb.rpc('save_commercial_config'");
     // Uses step-up-protected server route

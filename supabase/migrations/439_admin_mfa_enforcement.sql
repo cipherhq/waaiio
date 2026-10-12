@@ -534,7 +534,7 @@ REVOKE EXECUTE ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jso
 GRANT EXECUTE ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) TO service_role;
 
 REVOKE EXECUTE ON FUNCTION public.save_messaging_config(jsonb, jsonb, jsonb, uuid, text) FROM PUBLIC, anon, authenticated;
--- No service_role GRANT — only reachable via SECURITY DEFINER outer function
+GRANT EXECUTE ON FUNCTION public.save_messaging_config(jsonb, jsonb, jsonb, uuid, text) TO service_role;
 
 REVOKE EXECUTE ON FUNCTION public.toggle_messaging_suspension(uuid, boolean, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.toggle_messaging_suspension(uuid, boolean, text) TO service_role;
@@ -737,12 +737,14 @@ DECLARE
   v_snapshot JSONB; v_version_id UUID; v_now TIMESTAMPTZ; v_latest_version_id UUID;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
-  IF p_expected_version_id IS NOT NULL THEN
-    SELECT id INTO v_latest_version_id FROM platform_config_versions
+  -- CAS: require non-NULL version ID (matches M416 save_messaging_config contract)
+  IF p_expected_version_id IS NULL THEN
+    RAISE EXCEPTION 'save_messaging_config requires a non-NULL expected_version_id for CAS';
+  END IF;
+  SELECT id INTO v_latest_version_id FROM platform_config_versions
     ORDER BY effective_from DESC LIMIT 1;
-    IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
-      RAISE EXCEPTION 'config_version_conflict: expected % but latest is %', p_expected_version_id, v_latest_version_id;
-    END IF;
+  IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
+    RAISE EXCEPTION 'config_version_conflict: expected % but latest is %', p_expected_version_id, v_latest_version_id;
   END IF;
 
   INSERT INTO platform_settings (key, value, description, updated_by, updated_at)

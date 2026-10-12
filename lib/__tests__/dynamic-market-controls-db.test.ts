@@ -29,12 +29,15 @@ function psqlMayFail(sql: string): string {
 }
 
 // Admin context — matches production CAS semantics
+// C6: After M439, financial RPCs have EXECUTE revoked from authenticated.
+// For tests calling the original functions (which check auth.uid/is_admin),
+// use service_role with JWT claims set so auth.uid() and is_admin() work
+// inside the SECURITY DEFINER functions.
 function adminContext(adminId: string): string {
   return `
-    SELECT set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', false);
-    SELECT set_config('request.jwt.claim.sub', '${adminId}', false);
+    DO $$ BEGIN PERFORM set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', false); END $$;
     CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
-    SET ROLE authenticated;
+    SET ROLE service_role;
   `;
 }
 
@@ -86,19 +89,22 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
   }
 
   beforeAll(() => {
-    // Discover auth.uid() in this environment
-    adminId = psql('SELECT auth.uid()::text;').trim();
+    // C6: Use a fixed admin ID (auth.uid() returns empty without JWT claims)
+    adminId = '00000000-0000-0000-0000-000000377001';
 
     // Ensure admin user row exists with admin role
     psqlMayFail(`
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
       INSERT INTO auth.users (id, email, raw_app_meta_data)
       VALUES ('${adminId}', 'm377-admin@test.com', '{"role":"admin"}'::jsonb)
       ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{"role":"admin"}'::jsonb;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+      INSERT INTO profiles (id, email) VALUES ('${adminId}', 'm377-admin@test.com') ON CONFLICT DO NOTHING;
     `);
 
-    // Verify admin context works
-    const isAdmin = psql(`${adminContext(adminId)} SELECT public.is_admin(); RESET ROLE;`);
-    expect(isAdmin).toContain('t');
+    // Verify admin role via auth.users (is_admin() requires EXECUTE which is revoked from service_role)
+    const role = psql(`SELECT raw_app_meta_data->>'role' FROM auth.users WHERE id = '${adminId}';`);
+    expect(role).toBe('admin');
     expect(currentVersion()).toBeTruthy();
 
     // Ensure ZZ test country exists (idempotent — cannot delete)
@@ -120,36 +126,34 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
       planCodes[code] = { growth: `PLN_setup_g_${code}`, business: `PLN_setup_b_${code}` };
     }
     const planCodesJson = Object.keys(planCodes).length > 0 ? `'${JSON.stringify(planCodes)}'::jsonb` : 'NULL';
-    psql(`${adminContext(adminId)} SELECT save_market_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, ${planCodesJson}, '${currentVersion()}'::uuid); RESET ROLE;`);
+    psql(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, ${planCodesJson}, '${currentVersion()}'::uuid); RESET ROLE;`);
   });
 
   // ── aal1 denial ──
 
-  it('0. admin with aal1 JWT cannot call save_commercial_config (aal2 required)', () => {
+  it('0. authenticated direct call to save_commercial_config denied (C6 REVOKE)', () => {
     const r = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', false);
-      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '14'::jsonb);
       RESET ROLE;
     `);
-    expect(r).toMatch(/requires admin role|permission denied|aal2/i);
+    expect(r).toMatch(/permission denied/i);
   });
 
-  // ── save_commercial_config: bundle-only key rejection ──
+  // ── save_commercial_config: bundle-only key rejection (via svc_ wrapper) ──
 
-  it('1. rejects messaging_pricing via save_commercial_config', () => {
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_commercial_config('messaging_pricing', '{}'::jsonb);`);
+  it('1. rejects messaging_pricing via svc_save_commercial_config', () => {
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_commercial_config('${adminId}'::uuid, 'messaging_pricing', '{}'::jsonb);`);
     expect(r).toContain('bundle-only messaging key');
   });
 
-  it('2. rejects trial_credit_minor_by_currency via save_commercial_config', () => {
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_commercial_config('trial_credit_minor_by_currency', '{}'::jsonb);`);
+  it('2. rejects trial_credit_minor_by_currency via svc_save_commercial_config', () => {
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_commercial_config('${adminId}'::uuid, 'trial_credit_minor_by_currency', '{}'::jsonb);`);
     expect(r).toContain('bundle-only messaging key');
   });
 
-  it('3. rejects subscription_included via save_commercial_config', () => {
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_commercial_config('subscription_included_minor_by_tier_currency', '{}'::jsonb);`);
+  it('3. rejects subscription_included via svc_save_commercial_config', () => {
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_commercial_config('${adminId}'::uuid, 'subscription_included_minor_by_tier_currency', '{}'::jsonb);`);
     expect(r).toContain('bundle-only messaging key');
   });
 
