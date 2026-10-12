@@ -735,6 +735,10 @@ DECLARE
     'fee_policy_enabled', 'category_fee_rates', 'messaging_pricing', 'messaging_topup_packages'
   ];
   v_snapshot JSONB; v_version_id UUID; v_now TIMESTAMPTZ; v_latest_version_id UUID;
+  -- Validation variables (from M416 save_messaging_config)
+  v_currency TEXT; v_bucket JSONB; v_country_key TEXT; v_rate_val JSONB;
+  v_seen_countries TEXT[] := '{}';
+  v_country RECORD; v_match_count INTEGER; v_matched_currency TEXT;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
   -- CAS: require non-NULL version ID (matches M416 save_messaging_config contract)
@@ -746,6 +750,45 @@ BEGIN
   IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
     RAISE EXCEPTION 'config_version_conflict: expected % but latest is %', p_expected_version_id, v_latest_version_id;
   END IF;
+
+  -- Validate messaging_pricing (preserved from M416)
+  IF jsonb_typeof(p_messaging_pricing) <> 'object' THEN RAISE EXCEPTION 'messaging_pricing must be a JSONB object'; END IF;
+  FOR v_currency, v_bucket IN SELECT * FROM jsonb_each(p_messaging_pricing) LOOP
+    IF jsonb_typeof(v_bucket) <> 'object' THEN RAISE EXCEPTION 'messaging_pricing[%] must be an object', v_currency; END IF;
+    IF v_bucket -> 'default_spend_cap_minor' IS NULL OR jsonb_typeof(v_bucket -> 'default_spend_cap_minor') <> 'number' THEN
+      RAISE EXCEPTION 'messaging_pricing[%].default_spend_cap_minor must be a positive integer', v_currency;
+    END IF;
+    DECLARE v_cap NUMERIC; BEGIN
+      v_cap := (v_bucket ->> 'default_spend_cap_minor')::NUMERIC;
+      IF v_cap <= 0 OR v_cap <> FLOOR(v_cap) THEN RAISE EXCEPTION 'messaging_pricing[%].default_spend_cap_minor must be a positive integer, got %', v_currency, v_cap; END IF;
+    END;
+    IF v_bucket -> 'default_cost_minor' IS NOT NULL THEN
+      IF jsonb_typeof(v_bucket -> 'default_cost_minor') <> 'number' THEN RAISE EXCEPTION 'messaging_pricing[%].default_cost_minor must be a non-negative integer', v_currency; END IF;
+      DECLARE v_cost NUMERIC; BEGIN
+        v_cost := (v_bucket ->> 'default_cost_minor')::NUMERIC;
+        IF v_cost < 0 OR v_cost <> FLOOR(v_cost) THEN RAISE EXCEPTION 'messaging_pricing[%].default_cost_minor must be a non-negative integer, got %', v_currency, v_cost; END IF;
+      END;
+    END IF;
+    IF v_bucket -> 'rates' IS NULL OR jsonb_typeof(v_bucket -> 'rates') <> 'object' THEN RAISE EXCEPTION 'messaging_pricing[%].rates must be an object', v_currency; END IF;
+    FOR v_country_key IN SELECT key FROM jsonb_each(v_bucket -> 'rates') LOOP
+      IF length(v_country_key) <> 2 OR v_country_key <> upper(v_country_key) THEN RAISE EXCEPTION 'messaging_pricing[%].rates: invalid country code "%"', v_currency, v_country_key; END IF;
+      IF v_country_key = ANY(v_seen_countries) THEN RAISE EXCEPTION 'messaging_pricing: country "%" appears in multiple currency buckets', v_country_key; END IF;
+      v_seen_countries := array_append(v_seen_countries, v_country_key);
+      v_rate_val := v_bucket -> 'rates' -> v_country_key;
+      IF jsonb_typeof(v_rate_val) <> 'object' THEN RAISE EXCEPTION 'messaging_pricing[%].rates[%] must be an object', v_currency, v_country_key; END IF;
+      DECLARE v_rk TEXT; v_rv JSONB; v_rn NUMERIC; v_allowed TEXT[] := ARRAY['*','marketing','utility','authentication','service']; BEGIN
+        FOR v_rk IN SELECT key FROM jsonb_each(v_rate_val) LOOP
+          IF NOT (v_rk = ANY(v_allowed)) THEN RAISE EXCEPTION 'messaging_pricing[%].rates[%]: unknown rate key "%"', v_currency, v_country_key, v_rk; END IF;
+          v_rv := v_rate_val -> v_rk;
+          IF jsonb_typeof(v_rv) <> 'number' THEN RAISE EXCEPTION 'messaging_pricing[%].rates[%][%] must be a non-negative integer', v_currency, v_country_key, v_rk; END IF;
+          v_rn := (v_rv::TEXT)::NUMERIC;
+          IF v_rn < 0 OR v_rn <> FLOOR(v_rn) THEN RAISE EXCEPTION 'messaging_pricing[%].rates[%][%] must be a non-negative integer, got %', v_currency, v_country_key, v_rk, v_rv::TEXT; END IF;
+        END LOOP;
+      END;
+    END LOOP;
+  END LOOP;
+  IF jsonb_typeof(p_trial_credit_minor_by_currency) <> 'object' THEN RAISE EXCEPTION 'trial_credit_minor_by_currency must be a JSONB object'; END IF;
+  IF jsonb_typeof(p_subscription_included_minor_by_tier_currency) <> 'object' THEN RAISE EXCEPTION 'subscription_included_minor_by_tier_currency must be a JSONB object'; END IF;
 
   INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
   VALUES ('messaging_pricing', p_messaging_pricing, COALESCE(p_description, 'messaging bundle'), p_actor_id, clock_timestamp())
