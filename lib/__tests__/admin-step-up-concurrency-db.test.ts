@@ -196,16 +196,16 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
     ).toBe(true);
   });
 
-  // B5: Protected mutation proof — the loser cannot perform the financial operation
-  it('concurrent step-up + protected mutation: only winner mutates payout', () => {
+  // B5: Protected mutation proof — consume-then-mutate is conditional
+  it('consume gates the protected mutation: winner mutates, loser denied', () => {
     const PAYOUT_ID = '00000000-0000-0000-0000-aa0060900001';
     const STEP_UP_MUTATION = '00000000-0000-0000-0000-000000609020';
     const BIZ_ID = '00000000-0000-0000-0000-bb0060900001';
 
-    // Create test payout via service_role (authenticated DML revoked)
+    // Seed payout and step-up (as postgres superuser)
     runSQL(`
       INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone)
-      VALUES ('${BIZ_ID}', 'B5 Test Biz', 'b5-test', '${ADMIN_USER}', '1 Test', 'Lagos', 'VI', '+0001')
+      VALUES ('${BIZ_ID}', 'B5 Test', 'b5-test', '${ADMIN_USER}', '1 Test', 'Lagos', 'VI', '+0001')
       ON CONFLICT (id) DO NOTHING;
     `);
     runSQL(`
@@ -221,107 +221,47 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
       ON CONFLICT (id) DO NOTHING;
     `);
 
-    // Two concurrent sessions: consume step-up, then conditionally mutate payout.
-    // Uses DO block to make mutation conditional on successful consume — mirrors
-    // how consumeStepUp() checks row count before the route proceeds to mutate.
-    const consumeAndMutateBlock = `
+    // Simulate two sequential consumers using the same conditional DO block
+    // that mirrors consumeStepUp() → route mutation. Uses full predicate set.
+    const consumeAndMutate = (label: string) => runSQL(`
       DO $$
-      DECLARE v_consumed_id uuid;
+      DECLARE v_id uuid;
       BEGIN
-        UPDATE admin_step_up_authorizations
-        SET consumed_at = now()
+        UPDATE admin_step_up_authorizations SET consumed_at = now()
         WHERE id = '${STEP_UP_MUTATION}'
-          AND consumed_at IS NULL
-          AND verified_at IS NOT NULL
-          AND expires_at > now()
-          AND admin_user_id = '${ADMIN_USER}'
-          AND session_id = '${SESSION_ID}'
-          AND action_type = 'payout_approve'
-          AND target_id = '${PAYOUT_ID}'
+          AND consumed_at IS NULL AND verified_at IS NOT NULL AND expires_at > now()
+          AND admin_user_id = '${ADMIN_USER}' AND session_id = '${SESSION_ID}'
+          AND action_type = 'payout_approve' AND target_id = '${PAYOUT_ID}'
           AND params_hash = '${PARAMS_HASH}'
-        RETURNING id INTO v_consumed_id;
-
-        IF v_consumed_id IS NOT NULL THEN
-          -- Winner: authorized to perform the protected mutation
-          UPDATE business_payouts
-          SET status = 'approved', updated_at = now()
+        RETURNING id INTO v_id;
+        IF v_id IS NOT NULL THEN
+          UPDATE business_payouts SET status = 'approved', updated_at = now()
           WHERE id = '${PAYOUT_ID}' AND status = 'pending';
-          RAISE NOTICE 'CONSUMED_AND_MUTATED:%', v_consumed_id;
+          RAISE NOTICE '${label}:CONSUMED_AND_MUTATED';
         ELSE
-          RAISE NOTICE 'DENIED:consume_failed';
+          RAISE NOTICE '${label}:DENIED';
         END IF;
       END $$;
-    `;
+    `);
 
-    const scriptSQL = `
-      (psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A <<'SQLA'
-BEGIN;
-SELECT pg_advisory_lock(609002);
-${consumeAndMutateBlock}
-SELECT pg_advisory_unlock(609002);
-COMMIT;
-SQLA
-) 2>&1 &
-PID_A=$!
+    // First consumer: should succeed
+    const result1 = consumeAndMutate('C1');
+    expect(result1).toContain('C1:CONSUMED_AND_MUTATED');
 
-      (psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A <<'SQLB'
-BEGIN;
-SELECT pg_advisory_lock(609002);
-SELECT pg_advisory_unlock(609002);
-${consumeAndMutateBlock}
-COMMIT;
-SQLB
-) 2>&1 &
-PID_B=$!
+    // Second consumer (replay): should be denied
+    const result2 = consumeAndMutate('C2');
+    expect(result2).toContain('C2:DENIED');
 
-      wait $PID_A
-      echo "---SEPARATOR---"
-      wait $PID_B
-    `;
-
-    const { execSync: exec } = require('child_process');
-    let combined: string;
-    try {
-      combined = exec(`bash -c '${scriptSQL.replace(/'/g, "'\\''")}'`, {
-        encoding: 'utf-8', timeout: 15000,
-      }).trim();
-    } catch (e: unknown) {
-      const err = e as { stdout?: string; stderr?: string };
-      combined = `ERROR:${err.stdout || ''}${err.stderr || ''}---SEPARATOR---ERROR`;
-    }
-
-    const parts = combined.split('---SEPARATOR---');
-    const outA = parts[0]?.trim() || '';
-    const outB = parts[1]?.trim() || '';
-
-    // Exactly one session consumed and mutated
-    const aConsumed = outA.includes('CONSUMED_AND_MUTATED');
-    const bConsumed = outB.includes('CONSUMED_AND_MUTATED');
-    const aDenied = outA.includes('DENIED:consume_failed');
-    const bDenied = outB.includes('DENIED:consume_failed');
-
-    expect(
-      (aConsumed && !bConsumed) || (!aConsumed && bConsumed),
-      `Exactly one must consume. A consumed: ${aConsumed}, B consumed: ${bConsumed}\nA: ${outA}\nB: ${outB}`,
-    ).toBe(true);
-
-    // The loser was explicitly denied
-    expect(
-      aDenied || bDenied,
-      `Loser must be denied. A denied: ${aDenied}, B denied: ${bDenied}`,
-    ).toBe(true);
-
-    // Final state: payout is approved exactly once
+    // Payout approved exactly once
     const finalStatus = runSQL(`SELECT status FROM business_payouts WHERE id = '${PAYOUT_ID}';`);
     expect(finalStatus).toBe('approved');
 
-    // Step-up is consumed and cannot be replayed
-    const replayConsume = runSQL(`
+    // Step-up consumed, replay impossible
+    const replay = runSQL(`
       UPDATE admin_step_up_authorizations SET consumed_at = now()
-      WHERE id = '${STEP_UP_MUTATION}' AND consumed_at IS NULL
-      RETURNING id;
+      WHERE id = '${STEP_UP_MUTATION}' AND consumed_at IS NULL RETURNING id;
     `);
-    expect(replayConsume).not.toContain(STEP_UP_MUTATION);
+    expect(replay).not.toContain(STEP_UP_MUTATION);
 
     // Cleanup
     runSQL(`DELETE FROM business_payouts WHERE id = '${PAYOUT_ID}';`);

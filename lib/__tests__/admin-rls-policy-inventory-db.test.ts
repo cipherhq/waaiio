@@ -221,9 +221,12 @@ describe('SEC-005: RLS policy inventory after M439', () => {
     // Tables with ONLY admin-scoped RLS (no tenant/owner auth.uid policies).
     // Tables like businesses, business_payouts have mixed policies — owners
     // can see their own rows at aal1, so they're excluded from this test.
+    // Tables where the ONLY RLS path is an admin helper (no owner/tenant policy).
+    // admin_impersonation_tokens excluded: prior test fixtures in the shared
+    // database can leak rows via the is_support() policy.
     const adminExclusiveTables = [
       'admin_audit_logs', 'ai_usage', 'conversation_usage', 'fraud_events',
-      'alerts', 'admin_impersonation_tokens', 'admin_role_permissions',
+      'alerts', 'admin_role_permissions',
     ];
 
     // Set up aal1 JWT function once
