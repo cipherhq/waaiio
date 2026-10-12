@@ -31,7 +31,7 @@ Report P0 and P1 issues with file and line. Skip style nitpicks.
 ## Finding and evidence rules
 
 - Never dismiss a P0 or P1 finding silently. Each one is either fixed, or listed in the PR description with evidence for why it is not valid.
-- Never claim a test runs in CI unless you have shown it from `.github/workflows/ci.yml` AND the CI log with test counts, zero skipped. A green CI run does not prove a test ran.
+- Never claim a test runs in CI without evidence for that specific test: the test file, the CI job and step that runs it (shown in `.github/workflows/ci.yml`), the test count, the skip count (must be zero for that test file), and the exact SHA. Unrelated, intentionally skipped tests elsewhere do not invalidate a run. A green CI run alone does not prove a test ran. A database-level SQL test must never be reported as a completed HTTP route test.
 
 ## Public repository rule
 
