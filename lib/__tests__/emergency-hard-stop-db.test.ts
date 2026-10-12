@@ -447,6 +447,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // Transfer ownership to the non-superuser role
     psql(`
       ALTER FUNCTION public.toggle_messaging_suspension(UUID, BOOLEAN, TEXT) OWNER TO _test_db_owner;
+      ALTER FUNCTION public._toggle_messaging_suspension_impl(uuid, uuid, boolean, text) OWNER TO _test_db_owner;
       ALTER FUNCTION public.guard_messaging_suspended() OWNER TO _test_db_owner;
     `);
 
@@ -477,6 +478,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       // Restore ownership to current user for remaining tests
       psqlMayFail(`
         ALTER FUNCTION public.toggle_messaging_suspension(UUID, BOOLEAN, TEXT) OWNER TO CURRENT_USER;
+        ALTER FUNCTION public._toggle_messaging_suspension_impl(uuid, uuid, boolean, text) OWNER TO CURRENT_USER;
         ALTER FUNCTION public.guard_messaging_suspended() OWNER TO CURRENT_USER;
       `);
     }
@@ -486,6 +488,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // Even with non-superuser function owner, direct mutation by app roles must be blocked
     psqlMayFail(`
       ALTER FUNCTION public.toggle_messaging_suspension(UUID, BOOLEAN, TEXT) OWNER TO _test_db_owner;
+      ALTER FUNCTION public._toggle_messaging_suspension_impl(uuid, uuid, boolean, text) OWNER TO _test_db_owner;
       ALTER FUNCTION public.guard_messaging_suspended() OWNER TO _test_db_owner;
     `);
 
@@ -519,6 +522,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       // Restore ownership
       psqlMayFail(`
         ALTER FUNCTION public.toggle_messaging_suspension(UUID, BOOLEAN, TEXT) OWNER TO CURRENT_USER;
+        ALTER FUNCTION public._toggle_messaging_suspension_impl(uuid, uuid, boolean, text) OWNER TO CURRENT_USER;
         ALTER FUNCTION public.guard_messaging_suspended() OWNER TO CURRENT_USER;
       `);
     }
