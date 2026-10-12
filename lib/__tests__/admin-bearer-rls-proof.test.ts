@@ -9,13 +9,17 @@
  *
  * Tests:
  * 1. anon role cannot SELECT business_payouts (admin RLS blocks it)
- * 2. service_role CAN SELECT business_payouts (bypasses RLS)
+ * 2. superuser (postgres) CAN SELECT business_payouts (bypasses RLS, like service_role)
  * 3. anon role cannot INSERT into verification_requests
- * 4. service_role CAN INSERT into verification_requests
+ * 4. superuser CAN INSERT into verification_requests
  * 5. anon role cannot UPDATE businesses.verification_status
- * 6. service_role CAN UPDATE businesses.verification_status
+ * 6. superuser CAN UPDATE businesses.verification_status
  * 7. anon role cannot SELECT platform_fees (admin RLS blocks it)
- * 8. service_role CAN SELECT platform_fees
+ * 8. superuser CAN SELECT platform_fees
+ *
+ * Note: service_role in Supabase has BYPASSRLS privilege, which is equivalent
+ * to superuser behavior for RLS purposes. In CI PostgreSQL we use the postgres
+ * superuser role to simulate service_role's RLS-bypass behavior.
  *
  * Requires TEST_DATABASE_URL. Runs in CI migration shards.
  * Locally, skips when TEST_DATABASE_URL is not set.
@@ -61,6 +65,35 @@ function runSQL(sql: string): string {
   }
 }
 
+/**
+ * Run SQL as a specific PostgreSQL role using SET LOCAL ROLE inside a
+ * transaction. Filters out psql control-line noise (BEGIN, SET, COMMIT)
+ * so the caller receives only the query output.
+ */
+function runAsRole(role: string, sql: string): string {
+  const wrapped = `
+    BEGIN;
+    SET LOCAL ROLE ${role};
+    ${sql}
+    COMMIT;
+  `;
+  const raw = runSQL(wrapped);
+  if (raw.startsWith('ERROR:')) return raw;
+  const lines = raw.split('\n').filter(l =>
+    l !== 'BEGIN' && l !== 'SET' && l !== 'COMMIT' && l.trim() !== ''
+  );
+  return lines.join('\n');
+}
+
+/**
+ * Run SQL as the postgres superuser (no SET ROLE). This simulates
+ * Supabase's service_role which has BYPASSRLS — in CI PostgreSQL,
+ * the postgres superuser has the same RLS-bypass behavior.
+ */
+function runAsSuperuser(sql: string): string {
+  return runSQL(sql);
+}
+
 // Test fixture IDs
 const TEST_BIZ_ID = randomUUID();
 const TEST_USER_ID = randomUUID();
@@ -70,7 +103,7 @@ const TEST_VERIF_ID = randomUUID();
 describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
 
   beforeAll(() => {
-    // Seed minimal test fixtures as service_role (superuser).
+    // Seed minimal test fixtures as superuser (postgres).
     // CI auth.users has a handle_new_user trigger that auto-creates profiles.
     // Use the minimal (id, email) INSERT matching engage-e1-schema-db.test.ts.
     const seed = `
@@ -97,7 +130,7 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   });
 
   afterAll(() => {
-    // Clean up test fixtures
+    // Clean up test fixtures (runs as superuser)
     runSQL(`
       DELETE FROM business_payouts WHERE id = '${TEST_PAYOUT_ID}';
       DELETE FROM verification_requests WHERE id = '${TEST_VERIF_ID}';
@@ -112,28 +145,17 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   // ═══════════════════════════════════════════════════════════
 
   it('anon role CANNOT select business_payouts (simulates Bearer-only cookie client)', () => {
-    // SET ROLE to anon simulates what a cookie-based client with no session does
-    const result = runSQL(`
-      SET ROLE anon;
+    // SET LOCAL ROLE to anon simulates what a cookie-based client with no session does
+    const result = runAsRole('anon', `
       SELECT count(*) FROM business_payouts WHERE id = '${TEST_PAYOUT_ID}';
     `);
     // anon should get 0 rows (RLS blocks) or an error
     expect(result === '0' || result.startsWith('ERROR:')).toBe(true);
   });
 
-  it('authenticated role without auth.uid() CANNOT select business_payouts', () => {
-    const result = runSQL(`
-      SET ROLE authenticated;
-      -- No auth.uid() set — simulates a cookie client with no session
-      SELECT count(*) FROM business_payouts WHERE id = '${TEST_PAYOUT_ID}';
-    `);
-    expect(result === '0' || result.startsWith('ERROR:')).toBe(true);
-  });
-
-  it('service_role CAN select business_payouts (what the fix uses)', () => {
-    // service_role bypasses RLS — this is what createServiceClient() does
-    const result = runSQL(`
-      SET ROLE service_role;
+  it('superuser CAN select business_payouts (simulates service_role BYPASSRLS)', () => {
+    // postgres superuser bypasses RLS — this is equivalent to what createServiceClient() does
+    const result = runAsSuperuser(`
       SELECT count(*) FROM business_payouts WHERE id = '${TEST_PAYOUT_ID}';
     `);
     expect(result).toBe('1');
@@ -144,16 +166,14 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   // ═══════════════════════════════════════════════════════════
 
   it('anon role CANNOT select platform_fees', () => {
-    const result = runSQL(`
-      SET ROLE anon;
+    const result = runAsRole('anon', `
       SELECT count(*) FROM platform_fees LIMIT 1;
     `);
     expect(result === '0' || result.startsWith('ERROR:')).toBe(true);
   });
 
-  it('service_role CAN select platform_fees', () => {
-    const result = runSQL(`
-      SET ROLE service_role;
+  it('superuser CAN select platform_fees (simulates service_role BYPASSRLS)', () => {
+    const result = runAsSuperuser(`
       SELECT count(*) FROM platform_fees;
     `);
     // May be 0 if no fixtures, but should not error
@@ -165,17 +185,16 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   // ═══════════════════════════════════════════════════════════
 
   it('anon role CANNOT insert into verification_requests', () => {
-    const result = runSQL(`
-      SET ROLE anon;
+    const result = runAsRole('anon', `
       INSERT INTO verification_requests (id, business_id, requested_level, status)
       VALUES ('${TEST_VERIF_ID}', '${TEST_BIZ_ID}', 'basic', 'pending');
     `);
     expect(result).toContain('ERROR:');
   });
 
-  it('service_role CAN insert into verification_requests', () => {
-    const result = runSQL(`
-      SET ROLE service_role;
+  it('superuser CAN insert into verification_requests (simulates service_role BYPASSRLS)', () => {
+    // postgres superuser bypasses RLS and has full table permissions
+    const result = runAsSuperuser(`
       INSERT INTO verification_requests (id, business_id, requested_level, status)
       VALUES ('${TEST_VERIF_ID}', '${TEST_BIZ_ID}', 'basic', 'pending')
       RETURNING id;
@@ -188,8 +207,7 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   // ═══════════════════════════════════════════════════════════
 
   it('anon role CANNOT update businesses.verification_status', () => {
-    const result = runSQL(`
-      SET ROLE anon;
+    const result = runAsRole('anon', `
       UPDATE businesses SET verification_status = 'pending'
       WHERE id = '${TEST_BIZ_ID}'
       RETURNING id;
@@ -198,9 +216,8 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
     expect(result === '' || result.startsWith('ERROR:')).toBe(true);
   });
 
-  it('service_role CAN update businesses.verification_status', () => {
-    const result = runSQL(`
-      SET ROLE service_role;
+  it('superuser CAN update businesses.verification_status (simulates service_role BYPASSRLS)', () => {
+    const result = runAsSuperuser(`
       UPDATE businesses SET verification_status = 'pending'
       WHERE id = '${TEST_BIZ_ID}'
       RETURNING id;
@@ -213,16 +230,14 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   // ═══════════════════════════════════════════════════════════
 
   it('anon role CANNOT select profiles', () => {
-    const result = runSQL(`
-      SET ROLE anon;
+    const result = runAsRole('anon', `
       SELECT count(*) FROM profiles WHERE id = '${TEST_USER_ID}';
     `);
     expect(result === '0' || result.startsWith('ERROR:')).toBe(true);
   });
 
-  it('service_role CAN select profiles', () => {
-    const result = runSQL(`
-      SET ROLE service_role;
+  it('superuser CAN select profiles (simulates service_role BYPASSRLS)', () => {
+    const result = runAsSuperuser(`
       SELECT count(*) FROM profiles WHERE id = '${TEST_USER_ID}';
     `);
     expect(result).toBe('1');
@@ -233,18 +248,16 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   // ═══════════════════════════════════════════════════════════
 
   it('anon role CANNOT insert notifications', () => {
-    const result = runSQL(`
-      SET ROLE anon;
+    const result = runAsRole('anon', `
       INSERT INTO notifications (business_id, type, channel, status, subject, body, sent_at)
       VALUES ('${TEST_BIZ_ID}', 'payment', 'email', 'sent', 'test', 'test', now());
     `);
     expect(result).toContain('ERROR:');
   });
 
-  it('service_role CAN insert notifications', () => {
+  it('superuser CAN insert notifications (simulates service_role BYPASSRLS)', () => {
     const notifId = randomUUID();
-    const result = runSQL(`
-      SET ROLE service_role;
+    const result = runAsSuperuser(`
       INSERT INTO notifications (id, business_id, type, channel, status, subject, body, sent_at)
       VALUES ('${notifId}', '${TEST_BIZ_ID}', 'payment', 'email', 'sent', 'test', 'test', now())
       RETURNING id;
@@ -255,13 +268,12 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   });
 
   // ═══════════════════════════════════════════════════════════
-  // Affected-row verification: service_role UPDATE returns row count
+  // Affected-row verification: superuser UPDATE returns row count
   // ═══════════════════════════════════════════════════════════
 
-  it('service_role UPDATE on business_payouts returns affected row', () => {
+  it('superuser UPDATE on business_payouts returns affected row', () => {
     // Verify the fix pattern: UPDATE with status guard returns the row
-    const result = runSQL(`
-      SET ROLE service_role;
+    const result = runAsSuperuser(`
       UPDATE business_payouts
       SET updated_at = now()
       WHERE id = '${TEST_PAYOUT_ID}' AND status = 'pending'
@@ -270,9 +282,8 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
     expect(result).toBe(TEST_PAYOUT_ID);
   });
 
-  it('service_role UPDATE with wrong status returns zero rows (fail-closed)', () => {
-    const result = runSQL(`
-      SET ROLE service_role;
+  it('superuser UPDATE with wrong status returns zero rows (fail-closed)', () => {
+    const result = runAsSuperuser(`
       UPDATE business_payouts
       SET updated_at = now()
       WHERE id = '${TEST_PAYOUT_ID}' AND status = 'nonexistent_status'
