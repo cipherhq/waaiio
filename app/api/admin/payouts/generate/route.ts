@@ -256,14 +256,30 @@ export async function POST(request: NextRequest) {
       }
 
       // Mark adjustments as applied to this payout
-      if (newPayout && adjustments && adjustments.length > 0) {
+      if (adjustments && adjustments.length > 0) {
         const adjIds = adjustments.map((a) => a.id);
         const { error: adjError } = await supabase
           .from('payout_adjustments')
           .update({ applied_to_payout_id: newPayout.id })
           .in('id', adjIds);
         if (adjError) {
-          logger.error('[PAYOUT] Failed to mark adjustments as applied', { payout_id: newPayout.id, adjIds });
+          // Containment: set payout to held with adjustment_link_failed flag
+          // so it cannot be approved without admin review.
+          const existingFlags = Array.isArray(flags) ? flags : [];
+          existingFlags.push({
+            type: 'adjustment_link_failed',
+            message: `Failed to link ${adjIds.length} adjustment(s): ${adjError.message}`,
+            severity: 'critical' as const,
+          });
+          await supabase
+            .from('business_payouts')
+            .update({ status: 'held', flags: existingFlags })
+            .eq('id', newPayout.id);
+          logger.error('[PAYOUT] Adjustment link failed — payout set to held', {
+            payout_id: newPayout.id, business_id: biz.id, adjIds, error: adjError.message,
+          });
+          failed++;
+          continue;
         }
       }
 

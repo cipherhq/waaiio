@@ -11,6 +11,7 @@ import { NextRequest } from 'next/server';
 
 let mockFromImpl: (table: string) => Record<string, unknown>;
 const mockLoggerError = vi.fn();
+const mockLoggerWarn = vi.fn();
 
 vi.mock('@/lib/admin-auth', () => ({
   requirePlatformAdmin: vi.fn().mockResolvedValue({
@@ -38,12 +39,17 @@ vi.mock('@/lib/constants', () => ({
 vi.mock('@/lib/logger', () => ({
   logger: {
     error: (...args: unknown[]) => mockLoggerError(...args),
-    info: vi.fn(), debug: vi.fn(), warn: vi.fn(),
+    warn: (...args: unknown[]) => mockLoggerWarn(...args),
+    info: vi.fn(), debug: vi.fn(),
     withContext: vi.fn(() => ({
       error: (...args: unknown[]) => mockLoggerError(...args),
-      info: vi.fn(), debug: vi.fn(), warn: vi.fn(),
+      warn: (...args: unknown[]) => mockLoggerWarn(...args),
+      info: vi.fn(), debug: vi.fn(),
     })),
   },
+  safeLogErrorContext: vi.fn(() => ({})),
+}));
+vi.mock('@/lib/errors', () => ({
   safeLogErrorContext: vi.fn(() => ({})),
 }));
 vi.mock('@/lib/admin-step-up', () => ({
@@ -86,15 +92,16 @@ function chainMock(terminalResult: { data: unknown; error: unknown }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// verification/review — affected rows and error checks
+// verification/review — document pre-validation, write order, error checks
 // ═══════════════════════════════════════════════════════════════
 
-describe('verification/review: affected-row and error checks', () => {
+describe('verification/review: document pre-validation and ordered writes', () => {
   let reviewModule: typeof import('@/app/api/verification/review/route');
 
   beforeEach(async () => {
     vi.clearAllMocks();
     mockLoggerError.mockClear();
+    mockLoggerWarn.mockClear();
     vi.resetModules();
 
     // Re-register mocks before re-importing the route
@@ -116,41 +123,81 @@ describe('verification/review: affected-row and error checks', () => {
       CountryCode: {}, VerificationLevel: {},
     }));
     vi.doMock('@/lib/logger', () => ({
-      logger: { error: mockLoggerError, info: vi.fn(), debug: vi.fn(), warn: vi.fn(), withContext: vi.fn(() => ({ error: mockLoggerError, info: vi.fn(), debug: vi.fn(), warn: vi.fn() })) },
+      logger: {
+        error: mockLoggerError, warn: mockLoggerWarn, info: vi.fn(), debug: vi.fn(),
+        withContext: vi.fn(() => ({
+          error: mockLoggerError, warn: mockLoggerWarn, info: vi.fn(), debug: vi.fn(),
+        })),
+      },
     }));
   });
 
+  /**
+   * Mock setup for the review route.
+   *
+   * The route calls tables in this order:
+   *   1. businesses SELECT (get biz info)
+   *   2. business_documents SELECT (pre-validate IDs) — via .in().eq()
+   *   3. business_documents UPDATE (approve/reject docs) — via .update().in().eq().select()
+   *   4. verification_requests UPDATE
+   *   5. businesses UPDATE (mark verified/rejected) — LAST
+   *   6. profiles SELECT (for email)
+   *
+   * The mock tracks call sequence per table to return different results
+   * for SELECT vs UPDATE on the same table.
+   */
   function setupMocks(overrides: {
     bizSelectResult?: { data: unknown; error: unknown };
-    bizUpdateResult?: { data: unknown; error: unknown };
+    docPreValidateResult?: { data: unknown; error: unknown };
     docsUpdateResult?: { data: unknown; error: unknown };
     reqUpdateResult?: { data: unknown; error: unknown };
+    bizUpdateResult?: { data: unknown; error: unknown };
     profileResult?: { data: unknown; error: unknown };
   } = {}) {
     const defaults = {
       bizSelectResult: { data: { name: 'Test Biz', owner_id: 'u1', country_code: 'NG' }, error: null },
-      bizUpdateResult: { data: [{ id: 'b1' }], error: null },
+      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
       docsUpdateResult: { data: [{ id: 'd1' }], error: null },
-      reqUpdateResult: { data: [{ id: 'r1' }], error: null },
+      reqUpdateResult: { data: null, error: null },
+      bizUpdateResult: { data: [{ id: 'b1' }], error: null },
       profileResult: { data: { email: 'test@test.com' }, error: null },
     };
     const cfg = { ...defaults, ...overrides };
 
-    let bizSelectCount = 0;
+    // Track per-table call counts to differentiate SELECT vs UPDATE
+    let bizCallCount = 0;
+    let docsCallCount = 0;
+
     mockFromImpl = (table: string) => {
       const chain = chainMock({ data: null, error: null });
+
       if (table === 'businesses') {
-        // First .from('businesses') is the SELECT; subsequent are UPDATEs
-        if (bizSelectCount === 0) {
-          bizSelectCount++;
+        const idx = bizCallCount++;
+        if (idx === 0) {
+          // First: SELECT to get biz info → .single()
           chain.single = vi.fn().mockResolvedValue(cfg.bizSelectResult);
         } else {
+          // Second: UPDATE to mark verified/rejected → .update().eq().select()
+          // The route does .update({...}).eq('id', business_id).select('id')
+          // .update() returns chain, .eq() returns chain, .select() resolves to the result
           chain.select = vi.fn().mockResolvedValue(cfg.bizUpdateResult);
         }
       } else if (table === 'business_documents') {
-        chain.select = vi.fn().mockResolvedValue(cfg.docsUpdateResult);
+        const idx = docsCallCount++;
+        if (idx === 0) {
+          // First: SELECT for pre-validation → .select('id').in().eq()
+          // Terminal is .eq() which resolves
+          chain.eq = vi.fn().mockResolvedValue(cfg.docPreValidateResult);
+        } else {
+          // Second: UPDATE for approve/reject → .update().in().eq().select()
+          // Terminal is .select() which resolves
+          chain.select = vi.fn().mockResolvedValue(cfg.docsUpdateResult);
+        }
       } else if (table === 'verification_requests') {
-        chain.select = vi.fn().mockResolvedValue(cfg.reqUpdateResult);
+        // UPDATE → .update().eq().eq() — terminal .eq() resolves
+        chain.eq = vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue(cfg.reqUpdateResult),
+        });
       } else if (table === 'profiles') {
         chain.single = vi.fn().mockResolvedValue(cfg.profileResult);
       } else if (table === 'admin_audit_logs') {
@@ -166,85 +213,121 @@ describe('verification/review: affected-row and error checks', () => {
     }));
   }
 
-  it('approve: business update error returns 500, not success', async () => {
-    setupMocks({ bizUpdateResult: { data: null, error: { message: 'db error' } } });
+  it('approve: foreign document_id returns 400 with no writes', async () => {
+    // Pre-validation finds 0 owned docs out of 1 requested
+    setupMocks({
+      docPreValidateResult: { data: [], error: null },
+    });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
-      makeRequest('/api/verification/review', { business_id: 'b1', action: 'approve', level: 'basic' }),
+      makeRequest('/api/verification/review', {
+        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['foreign-doc'],
+      }),
     );
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.success).toBeUndefined();
-    expect(body.error).toContain('Failed to update business verification');
-  });
-
-  it('approve: business update zero rows returns 500, not success', async () => {
-    setupMocks({ bizUpdateResult: { data: [], error: null } });
-    reviewModule = await import('@/app/api/verification/review/route');
-    const res = await reviewModule.POST(
-      makeRequest('/api/verification/review', { business_id: 'b1', action: 'approve', level: 'basic' }),
-    );
-    expect(res.status).toBe(500);
-    const body = await res.json();
-    expect(body.success).toBeUndefined();
-    expect(body.error).toContain('no rows');
-  });
-
-  it('approve: documents update error returns 500, not success', async () => {
-    setupMocks({ docsUpdateResult: { data: null, error: { message: 'docs error' } } });
-    reviewModule = await import('@/app/api/verification/review/route');
-    const res = await reviewModule.POST(
-      makeRequest('/api/verification/review', { business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1'] }),
-    );
-    expect(res.status).toBe(500);
-    const body = await res.json();
-    expect(body.success).toBeUndefined();
-    expect(body.error).toContain('document');
-  });
-
-  it('approve: documents update zero rows returns 500, not success', async () => {
-    setupMocks({ docsUpdateResult: { data: [], error: null } });
-    reviewModule = await import('@/app/api/verification/review/route');
-    const res = await reviewModule.POST(
-      makeRequest('/api/verification/review', { business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1'] }),
-    );
-    expect(res.status).toBe(500);
-    const body = await res.json();
-    expect(body.success).toBeUndefined();
-    expect(body.error).toContain('document');
-  });
-
-  it('reject: business update error returns 500, not success', async () => {
-    setupMocks({ bizUpdateResult: { data: null, error: { message: 'db error' } } });
-    reviewModule = await import('@/app/api/verification/review/route');
-    const res = await reviewModule.POST(
-      makeRequest('/api/verification/review', { business_id: 'b1', action: 'reject', reason: 'incomplete docs' }),
-    );
-    expect(res.status).toBe(500);
-    const body = await res.json();
+    expect(body.error).toContain('1 of 1');
+    expect(body.error).toContain('do not belong');
     expect(body.success).toBeUndefined();
   });
 
-  it('reject: business update zero rows returns 500, not success', async () => {
-    setupMocks({ bizUpdateResult: { data: [], error: null } });
+  it('approve: missing document_id returns 400 with no writes', async () => {
+    // Pre-validation finds 1 owned doc out of 2 requested
+    setupMocks({
+      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
+    });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
-      makeRequest('/api/verification/review', { business_id: 'b1', action: 'reject', reason: 'incomplete docs' }),
+      makeRequest('/api/verification/review', {
+        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1', 'nonexistent'],
+      }),
     );
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
     const body = await res.json();
+    expect(body.error).toContain('1 of 2');
+    expect(body.error).toContain('do not belong');
     expect(body.success).toBeUndefined();
   });
 
-  it('reject: documents update zero rows returns 500, not success', async () => {
-    setupMocks({ docsUpdateResult: { data: [], error: null } });
+  it('approve: business update fails AFTER docs/requests succeed returns 500 with log', async () => {
+    // Documents and requests write successfully, then business update errors
+    setupMocks({
+      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
+      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      reqUpdateResult: { data: null, error: null },
+      bizUpdateResult: { data: null, error: { message: 'db error' } },
+    });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
-      makeRequest('/api/verification/review', { business_id: 'b1', action: 'reject', reason: 'bad docs', document_ids: ['d1'] }),
+      makeRequest('/api/verification/review', {
+        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1'],
+      }),
     );
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.success).toBeUndefined();
+    expect(body.error).toContain('documents were already updated');
+    // Verify logger.error was called to record the partial write
+    expect(mockLoggerError).toHaveBeenCalled();
+  });
+
+  it('approve: happy path writes docs, then requests, then business', async () => {
+    setupMocks({
+      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
+      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      reqUpdateResult: { data: null, error: null },
+      bizUpdateResult: { data: [{ id: 'b1' }], error: null },
+      profileResult: { data: { email: 'test@test.com' }, error: null },
+    });
+    reviewModule = await import('@/app/api/verification/review/route');
+    const res = await reviewModule.POST(
+      makeRequest('/api/verification/review', {
+        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1'],
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+  });
+
+  it('reject: business update fails after docs/requests succeed returns 500', async () => {
+    setupMocks({
+      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
+      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      reqUpdateResult: { data: null, error: null },
+      bizUpdateResult: { data: null, error: { message: 'db error' } },
+    });
+    reviewModule = await import('@/app/api/verification/review/route');
+    const res = await reviewModule.POST(
+      makeRequest('/api/verification/review', {
+        business_id: 'b1', action: 'reject', reason: 'incomplete docs', document_ids: ['d1'],
+      }),
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.success).toBeUndefined();
+    expect(body.error).toContain('documents were already updated');
+    expect(mockLoggerError).toHaveBeenCalled();
+  });
+
+  it('reject: documents update affected wrong count returns 500', async () => {
+    // Pre-validation says 2 docs exist, but UPDATE only touches 1
+    setupMocks({
+      docPreValidateResult: { data: [{ id: 'd1' }, { id: 'd2' }], error: null },
+      docsUpdateResult: { data: [{ id: 'd1' }], error: null }, // only 1 updated, expected 2
+    });
+    reviewModule = await import('@/app/api/verification/review/route');
+    const res = await reviewModule.POST(
+      makeRequest('/api/verification/review', {
+        business_id: 'b1', action: 'reject', reason: 'bad docs', document_ids: ['d1', 'd2'],
+      }),
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.success).toBeUndefined();
+    expect(body.error).toContain('affected');
+    expect(body.error).toContain('1');
+    expect(body.error).toContain('2');
   });
 });
 
@@ -258,6 +341,7 @@ describe('verification/request: Option B + revert atomicity', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mockLoggerError.mockClear();
+    mockLoggerWarn.mockClear();
     vi.resetModules();
 
     vi.doMock('@/lib/admin-auth', () => ({
@@ -272,8 +356,10 @@ describe('verification/request: Option B + revert atomicity', () => {
     vi.doMock('@/lib/constants', () => ({ getDocTypeLabel: vi.fn((cc: string, d: string) => d), CountryCode: {} }));
     vi.doMock('@/lib/logger', () => ({
       logger: {
-        error: mockLoggerError, info: vi.fn(), debug: vi.fn(), warn: vi.fn(),
-        withContext: vi.fn(() => ({ error: mockLoggerError, info: vi.fn(), debug: vi.fn(), warn: vi.fn() })),
+        error: mockLoggerError, warn: mockLoggerWarn, info: vi.fn(), debug: vi.fn(),
+        withContext: vi.fn(() => ({
+          error: mockLoggerError, warn: mockLoggerWarn, info: vi.fn(), debug: vi.fn(),
+        })),
       },
     }));
   });
@@ -282,14 +368,16 @@ describe('verification/request: Option B + revert atomicity', () => {
     bizSelectResult?: { data: unknown; error: unknown };
     bizUpdateError?: unknown;
     insertResult?: { data: unknown; error: unknown };
-    restoreError?: unknown;
+    restoreResult?: { data: unknown; error: unknown };
+    reReadResult?: { data: unknown; error: unknown };
     profileResult?: { data: unknown; error: unknown };
   } = {}) {
     const defaults = {
       bizSelectResult: { data: { name: 'Test Biz', owner_id: 'u1', country_code: 'NG', verification_status: 'unverified' }, error: null },
       bizUpdateError: null,
       insertResult: { data: { id: 'req-1' }, error: null },
-      restoreError: null,
+      restoreResult: { data: [{ id: 'b1' }], error: null },
+      reReadResult: { data: { verification_status: 'pending' }, error: null },
       profileResult: { data: { email: 'test@test.com' }, error: null },
     };
     const cfg = { ...defaults, ...overrides };
@@ -305,11 +393,18 @@ describe('verification/request: Option B + revert atomicity', () => {
         } else if (idx === 1) {
           // Second: UPDATE to 'pending'
           chain.eq = vi.fn().mockResolvedValue({ error: cfg.bizUpdateError });
-        } else {
+        } else if (idx === 2) {
           // Third: CAS restore on insert failure
+          // Route does .update().eq('id',…).eq('verification_status','pending').select('id')
+          // The chain: .update() -> chain, .eq() returns inner, inner.eq() returns inner2, inner2.select() resolves
           chain.eq = vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({ error: cfg.restoreError }),
+            eq: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue(cfg.restoreResult),
+            }),
           });
+        } else if (idx === 3) {
+          // Fourth: Re-read after CAS restore returns zero rows
+          chain.single = vi.fn().mockResolvedValue(cfg.reReadResult);
         }
       } else if (table === 'verification_requests') {
         chain.single = vi.fn().mockResolvedValue(cfg.insertResult);
@@ -343,6 +438,7 @@ describe('verification/request: Option B + revert atomicity', () => {
   it('insert failure restores prior status and returns error', async () => {
     setupMocks({
       insertResult: { data: null, error: { message: 'duplicate key' } },
+      restoreResult: { data: [{ id: 'b1' }], error: null },
     });
     requestModule = await import('@/app/api/verification/request/route');
     const res = await requestModule.POST(
@@ -359,7 +455,7 @@ describe('verification/request: Option B + revert atomicity', () => {
   it('insert failure + restore failure logs at error with business_id and returns error', async () => {
     setupMocks({
       insertResult: { data: null, error: { message: 'insert failed' } },
-      restoreError: { message: 'restore also failed' },
+      restoreResult: { data: null, error: { message: 'restore also failed' } },
     });
     requestModule = await import('@/app/api/verification/request/route');
     const res = await requestModule.POST(
@@ -377,6 +473,50 @@ describe('verification/request: Option B + revert atomicity', () => {
     const logContext = logCall![1] as Record<string, unknown>;
     expect(logContext.business_id).toBe('b1');
   });
+
+  it('insert failure + CAS restore zero rows + concurrent status change returns 409', async () => {
+    // CAS returns zero rows (no rows matched the WHERE), re-read shows 'verified' (concurrent change)
+    setupMocks({
+      insertResult: { data: null, error: { message: 'duplicate key' } },
+      restoreResult: { data: [], error: null }, // zero rows — CAS didn't match
+      reReadResult: { data: { verification_status: 'verified' }, error: null }, // concurrent change
+    });
+    requestModule = await import('@/app/api/verification/request/route');
+    const res = await requestModule.POST(
+      makeRequest('/api/verification/request', { business_id: 'b1', requested_level: 'basic' }),
+    );
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain('concurrently');
+    // Should have logged a warn, not error
+    expect(mockLoggerWarn).toHaveBeenCalled();
+    const warnCall = mockLoggerWarn.mock.calls.find(
+      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('concurrent'),
+    );
+    expect(warnCall).toBeDefined();
+  });
+
+  it('insert failure + CAS restore zero rows + still pending returns 500 with error log', async () => {
+    // CAS returns zero rows, but re-read shows status is still 'pending' — compensation failure
+    setupMocks({
+      insertResult: { data: null, error: { message: 'insert failed' } },
+      restoreResult: { data: [], error: null }, // zero rows — CAS didn't match
+      reReadResult: { data: { verification_status: 'pending' }, error: null }, // still pending — anomaly
+    });
+    requestModule = await import('@/app/api/verification/request/route');
+    const res = await requestModule.POST(
+      makeRequest('/api/verification/request', { business_id: 'b1', requested_level: 'basic' }),
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toContain('manual intervention');
+    // Should have logged at error level
+    expect(mockLoggerError).toHaveBeenCalled();
+    const errorCall = mockLoggerError.mock.calls.find(
+      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('Compensation failure'),
+    );
+    expect(errorCall).toBeDefined();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -389,6 +529,7 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mockLoggerError.mockClear();
+    mockLoggerWarn.mockClear();
     vi.resetModules();
 
     vi.doMock('@/lib/admin-auth', () => ({
@@ -411,9 +552,14 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     }));
     vi.doMock('@/lib/logger', () => ({
       logger: {
-        error: mockLoggerError, info: vi.fn(), debug: vi.fn(), warn: vi.fn(),
-        withContext: vi.fn(() => ({ error: mockLoggerError, info: vi.fn(), debug: vi.fn(), warn: vi.fn() })),
+        error: mockLoggerError, warn: mockLoggerWarn, info: vi.fn(), debug: vi.fn(),
+        withContext: vi.fn(() => ({
+          error: mockLoggerError, warn: mockLoggerWarn, info: vi.fn(), debug: vi.fn(),
+        })),
       },
+      safeLogErrorContext: vi.fn(() => ({})),
+    }));
+    vi.doMock('@/lib/errors', () => ({
       safeLogErrorContext: vi.fn(() => ({})),
     }));
   });
@@ -426,9 +572,11 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     feesData?: unknown[] | null;
     feesError?: unknown;
     paymentsError?: unknown;
+    adjustmentsData?: unknown[] | null;
     adjustmentsError?: unknown;
     insertResult?: { data: unknown; error: unknown };
     payoutAccountData?: unknown;
+    adjLinkError?: unknown;
   } = {}) {
     const defaults = {
       businesses: [{ id: 'b1', created_at: '2025-01-01', verification_level: 'basic', payout_limit_monthly: 500000, country_code: 'NG' }],
@@ -438,11 +586,16 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
       feesData: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
       feesError: null,
       paymentsError: null,
+      adjustmentsData: [] as unknown[],
       adjustmentsError: null,
       insertResult: { data: { id: 'payout-1' }, error: null },
       payoutAccountData: { id: 'pa-1' },
+      adjLinkError: null,
     };
     const cfg = { ...defaults, ...overrides };
+
+    // Track calls to business_payouts to differentiate dedup check vs insert vs update-after-adj-failure
+    let payoutsCallCount = 0;
 
     mockFromImpl = (table: string) => {
       const chain = chainMock({ data: null, error: null });
@@ -453,10 +606,23 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
           eq: vi.fn().mockResolvedValue({ data: cfg.businesses, error: cfg.businessesError }),
         });
       } else if (table === 'business_payouts') {
-        // Dedup check uses .maybeSingle()
-        chain.maybeSingle = vi.fn().mockResolvedValue({ data: cfg.existingPayout, error: cfg.existingError });
-        // Monthly limit check also uses business_payouts
-        chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        const idx = payoutsCallCount++;
+        if (idx === 0) {
+          // Dedup check uses .maybeSingle()
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: cfg.existingPayout, error: cfg.existingError });
+          // Monthly limit check also uses business_payouts
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        }
+        // INSERT — .insert({}).select('id').single()
+        chain.insert = vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue(cfg.insertResult),
+          }),
+        });
+        // UPDATE for adjustment link failure — .update({}).eq('id', payoutId)
+        chain.update = vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        });
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({ data: cfg.feesData, error: cfg.feesError });
       } else if (table === 'payments') {
@@ -465,20 +631,19 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
         if (cfg.adjustmentsError) {
           chain.is = vi.fn().mockResolvedValue({ data: null, error: cfg.adjustmentsError });
         } else {
-          chain.is = vi.fn().mockResolvedValue({ data: [], error: null });
+          chain.is = vi.fn().mockResolvedValue({ data: cfg.adjustmentsData, error: null });
         }
-        chain.in = vi.fn().mockResolvedValue({ error: null });
+        // The .in() UPDATE for linking adjustments to the payout
+        if (cfg.adjLinkError) {
+          chain.in = vi.fn().mockResolvedValue({ error: cfg.adjLinkError });
+        } else {
+          chain.in = vi.fn().mockResolvedValue({ error: null });
+        }
       } else if (table === 'payout_accounts') {
         chain.maybeSingle = vi.fn().mockResolvedValue({ data: cfg.payoutAccountData, error: null });
       } else if (table === 'admin_audit_logs') {
         chain.insert = vi.fn().mockResolvedValue({ error: null });
       }
-      // For the INSERT on business_payouts via the service client
-      chain.insert = vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue(cfg.insertResult),
-        }),
-      });
       return chain;
     };
 
@@ -550,5 +715,26 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.message).toContain('No platform-managed');
+  });
+
+  it('adjustment link failure sets payout to held with flag, counts as failed', async () => {
+    // Business has pending adjustments; payout inserts ok, but linking adjustments fails
+    setupGenerateMocks({
+      adjustmentsData: [{ id: 'adj-1', amount: -500 }],
+      adjLinkError: { message: 'FK constraint violated' },
+    });
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(
+      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
+    );
+    expect(res.status).toBe(207);
+    const body = await res.json();
+    expect(body.failed).toBeGreaterThan(0);
+    // Verify logger.error was called with adjustment_link context
+    expect(mockLoggerError).toHaveBeenCalled();
+    const logCall = mockLoggerError.mock.calls.find(
+      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('Adjustment link failed'),
+    );
+    expect(logCall).toBeDefined();
   });
 });

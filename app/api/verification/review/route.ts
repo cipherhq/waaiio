@@ -5,6 +5,7 @@ import { kycApprovedEmail, kycRejectedEmail } from '@/lib/email/templates';
 import { getPayoutLimit, formatPayoutLimit, type CountryCode, type VerificationLevel } from '@/lib/constants';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logAdminAudit } from '@/lib/admin-audit';
+import { logger } from '@/lib/logger';
 
 const LEVEL_LABELS: Record<string, string> = {
   unverified: 'Unverified',
@@ -43,33 +44,39 @@ export async function POST(request: NextRequest) {
 
   const cc = (biz.country_code || 'NG') as CountryCode;
 
+  // ── Pre-validate document IDs before any write ──
+  // If document_ids are provided, verify they all belong to this business.
+  // Any missing or foreign ID is a 400 with no writes.
+  const requestedDocCount = document_ids?.length ?? 0;
+  if (requestedDocCount > 0) {
+    const { data: ownedDocs, error: docCheckError } = await supabase
+      .from('business_documents')
+      .select('id')
+      .in('id', document_ids)
+      .eq('business_id', business_id);
+
+    if (docCheckError) {
+      return NextResponse.json({ error: 'Failed to validate document IDs' }, { status: 500 });
+    }
+
+    const ownedCount = ownedDocs?.length ?? 0;
+    if (ownedCount !== requestedDocCount) {
+      const missing = requestedDocCount - ownedCount;
+      return NextResponse.json({
+        error: `${missing} of ${requestedDocCount} document ID(s) do not belong to this business or do not exist`,
+      }, { status: 400 });
+    }
+  }
+
   if (action === 'approve') {
     const verLevel = (level || 'basic') as VerificationLevel;
     const limit = getPayoutLimit(cc, verLevel);
 
-    // Update business
-    const { data: bizUpdated, error: bizUpdateError } = await supabase
-      .from('businesses')
-      .update({
-        verification_level: verLevel,
-        verification_status: 'verified',
-        verification_notes: notes || null,
-        verified_at: new Date().toISOString(),
-        verified_by: admin.userId,
-        payout_limit_monthly: limit,
-      })
-      .eq('id', business_id)
-      .select('id');
+    // Write order: documents → verification requests → business (last)
+    // Business is only marked verified after the other writes succeed.
 
-    if (bizUpdateError) {
-      return NextResponse.json({ error: 'Failed to update business verification' }, { status: 500 });
-    }
-    if (!bizUpdated || bizUpdated.length === 0) {
-      return NextResponse.json({ error: 'Business update affected no rows' }, { status: 500 });
-    }
-
-    // Approve specified documents
-    if (document_ids?.length) {
+    // 1. Approve specified documents
+    if (requestedDocCount > 0) {
       const { data: docsUpdated, error: docsUpdateError } = await supabase
         .from('business_documents')
         .update({
@@ -84,24 +91,49 @@ export async function POST(request: NextRequest) {
       if (docsUpdateError) {
         return NextResponse.json({ error: 'Failed to update business documents' }, { status: 500 });
       }
-      if (!docsUpdated || docsUpdated.length === 0) {
-        return NextResponse.json({ error: 'Document update affected no rows — document_ids may be invalid' }, { status: 500 });
+      if (!docsUpdated || docsUpdated.length !== requestedDocCount) {
+        return NextResponse.json({
+          error: `Document update affected ${docsUpdated?.length ?? 0} row(s), expected ${requestedDocCount}`,
+        }, { status: 500 });
       }
     }
 
-    // Complete any pending verification requests
-    const { data: reqUpdated, error: reqUpdateError } = await supabase
+    // 2. Complete any pending verification requests
+    const { error: reqUpdateError } = await supabase
       .from('verification_requests')
       .update({ status: 'completed', completed_at: new Date().toISOString() })
       .eq('business_id', business_id)
-      .eq('status', 'pending')
-      .select('id');
+      .eq('status', 'pending');
 
     if (reqUpdateError) {
       return NextResponse.json({ error: 'Failed to update verification requests' }, { status: 500 });
     }
-    if (!reqUpdated || reqUpdated.length === 0) {
-      console.log(`No pending verification requests found for business ${business_id} — continuing`);
+
+    // 3. Update business LAST — only after documents and requests succeeded
+    const { data: bizUpdated, error: bizUpdateError } = await supabase
+      .from('businesses')
+      .update({
+        verification_level: verLevel,
+        verification_status: 'verified',
+        verification_notes: notes || null,
+        verified_at: new Date().toISOString(),
+        verified_by: admin.userId,
+        payout_limit_monthly: limit,
+      })
+      .eq('id', business_id)
+      .select('id');
+
+    if (bizUpdateError) {
+      logger.error('[VERIFICATION] Business update failed after documents/requests were already written', {
+        business_id, action: 'approve', level: verLevel,
+      });
+      return NextResponse.json({ error: 'Failed to update business verification — documents were already updated' }, { status: 500 });
+    }
+    if (!bizUpdated || bizUpdated.length === 0) {
+      logger.error('[VERIFICATION] Business update affected no rows after documents/requests were already written', {
+        business_id, action: 'approve', level: verLevel,
+      });
+      return NextResponse.json({ error: 'Business update affected no rows — documents were already updated' }, { status: 500 });
     }
 
     // Send email
@@ -134,24 +166,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Rejection reason is required' }, { status: 400 });
     }
 
-    const { data: bizUpdatedReject, error: bizUpdateError } = await supabase
-      .from('businesses')
-      .update({
-        verification_status: 'rejected',
-        verification_notes: reason,
-      })
-      .eq('id', business_id)
-      .select('id');
+    // Write order: documents → verification requests → business (last)
 
-    if (bizUpdateError) {
-      return NextResponse.json({ error: 'Failed to update business verification' }, { status: 500 });
-    }
-    if (!bizUpdatedReject || bizUpdatedReject.length === 0) {
-      return NextResponse.json({ error: 'Business update affected no rows' }, { status: 500 });
-    }
-
-    // Reject specified documents
-    if (document_ids?.length) {
+    // 1. Reject specified documents
+    if (requestedDocCount > 0) {
       const { data: docsUpdatedReject, error: docsUpdateError } = await supabase
         .from('business_documents')
         .update({
@@ -167,24 +185,45 @@ export async function POST(request: NextRequest) {
       if (docsUpdateError) {
         return NextResponse.json({ error: 'Failed to update business documents' }, { status: 500 });
       }
-      if (!docsUpdatedReject || docsUpdatedReject.length === 0) {
-        return NextResponse.json({ error: 'Document update affected no rows — document_ids may be invalid' }, { status: 500 });
+      if (!docsUpdatedReject || docsUpdatedReject.length !== requestedDocCount) {
+        return NextResponse.json({
+          error: `Document update affected ${docsUpdatedReject?.length ?? 0} row(s), expected ${requestedDocCount}`,
+        }, { status: 500 });
       }
     }
 
-    // Complete any pending requests
-    const { data: reqUpdatedReject, error: reqUpdateErrorReject } = await supabase
+    // 2. Complete any pending requests
+    const { error: reqUpdateErrorReject } = await supabase
       .from('verification_requests')
       .update({ status: 'completed', completed_at: new Date().toISOString() })
       .eq('business_id', business_id)
-      .eq('status', 'pending')
-      .select('id');
+      .eq('status', 'pending');
 
     if (reqUpdateErrorReject) {
       return NextResponse.json({ error: 'Failed to update verification requests' }, { status: 500 });
     }
-    if (!reqUpdatedReject || reqUpdatedReject.length === 0) {
-      console.log(`No pending verification requests found for business ${business_id} — continuing`);
+
+    // 3. Update business LAST
+    const { data: bizUpdatedReject, error: bizUpdateError } = await supabase
+      .from('businesses')
+      .update({
+        verification_status: 'rejected',
+        verification_notes: reason,
+      })
+      .eq('id', business_id)
+      .select('id');
+
+    if (bizUpdateError) {
+      logger.error('[VERIFICATION] Business update failed after documents/requests were already written', {
+        business_id, action: 'reject',
+      });
+      return NextResponse.json({ error: 'Failed to update business verification — documents were already updated' }, { status: 500 });
+    }
+    if (!bizUpdatedReject || bizUpdatedReject.length === 0) {
+      logger.error('[VERIFICATION] Business update affected no rows after documents/requests were already written', {
+        business_id, action: 'reject',
+      });
+      return NextResponse.json({ error: 'Business update affected no rows — documents were already updated' }, { status: 500 });
     }
 
     // Send email
