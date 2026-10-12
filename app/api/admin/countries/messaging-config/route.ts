@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
         subscription_included: subscriptionIncludedMinorByTierCurrency ?? null,
         paystack_plan_codes: paystackPlanCodes ?? null,
         expected_version_id: expectedVersionId ?? null,
+        description: description ?? null,
       });
     } catch (err) {
       const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
