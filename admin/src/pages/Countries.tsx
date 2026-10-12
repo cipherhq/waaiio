@@ -1070,6 +1070,8 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
   const [configVersionId, setConfigVersionId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const msgStepUp = useStepUp();
+  const msgStepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // Country-scoped state: category rates + Paystack plan codes
   // rates keyed by category (utility, marketing, *, authentication, service)
@@ -1144,31 +1146,51 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     if (!canMutate || !configVersionId) return;
     setSaving(true); setError(''); setSuccess('');
     try {
-      const { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes } =
+      const { messagingPricing, trialCredit, tierIncluded } =
         buildMessagingPayload(countries, currencyState, countryState);
 
-      // Paystack plan codes are now managed ONLY through /api/admin/provider-config
-      // → save_provider_plan_refs with provider preflight. Never submit them here.
-      const { data, error: rpcError } = await adminDb.rpc('save_market_messaging_config', {
-        p_messaging_pricing: messagingPricing,
-        p_trial_credit_minor_by_currency: trialCredit,
-        p_subscription_included_minor_by_tier_currency: tierIncluded,
-        p_paystack_plan_codes: null,
-        p_expected_version_id: configVersionId,
-      });
-
-      if (rpcError) {
-        if (rpcError.message?.includes('config_version_conflict')) {
-          throw new Error('Configuration was modified by another admin. Please reload the page and try again.');
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) throw new Error('Session expired');
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/countries/messaging-config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            messagingPricing, trialCreditMinorByCurrency: trialCredit,
+            subscriptionIncludedMinorByTierCurrency: tierIncluded,
+            paystackPlanCodes: null, expectedVersionId: configVersionId,
+            stepUpId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') throw new Error('Step-up authorization failed');
+          if (data.code === 'version_conflict') throw new Error('Configuration was modified by another admin. Please reload the page and try again.');
+          throw new Error(data.error || 'Save failed');
         }
-        throw new Error(rpcError.message);
-      }
+        setConfigVersionId(data.versionId);
+        setSuccess('Messaging configuration saved successfully');
+        await onSaved();
+      };
 
-      setConfigVersionId(data as string);
-      setSuccess('Messaging configuration saved successfully');
-      await onSaved();
+      msgStepUpCallbackRef.current = onAuthorized;
+      await msgStepUp.execute({
+        actionType: 'messaging_config',
+        targetId: 'messaging_bundle',
+        params: {
+          messaging_pricing: messagingPricing ?? null,
+          trial_credit: trialCredit ?? null,
+          subscription_included: tierIncluded ?? null,
+          expected_version_id: configVersionId ?? null,
+        },
+        description: 'Save messaging financial configuration',
+        onAuthorized,
+      });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Save failed');
+      msgStepUp.reset();
     } finally {
       setSaving(false);
     }
@@ -1276,6 +1298,14 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
           {saving ? 'Saving...' : 'Save Messaging Config'}
         </button>
       </div>
+      <StepUpDialog
+        open={msgStepUp.state.phase === 'awaiting-code' || msgStepUp.state.phase === 'verifying'}
+        description={msgStepUp.state.description}
+        error={msgStepUp.state.error}
+        loading={msgStepUp.state.phase === 'verifying'}
+        onSubmit={(code) => { if (msgStepUpCallbackRef.current) msgStepUp.submitCode(code, msgStepUpCallbackRef.current); }}
+        onCancel={() => { msgStepUp.reset(); msgStepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }
