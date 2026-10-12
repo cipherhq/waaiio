@@ -9,7 +9,7 @@
  */
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -36,7 +36,22 @@ const BIZ_ID = '00000000-0000-0000-0256-000000000001';
 const BIZ_B_ID = '00000000-0000-0000-0256-000000000002';
 
 describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
+  let originallyAuthenticatedCanExecute = false;
+
+  afterAll(() => {
+    // M439 intentionally revokes this ACL. Restore the pre-test state so the
+    // following M366 security suite does not inherit a misleading grant.
+    if (!originallyAuthenticatedCanExecute) {
+      psql('REVOKE EXECUTE ON FUNCTION public.toggle_messaging_suspension(uuid, boolean, text) FROM authenticated;');
+    }
+  });
+
   beforeAll(() => {
+    // The full migration suite shares a database across tests. Preserve the
+    // original EXECUTE ACL before temporarily exercising this legacy RPC.
+    originallyAuthenticatedCanExecute = psql(
+      "SELECT has_function_privilege('authenticated', 'public.toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');"
+    ) === 't';
     // Set up schema stubs
     psql(`
       CREATE EXTENSION IF NOT EXISTS "pgcrypto";
