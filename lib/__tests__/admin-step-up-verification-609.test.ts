@@ -42,6 +42,7 @@ const pendingRow = () => ({
   admin_user_id: admin.userId,
   session_id: admin.sessionId,
   challenge_id: 'challenge-one',
+  factor_id: 'factor-one',
   verified_at: null,
   consumed_at: null,
   expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
@@ -66,18 +67,25 @@ describe('SEC-005 step-up verification: exact pending-state enforcement', () => 
     mock.marked.mockReturnValue({ id: 'step-up-one' });
     vi.stubGlobal('fetch', vi.fn(async (input: string) => ({
       ok: true,
-      json: async () => input.endsWith('/user')
-        ? { factors: [{ id: 'factor-one', factor_type: 'totp', status: 'verified' }] }
+      json: async () => input.endsWith('/verify')
+        ? { access_token: 'rotated-aal2-token', refresh_token: 'rotated-refresh-token' }
         : { success: true },
     })));
   });
 
   it('accepts only the same admin/session/challenge and an updated pending row', async () => {
     const { verifyStepUp } = await import('../admin-step-up');
-    await expect(verifyStepUp(admin, 'step-up-one', '123456')).resolves.toBe(true);
+    await expect(verifyStepUp(admin, 'step-up-one', '123456')).resolves.toEqual({
+      access_token: 'rotated-aal2-token', refresh_token: 'rotated-refresh-token',
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://unit.example.test/auth/v1/factors/factor-one/verify',
+      expect.objectContaining({ method: 'POST' }),
+    );
     expect(mock.eq).toHaveBeenCalledWith('admin_user_id', admin.userId);
     expect(mock.eq).toHaveBeenCalledWith('session_id', admin.sessionId);
     expect(mock.eq).toHaveBeenCalledWith('challenge_id', 'challenge-one');
+    expect(mock.eq).toHaveBeenCalledWith('factor_id', 'factor-one');
     expect(mock.is).toHaveBeenCalledWith('consumed_at', null);
     expect(mock.is).toHaveBeenCalledWith('verified_at', null);
     expect(mock.gt).toHaveBeenCalledWith('expires_at', expect.any(String));
