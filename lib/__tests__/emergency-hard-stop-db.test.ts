@@ -432,10 +432,12 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       GRANT USAGE ON SCHEMA public TO _test_db_owner;
       GRANT ALL ON public.businesses TO _test_db_owner;
       GRANT ALL ON public.messaging_suspension_audit TO _test_db_owner;
-      -- Minimum RPC dependencies: toggle_messaging_suspension calls auth.uid() and public.is_admin()
+      -- Minimum RPC dependencies: toggle_messaging_suspension calls auth.uid(), is_admin(), and _impl
       GRANT USAGE ON SCHEMA auth TO _test_db_owner;
       GRANT EXECUTE ON FUNCTION auth.uid() TO _test_db_owner;
       GRANT EXECUTE ON FUNCTION public.is_admin() TO _test_db_owner;
+      -- C6 Option B: the function delegates to _toggle_messaging_suspension_impl
+      GRANT EXECUTE ON FUNCTION public._toggle_messaging_suspension_impl(uuid, uuid, boolean, text) TO _test_db_owner;
       -- Migration 010 policy "Admins can view all businesses" directly reads profiles
       GRANT SELECT ON public.profiles TO _test_db_owner;
       -- Migration 205 reseller policies on businesses directly read resellers

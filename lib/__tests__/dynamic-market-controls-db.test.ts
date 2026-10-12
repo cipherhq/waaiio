@@ -95,8 +95,8 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     // C6: Use a fixed admin ID (auth.uid() returns empty without JWT claims)
     adminId = '00000000-0000-0000-0000-000000377001';
 
-    // Ensure admin user row exists with admin role
-    psqlMayFail(`
+    // Ensure admin user row exists with admin role — fail hard if seed errors
+    const seedResult = psqlMayFail(`
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
       INSERT INTO auth.users (id, email, raw_app_meta_data)
       VALUES ('${adminId}', 'm377-admin@test.com', '{"role":"admin"}'::jsonb)
@@ -104,6 +104,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
       INSERT INTO profiles (id, email) VALUES ('${adminId}', 'm377-admin@test.com') ON CONFLICT DO NOTHING;
     `);
+    if (seedResult.includes('ERROR')) throw new Error(`Admin seed failed: ${seedResult}`);
 
     // Verify admin role via auth.users (is_admin() requires EXECUTE which is revoked from service_role)
     const role = psql(`SELECT raw_app_meta_data->>'role' FROM auth.users WHERE id = '${adminId}';`);
