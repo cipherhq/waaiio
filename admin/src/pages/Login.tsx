@@ -59,7 +59,18 @@ export default function Login() {
       const verifiedTotp = factorsData?.totp?.find(f => f.factor_type === 'totp' && f.status === 'verified');
 
       if (!verifiedTotp) {
-        // No verified TOTP factor — enroll now.
+        // Reconcile abandoned, unverified TOTP enrollments before creating
+        // another factor, otherwise repeated cancellations exhaust factor slots.
+        const pendingFactors = factorsData?.all?.filter(f => f.factor_type === 'totp' && f.status === 'unverified') ?? [];
+        for (const pending of pendingFactors) {
+          const { error: cleanupError } = await supabase.auth.mfa.unenroll({ factorId: pending.id });
+          if (cleanupError) {
+            await supabase.auth.signOut();
+            setError('Cannot clear an incomplete MFA enrollment. Contact an administrator.');
+            setLoading(false);
+            return;
+          }
+        }
         await startEnrollment();
       } else {
         // Existing factor — go straight to verify.
@@ -187,6 +198,10 @@ export default function Login() {
 
   // Sign out and reset to the credentials step.
   async function handleBackToLogin() {
+    if (step === 'mfa-enroll' && factorId) {
+      // Best-effort cleanup. The next login also reconciles pending factors.
+      await supabase.auth.mfa.unenroll({ factorId }).catch(() => undefined);
+    }
     await supabase.auth.signOut();
     setStep('credentials');
     setError('');
