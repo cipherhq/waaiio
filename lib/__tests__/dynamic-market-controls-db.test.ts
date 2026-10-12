@@ -165,35 +165,35 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
 
   it('4. rejects NULL CAS', () => {
     const b = fullBundle();
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, NULL);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, NULL, NULL);`);
     expect(r).toContain('non-NULL expected_version_id');
   });
 
   it('5. rejects stale CAS', () => {
     const b = fullBundle();
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '00000000-0000-0000-0000-ffffffffffff'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, NULL, '00000000-0000-0000-0000-ffffffffffff'::uuid);`);
     expect(r).toContain('config_version_conflict');
   });
 
   // ── Validation ──
 
   it('6. rejects fractional spend cap', () => {
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_messaging_config('{"NGN":{"rates":{"NG":{"*":400}},"default_spend_cap_minor":5000.5}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, '${currentVersion()}'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '{"NGN":{"rates":{"NG":{"*":400}},"default_spend_cap_minor":5000.5}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, NULL, '${currentVersion()}'::uuid);`);
     expect(r).toContain('positive integer');
   });
 
   it('7. rejects unknown rate key', () => {
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_messaging_config('{"NGN":{"rates":{"NG":{"bad_key":400}},"default_spend_cap_minor":5000000}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, '${currentVersion()}'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '{"NGN":{"rates":{"NG":{"bad_key":400}},"default_spend_cap_minor":5000000}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, NULL, '${currentVersion()}'::uuid);`);
     expect(r).toContain('unknown rate key');
   });
 
   it('8. rejects negative rate', () => {
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_messaging_config('{"NGN":{"rates":{"NG":{"*":-1}},"default_spend_cap_minor":5000000}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, '${currentVersion()}'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '{"NGN":{"rates":{"NG":{"*":-1}},"default_spend_cap_minor":5000000}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, NULL, '${currentVersion()}'::uuid);`);
     expect(r).toContain('non-negative integer');
   });
 
   it('9. rejects duplicate country across buckets', () => {
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_messaging_config('{"NGN":{"rates":{"NG":{"*":400}},"default_spend_cap_minor":5000000},"USD":{"rates":{"NG":{"*":600}},"default_spend_cap_minor":10000000}}'::jsonb, '{"NGN":50000,"USD":500}'::jsonb, '{"growth":{"NGN":100000,"USD":1000},"business":{"NGN":200000,"USD":2000}}'::jsonb, '${currentVersion()}'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '{"NGN":{"rates":{"NG":{"*":400}},"default_spend_cap_minor":5000000},"USD":{"rates":{"NG":{"*":600}},"default_spend_cap_minor":10000000}}'::jsonb, '{"NGN":50000,"USD":500}'::jsonb, '{"growth":{"NGN":100000,"USD":1000},"business":{"NGN":200000,"USD":2000}}'::jsonb, NULL, '${currentVersion()}'::uuid);`);
     expect(r).toContain('multiple currency buckets');
   });
 
@@ -223,7 +223,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
 
   it('14. save_messaging_config with complete active-market bundle succeeds + scalar preserves maps', () => {
     const b = fullBundle();
-    const v1 = psql(`${adminContext(adminId)} SELECT save_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '${currentVersion()}'::uuid);`);
+    const v1 = psql(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, NULL, '${currentVersion()}'::uuid);`);
     expect(v1).toBeTruthy();
 
     // Capture the exact messaging map values after bundle save
@@ -238,7 +238,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     const origIncluded = JSON.stringify(bundleSnap.subscription_included_minor_by_tier_currency);
 
     // Scalar save must preserve messaging maps
-    const v2 = psql(`${adminContext(adminId)} SELECT save_commercial_config('trial_days', '14'::jsonb);`);
+    const v2 = psql(`${adminContext(adminId)} SELECT svc_save_commercial_config('${adminId}'::uuid, 'trial_days', '14'::jsonb);`);
     expect(v2).toBeTruthy();
 
     // Select the new version row first, then check keys and values
@@ -302,7 +302,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     }
 
     // Save the category-specific bundle
-    const v1 = psql(`${adminContext(adminId)} SELECT save_messaging_config('${JSON.stringify(pricingObj)}'::jsonb, '${JSON.stringify(trialObj)}'::jsonb, '${JSON.stringify(includedObj)}'::jsonb, '${currentVersion()}'::uuid);`);
+    const v1 = psql(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${JSON.stringify(pricingObj)}'::jsonb, '${JSON.stringify(trialObj)}'::jsonb, '${JSON.stringify(includedObj)}'::jsonb, NULL, '${currentVersion()}'::uuid);`);
     expect(v1).toBeTruthy();
 
     // Read back and verify category rates are preserved independently
@@ -324,7 +324,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     expect(ghRates.marketing).toBe(26);
 
     // Second save: scalar trial_days must not destroy category rates
-    psql(`${adminContext(adminId)} SELECT save_commercial_config('trial_days', '14'::jsonb);`);
+    psql(`${adminContext(adminId)} SELECT svc_save_commercial_config('${adminId}'::uuid, 'trial_days', '14'::jsonb);`);
     const snap2 = JSON.parse(psql(`
       SELECT config_snapshot::text FROM platform_config_versions
       WHERE effective_from <= clock_timestamp()
@@ -412,7 +412,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     const b = fullBundle();
     const origNgPrice = psql("SELECT pricing->'growth'->>'price' FROM countries WHERE code = 'NG';");
 
-    const r = psql(`${adminContext(adminId)} SELECT save_market_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"NG":{"growth":"PLN_orch_g","business":"PLN_orch_b"}}'::jsonb, '${currentVersion()}'::uuid);`);
+    const r = psql(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"NG":{"growth":"PLN_orch_g","business":"PLN_orch_b"}}'::jsonb, '${currentVersion()}'::uuid);`);
     expect(r).toBeTruthy();
 
     // Plan codes set
@@ -426,7 +426,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     const ngCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
     const b = fullBundle();
 
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_market_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"NG":{"growth":"PLN_stale","business":"PLN_stale"}}'::jsonb, '00000000-0000-0000-0000-ffffffffffff'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"NG":{"growth":"PLN_stale","business":"PLN_stale"}}'::jsonb, '00000000-0000-0000-0000-ffffffffffff'::uuid);`);
     expect(r).toContain('config_version_conflict');
 
     expect(currentVersion()).toBe(ver);
@@ -437,20 +437,20 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     const ver = currentVersion();
     const b = fullBundle();
 
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_market_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"XX":{"growth":"PLN_bad","business":"PLN_bad"}}'::jsonb, '${ver}'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"XX":{"growth":"PLN_bad","business":"PLN_bad"}}'::jsonb, '${ver}'::uuid);`);
     expect(r).toContain('unknown country');
     expect(currentVersion()).toBe(ver); // version unchanged
   });
 
   it('21. orchestration: non-Paystack country → rejected', () => {
     const b = fullBundle();
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_market_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"US":{"growth":"PLN_bad","business":"PLN_bad"}}'::jsonb, '${currentVersion()}'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"US":{"growth":"PLN_bad","business":"PLN_bad"}}'::jsonb, '${currentVersion()}'::uuid);`);
     expect(r).toContain('not "paystack"');
   });
 
   it('22. orchestration: partial plan codes (growth only) → rejected', () => {
     const b = fullBundle();
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT save_market_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"NG":{"growth":"PLN_only"}}'::jsonb, '${currentVersion()}'::uuid);`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT svc_save_market_messaging_config('${adminId}'::uuid, '${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '{"NG":{"growth":"PLN_only"}}'::jsonb, '${currentVersion()}'::uuid);`);
     expect(r).toContain('both growth and business');
   });
 
