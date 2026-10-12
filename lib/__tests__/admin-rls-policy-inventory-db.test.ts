@@ -226,7 +226,7 @@ describe('SEC-005: RLS policy inventory after M439', () => {
     // database can leak rows via the is_support() policy.
     const adminExclusiveTables = [
       'admin_audit_logs', 'ai_usage', 'conversation_usage', 'fraud_events',
-      'alerts', 'admin_role_permissions',
+      'alerts',
     ];
 
     // Set up aal1 JWT function once

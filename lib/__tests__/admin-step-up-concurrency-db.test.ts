@@ -221,36 +221,32 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
       ON CONFLICT (id) DO NOTHING;
     `);
 
-    // Simulate two sequential consumers using the same conditional DO block
-    // that mirrors consumeStepUp() → route mutation. Uses full predicate set.
-    const consumeAndMutate = (label: string) => runSQL(`
-      DO $$
-      DECLARE v_id uuid;
-      BEGIN
+    // Atomic consume-then-mutate: CTE consumes the step-up, outer UPDATE
+    // only mutates the payout if the CTE returned a row. Single statement,
+    // mirrors the production consumeStepUp() → route mutation contract.
+    const consumeAndMutate = () => runSQL(`
+      WITH consumed AS (
         UPDATE admin_step_up_authorizations SET consumed_at = now()
         WHERE id = '${STEP_UP_MUTATION}'
           AND consumed_at IS NULL AND verified_at IS NOT NULL AND expires_at > now()
           AND admin_user_id = '${ADMIN_USER}' AND session_id = '${SESSION_ID}'
           AND action_type = 'payout_approve' AND target_id = '${PAYOUT_ID}'
           AND params_hash = '${PARAMS_HASH}'
-        RETURNING id INTO v_id;
-        IF v_id IS NOT NULL THEN
-          UPDATE business_payouts SET status = 'approved', updated_at = now()
-          WHERE id = '${PAYOUT_ID}' AND status = 'pending';
-          RAISE NOTICE '${label}:CONSUMED_AND_MUTATED';
-        ELSE
-          RAISE NOTICE '${label}:DENIED';
-        END IF;
-      END $$;
+        RETURNING id
+      )
+      UPDATE business_payouts SET status = 'approved', updated_at = now()
+      FROM consumed
+      WHERE business_payouts.id = '${PAYOUT_ID}' AND business_payouts.status = 'pending'
+      RETURNING business_payouts.id;
     `);
 
-    // First consumer: should succeed
-    const result1 = consumeAndMutate('C1');
-    expect(result1).toContain('C1:CONSUMED_AND_MUTATED');
+    // First consumer: should succeed (returns payout ID)
+    const result1 = consumeAndMutate();
+    expect(result1).toContain(PAYOUT_ID);
 
-    // Second consumer (replay): should be denied
-    const result2 = consumeAndMutate('C2');
-    expect(result2).toContain('C2:DENIED');
+    // Second consumer (replay): CTE returns zero rows → no mutation
+    const result2 = consumeAndMutate();
+    expect(result2).not.toContain(PAYOUT_ID);
 
     // Payout approved exactly once
     const finalStatus = runSQL(`SELECT status FROM business_payouts WHERE id = '${PAYOUT_ID}';`);
