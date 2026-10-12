@@ -66,8 +66,8 @@ describe('SEC-005 step-up verification: exact pending-state enforcement', () => 
     mock.marked.mockReturnValue({ id: 'step-up-one' });
     vi.stubGlobal('fetch', vi.fn(async (input: string) => ({
       ok: true,
-      json: async () => input.endsWith('/factors')
-        ? [{ id: 'factor-one', factor_type: 'totp', status: 'verified' }]
+      json: async () => input.endsWith('/user')
+        ? { factors: [{ id: 'factor-one', factor_type: 'totp', status: 'verified' }] }
         : { success: true },
     })));
   });
