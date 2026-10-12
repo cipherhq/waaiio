@@ -27,7 +27,7 @@
 
 CREATE TABLE IF NOT EXISTS public.admin_step_up_authorizations (
   id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  admin_user_id  uuid        NOT NULL REFERENCES auth.users(id),
+  admin_user_id  uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   session_id     text        NOT NULL,
   action_type    text        NOT NULL CHECK (action_type IN (
                                'payout_approve',
