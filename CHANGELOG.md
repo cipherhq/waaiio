@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-11 — docs/claude-safety-rules: Standing safety rules, product decision protocol, .gitignore
+
+### What changed
+- `CLAUDE.md`: Replaced "Always commit and push" convention with scoped authorization rule: commit/push to feature branches within approved tasks, explicit Owner authorization required per action, stop on permission errors regardless of prior authorization.
+- `CLAUDE.md`: Added "Standing safety rules" section — main protection, permission-error stop behavior, worktree restrictions, public-repo security advisory rule, pre-push Codex review gate (sanitized branch-specific output file with `tr '/' '-'`, non-empty file check), invalid-finding disclosure rule, Codex-unavailable fallback to ChatGPT reviewer, two-reviewer gate for high-risk changes, per-test CI evidence rule (test file + job + step + counts + SHA), no-substitution rule, security-test fail-not-skip policy.
+- `CLAUDE.md`: Added "Product decisions" section — decision card protocol for business rules, edge cases, user-facing behavior, money handling, security tradeoffs, and deviations from Owner/CTO/reviewer instructions.
+- `AGENTS.md`: Added PRODUCT DECISION NEEDED label guidance, deviation-flagging rule, finding disclosure rule, and per-test CI evidence rule under review sections.
+- `.gitignore`: Added `.codex/`, `.mcp.json`, `.playwright-mcp/`.
+
+### What it affects / could break
+- Documentation and .gitignore only. No runtime, migration, or code behavior changes.
+
 ## 2026-10-10 — #609 SEC-005: Admin native MFA enforcement (pre-merge)
 
 ### What changed
