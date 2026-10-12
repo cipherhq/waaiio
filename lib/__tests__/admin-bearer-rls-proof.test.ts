@@ -92,10 +92,10 @@ function runAsRole(role: string, sql: string): string {
  */
 function runAsSuperuser(sql: string): string {
   const raw = runSQL(sql);
-  // Strip blank lines and psql control output (UPDATE N, INSERT N, DELETE N)
+  // Strip blank lines and psql control output (UPDATE N, INSERT 0 1, DELETE N, etc.)
   return raw.split('\n').filter(l =>
     l !== '' &&
-    !/^(UPDATE|INSERT|DELETE|SET|BEGIN|COMMIT)\s*\d*$/.test(l)
+    !/^(UPDATE|INSERT|DELETE|SET|BEGIN|COMMIT)(\s+\d+)*$/.test(l)
   ).join('\n');
 }
 
