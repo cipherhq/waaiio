@@ -746,6 +746,7 @@ BEGIN
     RAISE EXCEPTION 'save_messaging_config requires a non-NULL expected_version_id for CAS';
   END IF;
   SELECT id INTO v_latest_version_id FROM platform_config_versions
+    WHERE effective_from <= clock_timestamp()
     ORDER BY effective_from DESC LIMIT 1;
   IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
     RAISE EXCEPTION 'config_version_conflict: expected % but latest is %', p_expected_version_id, v_latest_version_id;
