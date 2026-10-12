@@ -26,6 +26,10 @@ Read and follow both documents before any substantive work. The Operating Order 
 - This repository is public. Never put security vulnerability details in public issues, PRs, or comments. Security issues go in private GitHub security advisories.
 - Before every push, run: `codex exec --sandbox read-only --output-last-message ~/Desktop/codex-review-$(git branch --show-current).md "Review the changes on this branch compared to origin/main as an independent security reviewer. Report P0 and P1 issues with file and line. Do not modify files."` Fix every valid P0 and P1 finding before pushing. Always read the review file for the current branch only (the branch name is part of the filename so concurrent agents do not overwrite each other).
 - If you judge a Codex P0 or P1 finding invalid, record the finding and your reason in the PR description. Never dismiss a finding silently.
+- If Codex is unavailable (usage limit or error), push so CI runs, state in the PR description that Codex was unavailable, and ChatGPT becomes reviewer of record for that exact SHA. The review gate never disappears. No merge without the reviewer's APPROVED on the exact head SHA.
+- Two-reviewer gate for high-risk changes (money, auth, permissions, data, migrations): Claude chat reviews the report against the code first, then ChatGPT reviews the corrected SHA, then the Owner merges. Docs-only changes need one review. Each reviewer reviews as if it were the only one.
+- Never claim a test runs in CI unless you have shown it from `.github/workflows/ci.yml` AND the CI log with test counts, zero skipped. A green CI run does not prove a test ran.
+- Never report a requirement as met by substituting a different test or approach. If the required thing is not feasible, stop and say exactly why.
 - Security tests must fail, not skip, in CI when their database or configuration is missing.
 
 ## Product decisions: the Owner decides how Waaiio works

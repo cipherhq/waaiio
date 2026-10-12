@@ -7,9 +7,9 @@ If something breaks, check this log to find what changed and when.
 
 ### What changed
 - `CLAUDE.md`: Replaced "Always commit and push" convention with scoped rule: commit/push to feature branches only, never merge/push to main/deploy/mutate staging or production (Owner-only).
-- `CLAUDE.md`: Added "Standing safety rules" section — main protection, permission-error stop behavior, worktree restrictions, public-repo security advisory rule, pre-push Codex review gate (branch-specific output file), invalid-finding disclosure rule, security-test fail-not-skip policy.
+- `CLAUDE.md`: Added "Standing safety rules" section — main protection, permission-error stop behavior, worktree restrictions, public-repo security advisory rule, pre-push Codex review gate (branch-specific output file), invalid-finding disclosure rule, Codex-unavailable fallback to ChatGPT reviewer, two-reviewer gate for high-risk changes, CI test evidence rule, no-substitution rule, security-test fail-not-skip policy.
 - `CLAUDE.md`: Added "Product decisions" section — decision card protocol for business rules, edge cases, user-facing behavior, money handling, security tradeoffs, and deviations from Owner/CTO/reviewer instructions.
-- `AGENTS.md`: Added PRODUCT DECISION NEEDED label guidance and deviation-flagging rule under "Your role in code review".
+- `AGENTS.md`: Added PRODUCT DECISION NEEDED label guidance, deviation-flagging rule, finding disclosure rule, and CI test evidence rule under review sections.
 - `.gitignore`: Added `.codex/`, `.mcp.json`, `.playwright-mcp/`.
 
 ### What it affects / could break
