@@ -234,7 +234,7 @@ CREATE POLICY "Admins can view audit logs"
 -- No authenticated INSERT policy needed — direct PostgREST writes blocked.
 DROP POLICY IF EXISTS "Admins can insert audit logs" ON public.admin_audit_logs;
 REVOKE INSERT, UPDATE, DELETE ON public.admin_audit_logs FROM PUBLIC, anon, authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.admin_audit_logs TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.admin_audit_logs TO service_role;
 
 -- ── ai_usage ──────────────────────────────────────────────────────────────
 -- Old: "ai_usage_admin" (SELECT, profiles.role = 'admin')
@@ -259,15 +259,15 @@ CREATE POLICY "Admins can view business_payouts"
 -- service-role API routes that require step-up authorization.
 -- Explicitly grant to service_role (CI environments lack ALTER DEFAULT PRIVILEGES).
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.business_payouts FROM PUBLIC, anon, authenticated;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.business_payouts TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_payouts TO service_role;
 
 -- Same pattern for reseller_payouts: all writes via service-role API routes.
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.reseller_payouts FROM PUBLIC, anon, authenticated;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.reseller_payouts TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reseller_payouts TO service_role;
 
 -- Impersonation tokens are issued via service-role API only.
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.admin_impersonation_tokens FROM PUBLIC, anon, authenticated;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.admin_impersonation_tokens TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_impersonation_tokens TO service_role;
 
 -- ── businesses ────────────────────────────────────────────────────────────
 -- Old: "Admins can view all businesses" (SELECT, profiles.role = 'admin')
@@ -481,7 +481,7 @@ CREATE POLICY "growth_pricing_admin_select"
 -- mutation, not browser-issued Supabase table DML. Read access is unchanged.
 -- service_role remains authorized for verified server mutations.
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.countries FROM PUBLIC, anon, authenticated;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.countries TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.countries TO service_role;
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- §6. cleanup_expired_step_ups() — cron housekeeping
