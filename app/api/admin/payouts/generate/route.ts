@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
     let created = 0;
     let skipped = 0;
     let held = 0;
+    let failed = 0;
 
     for (const biz of businesses) {
       // Check if payout already exists for this period
@@ -250,7 +251,7 @@ export async function POST(request: NextRequest) {
 
       if (insertError || !newPayout) {
         logger.error('[PAYOUT] Failed to insert payout for business', { business_id: biz.id, error: insertError?.message });
-        skipped++;
+        failed++;
         continue;
       }
 
@@ -285,8 +286,21 @@ export async function POST(request: NextRequest) {
         businesses_checked: businesses.length,
         payouts_created: created,
         payouts_held: held,
+        payouts_failed: failed,
       },
     });
+
+    // Never report success when any INSERT failed
+    if (failed > 0) {
+      return NextResponse.json({
+        error: `Payout generation completed with ${failed} failed write(s)`,
+        created,
+        held,
+        skipped,
+        failed,
+        period: { start: periodStartStr, end: periodEndStr },
+      }, { status: 207 });
+    }
 
     if (created === 0 && held === 0) {
       return NextResponse.json({
@@ -294,6 +308,7 @@ export async function POST(request: NextRequest) {
         created: 0,
         held: 0,
         skipped,
+        failed: 0,
         period: { start: periodStartStr, end: periodEndStr },
         message: 'No eligible payouts for this period',
       });
@@ -304,6 +319,7 @@ export async function POST(request: NextRequest) {
       created,
       held,
       skipped,
+      failed: 0,
       period: { start: periodStartStr, end: periodEndStr },
     });
   } catch (error) {
