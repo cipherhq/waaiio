@@ -77,10 +77,10 @@ export async function POST(request: NextRequest) {
         .eq('period_end', periodEndStr)
         .maybeSingle();
 
-      // Fail closed: if we can't check for duplicates, skip this business
+      // Fail closed: if we can't check for duplicates, count as failed
       if (existingError) {
         logger.error('[PAYOUT] Dedup check failed for business', { business_id: biz.id, error: existingError.message });
-        skipped++;
+        failed++;
         continue;
       }
       if (existing) continue;
@@ -95,10 +95,10 @@ export async function POST(request: NextRequest) {
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
 
-      // Fail closed: if fee data is unavailable, skip (never generate with partial data)
+      // Fail closed: if fee data is unavailable, count as failed (never generate with partial data)
       if (feesError) {
         logger.error('[PAYOUT] Fee query failed for business', { business_id: biz.id, error: feesError.message });
-        skipped++;
+        failed++;
         continue;
       }
 
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
 
       if (paymentsError) {
         logger.error('[PAYOUT] Payments query failed for business', { business_id: biz.id, error: paymentsError.message });
-        skipped++;
+        failed++;
         continue;
       }
 
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
 
       if (adjQueryError) {
         logger.error('[PAYOUT] Adjustments query failed for business', { business_id: biz.id, error: adjQueryError.message });
-        skipped++;
+        failed++;
         continue;
       }
 
