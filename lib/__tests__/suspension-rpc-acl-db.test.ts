@@ -89,9 +89,7 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
       $jwt$;
     `);
 
-    // C6: M439 revokes authenticated EXECUTE on toggle_messaging_suspension.
-    // Re-grant for internal logic testing. ACL tested in admin-helper-acl-db.
-    psqlMayFail(`GRANT EXECUTE ON FUNCTION toggle_messaging_suspension(uuid, boolean, text) TO authenticated;`);
+    // M439 revokes browser EXECUTE; never change live ACLs to make tests pass.
 
     // 1. Seed dedicated admin user with canonical raw_app_meta_data.role = 'admin'
     const adminResult = psqlMayFail(`
@@ -189,7 +187,7 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'aal1 must be denied');
       RESET ROLE;
     `);
-    expect(error).toContain('requires admin role');
+    expect(error.toLowerCase()).toContain('permission denied');
     expect(psql(`SELECT messaging_suspended FROM businesses WHERE id = '${BIZ_ID}';`)).toBe(before);
   });
 
@@ -199,12 +197,12 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
     expect(psql("SELECT has_function_privilege('anon', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');")).toBe('f');
   });
 
-  it('2. authenticated has EXECUTE on toggle_messaging_suspension', () => {
-    expect(psql("SELECT has_function_privilege('authenticated', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');")).toBe('t');
+  it('2. authenticated has NO EXECUTE on toggle_messaging_suspension', () => {
+    expect(psql("SELECT has_function_privilege('authenticated', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');")).toBe('f');
   });
 
-  it('3. service_role has no EXECUTE on toggle_messaging_suspension', () => {
-    expect(psql("SELECT has_function_privilege('service_role', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');")).toBe('f');
+  it('3. service_role retains privileged EXECUTE on legacy wrapper', () => {
+    expect(psql("SELECT has_function_privilege('service_role', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');")).toBe('t');
   });
 
   // ── 4. PUBLIC has no EXECUTE ACE ──
@@ -213,17 +211,16 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
     const acl = psql("SELECT proacl::text FROM pg_proc WHERE proname = 'toggle_messaging_suspension';");
     // PUBLIC grant would appear as "=X/" (empty grantee before =). Must be absent.
     expect(acl).not.toMatch(/(?<![a-z_])=X\//);
-    expect(acl).toContain('authenticated=X/');
+    expect(acl).not.toContain('authenticated=X/');
   });
 
   // ── 5. Admin suspend/resume with canonical authority ──
 
-  it('5. Authenticated admin (canonical app_metadata) can suspend and resume with durable audit', () => {
+  it('5. Service-only wrapper uses canonical admin authority and writes durable audit', () => {
     // Suspend
     const suspendResult = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${ADMIN_JWT}', false);
-      SET ROLE authenticated;
-      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'ACL test suspend 287');
+      SET ROLE service_role;
+      SELECT svc_toggle_messaging_suspension('${ADMIN_UUID}'::uuid, '${BIZ_ID}'::uuid, true, 'ACL test suspend 287');
       RESET ROLE;
     `);
     expect(suspendResult).not.toContain('ERROR');
@@ -241,9 +238,8 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
 
     // Resume
     const resumeResult = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${ADMIN_JWT}', false);
-      SET ROLE authenticated;
-      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false, 'ACL test resume 287');
+      SET ROLE service_role;
+      SELECT svc_toggle_messaging_suspension('${ADMIN_UUID}'::uuid, '${BIZ_ID}'::uuid, false, 'ACL test resume 287');
       RESET ROLE;
     `);
     expect(resumeResult).not.toContain('ERROR');
@@ -252,13 +248,12 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
     expect(afterResume).toBe('f');
   });
 
-  // ── 6. Non-admin denied by internal is_admin() ──
+  // ── 6. Non-admin rejected by service-only wrapper's DB role lookup ──
 
-  it('6. Ordinary authenticated non-admin is denied by internal is_admin()', () => {
+  it('6. Service-only wrapper rejects non-admin actor IDs', () => {
     const err = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${NON_ADMIN_JWT}', false);
-      SET ROLE authenticated;
-      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true);
+      SET ROLE service_role;
+      SELECT svc_toggle_messaging_suspension('${NON_ADMIN_UUID}'::uuid, '${BIZ_ID}'::uuid, true);
       RESET ROLE;
     `);
     expect(err).toContain('requires admin role');
@@ -275,26 +270,30 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
     expect(err.toLowerCase()).toContain('permission denied');
   });
 
-  // ── 8. Service_role denied at EXECUTE privilege boundary ──
+  // ── 8. Service_role legacy call requires genuine caller context ──
 
-  it('8. Service_role invocation denied at EXECUTE privilege boundary', () => {
+  it('8. Service_role cannot use legacy wrapper without a caller identity', () => {
     const err = psqlMayFail(`
       SET ROLE service_role;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true);
       RESET ROLE;
     `);
-    expect(err.toLowerCase()).toContain('permission denied');
+    expect(err.toLowerCase()).toContain('requires authenticated caller');
   });
 
-  // ── 9. RPC definition unchanged from 363 ──
+  // ── 9. Shared implementation is responsible for actual column update ──
 
-  it('9. RPC body still contains auth.uid() and is_admin() checks, semantically unchanged', () => {
+  it('9. RPC retains identity checks and delegates mutation to protected implementation', () => {
     const src = psql("SELECT prosrc FROM pg_proc WHERE proname = 'toggle_messaging_suspension';");
     expect(src).toContain('auth.uid()');
     expect(src).toContain('is_admin()');
     expect(src).toContain('requires authenticated caller');
     expect(src).toContain('requires admin role');
-    expect(src).toContain('messaging_suspended');
+    expect(src).toContain('_toggle_messaging_suspension_impl');
+    const impl = psql("SELECT prosrc FROM pg_proc WHERE proname = '_toggle_messaging_suspension_impl';");
+    expect(impl).toContain('messaging_suspended');
+    expect(psql("SELECT has_function_privilege('authenticated', '_toggle_messaging_suspension_impl(uuid,uuid,boolean,text)', 'EXECUTE');")).toBe('f');
+    expect(psql("SELECT has_function_privilege('service_role', 'svc_toggle_messaging_suspension(uuid,uuid,boolean,text)', 'EXECUTE');")).toBe('t');
 
     const secdef = psql("SELECT prosecdef FROM pg_proc WHERE proname = 'toggle_messaging_suspension';");
     expect(secdef).toBe('t');
