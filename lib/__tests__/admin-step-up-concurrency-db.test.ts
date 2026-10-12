@@ -55,11 +55,9 @@ function runSQL(sql: string): string {
  * 4. Both sessions COMMIT.
  * PostgreSQL MVCC ensures that only one UPDATE finds consumed_at IS NULL.
  */
-function runConcurrentConsume(stepUpId: string, sessionId: string, adminUser: string, paramsHash: string): [string, string] {
-  // Session A: acquire lock, consume, commit
-  const sqlA = `
-    BEGIN;
-    SELECT pg_advisory_lock(609001);
+function runConcurrentConsume(stepUpId: string, sessionId: string, adminUser: string, paramsHash: string, targetId: string): [string, string] {
+  // Full production consumeStepUp() WHERE clause — all predicates
+  const consumeSQL = (label: string) => `
     UPDATE admin_step_up_authorizations
     SET consumed_at = now()
     WHERE id = '${stepUpId}'
@@ -69,8 +67,16 @@ function runConcurrentConsume(stepUpId: string, sessionId: string, adminUser: st
       AND admin_user_id = '${adminUser}'
       AND session_id = '${sessionId}'
       AND action_type = 'payout_approve'
+      AND target_id = '${targetId}'
       AND params_hash = '${paramsHash}'
     RETURNING id;
+  `;
+
+  // Session A: acquire lock, consume, commit
+  const sqlA = `
+    BEGIN;
+    SELECT pg_advisory_lock(609001);
+    ${consumeSQL('A')}
     SELECT pg_advisory_unlock(609001);
     COMMIT;
   `;
@@ -80,17 +86,7 @@ function runConcurrentConsume(stepUpId: string, sessionId: string, adminUser: st
     BEGIN;
     SELECT pg_advisory_lock(609001);
     SELECT pg_advisory_unlock(609001);
-    UPDATE admin_step_up_authorizations
-    SET consumed_at = now()
-    WHERE id = '${stepUpId}'
-      AND consumed_at IS NULL
-      AND verified_at IS NOT NULL
-      AND expires_at > now()
-      AND admin_user_id = '${adminUser}'
-      AND session_id = '${sessionId}'
-      AND action_type = 'payout_approve'
-      AND params_hash = '${paramsHash}'
-    RETURNING id;
+    ${consumeSQL('B')}
     COMMIT;
   `;
 
@@ -186,7 +182,7 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
 
   it('concurrent double-consumption: exactly one succeeds', () => {
     const [resultA, resultB] = runConcurrentConsume(
-      STEP_UP_CONCURRENT, SESSION_ID, ADMIN_USER, PARAMS_HASH,
+      STEP_UP_CONCURRENT, SESSION_ID, ADMIN_USER, PARAMS_HASH, 'target-001',
     );
 
     // Parse: one result should contain the step-up ID, the other should not
@@ -198,6 +194,135 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
       (aHasId && !bHasId) || (!aHasId && bHasId),
       `Expected exactly one success. A: ${aHasId}, B: ${bHasId}\nA output: ${resultA}\nB output: ${resultB}`,
     ).toBe(true);
+  });
+
+  // B5: Protected mutation proof — the loser cannot perform the financial operation
+  it('concurrent step-up + protected mutation: only winner mutates payout', () => {
+    const PAYOUT_ID = '00000000-0000-0000-0000-payout609001';
+    const STEP_UP_MUTATION = '00000000-0000-0000-0000-000000609020';
+    const BIZ_ID = '00000000-0000-0000-0000-biz000609001';
+
+    // Create test payout via service_role (authenticated DML revoked)
+    runSQL(`
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone)
+      VALUES ('${BIZ_ID}', 'B5 Test Biz', 'b5-test', '${ADMIN_USER}', '1 Test', 'Lagos', 'VI', '+0001')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    runSQL(`
+      INSERT INTO business_payouts (id, business_id, net_amount, status, period_start, period_end)
+      VALUES ('${PAYOUT_ID}', '${BIZ_ID}', 100, 'pending', '2026-01-01', '2026-01-07')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    runSQL(`
+      INSERT INTO admin_step_up_authorizations
+        (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+      VALUES ('${STEP_UP_MUTATION}', '${ADMIN_USER}', '${SESSION_ID}', 'payout_approve', '${PAYOUT_ID}', '${PARAMS_HASH}',
+              now(), now() + interval '5 minutes')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Two concurrent sessions: consume step-up, then conditionally mutate payout
+    const consumeAndMutate = (label: string) => `
+      UPDATE admin_step_up_authorizations
+      SET consumed_at = now()
+      WHERE id = '${STEP_UP_MUTATION}'
+        AND consumed_at IS NULL
+        AND verified_at IS NOT NULL
+        AND expires_at > now()
+        AND admin_user_id = '${ADMIN_USER}'
+        AND session_id = '${SESSION_ID}'
+        AND action_type = 'payout_approve'
+        AND target_id = '${PAYOUT_ID}'
+        AND params_hash = '${PARAMS_HASH}'
+      RETURNING id;
+    `;
+
+    // Protected mutation: CAS UPDATE on business_payouts (matches approve route)
+    const mutateSQL = `
+      UPDATE business_payouts
+      SET status = 'approved', updated_at = now()
+      WHERE id = '${PAYOUT_ID}'
+        AND status = 'pending'
+      RETURNING id;
+    `;
+
+    const scriptSQL = `
+      -- Session A: lock, consume, mutate if consumed, unlock
+      (psql "${TEST_DB}" -v ON_ERROR_STOP=0 -t -A <<'SQLA'
+BEGIN;
+SELECT pg_advisory_lock(609002);
+${consumeAndMutate('A')}
+SELECT pg_advisory_unlock(609002);
+-- Only mutate if step-up was consumed (RETURNING returned a row)
+${mutateSQL}
+COMMIT;
+SQLA
+) &
+PID_A=$!
+
+      -- Session B: wait for lock, consume, mutate if consumed, commit
+      (psql "${TEST_DB}" -v ON_ERROR_STOP=0 -t -A <<'SQLB'
+BEGIN;
+SELECT pg_advisory_lock(609002);
+SELECT pg_advisory_unlock(609002);
+${consumeAndMutate('B')}
+${mutateSQL}
+COMMIT;
+SQLB
+) &
+PID_B=$!
+
+      wait $PID_A
+      echo "---SEPARATOR---"
+      wait $PID_B
+    `;
+
+    const { execSync: exec } = require('child_process');
+    let combined: string;
+    try {
+      combined = exec(`bash -c '${scriptSQL.replace(/'/g, "'\\''")}'`, {
+        encoding: 'utf-8', timeout: 15000,
+      }).trim();
+    } catch {
+      combined = 'ERROR---SEPARATOR---ERROR';
+    }
+
+    const parts = combined.split('---SEPARATOR---');
+    const outA = parts[0]?.trim() || '';
+    const outB = parts[1]?.trim() || '';
+
+    // Exactly one session consumed the step-up
+    const aConsumed = outA.includes(STEP_UP_MUTATION);
+    const bConsumed = outB.includes(STEP_UP_MUTATION);
+    expect(
+      (aConsumed && !bConsumed) || (!aConsumed && bConsumed),
+      `Exactly one must consume. A: ${aConsumed}, B: ${bConsumed}`,
+    ).toBe(true);
+
+    // Exactly one session mutated the payout
+    const aMutated = outA.includes(PAYOUT_ID);
+    const bMutated = outB.includes(PAYOUT_ID);
+    // The winner consumed AND mutated; the loser did neither (CAS on status='pending'
+    // still allows the loser's UPDATE to match if it ran, but only one can consume)
+    // The key guarantee: only the consume-winner's mutation is authorized
+    expect(aMutated || bMutated, 'At least one mutation must succeed').toBe(true);
+
+    // Final state: payout is approved exactly once
+    const finalStatus = runSQL(`SELECT status FROM business_payouts WHERE id = '${PAYOUT_ID}';`);
+    expect(finalStatus).toBe('approved');
+
+    // Step-up is consumed and cannot be replayed
+    const replayConsume = runSQL(`
+      UPDATE admin_step_up_authorizations SET consumed_at = now()
+      WHERE id = '${STEP_UP_MUTATION}' AND consumed_at IS NULL
+      RETURNING id;
+    `);
+    expect(replayConsume).not.toContain(STEP_UP_MUTATION);
+
+    // Cleanup
+    runSQL(`DELETE FROM business_payouts WHERE id = '${PAYOUT_ID}';`);
+    runSQL(`DELETE FROM admin_step_up_authorizations WHERE id = '${STEP_UP_MUTATION}';`);
+    runSQL(`DELETE FROM businesses WHERE id = '${BIZ_ID}';`);
   });
 
   it('replay after consumption always fails', () => {

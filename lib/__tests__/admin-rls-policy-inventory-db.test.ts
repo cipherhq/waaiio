@@ -151,50 +151,100 @@ describe('SEC-005: RLS policy inventory after M439', () => {
     });
   }
 
-  // B6: Every admin-access RLS policy must use an aal2-gated helper function
-  it('every admin-access RLS policy calls an aal2-gated helper', () => {
-    // Find all policies that reference admin/support/finance helper functions
-    // and verify none bypass aal2 by using raw role checks
-    const adminPolicies = runSQL(`
-      SELECT tablename, policyname, qual::text AS qual, with_check::text AS wc
-      FROM pg_policies
-      WHERE schemaname = 'public'
-        AND (
-          qual::text LIKE '%is_admin%'
-          OR qual::text LIKE '%is_support%'
-          OR qual::text LIKE '%has_admin_role%'
-          OR qual::text LIKE '%has_platform_role%'
-          OR qual::text LIKE '%is_admin_or_finance%'
-          OR qual::text LIKE '%is_admin_or_support%'
-          OR with_check::text LIKE '%is_admin%'
-          OR with_check::text LIKE '%is_support%'
-          OR with_check::text LIKE '%has_admin_role%'
-          OR with_check::text LIKE '%has_platform_role%'
-          OR with_check::text LIKE '%is_admin_or_finance%'
-          OR with_check::text LIKE '%is_admin_or_support%'
-        );
-    `);
-    // All these helpers now require aal2 via M439 rewrites.
-    // If any policy uses a different admin-check function, this test suite
-    // would need updating. The existence of results confirms they all
-    // delegate to aal2-gated helpers.
-    expect(adminPolicies.length).toBeGreaterThan(0);
-
-    // No admin policy should use raw app_metadata or user_metadata checks
-    const rawMetaPolicies = runSQL(`
-      SELECT tablename, policyname
+  // B6: Authoritative admin policy inventory — detects unexpected authorization paths
+  // Enumerates ALL policies, classifies each, and fails if any admin-access policy
+  // lacks aal2 enforcement.
+  it('no policy uses raw app_metadata, user_metadata, or profiles.role directly', () => {
+    const rawPolicies = runSQL(`
+      SELECT tablename || '|' || policyname AS policy
       FROM pg_policies
       WHERE schemaname = 'public'
         AND (
           qual::text LIKE '%raw_app_meta_data%'
           OR qual::text LIKE '%app_metadata%'
           OR qual::text LIKE '%user_metadata%'
+          OR qual::text LIKE '%profiles%role%'
           OR with_check::text LIKE '%raw_app_meta_data%'
           OR with_check::text LIKE '%app_metadata%'
           OR with_check::text LIKE '%user_metadata%'
+          OR with_check::text LIKE '%profiles%role%'
         );
     `);
-    expect(rawMetaPolicies, `Found policies using raw metadata: ${rawMetaPolicies}`).toBe('');
+    expect(rawPolicies, `Found policies using raw metadata or profiles.role: ${rawPolicies}`).toBe('');
+  });
+
+  it('every privileged policy uses an aal2-gated helper — no unknown admin authorization', () => {
+    // Known aal2-gated helper functions (all rewritten by M439 to require aal2)
+    const aal2Helpers = [
+      'is_admin', 'is_support', 'has_admin_role', 'has_platform_role',
+      'is_admin_or_finance', 'is_admin_or_support',
+    ];
+    const helperPattern = aal2Helpers.map(h => `'%${h}%'`).join(',');
+
+    // Find ALL policies that are NOT tenant-scoped (auth.uid()) and NOT using
+    // known aal2-gated helpers — these would be unexpected admin paths
+    const unexpectedPolicies = runSQL(`
+      SELECT tablename || '|' || policyname || '|' || COALESCE(qual::text, 'NULL') AS policy
+      FROM pg_policies
+      WHERE schemaname = 'public'
+        AND roles::text LIKE '%authenticated%'
+        AND qual::text NOT LIKE '%auth.uid()%'
+        AND qual::text NOT LIKE ALL(ARRAY[${helperPattern}])
+        AND COALESCE(with_check::text, '') NOT LIKE '%auth.uid()%'
+        AND COALESCE(with_check::text, '') NOT LIKE ALL(ARRAY[${helperPattern}])
+        AND qual::text != 'true'
+        AND qual::text != 'false';
+    `);
+    expect(
+      unexpectedPolicies,
+      `Found policies with unknown authorization (not tenant-scoped, not aal2-helper): ${unexpectedPolicies}`,
+    ).toBe('');
+  });
+
+  // B6: Executable aal1 denial across all admin-scoped tables
+  it('aal1 admin session sees zero rows from every admin table', () => {
+    // Seed an admin user for this test
+    const TEST_ADMIN = '00000000-0000-0000-0000-aal1test0001';
+    runSQL(`
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id, raw_app_meta_data)
+      VALUES ('${TEST_ADMIN}', '{"role":"admin"}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{"role":"admin"}'::jsonb;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+      INSERT INTO profiles (id, email) VALUES ('${TEST_ADMIN}', 'aal1-test@waaiio.local')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Tables that admin policies gate — a subset of AFFECTED_TABLES that have admin-only RLS
+    const adminOnlyTables = [
+      'admin_audit_logs', 'ai_usage', 'business_payouts', 'businesses',
+      'conversation_usage', 'countries', 'fraud_events', 'payout_accounts',
+      'resellers', 'alerts', 'admin_impersonation_tokens', 'reseller_payouts',
+    ];
+
+    for (const table of adminOnlyTables) {
+      const count = runSQL(`
+        BEGIN;
+        SELECT set_config('request.jwt.claims', '{"sub":"${TEST_ADMIN}","role":"authenticated","aal":"aal1","app_metadata":{"role":"admin"}}', true);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+          SELECT '{"sub":"${TEST_ADMIN}","role":"authenticated","aal":"aal1","app_metadata":{"role":"admin"}}'::jsonb;
+        $fn$ LANGUAGE SQL STABLE;
+        SET LOCAL ROLE authenticated;
+        SELECT count(*)::int FROM ${table};
+        COMMIT;
+      `);
+      // With aal1, all admin helpers return false → 0 rows
+      const rowCount = parseInt(count.split('\n').pop()?.trim() || '0', 10);
+      expect(rowCount, `aal1 admin should see 0 rows from ${table}, got ${rowCount}`).toBe(0);
+    }
+
+    // Cleanup
+    runSQL(`
+      DELETE FROM profiles WHERE id = '${TEST_ADMIN}';
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      DELETE FROM auth.users WHERE id = '${TEST_ADMIN}';
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+    `);
   });
 });
 
