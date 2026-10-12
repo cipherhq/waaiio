@@ -35,8 +35,11 @@ function psqlMayFail(sql: string): string {
 // inside the SECURITY DEFINER functions.
 function adminContext(adminId: string): string {
   return `
-    DO $$ BEGIN PERFORM set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', false); END $$;
-    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+    DO $$ BEGIN
+      PERFORM set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated","aal":"aal2"}', false);
+      PERFORM set_config('request.jwt.claim.sub', '${adminId}', false);
+    END $$;
+    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"sub":"${adminId}","role":"admin","aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
     SET ROLE service_role;
   `;
 }
