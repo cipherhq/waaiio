@@ -91,7 +91,12 @@ function runAsRole(role: string, sql: string): string {
  * the postgres superuser has the same RLS-bypass behavior.
  */
 function runAsSuperuser(sql: string): string {
-  return runSQL(sql);
+  const raw = runSQL(sql);
+  // Strip blank lines and psql control output (UPDATE N, INSERT N, DELETE N)
+  return raw.split('\n').filter(l =>
+    l !== '' &&
+    !/^(UPDATE|INSERT|DELETE|SET|BEGIN|COMMIT)\s*\d*$/.test(l)
+  ).join('\n');
 }
 
 // Test fixture IDs
@@ -186,8 +191,8 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
 
   it('anon role CANNOT insert into verification_requests', () => {
     const result = runAsRole('anon', `
-      INSERT INTO verification_requests (id, business_id, requested_level, status)
-      VALUES ('${TEST_VERIF_ID}', '${TEST_BIZ_ID}', 'basic', 'pending');
+      INSERT INTO verification_requests (id, business_id, requested_level, requested_by, status)
+      VALUES ('${TEST_VERIF_ID}', '${TEST_BIZ_ID}', 'basic', '${TEST_USER_ID}', 'pending');
     `);
     expect(result).toContain('ERROR:');
   });
@@ -195,8 +200,8 @@ describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
   it('superuser CAN insert into verification_requests (simulates service_role BYPASSRLS)', () => {
     // postgres superuser bypasses RLS and has full table permissions
     const result = runAsSuperuser(`
-      INSERT INTO verification_requests (id, business_id, requested_level, status)
-      VALUES ('${TEST_VERIF_ID}', '${TEST_BIZ_ID}', 'basic', 'pending')
+      INSERT INTO verification_requests (id, business_id, requested_level, requested_by, status)
+      VALUES ('${TEST_VERIF_ID}', '${TEST_BIZ_ID}', 'basic', '${TEST_USER_ID}', 'pending')
       RETURNING id;
     `);
     expect(result).toBe(TEST_VERIF_ID);
