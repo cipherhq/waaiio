@@ -146,6 +146,7 @@ export async function prepareStepUp(
       target_id: targetId,
       params_hash: paramsHash,
       challenge_id: challenge.id,
+      factor_id: totpFactor.id,
       expires_at: new Date(Date.now() + STEP_UP_MAX_AGE_SECONDS * 1000).toISOString(),
     })
     .select('id')
@@ -171,7 +172,7 @@ export async function verifyStepUp(
   admin: PlatformAdmin,
   stepUpId: string,
   code: string,
-): Promise<boolean> {
+): Promise<{ access_token: string; refresh_token: string }> {
   const { createServiceClient } = await import('@/lib/supabase/service');
   const supabase = createServiceClient();
 
@@ -182,7 +183,7 @@ export async function verifyStepUp(
   // Load the pending step-up
   const { data: stepUp, error } = await supabase
     .from('admin_step_up_authorizations')
-    .select('id, admin_user_id, session_id, challenge_id, verified_at, consumed_at, expires_at')
+    .select('id, admin_user_id, session_id, challenge_id, factor_id, verified_at, consumed_at, expires_at')
     .eq('id', stepUpId)
     .single();
 
@@ -194,27 +195,14 @@ export async function verifyStepUp(
   if (stepUp.consumed_at) throw new StepUpError('Step-up already consumed');
   if (new Date(stepUp.expires_at) < new Date()) throw new StepUpError('Step-up expired');
 
-  // Load the challenge to get the factor ID
+  // Always verify against the exact factor that created this challenge.
+  // Re-enumerating factors can select another factor if their order changes.
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !anonKey) throw new StepUpError('Missing Supabase configuration');
+  if (!stepUp.factor_id) throw new StepUpError('Step-up challenge has no factor identity');
 
-  // C0: Use official GET /auth/v1/user endpoint to get enrolled factors.
-  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    headers: {
-      'Authorization': `Bearer ${admin.bearerToken}`,
-      'apikey': anonKey,
-    },
-  });
-
-  if (!userRes.ok) throw new StepUpError('Failed to get user factors for verification');
-  const userData = await userRes.json();
-  const totpFactor = (userData.factors ?? [])
-    .find((f: { factor_type: string; status: string }) => f.factor_type === 'totp' && f.status === 'verified');
-
-  if (!totpFactor) throw new StepUpError('No verified TOTP factor');
-
-  const verifyRes = await fetch(`${supabaseUrl}/auth/v1/factors/${totpFactor.id}/verify`, {
+  const verifyRes = await fetch(`${supabaseUrl}/auth/v1/factors/${stepUp.factor_id}/verify`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${admin.bearerToken}`,
@@ -232,6 +220,14 @@ export async function verifyStepUp(
     throw new StepUpError(errBody?.msg || errBody?.error || 'TOTP verification failed');
   }
 
+  // GoTrue rotates the session tokens during MFA verification. The browser
+  // must persist them before executing the authorized operation.
+  const verifiedSession = await verifyRes.json();
+  if (typeof verifiedSession?.access_token !== 'string' ||
+      typeof verifiedSession?.refresh_token !== 'string') {
+    throw new StepUpError('MFA verification returned no refreshed session');
+  }
+
   // The verification transition is conditional on *all* pending-state
   // predicates. Checking only the error is insufficient: UPDATE of zero rows
   // is not an authorization success (and races must not re-verify an old grant).
@@ -242,6 +238,7 @@ export async function verifyStepUp(
     .eq('admin_user_id', admin.userId)
     .eq('session_id', sessionId)
     .eq('challenge_id', stepUp.challenge_id)
+    .eq('factor_id', stepUp.factor_id)
     .is('verified_at', null)
     .is('consumed_at', null)
     .gt('expires_at', new Date().toISOString())
@@ -250,7 +247,7 @@ export async function verifyStepUp(
 
   if (updateError || !marked) throw new StepUpError('Step-up verification is no longer pending');
 
-  return true;
+  return { access_token: verifiedSession.access_token, refresh_token: verifiedSession.refresh_token };
 }
 
 /**
