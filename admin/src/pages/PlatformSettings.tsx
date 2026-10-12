@@ -463,7 +463,7 @@ export default function PlatformSettings() {
       stepUp.execute({
         actionType: 'commercial_config',
         targetId: key,
-        params: { key, value, description: description ?? null },
+        params: { key, value, description: description ?? null, expected_version_id: null },
         description: `Update commercial setting: ${key}`,
         onAuthorized,
       }).catch(reject);
