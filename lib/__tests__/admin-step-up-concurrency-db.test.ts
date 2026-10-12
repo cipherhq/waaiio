@@ -202,24 +202,39 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
     const STEP_UP_MUTATION = '00000000-0000-0000-0000-000000609020';
     const BIZ_ID = '00000000-0000-0000-0000-bb0060900001';
 
-    // Seed payout and step-up (as postgres superuser)
-    runSQL(`
+    // Seed fixtures — fail immediately if any insert errors
+    const seedProfile = runSQL(`
+      INSERT INTO profiles (id, email) VALUES ('${ADMIN_USER}', 'b5-admin@test.local')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    expect(seedProfile, 'profile seed failed').not.toContain('ERROR');
+
+    const seedBiz = runSQL(`
       INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone)
       VALUES ('${BIZ_ID}', 'B5 Test', 'b5-test', '${ADMIN_USER}', '1 Test', 'Lagos', 'VI', '+0001')
       ON CONFLICT (id) DO NOTHING;
     `);
-    runSQL(`
-      INSERT INTO business_payouts (id, business_id, net_amount, status, period_start, period_end)
-      VALUES ('${PAYOUT_ID}', '${BIZ_ID}', 100, 'pending', '2026-01-01', '2026-01-07')
+    expect(seedBiz, 'business seed failed').not.toContain('ERROR');
+
+    const seedPayout = runSQL(`
+      INSERT INTO business_payouts (id, business_id, gross_amount, platform_fee, net_amount, status, period_start, period_end)
+      VALUES ('${PAYOUT_ID}', '${BIZ_ID}', 200, 50, 150, 'pending', '2026-01-01', '2026-01-07')
       ON CONFLICT (id) DO NOTHING;
     `);
-    runSQL(`
+    expect(seedPayout, 'payout seed failed').not.toContain('ERROR');
+
+    // Verify payout exists before the test
+    const payoutExists = runSQL(`SELECT count(*) FROM business_payouts WHERE id = '${PAYOUT_ID}';`);
+    expect(payoutExists.trim()).toBe('1');
+
+    const seedStepUp = runSQL(`
       INSERT INTO admin_step_up_authorizations
         (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
       VALUES ('${STEP_UP_MUTATION}', '${ADMIN_USER}', '${SESSION_ID}', 'payout_approve', '${PAYOUT_ID}', '${PARAMS_HASH}',
               now(), now() + interval '5 minutes')
       ON CONFLICT (id) DO NOTHING;
     `);
+    expect(seedStepUp, 'step-up seed failed').not.toContain('ERROR');
 
     // Atomic consume-then-mutate: CTE consumes the step-up, outer UPDATE
     // only mutates the payout if the CTE returned a row. Single statement,
@@ -263,6 +278,7 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
     runSQL(`DELETE FROM business_payouts WHERE id = '${PAYOUT_ID}';`);
     runSQL(`DELETE FROM admin_step_up_authorizations WHERE id = '${STEP_UP_MUTATION}';`);
     runSQL(`DELETE FROM businesses WHERE id = '${BIZ_ID}';`);
+    runSQL(`DELETE FROM profiles WHERE id = '${ADMIN_USER}';`);
   });
 
   it('replay after consumption always fails', () => {

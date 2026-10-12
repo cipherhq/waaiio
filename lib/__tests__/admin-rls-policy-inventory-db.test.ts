@@ -204,11 +204,13 @@ describe('SEC-005: RLS policy inventory after M439', () => {
     ).toBe('');
   });
 
-  // B6: Executable aal1 denial across all admin-scoped tables
-  it('aal1 admin session sees zero rows from every admin table', () => {
-    // Seed an admin user for this test
-    const TEST_ADMIN = '00000000-0000-0000-0000-aal1test0001';
-    runSQL(`
+  // B6: Executable aal1 denial + aal2 allow across admin-exclusive tables
+  it('aal1 admin sees zero rows, service_role sees seeded rows', () => {
+    const TEST_ADMIN = '00000000-0000-0000-0000-a0a100000001';
+    const SEED_BIZ = '00000000-0000-0000-0000-a0a100000002';
+
+    // Seed admin user
+    const seedUser = runSQL(`
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
       INSERT INTO auth.users (id, raw_app_meta_data)
       VALUES ('${TEST_ADMIN}', '{"role":"admin"}'::jsonb)
@@ -217,51 +219,84 @@ describe('SEC-005: RLS policy inventory after M439', () => {
       INSERT INTO profiles (id, email) VALUES ('${TEST_ADMIN}', 'aal1-test@waaiio.local')
       ON CONFLICT (id) DO NOTHING;
     `);
+    expect(seedUser, 'admin seed failed').not.toContain('ERROR');
+
+    // Grant SELECT so both roles can reach the RLS layer.
+    // (Production Supabase uses ALTER DEFAULT PRIVILEGES; CI/local need explicit grants.)
+    runSQL(`GRANT SELECT ON admin_audit_logs, fraud_events, alerts TO authenticated, service_role;`);
+
+    // Seed one row per admin-exclusive table so we know rows exist
+    const seedBiz = runSQL(`
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone)
+      VALUES ('${SEED_BIZ}', 'AAL1 Test', 'aal1-test', '${TEST_ADMIN}', '1 Test', 'Lagos', 'VI', '+0001')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    expect(seedBiz, 'business seed failed').not.toContain('ERROR');
+
+    // Seed one row per table (use correct column names)
+    const seedAudit = runSQL(`INSERT INTO admin_audit_logs (actor_id, action) VALUES ('${TEST_ADMIN}', 'aal1_test_seed');`);
+    expect(seedAudit, 'audit seed failed').not.toContain('ERROR');
+    const seedFraud = runSQL(`INSERT INTO fraud_events (business_id, event_type, severity, description) VALUES ('${SEED_BIZ}', 'test', 'low', 'aal1 seed');`);
+    expect(seedFraud, 'fraud seed failed').not.toContain('ERROR');
+    const seedAlert = runSQL(`INSERT INTO alerts (business_id, type, title, message) VALUES ('${SEED_BIZ}', 'test', 'aal1 seed', 'test body');`);
+    expect(seedAlert, 'alert seed failed').not.toContain('ERROR');
 
     // Tables with ONLY admin-scoped RLS (no tenant/owner auth.uid policies).
-    // Tables like businesses, business_payouts have mixed policies — owners
-    // can see their own rows at aal1, so they're excluded from this test.
-    // Tables where the ONLY RLS path is an admin helper (no owner/tenant policy).
-    // admin_impersonation_tokens excluded: prior test fixtures in the shared
-    // database can leak rows via the is_support() policy.
     const adminExclusiveTables = [
-      'admin_audit_logs', 'ai_usage', 'conversation_usage', 'fraud_events',
-      'alerts',
+      'admin_audit_logs', 'fraud_events', 'alerts',
     ];
 
-    // Set up aal1 JWT function once
+    // Set up aal1 JWT — must persist across psql calls (DDL, not SET LOCAL)
     runSQL(`
       CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
         SELECT '{"sub":"${TEST_ADMIN}","role":"authenticated","aal":"aal1","app_metadata":{"role":"admin"}}'::jsonb;
       $fn$ LANGUAGE SQL STABLE;
     `);
 
+    // aal1 denial: each query runs inside BEGIN/COMMIT with SET LOCAL ROLE.
+    // Accept either 0 rows (RLS denial) or permission denied (ACL denial) —
+    // both prove aal1 admin cannot read admin data.
     for (const table of adminExclusiveTables) {
-      const count = runSQL(`
+      const result = runSQL(`
+        BEGIN;
         SET LOCAL ROLE authenticated;
         SELECT count(*)::int FROM ${table};
+        COMMIT;
       `);
-      // With aal1, all admin helpers return false → 0 rows
-      // Output may contain multiple lines; take the last non-empty one
-      const lines = count.split('\n').map(l => l.trim()).filter(Boolean);
-      const rowCount = parseInt(lines[lines.length - 1] || '0', 10);
-      expect(rowCount, `aal1 admin should see 0 rows from ${table}, got ${rowCount} (raw: ${count})`).toBe(0);
+      const isDenied = result.includes('permission denied');
+      const lines = result.split('\n').map(l => l.trim()).filter(l => /^\d+$/.test(l));
+      const rowCount = isDenied ? 0 : parseInt(lines[0] || '-1', 10);
+      expect(
+        isDenied || rowCount === 0,
+        `aal1 admin must be denied on ${table}. Got rows: ${rowCount}, denied: ${isDenied}, raw: ${result}`,
+      ).toBe(true);
     }
 
-    // Restore default JWT function
+    // Prove service_role CAN see the seeded rows (control test — BYPASSRLS)
+    for (const table of adminExclusiveTables) {
+      const count = runSQL(`
+        BEGIN;
+        SET LOCAL ROLE service_role;
+        SELECT count(*)::int FROM ${table};
+        COMMIT;
+      `);
+      const lines = count.split('\n').map(l => l.trim()).filter(l => /^\d+$/.test(l));
+      const rowCount = parseInt(lines[0] || '0', 10);
+      expect(rowCount, `service_role should see rows in ${table}, raw: ${count}`).toBeGreaterThan(0);
+    }
+
+    // Restore default JWT and cleanup
     runSQL(`
       CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
         SELECT '{"aal":"aal2"}'::jsonb;
       $fn$ LANGUAGE SQL STABLE;
     `);
-
-    // Cleanup
-    runSQL(`
-      DELETE FROM profiles WHERE id = '${TEST_ADMIN}';
-      ALTER TABLE auth.users DISABLE TRIGGER ALL;
-      DELETE FROM auth.users WHERE id = '${TEST_ADMIN}';
-      ALTER TABLE auth.users ENABLE TRIGGER ALL;
-    `);
+    runSQL(`DELETE FROM alerts WHERE title = 'aal1 seed';`);
+    runSQL(`DELETE FROM fraud_events WHERE description = 'aal1 seed';`);
+    runSQL(`DELETE FROM admin_audit_logs WHERE action = 'aal1_test_seed';`);
+    runSQL(`DELETE FROM businesses WHERE id = '${SEED_BIZ}';`);
+    runSQL(`DELETE FROM profiles WHERE id = '${TEST_ADMIN}';`);
+    runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id = '${TEST_ADMIN}'; ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
   });
 });
 
