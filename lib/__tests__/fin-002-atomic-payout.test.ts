@@ -152,16 +152,17 @@ function setupMocks(config: MockConfig = {}) {
         return Promise.resolve({ data: null, error: null });
       }),
       from: vi.fn().mockImplementation((table: string) => {
+        // Get the base mock chain (same data as the old cookie client)
+        const base = mockFrom(table);
         if (table === 'business_payouts') {
-          return {
-            update: vi.fn().mockReturnValue(serviceUpdateChain),
-            insert: vi.fn().mockReturnValue(serviceInsertChain),
-          };
+          // Overlay service-specific write operations
+          base.update = vi.fn().mockReturnValue(serviceUpdateChain);
+          base.insert = vi.fn().mockReturnValue(serviceInsertChain);
         }
         if (table === 'admin_audit_logs') {
-          return { insert: vi.fn().mockResolvedValue({}) };
+          base.insert = vi.fn().mockResolvedValue({});
         }
-        return { insert: vi.fn().mockResolvedValue({}), select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
+        return base;
       }),
     }),
   }));
@@ -429,6 +430,13 @@ describe('FIN-002: Timeout → review_required', () => {
           }
           return Promise.resolve({ data: null, error: null });
         }),
+        from: vi.fn().mockImplementation((table: string) => {
+          const base = mockFrom(table);
+          if (table === 'admin_audit_logs') {
+            base.insert = vi.fn().mockResolvedValue({});
+          }
+          return base;
+        }),
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({ requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }) }));
@@ -519,6 +527,13 @@ describe('FIN-002: Provider response classification', () => {
           if (name === 'mark_payout_review_required') { lastTransition = 'review_required'; }
           if (name === 'mark_payout_provider_submitted') { lastTransition = 'submitted'; }
           return Promise.resolve({ data: [{ id: 'p1' }], error: null });
+        }),
+        from: vi.fn().mockImplementation((table: string) => {
+          const base = mockFrom(table);
+          if (table === 'admin_audit_logs') {
+            base.insert = vi.fn().mockResolvedValue({});
+          }
+          return base;
         }),
       }),
     }));
@@ -723,10 +738,40 @@ describe('FIN-002: Manual methods', () => {
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         rpc: vi.fn().mockImplementation(() => { claimCalled = true; return Promise.resolve({ data: [], error: null }); }),
-        from: vi.fn().mockImplementation(() => {
+        from: vi.fn().mockImplementation((table: string) => {
           const chain: Record<string, unknown> = {};
-          ['update', 'eq', 'in', 'select', 'insert'].forEach(m => { chain[m] = vi.fn().mockReturnValue(chain); });
-          chain.select = vi.fn().mockResolvedValue({ data: [{ id: 'p1' }] });
+          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+            chain[m] = vi.fn().mockReturnValue(chain);
+          });
+          if (table === 'business_payouts') {
+            chain.single = vi.fn().mockResolvedValue({
+              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
+                      payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+            });
+            // Manual update chain
+            const updateChain: Record<string, unknown> = {};
+            ['eq', 'in', 'select'].forEach(m => { updateChain[m] = vi.fn().mockReturnValue(updateChain); });
+            updateChain.select = vi.fn().mockResolvedValue({ data: [{ id: 'p1' }] });
+            chain.update = vi.fn().mockReturnValue(updateChain);
+          } else if (table === 'businesses') {
+            chain.single = vi.fn().mockResolvedValue({
+              data: { verification_level: 'verified', country_code: 'NG', name: 'Test', owner_id: 'u1' },
+            });
+          } else if (table === 'payout_accounts') {
+            chain.maybeSingle = vi.fn().mockResolvedValue({
+              data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' },
+            });
+            chain.single = vi.fn().mockResolvedValue({
+              data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', gateway: 'paystack' },
+            });
+          } else if (table === 'platform_fees') {
+            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+          } else if (table === 'profiles') {
+            chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
+          } else if (table === 'notifications') {
+            chain.insert = vi.fn().mockResolvedValue({});
+          }
+          chain.neq = vi.fn().mockResolvedValue({ data: [] });
           return chain;
         }),
       }),
@@ -1389,9 +1434,41 @@ describe('FIN-002: Paystack account_name required before claim', () => {
   it('account_name null → 400, zero claim calls, zero provider calls', async () => {
     let claimCalled = false;
     setupMocks({ payoutAccountName: null });
+    // No further service client override needed — setupMocks now provides
+    // a service client with from() that delegates to mockFrom (which has
+    // payoutAccountName: null configured). We just need to track claimCalled.
+    // Re-mock only rpc to track the claim call, keeping from from setupMocks.
+    // Actually, vi.doMock replaces the whole module, so we must provide from too.
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         rpc: vi.fn().mockImplementation(() => { claimCalled = true; return Promise.resolve({ data: [], error: null }); }),
+        from: vi.fn().mockImplementation((table: string) => {
+          const chain: Record<string, unknown> = {};
+          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+            chain[m] = vi.fn().mockReturnValue(chain);
+          });
+          if (table === 'business_payouts') {
+            chain.single = vi.fn().mockResolvedValue({
+              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
+                      payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+            });
+          } else if (table === 'businesses') {
+            chain.single = vi.fn().mockResolvedValue({
+              data: { verification_level: 'verified', country_code: 'NG', name: 'Test', owner_id: 'u1' },
+            });
+          } else if (table === 'payout_accounts') {
+            chain.maybeSingle = vi.fn().mockResolvedValue({
+              data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' },
+            });
+            chain.single = vi.fn().mockResolvedValue({
+              data: { bank_code: '058', account_number: '0123456789', account_name: null, gateway: 'paystack' },
+            });
+          } else if (table === 'platform_fees') {
+            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+          }
+          chain.neq = vi.fn().mockResolvedValue({ data: [] });
+          return chain;
+        }),
       }),
     }));
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
@@ -1410,6 +1487,33 @@ describe('FIN-002: Paystack account_name required before claim', () => {
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         rpc: vi.fn().mockImplementation(() => { claimCalled = true; return Promise.resolve({ data: [], error: null }); }),
+        from: vi.fn().mockImplementation((table: string) => {
+          const chain: Record<string, unknown> = {};
+          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+            chain[m] = vi.fn().mockReturnValue(chain);
+          });
+          if (table === 'business_payouts') {
+            chain.single = vi.fn().mockResolvedValue({
+              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
+                      payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+            });
+          } else if (table === 'businesses') {
+            chain.single = vi.fn().mockResolvedValue({
+              data: { verification_level: 'verified', country_code: 'NG', name: 'Test', owner_id: 'u1' },
+            });
+          } else if (table === 'payout_accounts') {
+            chain.maybeSingle = vi.fn().mockResolvedValue({
+              data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' },
+            });
+            chain.single = vi.fn().mockResolvedValue({
+              data: { bank_code: '058', account_number: '0123456789', account_name: '   ', gateway: 'paystack' },
+            });
+          } else if (table === 'platform_fees') {
+            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+          }
+          chain.neq = vi.fn().mockResolvedValue({ data: [] });
+          return chain;
+        }),
       }),
     }));
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');

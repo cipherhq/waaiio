@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { kycApprovedEmail, kycRejectedEmail } from '@/lib/email/templates';
 import { getPayoutLimit, formatPayoutLimit, type CountryCode, type VerificationLevel } from '@/lib/constants';
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const body = await request.json();
   const { business_id, action, level, notes, reason, document_ids } = body;
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     const limit = getPayoutLimit(cc, verLevel);
 
     // Update business
-    await supabase
+    const { error: bizUpdateError } = await supabase
       .from('businesses')
       .update({
         verification_level: verLevel,
@@ -59,6 +59,10 @@ export async function POST(request: NextRequest) {
         payout_limit_monthly: limit,
       })
       .eq('id', business_id);
+
+    if (bizUpdateError) {
+      return NextResponse.json({ error: 'Failed to update business verification' }, { status: 500 });
+    }
 
     // Approve specified documents
     if (document_ids?.length) {
@@ -109,13 +113,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Rejection reason is required' }, { status: 400 });
     }
 
-    await supabase
+    const { error: bizUpdateError } = await supabase
       .from('businesses')
       .update({
         verification_status: 'rejected',
         verification_notes: reason,
       })
       .eq('id', business_id);
+
+    if (bizUpdateError) {
+      return NextResponse.json({ error: 'Failed to update business verification' }, { status: 500 });
+    }
 
     // Reject specified documents
     if (document_ids?.length) {

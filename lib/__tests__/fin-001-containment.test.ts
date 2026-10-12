@@ -78,12 +78,19 @@ describe('FIN-001: Payout kill switch (approve route)', () => {
   });
 
   async function loadApproveRoute() {
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
-        from: vi.fn().mockReturnThis(),
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: null }),
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        from: vi.fn().mockImplementation(() => {
+          const chain: Record<string, unknown> = {};
+          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+            chain[m] = vi.fn().mockReturnValue(chain);
+          });
+          chain.single = vi.fn().mockResolvedValue({ data: null });
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null });
+          chain.insert = vi.fn().mockResolvedValue({ error: null });
+          return chain;
+        }),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({
@@ -761,12 +768,19 @@ describe('FIN-001: Transfer-method allowlist', () => {
   });
 
   async function loadApproveRoute() {
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
-        from: vi.fn().mockReturnThis(),
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: null }),
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        from: vi.fn().mockImplementation(() => {
+          const chain: Record<string, unknown> = {};
+          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+            chain[m] = vi.fn().mockReturnValue(chain);
+          });
+          chain.single = vi.fn().mockResolvedValue({ data: null });
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null });
+          chain.insert = vi.fn().mockResolvedValue({ error: null });
+          return chain;
+        }),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({

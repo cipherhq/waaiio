@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
@@ -30,7 +29,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   try {
     const settings = await loadPlatformSettings({ useServiceClient: true });
@@ -207,8 +206,7 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
-      const serviceClient = createServiceClient();
-      const { data: newPayout } = await serviceClient.from('business_payouts').insert({
+      const { data: newPayout } = await supabase.from('business_payouts').insert({
         business_id: biz.id,
         payout_account_id: payoutAccount?.id || null,
         period_start: periodStartStr,
@@ -224,10 +222,13 @@ export async function POST(request: NextRequest) {
       // Mark adjustments as applied to this payout
       if (newPayout && adjustments && adjustments.length > 0) {
         const adjIds = adjustments.map((a) => a.id);
-        await supabase
+        const { error: adjError } = await supabase
           .from('payout_adjustments')
           .update({ applied_to_payout_id: newPayout.id })
           .in('id', adjIds);
+        if (adjError) {
+          logger.error('[PAYOUT] Failed to mark adjustments as applied', { payout_id: newPayout.id, adjIds });
+        }
       }
 
       if (status === 'held') {
@@ -252,10 +253,22 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    if (created === 0 && held === 0) {
+      return NextResponse.json({
+        success: true,
+        created: 0,
+        held: 0,
+        skipped,
+        period: { start: periodStartStr, end: periodEndStr },
+        message: 'No eligible payouts for this period',
+      });
+    }
+
     return NextResponse.json({
       success: true,
       created,
       held,
+      skipped,
       period: { start: periodStartStr, end: periodEndStr },
     });
   } catch (error) {

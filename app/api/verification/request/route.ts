@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { kycRequestedEmail } from '@/lib/email/templates';
 import { getDocTypeLabel, type CountryCode } from '@/lib/constants';
@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const body = await request.json();
   const { business_id, requested_level, documents_required, message } = body;
@@ -43,10 +43,14 @@ export async function POST(request: NextRequest) {
   }
 
   // Update business status to pending
-  await supabase
+  const { error: updateError } = await supabase
     .from('businesses')
     .update({ verification_status: 'pending' })
     .eq('id', business_id);
+
+  if (updateError) {
+    return NextResponse.json({ error: 'Failed to update business verification status' }, { status: 500 });
+  }
 
   // Send email to business owner
   const { data: biz } = await supabase

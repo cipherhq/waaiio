@@ -733,6 +733,9 @@ const mockConsumeStepUp = stepUpMod.consumeStepUp as ReturnType<typeof vi.fn>;
 describe('Step-up denial returns 403 (E — route-level)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset mockSelectResult to clear any queued mockResolvedValueOnce
+    // values from earlier tests (vi.clearAllMocks does not clear implementations)
+    mockSelectResult.mockReset();
     mockAuthRole = 'admin';
     mockConsumeStepUp.mockResolvedValue(true);
     mockSelectResult.mockResolvedValue({
@@ -742,6 +745,12 @@ describe('Step-up denial returns 403 (E — route-level)', () => {
   });
 
   it('payout reject returns 403 when step-up fails', async () => {
+    // Route now validates payout existence/status BEFORE step-up consumption,
+    // so the mock must return a valid payout for the precondition checks to pass.
+    mockSelectResult.mockResolvedValue({
+      data: { id: 'p-1', business_id: 'b-1', net_amount: 100, status: 'pending' },
+      error: null,
+    });
     mockConsumeStepUp.mockRejectedValueOnce(
       new Error('Step-up authorization required')
     );
