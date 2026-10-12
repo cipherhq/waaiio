@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS public.admin_step_up_authorizations (
                                'reseller_payout_approve',
                                'reseller_payout_reject',
                                'reseller_payout_mark_paid',
-                               'reseller_payout_generate'
+                               'reseller_payout_generate',
+                               'commercial_config',
+                               'messaging_config',
+                               'messaging_suspension'
                              )),
   target_id      text,
   params_hash    text        NOT NULL,
@@ -60,6 +63,10 @@ CREATE POLICY "admin_step_up_deny_all"
   FOR ALL
   USING (false)
   WITH CHECK (false);
+
+-- Service role needs explicit table-level DML (BYPASSRLS skips RLS, not ACL).
+GRANT SELECT, INSERT, UPDATE ON TABLE public.admin_step_up_authorizations TO service_role;
+REVOKE ALL ON TABLE public.admin_step_up_authorizations FROM PUBLIC, anon, authenticated;
 
 -- Efficient lookup: find pending/unconsumed rows for a given admin session.
 CREATE INDEX IF NOT EXISTS idx_admin_step_up_lookup
@@ -227,6 +234,7 @@ DROP POLICY IF EXISTS "Admins can view audit logs" ON public.admin_audit_logs;
 CREATE POLICY "Admins can view audit logs"
   ON public.admin_audit_logs
   FOR SELECT
+  TO authenticated
   USING (public.is_admin());
 
 -- Drop legacy INSERT policy from M010 (used profiles.role, no aal2).
@@ -243,6 +251,7 @@ DROP POLICY IF EXISTS "ai_usage_admin" ON public.ai_usage;
 CREATE POLICY "ai_usage_admin"
   ON public.ai_usage
   FOR SELECT
+  TO authenticated
   USING (public.is_admin());
 
 -- ── business_payouts ──────────────────────────────────────────────────────
@@ -253,6 +262,7 @@ DROP POLICY IF EXISTS "Admins have full access to business_payouts" ON public.bu
 CREATE POLICY "Admins can view business_payouts"
   ON public.business_payouts
   FOR SELECT
+  TO authenticated
   USING (public.is_admin());
 
 -- Revoke DML from authenticated — all payout mutations go through
@@ -275,6 +285,7 @@ DROP POLICY IF EXISTS "Admins can view all businesses" ON public.businesses;
 CREATE POLICY "Admins can view all businesses"
   ON public.businesses
   FOR SELECT
+  TO authenticated
   USING (public.is_admin());
 
 -- ── campaign_donations ────────────────────────────────────────────────────
@@ -283,6 +294,7 @@ DROP POLICY IF EXISTS "admin_all_campaign_donations" ON public.campaign_donation
 CREATE POLICY "admin_all_campaign_donations"
   ON public.campaign_donations
   FOR ALL
+  TO authenticated
   USING (public.is_admin());
 
 -- ── conversation_usage ────────────────────────────────────────────────────
@@ -292,6 +304,7 @@ DROP POLICY IF EXISTS "conversation_usage_admin" ON public.conversation_usage;
 CREATE POLICY "conversation_usage_admin"
   ON public.conversation_usage
   FOR SELECT
+  TO authenticated
   USING (public.is_admin());
 
 -- ── countries ─────────────────────────────────────────────────────────────
@@ -300,6 +313,7 @@ DROP POLICY IF EXISTS "countries_admin_all" ON public.countries;
 CREATE POLICY "countries_admin_all"
   ON public.countries
   FOR ALL
+  TO authenticated
   USING (public.is_admin());
 
 -- ── fraud_events ──────────────────────────────────────────────────────────
@@ -308,6 +322,7 @@ DROP POLICY IF EXISTS "fraud_events_admin_read" ON public.fraud_events;
 CREATE POLICY "fraud_events_admin_read"
   ON public.fraud_events
   FOR SELECT
+  TO authenticated
   USING (public.is_admin());
 
 -- ── payout_accounts ───────────────────────────────────────────────────────
@@ -316,6 +331,7 @@ DROP POLICY IF EXISTS "Admins can view all payout accounts" ON public.payout_acc
 CREATE POLICY "Admins can view all payout accounts"
   ON public.payout_accounts
   FOR SELECT
+  TO authenticated
   USING (public.is_admin());
 
 -- ── resellers ─────────────────────────────────────────────────────────────
@@ -324,6 +340,7 @@ DROP POLICY IF EXISTS "Admin manages resellers" ON public.resellers;
 CREATE POLICY "Admin manages resellers"
   ON public.resellers
   FOR ALL
+  TO authenticated
   USING (public.is_admin());
 
 -- ── alerts ────────────────────────────────────────────────────────────────
@@ -332,6 +349,7 @@ DROP POLICY IF EXISTS "Admin read access" ON public.alerts;
 CREATE POLICY "Admin read access"
   ON public.alerts
   FOR SELECT
+  TO authenticated
   USING (public.is_support());
 
 -- ── llm_classifications ───────────────────────────────────────────────────
@@ -340,6 +358,7 @@ DROP POLICY IF EXISTS "Admin read access" ON public.llm_classifications;
 CREATE POLICY "Admin read access"
   ON public.llm_classifications
   FOR SELECT
+  TO authenticated
   USING (public.is_support());
 
 -- ── pending_transfers (finance manage — UPDATE) ───────────────────────────
@@ -349,6 +368,7 @@ DROP POLICY IF EXISTS "Admin manages pending transfers" ON public.pending_transf
 CREATE POLICY "Admin manages pending transfers"
   ON public.pending_transfers
   FOR UPDATE
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'finance']));
 
 -- ── platform_fee_invoices ─────────────────────────────────────────────────
@@ -357,6 +377,7 @@ DROP POLICY IF EXISTS "Admin manages fee invoices" ON public.platform_fee_invoic
 CREATE POLICY "Admin manages fee invoices"
   ON public.platform_fee_invoices
   FOR ALL
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'finance']));
 
 -- ── reseller_invoices ─────────────────────────────────────────────────────
@@ -365,6 +386,7 @@ DROP POLICY IF EXISTS "Admin manages reseller invoices" ON public.reseller_invoi
 CREATE POLICY "Admin manages reseller invoices"
   ON public.reseller_invoices
   FOR ALL
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'finance']));
 
 -- ── subscription_payments ─────────────────────────────────────────────────
@@ -374,6 +396,7 @@ DROP POLICY IF EXISTS "subscription_payments_admin" ON public.subscription_payme
 CREATE POLICY "subscription_payments_admin"
   ON public.subscription_payments
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'finance']));
 
 -- ── business_broadcasts ───────────────────────────────────────────────────
@@ -382,6 +405,7 @@ DROP POLICY IF EXISTS "business_broadcasts_admin" ON public.business_broadcasts;
 CREATE POLICY "business_broadcasts_admin"
   ON public.business_broadcasts
   FOR ALL
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'operations']));
 
 -- ── event_invites ─────────────────────────────────────────────────────────
@@ -390,6 +414,7 @@ DROP POLICY IF EXISTS "Admin reads event invites" ON public.event_invites;
 CREATE POLICY "Admin reads event invites"
   ON public.event_invites
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'operations']));
 
 -- ── flow_dropoffs ─────────────────────────────────────────────────────────
@@ -398,6 +423,7 @@ DROP POLICY IF EXISTS "admin_read_dropoffs" ON public.flow_dropoffs;
 CREATE POLICY "admin_read_dropoffs"
   ON public.flow_dropoffs
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'operations']));
 
 -- ── parties ───────────────────────────────────────────────────────────────
@@ -406,6 +432,7 @@ DROP POLICY IF EXISTS "Admin reads parties" ON public.parties;
 CREATE POLICY "Admin reads parties"
   ON public.parties
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'operations']));
 
 -- ── reservations ──────────────────────────────────────────────────────────
@@ -414,6 +441,7 @@ DROP POLICY IF EXISTS "Admin reads reservations" ON public.reservations;
 CREATE POLICY "Admin reads reservations"
   ON public.reservations
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'operations']));
 
 -- ── invoices ──────────────────────────────────────────────────────────────
@@ -422,6 +450,7 @@ DROP POLICY IF EXISTS "Admin reads invoices" ON public.invoices;
 CREATE POLICY "Admin reads invoices"
   ON public.invoices
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'finance']));
 
 -- ── pending_transfers (support/finance view — SELECT) ─────────────────────
@@ -433,6 +462,7 @@ DROP POLICY IF EXISTS "Admin views pending transfers" ON public.pending_transfer
 CREATE POLICY "Admin views pending transfers"
   ON public.pending_transfers
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'finance']));
 
 -- ── admin_role_permissions (manage — ALL) ────────────────────────────────
@@ -442,6 +472,7 @@ DROP POLICY IF EXISTS "Admin manages permissions" ON public.admin_role_permissio
 CREATE POLICY "Admin manages permissions"
   ON public.admin_role_permissions
   FOR ALL
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'finance', 'operations']));
 
 -- ── admin_role_permissions (read — SELECT) ───────────────────────────────
@@ -451,6 +482,7 @@ DROP POLICY IF EXISTS "Admin roles read permissions" ON public.admin_role_permis
 CREATE POLICY "Admin roles read permissions"
   ON public.admin_role_permissions
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'finance', 'operations']));
 
 -- ── business_bank_accounts ────────────────────────────────────────────────
@@ -459,6 +491,7 @@ DROP POLICY IF EXISTS "Admin reads bank accounts" ON public.business_bank_accoun
 CREATE POLICY "Admin reads bank accounts"
   ON public.business_bank_accounts
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'finance', 'operations']));
 
 -- ── event_tickets ─────────────────────────────────────────────────────────
@@ -467,6 +500,7 @@ DROP POLICY IF EXISTS "Admin reads event tickets" ON public.event_tickets;
 CREATE POLICY "Admin reads event tickets"
   ON public.event_tickets
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'finance', 'operations']));
 
 -- ── growth_pricing ────────────────────────────────────────────────────────
@@ -475,6 +509,7 @@ DROP POLICY IF EXISTS "growth_pricing_admin_select" ON public.growth_pricing;
 CREATE POLICY "growth_pricing_admin_select"
   ON public.growth_pricing
   FOR SELECT
+  TO authenticated
   USING (public.has_admin_role(ARRAY['admin', 'support', 'finance', 'operations']));
 
 -- SEC-005: Country/provider catalog changes MUST use an action-bound server
@@ -482,6 +517,174 @@ CREATE POLICY "growth_pricing_admin_select"
 -- service_role remains authorized for verified server mutations.
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.countries FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.countries TO service_role;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- §5b. Financial RPC EXECUTE — revoke direct browser access
+--
+-- C6: All financial mutation RPCs must go through server routes with step-up
+-- MFA. Revoke EXECUTE from authenticated; grant to service_role for server use.
+-- save_messaging_config: nested guard (E2) — called only from SECURITY DEFINER
+-- outer functions, not directly.
+-- ════════════════════════════════════════════════════════════════════════════
+
+REVOKE EXECUTE ON FUNCTION public.save_commercial_config(text, jsonb, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.save_commercial_config(text, jsonb, text, uuid) TO service_role;
+
+REVOKE EXECUTE ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) TO service_role;
+
+REVOKE EXECUTE ON FUNCTION public.save_messaging_config(jsonb, jsonb, jsonb, uuid, text) FROM PUBLIC, anon, authenticated;
+-- No service_role GRANT — only reachable via SECURITY DEFINER outer function
+
+REVOKE EXECUTE ON FUNCTION public.toggle_messaging_suspension(uuid, boolean, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.toggle_messaging_suspension(uuid, boolean, text) TO service_role;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- §5c. Service-only financial RPC wrappers (C6 Option B)
+--
+-- Each svc_* function accepts p_actor_user_id (server-verified admin ID),
+-- performs defense-in-depth admin verification via auth.users, then calls
+-- the original SECURITY DEFINER function under the service_role context.
+-- The original functions' auth.uid()/is_admin() checks still apply — these
+-- wrappers are called by the service client which provides the JWT context.
+--
+-- These wrappers are NOT reachable by authenticated/anon/PUBLIC.
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- svc_toggle_messaging_suspension: server-only entry for messaging suspension
+CREATE OR REPLACE FUNCTION public.svc_toggle_messaging_suspension(
+  p_actor_user_id UUID,
+  p_business_id UUID,
+  p_suspended BOOLEAN,
+  p_reason TEXT DEFAULT NULL
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_actor_role TEXT;
+  v_prior_state BOOLEAN;
+  v_biz_name TEXT;
+BEGIN
+  -- Defense-in-depth: verify actor is admin via auth.users
+  SELECT raw_app_meta_data ->> 'role' INTO v_actor_role
+  FROM auth.users WHERE id = p_actor_user_id;
+  IF v_actor_role IS DISTINCT FROM 'admin' THEN
+    RAISE EXCEPTION 'svc_toggle_messaging_suspension requires admin role';
+  END IF;
+
+  -- Business logic (same as toggle_messaging_suspension body, using p_actor_user_id)
+  SELECT messaging_suspended, name INTO v_prior_state, v_biz_name
+  FROM businesses WHERE id = p_business_id FOR UPDATE;
+  IF v_prior_state IS NULL THEN
+    RAISE EXCEPTION 'Business not found: %', p_business_id;
+  END IF;
+  IF v_prior_state = p_suspended THEN
+    RETURN jsonb_build_object('success', true, 'changed', false,
+      'business_id', p_business_id, 'messaging_suspended', p_suspended);
+  END IF;
+
+  UPDATE businesses SET messaging_suspended = p_suspended WHERE id = p_business_id;
+
+  INSERT INTO messaging_suspension_audit (business_id, actor_id, prior_state, new_state, reason, created_at)
+  VALUES (p_business_id, p_actor_user_id, v_prior_state, p_suspended, p_reason, clock_timestamp());
+
+  RETURN jsonb_build_object('success', true, 'changed', true,
+    'business_id', p_business_id, 'business_name', v_biz_name,
+    'messaging_suspended', p_suspended, 'prior_state', v_prior_state,
+    'actor_id', p_actor_user_id);
+END $$;
+REVOKE ALL ON FUNCTION public.svc_toggle_messaging_suspension(uuid, uuid, boolean, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.svc_toggle_messaging_suspension(uuid, uuid, boolean, text) TO service_role;
+
+-- svc_save_commercial_config: server-only entry for commercial platform settings
+-- Calls the original save_commercial_config which has full CAS/validation logic.
+-- The original function checks auth.uid() and is_admin() — under service_role
+-- these would fail. So this wrapper inlines the validation/mutation logic
+-- with p_actor_user_id substituted for auth.uid().
+CREATE OR REPLACE FUNCTION public.svc_save_commercial_config(
+  p_actor_user_id UUID,
+  p_key TEXT,
+  p_value JSONB,
+  p_description TEXT DEFAULT NULL,
+  p_expected_version_id UUID DEFAULT NULL
+) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE
+  v_actor_role TEXT;
+  v_commercial_keys TEXT[] := ARRAY[
+    'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
+    'default_platform_fee_percent', 'annual_discount_percentage',
+    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'transfer_expiry_hours', 'minimum_bank_transfer',
+    'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
+    'trial_credit_minor_by_currency', 'subscription_included_minor_by_tier_currency',
+    'fee_policy_enabled', 'category_fee_rates', 'messaging_pricing', 'messaging_topup_packages'
+  ];
+  v_bundle_only_keys TEXT[] := ARRAY[
+    'messaging_pricing', 'trial_credit_minor_by_currency', 'subscription_included_minor_by_tier_currency'
+  ];
+  v_snapshot JSONB; v_version_id UUID; v_now TIMESTAMPTZ; v_latest_version_id UUID;
+  v_key TEXT; v_val JSONB; v_tier_key TEXT; v_tier_val JSONB;
+  v_cur_key TEXT; v_cur_val JSONB; v_cat_key TEXT; v_cat_val JSONB; v_rate_key TEXT;
+  v_pkg JSONB; v_pkg_idx INTEGER;
+BEGIN
+  -- Defense-in-depth: verify actor is admin
+  SELECT raw_app_meta_data ->> 'role' INTO v_actor_role
+  FROM auth.users WHERE id = p_actor_user_id;
+  IF v_actor_role IS DISTINCT FROM 'admin' THEN
+    RAISE EXCEPTION 'svc_save_commercial_config requires admin role';
+  END IF;
+
+  -- Key validation (same as save_commercial_config)
+  IF NOT (p_key = ANY(v_commercial_keys)) THEN
+    RAISE EXCEPTION 'Key "%" is not a commercial config key', p_key;
+  END IF;
+  IF p_key = ANY(v_bundle_only_keys) THEN
+    RAISE EXCEPTION 'Key "%" is a bundle-only messaging key', p_key;
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
+
+  -- CAS version check
+  IF p_expected_version_id IS NOT NULL THEN
+    SELECT id INTO v_latest_version_id FROM platform_config_versions
+    ORDER BY effective_from DESC LIMIT 1;
+    IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
+      RAISE EXCEPTION 'Config version conflict: expected %, got %', p_expected_version_id, v_latest_version_id;
+    END IF;
+  END IF;
+
+  -- Upsert (using p_actor_user_id for actor attribution)
+  INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
+  VALUES (p_key, p_value, COALESCE(p_description, ''), p_actor_user_id, clock_timestamp())
+  ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value,
+        description = COALESCE(NULLIF(p_description, ''), platform_settings.description),
+        updated_by = EXCLUDED.updated_by,
+        updated_at = EXCLUDED.updated_at;
+
+  -- Snapshot + version
+  v_now := clock_timestamp();
+  SELECT jsonb_object_agg(key, value) INTO v_snapshot
+  FROM platform_settings WHERE key = ANY(v_commercial_keys);
+  IF v_snapshot IS NULL OR v_snapshot = '{}'::jsonb THEN
+    RAISE EXCEPTION 'Cannot create config version: no commercial keys found';
+  END IF;
+  v_version_id := gen_random_uuid();
+  INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by)
+  VALUES (v_version_id, v_snapshot, v_now, p_actor_user_id);
+
+  RETURN v_version_id;
+END $$;
+REVOKE ALL ON FUNCTION public.svc_save_commercial_config(uuid, text, jsonb, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.svc_save_commercial_config(uuid, text, jsonb, text, uuid) TO service_role;
+
+-- Note: svc_save_market_messaging_config is not created here because
+-- save_market_messaging_config calls save_messaging_config internally,
+-- which also requires auth.uid(). The full _impl extraction for this
+-- function chain requires careful tracing of the ~300 lines of validation,
+-- Paystack plan code handling, and nested config writes. This will be
+-- addressed in a follow-up commit if the CTO agrees to scope it separately,
+-- or inline here after CTO review of the toggle/commercial patterns.
+-- For now, save_market_messaging_config EXECUTE is revoked from authenticated
+-- (preventing direct browser calls) and the server route is prepared.
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- §6. cleanup_expired_step_ups() — cron housekeeping

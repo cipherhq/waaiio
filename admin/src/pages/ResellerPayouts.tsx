@@ -248,7 +248,7 @@ export default function ResellerPayouts() {
         params: {
           reseller_id: genResellerId, period_start: genPeriodStart,
           period_end: genPeriodEnd, holdback_percent: parseFloat(genHoldbackPct) || 0,
-          deductions: parseFloat(genDeductions) || 0,
+          deductions: parseFloat(genDeductions) || 0, notes: genNotes || null,
         },
         description: `Generate reseller payout for ${resellerName} (${genPeriodStart} to ${genPeriodEnd})`,
         onAuthorized,
@@ -666,15 +666,16 @@ export default function ResellerPayouts() {
       </DetailModal>
 
       <StepUpDialog
-        stepUp={stepUp}
-        onSubmitCode={async (code) => {
-          await stepUp.submitCode(code);
-          if (stepUpCallbackRef.current && stepUp.state.stepUpId) {
-            await stepUpCallbackRef.current(stepUp.state.stepUpId);
-            stepUp.reset();
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (stepUpCallbackRef.current) {
+            stepUp.submitCode(code, stepUpCallbackRef.current);
           }
         }}
-        onCancel={() => stepUp.reset()}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
       />
     </div>
   );

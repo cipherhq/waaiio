@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       await consumeStepUp(auth, stepUpId, 'reseller_payout_generate', reseller_id ?? '', {
         reseller_id: reseller_id ?? null, period_start: period_start ?? null,
         period_end: period_end ?? null, holdback_percent: holdback_percent ?? null,
-        deductions: deductions ?? null,
+        deductions: deductions ?? null, notes: notes ?? null,
       });
     } catch (err) {
       const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';

@@ -35,7 +35,10 @@ export type StepUpAction =
   | 'reseller_payout_approve'
   | 'reseller_payout_reject'
   | 'reseller_payout_mark_paid'
-  | 'reseller_payout_generate';
+  | 'reseller_payout_generate'
+  | 'commercial_config'
+  | 'messaging_config'
+  | 'messaging_suspension';
 
 const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 
@@ -95,23 +98,23 @@ export async function prepareStepUp(
     throw new StepUpError('Cannot determine session identity');
   }
 
-  // Factor access is mediated by the authenticated GoTrue API below.
-  // Use GoTrue API directly to list factors for the user
+  // C0: Use official GET /auth/v1/user endpoint (SDK's mfa.listFactors() uses this).
+  // GET /auth/v1/factors does NOT exist in GoTrue — runtime blocker.
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !anonKey) throw new StepUpError('Missing Supabase configuration');
 
-  const factorsRes = await fetch(`${supabaseUrl}/auth/v1/factors`, {
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
     headers: {
       'Authorization': `Bearer ${admin.bearerToken}`,
       'apikey': anonKey,
     },
   });
 
-  if (!factorsRes.ok) throw new StepUpError('Failed to list MFA factors');
-  const factorsData = await factorsRes.json();
+  if (!userRes.ok) throw new StepUpError('Failed to get user MFA factors');
+  const userData = await userRes.json();
 
-  const totpFactor = (Array.isArray(factorsData) ? factorsData : factorsData?.totp ?? [])
+  const totpFactor = (userData.factors ?? [])
     .find((f: { factor_type: string; status: string }) => f.factor_type === 'totp' && f.status === 'verified');
 
   if (!totpFactor) {
@@ -196,18 +199,17 @@ export async function verifyStepUp(
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !anonKey) throw new StepUpError('Missing Supabase configuration');
 
-  // Verify via the authenticated GoTrue API, not a direct public-schema
-  // query against Supabase Auth's protected internal tables.
-  const factorsRes = await fetch(`${supabaseUrl}/auth/v1/factors`, {
+  // C0: Use official GET /auth/v1/user endpoint to get enrolled factors.
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
     headers: {
       'Authorization': `Bearer ${admin.bearerToken}`,
       'apikey': anonKey,
     },
   });
 
-  if (!factorsRes.ok) throw new StepUpError('Failed to list factors for verification');
-  const factorsData = await factorsRes.json();
-  const totpFactor = (Array.isArray(factorsData) ? factorsData : factorsData?.totp ?? [])
+  if (!userRes.ok) throw new StepUpError('Failed to get user factors for verification');
+  const userData = await userRes.json();
+  const totpFactor = (userData.factors ?? [])
     .find((f: { factor_type: string; status: string }) => f.factor_type === 'totp' && f.status === 'verified');
 
   if (!totpFactor) throw new StepUpError('No verified TOTP factor');

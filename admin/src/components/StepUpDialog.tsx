@@ -31,7 +31,7 @@ export function StepUpDialog({ open, description, error, loading, onSubmit, onCa
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
       <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-xl dark:bg-gray-900 dark:border-gray-700">
         <div className="text-center mb-4">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-900">
