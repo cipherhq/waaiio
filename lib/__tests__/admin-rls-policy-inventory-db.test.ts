@@ -218,11 +218,12 @@ describe('SEC-005: RLS policy inventory after M439', () => {
       ON CONFLICT (id) DO NOTHING;
     `);
 
-    // Tables that admin policies gate — a subset of AFFECTED_TABLES that have admin-only RLS
-    const adminOnlyTables = [
-      'admin_audit_logs', 'ai_usage', 'business_payouts', 'businesses',
-      'conversation_usage', 'countries', 'fraud_events', 'payout_accounts',
-      'resellers', 'alerts', 'admin_impersonation_tokens', 'reseller_payouts',
+    // Tables with ONLY admin-scoped RLS (no tenant/owner auth.uid policies).
+    // Tables like businesses, business_payouts have mixed policies — owners
+    // can see their own rows at aal1, so they're excluded from this test.
+    const adminExclusiveTables = [
+      'admin_audit_logs', 'ai_usage', 'conversation_usage', 'fraud_events',
+      'alerts', 'admin_impersonation_tokens', 'admin_role_permissions',
     ];
 
     // Set up aal1 JWT function once
@@ -232,7 +233,7 @@ describe('SEC-005: RLS policy inventory after M439', () => {
       $fn$ LANGUAGE SQL STABLE;
     `);
 
-    for (const table of adminOnlyTables) {
+    for (const table of adminExclusiveTables) {
       const count = runSQL(`
         SET LOCAL ROLE authenticated;
         SELECT count(*)::int FROM ${table};

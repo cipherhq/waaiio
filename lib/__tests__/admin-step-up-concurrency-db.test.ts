@@ -198,9 +198,9 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
 
   // B5: Protected mutation proof — the loser cannot perform the financial operation
   it('concurrent step-up + protected mutation: only winner mutates payout', () => {
-    const PAYOUT_ID = '00000000-0000-0000-0000-payout609001';
+    const PAYOUT_ID = '00000000-0000-0000-0000-aa0060900001';
     const STEP_UP_MUTATION = '00000000-0000-0000-0000-000000609020';
-    const BIZ_ID = '00000000-0000-0000-0000-biz000609001';
+    const BIZ_ID = '00000000-0000-0000-0000-bb0060900001';
 
     // Create test payout via service_role (authenticated DML revoked)
     runSQL(`
