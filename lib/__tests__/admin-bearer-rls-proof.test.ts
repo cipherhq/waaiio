@@ -70,14 +70,16 @@ const TEST_VERIF_ID = randomUUID();
 describe('Admin Bearer RLS proof (real PostgreSQL)', () => {
 
   beforeAll(() => {
-    // Seed minimal test fixtures as service_role (superuser)
+    // Seed minimal test fixtures as service_role (superuser).
+    // CI auth.users has a handle_new_user trigger that auto-creates profiles.
+    // Use the minimal (id, email) INSERT matching engage-e1-schema-db.test.ts.
     const seed = `
       -- Create test user in auth.users (required for FK references)
-      INSERT INTO auth.users (id, instance_id, email, encrypted_password, aud, role, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, confirmation_token)
-      VALUES ('${TEST_USER_ID}', '00000000-0000-0000-0000-000000000000', 'rls-test-${TEST_USER_ID.slice(0,8)}@test.local', '', 'authenticated', 'authenticated', '{"provider":"email","providers":["email"]}', '{}', now(), now(), '')
+      INSERT INTO auth.users (id, email)
+      VALUES ('${TEST_USER_ID}', 'rls-test-${TEST_USER_ID.slice(0,8)}@test.local')
       ON CONFLICT (id) DO NOTHING;
 
-      -- Create profile
+      -- Ensure profile exists (trigger may have created it)
       INSERT INTO profiles (id, display_name) VALUES ('${TEST_USER_ID}', 'RLS Test User')
       ON CONFLICT (id) DO NOTHING;
 
