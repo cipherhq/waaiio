@@ -121,17 +121,27 @@ describeIfDb('Migration 311: RLS behavioral authorization', () => {
     expect(r).toContain(PAYOUT_ID);
   });
 
-  it('admin INSERT succeeds', () => {
+  // SEC-005: M439 revokes authenticated DML on reseller_payouts.
+  // All writes must go through service-role API routes with step-up MFA.
+  it('admin INSERT denied (M439 DML revoke)', () => {
     const testId = '00000000-0000-0000-0000-000000311021';
     runSQL(`DELETE FROM reseller_payouts WHERE id = '${testId}';`);
     const r = asRole(ADMIN_USER, `INSERT INTO reseller_payouts (id, reseller_id, period_start, period_end, net_amount, status) VALUES ('${testId}', '${RESELLER_ID}', '2026-07-01', '2026-07-15', 50, 'pending') RETURNING id;`);
-    expect(r).toContain(testId);
+    expect(r.includes('ERROR') || r.includes('permission denied') || r.includes('ROLLBACK')).toBe(true);
     runSQL(`DELETE FROM reseller_payouts WHERE id = '${testId}';`);
   });
 
-  it('admin UPDATE succeeds', () => {
+  it('admin UPDATE denied (M439 DML revoke)', () => {
     const r = asRole(ADMIN_USER, `UPDATE reseller_payouts SET notes = 'admin-test' WHERE id = '${PAYOUT_ID}' RETURNING id;`);
-    expect(r).toContain(PAYOUT_ID);
+    expect(r.includes('ERROR') || r.includes('permission denied') || r.includes('ROLLBACK') || r === '').toBe(true);
+  });
+
+  it('service_role INSERT succeeds (only valid write path)', () => {
+    const testId = '00000000-0000-0000-0000-000000311023';
+    runSQL(`DELETE FROM reseller_payouts WHERE id = '${testId}';`);
+    const r = runSQL(`BEGIN; SET LOCAL ROLE service_role; INSERT INTO reseller_payouts (id, reseller_id, period_start, period_end, net_amount, status) VALUES ('${testId}', '${RESELLER_ID}', '2026-07-01', '2026-07-15', 50, 'pending') RETURNING id; COMMIT;`);
+    expect(r).toContain(testId);
+    runSQL(`DELETE FROM reseller_payouts WHERE id = '${testId}';`);
   });
 
   // ── FINANCE ──
