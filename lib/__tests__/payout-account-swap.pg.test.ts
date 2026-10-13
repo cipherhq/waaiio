@@ -2,10 +2,11 @@
  * Migration 441: payout-account atomic swap/disconnect — Real PostgreSQL tests
  *
  * Runs against a disposable Postgres instance (TEST_DATABASE_URL).
- * Fails (not skips) when CI=true and TEST_DATABASE_URL is missing.
+ * Fails (not skips) when REQUIRE_PG_TESTS=true and TEST_DATABASE_URL is missing.
  *
  * Creates its own minimal schema, applies migration 441 from disk,
- * then tests concurrency, rollback, atomicity, and permissions.
+ * then tests concurrency (two pg Client connections), rollback, atomicity,
+ * and permissions.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -20,11 +21,11 @@ if (!TEST_DB && process.env.REQUIRE_PG_TESTS === 'true') {
   throw new Error('TEST_DATABASE_URL is required — cannot skip DB tests (REQUIRE_PG_TESTS=true)');
 }
 
-function sql(query: string, connStr = TEST_DB): string {
-  if (!connStr) throw new Error('TEST_DATABASE_URL not set');
+function sql(query: string): string {
+  if (!TEST_DB) throw new Error('TEST_DATABASE_URL not set');
   try {
     return execSync(
-      `psql "${connStr}" -v ON_ERROR_STOP=1 -t -A`,
+      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`,
       { encoding: 'utf-8', timeout: 15000, input: query },
     ).trim();
   } catch (err: any) {
@@ -32,28 +33,22 @@ function sql(query: string, connStr = TEST_DB): string {
   }
 }
 
-// Second connection helper for concurrency tests
-function sql2(query: string): string {
-  return sql(query, TEST_DB);
-}
-
 const describeDb = !TEST_DB ? describe.skip : describe;
 
 const BIZ_ID = '00000000-0000-0000-0000-000000441001';
 const BIZ_ID2 = '00000000-0000-0000-0000-000000441002';
+const BIZ_ID3 = '00000000-0000-0000-0000-000000441003';
 const OWNER_ID = '00000000-0000-0000-0000-000000441010';
 
 describeDb('Migration 441: payout account atomic RPCs', () => {
   beforeAll(() => {
     // ── Minimal schema ──
-    // Create roles if they don't exist (CI may have provisioned them already)
     sql(`
       DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $$;
       DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$;
       DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
     `);
 
-    // auth schema
     sql(`
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE TABLE IF NOT EXISTS auth.users (
@@ -62,7 +57,6 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
       );
     `);
 
-    // businesses table (with payout_mode column from migration 010)
     sql(`
       CREATE TABLE IF NOT EXISTS public.businesses (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -73,10 +67,8 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
         status VARCHAR(20) DEFAULT 'active'
       );
     `);
-    // Add payout_mode if the table already existed without it (CI provisioning)
     sql(`ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS payout_mode VARCHAR(20) NOT NULL DEFAULT 'platform_managed';`);
 
-    // payout_accounts table (from migration 009)
     sql(`
       CREATE TABLE IF NOT EXISTS public.payout_accounts (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -96,13 +88,11 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
       );
     `);
 
-    // The unique partial index from migration 009 — at-most-one active per business
     sql(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_accounts_business_active
         ON public.payout_accounts(business_id) WHERE is_active = true;
     `);
 
-    // Grants so RPCs can operate
     sql(`
       GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.businesses TO service_role;
@@ -123,32 +113,22 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
     sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
     sql(`INSERT INTO public.businesses (id, owner_id, name, payout_mode) VALUES ('${BIZ_ID}', '${OWNER_ID}', 'Swap Test Biz', 'platform_managed') ON CONFLICT (id) DO NOTHING;`);
     sql(`INSERT INTO public.businesses (id, owner_id, name, payout_mode) VALUES ('${BIZ_ID2}', '${OWNER_ID}', 'Swap Test Biz 2', 'direct_split') ON CONFLICT (id) DO NOTHING;`);
+    sql(`INSERT INTO public.businesses (id, owner_id, name, payout_mode) VALUES ('${BIZ_ID3}', '${OWNER_ID}', 'Swap Test Biz 3', 'direct_split') ON CONFLICT (id) DO NOTHING;`);
   });
 
   afterAll(() => {
-    sql(`DELETE FROM payout_accounts WHERE business_id IN ('${BIZ_ID}', '${BIZ_ID2}');`);
-    sql(`DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${BIZ_ID2}');`);
+    sql(`DELETE FROM payout_accounts WHERE business_id IN ('${BIZ_ID}', '${BIZ_ID2}', '${BIZ_ID3}');`);
+    sql(`DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${BIZ_ID2}', '${BIZ_ID3}');`);
     sql(`DELETE FROM auth.users WHERE id = '${OWNER_ID}';`);
   });
 
-  // ── Helper ──
-  function cleanAccounts() {
-    sql(`DELETE FROM payout_accounts WHERE business_id IN ('${BIZ_ID}', '${BIZ_ID2}');`);
+  function cleanAccounts(bizId?: string) {
+    const ids = bizId ? `'${bizId}'` : `'${BIZ_ID}', '${BIZ_ID2}', '${BIZ_ID3}'`;
+    sql(`DELETE FROM payout_accounts WHERE business_id IN (${ids});`);
   }
 
   function countActive(bizId: string): number {
-    const r = sql(`SELECT COUNT(*) FROM payout_accounts WHERE business_id = '${bizId}' AND is_active = true;`);
-    return parseInt(r, 10);
-  }
-
-  function swapAsServiceRole(bizId: string, acctNum: string): string {
-    return sql(`
-      SET LOCAL ROLE service_role;
-      SELECT swap_payout_account(
-        '${bizId}', 'paystack', '058', 'Test Bank',
-        '${acctNum}', 'Test Name', NULL, NULL
-      );
-    `);
+    return parseInt(sql(`SELECT COUNT(*) FROM payout_accounts WHERE business_id = '${bizId}' AND is_active = true;`), 10);
   }
 
   // ════════════════════════════════════════════════════════
@@ -156,92 +136,59 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
   // ════════════════════════════════════════════════════════
 
   it('swap_payout_account EXECUTE denied to authenticated', () => {
-    const r = sql("SELECT has_function_privilege('authenticated', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');");
-    expect(r).toBe('f');
+    expect(sql("SELECT has_function_privilege('authenticated', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');")).toBe('f');
   });
 
   it('swap_payout_account EXECUTE denied to anon', () => {
-    const r = sql("SELECT has_function_privilege('anon', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');");
-    expect(r).toBe('f');
+    expect(sql("SELECT has_function_privilege('anon', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');")).toBe('f');
   });
 
   it('swap_payout_account EXECUTE granted to service_role', () => {
-    const r = sql("SELECT has_function_privilege('service_role', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');");
-    expect(r).toBe('t');
+    expect(sql("SELECT has_function_privilege('service_role', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');")).toBe('t');
   });
 
   it('disconnect_payout_account EXECUTE denied to authenticated', () => {
-    const r = sql("SELECT has_function_privilege('authenticated', 'disconnect_payout_account(uuid)', 'EXECUTE');");
-    expect(r).toBe('f');
+    expect(sql("SELECT has_function_privilege('authenticated', 'disconnect_payout_account(uuid)', 'EXECUTE');")).toBe('f');
   });
 
   it('disconnect_payout_account EXECUTE denied to anon', () => {
-    const r = sql("SELECT has_function_privilege('anon', 'disconnect_payout_account(uuid)', 'EXECUTE');");
-    expect(r).toBe('f');
+    expect(sql("SELECT has_function_privilege('anon', 'disconnect_payout_account(uuid)', 'EXECUTE');")).toBe('f');
   });
 
   it('disconnect_payout_account EXECUTE granted to service_role', () => {
-    const r = sql("SELECT has_function_privilege('service_role', 'disconnect_payout_account(uuid)', 'EXECUTE');");
-    expect(r).toBe('t');
+    expect(sql("SELECT has_function_privilege('service_role', 'disconnect_payout_account(uuid)', 'EXECUTE');")).toBe('t');
   });
 
   it('anon gets permission denied calling swap_payout_account', () => {
-    const r = sql(`
-      BEGIN;
-      SET LOCAL ROLE anon;
-      SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '0000000001', 'Name', NULL, NULL);
-      COMMIT;
-    `);
+    const r = sql(`BEGIN; SET LOCAL ROLE anon; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '0000000001', 'Name', NULL, NULL); COMMIT;`);
     expect(r).toMatch(/ERROR|permission denied/i);
   });
 
   it('authenticated gets permission denied calling swap_payout_account', () => {
-    const r = sql(`
-      BEGIN;
-      SET LOCAL ROLE authenticated;
-      SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '0000000001', 'Name', NULL, NULL);
-      COMMIT;
-    `);
+    const r = sql(`BEGIN; SET LOCAL ROLE authenticated; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '0000000001', 'Name', NULL, NULL); COMMIT;`);
     expect(r).toMatch(/ERROR|permission denied/i);
   });
 
   // ════════════════════════════════════════════════════════
-  // B. service_role happy paths
+  // B. service_role happy paths (psql sequential)
   // ════════════════════════════════════════════════════════
 
   it('service_role can swap with no existing account', () => {
-    cleanAccounts();
-    const r = sql(`
-      BEGIN;
-      SET LOCAL ROLE service_role;
-      SELECT swap_payout_account(
-        '${BIZ_ID}', 'paystack', '058', 'Test Bank',
-        '1234567890', 'John Doe', NULL, NOW()
-      );
-      COMMIT;
-    `);
+    cleanAccounts(BIZ_ID);
+    const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Test Bank', '1234567890', 'John Doe', NULL, NOW()); COMMIT;`);
     expect(r).not.toContain('ERROR');
     expect(countActive(BIZ_ID)).toBe(1);
   });
 
   it('service_role can swap replacing an existing account', () => {
-    cleanAccounts();
-    // First account
+    cleanAccounts(BIZ_ID);
     sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank A', '1111111111', 'First', NULL, NULL); COMMIT;`);
-    expect(countActive(BIZ_ID)).toBe(1);
     const firstId = sql(`SELECT id FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`);
 
-    // Replace with second
     sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank B', '2222222222', 'Second', NULL, NULL); COMMIT;`);
     expect(countActive(BIZ_ID)).toBe(1);
-
-    // Old account is now inactive
-    const oldActive = sql(`SELECT is_active FROM payout_accounts WHERE id = '${firstId}';`);
-    expect(oldActive).toBe('f');
-
-    // New account has the right name
-    const newName = sql(`SELECT account_name FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`);
-    expect(newName).toBe('Second');
+    expect(sql(`SELECT is_active FROM payout_accounts WHERE id = '${firstId}';`)).toBe('f');
+    expect(sql(`SELECT account_name FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`)).toBe('Second');
   });
 
   // ════════════════════════════════════════════════════════
@@ -249,117 +196,229 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
   // ════════════════════════════════════════════════════════
 
   it('swap raises business_not_found for nonexistent business', () => {
-    const fakeId = '00000000-0000-0000-0000-ffffffffffff';
-    const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${fakeId}', 'paystack', '058', 'Bank', '0000000001', 'Name', NULL, NULL); COMMIT;`);
+    const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('00000000-0000-0000-0000-ffffffffffff', 'paystack', '058', 'Bank', '0000000001', 'Name', NULL, NULL); COMMIT;`);
     expect(r).toContain('business_not_found');
   });
 
   it('disconnect raises business_not_found for nonexistent business', () => {
-    const fakeId = '00000000-0000-0000-0000-ffffffffffff';
-    const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT disconnect_payout_account('${fakeId}'); COMMIT;`);
+    const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT disconnect_payout_account('00000000-0000-0000-0000-ffffffffffff'); COMMIT;`);
     expect(r).toContain('business_not_found');
   });
 
   // ════════════════════════════════════════════════════════
-  // D. Concurrent swaps — no existing account
+  // D. True concurrency — two pg Client connections
   // ════════════════════════════════════════════════════════
 
-  it('two concurrent swaps with no existing account: at most one active row', () => {
-    cleanAccounts();
+  it('concurrent swap: no existing account — client B blocks on row lock, exactly one active at end', async () => {
+    cleanAccounts(BIZ_ID);
+    const { Client } = await import('pg');
+    const clientA = new Client({ connectionString: TEST_DB });
+    const clientB = new Client({ connectionString: TEST_DB });
+    await clientA.connect();
+    await clientB.connect();
 
-    // Run two swaps sequentially (psql is single-connection; the unique
-    // partial index enforces at-most-one regardless of ordering)
-    const r1 = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '1111111111', 'First', NULL, NULL); COMMIT;`);
-    const r2 = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '2222222222', 'Second', NULL, NULL); COMMIT;`);
+    try {
+      // Client A: begin + swap, hold transaction open (locks businesses row)
+      await clientA.query('BEGIN');
+      await clientA.query('SET LOCAL ROLE service_role');
+      const resA = await clientA.query(
+        `SELECT swap_payout_account($1, 'paystack', '058', 'Bank', '1111111111', 'ClientA', NULL, NULL)`,
+        [BIZ_ID],
+      );
+      expect(resA.rows[0].swap_payout_account).toBeTruthy();
 
-    // Both succeed in sequence (second deactivates first)
-    expect(r1).not.toContain('ERROR');
-    expect(r2).not.toContain('ERROR');
-    expect(countActive(BIZ_ID)).toBe(1);
+      // Client B: begin + swap — should block because A holds the businesses row lock.
+      // We race it with a short timeout to prove blocking.
+      await clientB.query('BEGIN');
+      await clientB.query('SET LOCAL ROLE service_role');
 
-    // The active one is the second
-    const name = sql(`SELECT account_name FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`);
-    expect(name).toBe('Second');
+      let bCompleted = false;
+      const bPromise = clientB.query(
+        `SELECT swap_payout_account($1, 'paystack', '058', 'Bank', '2222222222', 'ClientB', NULL, NULL)`,
+        [BIZ_ID],
+      ).then(r => { bCompleted = true; return r; });
+
+      // Give B 200ms to try — it should still be blocked
+      await new Promise(r => setTimeout(r, 200));
+      expect(bCompleted).toBe(false); // B is blocked on the row lock
+
+      // A commits, releasing the lock
+      await clientA.query('COMMIT');
+
+      // Now B unblocks and completes
+      const resB = await bPromise;
+      await clientB.query('COMMIT');
+
+      // Both succeeded in sequence; exactly one active row at the end
+      expect(resA.rows[0].swap_payout_account).toBeTruthy();
+      expect(resB.rows[0].swap_payout_account).toBeTruthy();
+      expect(countActive(BIZ_ID)).toBe(1);
+
+      // The active one is B's (it ran second, deactivated A's)
+      expect(sql(`SELECT account_name FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`)).toBe('ClientB');
+    } finally {
+      await clientA.end();
+      await clientB.end();
+    }
   });
 
-  it('two concurrent replacements with existing account: exactly one active', () => {
-    cleanAccounts();
-    // Seed an initial account
+  it('concurrent replacement: existing account — client B blocks, exactly one active at end', async () => {
+    cleanAccounts(BIZ_ID);
+    // Seed an original account
     sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '0000000000', 'Original', NULL, NULL); COMMIT;`);
     expect(countActive(BIZ_ID)).toBe(1);
 
-    // Two replacements in sequence
-    sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '1111111111', 'Replace A', NULL, NULL); COMMIT;`);
-    sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '2222222222', 'Replace B', NULL, NULL); COMMIT;`);
+    const { Client } = await import('pg');
+    const clientA = new Client({ connectionString: TEST_DB });
+    const clientB = new Client({ connectionString: TEST_DB });
+    await clientA.connect();
+    await clientB.connect();
 
-    // Exactly one active
-    expect(countActive(BIZ_ID)).toBe(1);
-    const name = sql(`SELECT account_name FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`);
-    expect(name).toBe('Replace B');
+    try {
+      // A: replace Original
+      await clientA.query('BEGIN');
+      await clientA.query('SET LOCAL ROLE service_role');
+      await clientA.query(
+        `SELECT swap_payout_account($1, 'paystack', '058', 'Bank', '1111111111', 'ReplaceA', NULL, NULL)`,
+        [BIZ_ID],
+      );
+
+      // B: also tries to replace — blocked by A's lock
+      await clientB.query('BEGIN');
+      await clientB.query('SET LOCAL ROLE service_role');
+
+      let bDone = false;
+      const bPromise = clientB.query(
+        `SELECT swap_payout_account($1, 'paystack', '058', 'Bank', '2222222222', 'ReplaceB', NULL, NULL)`,
+        [BIZ_ID],
+      ).then(r => { bDone = true; return r; });
+
+      await new Promise(r => setTimeout(r, 200));
+      expect(bDone).toBe(false); // blocked
+
+      await clientA.query('COMMIT');
+      await bPromise;
+      await clientB.query('COMMIT');
+
+      // Exactly one active
+      expect(countActive(BIZ_ID)).toBe(1);
+      expect(sql(`SELECT account_name FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`)).toBe('ReplaceB');
+    } finally {
+      await clientA.end();
+      await clientB.end();
+    }
   });
 
   // ════════════════════════════════════════════════════════
-  // E. Rollback on insert failure leaves original active
+  // E. Swap rollback via trigger: INSERT failure after deactivate
   // ════════════════════════════════════════════════════════
 
-  it('rollback on insert failure preserves the original active account', () => {
-    cleanAccounts();
-    // Create a valid account
+  it('swap rollback: trigger-forced INSERT failure leaves original account active', () => {
+    cleanAccounts(BIZ_ID);
+    // Create a valid original account
     sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '1234567890', 'Original', NULL, NULL); COMMIT;`);
     const originalId = sql(`SELECT id FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`);
     expect(originalId).not.toContain('ERROR');
 
-    // Attempt a swap that will fail: violate NOT NULL on gateway
-    const r = sql(`
-      BEGIN;
-      SET LOCAL ROLE service_role;
-      SELECT swap_payout_account('${BIZ_ID}', NULL, '058', 'Bank', '9999999999', 'Bad', NULL, NULL);
-      COMMIT;
+    // Install a BEFORE INSERT trigger that raises on payout_accounts
+    sql(`
+      CREATE OR REPLACE FUNCTION test_block_payout_insert() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'test_block_insert: deliberate failure';
+      END;
+      $$;
+      CREATE TRIGGER trg_test_block_payout_insert
+        BEFORE INSERT ON payout_accounts
+        FOR EACH ROW EXECUTE FUNCTION test_block_payout_insert();
     `);
-    expect(r).toContain('ERROR');
 
-    // Original account must still be active (transaction rolled back)
-    const stillActive = sql(`SELECT id FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`);
-    expect(stillActive).toBe(originalId);
-    expect(countActive(BIZ_ID)).toBe(1);
+    try {
+      // Attempt a swap — the INSERT inside the RPC will fire the trigger and fail.
+      // The entire transaction (including the earlier UPDATE that deactivated the original)
+      // must roll back.
+      const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '9999999999', 'ShouldFail', NULL, NULL); COMMIT;`);
+      expect(r).toContain('test_block_insert');
+
+      // Original account must still be active
+      expect(sql(`SELECT id FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`)).toBe(originalId);
+      expect(countActive(BIZ_ID)).toBe(1);
+    } finally {
+      sql(`DROP TRIGGER IF EXISTS trg_test_block_payout_insert ON payout_accounts;`);
+      sql(`DROP FUNCTION IF EXISTS test_block_payout_insert();`);
+    }
   });
 
   // ════════════════════════════════════════════════════════
-  // F. Disconnect atomicity
+  // F. Disconnect atomicity via trigger: failure in second statement rolls back first
+  // ════════════════════════════════════════════════════════
+
+  it('disconnect atomicity: trigger failure on businesses.payout_mode UPDATE rolls back payout_accounts deactivation', () => {
+    cleanAccounts(BIZ_ID3);
+    sql(`UPDATE businesses SET payout_mode = 'direct_split' WHERE id = '${BIZ_ID3}';`);
+    sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID3}', 'paystack', '058', 'Bank', '7777777777', 'Active', NULL, NULL); COMMIT;`);
+    expect(countActive(BIZ_ID3)).toBe(1);
+
+    // Install a BEFORE UPDATE trigger on businesses that raises when payout_mode changes
+    sql(`
+      CREATE OR REPLACE FUNCTION test_block_payout_mode_change() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.payout_mode IS DISTINCT FROM OLD.payout_mode THEN
+          RAISE EXCEPTION 'test_block_mode_change: deliberate failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+      CREATE TRIGGER trg_test_block_payout_mode
+        BEFORE UPDATE ON businesses
+        FOR EACH ROW EXECUTE FUNCTION test_block_payout_mode_change();
+    `);
+
+    try {
+      // disconnect_payout_account does: UPDATE payout_accounts (deactivate) then UPDATE businesses (payout_mode).
+      // The trigger fires on the second UPDATE and raises, rolling back everything.
+      const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT disconnect_payout_account('${BIZ_ID3}'); COMMIT;`);
+      expect(r).toContain('test_block_mode_change');
+
+      // The payout account must STILL be active (first UPDATE was rolled back)
+      expect(countActive(BIZ_ID3)).toBe(1);
+      // payout_mode unchanged
+      expect(sql(`SELECT payout_mode FROM businesses WHERE id = '${BIZ_ID3}';`)).toBe('direct_split');
+    } finally {
+      sql(`DROP TRIGGER IF EXISTS trg_test_block_payout_mode ON businesses;`);
+      sql(`DROP FUNCTION IF EXISTS test_block_payout_mode_change();`);
+    }
+  });
+
+  // ════════════════════════════════════════════════════════
+  // G. Disconnect happy path
   // ════════════════════════════════════════════════════════
 
   it('disconnect deactivates account and resets payout_mode atomically', () => {
-    cleanAccounts();
+    cleanAccounts(BIZ_ID);
     sql(`UPDATE businesses SET payout_mode = 'direct_split' WHERE id = '${BIZ_ID}';`);
     sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '1234567890', 'Active', NULL, NULL); COMMIT;`);
     expect(countActive(BIZ_ID)).toBe(1);
 
-    // Disconnect
     const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT disconnect_payout_account('${BIZ_ID}'); COMMIT;`);
     expect(r).not.toContain('ERROR');
-
-    // Account deactivated and payout_mode reset
     expect(countActive(BIZ_ID)).toBe(0);
-    const mode = sql(`SELECT payout_mode FROM businesses WHERE id = '${BIZ_ID}';`);
-    expect(mode).toBe('platform_managed');
+    expect(sql(`SELECT payout_mode FROM businesses WHERE id = '${BIZ_ID}';`)).toBe('platform_managed');
   });
 
-  it('disconnect rolls back fully on error (simulated by invalid business_id type)', () => {
-    // If the function raises, the entire transaction rolls back.
-    // We test this by calling with a nonexistent business.
-    cleanAccounts();
-    sql(`UPDATE businesses SET payout_mode = 'direct_split' WHERE id = '${BIZ_ID2}';`);
-    sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID2}', 'paystack', '058', 'Bank', '5555555555', 'Active', NULL, NULL); COMMIT;`);
-    expect(countActive(BIZ_ID2)).toBe(1);
+  // ════════════════════════════════════════════════════════
+  // H. Rollback on NULL gateway (NOT NULL constraint failure)
+  // ════════════════════════════════════════════════════════
 
-    // Try to disconnect a nonexistent business — should raise and roll back
-    const fakeId = '00000000-0000-0000-0000-ffffffffffff';
-    const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT disconnect_payout_account('${fakeId}'); COMMIT;`);
-    expect(r).toContain('business_not_found');
+  it('NOT NULL constraint failure preserves the original active account', () => {
+    cleanAccounts(BIZ_ID);
+    sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '1234567890', 'Original', NULL, NULL); COMMIT;`);
+    const originalId = sql(`SELECT id FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`);
 
-    // BIZ_ID2's account is untouched (different business, but confirms raise = rollback)
-    expect(countActive(BIZ_ID2)).toBe(1);
-    const mode = sql(`SELECT payout_mode FROM businesses WHERE id = '${BIZ_ID2}';`);
-    expect(mode).toBe('direct_split');
+    const r = sql(`BEGIN; SET LOCAL ROLE service_role; SELECT swap_payout_account('${BIZ_ID}', NULL, '058', 'Bank', '9999999999', 'Bad', NULL, NULL); COMMIT;`);
+    expect(r).toContain('ERROR');
+    expect(sql(`SELECT id FROM payout_accounts WHERE business_id = '${BIZ_ID}' AND is_active = true;`)).toBe(originalId);
+    expect(countActive(BIZ_ID)).toBe(1);
   });
 });
