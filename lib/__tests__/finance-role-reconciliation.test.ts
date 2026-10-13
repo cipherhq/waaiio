@@ -82,6 +82,7 @@ vi.mock('@/lib/supabase/service', () => ({
       }),
       update: vi.fn(() => mockUpdateChain),
     })),
+    rpc: vi.fn().mockResolvedValue({ data: [{ rejected_id: 'p-1', adjustments_released: 0 }], error: null }),
     auth: { admin: { getUserById: vi.fn() } },
   })),
 }));
@@ -314,8 +315,9 @@ describe('Payout list response excludes operational tokens', () => {
 describe('Payout rejection is atomic (TOCTOU fix)', () => {
   const rejectSource = readFileSync('app/api/admin/payouts/[id]/reject/route.ts', 'utf-8');
 
-  it('UPDATE includes status guard via .in()', () => {
-    expect(rejectSource).toContain(".in('status',");
+  it('uses atomic RPC for reject + adjustment release', () => {
+    // The inline .update().in('status',) was replaced by an atomic RPC
+    expect(rejectSource).toContain('reject_payout_and_release_adjustments');
   });
 
   it('checks affected row count for conflict', () => {
@@ -693,9 +695,10 @@ describe('Step-up MFA enforced on payout mutations (E)', () => {
 
   it('payout reject calls consumeStepUp before mutation', () => {
     const stepUpIdx = rejectSource.indexOf('consumeStepUp');
-    const updateIdx = rejectSource.indexOf('.update(');
+    // The mutation is now an RPC call instead of inline .update()
+    const rpcIdx = rejectSource.indexOf("'reject_payout_and_release_adjustments'");
     expect(stepUpIdx).toBeGreaterThan(-1);
-    expect(updateIdx).toBeGreaterThan(stepUpIdx);
+    expect(rpcIdx).toBeGreaterThan(stepUpIdx);
   });
 
   it('payout reject uses payout_reject action type', () => {
