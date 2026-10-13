@@ -275,7 +275,21 @@ async function verifyWithProviderServerSide(
         return { success: false, reason: 'reference_mismatch' };
       }
 
-      // Build verifiedData from provider response (fix 1 — Paystack)
+      // Build verifiedData from provider response (Paystack)
+      // Strip authorization_code — BYO cards are never reusable through Waaiio
+      const psAuth = result.data.authorization as Record<string, unknown> | undefined;
+      const sanitizedAuth = psAuth ? {
+        last4: psAuth.last4,
+        brand: psAuth.brand,
+        country_code: psAuth.country_code,
+        bin: psAuth.bin,
+        exp_month: psAuth.exp_month,
+        exp_year: psAuth.exp_year,
+        card_type: psAuth.card_type,
+        bank: psAuth.bank,
+        // authorization_code intentionally omitted
+      } : undefined;
+
       return {
         success: true,
         providerStatus: 'success',
@@ -287,7 +301,7 @@ async function verifyWithProviderServerSide(
           status: 'success',
           channel: result.data.channel,
           fees: result.data.fees,      // already kobo
-          authorization: result.data.authorization,
+          authorization: sanitizedAuth,
           customer: result.data.customer,
         },
       };

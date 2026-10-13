@@ -1338,6 +1338,168 @@ describe('BYO Webhook — invalid JSON body → 400 (test f)', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════
+// 11. Real processPaystackChargeSuccess rounding test (no mock)
+// ═══════════════════════════════════════════════════════════
+
+describe('webhook-handler processPaystackChargeSuccess — minor-unit rounding', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('payment amount 19.99 with data.amount 1999 → NOT amount_mismatch, reconcilePayment called', async () => {
+    // Mock only external deps, NOT webhook-handler itself — test the real function
+    const reconcileMock = vi.fn().mockResolvedValue({ lifecycle: null });
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: reconcileMock }));
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+
+    // Track updates to detect amount_mismatch
+    let updatedToFailed = false;
+    const noopChain = () => {
+      const c: Record<string, unknown> = {};
+      c.eq = () => c;
+      c.in = () => c;
+      c.select = () => c;
+      c.single = () => Promise.resolve({ data: null, error: null });
+      c.then = (r: (v: unknown) => void) => Promise.resolve({ data: null, error: null }).then(r);
+      return c;
+    };
+    const fakeSb = {
+      from: vi.fn((table: string) => {
+        if (table === 'payments') {
+          return {
+            select: () => ({
+              eq: () => ({
+                single: () => Promise.resolve({
+                  data: {
+                    id: 'pay-round', status: 'pending', amount: 19.99,
+                    booking_id: null, invoice_id: null, campaign_id: null,
+                    reservation_id: null, order_id: null, metadata: {},
+                    gateway: 'paystack', payment_authority_version: null,
+                    finalization_completed_at: null,
+                  },
+                  error: null,
+                }),
+              }),
+            }),
+            update: (data: Record<string, unknown>) => {
+              if (data.status === 'failed') updatedToFailed = true;
+              return noopChain();
+            },
+          };
+        }
+        return { select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }) };
+      }),
+    };
+
+    // Use importActual to get the REAL handler (not any vi.doMock from earlier tests)
+    const { processPaystackChargeSuccess } = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    await processPaystackChargeSuccess(
+      { amount: 1999, currency: 'NGN', reference: 'ref-round', id: 1, fees: 30 },
+      'ref-round',
+      fakeSb as any,
+    );
+
+    // Must NOT have been marked as amount_mismatch
+    expect(updatedToFailed).toBe(false);
+    // reconcilePayment must have been called (means it passed the amount check)
+    expect(reconcileMock).toHaveBeenCalled();
+    // Check reconcile was called with amount 19.99 (1999 kobo / 100)
+    const callArgs = reconcileMock.mock.calls[0];
+    const providerOverride = callArgs[3]; // 4th arg is providerOverride
+    expect(providerOverride.result.amount).toBe(19.99);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 12. Paystack BYO: authorization_code stripped
+// ═══════════════════════════════════════════════════════════
+
+describe('BYO Webhook — Paystack authorization_code stripped (test 2)', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('Paystack verify with AUTH_x → handler data has no authorization_code', async () => {
+    const secretKey = `${SK_TEST}authstrip`;
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-strip', status: 'pending', amount: 500, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    let capturedData: Record<string, unknown> | null = null;
+    const mockSuccess = vi.fn().mockImplementation((data: Record<string, unknown>) => {
+      capturedData = data;
+    });
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: mockSuccess,
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        data: {
+          id: 42, status: 'success', amount: 50000, currency: 'NGN',
+          reference: 'ref-strip', channel: 'card', fees: 750,
+          authorization: {
+            authorization_code: 'AUTH_x',
+            reusable: true,
+            last4: '1234',
+            brand: 'Visa',
+            country_code: 'NG',
+            bin: '412345',
+            exp_month: '12',
+            exp_year: '2030',
+            card_type: 'visa',
+            bank: 'GTBank',
+          },
+          customer: { email: 'strip@test.com', customer_code: 'CUS_x' },
+        },
+      }),
+    });
+
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-strip', amount: 50000 } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
+      const res = await POST(req, { params: { businessId: 'biz-1' } });
+
+      expect(res.status).toBe(200);
+      expect(mockSuccess).toHaveBeenCalled();
+
+      // authorization_code must be stripped
+      const auth = capturedData!.authorization as Record<string, unknown>;
+      expect(auth).toBeDefined();
+      expect(auth.authorization_code).toBeUndefined();
+      // Other fields preserved
+      expect(auth.last4).toBe('1234');
+      expect(auth.brand).toBe('Visa');
+      expect(auth.country_code).toBe('NG');
+      expect(auth.bin).toBe('412345');
+      expect(auth.exp_month).toBe('12');
+      expect(auth.exp_year).toBe('2030');
+      expect(auth.card_type).toBe('visa');
+      expect(auth.bank).toBe('GTBank');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe('BYO Webhook — Flutterwave card has no authorization_code (test g)', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.restoreAllMocks(); });
