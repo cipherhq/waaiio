@@ -4195,41 +4195,113 @@ jobs:
           fi
           echo "✅ All tests executed (zero skipped)"
 
-      - name: Discover .pg.test.ts files
-        id: pg-discover
+      - name: Create clean template database for .pg.test.ts isolation
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+          PGDATABASE: security_acl_test
         run: |
-          PG_FILES=$(find lib -name '*.pg.test.ts' -type f | sort)
-          PG_COUNT=$(echo "$PG_FILES" | grep -c '.' || true)
+          # Snapshot the provisioned database as a template BEFORE any test
+          # step can mutate it. Each .pg.test.ts file gets its own clone.
+          psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'security_acl_test' AND pid <> pg_backend_pid();" || true
+          psql -d postgres -c "ALTER DATABASE security_acl_test WITH is_template = true;"
+          echo "✅ pg_template_clean ready (security_acl_test marked as template)"
+
+      - name: Run .pg.test.ts files in parallel with isolated databases
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+          REQUIRE_PG_TESTS: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Discover files
+          mapfile -t PG_FILES < <(find lib -name '*.pg.test.ts' -type f | sort)
+          PG_COUNT=${#PG_FILES[@]}
           echo "Found $PG_COUNT .pg.test.ts file(s):"
-          echo "$PG_FILES"
+          printf '  %s\n' "${PG_FILES[@]}"
+
           if [ "$PG_COUNT" -eq 0 ]; then
             echo "❌ No .pg.test.ts files found — guard tripped"
             exit 1
           fi
-          echo "pg_files<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$PG_FILES" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
 
-      - name: Run all .pg.test.ts integration tests against disposable PG
-        env:
-          TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/security_acl_test
-          REQUIRE_PG_TESTS: 'true'
-        shell: bash
-        run: |
-          set -o pipefail
-          PG_FILES="${{ steps.pg-discover.outputs.pg_files }}"
-          echo "Running .pg.test.ts files:"
-          echo "$PG_FILES"
-          echo "$PG_FILES" | xargs npx vitest run --reporter=verbose 2>&1 | tee /tmp/pg-test-output.txt
+          # Create one database per file (cloned from the template).
+          # Done sequentially because CREATE DATABASE ... TEMPLATE requires
+          # no other connections to the template.
+          declare -A DB_MAP
+          for i in "${!PG_FILES[@]}"; do
+            DB_NAME="pg_test_${i}"
+            psql -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME};"
+            psql -d postgres -c "CREATE DATABASE ${DB_NAME} TEMPLATE security_acl_test;"
+            DB_MAP["${PG_FILES[$i]}"]="$DB_NAME"
+            echo "  ✅ ${DB_NAME} ← ${PG_FILES[$i]}"
+          done
+
+          # Run each file in parallel, capped at 4 concurrent jobs
+          mkdir -p /tmp/pg-test-logs
+          PIDS=()
+          for file in "${PG_FILES[@]}"; do
+            db="${DB_MAP[$file]}"
+            slug=$(echo "$file" | sed 's|[/.]|_|g')
+            log="/tmp/pg-test-logs/${slug}.txt"
+            (
+              TEST_DATABASE_URL="postgresql://test_runner:test_only_ephemeral@localhost:5432/${db}" \
+                npx vitest run "$file" --reporter=verbose 2>&1 | tee "$log"
+            ) &
+            PIDS+=($!)
+            # Cap at 4 concurrent
+            if [ "${#PIDS[@]}" -ge 4 ]; then
+              wait "${PIDS[0]}"
+              PIDS=("${PIDS[@]:1}")
+            fi
+          done
+
+          # Wait for all remaining
+          FAILED=0
+          for pid in "${PIDS[@]}"; do
+            wait "$pid" || FAILED=1
+          done
+
+          # Print all logs
+          echo ""
+          echo "═══════════════════════════════════════════════════"
+          echo "Combined .pg.test.ts results"
+          echo "═══════════════════════════════════════════════════"
+          for file in "${PG_FILES[@]}"; do
+            slug=$(echo "$file" | sed 's|[/.]|_|g')
+            log="/tmp/pg-test-logs/${slug}.txt"
+            echo ""
+            echo "── ${file} (database: ${DB_MAP[$file]}) ──"
+            tail -20 "$log"
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo ""
+            echo "❌ One or more .pg.test.ts files failed"
+            exit 1
+          fi
 
       - name: Verify zero skipped .pg.test.ts tests
         run: |
-          if grep -qE "[1-9][0-9]* skipped" /tmp/pg-test-output.txt; then
+          COMBINED=$(cat /tmp/pg-test-logs/*.txt)
+          if echo "$COMBINED" | grep -qE "[1-9][0-9]* skipped"; then
             echo "❌ PG integration tests were skipped"
             exit 1
           fi
-          if ! grep -q "passed" /tmp/pg-test-output.txt; then
+          if ! echo "$COMBINED" | grep -q "passed"; then
             echo "❌ No .pg.test.ts tests passed — something is wrong"
             exit 1
           fi
-          echo "✅ All .pg.test.ts tests executed (zero skipped)"
+          # Show per-file summary
+          for log in /tmp/pg-test-logs/*.txt; do
+            file=$(basename "$log" .txt | sed 's|_|/|g; s|/ts$|.ts|')
+            summary=$(grep -E "Tests |Test Files" "$log" | tail -2 || true)
+            echo "  $file: $summary"
+          done
+          echo "✅ All .pg.test.ts tests executed (zero skipped, per-database isolation)"
