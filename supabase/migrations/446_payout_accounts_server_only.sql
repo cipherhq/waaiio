@@ -74,8 +74,13 @@ ALTER TABLE public.oauth_connect_states ENABLE ROW LEVEL SECURITY;
 GRANT ALL ON public.oauth_connect_states TO service_role;
 
 -- ══════════════════════════════════════════════════════════════════
--- §5  Extend swap_payout_account for Stripe/Square connect
+-- §5  Replace swap_payout_account with unified signature
 -- ══════════════════════════════════════════════════════════════════
+-- Drop the M441 8-arg overload to avoid "function is not unique" ambiguity.
+-- The new 11-arg version keeps all M441 guarantees (FOR UPDATE lock,
+-- business_not_found check, idx_payout_accounts_business_active invariant).
+
+DROP FUNCTION IF EXISTS public.swap_payout_account(uuid, text, text, text, text, text, text, timestamptz);
 
 CREATE OR REPLACE FUNCTION public.swap_payout_account(
   p_business_id        uuid,
@@ -171,6 +176,10 @@ BEGIN
   END IF;
   IF NOT has_table_privilege('service_role', 'public.payout_accounts', 'INSERT') THEN
     _errors := _errors || 'service_role missing INSERT';
+  END IF;
+  -- Exactly one swap_payout_account overload
+  IF (SELECT count(*) FROM pg_proc WHERE proname = 'swap_payout_account' AND pronamespace = 'public'::regnamespace) != 1 THEN
+    _errors := _errors || 'swap_payout_account: expected exactly 1 overload, found ' || (SELECT count(*) FROM pg_proc WHERE proname = 'swap_payout_account' AND pronamespace = 'public'::regnamespace);
   END IF;
   -- oauth_connect_states not readable by authenticated
   IF has_table_privilege('authenticated', 'public.oauth_connect_states', 'SELECT') THEN

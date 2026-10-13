@@ -147,19 +147,21 @@ async function resolveSquareCredential(
   if (origin === 'connect' || (origin === null && businessId)) {
     // Merchant OAuth — load exact connection by ID if available, else by business
     const query = connectionId
-      ? supabase.from('payout_accounts').select('id, business_id, access_token').eq('id', connectionId).maybeSingle()
+      ? supabase.from('payout_accounts').select('id, business_id, square_access_token').eq('id', connectionId).maybeSingle()
       : businessId
-        ? supabase.from('payout_accounts').select('id, business_id, access_token').eq('business_id', businessId).eq('provider', 'square').eq('is_active', true).maybeSingle()
+        ? supabase.from('payout_accounts').select('id, business_id, square_access_token').eq('business_id', businessId).eq('gateway', 'square').eq('is_active', true).maybeSingle()
         : null;
 
     if (query) {
       const { data: payoutAccount, error } = await query;
-      if (!error && payoutAccount?.access_token) {
+      if (!error && payoutAccount?.square_access_token) {
         if (businessId && payoutAccount.business_id !== businessId) return null;
         try {
           const { decryptToken } = await import('@/lib/encryption');
-          return { secretKey: decryptToken(payoutAccount.access_token), isByo: false };
-        } catch {
+          return { secretKey: decryptToken(payoutAccount.square_access_token), isByo: false };
+        } catch (decryptErr) {
+          const Sentry = await import('@sentry/nextjs');
+          Sentry.captureException(decryptErr, { tags: { component: 'provider-adapters', operation: 'decrypt-square-token' } });
           return null;
         }
       }

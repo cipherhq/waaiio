@@ -189,7 +189,20 @@ export async function resolvePaymentRoutingAuthority(
             result.subaccountCode = payout.subaccount_code || null;
             result.stripeAccountId = payout.stripe_account_id || null;
             result.squareMerchantId = payout.square_merchant_id || null;
-            result.squareAccessToken = payout.square_access_token || null;
+            // Decrypt stored Square OAuth token; fail closed on decryption error
+            if (payout.square_access_token) {
+              try {
+                const { decryptToken } = await import('@/lib/encryption');
+                result.squareAccessToken = decryptToken(payout.square_access_token);
+              } catch (decryptErr) {
+                const Sentry = await import('@sentry/nextjs');
+                Sentry.captureException(decryptErr, { tags: { component: 'resolve-stripe-routing', operation: 'decrypt-square-token' } });
+                logger.error('[ROUTING] Square access token decryption failed — fail closed');
+                result.squareAccessToken = null;
+              }
+            } else {
+              result.squareAccessToken = null;
+            }
             result.platformFeeAmount = Math.round(amount * (payout.platform_percentage / 100));
             result.payoutAccountId = payout.id;
           }

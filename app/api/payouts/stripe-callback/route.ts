@@ -102,10 +102,16 @@ export async function GET(request: NextRequest) {
     }
 
     // Update business payout mode
-    await serviceClient
+    const { error: modeError } = await serviceClient
       .from('businesses')
       .update({ payout_mode: 'direct_split' })
       .eq('id', businessId);
+    if (modeError) {
+      const Sentry = await import('@sentry/nextjs');
+      Sentry.captureException(modeError, { tags: { component: 'stripe-callback', operation: 'payout_mode_update' } });
+      logger.error('[STRIPE-CALLBACK] payout_mode update failed:', modeError);
+      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=mode_update_failed`);
+    }
 
     // Owner notification email (non-blocking)
     try {
