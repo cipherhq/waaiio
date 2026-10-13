@@ -47,7 +47,7 @@ function psql(sql: string): string {
 
 function psqlMayFail(sql: string): string {
   try {
-    return execSync(`psql "${dbUrl}" -tAXq`, {
+    return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
       input: sql,
       encoding: 'utf-8',
       timeout: 15_000,
