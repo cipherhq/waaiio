@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ALL_FLOW_COPY_KEYS, BUTTON_TITLE_KEYS, LIST_TITLE_KEYS, PLACEHOLDER_SCHEMA, KEYS_WITH_COMMANDS, getFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { loadBusinessLanguages, getEffectiveLanguages } from '@/lib/bot/language-policy';
 import { isSupportedLanguage } from '@/lib/bot/languages';
+import { isBusinessEditableKey } from '@/lib/bot/translations';
 
 /**
  * GET /api/translations
@@ -51,6 +52,7 @@ export async function GET(request: NextRequest) {
     platformOverrides: platformOverrides || [],
     allowedLanguages: entitlement.allowedLanguages,
     allKeys: ALL_FLOW_COPY_KEYS,
+    editableKeys: ALL_FLOW_COPY_KEYS.filter(isBusinessEditableKey),
   });
 }
 
@@ -74,6 +76,10 @@ export async function PUT(request: NextRequest) {
 
   if (!businessId || !Array.isArray(overrides)) {
     return NextResponse.json({ error: 'businessId and overrides[] required' }, { status: 400 });
+  }
+
+  if (overrides.length > 200) {
+    return NextResponse.json({ error: 'Too many overrides (max 200)' }, { status: 400 });
   }
 
   // Verify ownership
@@ -108,6 +114,19 @@ export async function PUT(request: NextRequest) {
     }
 
     const trimmedValue = override.value.trim();
+
+    // Validate key is business-editable
+    if (!isBusinessEditableKey(override.key)) {
+      errors.push(`${override.key}: not editable by businesses`);
+      continue;
+    }
+
+    // Reject values containing URLs, phone numbers, or 8+ digit runs
+    const UNSAFE_VALUE_PATTERN = /https?:\/\/|www\.|[a-z0-9-]+\.[a-z]{2,}\/|(\+?\d[\d\s-]{7,}\d)|\d{8,}/i;
+    if (UNSAFE_VALUE_PATTERN.test(trimmedValue)) {
+      errors.push(`${override.key}: value must not contain URLs, phone numbers, or long digit sequences`);
+      continue;
+    }
 
     // Validate key exists
     if (!ALL_FLOW_COPY_KEYS.includes(override.key)) {
@@ -173,12 +192,15 @@ export async function PUT(request: NextRequest) {
 
   // Process deletes
   for (const del of deletes) {
-    await serviceClient
+    const { error: delError } = await serviceClient
       .from('bot_translation_overrides')
       .delete()
       .eq('business_id', businessId)
       .eq('lang', del.lang)
       .eq('key', del.key);
+    if (delError) {
+      return NextResponse.json({ error: 'Failed to delete override' }, { status: 500 });
+    }
   }
 
   // Process upserts
@@ -197,7 +219,7 @@ export async function PUT(request: NextRequest) {
       .upsert(rows, { onConflict: 'business_id,lang,key' });
 
     if (upsertError) {
-      return NextResponse.json({ error: 'Failed to save overrides', detail: upsertError.message }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to save overrides' }, { status: 500 });
     }
   }
 

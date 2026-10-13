@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logAdminAudit } from '@/lib/admin-audit';
@@ -149,7 +150,7 @@ export async function GET(request: NextRequest) {
     .order('key');
 
   if (error) {
-    console.error('[ADMIN_TRANSLATIONS] GET failed:', error.message);
+    Sentry.captureMessage(`Admin translations GET failed: ${error.message}`, 'error');
     return NextResponse.json(
       { error: 'Failed to load platform overrides' },
       { status: 500 },
@@ -225,9 +226,9 @@ export async function PUT(request: NextRequest) {
     .upsert(rows, { onConflict: 'lang,key' });
 
   if (upsertError) {
-    console.error('[ADMIN_TRANSLATIONS] PUT failed:', upsertError.message);
+    Sentry.captureMessage(`Admin translations PUT failed: ${upsertError.message}`, 'error');
     return NextResponse.json(
-      { error: 'Failed to save platform overrides', detail: upsertError.message },
+      { error: 'Failed to save platform overrides' },
       { status: 500 },
     );
   }
@@ -247,7 +248,7 @@ export async function PUT(request: NextRequest) {
     ipAddress: getRequestIp(request),
   });
   if (auditError) {
-    console.error('[ADMIN_TRANSLATIONS] Audit log failed for PUT:', auditError);
+    Sentry.captureMessage(`Admin audit log failed for translation override: ${String(auditError)}`, 'error');
     // Overrides saved successfully — don't fail the request over audit
   }
 
@@ -314,10 +315,7 @@ export async function DELETE(request: NextRequest) {
       .eq('key', t.key);
 
     if (delError) {
-      console.error(
-        `[ADMIN_TRANSLATIONS] DELETE failed for ${t.lang}.${t.key}:`,
-        delError.message,
-      );
+      Sentry.captureMessage(`Admin translations DELETE failed for ${t.lang}.${t.key}: ${delError.message}`, 'error');
       // Continue deleting remaining — partial success is acceptable
     } else {
       deleted += count ?? 0;
@@ -339,7 +337,7 @@ export async function DELETE(request: NextRequest) {
     ipAddress: getRequestIp(request),
   });
   if (auditError) {
-    console.error('[ADMIN_TRANSLATIONS] Audit log failed for DELETE:', auditError);
+    Sentry.captureMessage(`Admin audit log failed for translation override: ${String(auditError)}`, 'error');
   }
 
   return NextResponse.json({ success: true, deleted });
