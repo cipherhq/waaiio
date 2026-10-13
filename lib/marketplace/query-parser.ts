@@ -11,7 +11,7 @@
  * Phase B / #584 — pure, deterministic, no side effects.
  */
 
-import { detectCategoryIntent } from '@/lib/bot/fuzzy-match';
+import { detectCategoryIntent, CATEGORY_KEYWORDS, levenshtein } from '@/lib/bot/fuzzy-match';
 import { resolveLocation, type LocationResolution } from './location-resolver';
 
 // ── Types ──────────────────────────────────────────────
@@ -29,6 +29,8 @@ export interface DirectoryQueryResult {
   nameQuery: string | null;
   /** Location candidates with country codes (for multi-country disambiguation). */
   candidates?: Array<{ name: string; countryCode: string }>;
+  /** If the category was fuzzy-corrected (e.g., "resturant" → "restaurant"). */
+  correctedFrom?: string;
 }
 
 // ── Preposition patterns ───────────────────────────────
@@ -73,6 +75,50 @@ const SPLIT_RE = buildSplitRegex();
  */
 const NEAR_ME_RE = /^me$/i;
 
+/**
+ * Generic nouns that mean "show everything" — no category filter, no nameQuery.
+ * "business in DC" = all eligible businesses in DC.
+ */
+const GENERIC_NOUNS = new Set([
+  'business', 'businesses', 'place', 'places', 'shop', 'shops',
+  'store', 'stores', 'anything', 'everything', 'services',
+]);
+
+/**
+ * Fuzzy-correct a misspelled category word against CATEGORY_KEYWORDS keys.
+ * Levenshtein ≤ 2 for words ≥ 5 chars, ≤ 1 for shorter words.
+ * Returns the corrected category key and the original misspelling, or null.
+ */
+function correctCategory(word: string): { category: string; original: string } | null {
+  const lower = word.toLowerCase();
+  // Words under 4 chars are too ambiguous for fuzzy correction (e.g., "inn" → "ink")
+  if (lower.length < 4) return null;
+  const maxDist = lower.length >= 5 ? 2 : 1;
+  let bestKey: string | null = null;
+  let bestDist = Infinity;
+
+  for (const key of Object.keys(CATEGORY_KEYWORDS)) {
+    const dist = levenshtein(lower, key);
+    if (dist <= maxDist && dist < bestDist) {
+      bestDist = dist;
+      bestKey = key;
+    }
+  }
+  // Also check keyword values (e.g., "resturant" close to "restaurant")
+  if (!bestKey) {
+    for (const [key, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+      for (const kw of keywords) {
+        const dist = levenshtein(lower, kw);
+        if (dist <= maxDist && dist < bestDist) {
+          bestDist = dist;
+          bestKey = key;
+        }
+      }
+    }
+  }
+  return bestKey && bestDist > 0 ? { category: bestKey, original: word } : null;
+}
+
 // ── Public API ─────────────────────────────────────────
 
 /**
@@ -105,18 +151,49 @@ export function parseDirectoryQuery(
 
   // ── "near me" detection ──
   if (locationPart !== null && NEAR_ME_RE.test(locationPart.trim())) {
-    const categories = detectCategoryIntent(categoryPart);
+    const isGenericNearMe = GENERIC_NOUNS.has(categoryPart.toLowerCase());
+    let nearMeCategories = isGenericNearMe ? [] : detectCategoryIntent(categoryPart);
+    let nearMeCorrected: string | undefined;
+
+    if (nearMeCategories.length === 0 && !isGenericNearMe) {
+      for (const word of categoryPart.split(/\s+/)) {
+        const correction = correctCategory(word);
+        if (correction) {
+          nearMeCategories = [correction.category];
+          nearMeCorrected = correction.original;
+          break;
+        }
+      }
+    }
+
     return {
-      categories,
+      categories: nearMeCategories,
       locationText: null,
       resolvedLocation: null,
       needsLocation: true,
-      nameQuery: categories.length === 0 ? categoryPart : null,
+      nameQuery: nearMeCategories.length === 0 && !isGenericNearMe ? categoryPart : null,
+      correctedFrom: nearMeCorrected,
     };
   }
 
-  // ── Category detection ──
-  const categories = categoryPart ? detectCategoryIntent(categoryPart) : [];
+  // ── Generic noun check ──
+  const isGeneric = categoryPart ? GENERIC_NOUNS.has(categoryPart.toLowerCase()) : false;
+
+  // ── Category detection (with fuzzy correction) ──
+  let categories = categoryPart && !isGeneric ? detectCategoryIntent(categoryPart) : [];
+  let correctedFrom: string | undefined;
+
+  // Fuzzy-correct misspelled categories when exact detection fails
+  if (categories.length === 0 && categoryPart && !isGeneric) {
+    for (const word of categoryPart.split(/\s+/)) {
+      const correction = correctCategory(word);
+      if (correction) {
+        categories = [correction.category];
+        correctedFrom = correction.original;
+        break;
+      }
+    }
+  }
 
   // ── Location resolution ──
   let locationText: string | null = null;
@@ -135,16 +212,27 @@ export function parseDirectoryQuery(
       locationText,
       resolvedLocation,
       needsLocation: false,
-      nameQuery: categories.length === 0 ? categoryPart : null,
+      nameQuery: categories.length === 0 && !isGeneric ? categoryPart : null,
+      correctedFrom,
     };
   }
 
   // ── No preposition found — entire input is one thing ──
-  // Try as category first, then as location, then as name fallback.
 
+  // Generic nouns with no location → all businesses, ask for location
+  if (GENERIC_NOUNS.has(trimmed.toLowerCase())) {
+    return {
+      categories: [],
+      locationText: null,
+      resolvedLocation: null,
+      needsLocation: true,
+      nameQuery: null,
+    };
+  }
+
+  // Try as category first (exact + synonyms)
   const fullCategories = detectCategoryIntent(trimmed);
   if (fullCategories.length > 0) {
-    // Pure category query: "restaurants", "barber"
     return {
       categories: fullCategories,
       locationText: null,
@@ -164,6 +252,21 @@ export function parseDirectoryQuery(
       needsLocation: false,
       nameQuery: null,
     };
+  }
+
+  // Try fuzzy category correction before falling back to name
+  for (const word of trimmed.split(/\s+/)) {
+    const correction = correctCategory(word);
+    if (correction) {
+      return {
+        categories: [correction.category],
+        locationText: null,
+        resolvedLocation: null,
+        needsLocation: true,
+        nameQuery: null,
+        correctedFrom: correction.original,
+      };
+    }
   }
 
   // ── Fallback: treat entire input as a name query ──

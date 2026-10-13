@@ -36,10 +36,11 @@ describe('parseDirectoryQuery', () => {
     expect(result.needsLocation).toBe(false);
   });
 
-  it('"business in DC" → nameQuery fallback for unrecognised category', () => {
+  it('"business in DC" → generic noun, no category, location DC', () => {
     const result = parseDirectoryQuery('business in DC');
-    // "business" is not a recognised category keyword
-    expect(result.nameQuery).toBe('business');
+    // "business" is a generic noun — no category filter, no nameQuery
+    expect(result.categories).toEqual([]);
+    expect(result.nameQuery).toBeNull();
     expect(result.locationText).toBe('DC');
     expect(result.needsLocation).toBe(false);
   });
@@ -98,15 +99,57 @@ describe('parseDirectoryQuery', () => {
     expect(result.nameQuery).toBeNull();
   });
 
-  // ── Misspelling fallback ──
+  // ── Category spelling correction ──
 
-  it('"resturant in lagos" → nameQuery: "resturant", location: "lagos"', () => {
+  it('"resturant in lagos" → categories: ["restaurant"], correctedFrom: "resturant"', () => {
     const result = parseDirectoryQuery('resturant in lagos');
-    // "resturant" (misspelled) does not match any category keyword
-    expect(result.nameQuery).toBe('resturant');
+    expect(result.categories).toContain('restaurant');
+    expect(result.correctedFrom).toBe('resturant');
+    expect(result.nameQuery).toBeNull();
     expect(result.locationText).toBe('lagos');
-    expect(result.resolvedLocation).not.toBeNull();
-    expect(result.needsLocation).toBe(false);
+  });
+
+  it('"barbr near me" → categories: ["barber"], correctedFrom: "barbr"', () => {
+    const result = parseDirectoryQuery('barbr near me');
+    expect(result.categories).toContain('barber');
+    expect(result.correctedFrom).toBe('barbr');
+    expect(result.needsLocation).toBe(true);
+  });
+
+  it('bare "resturant" → categories: ["restaurant"], correctedFrom', () => {
+    const result = parseDirectoryQuery('resturant');
+    expect(result.categories).toContain('restaurant');
+    expect(result.correctedFrom).toBe('resturant');
+  });
+
+  // ── Generic nouns ──
+
+  it('"business in DC" → no category, no nameQuery, location DC', () => {
+    const result = parseDirectoryQuery('business in DC');
+    expect(result.categories).toEqual([]);
+    expect(result.nameQuery).toBeNull();
+    expect(result.locationText).toBe('DC');
+  });
+
+  it('"businesses in Lagos" → no category, location Lagos', () => {
+    const result = parseDirectoryQuery('businesses in Lagos');
+    expect(result.categories).toEqual([]);
+    expect(result.nameQuery).toBeNull();
+    expect(result.locationText).toBe('Lagos');
+  });
+
+  it('"places" (bare) → no category, needsLocation', () => {
+    const result = parseDirectoryQuery('places');
+    expect(result.categories).toEqual([]);
+    expect(result.nameQuery).toBeNull();
+    expect(result.needsLocation).toBe(true);
+  });
+
+  it('"services in Lekki" → no category, location Lekki', () => {
+    const result = parseDirectoryQuery('services in Lekki');
+    expect(result.categories).toEqual([]);
+    expect(result.nameQuery).toBeNull();
+    expect(result.locationText).toBe('Lekki');
   });
 
   // ── Edge cases ──

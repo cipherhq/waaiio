@@ -451,7 +451,7 @@ export async function searchMarketplace(
 
     // If zero results and a free-text query was provided, try fuzzy suggestions
     if (paged.length === 0 && safeQuery) {
-      const suggestions = await searchFuzzy(supabase, safeQuery, effectiveCountry || null, criteria.excludeIds || []);
+      const suggestions = await searchFuzzy(supabase, safeQuery, effectiveCountry || null, criteria.excludeIds || [], resolvedCity, null);
       if (suggestions.length > 0) {
         return { results: [], ok: true, suggestions, hasMore: false };
       }
@@ -478,6 +478,8 @@ export async function searchFuzzy(
   query: string,
   country: string | null,
   hiddenIds: string[] = [],
+  city?: string | null,
+  state?: string | null,
 ): Promise<FuzzySuggestion[]> {
   try {
     const { data, error } = await supabase.rpc('search_businesses_fuzzy', {
@@ -485,6 +487,8 @@ export async function searchFuzzy(
       p_country: country,
       p_limit: 5,
       p_hidden_ids: hiddenIds,
+      p_city: city || null,
+      p_state: state || null,
     });
     if (error || !data) return [];
     return (data as Array<Record<string, unknown>>).map(row => ({

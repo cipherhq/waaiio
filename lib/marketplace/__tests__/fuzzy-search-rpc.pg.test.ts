@@ -153,6 +153,23 @@ describe('search_businesses_fuzzy — real DB', () => {
     // Our test business is NG, not GH — should not appear
     expect(result).not.toContain('Fuzzy Salon');
   });
+
+  it('8. location-scoped: p_city filters to matching city only', () => {
+    // Create a second business in Abuja
+    psql(`
+      INSERT INTO businesses (id, owner_id, name, slug, address, city, phone, status, bot_code, discovery_enabled, messaging_suspended, payout_mode, country_code)
+      VALUES ('44700000-0000-0000-0000-000000000015', '${OWNER_UUID}', 'Fuzzy Salon Abuja', 'fuzzy-salon-abuja-447', '6 Test St', 'Abuja', '+2340000005', 'active', 'FZSA', true, false, 'platform_managed', 'NG')
+      ON CONFLICT (id) DO UPDATE SET city = 'Abuja', status = 'active', bot_code = 'FZSA', discovery_enabled = true;
+    `);
+
+    // Search with p_city='Lagos' — should only return Lagos business
+    const lagosResult = psql(`SELECT name FROM search_businesses_fuzzy('Fuzzy Salon', NULL, 10, ARRAY[]::uuid[], 'Lagos', NULL);`);
+    expect(lagosResult).toContain('Fuzzy Salon Test');
+    expect(lagosResult).not.toContain('Fuzzy Salon Abuja');
+
+    // Clean up
+    psqlMayFail(`DELETE FROM businesses WHERE id = '44700000-0000-0000-0000-000000000015';`);
+  });
 });
 
 } // end if (TEST_DB)
