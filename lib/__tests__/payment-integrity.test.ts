@@ -1937,3 +1937,517 @@ describe('Deployment safety: webhook_secret_hash column missing → 503 (Flutter
   });
 });
 
+// ═══════════════════════════════════════════════════════════
+// Real-handler tests (vi.importActual, filter-recording mock)
+// ═══════════════════════════════════════════════════════════
+
+/** Creates a Supabase mock that records every .eq/.in filter on every table. */
+function createFilterRecordingSupabase(opts: {
+  payments: Record<string, unknown>;
+  reconcileResult?: Record<string, unknown>;
+}) {
+  const queries: Array<{ table: string; op: string; filters: Array<[string, string, unknown]> }> = [];
+  let currentQuery: { table: string; op: string; filters: Array<[string, string, unknown]> } | null = null;
+
+  function pushQuery(table: string, op: string) {
+    currentQuery = { table, op, filters: [] };
+    queries.push(currentQuery);
+  }
+
+  const noopChain = (): Record<string, unknown> => {
+    const c: Record<string, unknown> = {};
+    c.eq = (col: string, val: unknown) => { currentQuery?.filters.push(['eq', col, val]); return c; };
+    c.in = (col: string, val: unknown) => { currentQuery?.filters.push(['in', col, val]); return c; };
+    c.is = (col: string, val: unknown) => { currentQuery?.filters.push(['is', col, val]); return c; };
+    c.select = () => c;
+    c.single = () => Promise.resolve({ data: opts.payments, error: null });
+    c.maybeSingle = () => Promise.resolve({ data: opts.payments, error: null });
+    c.then = (r: (v: unknown) => void) => Promise.resolve({ data: [{ id: opts.payments.id }], error: null }).then(r);
+    return c;
+  };
+
+  const sb = {
+    from: vi.fn((table: string) => ({
+      select: (...args: unknown[]) => { pushQuery(table, 'select'); return noopChain(); },
+      update: (data: Record<string, unknown>) => { pushQuery(table, 'update'); return noopChain(); },
+      insert: () => Promise.resolve({ data: null, error: null }),
+    })),
+    _queries: queries,
+  };
+  return sb;
+}
+
+describe('Real handler: scoped processPaystackChargeSuccess uses id+business_id (1a)', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('every query carries id+business_id; no query filters by gateway_reference alone', async () => {
+    const reconcileMock = vi.fn().mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'completed', stages: { providerPaid: true, businessFinalized: true, customerConfirmed: true } },
+      acknowledgeSuccess: true,
+    });
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: reconcileMock }));
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+
+    const fakeSb = createFilterRecordingSupabase({
+      payments: {
+        id: 'pay-A', status: 'pending', amount: 1000, booking_id: null,
+        invoice_id: null, campaign_id: null, reservation_id: null, order_id: null,
+        metadata: {}, gateway: 'paystack', payment_authority_version: null,
+        finalization_completed_at: null, business_id: 'biz-A',
+      },
+    });
+
+    const { processPaystackChargeSuccess } = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    const result = await processPaystackChargeSuccess(
+      { amount: 100000, currency: 'NGN', channel: 'card', id: 1, fees: 100 },
+      'shared-ref',
+      fakeSb as any,
+      { paymentId: 'pay-A', businessId: 'biz-A' },
+    );
+
+    expect(result).toBe('finalized');
+
+    // Every payments query must have id='pay-A' AND business_id='biz-A'
+    const paymentQueries = fakeSb._queries.filter(q => q.table === 'payments');
+    expect(paymentQueries.length).toBeGreaterThanOrEqual(2); // select + update
+
+    for (const q of paymentQueries) {
+      const hasId = q.filters.some(([op, col, val]) => op === 'eq' && col === 'id' && val === 'pay-A');
+      const hasBizId = q.filters.some(([op, col, val]) => op === 'eq' && col === 'business_id' && val === 'biz-A');
+      const hasRefOnly = q.filters.some(([op, col]) => op === 'eq' && col === 'gateway_reference') && !hasId;
+      expect(hasId).toBe(true);
+      expect(hasBizId).toBe(true);
+      expect(hasRefOnly).toBe(false);
+    }
+  });
+});
+
+describe('Real handler: scoped update 0 rows → ScopedUpdateError (1b)', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('throws ScopedUpdateError when scoped metadata update returns 0 rows', async () => {
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn() }));
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+
+    // Mock: select returns the payment, but update returns 0 rows (simulating scope mismatch)
+    let callCount = 0;
+    const fakeSb = {
+      from: vi.fn(() => ({
+        select: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c; c.single = () => Promise.resolve({
+            data: {
+              id: 'pay-Z', status: 'pending', amount: 1000, booking_id: null,
+              invoice_id: null, campaign_id: null, reservation_id: null, order_id: null,
+              metadata: {}, gateway: 'paystack', payment_authority_version: null,
+              finalization_completed_at: null,
+            }, error: null,
+          });
+          c.maybeSingle = c.single;
+          return c;
+        },
+        update: () => {
+          callCount++;
+          const c: Record<string, unknown> = {};
+          c.eq = () => c;
+          c.select = () => c;
+          // Return empty array (0 rows updated)
+          c.then = (r: (v: unknown) => void) => Promise.resolve({ data: [], error: null }).then(r);
+          return c;
+        },
+      })),
+    };
+
+    const { processPaystackChargeSuccess, ScopedUpdateError } = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    await expect(processPaystackChargeSuccess(
+      { amount: 100000, currency: 'NGN', channel: 'card', id: 1, fees: 100 },
+      'ref-z',
+      fakeSb as any,
+      { paymentId: 'pay-Z', businessId: 'biz-Z' },
+    )).rejects.toThrow(ScopedUpdateError);
+  });
+});
+
+describe('Real handler: scoped processPaystackChargeFailed (1c)', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('scoped update carries id, business_id, status=pending; success/failed → no update, no alert', async () => {
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    const alertMock = vi.fn();
+    vi.doMock('@/lib/alerts/create-alert', () => ({ createAlert: alertMock }));
+
+    // Test with already-success payment — should not update or alert
+    const fakeSb = {
+      from: vi.fn(() => ({
+        select: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c;
+          c.single = () => Promise.resolve({
+            data: { id: 'pay-suc', status: 'success', amount: 1000, business_id: 'biz-1' },
+            error: null,
+          });
+          return c;
+        },
+        update: vi.fn(() => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c; c.select = () => c;
+          c.then = (r: (v: unknown) => void) => Promise.resolve({ data: [{ id: 'pay-suc' }], error: null }).then(r);
+          return c;
+        }),
+      })),
+    };
+
+    const { processPaystackChargeFailed } = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    await processPaystackChargeFailed(
+      { gateway_response: 'declined' }, 'ref-suc', fakeSb as any,
+      { paymentId: 'pay-suc', businessId: 'biz-1' },
+    );
+
+    // update() must NOT have been called (status was 'success' → early return)
+    // Use the from mock's call count: only the initial select, no update call
+    const paymentCalls = fakeSb.from.mock.calls.filter((c: unknown[]) => c[0] === 'payments');
+    expect(paymentCalls).toHaveLength(1); // Only the select call
+    expect(alertMock).not.toHaveBeenCalled();
+
+    // Test with already-failed payment
+    const fakeSb2 = {
+      from: vi.fn(() => ({
+        select: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c;
+          c.single = () => Promise.resolve({
+            data: { id: 'pay-fail', status: 'failed', amount: 1000, business_id: 'biz-1' },
+            error: null,
+          });
+          return c;
+        },
+        update: vi.fn(() => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c; c.select = () => c;
+          c.then = (r: (v: unknown) => void) => Promise.resolve({ data: [], error: null }).then(r);
+          return c;
+        }),
+      })),
+    };
+
+    alertMock.mockClear();
+    await processPaystackChargeFailed(
+      { gateway_response: 'declined' }, 'ref-fail', fakeSb2 as any,
+      { paymentId: 'pay-fail', businessId: 'biz-1' },
+    );
+    const paymentCalls2 = fakeSb2.from.mock.calls.filter((c: unknown[]) => c[0] === 'payments');
+    expect(paymentCalls2).toHaveLength(1); // Only the select call
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('Real handler: reconcile outcome → SuccessOutcome mapping (1d)', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('businessFinalized=false → incomplete; skipped → already_finalized; finalized → finalized', async () => {
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+
+    const noopSb = () => ({
+      from: vi.fn(() => ({
+        select: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c;
+          c.single = () => Promise.resolve({
+            data: {
+              id: 'pay-out', status: 'pending', amount: 1000, booking_id: null,
+              invoice_id: null, campaign_id: null, reservation_id: null, order_id: null,
+              metadata: {}, gateway: 'paystack', payment_authority_version: null,
+              finalization_completed_at: null,
+            }, error: null,
+          });
+          c.maybeSingle = c.single;
+          return c;
+        },
+        update: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c; c.select = () => c;
+          c.then = (r: (v: unknown) => void) => Promise.resolve({ data: [{ id: 'pay-out' }], error: null }).then(r);
+          return c;
+        },
+      })),
+    });
+
+    // Test incomplete (businessFinalized=false)
+    const reconcileMock = vi.fn();
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: reconcileMock }));
+
+    reconcileMock.mockResolvedValueOnce({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'processing', stages: { providerPaid: true, businessFinalized: false, customerConfirmed: false } },
+    });
+
+    let mod = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    let result = await mod.processPaystackChargeSuccess(
+      { amount: 100000, currency: 'NGN', id: 1, fees: 0 }, 'ref-1', noopSb() as any,
+    );
+    expect(result).toBe('incomplete');
+
+    // Test skipped → already_finalized
+    vi.resetModules();
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+    const reconcileMock2 = vi.fn().mockResolvedValue({
+      providerOutcome: 'skipped', lifecycle: null, acknowledgeSuccess: true,
+    });
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: reconcileMock2 }));
+
+    mod = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    result = await mod.processPaystackChargeSuccess(
+      { amount: 100000, currency: 'NGN', id: 1, fees: 0 }, 'ref-2', noopSb() as any,
+    );
+    expect(result).toBe('already_finalized');
+
+    // Test finalized (businessFinalized=true)
+    vi.resetModules();
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+    const reconcileMock3 = vi.fn().mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'completed', stages: { providerPaid: true, businessFinalized: true, customerConfirmed: true } },
+    });
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: reconcileMock3 }));
+
+    mod = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    result = await mod.processPaystackChargeSuccess(
+      { amount: 100000, currency: 'NGN', id: 1, fees: 0 }, 'ref-3', noopSb() as any,
+    );
+    expect(result).toBe('finalized');
+  });
+});
+
+describe('Amount-mismatch status guard (fix 2)', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('scoped: success payment → not flipped to failed (throws ScopedUpdateError)', async () => {
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn() }));
+
+    // Payment is already success; amount mismatch triggers update with status='pending' guard → 0 rows
+    // Then re-read shows status='success' → throws
+    let selectCallCount = 0;
+    const fakeSb = {
+      from: vi.fn(() => ({
+        select: () => {
+          selectCallCount++;
+          const c: Record<string, unknown> = {};
+          c.eq = () => c;
+          c.single = () => {
+            if (selectCallCount === 1) {
+              // First select: payment lookup
+              return Promise.resolve({
+                data: {
+                  id: 'pay-suc', status: 'success', amount: 1000, booking_id: null,
+                  invoice_id: null, campaign_id: null, reservation_id: null, order_id: null,
+                  metadata: {}, gateway: 'paystack', payment_authority_version: 1,
+                  finalization_completed_at: null, // v1 not yet finalized → passes early-return check
+                }, error: null,
+              });
+            }
+            // Second select: re-read after 0-row update
+            return Promise.resolve({ data: { status: 'success' }, error: null });
+          };
+          return c;
+        },
+        update: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c; c.select = () => c;
+          // 0 rows updated (status guard blocked it)
+          c.then = (r: (v: unknown) => void) => Promise.resolve({ data: [], error: null }).then(r);
+          return c;
+        },
+      })),
+    };
+
+    const { processPaystackChargeSuccess, ScopedUpdateError } = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    await expect(processPaystackChargeSuccess(
+      { amount: 999999, currency: 'NGN', id: 1, fees: 0 }, // wrong amount
+      'ref-mm-suc',
+      fakeSb as any,
+      { paymentId: 'pay-suc', businessId: 'biz-1' },
+    )).rejects.toThrow(ScopedUpdateError);
+  });
+
+  it('scoped: already-failed payment + mismatch → returns amount_mismatch without throwing', async () => {
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn() }));
+
+    let selectCallCount = 0;
+    const fakeSb = {
+      from: vi.fn(() => ({
+        select: () => {
+          selectCallCount++;
+          const c: Record<string, unknown> = {};
+          c.eq = () => c;
+          c.single = () => {
+            if (selectCallCount === 1) {
+              return Promise.resolve({
+                data: {
+                  id: 'pay-fld', status: 'pending', amount: 1000, booking_id: null,
+                  invoice_id: null, campaign_id: null, reservation_id: null, order_id: null,
+                  metadata: {}, gateway: 'paystack', payment_authority_version: null,
+                  finalization_completed_at: null,
+                }, error: null,
+              });
+            }
+            // Re-read shows already failed
+            return Promise.resolve({ data: { status: 'failed' }, error: null });
+          };
+          return c;
+        },
+        update: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c; c.select = () => c;
+          c.then = (r: (v: unknown) => void) => Promise.resolve({ data: [], error: null }).then(r);
+          return c;
+        },
+      })),
+    };
+
+    const { processPaystackChargeSuccess } = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    const result = await processPaystackChargeSuccess(
+      { amount: 999999, currency: 'NGN', id: 1, fees: 0 },
+      'ref-mm-fld',
+      fakeSb as any,
+      { paymentId: 'pay-fld', businessId: 'biz-1' },
+    );
+    expect(result).toBe('amount_mismatch');
+  });
+
+  it('unscoped: amount-mismatch update includes status=pending guard', async () => {
+    vi.doMock('@/lib/posthog/server', () => ({ getServerPostHog: () => null }));
+    vi.doMock('@/lib/fraud/detect', () => ({ checkPaymentFraud: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {},
+        withContext: () => ({ info: () => {}, error: () => {}, debug: () => {}, warn: () => {} }) },
+    }));
+    vi.doMock('@/lib/payments/paystack-card-authorization', () => ({
+      normalizePaystackCardAuthorization: () => undefined,
+      persistPaystackCardAuthorization: vi.fn(),
+    }));
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn() }));
+
+    const filters: Array<[string, unknown]> = [];
+    const fakeSb = {
+      from: vi.fn(() => ({
+        select: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = () => c;
+          c.single = () => Promise.resolve({
+            data: {
+              id: 'pay-u', status: 'pending', amount: 1000, booking_id: null,
+              invoice_id: null, campaign_id: null, reservation_id: null, order_id: null,
+              metadata: {}, gateway: 'paystack', payment_authority_version: null,
+              finalization_completed_at: null,
+            }, error: null,
+          });
+          return c;
+        },
+        update: () => {
+          const c: Record<string, unknown> = {};
+          c.eq = (col: string, val: unknown) => { filters.push([col, val]); return c; };
+          c.select = () => c;
+          c.then = (r: (v: unknown) => void) => Promise.resolve({ data: null, error: null }).then(r);
+          return c;
+        },
+      })),
+    };
+
+    const { processPaystackChargeSuccess } = await vi.importActual<typeof import('@/lib/payments/webhook-handler')>('@/lib/payments/webhook-handler');
+    const result = await processPaystackChargeSuccess(
+      { amount: 999999, currency: 'NGN', id: 1, fees: 0 },
+      'ref-mm-u',
+      fakeSb as any,
+      // No scope — unscoped path
+    );
+    expect(result).toBe('amount_mismatch');
+    // Must include status='pending' in update filters
+    expect(filters).toContainEqual(['status', 'pending']);
+    expect(filters).toContainEqual(['gateway_reference', 'ref-mm-u']);
+  });
+});
+

@@ -76,18 +76,33 @@ export async function processPaystackChargeSuccess(
   if (webhookAmountKobo !== expectedKobo) {
     Sentry.captureMessage('Payment amount mismatch', { level: 'warning', extra: { reference, webhookAmountKobo, expectedKobo } });
     if (scope) {
+      // Status guard: never flip a success payment to failed
       const { data: updated, error } = await supabase
         .from('payments')
         .update({ status: 'failed', gateway_status: 'amount_mismatch' })
         .eq('id', scope.paymentId)
         .eq('business_id', scope.businessId)
+        .eq('status', 'pending')
         .select('id');
-      if (error || !updated?.length) throw new ScopedUpdateError('amount_mismatch scoped update failed');
+      if (error) throw new ScopedUpdateError('amount_mismatch scoped update error');
+      if (!updated?.length) {
+        // 0 rows: check if already failed (benign) or success (must not flip)
+        const { data: current } = await supabase
+          .from('payments')
+          .select('status')
+          .eq('id', scope.paymentId)
+          .eq('business_id', scope.businessId)
+          .single();
+        if (current?.status === 'failed') return 'amount_mismatch'; // already failed — benign
+        throw new ScopedUpdateError('amount_mismatch scoped update: payment not pending');
+      }
     } else {
+      // Unscoped: also guard with status='pending'
       await supabase
         .from('payments')
         .update({ status: 'failed', gateway_status: 'amount_mismatch' })
-        .eq('gateway_reference', reference);
+        .eq('gateway_reference', reference)
+        .eq('status', 'pending');
     }
     return 'amount_mismatch';
   }
