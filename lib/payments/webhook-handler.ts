@@ -50,7 +50,7 @@ export async function processPaystackChargeSuccess(
   const gatewayFee = Math.round(paystackFeeKobo / 100);
 
   const webhookAmountKobo = data.amount as number;
-  const expectedKobo = existingPayment.amount * 100;
+  const expectedKobo = Math.round(existingPayment.amount * 100);
 
   if (webhookAmountKobo !== expectedKobo) {
     Sentry.captureMessage('Payment amount mismatch', { level: 'warning', extra: { reference, webhookAmountKobo, expectedKobo } });
