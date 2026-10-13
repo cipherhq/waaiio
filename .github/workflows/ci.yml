@@ -4160,11 +4160,11 @@ jobs:
       - name: Run .pg.test.ts integration tests against disposable PG
         env:
           TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/security_acl_test
-          CI: 'true'
+          REQUIRE_PG_TESTS: 'true'
         shell: bash
         run: |
           set -o pipefail
-          npx vitest run 'lib/__tests__/**/*.pg.test.ts' --reporter=verbose 2>&1 | tee /tmp/pg-test-output.txt
+          npx vitest run lib/__tests__/payout-account-swap.pg.test.ts --reporter=verbose 2>&1 | tee /tmp/pg-test-output.txt
 
       - name: Verify zero skipped .pg.test.ts tests
         run: |

@@ -14,8 +14,10 @@ import { resolve } from 'path';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
-if (!TEST_DB && process.env.CI === 'true') {
-  throw new Error('TEST_DATABASE_URL is required in CI — cannot skip DB tests');
+// In the P0 security ACL CI job, REQUIRE_PG_TESTS is set.
+// If the database is unavailable there, fail hard instead of skipping.
+if (!TEST_DB && process.env.REQUIRE_PG_TESTS === 'true') {
+  throw new Error('TEST_DATABASE_URL is required — cannot skip DB tests (REQUIRE_PG_TESTS=true)');
 }
 
 function sql(query: string, connStr = TEST_DB): string {
