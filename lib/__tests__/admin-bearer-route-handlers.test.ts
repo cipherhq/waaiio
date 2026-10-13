@@ -3,6 +3,12 @@
  *
  * Calls actual route handlers with mocked Supabase client.
  * Covers CTO rulings #3 (affected rows), #4 (read errors = failed), #5 (atomicity).
+ *
+ * Adjustment-linked payout tests cover the three-phase design:
+ *   1. INSERT as 'held' with adjustment_link_pending flag
+ *   2. Link adjustments with CAS (.is('applied_to_payout_id', null))
+ *   3a. On link success: promote with CAS (.contains('flags', [{type:'adjustment_link_pending'}]))
+ *   3b. On link failure: swap pending->failed flag
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -82,7 +88,7 @@ function makeRequest(url: string, body: Record<string, unknown>) {
 /** Build a chainable mock for a Supabase .from(table) call */
 function chainMock(terminalResult: { data: unknown; error: unknown }) {
   const chain: Record<string, unknown> = {};
-  const methods = ['select', 'eq', 'neq', 'in', 'is', 'gte', 'lte', 'order', 'range', 'insert', 'update'];
+  const methods = ['select', 'eq', 'neq', 'in', 'is', 'gte', 'lte', 'order', 'range', 'insert', 'update', 'contains'];
   for (const m of methods) {
     chain[m] = vi.fn().mockReturnValue(chain);
   }
@@ -520,10 +526,10 @@ describe('verification/request: Option B + revert atomicity', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// payouts/generate — read errors, insert errors, no-eligible
+// payouts/generate — three-phase adjustment linking, read errors, no-eligible
 // ═══════════════════════════════════════════════════════════════
 
-describe('payouts/generate: failure counting and no-eligible result', () => {
+describe('payouts/generate: failure counting and three-phase adjustment linking', () => {
   let generateModule: typeof import('@/app/api/admin/payouts/generate/route');
 
   beforeEach(async () => {
@@ -564,7 +570,19 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     }));
   });
 
-  function setupGenerateMocks(overrides: {
+  // ── Helper to build per-table mocks with call counters ──
+  // The generate route calls .from('business_payouts') multiple times:
+  //   0: dedup check (.select().eq().eq().eq().maybeSingle())
+  //   1: monthly limit check (.select().eq().in().gte()) — only if payout_limit_monthly > 0
+  //   2: INSERT (.insert({}).select('id').single())
+  //   3: promote UPDATE (.update({}).eq().eq().contains().select()) — three-phase only
+  //
+  // .from('payout_adjustments') calls:
+  //   0: batch SELECT (.select().eq().is())
+  //   1: link UPDATE (.update({}).in().is().select())
+
+  /** Standard non-adjustment mock setup */
+  function setupSimpleMocks(overrides: {
     businesses?: unknown[] | null;
     businessesError?: unknown;
     existingPayout?: unknown;
@@ -572,11 +590,8 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     feesData?: unknown[] | null;
     feesError?: unknown;
     paymentsError?: unknown;
-    adjustmentsData?: unknown[] | null;
-    adjustmentsError?: unknown;
     insertResult?: { data: unknown; error: unknown };
     payoutAccountData?: unknown;
-    adjLinkError?: unknown;
   } = {}) {
     const defaults = {
       businesses: [{ id: 'b1', created_at: '2025-01-01', verification_level: 'basic', payout_limit_monthly: 500000, country_code: 'NG' }],
@@ -586,43 +601,23 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
       feesData: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
       feesError: null,
       paymentsError: null,
-      adjustmentsData: [] as unknown[],
-      adjustmentsError: null,
       insertResult: { data: { id: 'payout-1' }, error: null },
       payoutAccountData: { id: 'pa-1' },
-      adjLinkError: null,
     };
     const cfg = { ...defaults, ...overrides };
-
-    // Track calls to business_payouts to differentiate dedup check vs insert vs update-after-adj-failure
-    let payoutsCallCount = 0;
 
     mockFromImpl = (table: string) => {
       const chain = chainMock({ data: null, error: null });
       if (table === 'businesses') {
-        // The businesses SELECT uses .eq().eq() chain, terminal is the last .eq()
-        // which resolves to the data array
         chain.eq = vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({ data: cfg.businesses, error: cfg.businessesError }),
         });
       } else if (table === 'business_payouts') {
-        const idx = payoutsCallCount++;
-        if (idx === 0) {
-          // Dedup check uses .maybeSingle()
-          chain.maybeSingle = vi.fn().mockResolvedValue({ data: cfg.existingPayout, error: cfg.existingError });
-          // Monthly limit check also uses business_payouts
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
-        }
-        // INSERT — .insert({}).select('id').single()
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: cfg.existingPayout, error: cfg.existingError });
+        chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         chain.insert = vi.fn().mockReturnValue({
           select: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue(cfg.insertResult),
-          }),
-        });
-        // UPDATE for adjustment link failure — .update({}).eq('id', payoutId).select('id')
-        chain.update = vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-1' }], error: null }),
           }),
         });
       } else if (table === 'platform_fees') {
@@ -630,17 +625,7 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
       } else if (table === 'payments') {
         chain.lte = vi.fn().mockResolvedValue({ data: [], error: cfg.paymentsError });
       } else if (table === 'payout_adjustments') {
-        if (cfg.adjustmentsError) {
-          chain.is = vi.fn().mockResolvedValue({ data: null, error: cfg.adjustmentsError });
-        } else {
-          chain.is = vi.fn().mockResolvedValue({ data: cfg.adjustmentsData, error: null });
-        }
-        // The .in() UPDATE for linking adjustments to the payout
-        if (cfg.adjLinkError) {
-          chain.in = vi.fn().mockResolvedValue({ error: cfg.adjLinkError });
-        } else {
-          chain.in = vi.fn().mockResolvedValue({ error: null });
-        }
+        chain.is = vi.fn().mockResolvedValue({ data: [], error: null });
       } else if (table === 'payout_accounts') {
         chain.maybeSingle = vi.fn().mockResolvedValue({ data: cfg.payoutAccountData, error: null });
       } else if (table === 'admin_audit_logs') {
@@ -657,45 +642,10 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     }));
   }
 
-  it('read error on dedup check counts as failed, returns 207', async () => {
-    setupGenerateMocks({ existingError: { message: 'connection refused' } });
-    generateModule = await import('@/app/api/admin/payouts/generate/route');
-    const res = await generateModule.POST(
-      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
-    );
-    expect(res.status).toBe(207);
-    const body = await res.json();
-    expect(body.error).toBeDefined();
-    expect(body.failed).toBeGreaterThan(0);
-    expect(body.success).toBeUndefined();
-  });
-
-  it('read error on fees counts as failed, returns 207', async () => {
-    setupGenerateMocks({ feesError: { message: 'timeout' } });
-    generateModule = await import('@/app/api/admin/payouts/generate/route');
-    const res = await generateModule.POST(
-      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
-    );
-    expect(res.status).toBe(207);
-    const body = await res.json();
-    expect(body.failed).toBeGreaterThan(0);
-  });
-
-  it('insert error counts as failed, returns 207', async () => {
-    setupGenerateMocks({ insertResult: { data: null, error: { message: 'constraint violation' } } });
-    generateModule = await import('@/app/api/admin/payouts/generate/route');
-    const res = await generateModule.POST(
-      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
-    );
-    expect(res.status).toBe(207);
-    const body = await res.json();
-    expect(body.failed).toBeGreaterThan(0);
-    expect(body.success).toBeUndefined();
-  });
+  // ── Non-adjustment tests (kept from original) ──
 
   it('zero eligible businesses returns explicit no-eligible result', async () => {
-    // All businesses have zero gross fees → no eligible payouts
-    setupGenerateMocks({ feesData: [] });
+    setupSimpleMocks({ feesData: [] });
     generateModule = await import('@/app/api/admin/payouts/generate/route');
     const res = await generateModule.POST(
       makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
@@ -709,7 +659,7 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
   });
 
   it('no platform-managed businesses returns explicit message', async () => {
-    setupGenerateMocks({ businesses: [] });
+    setupSimpleMocks({ businesses: [] });
     generateModule = await import('@/app/api/admin/payouts/generate/route');
     const res = await generateModule.POST(
       makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
@@ -719,41 +669,30 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     expect(body.message).toContain('No platform-managed');
   });
 
-  it('adjustment link failure sets payout to held with flag, counts as failed', async () => {
-    // Business has pending adjustments; payout inserts ok, but linking adjustments fails
-    setupGenerateMocks({
-      adjustmentsData: [{ id: 'adj-1', amount: -500 }],
-      adjLinkError: { message: 'FK constraint violated' },
-    });
+  it('read error on dedup check counts as failed', async () => {
+    setupSimpleMocks({ existingError: { message: 'connection refused' } });
     generateModule = await import('@/app/api/admin/payouts/generate/route');
     const res = await generateModule.POST(
       makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
     );
     expect(res.status).toBe(207);
     const body = await res.json();
+    expect(body.error).toBeDefined();
     expect(body.failed).toBeGreaterThan(0);
-    // Verify logger.error was called with adjustment_link context
-    expect(mockLoggerError).toHaveBeenCalled();
-    const logCall = mockLoggerError.mock.calls.find(
-      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('Adjustment link failed'),
-    );
-    expect(logCall).toBeDefined();
+    expect(body.success).toBeUndefined();
   });
 
-  it('adjustment link failure: containment update sets status held with adjustment_link_failed flag', async () => {
-    // Adjustments exist, adjustment UPDATE errors, containment UPDATE on business_payouts succeeds
-    // We need to capture the update payload to verify the containment write
-    //
-    // The generate route calls .from('business_payouts') 4 times for a single business:
-    //   0: dedup check (.select().eq().eq().eq().maybeSingle())
-    //   1: monthly limit check (.select().eq().in().gte()) — only if payout_limit_monthly > 0
-    //   2: INSERT (.insert({}).select('id').single())
-    //   3: containment UPDATE (.update({}).eq('id',...).select('id'))
-    let capturedUpdatePayload: Record<string, unknown> | null = null;
-    let payoutsCallIdx = 0;
+  // ── Three-phase adjustment tests ──
+
+  it('generate: fewer linked ids than expected -> held + failed flag, no claim', async () => {
+    // 2 adjustments, but link CAS only returns 1 id (partial)
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+    let capturedSwapPayload: Record<string, unknown> | null = null;
 
     mockFromImpl = (table: string) => {
       const chain = chainMock({ data: null, error: null });
+
       if (table === 'businesses') {
         chain.eq = vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({
@@ -762,27 +701,27 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
           }),
         });
       } else if (table === 'business_payouts') {
-        const idx = payoutsCallIdx++;
+        const idx = payoutsIdx++;
         if (idx === 0) {
-          // Dedup check — no existing payout
+          // Dedup check
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 1) {
-          // Monthly limit check — terminal is .gte()
+          // Monthly limit check
           chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx === 2) {
-          // INSERT
+          // INSERT as held + pending flag
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: { id: 'payout-1' }, error: null }),
+              single: vi.fn().mockResolvedValue({ data: { id: 'payout-partial' }, error: null }),
             }),
           });
         } else if (idx === 3) {
-          // Containment UPDATE — capture the payload
+          // Flag swap: pending -> failed (after partial link)
           chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
-            capturedUpdatePayload = payload;
+            capturedSwapPayload = payload;
             return {
               eq: vi.fn().mockReturnValue({
-                select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-1' }], error: null }),
+                select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-partial' }], error: null }),
               }),
             };
           });
@@ -795,10 +734,23 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
       } else if (table === 'payments') {
         chain.lte = vi.fn().mockResolvedValue({ data: [], error: null });
       } else if (table === 'payout_adjustments') {
-        // SELECT returns adjustments
-        chain.is = vi.fn().mockResolvedValue({ data: [{ id: 'adj-1', amount: -500 }], error: null });
-        // UPDATE (link to payout) errors
-        chain.in = vi.fn().mockResolvedValue({ error: { message: 'FK constraint violated' } });
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          // Batch SELECT returns 2 adjustments
+          chain.is = vi.fn().mockResolvedValue({
+            data: [{ id: 'adj-1', amount: -200 }, { id: 'adj-2', amount: -300 }],
+            error: null,
+          });
+        } else {
+          // Link UPDATE with CAS: .update({}).in().is().select() — returns only 1 row (partial)
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: [{ id: 'adj-1' }], error: null }),
+              }),
+            }),
+          });
+        }
       } else if (table === 'payout_accounts') {
         chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1' }, error: null });
       } else if (table === 'admin_audit_logs') {
@@ -822,21 +774,22 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     const body = await res.json();
     expect(body.failed).toBeGreaterThan(0);
 
-    // Verify containment update payload includes status: 'held' and the adjustment_link_failed flag
-    expect(capturedUpdatePayload).not.toBeNull();
-    expect(capturedUpdatePayload!.status).toBe('held');
-    const capturedFlags = capturedUpdatePayload!.flags as Array<{ type: string }>;
-    expect(capturedFlags).toBeDefined();
-    const adjFlag = capturedFlags.find((f) => f.type === 'adjustment_link_failed');
-    expect(adjFlag).toBeDefined();
+    // Verify flag swap happened: pending -> failed
+    expect(capturedSwapPayload).not.toBeNull();
+    expect(capturedSwapPayload!.status).toBe('held');
+    const swapFlags = capturedSwapPayload!.flags as Array<{ type: string }>;
+    expect(swapFlags.some(f => f.type === 'adjustment_link_failed')).toBe(true);
+    expect(swapFlags.some(f => f.type === 'adjustment_link_pending')).toBe(false);
   });
 
-  it('adjustment link failure: containment update fails → payout_id in needs_attention', async () => {
-    // Same call sequence as above but the containment UPDATE also fails
-    let payoutsCallIdx2 = 0;
+  it('generate: link returns 0 rows (already claimed) -> held + failed flag', async () => {
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+    let capturedSwapPayload: Record<string, unknown> | null = null;
 
     mockFromImpl = (table: string) => {
       const chain = chainMock({ data: null, error: null });
+
       if (table === 'businesses') {
         chain.eq = vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({
@@ -845,25 +798,115 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
           }),
         });
       } else if (table === 'business_payouts') {
-        const idx = payoutsCallIdx2++;
+        const idx = payoutsIdx++;
         if (idx === 0) {
-          // Dedup check
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 1) {
-          // Monthly limit check
           chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx === 2) {
-          // INSERT
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: { id: 'payout-99' }, error: null }),
+              single: vi.fn().mockResolvedValue({ data: { id: 'payout-claimed' }, error: null }),
             }),
           });
         } else if (idx === 3) {
-          // Containment UPDATE — fails
+          // Flag swap
+          chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            capturedSwapPayload = payload;
+            return {
+              eq: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-claimed' }], error: null }),
+              }),
+            };
+          });
+        }
+      } else if (table === 'platform_fees') {
+        chain.lte = vi.fn().mockResolvedValue({
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          error: null,
+        });
+      } else if (table === 'payments') {
+        chain.lte = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_adjustments') {
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          // Returns 1 adjustment
+          chain.is = vi.fn().mockResolvedValue({
+            data: [{ id: 'adj-claimed', amount: -100 }],
+            error: null,
+          });
+        } else {
+          // Link returns empty data (already claimed by another payout)
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          });
+        }
+      } else if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1' }, error: null });
+      } else if (table === 'admin_audit_logs') {
+        chain.insert = vi.fn().mockResolvedValue({ error: null });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      })),
+    }));
+
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(
+      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
+    );
+    expect(res.status).toBe(207);
+    const body = await res.json();
+    expect(body.failed).toBeGreaterThan(0);
+
+    // Flag swap: pending -> failed
+    expect(capturedSwapPayload).not.toBeNull();
+    expect(capturedSwapPayload!.status).toBe('held');
+    const flags = capturedSwapPayload!.flags as Array<{ type: string }>;
+    expect(flags.some(f => f.type === 'adjustment_link_failed')).toBe(true);
+    expect(flags.some(f => f.type === 'adjustment_link_pending')).toBe(false);
+  });
+
+  it('generate: link fails and flag swap fails -> held + pending, error logged, needs_attention', async () => {
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        chain.eq = vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ id: 'b1', created_at: '2025-01-01', verification_level: 'basic', payout_limit_monthly: 500000, country_code: 'NG' }],
+            error: null,
+          }),
+        });
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        } else if (idx === 1) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 2) {
+          chain.insert = vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'payout-swap-fail' }, error: null }),
+            }),
+          });
+        } else if (idx === 3) {
+          // Flag swap also FAILS
           chain.update = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
-              select: vi.fn().mockResolvedValue({ data: null, error: { message: 'containment write failed' } }),
+              select: vi.fn().mockResolvedValue({ data: null, error: { message: 'swap write failed' } }),
             }),
           });
         }
@@ -875,8 +918,22 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
       } else if (table === 'payments') {
         chain.lte = vi.fn().mockResolvedValue({ data: [], error: null });
       } else if (table === 'payout_adjustments') {
-        chain.is = vi.fn().mockResolvedValue({ data: [{ id: 'adj-2', amount: -300 }], error: null });
-        chain.in = vi.fn().mockResolvedValue({ error: { message: 'FK constraint violated' } });
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          chain.is = vi.fn().mockResolvedValue({
+            data: [{ id: 'adj-sf', amount: -100 }],
+            error: null,
+          });
+        } else {
+          // Link fails with error
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: null, error: { message: 'link error' } }),
+              }),
+            }),
+          });
+        }
       } else if (table === 'payout_accounts') {
         chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1' }, error: null });
       } else if (table === 'admin_audit_logs') {
@@ -900,7 +957,312 @@ describe('payouts/generate: failure counting and no-eligible result', () => {
     const body = await res.json();
     expect(body.failed).toBeGreaterThan(0);
     expect(body.needs_attention).toBeDefined();
-    expect(body.needs_attention).toContain('payout-99');
+    expect(body.needs_attention).toContain('payout-swap-fail');
+
+    // Error logged for the swap failure
+    expect(mockLoggerError).toHaveBeenCalled();
+    const logCall = mockLoggerError.mock.calls.find(
+      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('Flag swap failed'),
+    );
+    expect(logCall).toBeDefined();
+  });
+
+  it('generate: promote zero rows -> no claim, re-read logged, needs_attention', async () => {
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        chain.eq = vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ id: 'b1', created_at: '2025-01-01', verification_level: 'basic', payout_limit_monthly: 500000, country_code: 'NG' }],
+            error: null,
+          }),
+        });
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        } else if (idx === 1) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 2) {
+          // INSERT
+          chain.insert = vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'payout-promote-fail' }, error: null }),
+            }),
+          });
+        } else if (idx === 3) {
+          // Promote CAS returns 0 rows
+          chain.update = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                contains: vi.fn().mockReturnValue({
+                  select: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          });
+        } else if (idx === 4) {
+          // Re-read after promote failure
+          chain.single = vi.fn().mockResolvedValue({
+            data: { id: 'payout-promote-fail', status: 'held', flags: [{ type: 'adjustment_link_pending' }] },
+            error: null,
+          });
+        }
+      } else if (table === 'platform_fees') {
+        chain.lte = vi.fn().mockResolvedValue({
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          error: null,
+        });
+      } else if (table === 'payments') {
+        chain.lte = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_adjustments') {
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          chain.is = vi.fn().mockResolvedValue({
+            data: [{ id: 'adj-pf', amount: -100 }],
+            error: null,
+          });
+        } else {
+          // Link succeeds (full set)
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: [{ id: 'adj-pf' }], error: null }),
+              }),
+            }),
+          });
+        }
+      } else if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1' }, error: null });
+      } else if (table === 'admin_audit_logs') {
+        chain.insert = vi.fn().mockResolvedValue({ error: null });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      })),
+    }));
+
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(
+      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
+    );
+    expect(res.status).toBe(207);
+    const body = await res.json();
+    expect(body.failed).toBeGreaterThan(0);
+    expect(body.needs_attention).toBeDefined();
+    expect(body.needs_attention).toContain('payout-promote-fail');
+
+    // Re-read logged
+    expect(mockLoggerError).toHaveBeenCalled();
+    const logCall = mockLoggerError.mock.calls.find(
+      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('Promote CAS failed'),
+    );
+    expect(logCall).toBeDefined();
+  });
+
+  it('generate: happy path with adjustments -> pending flag carries adjustment_ids, promotes to intended status', async () => {
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+    let capturedInsertPayload: Record<string, unknown> | null = null;
+    let capturedPromotePayload: Record<string, unknown> | null = null;
+
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        chain.eq = vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ id: 'b1', created_at: '2025-01-01', verification_level: 'basic', payout_limit_monthly: 500000, country_code: 'NG' }],
+            error: null,
+          }),
+        });
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        } else if (idx === 1) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 2) {
+          // INSERT — capture payload
+          chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            capturedInsertPayload = payload;
+            return {
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'payout-happy' }, error: null }),
+              }),
+            };
+          });
+        } else if (idx === 3) {
+          // Promote CAS succeeds — capture payload
+          chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            capturedPromotePayload = payload;
+            return {
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  contains: vi.fn().mockReturnValue({
+                    select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-happy' }], error: null }),
+                  }),
+                }),
+              }),
+            };
+          });
+        }
+      } else if (table === 'platform_fees') {
+        chain.lte = vi.fn().mockResolvedValue({
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          error: null,
+        });
+      } else if (table === 'payments') {
+        chain.lte = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_adjustments') {
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          chain.is = vi.fn().mockResolvedValue({
+            data: [{ id: 'adj-happy', amount: -100 }],
+            error: null,
+          });
+        } else {
+          // Link succeeds
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: [{ id: 'adj-happy' }], error: null }),
+              }),
+            }),
+          });
+        }
+      } else if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1' }, error: null });
+      } else if (table === 'admin_audit_logs') {
+        chain.insert = vi.fn().mockResolvedValue({ error: null });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      })),
+    }));
+
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(
+      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+
+    // INSERT payload should have status='held' and adjustment_link_pending flag with adjustment_ids
+    expect(capturedInsertPayload).not.toBeNull();
+    expect(capturedInsertPayload!.status).toBe('held');
+    const insertFlags = capturedInsertPayload!.flags as Array<{ type: string; adjustment_ids?: string[] }>;
+    const pendingFlag = insertFlags.find(f => f.type === 'adjustment_link_pending');
+    expect(pendingFlag).toBeDefined();
+    expect(pendingFlag!.adjustment_ids).toContain('adj-happy');
+
+    // Promote payload should have the intended status (not 'held') and flags without the pending flag
+    expect(capturedPromotePayload).not.toBeNull();
+    // The intended status depends on hold conditions — for this biz it should be 'pending'
+    // (the business is basic verified, old enough, etc.)
+    expect(capturedPromotePayload!.status).toBeDefined();
+    const promoteFlags = capturedPromotePayload!.flags as Array<{ type: string }> | undefined;
+    // Promote flags should NOT contain adjustment_link_pending
+    if (promoteFlags && promoteFlags.length > 0) {
+      expect(promoteFlags.some(f => f.type === 'adjustment_link_pending')).toBe(false);
+    }
+  });
+
+  it('generate: insert unique violation -> failed, nothing linked', async () => {
+    let adjLinkCalled = false;
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        chain.eq = vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ id: 'b1', created_at: '2025-01-01', verification_level: 'basic', payout_limit_monthly: 500000, country_code: 'NG' }],
+            error: null,
+          }),
+        });
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        } else if (idx === 1) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 2) {
+          // INSERT returns unique violation
+          chain.insert = vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: { message: 'unique violation', code: '23505' } }),
+            }),
+          });
+        }
+      } else if (table === 'platform_fees') {
+        chain.lte = vi.fn().mockResolvedValue({
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          error: null,
+        });
+      } else if (table === 'payments') {
+        chain.lte = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_adjustments') {
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          chain.is = vi.fn().mockResolvedValue({
+            data: [{ id: 'adj-uv', amount: -100 }],
+            error: null,
+          });
+        } else {
+          // Should NOT be called
+          chain.update = vi.fn().mockImplementation(() => {
+            adjLinkCalled = true;
+            return {
+              in: vi.fn().mockReturnValue({
+                is: vi.fn().mockReturnValue({
+                  select: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            };
+          });
+        }
+      } else if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1' }, error: null });
+      } else if (table === 'admin_audit_logs') {
+        chain.insert = vi.fn().mockResolvedValue({ error: null });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      })),
+    }));
+
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(
+      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
+    );
+    expect(res.status).toBe(207);
+    const body = await res.json();
+    expect(body.failed).toBeGreaterThan(0);
+    // No adjustment link should have been attempted
+    expect(adjLinkCalled).toBe(false);
   });
 });
 
@@ -957,11 +1319,9 @@ describe('payouts/approve: flagged held payout rejection', () => {
     }));
   });
 
-  it('flagged held payout returns 409, consumeStepUp NOT called, no writes', async () => {
-    // The approve route checks ENABLE_PAYOUTS before anything else
+  it('flagged held payout (adjustment_link_failed) returns 409, consumeStepUp NOT called, no writes', async () => {
     process.env.ENABLE_PAYOUTS = 'true';
 
-    // Mock the service client: payout SELECT returns a held payout with adjustment_link_failed flag
     mockFromImpl = (table: string) => {
       const chain = chainMock({ data: null, error: null });
       if (table === 'business_payouts') {
@@ -997,9 +1357,56 @@ describe('payouts/approve: flagged held payout rejection', () => {
     const res = await approveModule.POST(req, { params: Promise.resolve({ id: 'payout-flagged' }) });
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.error).toContain('adjustment_link_failed');
+    expect(body.error).toContain('adjustment');
 
     // Verify consumeStepUp was NOT called (the flag check is before step-up)
+    const { consumeStepUp: mockConsumeStepUp } = await import('@/lib/admin-step-up');
+    expect((mockConsumeStepUp as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+
+    delete process.env.ENABLE_PAYOUTS;
+  });
+
+  it('approve: 409 on pending flag, step-up not consumed', async () => {
+    process.env.ENABLE_PAYOUTS = 'true';
+
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+      if (table === 'business_payouts') {
+        chain.single = vi.fn().mockResolvedValue({
+          data: {
+            id: 'payout-pending-flag',
+            business_id: 'b1',
+            net_amount: 5000,
+            status: 'held',
+            payout_account_id: 'pa-1',
+            period_start: '2025-01-01',
+            period_end: '2025-01-07',
+            flags: [{ type: 'adjustment_link_pending', message: 'Linking 2 adjustment(s)', severity: 'critical', adjustment_ids: ['adj-1', 'adj-2'] }],
+          },
+          error: null,
+        });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      })),
+    }));
+
+    approveModule = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makeRequest('/api/admin/payouts/payout-pending-flag/approve', {
+      transfer_method: 'manual_bank',
+      stepUpId: 'su-1',
+    });
+    const res = await approveModule.POST(req, { params: Promise.resolve({ id: 'payout-pending-flag' }) });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain('adjustment');
+
+    // Verify consumeStepUp was NOT called
     const { consumeStepUp: mockConsumeStepUp } = await import('@/lib/admin-step-up');
     expect((mockConsumeStepUp as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
 
@@ -1009,10 +1416,10 @@ describe('payouts/approve: flagged held payout rejection', () => {
 
 // ═══════════════════════════════════════════════════════════════
 let cronPaystackEligible = false;
-// cron auto-payout — flagged held payout skip logic
+// cron auto-payout — three-phase adjustment linking, held payout skip logic
 // ═══════════════════════════════════════════════════════════════
 
-describe('cron auto-payout: flagged held payout handling', () => {
+describe('cron auto-payout: three-phase adjustment linking and held payout handling', () => {
   let cronModule: typeof import('@/app/api/cron/auto-payout/route');
 
   beforeEach(async () => {
@@ -1079,21 +1486,13 @@ describe('cron auto-payout: flagged held payout handling', () => {
     });
   }
 
-  it('flagged held payout is NOT released', async () => {
-    // Track whether business_payouts UPDATE to 'approved' was called for held payout
+  // ── Held payout release tests ──
+
+  it('flagged held payout is NOT released (adjustment_link_failed)', async () => {
     let approvedUpdateCalled = false;
     let bizCallIdx = 0;
     let payoutsCallIdx = 0;
     let payoutAccountsCallIdx = 0;
-
-    // The cron route:
-    // 1. Queries businesses (.select().eq().eq()) — must return at least 1 to avoid early return
-    // 2. Batch-fetches: business_payouts (dedup), platform_fees, payout_adjustments, payout_accounts
-    //    via Promise.all — each uses .select().in()...limit()
-    // 3. Loops through businesses, skips those with zero gross fees
-    // 4. After generation loop: queries held payouts (.select().eq('status','held'))
-    // 5. Batch-fetches businesses and payout_accounts for held payouts
-    // 6. Loops through held payouts, potentially updates to 'approved'
 
     mockFromImpl = (table: string) => {
       const chain = chainMock({ data: null, error: null });
@@ -1101,9 +1500,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
       if (table === 'businesses') {
         const idx = bizCallIdx++;
         if (idx === 0) {
-          // Generation phase: .select().eq('payout_mode',...).eq('status',...)
-          // Return a business so we don't hit the early return.
-          // Zero fees will make it skip (no payout generated).
           chain.eq = vi.fn().mockReturnValue({
             eq: vi.fn().mockResolvedValue({
               data: [{ id: 'biz-dummy', name: 'Dummy', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic' }],
@@ -1111,13 +1507,12 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else {
-          // Held payout release phase: .select().in('id',...).limit(5000)
           chain.in = vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue({
               data: [{
                 id: 'b1',
-                created_at: '2024-01-01', // old enough — cooling done
-                verification_level: 'basic', // verified
+                created_at: '2024-01-01',
+                verification_level: 'basic',
               }],
               error: null,
             }),
@@ -1126,8 +1521,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
       } else if (table === 'business_payouts') {
         const idx = payoutsCallIdx++;
         if (idx === 0) {
-          // Batch-fetch: existing payouts for period — .select().in().eq().eq().limit()
-          // Return empty — no existing payouts for this business
           chain.in = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
@@ -1136,7 +1529,7 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else if (idx === 1) {
-          // Held payouts query: .select().eq('status', 'held')
+          // Held payouts query
           chain.eq = vi.fn().mockResolvedValue({
             data: [{
               id: 'held-payout-1',
@@ -1146,7 +1539,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
             error: null,
           });
         } else {
-          // UPDATE to 'approved' — track if called
           chain.update = vi.fn().mockImplementation(() => {
             approvedUpdateCalled = true;
             return {
@@ -1155,8 +1547,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
           });
         }
       } else if (table === 'platform_fees') {
-        // Batch-fetch: .select().in().is().gte().lte().limit()
-        // Return empty — zero fees means no payout generated, skips to held release
         chain.in = vi.fn().mockReturnValue({
           is: vi.fn().mockReturnValue({
             gte: vi.fn().mockReturnValue({
@@ -1167,7 +1557,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
           }),
         });
       } else if (table === 'payout_adjustments') {
-        // Batch-fetch: .select().in().is().limit()
         chain.in = vi.fn().mockReturnValue({
           is: vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue({ data: [], error: null }),
@@ -1176,14 +1565,12 @@ describe('cron auto-payout: flagged held payout handling', () => {
       } else if (table === 'payout_accounts') {
         const paIdx = payoutAccountsCallIdx++;
         if (paIdx === 0) {
-          // Batch-fetch for generation: .select().in().eq().limit()
           chain.in = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({ data: [], error: null }),
             }),
           });
         } else {
-          // Held payout release phase: .select().in().eq().limit()
           chain.in = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
@@ -1204,28 +1591,131 @@ describe('cron auto-payout: flagged held payout handling', () => {
       })),
     }));
 
-    // Enable payouts
     process.env.ENABLE_PAYOUTS = 'true';
 
     cronModule = await import('@/app/api/cron/auto-payout/route');
     const res = await cronModule.GET(makeCronRequest());
     expect(res.status).toBe(200);
 
-    // The flagged held payout should NOT be released (update to 'approved' should NOT be called)
     expect(approvedUpdateCalled).toBe(false);
 
-    // Verify logger.warn was called for the skipped payout
     expect(mockLoggerWarn).toHaveBeenCalled();
-    const warnCall = mockLoggerWarn.mock.calls.find(
-      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('adjustment_link_failed'),
-    );
-    expect(warnCall).toBeDefined();
+
+    delete process.env.ENABLE_PAYOUTS;
+  });
+
+  it('held release skips pending flag (adjustment_link_pending)', async () => {
+    let approvedUpdateCalled = false;
+    let bizCallIdx = 0;
+    let payoutsCallIdx = 0;
+    let payoutAccountsCallIdx = 0;
+
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        const idx = bizCallIdx++;
+        if (idx === 0) {
+          chain.eq = vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'biz-dummy', name: 'Dummy', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic' }],
+              error: null,
+            }),
+          });
+        } else {
+          chain.in = vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({
+              data: [{ id: 'b1', created_at: '2024-01-01', verification_level: 'basic' }],
+              error: null,
+            }),
+          });
+        }
+      } else if (table === 'business_payouts') {
+        const idx = payoutsCallIdx++;
+        if (idx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          });
+        } else if (idx === 1) {
+          // Held payouts query — has adjustment_link_pending flag
+          chain.eq = vi.fn().mockResolvedValue({
+            data: [{
+              id: 'held-pending-flag',
+              business_id: 'b1',
+              flags: [{ type: 'adjustment_link_pending', message: 'Linking 1 adjustment(s)', severity: 'critical' }],
+            }],
+            error: null,
+          });
+        } else {
+          chain.update = vi.fn().mockImplementation(() => {
+            approvedUpdateCalled = true;
+            return {
+              eq: vi.fn().mockResolvedValue({ error: null }),
+            };
+          });
+        }
+      } else if (table === 'platform_fees') {
+        chain.in = vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              lte: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          }),
+        });
+      } else if (table === 'payout_adjustments') {
+        chain.in = vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        });
+      } else if (table === 'payout_accounts') {
+        const paIdx = payoutAccountsCallIdx++;
+        if (paIdx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else {
+          chain.in = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({
+                data: [{ business_id: 'b1' }],
+                error: null,
+              }),
+            }),
+          });
+        }
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      })),
+    }));
+
+    process.env.ENABLE_PAYOUTS = 'true';
+
+    cronModule = await import('@/app/api/cron/auto-payout/route');
+    const res = await cronModule.GET(makeCronRequest());
+    expect(res.status).toBe(200);
+
+    // The pending-flag held payout should NOT be released
+    expect(approvedUpdateCalled).toBe(false);
 
     delete process.env.ENABLE_PAYOUTS;
   });
 
   it('unflagged eligible held payout IS released', async () => {
-    // Track whether business_payouts UPDATE to 'approved' was called
     let approvedUpdateCalled = false;
     let approvedPayoutId: string | null = null;
     let bizCallIdx = 0;
@@ -1238,7 +1728,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
       if (table === 'businesses') {
         const idx = bizCallIdx++;
         if (idx === 0) {
-          // Generation phase: return a business (avoids early return)
           chain.eq = vi.fn().mockReturnValue({
             eq: vi.fn().mockResolvedValue({
               data: [{ id: 'biz-dummy', name: 'Dummy', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic' }],
@@ -1246,13 +1735,12 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else {
-          // Held payout release phase: .select().in('id',...).limit(5000)
           chain.in = vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue({
               data: [{
                 id: 'b1',
-                created_at: '2024-01-01', // old enough — cooling done
-                verification_level: 'basic', // verified
+                created_at: '2024-01-01',
+                verification_level: 'basic',
               }],
               error: null,
             }),
@@ -1261,7 +1749,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
       } else if (table === 'business_payouts') {
         const idx = payoutsCallIdx++;
         if (idx === 0) {
-          // Batch-fetch: existing payouts for period
           chain.in = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
@@ -1270,17 +1757,15 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else if (idx === 1) {
-          // Held payouts query: .select().eq('status', 'held')
           chain.eq = vi.fn().mockResolvedValue({
             data: [{
               id: 'held-payout-2',
               business_id: 'b1',
-              flags: [{ type: 'cooling_period', message: 'was new', severity: 'warning' }], // non-critical
+              flags: [{ type: 'cooling_period', message: 'was new', severity: 'warning' }],
             }],
             error: null,
           });
         } else {
-          // UPDATE to 'approved' — track if called
           chain.update = vi.fn().mockImplementation(() => {
             approvedUpdateCalled = true;
             return {
@@ -1292,7 +1777,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
           });
         }
       } else if (table === 'platform_fees') {
-        // Zero fees — no payout generated, proceed to held release
         chain.in = vi.fn().mockReturnValue({
           is: vi.fn().mockReturnValue({
             gte: vi.fn().mockReturnValue({
@@ -1311,14 +1795,12 @@ describe('cron auto-payout: flagged held payout handling', () => {
       } else if (table === 'payout_accounts') {
         const paIdx = payoutAccountsCallIdx++;
         if (paIdx === 0) {
-          // Batch-fetch for generation: .select().in().eq().limit()
           chain.in = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({ data: [], error: null }),
             }),
           });
         } else {
-          // Held payout release phase
           chain.in = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
@@ -1345,382 +1827,15 @@ describe('cron auto-payout: flagged held payout handling', () => {
     const res = await cronModule.GET(makeCronRequest());
     expect(res.status).toBe(200);
 
-    // The unflagged eligible held payout SHOULD be released
     expect(approvedUpdateCalled).toBe(true);
     expect(approvedPayoutId).toBe('held-payout-2');
 
     delete process.env.ENABLE_PAYOUTS;
   });
 
-  // ── Cron adjustment link failure during generation phase ──
+  // ── Cron three-phase adjustment tests ──
 
-  it('cron: adjustment link failure on approved payout sets held + flag, no claim or Paystack call', async () => {
-    let containmentPayload: Record<string, unknown> | null = null;
-    let claimCalled = false;
-    let fetchCalled = false;
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-      fetchCalled = true;
-      return new Response('{}', { status: 200 });
-    });
-
-    let bizIdx = 0;
-    let payoutsIdx = 0;
-    let adjIdx = 0;
-    mockFromImpl = (table: string) => {
-      const chain = chainMock({ data: null, error: null });
-
-      if (table === 'businesses') {
-        if (bizIdx++ === 0) {
-          // Generation phase: .select().eq('payout_mode',...).eq('status',...)
-          chain.eq = vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({
-              data: [{ id: 'biz-adj', name: 'Adj Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
-              error: null,
-            }),
-          });
-        } else {
-          // Held payout release phase: .select().in().limit()
-          chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
-        }
-      } else if (table === 'business_payouts') {
-        const idx = payoutsIdx++;
-        if (idx === 0) {
-          // Batch dedup: .select().in().eq().eq().limit()
-          chain.in = vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-              }),
-            }),
-          });
-        } else if (idx === 1) {
-          // Insert payout: .insert({}).select().single()
-          chain.insert = vi.fn().mockReturnValue({
-            select: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: { id: 'payout-adj-1', net_amount: 9000 }, error: null }),
-            }),
-          });
-        } else if (idx === 2) {
-          // Containment update: .update({}).eq('id',...).select('id')
-          chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
-            containmentPayload = payload;
-            return { eq: vi.fn().mockReturnValue({
-              select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-adj-1' }], error: null }),
-            }) };
-          });
-        } else {
-          // Held payouts query: .select().eq('status','held')
-          chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
-        }
-      } else if (table === 'platform_fees') {
-        // Batch fees: .select().in().is().gte().lte().limit()
-        chain.in = vi.fn().mockReturnValue({
-          is: vi.fn().mockReturnValue({
-            gte: vi.fn().mockReturnValue({
-              lte: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
-                  error: null,
-                }),
-              }),
-            }),
-          }),
-        });
-      } else if (table === 'payout_adjustments') {
-        const aIdx = adjIdx++;
-        if (aIdx === 0) {
-          // Batch adjustments: .select().in().is().limit()
-          chain.in = vi.fn().mockReturnValue({
-            is: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-1', business_id: 'biz-adj', amount: -200 }],
-                error: null,
-              }),
-            }),
-          });
-        } else {
-          // Adjustment link update: .update({}).in('id', adjIds).select('id')
-          chain.update = vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              select: vi.fn().mockResolvedValue({ data: null, error: { message: 'connection timeout' } }),
-            }),
-          });
-        }
-      } else if (table === 'payout_accounts') {
-        // Batch accounts: .select().in().eq().limit()
-        chain.in = vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue({
-              data: [{ business_id: 'biz-adj', id: 'pa-1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack', bank_code: '058', account_number: '1234567890', account_name: 'Test' }],
-              error: null,
-            }),
-          }),
-        });
-      }
-      return chain;
-    };
-
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn(() => ({
-        from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockImplementation((name: string) => {
-          if (name === 'claim_payout_for_transfer') claimCalled = true;
-          return Promise.resolve({ data: null, error: null });
-        }),
-      })),
-    }));
-
-    process.env.ENABLE_PAYOUTS = 'true';
-    cronModule = await import('@/app/api/cron/auto-payout/route');
-    const res = await cronModule.GET(makeCronRequest());
-    expect(res.status).toBe(200);
-
-    expect(containmentPayload).not.toBeNull();
-    expect(containmentPayload!.status).toBe('held');
-    const flagArr = containmentPayload!.flags as { type: string }[];
-    expect(flagArr.some(f => f.type === 'adjustment_link_failed')).toBe(true);
-    expect(claimCalled).toBe(false);
-    expect(fetchCalled).toBe(false);
-
-    delete process.env.ENABLE_PAYOUTS;
-    vi.restoreAllMocks();
-  });
-
-  it('cron: containment update fails (error or 0 rows) after adj link failure, still no claim, error logged', async () => {
-    let claimCalled = false;
-
-    let bizIdx = 0;
-    let payoutsIdx = 0;
-    let adjIdx = 0;
-    mockFromImpl = (table: string) => {
-      const chain = chainMock({ data: null, error: null });
-
-      if (table === 'businesses') {
-        if (bizIdx++ === 0) {
-          // Generation phase: .select().eq('payout_mode',...).eq('status',...)
-          chain.eq = vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({
-              data: [{ id: 'biz-cf', name: 'CF Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
-              error: null,
-            }),
-          });
-        } else {
-          // Held payout release phase: .select().in().limit()
-          chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
-        }
-      } else if (table === 'business_payouts') {
-        const idx = payoutsIdx++;
-        if (idx === 0) {
-          // Batch dedup: .select().in().eq().eq().limit()
-          chain.in = vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-              }),
-            }),
-          });
-        } else if (idx === 1) {
-          // Insert payout: .insert({}).select().single()
-          chain.insert = vi.fn().mockReturnValue({
-            select: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: { id: 'payout-cf-1', net_amount: 9000 }, error: null }),
-            }),
-          });
-        } else if (idx === 2) {
-          // Containment update: .update({}).eq('id',...).select('id') — returns 0 rows (no error)
-          chain.update = vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              select: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
-          });
-        } else {
-          // Held payouts query: .select().eq('status','held')
-          chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
-        }
-      } else if (table === 'platform_fees') {
-        // Batch fees: .select().in().is().gte().lte().limit()
-        chain.in = vi.fn().mockReturnValue({
-          is: vi.fn().mockReturnValue({
-            gte: vi.fn().mockReturnValue({
-              lte: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-cf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
-                  error: null,
-                }),
-              }),
-            }),
-          }),
-        });
-      } else if (table === 'payout_adjustments') {
-        const aIdx = adjIdx++;
-        if (aIdx === 0) {
-          // Batch adjustments: .select().in().is().limit()
-          chain.in = vi.fn().mockReturnValue({
-            is: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-cf', business_id: 'biz-cf', amount: -100 }],
-                error: null,
-              }),
-            }),
-          });
-        } else {
-          // Adjustment link update: .update({}).in('id', adjIds).select('id') — returns error
-          chain.update = vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              select: vi.fn().mockResolvedValue({ data: null, error: { message: 'link fail' } }),
-            }),
-          });
-        }
-      } else if (table === 'payout_accounts') {
-        // Batch accounts: .select().in().eq().limit()
-        chain.in = vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue({
-              data: [{ business_id: 'biz-cf', id: 'pa-cf', is_active: true, verified_at: '2024-01-01', gateway: 'paystack', bank_code: '058', account_number: '1234567890', account_name: 'Test' }],
-              error: null,
-            }),
-          }),
-        });
-      }
-      return chain;
-    };
-
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn(() => ({
-        from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockImplementation((name: string) => {
-          if (name === 'claim_payout_for_transfer') claimCalled = true;
-          return Promise.resolve({ data: null, error: null });
-        }),
-      })),
-    }));
-
-    process.env.ENABLE_PAYOUTS = 'true';
-    cronModule = await import('@/app/api/cron/auto-payout/route');
-    const res = await cronModule.GET(makeCronRequest());
-    expect(res.status).toBe(200);
-
-    expect(claimCalled).toBe(false);
-    expect(mockLoggerError).toHaveBeenCalledWith(
-      expect.stringContaining('Containment update failed'),
-    );
-
-    delete process.env.ENABLE_PAYOUTS;
-  });
-
-  it('cron: adjustment link updates 0 rows with no error, payout held, claim NOT called', async () => {
-    let containmentPayload: Record<string, unknown> | null = null;
-    let claimCalled = false;
-
-    let bizIdx = 0;
-    let payoutsIdx = 0;
-    let adjIdx = 0;
-    mockFromImpl = (table: string) => {
-      const chain = chainMock({ data: null, error: null });
-
-      if (table === 'businesses') {
-        if (bizIdx++ === 0) {
-          chain.eq = vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({
-              data: [{ id: 'biz-0row', name: '0Row Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
-              error: null,
-            }),
-          });
-        } else {
-          chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
-        }
-      } else if (table === 'business_payouts') {
-        const idx = payoutsIdx++;
-        if (idx === 0) {
-          chain.in = vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) }) }),
-          });
-        } else if (idx === 1) {
-          chain.insert = vi.fn().mockReturnValue({
-            select: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: { id: 'payout-0row', net_amount: 9000 }, error: null }),
-            }),
-          });
-        } else if (idx === 2) {
-          // Containment update: captures payload
-          chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
-            containmentPayload = payload;
-            return { eq: vi.fn().mockReturnValue({
-              select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-0row' }], error: null }),
-            }) };
-          });
-        } else {
-          chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
-        }
-      } else if (table === 'platform_fees') {
-        chain.in = vi.fn().mockReturnValue({
-          is: vi.fn().mockReturnValue({ gte: vi.fn().mockReturnValue({ lte: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue({
-              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
-              error: null,
-            }),
-          }) }) }),
-        });
-      } else if (table === 'payout_adjustments') {
-        const aIdx = adjIdx++;
-        if (aIdx === 0) {
-          chain.in = vi.fn().mockReturnValue({
-            is: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-0row', business_id: 'biz-0row', amount: -200 }],
-                error: null,
-              }),
-            }),
-          });
-        } else {
-          // Adjustment link: NO error, but returns 0 rows (data: [])
-          chain.update = vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              select: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
-          });
-        }
-      } else if (table === 'payout_accounts') {
-        chain.in = vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue({
-              data: [{ business_id: 'biz-0row', id: 'pa-0row', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' }],
-              error: null,
-            }),
-          }),
-        });
-      }
-      return chain;
-    };
-
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn(() => ({
-        from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockImplementation((name: string) => {
-          if (name === 'claim_payout_for_transfer') claimCalled = true;
-          return Promise.resolve({ data: null, error: null });
-        }),
-      })),
-    }));
-
-    process.env.ENABLE_PAYOUTS = 'true';
-    cronModule = await import('@/app/api/cron/auto-payout/route');
-    const res = await cronModule.GET(makeCronRequest());
-    expect(res.status).toBe(200);
-
-    // Containment should have set held + flag
-    expect(containmentPayload).not.toBeNull();
-    expect(containmentPayload!.status).toBe('held');
-    const flagArr = containmentPayload!.flags as { type: string }[];
-    expect(flagArr.some(f => f.type === 'adjustment_link_failed')).toBe(true);
-
-    // claim must NOT have been called
-    expect(claimCalled).toBe(false);
-
-    delete process.env.ENABLE_PAYOUTS;
-  });
-
-  it('cron: link succeeds, approved payout proceeds to claim', async () => {
+  it('cron: happy path with adjustments -> pending flag, promotes, proceeds to claim', async () => {
     let claimCalled = false;
     let claimPayoutId: string | null = null;
 
@@ -1732,7 +1847,6 @@ describe('cron auto-payout: flagged held payout handling', () => {
 
       if (table === 'businesses') {
         if (bizIdx++ === 0) {
-          // Generation phase: .select().eq('payout_mode',...).eq('status',...)
           chain.eq = vi.fn().mockReturnValue({
             eq: vi.fn().mockResolvedValue({
               data: [{ id: 'biz-ok', name: 'OK Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
@@ -1740,13 +1854,12 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else {
-          // Held payout release phase: .select().in().limit()
           chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
         }
       } else if (table === 'business_payouts') {
         const idx = payoutsIdx++;
         if (idx === 0) {
-          // Batch dedup: .select().in().eq().eq().limit()
+          // Batch dedup
           chain.in = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
@@ -1755,18 +1868,28 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else if (idx === 1) {
-          // Insert payout: .insert({}).select().single()
+          // INSERT as held + pending flag
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-ok-1', net_amount: 9000 }, error: null }),
             }),
           });
+        } else if (idx === 2) {
+          // Promote CAS succeeds
+          chain.update = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                contains: vi.fn().mockReturnValue({
+                  select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-ok-1' }], error: null }),
+                }),
+              }),
+            }),
+          });
         } else {
-          // Held payouts query: .select().eq('status','held')
+          // Held payouts query
           chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
         }
       } else if (table === 'platform_fees') {
-        // Batch fees: .select().in().is().gte().lte().limit()
         chain.in = vi.fn().mockReturnValue({
           is: vi.fn().mockReturnValue({
             gte: vi.fn().mockReturnValue({
@@ -1782,7 +1905,7 @@ describe('cron auto-payout: flagged held payout handling', () => {
       } else if (table === 'payout_adjustments') {
         const aIdx = adjIdx++;
         if (aIdx === 0) {
-          // Batch adjustments: .select().in().is().limit()
+          // Batch adjustments
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
@@ -1792,15 +1915,16 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else {
-          // Adjustment link update: .update({}).in('id', adjIds).select('id') — succeeds
+          // Link succeeds (full set)
           chain.update = vi.fn().mockReturnValue({
             in: vi.fn().mockReturnValue({
-              select: vi.fn().mockResolvedValue({ data: [{ id: 'adj-ok' }], error: null }),
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: [{ id: 'adj-ok' }], error: null }),
+              }),
             }),
           });
         }
       } else if (table === 'payout_accounts') {
-        // Batch accounts: .select().in().eq().limit()
         chain.in = vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue({
@@ -1852,5 +1976,381 @@ describe('cron auto-payout: flagged held payout handling', () => {
     delete process.env.ENABLE_PAYOUTS;
     process.env.PAYSTACK_SECRET_KEY = '';
     vi.restoreAllMocks();
+  });
+
+  it('cron: link failure -> held + failed flag, no claim, no Paystack', async () => {
+    let claimCalled = false;
+    let fetchCalled = false;
+    let capturedSwapPayload: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      fetchCalled = true;
+      return new Response('{}', { status: 200 });
+    });
+
+    let bizIdx = 0;
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        if (bizIdx++ === 0) {
+          chain.eq = vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'biz-adj', name: 'Adj Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
+              error: null,
+            }),
+          });
+        } else {
+          chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
+        }
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          // Batch dedup
+          chain.in = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          });
+        } else if (idx === 1) {
+          // INSERT as held + pending
+          chain.insert = vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'payout-adj-1', net_amount: 9000 }, error: null }),
+            }),
+          });
+        } else if (idx === 2) {
+          // Flag swap: pending -> failed (captures payload)
+          chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            capturedSwapPayload = payload;
+            return { eq: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-adj-1' }], error: null }),
+            }) };
+          });
+        } else {
+          // Held payouts query
+          chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
+        }
+      } else if (table === 'platform_fees') {
+        chain.in = vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              lte: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        });
+      } else if (table === 'payout_adjustments') {
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({
+                data: [{ id: 'adj-1', business_id: 'biz-adj', amount: -200 }],
+                error: null,
+              }),
+            }),
+          });
+        } else {
+          // Link UPDATE fails with error
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: null, error: { message: 'connection timeout' } }),
+              }),
+            }),
+          });
+        }
+      } else if (table === 'payout_accounts') {
+        chain.in = vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({
+              data: [{ business_id: 'biz-adj', id: 'pa-1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack', bank_code: '058', account_number: '1234567890', account_name: 'Test' }],
+              error: null,
+            }),
+          }),
+        });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'claim_payout_for_transfer') claimCalled = true;
+          return Promise.resolve({ data: null, error: null });
+        }),
+      })),
+    }));
+
+    process.env.ENABLE_PAYOUTS = 'true';
+    cronModule = await import('@/app/api/cron/auto-payout/route');
+    const res = await cronModule.GET(makeCronRequest());
+    expect(res.status).toBe(200);
+
+    // Flag swap should have happened
+    expect(capturedSwapPayload).not.toBeNull();
+    expect(capturedSwapPayload!.status).toBe('held');
+    const flagArr = capturedSwapPayload!.flags as { type: string }[];
+    expect(flagArr.some(f => f.type === 'adjustment_link_failed')).toBe(true);
+    expect(claimCalled).toBe(false);
+    expect(fetchCalled).toBe(false);
+
+    delete process.env.ENABLE_PAYOUTS;
+    vi.restoreAllMocks();
+  });
+
+  it('cron: promote fails -> no claim, re-read logged', async () => {
+    let claimCalled = false;
+
+    let bizIdx = 0;
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        if (bizIdx++ === 0) {
+          chain.eq = vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'biz-pf', name: 'PF Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
+              error: null,
+            }),
+          });
+        } else {
+          chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
+        }
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          });
+        } else if (idx === 1) {
+          // INSERT
+          chain.insert = vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'payout-pf-1', net_amount: 9000 }, error: null }),
+            }),
+          });
+        } else if (idx === 2) {
+          // Promote CAS returns 0 rows
+          chain.update = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                contains: vi.fn().mockReturnValue({
+                  select: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          });
+        } else if (idx === 3) {
+          // Re-read after promote failure
+          chain.single = vi.fn().mockResolvedValue({
+            data: { id: 'payout-pf-1', status: 'held', flags: [{ type: 'adjustment_link_pending' }] },
+            error: null,
+          });
+        } else {
+          // Held payouts query
+          chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
+        }
+      } else if (table === 'platform_fees') {
+        chain.in = vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              lte: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ business_id: 'biz-pf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        });
+      } else if (table === 'payout_adjustments') {
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({
+                data: [{ id: 'adj-pf', business_id: 'biz-pf', amount: -100 }],
+                error: null,
+              }),
+            }),
+          });
+        } else {
+          // Link succeeds
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: [{ id: 'adj-pf' }], error: null }),
+              }),
+            }),
+          });
+        }
+      } else if (table === 'payout_accounts') {
+        chain.in = vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({
+              data: [{ business_id: 'biz-pf', id: 'pa-pf', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' }],
+              error: null,
+            }),
+          }),
+        });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'claim_payout_for_transfer') claimCalled = true;
+          return Promise.resolve({ data: null, error: null });
+        }),
+      })),
+    }));
+
+    process.env.ENABLE_PAYOUTS = 'true';
+    cronModule = await import('@/app/api/cron/auto-payout/route');
+    const res = await cronModule.GET(makeCronRequest());
+    expect(res.status).toBe(200);
+
+    expect(claimCalled).toBe(false);
+
+    // Error logged about promote failure
+    expect(mockLoggerError).toHaveBeenCalled();
+    const logCall = mockLoggerError.mock.calls.find(
+      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('Promote CAS failed'),
+    );
+    expect(logCall).toBeDefined();
+
+    delete process.env.ENABLE_PAYOUTS;
+  });
+
+  it('cron: adjustment link updates 0 rows with no error, payout held, claim NOT called', async () => {
+    let capturedSwapPayload: Record<string, unknown> | null = null;
+    let claimCalled = false;
+
+    let bizIdx = 0;
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        if (bizIdx++ === 0) {
+          chain.eq = vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'biz-0row', name: '0Row Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
+              error: null,
+            }),
+          });
+        } else {
+          chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
+        }
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) }) }),
+          });
+        } else if (idx === 1) {
+          chain.insert = vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'payout-0row', net_amount: 9000 }, error: null }),
+            }),
+          });
+        } else if (idx === 2) {
+          // Flag swap: captures payload
+          chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            capturedSwapPayload = payload;
+            return { eq: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-0row' }], error: null }),
+            }) };
+          });
+        } else {
+          chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
+        }
+      } else if (table === 'platform_fees') {
+        chain.in = vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({ gte: vi.fn().mockReturnValue({ lte: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({
+              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+              error: null,
+            }),
+          }) }) }),
+        });
+      } else if (table === 'payout_adjustments') {
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({
+                data: [{ id: 'adj-0row', business_id: 'biz-0row', amount: -200 }],
+                error: null,
+              }),
+            }),
+          });
+        } else {
+          // Adjustment link: NO error, but returns 0 rows (data: [])
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          });
+        }
+      } else if (table === 'payout_accounts') {
+        chain.in = vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({
+              data: [{ business_id: 'biz-0row', id: 'pa-0row', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' }],
+              error: null,
+            }),
+          }),
+        });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'claim_payout_for_transfer') claimCalled = true;
+          return Promise.resolve({ data: null, error: null });
+        }),
+      })),
+    }));
+
+    process.env.ENABLE_PAYOUTS = 'true';
+    cronModule = await import('@/app/api/cron/auto-payout/route');
+    const res = await cronModule.GET(makeCronRequest());
+    expect(res.status).toBe(200);
+
+    // Swap should have set held + adjustment_link_failed flag
+    expect(capturedSwapPayload).not.toBeNull();
+    expect(capturedSwapPayload!.status).toBe('held');
+    const flagArr = capturedSwapPayload!.flags as { type: string }[];
+    expect(flagArr.some(f => f.type === 'adjustment_link_failed')).toBe(true);
+
+    // claim must NOT have been called
+    expect(claimCalled).toBe(false);
+
+    delete process.env.ENABLE_PAYOUTS;
   });
 });

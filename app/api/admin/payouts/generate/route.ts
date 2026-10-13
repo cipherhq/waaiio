@@ -11,6 +11,7 @@ interface Flag {
   type: string;
   message: string;
   severity: 'info' | 'warning' | 'critical';
+  adjustment_ids?: string[];
 }
 
 export async function POST(request: NextRequest) {
@@ -237,67 +238,153 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
-      const { data: newPayout, error: insertError } = await supabase.from('business_payouts').insert({
-        business_id: biz.id,
-        payout_account_id: payoutAccount?.id || null,
-        period_start: periodStartStr,
-        period_end: periodEndStr,
-        gross_amount: gross,
-        platform_fee: totalFees,
-        gateway_fee: totalGatewayFees,
-        net_amount: net,
-        status,
-        flags,
-      }).select('id').single();
-
-      if (insertError || !newPayout) {
-        logger.error('[PAYOUT] Failed to insert payout for business', { business_id: biz.id, error: insertError?.message });
-        failed++;
-        continue;
-      }
-
-      // Mark adjustments as applied to this payout
       if (adjustments && adjustments.length > 0) {
-        const adjIds = adjustments.map((a) => a.id);
-        const { error: adjError } = await supabase
-          .from('payout_adjustments')
-          .update({ applied_to_payout_id: newPayout.id })
-          .in('id', adjIds);
-        if (adjError) {
-          // Containment: set payout to held with adjustment_link_failed flag
-          // so it cannot be approved without admin review.
-          const existingFlags = Array.isArray(flags) ? flags : [];
-          existingFlags.push({
-            type: 'adjustment_link_failed',
-            message: `Failed to link ${adjIds.length} adjustment(s): ${adjError.message}`,
-            severity: 'critical' as const,
+        // --- Adjustment-linked payout: INSERT held → link → promote ---
+        const adjIds = [...new Set(adjustments.map(a => a.id))];
+        const intendedStatus = status; // remember the computed status
+
+        const insertFlags: Flag[] = [...flags, {
+          type: 'adjustment_link_pending',
+          message: `Linking ${adjIds.length} adjustment(s)`,
+          severity: 'critical',
+          adjustment_ids: adjIds,
+        }];
+
+        // Step 1: INSERT as held with adjustment_link_pending flag
+        const { data: payout, error: insertError } = await supabase.from('business_payouts').insert({
+          business_id: biz.id,
+          payout_account_id: payoutAccount?.id || null,
+          period_start: periodStartStr,
+          period_end: periodEndStr,
+          gross_amount: gross,
+          platform_fee: totalFees,
+          gateway_fee: totalGatewayFees,
+          net_amount: net,
+          status: 'held',
+          flags: insertFlags,
+        }).select('id').single();
+
+        if (insertError || !payout) {
+          // Unique violation (23505) or any insert error: nothing linked, safe to skip
+          logger.error('[PAYOUT] Failed to insert payout for business', {
+            business_id: biz.id, error: insertError?.message, code: insertError?.code,
           });
-          const { data: containmentResult, error: containmentError } = await supabase
+          failed++;
+          continue;
+        }
+
+        // Step 2: Link adjustments with CAS (only unlinked)
+        const { data: linkedRows, error: linkError } = await supabase
+          .from('payout_adjustments')
+          .update({ applied_to_payout_id: payout.id })
+          .in('id', adjIds)
+          .is('applied_to_payout_id', null) // CAS: only unlinked
+          .select('id');
+
+        const linkedIds = (linkedRows || []).map(r => r.id);
+        const linkedSet = new Set(linkedIds);
+        const expectedSet = new Set(adjIds);
+        const linkSuccess = !linkError
+          && linkedSet.size === expectedSet.size
+          && adjIds.every(id => linkedSet.has(id));
+
+        if (linkSuccess) {
+          // Step 3: Promote with CAS — remove the pending flag
+          const { data: promoteResult, error: promoteError } = await supabase
             .from('business_payouts')
-            .update({ status: 'held', flags: existingFlags })
-            .eq('id', newPayout.id)
+            .update({ status: intendedStatus, flags })
+            .eq('id', payout.id)
+            .eq('status', 'held')
+            .contains('flags', [{ type: 'adjustment_link_pending' }])
             .select('id');
 
-          if (containmentError || !containmentResult || containmentResult.length === 0) {
-            logger.error('[PAYOUT] Containment update failed — payout may remain in original status without flag', {
-              payout_id: newPayout.id, business_id: biz.id, adjIds,
-              containment_error: containmentError?.message,
+          if (promoteError || !promoteResult || promoteResult.length !== 1) {
+            // Promote failed — re-read to understand state
+            const { data: reread } = await supabase
+              .from('business_payouts')
+              .select('id, status, flags')
+              .eq('id', payout.id)
+              .single();
+            logger.error('[PAYOUT] Promote CAS failed after successful link', {
+              payout_id: payout.id, business_id: biz.id,
+              promote_error: promoteError?.message,
+              persisted_status: reread?.status,
+              persisted_flags: reread?.flags,
             });
-            needsAttention.push(newPayout.id);
+            needsAttention.push(payout.id);
+            failed++;
+            continue;
+          }
+
+          // Promote succeeded
+          if (intendedStatus === 'held') {
+            held++;
           } else {
-            logger.error('[PAYOUT] Adjustment link failed — payout set to held', {
-              payout_id: newPayout.id, business_id: biz.id, adjIds, error: adjError.message,
+            created++;
+          }
+        } else {
+          // Step 4: Link failed — swap pending flag with failed flag
+          const reason = linkError
+            ? `Link error: ${linkError.message}`
+            : `Linked ${linkedSet.size}/${expectedSet.size} adjustment(s) — set mismatch`;
+
+          const failedFlags: Flag[] = flags.filter(f => f.type !== 'adjustment_link_pending');
+          failedFlags.push({
+            type: 'adjustment_link_failed',
+            message: reason,
+            severity: 'critical',
+            adjustment_ids: adjIds,
+          });
+
+          const { data: swapResult, error: swapError } = await supabase
+            .from('business_payouts')
+            .update({ status: 'held', flags: failedFlags })
+            .eq('id', payout.id)
+            .select('id');
+
+          if (swapError || !swapResult || swapResult.length === 0) {
+            // Swap failed — payout stays held+pending (still blocked)
+            logger.error('[PAYOUT] Flag swap failed — payout stays held+pending', {
+              payout_id: payout.id, business_id: biz.id, adjIds,
+              swap_error: swapError?.message,
+            });
+            needsAttention.push(payout.id);
+          } else {
+            logger.error('[PAYOUT] Adjustment link failed — payout held with failed flag', {
+              payout_id: payout.id, business_id: biz.id, adjIds, reason,
             });
           }
           failed++;
           continue;
         }
-      }
-
-      if (status === 'held') {
-        held++;
       } else {
-        created++;
+        // --- No adjustments: INSERT with computed status and flags ---
+        const { data: newPayout, error: insertError } = await supabase.from('business_payouts').insert({
+          business_id: biz.id,
+          payout_account_id: payoutAccount?.id || null,
+          period_start: periodStartStr,
+          period_end: periodEndStr,
+          gross_amount: gross,
+          platform_fee: totalFees,
+          gateway_fee: totalGatewayFees,
+          net_amount: net,
+          status,
+          flags,
+        }).select('id').single();
+
+        if (insertError || !newPayout) {
+          logger.error('[PAYOUT] Failed to insert payout for business', {
+            business_id: biz.id, error: insertError?.message,
+          });
+          failed++;
+          continue;
+        }
+
+        if (status === 'held') {
+          held++;
+        } else {
+          created++;
+        }
       }
     }
 
