@@ -128,6 +128,14 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
     sql(`INSERT INTO public.businesses (id, owner_id, name, slug) VALUES ('${BIZ_ID}', '${OWNER_ID}', 'M446 Test Biz', 'm446-test') ON CONFLICT (id) DO NOTHING;`);
 
     // ── PRE-446 NEGATIVE CONTROL ──
+    // Restore pre-446 state: re-grant INSERT to authenticated (swap test may
+    // have applied M446 first, which revoked it). Drop then re-create policies.
+    // Also need SELECT on businesses for RLS subquery.
+    sql(`GRANT SELECT ON public.businesses TO authenticated;`);
+    sql(`GRANT SELECT, INSERT, UPDATE ON public.payout_accounts TO authenticated;`);
+    sql(`DROP POLICY IF EXISTS "Business owners can insert own payout accounts" ON public.payout_accounts;`);
+    sql(`CREATE POLICY "Business owners can insert own payout accounts" ON public.payout_accounts FOR INSERT WITH CHECK (business_id IN (SELECT id FROM public.businesses WHERE owner_id = auth.uid()));`);
+
     // Prove authenticated CAN insert before M446 revokes the privilege.
     // Also set request.jwt.claim.sub (Supabase v2 format) for auth.uid().
     const insertResult = sql(`

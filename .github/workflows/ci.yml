@@ -4220,7 +4220,7 @@ jobs:
           PG_FILES="${{ steps.pg-discover.outputs.pg_files }}"
           echo "Running .pg.test.ts files:"
           echo "$PG_FILES"
-          echo "$PG_FILES" | xargs npx vitest run --reporter=verbose 2>&1 | tee /tmp/pg-test-output.txt
+          echo "$PG_FILES" | xargs npx vitest run --fileParallelism=false --reporter=verbose 2>&1 | tee /tmp/pg-test-output.txt
 
       - name: Verify zero skipped .pg.test.ts tests
         run: |
