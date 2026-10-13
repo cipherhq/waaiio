@@ -127,7 +127,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const result = psqlMayFail(`
       BEGIN;
       SET LOCAL ROLE authenticated;
-      SET LOCAL app.current_user_id = '${OWNER_A}';
+      SET LOCAL request.jwt.claim.sub = '${OWNER_A}';
       INSERT INTO bot_translation_platform_overrides (lang, key, value)
         VALUES ('en', 'rls_hack', 'nope');
       ROLLBACK;
@@ -139,7 +139,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const result = psqlMayFail(`
       BEGIN;
       SET LOCAL ROLE authenticated;
-      SET LOCAL app.current_user_id = '${OWNER_A}';
+      SET LOCAL request.jwt.claim.sub = '${OWNER_A}';
       INSERT INTO bot_translation_overrides (business_id, lang, key, value)
         VALUES ('${BIZ_A}', 'en', 'rls_hack', 'nope');
       ROLLBACK;
@@ -153,7 +153,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const result = psqlMayFail(`
       BEGIN;
       SET LOCAL ROLE authenticated;
-      SET LOCAL app.current_user_id = '${OWNER_A}';
+      SET LOCAL request.jwt.claim.sub = '${OWNER_A}';
       UPDATE bot_translation_platform_overrides SET value = 'hacked' WHERE key = 'rls_test_plat';
       ROLLBACK;
     `);
@@ -164,7 +164,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const result = psqlMayFail(`
       BEGIN;
       SET LOCAL ROLE authenticated;
-      SET LOCAL app.current_user_id = '${OWNER_A}';
+      SET LOCAL request.jwt.claim.sub = '${OWNER_A}';
       UPDATE bot_translation_overrides SET value = 'hacked' WHERE business_id = '${BIZ_A}';
       ROLLBACK;
     `);
@@ -177,7 +177,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const result = psqlMayFail(`
       BEGIN;
       SET LOCAL ROLE authenticated;
-      SET LOCAL app.current_user_id = '${OWNER_A}';
+      SET LOCAL request.jwt.claim.sub = '${OWNER_A}';
       DELETE FROM bot_translation_platform_overrides WHERE key = 'rls_test_plat';
       ROLLBACK;
     `);
@@ -188,7 +188,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const result = psqlMayFail(`
       BEGIN;
       SET LOCAL ROLE authenticated;
-      SET LOCAL app.current_user_id = '${OWNER_A}';
+      SET LOCAL request.jwt.claim.sub = '${OWNER_A}';
       DELETE FROM bot_translation_overrides WHERE business_id = '${BIZ_A}';
       ROLLBACK;
     `);
@@ -201,7 +201,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const count = psql(`
       BEGIN;
       SET LOCAL ROLE authenticated;
-      SET LOCAL app.current_user_id = '${OWNER_A}';
+      SET LOCAL request.jwt.claim.sub = '${OWNER_A}';
       SELECT COUNT(*) FROM bot_translation_overrides WHERE business_id = '${BIZ_A}';
       ROLLBACK;
     `);
@@ -214,7 +214,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const count = psql(`
       BEGIN;
       SET LOCAL ROLE authenticated;
-      SET LOCAL app.current_user_id = '${OWNER_A}';
+      SET LOCAL request.jwt.claim.sub = '${OWNER_A}';
       SELECT COUNT(*) FROM bot_translation_overrides WHERE business_id = '${BIZ_B}';
       ROLLBACK;
     `);
