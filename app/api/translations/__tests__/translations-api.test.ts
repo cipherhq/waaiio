@@ -198,6 +198,57 @@ describe('PUT /api/translations', () => {
     expect(body.errors.some((e: string) => e.includes('URL'))).toBe(true);
   });
 
+  // 4b. 400 for bare domain in value
+  it('returns 400 when value contains a bare domain', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [
+          { lang: 'en', key: 'cap.scheduling', value: 'Book at mybank.com' },
+        ],
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errors.some((e: string) => e.includes('URLs'))).toBe(true);
+  });
+
+  // 4c. 400 for bare .ng domain
+  it('returns 400 when value contains a bare .ng domain', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [
+          { lang: 'en', key: 'cap.scheduling', value: 'pay at pay.mybank.ng' },
+        ],
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  // 4d. Allows e.g. and Mr. Smith (not bare domains)
+  it('allows values with e.g. and Mr. Smith (not bare domains)', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({
+      bot_translation_overrides: [
+        { data: null, error: null }, // upsert result
+      ],
+    });
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [
+          { lang: 'en', key: 'cap.scheduling', value: 'e.g. book with Mr. Smith' },
+        ],
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+
   // 5. 400 for phone number in value
   it('returns 400 when value contains a phone number', async () => {
     setupMockFrom({ businesses: { data: BIZ, error: null } });

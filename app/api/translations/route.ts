@@ -122,7 +122,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // Reject values containing URLs, phone numbers, or 8+ digit runs
-    const UNSAFE_VALUE_PATTERN = /https?:\/\/|www\.|[a-z0-9-]+\.[a-z]{2,}\/|(\+?\d[\d\s-]{7,}\d)|\d{8,}/i;
+    const UNSAFE_VALUE_PATTERN = /https?:\/\/|www\.|[a-z0-9-]+\.[a-z]{2,}\/|(\+?\d[\d\s-]{7,}\d)|\d{8,}|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.(com|net|org|ng|gh|uk|ca|us|io|co|app|me|xyz|link|ly|info|biz)\b/i;
     if (UNSAFE_VALUE_PATTERN.test(trimmedValue)) {
       errors.push(`${override.key}: value must not contain URLs, phone numbers, or long digit sequences`);
       continue;
