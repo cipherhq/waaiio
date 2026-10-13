@@ -370,7 +370,8 @@ describe('Admin UI — Finance mutation controls hidden', () => {
   });
 
   it('Approve/Reject buttons gated by isAdmin', () => {
-    expect(payoutsUI).toContain("tab === 'pending' && isAdmin");
+    // #620: actions shown on both pending and review tabs
+    expect(payoutsUI).toContain("(tab === 'pending' || tab === 'review') && isAdmin");
   });
 
   it('ResellerPayouts Generate button gated by isFullAdmin', () => {
