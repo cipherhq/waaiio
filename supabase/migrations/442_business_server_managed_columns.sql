@@ -19,9 +19,26 @@ LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
+DECLARE
+  v_db_owner TEXT;
 BEGIN
-  -- Allow service_role (used by API routes and cron)
+  -- Allow service_role (used by API routes and cron via PostgREST)
   IF current_setting('role', true) = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Allow the database owner role (SECURITY DEFINER functions like
+  -- finalize_stripe_recurring_charge run as the function owner).
+  -- Look up the owner of this trigger function as the trusted boundary.
+  SELECT r.rolname INTO v_db_owner
+    FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    JOIN pg_roles r ON p.proowner = r.oid
+   WHERE n.nspname = 'public'
+     AND p.proname = 'guard_server_managed_columns'
+   LIMIT 1;
+
+  IF v_db_owner IS NOT NULL AND current_user = v_db_owner THEN
     RETURN NEW;
   END IF;
 
