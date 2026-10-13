@@ -4,56 +4,56 @@
 -- Target: staging project tqjvrzopvtczxfxiwmnz
 -- ══════════════════════════════════════════════════════════════════════════
 --
--- Reconcile staging table grants to match production (cxcmiqotkowhxinjbytg).
+-- Reconcile staging table and view grants to match production.
 --
 -- Root cause: staging pg_default_acl has 18 entries; production has 27.
 -- The 9 missing entries are all in the public schema (tables + sequences
 -- + functions) for roles postgres and supabase_admin. Without these,
--- tables created by migrations have no privileges for anon/authenticated/
--- service_role unless explicitly GRANTed.
+-- tables/views created by migrations have no privileges for
+-- anon/authenticated/service_role unless explicitly GRANTed.
+--
+-- Deliberate deviation — TRUNCATE, REFERENCES, TRIGGER:
+--   Production's Supabase defaults (arwdDxtm) grant TRUNCATE (D),
+--   REFERENCES (x), TRIGGER (t), and MAINTAIN (m) in addition to
+--   SELECT/INSERT/UPDATE/DELETE. This file grants only S/I/U/D because
+--   the application never uses TRUNCATE, REFERENCES, or TRIGGER via
+--   API roles. This is a least-privilege choice: staging will have
+--   narrower DML-only grants on existing relations, while §1's
+--   ALTER DEFAULT PRIVILEGES (GRANT ALL) matches production's full
+--   privilege set for future tables — including TRUNCATE/REFERENCES/TRIGGER.
 --
 -- This file contains:
---   §1  ALTER DEFAULT PRIVILEGES — 4 missing entries (tables + sequences only;
---       functions excluded per P0 review: 266 SECURITY DEFINER functions in
---       public, anon can execute only 9 today; blanket function EXECUTE would
---       expose financial RPCs)
---   §2  Exact GRANT diff — 449 statements for privileges present on production
---       but missing on staging (154 anon, 149 authenticated, 146 service_role
---       tables). Generated from has_table_privilege() on both catalogs,
---       2026-10-12. No blanket GRANT ALL ON ALL TABLES.
+--   §1  ALTER DEFAULT PRIVILEGES — 2 entries (tables + sequences;
+--       functions excluded per P0 review)
+--   §2  Exact GRANT diff — 451 statements (154 anon, 149 authenticated,
+--       148 service_role) including 2 views. Generated from
+--       has_table_privilege() on both catalogs (relkind r,v,m), 2026-10-12.
 --   §3  Verification — confirms user-reported tables are fixed
 --
 -- Excluded from this file:
---   - Function grants (production has ALTER DEFAULT PRIVILEGES ... ON FUNCTIONS
---     granting EXECUTE to all roles — excluded per P0 security review)
---   - 3 cron-schema defaults (supabase_admin-internal, postgres-only grantee)
---   - 8 staging-only tables not on production (engage_segments, platform_campaign_*,
---     admin_onboarding_invites, admin_step_up_authorizations)
+--   - Function grants (production has ALTER DEFAULT PRIVILEGES ... ON
+--     FUNCTIONS granting EXECUTE to all roles — excluded per P0 security
+--     review: 266 SECURITY DEFINER functions in public; blanket EXECUTE
+--     would expose financial RPCs like claim_payout_for_transfer to anon)
+--   - TRUNCATE, REFERENCES, TRIGGER on existing relations (see above)
+--   - 3 cron-schema defaults (supabase_admin-internal, postgres-only)
+--   - 8 staging-only tables not on production
 --
 -- Over-grants (staging has but production lacks): NONE (0 entries)
---
--- Convention: previous staging-only ACL fixes (M415, M417, M426) were placed
--- in supabase/migrations/ with staging_ prefixes. This file is placed in
--- supabase/staging-only/ to avoid the supabase/migrations/ directory which
--- is processed by the production release pipeline. This is safer: the
--- migrations runner will never see this file.
+
+BEGIN;
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- §1  ALTER DEFAULT PRIVILEGES — root cause fix (tables + sequences only)
 -- ══════════════════════════════════════════════════════════════════════════
 --
--- Production pg_default_acl has these 6 entries for public schema that
--- staging lacks (evidence: pg_default_acl query on both databases, 2026-10-12):
+-- Production has 6 entries for public schema that staging lacks.
+-- We emit 2 (tables + sequences for postgres role).
+-- The remaining 4 are either functions (excluded, P0) or supabase_admin
+-- (requires superuser — flagged for Owner to apply separately).
 --
---   postgres  | r (tables)    | public | anon=arwdDxtm, authenticated=arwdDxtm, service_role=arwdDxtm
---   postgres  | S (sequences) | public | anon=rwU, authenticated=rwU, service_role=rwU
---   postgres  | f (functions) | public | anon=X, authenticated=X, service_role=X          ← EXCLUDED
---   supabase_admin | r (tables)    | public | anon=arwdDxtm, authenticated=arwdDxtm, service_role=arwdDxtm
---   supabase_admin | S (sequences) | public | anon=rwU, authenticated=rwU, service_role=rwU
---   supabase_admin | f (functions) | public | anon=X, authenticated=X, service_role=X     ← EXCLUDED
---
--- We can only set defaults for postgres (the connected role).
--- supabase_admin defaults require superuser; flagged for Owner.
+-- Note: GRANT ALL ON TABLES includes TRUNCATE/REFERENCES/TRIGGER, matching
+-- production's defaults exactly. This applies only to future tables.
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT ALL ON TABLES TO anon, authenticated, service_role;
@@ -62,16 +62,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 
 -- ══════════════════════════════════════════════════════════════════════════
--- §2  Exact GRANT diff — 449 statements
+-- §2  Exact GRANT diff — 451 statements (tables + views)
 -- ══════════════════════════════════════════════════════════════════════════
--- Each statement adds only the specific privileges present on production
--- but missing on staging. GRANT is idempotent (no-op if already granted).
+-- Each statement adds only the specific S/I/U/D privileges present on
+-- production but missing on staging. GRANT is idempotent.
 -- No REVOKE statements. No blanket GRANT ALL ON ALL TABLES.
+-- Covers relkind r (tables) and v (views).
 --
--- Source: has_table_privilege('role', 'public.table', 'PRIV') on both
--- databases, 2026-10-12. Only tables existing on both environments.
+-- Source: has_table_privilege() on both databases, 2026-10-12.
 
--- anon grants (154 tables)
+-- anon grants (154 relations)
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_audit_logs TO anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_broadcasts TO anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_impersonation_tokens TO anon;
@@ -227,7 +227,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.waiver_templates TO anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_deliveries TO anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_endpoints TO anon;
 
--- authenticated grants (149 tables)
+-- authenticated grants (149 relations)
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_audit_logs TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_broadcasts TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_impersonation_tokens TO authenticated;
@@ -244,8 +244,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.booking_confirmation_intent
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.booking_slots TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bookings TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.bot_keywords TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.bot_sequence_enrollments TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bot_rules TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON TABLE public.bot_sequence_enrollments TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bot_step_overrides TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.broadcast_usage TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_bank_accounts TO authenticated;
@@ -327,10 +327,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.platform_fee_invoices TO au
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.platform_fees TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.poll_votes TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.product_addons TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.promo_codes TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_campaign_codes TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_campaigns TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_code_batches TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON TABLE public.promo_codes TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_eligibility_acks TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_fulfillment_notification_intents TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_pending_eligibility TO authenticated;
@@ -378,8 +378,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_deliveries TO authe
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_endpoints TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.whatsapp_channels TO authenticated;
 
--- service_role grants (146 tables)
+-- service_role grants (148 relations)
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_broadcasts TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_role_permissions TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_classification_log TO service_role;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.ai_conversation_config TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_usage TO service_role;
 GRANT UPDATE, DELETE ON TABLE public.alerts TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.api_keys TO service_role;
 GRANT UPDATE, DELETE ON TABLE public.attendance_log TO service_role;
@@ -399,6 +403,7 @@ GRANT DELETE ON TABLE public.business_bank_accounts TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_broadcasts TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_documents TO service_role;
 GRANT DELETE ON TABLE public.business_payment_credentials TO service_role;
+GRANT SELECT ON TABLE public.businesses_public TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.campaign_donations TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.campaigns TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.catalog_sync_logs TO service_role;
@@ -521,6 +526,7 @@ GRANT INSERT, DELETE ON TABLE public.waitlist_entries TO service_role;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.waiver_templates TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_deliveries TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_endpoints TO service_role;
+GRANT SELECT ON TABLE public.whatsapp_channels_public TO service_role;
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- §3  VERIFICATION
@@ -546,9 +552,31 @@ BEGIN
   IF NOT has_table_privilege('service_role', 'public.business_documents', 'SELECT') THEN
     _errors := _errors || 'business_documents: service_role missing SELECT';
   END IF;
+  -- Correction #1 tables
+  IF NOT has_table_privilege('service_role', 'public.admin_broadcasts', 'SELECT') THEN
+    _errors := _errors || 'admin_broadcasts: service_role missing SELECT';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.admin_role_permissions', 'SELECT') THEN
+    _errors := _errors || 'admin_role_permissions: service_role missing SELECT';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.ai_classification_log', 'SELECT') THEN
+    _errors := _errors || 'ai_classification_log: service_role missing SELECT';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.ai_usage', 'SELECT') THEN
+    _errors := _errors || 'ai_usage: service_role missing SELECT';
+  END IF;
+  -- Views
+  IF NOT has_table_privilege('service_role', 'public.businesses_public', 'SELECT') THEN
+    _errors := _errors || 'businesses_public: service_role missing SELECT';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.whatsapp_channels_public', 'SELECT') THEN
+    _errors := _errors || 'whatsapp_channels_public: service_role missing SELECT';
+  END IF;
 
   IF array_length(_errors, 1) > 0 THEN
-    RAISE EXCEPTION 'VERIFICATION FAILED: %', array_to_string(_errors, '; ');
+    RAISE EXCEPTION 'VERIFICATION FAILED — rolling back: %', array_to_string(_errors, '; ');
   END IF;
   RAISE NOTICE 'Grants reconciliation: all verification checks passed.';
 END $$;
+
+COMMIT;
