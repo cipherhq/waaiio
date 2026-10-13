@@ -28,7 +28,7 @@ function business(id: string, category: string, city: string, address: string, m
   return {
     id, name: 'Biz ' + id.slice(-3), category, city, address,
     status: 'active', bot_code: 'BOT-' + id.slice(-3),
-    discovery_enabled: true, state: city,
+    discovery_enabled: true, messaging_suspended: false, state: city,
     description: 'Public description', discovery_description: null,
     phone: 'NOT-PUBLIC', metadata: { private: true },
     operating_hours: null, is_verified: false, supports_delivery: false,

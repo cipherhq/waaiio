@@ -83,6 +83,7 @@ describe('applyDirectoryEligibility', () => {
       { method: 'eq', args: ['status', 'active'] },
       { method: 'not', args: ['bot_code', 'is', null] },
       { method: 'or', args: ['discovery_enabled.is.null,discovery_enabled.eq.true'] },
+      { method: 'eq', args: ['messaging_suspended', false] },
     ]);
   });
 });

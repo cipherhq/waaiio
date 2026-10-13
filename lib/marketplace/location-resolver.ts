@@ -63,6 +63,81 @@ for (const [cc, config] of Object.entries(COUNTRIES) as [CountryCode, typeof COU
   }
 }
 
+// ── State/province index ──────────────────────────────
+// Curated list of states/provinces + common aliases.
+// Used for "businesses in Maryland", "spa in Oyo", etc.
+
+interface StateEntry {
+  name: string;
+  /** Aliases that should resolve to this state (e.g., "DC" → "District of Columbia") */
+  aliases: string[];
+  countryCode: CountryCode;
+}
+
+const STATE_DATA: StateEntry[] = [
+  // Nigeria
+  { name: 'Lagos', aliases: [], countryCode: 'NG' },
+  { name: 'Oyo', aliases: [], countryCode: 'NG' },
+  { name: 'Rivers', aliases: [], countryCode: 'NG' },
+  { name: 'Abuja', aliases: ['fct', 'federal capital territory'], countryCode: 'NG' },
+  { name: 'Ogun', aliases: [], countryCode: 'NG' },
+  { name: 'Enugu', aliases: [], countryCode: 'NG' },
+  { name: 'Anambra', aliases: [], countryCode: 'NG' },
+  { name: 'Kano', aliases: [], countryCode: 'NG' },
+  { name: 'Kaduna', aliases: [], countryCode: 'NG' },
+  { name: 'Delta', aliases: [], countryCode: 'NG' },
+  // Ghana
+  { name: 'Greater Accra', aliases: ['accra region'], countryCode: 'GH' },
+  { name: 'Ashanti', aliases: ['kumasi region'], countryCode: 'GH' },
+  // US
+  { name: 'New York', aliases: ['ny'], countryCode: 'US' },
+  { name: 'California', aliases: ['ca'], countryCode: 'US' },
+  { name: 'Texas', aliases: ['tx'], countryCode: 'US' },
+  { name: 'Georgia', aliases: ['ga'], countryCode: 'US' },
+  { name: 'Maryland', aliases: ['md'], countryCode: 'US' },
+  { name: 'District of Columbia', aliases: ['dc', 'washington dc', 'washington d.c.'], countryCode: 'US' },
+  { name: 'Florida', aliases: ['fl'], countryCode: 'US' },
+  { name: 'Illinois', aliases: ['il'], countryCode: 'US' },
+  // UK
+  { name: 'England', aliases: [], countryCode: 'GB' },
+  { name: 'Greater London', aliases: ['london region'], countryCode: 'GB' },
+  { name: 'Greater Manchester', aliases: [], countryCode: 'GB' },
+  { name: 'West Midlands', aliases: [], countryCode: 'GB' },
+  // Canada
+  { name: 'Ontario', aliases: ['on'], countryCode: 'CA' },
+  { name: 'Alberta', aliases: ['ab'], countryCode: 'CA' },
+  { name: 'British Columbia', aliases: ['bc'], countryCode: 'CA' },
+];
+
+/** state name (lowercase) → StateEntry */
+const stateIndex: Map<string, StateEntry> = new Map();
+for (const s of STATE_DATA) {
+  stateIndex.set(s.name.toLowerCase(), s);
+  for (const alias of s.aliases) {
+    stateIndex.set(alias.toLowerCase(), s);
+  }
+}
+
+// ── Phone country dialing code map ────────────────────
+// Used for ambiguity resolution: "Maryland" from +234 = Lagos neighborhood,
+// from +1 = US state.
+const DIALING_CODE_TO_COUNTRY: Record<string, CountryCode> = {
+  '+234': 'NG', '+233': 'GH', '+1': 'US', '+44': 'GB',
+};
+
+/**
+ * Resolve phone country from a dialing code prefix.
+ * "+1" maps to US (not CA) by default — CA shares +1 but US is more common.
+ */
+export function phoneCountryFromDialingCode(phone: string): CountryCode | null {
+  if (!phone) return null;
+  const p = phone.startsWith('+') ? phone : `+${phone}`;
+  for (const [prefix, cc] of Object.entries(DIALING_CODE_TO_COUNTRY)) {
+    if (p.startsWith(prefix)) return cc;
+  }
+  return null;
+}
+
 // ── Public API ──────────────────────────────────────────
 
 /**
@@ -71,7 +146,10 @@ for (const [cc, config] of Object.entries(COUNTRIES) as [CountryCode, typeof COU
  * Returns a typed resolution with tier, city filter, optional address hint,
  * and optional country code. The caller uses these to build the Supabase query.
  */
-export function resolveLocation(locationToken: string): LocationResolution {
+export function resolveLocation(
+  locationToken: string,
+  phoneCountryCode?: CountryCode | null,
+): LocationResolution {
   const term = locationToken.trim();
   if (!term) {
     return { tier: 3, city: null, addressHint: null, countryCode: null, parentCityLabel: null, resolvedTerm: term };
@@ -93,34 +171,84 @@ export function resolveLocation(locationToken: string): LocationResolution {
   }
 
   // 2. Exact city name match (case-insensitive)
-  const cityMatch = cityIndex.find((c) => c.name.toLowerCase() === lower);
-  if (cityMatch) {
+  // Ambiguity: a city name can appear in multiple countries. Prefer the
+  // user's phone country if available.
+  const cityMatches = cityIndex.filter((c) => c.name.toLowerCase() === lower);
+  if (cityMatches.length === 1) {
     return {
       tier: 1,
-      city: cityMatch.name,
+      city: cityMatches[0].name,
       addressHint: null,
       countryCode: null,
-      parentCityLabel: cityMatch.name,
+      parentCityLabel: cityMatches[0].name,
+      resolvedTerm: term,
+    };
+  }
+  if (cityMatches.length > 1) {
+    // Disambiguate by phone country
+    const preferred = phoneCountryCode
+      ? cityMatches.find((c) => c.countryCode === phoneCountryCode)
+      : null;
+    if (preferred) {
+      return {
+        tier: 1,
+        city: preferred.name,
+        addressHint: null,
+        countryCode: preferred.countryCode,
+        parentCityLabel: preferred.name,
+        resolvedTerm: term,
+      };
+    }
+    // Multiple matches, no phone hint — tier 3 with candidates
+    return {
+      tier: 3,
+      city: null,
+      addressHint: null,
+      countryCode: null,
+      parentCityLabel: null,
       resolvedTerm: term,
     };
   }
 
   // 3. Neighbourhood substring match (e.g., "Lekki" matches "Lekki Phase 1")
-  const nMatch = neighborhoodIndex.find((n) =>
+  // Also handles "Maryland" → neighborhood of Lagos for NG users.
+  const nMatches = neighborhoodIndex.filter((n) =>
     n.name.toLowerCase().includes(lower),
   );
-  if (nMatch) {
+  if (nMatches.length > 0) {
+    // Prefer phone country if ambiguous
+    const preferred = phoneCountryCode
+      ? nMatches.find((n) => n.countryCode === phoneCountryCode)
+      : nMatches[0];
+    const nMatch = preferred || nMatches[0];
     return {
       tier: 2,
       city: nMatch.parentCityName,
       addressHint: term,
-      countryCode: null,
+      countryCode: nMatch.countryCode,
       parentCityLabel: nMatch.parentCityName,
       resolvedTerm: term,
     };
   }
 
-  // 4. Unknown location — tier 3 (caller should ask for clarification)
+  // 4. State/province match (e.g., "Oyo", "DC", "Maryland" for US users)
+  const stateMatch = stateIndex.get(lower);
+  if (stateMatch) {
+    // If this state name also matches a neighborhood in a different country,
+    // disambiguate by phone country. E.g., "Maryland" is both a US state and
+    // a Lagos neighborhood. +234 → Lagos neighborhood (handled above),
+    // +1 → US state (handled here).
+    return {
+      tier: 1,
+      city: null,
+      addressHint: null,
+      countryCode: stateMatch.countryCode,
+      parentCityLabel: stateMatch.name,
+      resolvedTerm: term,
+    };
+  }
+
+  // 5. Unknown location — tier 3 (caller should ask for clarification)
   return {
     tier: 3,
     city: null,

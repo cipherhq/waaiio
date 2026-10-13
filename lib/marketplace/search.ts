@@ -12,6 +12,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { formatDistance } from '@/lib/constants';
+import { detectCategoryIntent } from '@/lib/bot/fuzzy-match';
 import { resolveCompoundLocation, resolveLocation } from './location-resolver';
 
 // ── Public types ───────────────────────────────────────
@@ -129,19 +130,64 @@ export const DISCOVERY_PUBLIC_FIELDS = [
  * businesses table. Used by both SSR pre-rendering and API/search paths
  * to ensure identical eligibility semantics.
  *
- * Eligible: status='active', bot_code IS NOT NULL, discovery_enabled is NOT false.
- * Uses .or() to include both NULL (never configured) and true (opted in).
- * Only explicit opt-out (discovery_enabled=false) hides a business.
+ * Eligible when ALL of:
+ *   1. status = 'active'
+ *   2. bot_code IS NOT NULL
+ *   3. discovery_enabled IS NOT false (null or true both pass)
+ *   4. messaging_suspended = false
  */
 // eslint-disable-next-line
 export function applyDirectoryEligibility(query: any): any {
   return query
     .eq('status', 'active')
     .not('bot_code', 'is', null)
-    .or('discovery_enabled.is.null,discovery_enabled.eq.true');
+    .or('discovery_enabled.is.null,discovery_enabled.eq.true')
+    .eq('messaging_suspended', false);
+}
+
+/**
+ * Load admin-hidden business IDs from platform_settings.
+ * Used by both the API route and bot directory paths.
+ */
+export async function loadDirectoryHiddenIds(
+  supabase: SupabaseClient,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from('platform_settings')
+    .select('value')
+    .eq('key', 'directory_hidden')
+    .maybeSingle();
+  return Array.isArray(data?.value) ? data.value : [];
+}
+
+/**
+ * Check whether a single business is directory-eligible.
+ * Used to re-validate a selection (e.g., when a user taps a search result).
+ */
+export async function isBusinessDirectoryEligible(
+  supabase: SupabaseClient,
+  businessId: string,
+): Promise<boolean> {
+  const { data } = await applyDirectoryEligibility(
+    supabase.from('businesses').select('id').eq('id', businessId),
+  ).maybeSingle();
+  if (!data) return false;
+  const hidden = await loadDirectoryHiddenIds(supabase);
+  return !hidden.includes(businessId);
 }
 
 // ── Search result type with error distinction ─────────
+
+export interface FuzzySuggestion {
+  id: string;
+  name: string;
+  botCode: string | null;
+  category: string;
+  city: string | null;
+  state: string | null;
+  countryCode: string | null;
+  matchScore: number;
+}
 
 export interface MarketplaceSearchResult {
   results: MarketplaceResult[];
@@ -151,6 +197,10 @@ export interface MarketplaceSearchResult {
   error?: string;
   /** True when an explicit location constraint is invalid or ambiguous. */
   locationFailed?: boolean;
+  /** "Did you mean?" suggestions when main search returns 0 results. */
+  suggestions?: FuzzySuggestion[];
+  /** True when there are more results beyond the returned page. */
+  hasMore?: boolean;
 }
 
 // ── Main search function ───────────────────────────────
@@ -268,10 +318,17 @@ export async function searchMarketplace(
     }
 
     // Text search with bounded, grammar-safe PostgREST values.
+    // Also expand synonyms: "massage" → search for category=spa.
     if (safeQuery) {
-      query = query.or(
-        'name.ilike.%' + safeQuery + '%,description.ilike.%' + safeQuery + '%,category.ilike.%' + safeQuery + '%',
-      );
+      const synonymCategories = detectCategoryIntent(safeQuery);
+      const categoryOrClauses = synonymCategories.map(c => `category.ilike.%${c}%`);
+      const textClauses = [
+        `name.ilike.%${safeQuery}%`,
+        `description.ilike.%${safeQuery}%`,
+        `category.ilike.%${safeQuery}%`,
+        ...categoryOrClauses,
+      ];
+      query = query.or(textClauses.join(','));
     }
 
     // Fetch extra rows for scoring / filtering
@@ -389,14 +446,60 @@ export async function searchMarketplace(
     // Sort by score descending
     scored.sort((a, b) => b._score - a._score);
 
+    const paged = scored.slice(0, limit);
+    const hasMore = scored.length > limit;
+
+    // If zero results and a free-text query was provided, try fuzzy suggestions
+    if (paged.length === 0 && safeQuery) {
+      const suggestions = await searchFuzzy(supabase, safeQuery, effectiveCountry || null, criteria.excludeIds || []);
+      if (suggestions.length > 0) {
+        return { results: [], ok: true, suggestions, hasMore: false };
+      }
+    }
+
     // Return top results without internal score
     return {
-      results: scored.slice(0, limit).map(({ _score: _, ...rest }) => rest),
+      results: paged.map(({ _score: _, ...rest }) => rest),
       ok: true,
+      hasMore,
     };
   } catch (err) {
     logger.error('[MARKETPLACE] Search failed:', err);
     return { results: [], ok: false, error: err instanceof Error ? err.message : 'unknown' };
+  }
+}
+
+/**
+ * Fuzzy "did you mean?" suggestions using pg_trgm similarity() via RPC.
+ * Called when the main search returns zero results.
+ */
+export async function searchFuzzy(
+  supabase: SupabaseClient,
+  query: string,
+  country: string | null,
+  hiddenIds: string[] = [],
+): Promise<FuzzySuggestion[]> {
+  try {
+    const { data, error } = await supabase.rpc('search_businesses_fuzzy', {
+      p_query: query.slice(0, 100),
+      p_country: country,
+      p_limit: 5,
+      p_hidden_ids: hiddenIds,
+    });
+    if (error || !data) return [];
+    return (data as Array<Record<string, unknown>>).map(row => ({
+      id: row.id as string,
+      name: row.name as string,
+      botCode: (row.bot_code as string) || null,
+      category: row.category as string,
+      city: (row.city as string) || null,
+      state: (row.state as string) || null,
+      countryCode: (row.country_code as string) || null,
+      matchScore: row.match_score as number,
+    }));
+  } catch (err) {
+    logger.error('[MARKETPLACE] Fuzzy search failed:', err);
+    return [];
   }
 }
 

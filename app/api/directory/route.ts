@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
-import { searchMarketplace } from '@/lib/marketplace/search';
+import { searchMarketplace, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
 
 /**
  * GET /api/directory?country=US&category=barber&search=cuts
