@@ -13,6 +13,7 @@ import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
+import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
 
 /**
  * GET /api/cron/auto-payout
@@ -211,9 +212,6 @@ export async function GET(request: NextRequest) {
         net <= autoApproveLimit &&
         (biz.verification_level || 'unverified') !== 'unverified';
 
-      // Over-limit payouts become 'held' with a flag, never approved
-      const overLimit = !withinLimit;
-      const status = overLimit ? 'held' : (canAutoApprove ? 'approved' : 'pending');
       const holdReasons: string[] = [];
       if (!isNG) holdReasons.push('Business country not supported for automatic Paystack transfer');
       if (!payoutAccount) holdReasons.push('No payout account configured');
@@ -223,7 +221,9 @@ export async function GET(request: NextRequest) {
       if (avgPerDay >= VELOCITY_THRESHOLD) holdReasons.push('High transaction velocity');
       if (net > autoApproveLimit) holdReasons.push(`Amount exceeds auto-approve limit`);
       if ((biz.verification_level || 'unverified') === 'unverified') holdReasons.push('Business not verified');
-      if (overLimit) holdReasons.push(limitCheck.reason || 'Verification limit exceeded');
+
+      const decision = decideAutoPayoutOutcome({ canAutoApprove, limitCheck, holdReasons });
+      const { status, overLimit } = decision;
 
       // ── Create payout record ──
       // Two paths: with adjustments (three-phase INSERT→link→promote) and
@@ -234,12 +234,8 @@ export async function GET(request: NextRequest) {
         const adjIds = [...new Set(adjustments.map(a => a.id))];
         const intendedStatus = status;
 
-        // Convert holdReasons to structured flags for the adjustment path
-        const structuredFlags: { type: string; message: string; severity: string; adjustment_ids?: string[] }[] =
-          holdReasons.map(r => ({ type: 'hold_reason', message: r, severity: 'info' }));
-        if (overLimit) {
-          structuredFlags.push({ type: 'verification_limit_exceeded', message: limitCheck.reason || 'Monthly limit exceeded', severity: 'critical' });
-        }
+        // Use decision's structured flags for the adjustment path
+        const structuredFlags = decision.structuredFlags;
         const insertFlags = [...structuredFlags, {
           type: 'adjustment_link_pending',
           message: `Linking ${adjIds.length} adjustment(s)`,
@@ -525,11 +521,7 @@ export async function GET(request: NextRequest) {
         }
       } else {
         // --- No adjustments: INSERT with computed status ---
-        const insertFlags: (string | { type: string; message?: string; severity?: string })[] =
-          holdReasons.map(r => r);
-        if (overLimit) {
-          insertFlags.push({ type: 'verification_limit_exceeded', message: limitCheck.reason || 'Monthly limit exceeded', severity: 'critical' });
-        }
+        const insertFlags = decision.flags;
         const { data: payout } = await supabase.from('business_payouts').insert({
           business_id: biz.id,
           period_start: periodStartStr,

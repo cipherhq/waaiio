@@ -1,13 +1,13 @@
 /**
  * Payout verification limit enforcement tests.
  *
- * Tests that:
- * 1. Approve route returns 409 for over-limit payouts, payout unchanged, no step-up consumed
- * 2. Auto-payout cron creates over-limit payouts as 'held' with verification_limit_exceeded flag
- *    (both with-adjustments and no-adjustments paths)
+ * 1. Approve route: over-limit → 409, payout unchanged, no step-up consumed
+ * 2. decideAutoPayoutOutcome: pure-function behavioral tests for status/flags
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
+import type { VerificationLimitResult } from '@/lib/payouts/verification-limit';
 
 // ── Shared helpers ──
 
@@ -19,18 +19,22 @@ function makePostRequest(url: string, body: Record<string, unknown>) {
   });
 }
 
-function makeGetRequest(url: string, headers: Record<string, string> = {}) {
-  return new NextRequest(new URL(url, 'http://localhost:3000'), {
-    method: 'GET',
-    headers: { ...headers },
-  });
-}
-
 function mockLogger() {
   const noop = (..._: unknown[]) => {};
   return {
     error: noop, info: noop, debug: noop, warn: noop,
     withContext: () => ({ error: noop, info: noop, debug: noop, warn: noop }),
+  };
+}
+
+function allowedLimit(limit = 50_000_000, used = 0): VerificationLimitResult {
+  return { allowed: true, limit, used, remaining: limit - used };
+}
+
+function exceededLimit(limit = 50_000_000, used = 50_000_000): VerificationLimitResult {
+  return {
+    allowed: false, limit, used, remaining: 0,
+    reason: `Monthly payout limit exceeded: used ${used} + requested 10000000 > limit ${limit}`,
   };
 }
 
@@ -53,13 +57,12 @@ describe('Approve route: verification limit enforcement', () => {
   });
 
   it('over-limit payout → 409 with limit/used/remaining, payout unchanged, no step-up consumed', async () => {
-    // Mock verification limit to REJECT
     vi.doMock('@/lib/payouts/verification-limit', () => ({
       checkVerificationLimit: vi.fn().mockResolvedValue({
         allowed: false,
-        limit: 50_000_000,      // ₦500,000 in kobo
-        used: 45_000_000,       // ₦450,000 in kobo
-        remaining: 5_000_000,   // ₦50,000 remaining
+        limit: 50_000_000,
+        used: 45_000_000,
+        remaining: 5_000_000,
         reason: 'Monthly payout limit exceeded: used 45000000 + requested 10000000 > limit 50000000',
       }),
     }));
@@ -138,47 +141,116 @@ describe('Approve route: verification limit enforcement', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// 2. Auto-payout cron: over-limit → held with flag
+// 2. decideAutoPayoutOutcome: pure function behavioral tests
 // ════════════════════════════════════════════════════════════
 
-describe('Auto-payout cron: verification limit enforcement', () => {
-  let insertedPayouts: Array<Record<string, unknown>>;
+describe('decideAutoPayoutOutcome', () => {
+  // ── Over-limit: status 'held', verification_limit_exceeded flag ──
 
-  beforeEach(() => {
-    vi.resetModules();
-    insertedPayouts = [];
+  it('over-limit, withAdjustments=false → held + verification_limit_exceeded flag, never approved', () => {
+    const result = decideAutoPayoutOutcome({
+      canAutoApprove: true,
+      limitCheck: exceededLimit(),
+      holdReasons: [],
+    });
+
+    expect(result.status).toBe('held');
+    expect(result.overLimit).toBe(true);
+
+    // No-adjustments flags
+    const limitFlag = result.flags.find(
+      f => typeof f === 'object' && f.type === 'verification_limit_exceeded',
+    );
+    expect(limitFlag).toBeDefined();
+    expect((limitFlag as any).severity).toBe('critical');
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
+  it('over-limit, withAdjustments=true → held + verification_limit_exceeded in structuredFlags', () => {
+    const result = decideAutoPayoutOutcome({
+      canAutoApprove: true,
+      limitCheck: exceededLimit(),
+      holdReasons: ['Business too new (cooling period)'],
+    });
+
+    expect(result.status).toBe('held');
+
+    // Structured flags for adjustment path
+    const limitFlag = result.structuredFlags.find(
+      f => f.type === 'verification_limit_exceeded',
+    );
+    expect(limitFlag).toBeDefined();
+    expect(limitFlag!.severity).toBe('critical');
+
+    // Also has hold_reason flags
+    const holdFlag = result.structuredFlags.find(
+      f => f.type === 'hold_reason' && f.message.includes('cooling period'),
+    );
+    expect(holdFlag).toBeDefined();
   });
 
-  it('no-adjustments path: over-limit payout inserted as held with verification_limit_exceeded flag', async () => {
-    // The cron route is deeply integrated with many service dependencies.
-    // Instead of mocking the full cron route, we verify the logic directly:
-    // When checkVerificationLimit returns { allowed: false }, the auto-payout
-    // code sets status='held' and adds a verification_limit_exceeded flag.
-    //
-    // We test this by reading the source to confirm the logic, then testing
-    // the helper separately (covered in verification-limit.test.ts).
-    //
-    // The actual integration path is tested by the behavioral assertion:
-    // auto-payout/route.ts line ~225: overLimit ? 'held' : (canAutoApprove ? 'approved' : 'pending')
-    // auto-payout/route.ts line ~541: insertFlags.push({ type: 'verification_limit_exceeded', ... })
+  it('over-limit with canAutoApprove=false → still held (not pending)', () => {
+    const result = decideAutoPayoutOutcome({
+      canAutoApprove: false,
+      limitCheck: exceededLimit(),
+      holdReasons: ['Business not verified'],
+    });
 
-    const { readFileSync } = await import('fs');
-    const { join } = await import('path');
-    const source = readFileSync(join(process.cwd(), 'app/api/cron/auto-payout/route.ts'), 'utf-8');
+    expect(result.status).toBe('held');
+    expect(result.overLimit).toBe(true);
+  });
 
-    // Verify the over-limit check sets status to 'held'
-    expect(source).toContain("const overLimit = !withinLimit;");
-    expect(source).toContain("overLimit ? 'held'");
+  // ── Within limit ──
 
-    // Verify the verification_limit_exceeded flag is added
-    expect(source).toContain("type: 'verification_limit_exceeded'");
+  it('within limit + canAutoApprove → approved', () => {
+    const result = decideAutoPayoutOutcome({
+      canAutoApprove: true,
+      limitCheck: allowedLimit(),
+      holdReasons: [],
+    });
 
-    // Verify the structured flag is added for the adjustment path too
-    const adjFlagCount = (source.match(/verification_limit_exceeded/g) || []).length;
-    expect(adjFlagCount).toBeGreaterThanOrEqual(2); // both paths
+    expect(result.status).toBe('approved');
+    expect(result.overLimit).toBe(false);
+    expect(result.flags).toHaveLength(0);
+    expect(result.structuredFlags).toHaveLength(0);
+  });
+
+  it('within limit + not auto-approvable → pending', () => {
+    const result = decideAutoPayoutOutcome({
+      canAutoApprove: false,
+      limitCheck: allowedLimit(),
+      holdReasons: ['Business too new (cooling period)'],
+    });
+
+    expect(result.status).toBe('pending');
+    expect(result.overLimit).toBe(false);
+    // Should have hold_reason flags but no verification_limit_exceeded
+    expect(result.flags.length).toBeGreaterThan(0);
+    const limitFlag = result.structuredFlags.find(
+      f => f.type === 'verification_limit_exceeded',
+    );
+    expect(limitFlag).toBeUndefined();
+  });
+
+  // ── Adjustment path keeps existing flag shape ──
+
+  it('structuredFlags have type/message/severity shape for adjustment path', () => {
+    const result = decideAutoPayoutOutcome({
+      canAutoApprove: false,
+      limitCheck: allowedLimit(),
+      holdReasons: ['High transaction velocity', 'Business not verified'],
+    });
+
+    // Every structured flag has the required shape
+    for (const flag of result.structuredFlags) {
+      expect(flag).toHaveProperty('type');
+      expect(flag).toHaveProperty('message');
+      expect(flag).toHaveProperty('severity');
+      expect(flag.type).toBe('hold_reason');
+    }
+
+    // The route appends adjustment_link_pending separately — not in this function
+    // Verify no adjustment_link_pending is emitted by decideAutoPayoutOutcome
+    const adjFlag = result.structuredFlags.find(f => f.type === 'adjustment_link_pending');
+    expect(adjFlag).toBeUndefined();
   });
 });
