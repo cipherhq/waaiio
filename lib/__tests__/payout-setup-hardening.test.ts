@@ -7,6 +7,7 @@
  * 3. Re-authentication is required (no password → 403, wrong password → 403)
  * 4. Browser client never writes payout_accounts (disconnect goes through API)
  * 5. Resolve route returns 503 when provider key is missing (no mock)
+ * 6. Re-auth uses a separate non-persisting client, not the session client
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -71,6 +72,17 @@ describe('Payout setup: non-owner rejected', () => {
     const authSuccess = opts.authSuccess !== false;
     const businessOwnerId = opts.businessOwnerId || userId;
 
+    // Throwaway client for password check (non-persisting)
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: {
+          signInWithPassword: vi.fn().mockResolvedValue(
+            authSuccess ? { error: null } : { error: { message: 'Invalid credentials' } },
+          ),
+        },
+      }),
+    }));
+
     // Session client — for auth and ownership check (RLS-bound)
     const sessionFrom = vi.fn().mockImplementation((table: string) => {
       if (table === 'businesses') {
@@ -93,9 +105,6 @@ describe('Payout setup: non-owner rejected', () => {
           getUser: vi.fn().mockResolvedValue({
             data: { user: { id: userId, email: userEmail } },
           }),
-          signInWithPassword: vi.fn().mockResolvedValue(
-            authSuccess ? { error: null } : { error: { message: 'Invalid credentials' } },
-          ),
         },
         from: sessionFrom,
       }),
@@ -149,6 +158,11 @@ describe('Payout setup: non-owner rejected', () => {
   });
 
   it('rejects unauthenticated users', async () => {
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: { signInWithPassword: vi.fn() },
+      }),
+    }));
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockResolvedValue({
         auth: {
@@ -187,15 +201,21 @@ describe('Payout setup: re-auth required', () => {
   });
 
   async function loadSetupWithAuth(authSuccess: boolean) {
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: {
+          signInWithPassword: vi.fn().mockResolvedValue(
+            authSuccess ? { error: null } : { error: { message: 'Invalid credentials' } },
+          ),
+        },
+      }),
+    }));
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockResolvedValue({
         auth: {
           getUser: vi.fn().mockResolvedValue({
             data: { user: { id: 'user-1', email: 'user@test.com' } },
           }),
-          signInWithPassword: vi.fn().mockResolvedValue(
-            authSuccess ? { error: null } : { error: { message: 'Invalid credentials' } },
-          ),
         },
         from: vi.fn().mockImplementation(() => mockSupabaseChain({
           single: vi.fn().mockResolvedValue({
@@ -280,13 +300,20 @@ describe('Payout setup: unverified when no provider key', () => {
 
     let insertedRecord: Record<string, unknown> | null = null;
 
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: {
+          signInWithPassword: vi.fn().mockResolvedValue({ error: null }),
+        },
+      }),
+    }));
+
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockResolvedValue({
         auth: {
           getUser: vi.fn().mockResolvedValue({
             data: { user: { id: 'user-1', email: 'user@test.com' } },
           }),
-          signInWithPassword: vi.fn().mockResolvedValue({ error: null }),
         },
         from: vi.fn().mockImplementation(() => mockSupabaseChain({
           single: vi.fn().mockResolvedValue({
@@ -357,6 +384,17 @@ describe('Payout disconnect: server-side with ownership check', () => {
     const authSuccess = opts.authSuccess !== false;
     const businessOwnerId = opts.businessOwnerId || userId;
 
+    // Throwaway client for password check
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: {
+          signInWithPassword: vi.fn().mockResolvedValue(
+            authSuccess ? { error: null } : { error: { message: 'Invalid credentials' } },
+          ),
+        },
+      }),
+    }));
+
     const sessionFrom = vi.fn().mockImplementation((table: string) => {
       if (table === 'businesses') {
         const chain = mockSupabaseChain();
@@ -377,9 +415,6 @@ describe('Payout disconnect: server-side with ownership check', () => {
           getUser: vi.fn().mockResolvedValue({
             data: { user: { id: userId, email: 'user@test.com' } },
           }),
-          signInWithPassword: vi.fn().mockResolvedValue(
-            authSuccess ? { error: null } : { error: { message: 'Invalid credentials' } },
-          ),
         },
         from: sessionFrom,
       }),
@@ -454,13 +489,20 @@ describe('Payout disconnect: server-side with ownership check', () => {
     vi.restoreAllMocks();
     vi.resetModules();
 
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: {
+          signInWithPassword: vi.fn().mockResolvedValue({ error: null }),
+        },
+      }),
+    }));
+
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockResolvedValue({
         auth: {
           getUser: vi.fn().mockResolvedValue({
             data: { user: { id: 'user-1', email: 'user@test.com' } },
           }),
-          signInWithPassword: vi.fn().mockResolvedValue({ error: null }),
         },
         from: vi.fn().mockImplementation(() => {
           const chain = mockSupabaseChain();
@@ -598,5 +640,143 @@ describe('Dashboard payouts page: no browser-side payout_accounts writes', () =>
     expect(disconnectSection).not.toMatch(/supabase\.from\(['"]payout_accounts['"]\)\.update/);
     // Should NOT contain direct supabase writes to businesses
     expect(disconnectSection).not.toMatch(/supabase\.from\(['"]businesses['"]\)\.update/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Scope 7: Re-auth uses a separate non-persisting client
+// ═══════════════════════════════════════════════════════════
+
+describe('Payout setup: re-auth uses throwaway client, not session client', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('setup route calls signInWithPassword on the throwaway client, not the session client', async () => {
+    const throwawaySignIn = vi.fn().mockResolvedValue({ error: null });
+    const sessionSignIn = vi.fn().mockResolvedValue({ error: null });
+
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: { signInWithPassword: throwawaySignIn },
+      }),
+    }));
+
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: vi.fn().mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({
+            data: { user: { id: 'user-1', email: 'user@test.com' } },
+          }),
+          signInWithPassword: sessionSignIn,
+        },
+        from: vi.fn().mockImplementation(() => mockSupabaseChain({
+          single: vi.fn().mockResolvedValue({
+            data: { id: 'biz-1', name: 'Test', payout_mode: 'platform_managed', country_code: 'NG' },
+            error: null,
+          }),
+        })),
+      }),
+    }));
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        from: vi.fn().mockImplementation(() => {
+          const c = mockSupabaseChain();
+          c.insert = vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'p-1' }, error: null }),
+            }),
+          });
+          return c;
+        }),
+      }),
+    }));
+
+    vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue({ success: true }) }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
+
+    const mod = await import('@/app/api/payouts/setup/route');
+    const req = makePostRequest('/api/payouts/setup', {
+      business_id: 'biz-1',
+      gateway: 'paystack',
+      bank_code: '058',
+      account_number: '0123456789',
+      account_name: 'Test',
+      password: 'correct-pass',
+    });
+
+    await mod.POST(req);
+
+    // The throwaway client's signInWithPassword must be called
+    expect(throwawaySignIn).toHaveBeenCalledWith({
+      email: 'user@test.com',
+      password: 'correct-pass',
+    });
+
+    // The session client's signInWithPassword must NOT be called
+    expect(sessionSignIn).not.toHaveBeenCalled();
+  });
+});
+
+describe('Payout disconnect: re-auth uses throwaway client, not session client', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('disconnect route calls signInWithPassword on the throwaway client, not the session client', async () => {
+    const throwawaySignIn = vi.fn().mockResolvedValue({ error: null });
+    const sessionSignIn = vi.fn().mockResolvedValue({ error: null });
+
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: { signInWithPassword: throwawaySignIn },
+      }),
+    }));
+
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: vi.fn().mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({
+            data: { user: { id: 'user-1', email: 'user@test.com' } },
+          }),
+          signInWithPassword: sessionSignIn,
+        },
+        from: vi.fn().mockImplementation(() => mockSupabaseChain({
+          single: vi.fn().mockResolvedValue({
+            data: { id: 'biz-1', name: 'Test Biz' },
+            error: null,
+          }),
+        })),
+      }),
+    }));
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        from: vi.fn().mockImplementation(() => mockSupabaseChain()),
+      }),
+    }));
+
+    vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue({ success: true }) }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
+
+    const mod = await import('@/app/api/payouts/disconnect/route');
+    const req = makePostRequest('/api/payouts/disconnect', {
+      business_id: 'biz-1',
+      password: 'correct-pass',
+    });
+
+    await mod.POST(req);
+
+    // The throwaway client's signInWithPassword must be called
+    expect(throwawaySignIn).toHaveBeenCalledWith({
+      email: 'user@test.com',
+      password: 'correct-pass',
+    });
+
+    // The session client's signInWithPassword must NOT be called
+    expect(sessionSignIn).not.toHaveBeenCalled();
   });
 });

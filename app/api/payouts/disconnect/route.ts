@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
@@ -27,7 +28,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'User email not found' }, { status: 400 });
   }
 
-  const { error: authError } = await supabase.auth.signInWithPassword({
+  // Verify password with a throwaway client so the session cookies are not rotated
+  const authCheck = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  );
+  const { error: authError } = await authCheck.auth.signInWithPassword({
     email: user.email,
     password,
   });
