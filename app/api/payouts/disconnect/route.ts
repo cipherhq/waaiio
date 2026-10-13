@@ -57,28 +57,14 @@ export async function POST(request: NextRequest) {
   const service = createServiceClient();
 
   try {
-    // Deactivate payout account (service client)
-    const { error: deactivateError } = await service
-      .from('payout_accounts')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('business_id', business_id)
-      .eq('is_active', true);
+    // Atomic disconnect: deactivate account + reset payout_mode in one transaction
+    const { error: rpcError } = await service.rpc('disconnect_payout_account', {
+      p_business_id: business_id,
+    });
 
-    if (deactivateError) {
-      logger.error('Deactivate payout account error:', deactivateError);
-      return NextResponse.json({ error: 'Failed to deactivate payout account' }, { status: 500 });
-    }
-
-    // Reset business payout mode (service client)
-    const { error: modeError } = await service
-      .from('businesses')
-      .update({ payout_mode: 'platform_managed' })
-      .eq('id', business_id);
-
-    if (modeError) {
-      logger.error('Reset payout mode error:', modeError);
-      // Account already deactivated — report partial failure
-      return NextResponse.json({ error: 'Account deactivated but failed to reset payout mode' }, { status: 500 });
+    if (rpcError) {
+      logger.error('disconnect_payout_account RPC error:', rpcError);
+      return NextResponse.json({ error: 'Failed to disconnect payout account' }, { status: 500 });
     }
 
     // Send notification email

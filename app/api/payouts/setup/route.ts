@@ -162,80 +162,36 @@ export async function POST(request: NextRequest) {
       // No key in direct_split: subaccountCode stays null
     }
 
-    // Check for existing active account (for notification wording)
-    const { data: existingAccount } = await service
-      .from('payout_accounts')
-      .select('id')
-      .eq('business_id', business_id)
-      .eq('is_active', true)
-      .maybeSingle();
-
     // Use provider-returned name when available, client-sent name as fallback
     const storedAccountName = verifiedAccountName || account_name || account_number;
 
-    // Insert new payout account first (service client).
-    // We insert with is_active = false, then atomically swap: deactivate old, activate new.
-    // This ensures the business is never left without an active account if insert fails.
-    const { data: payout, error: insertError } = await service
-      .from('payout_accounts')
-      .insert({
-        business_id,
-        gateway,
-        subaccount_code: subaccountCode,
-        bank_code,
-        bank_name: bank_name || '',
-        account_number,
-        account_name: storedAccountName,
-        platform_percentage: 2.5,
-        is_active: false, // inserted inactive; activated below after old is deactivated
-        verified_at: verifiedAt,
-      })
-      .select('id')
-      .single();
+    // Atomic swap: deactivate old account + insert new one in a single transaction
+    const { data: newId, error: rpcError } = await service.rpc('swap_payout_account', {
+      p_business_id: business_id,
+      p_gateway: gateway,
+      p_bank_code: bank_code,
+      p_bank_name: bank_name || '',
+      p_account_number: account_number,
+      p_account_name: storedAccountName,
+      p_subaccount_code: subaccountCode,
+      p_verified_at: verifiedAt,
+    });
 
-    if (insertError) {
-      logger.error('Insert payout account error:', insertError);
+    if (rpcError || !newId) {
+      logger.error('swap_payout_account RPC error:', rpcError || 'no id returned');
       return NextResponse.json({ error: 'Failed to save payout account' }, { status: 500 });
     }
 
-    // Deactivate any existing payout accounts (service client bypasses RLS)
-    if (existingAccount) {
-      const { error: deactivateError } = await service
-        .from('payout_accounts')
-        .update({ is_active: false, updated_at: new Date().toISOString() })
-        .eq('business_id', business_id)
-        .eq('is_active', true);
-
-      if (deactivateError) {
-        logger.error('Deactivate payout account error:', deactivateError);
-        // Clean up the newly inserted (inactive) record
-        await service.from('payout_accounts').delete().eq('id', payout.id);
-        return NextResponse.json({ error: 'Failed to update payout account' }, { status: 500 });
-      }
-    }
-
-    // Activate the new account
-    const { error: activateError } = await service
-      .from('payout_accounts')
-      .update({ is_active: true })
-      .eq('id', payout.id);
-
-    if (activateError) {
-      logger.error('Activate payout account error:', activateError);
-      return NextResponse.json({ error: 'Failed to activate payout account' }, { status: 500 });
-    }
-
     // Send notification email
-    const action = existingAccount ? 'changed' : 'connected';
     sendEmail({
       to: user.email!,
-      subject: `Payout account ${action} — ${biz.name}`,
-      html: `<p>The payout account for <strong>${biz.name}</strong> has been ${action}.</p><p>If this wasn't you, contact support immediately.</p>`,
+      subject: `Payout account updated — ${biz.name}`,
+      html: `<p>The payout account for <strong>${biz.name}</strong> has been updated.</p><p>If this wasn't you, contact support immediately.</p>`,
     }).catch(e => logger.error('Failed to send payout notification:', e));
 
     return NextResponse.json({
       success: true,
-      payout_account_id: payout.id,
+      payout_account_id: newId,
       verified: !!verifiedAt,
       account_name: storedAccountName,
     });
