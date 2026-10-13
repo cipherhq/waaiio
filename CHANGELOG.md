@@ -9,7 +9,7 @@ If something breaks, check this log to find what changed and when.
 - `admin/src/pages/Payouts.tsx`: Added "Needs Review" tab showing `status='held'` payouts with count badge. Each held payout displays its flags (type, message, severity). Approve/Reject actions available on review tab with same step-up flow as pending tab.
 - `admin/src/pages/Payouts.tsx`: `formatDate()` rewritten to parse YYYY-MM-DD strings directly without `new Date()` constructor, preventing timezone-induced day shifts. "2026-10-05" renders as "5 Oct 2026" in every browser timezone.
 - `admin/src/pages/Payouts.tsx`: Added error banner with retry button when `/api/admin/payouts` returns non-OK, instead of silently showing "No payouts found".
-- `app/api/admin/payouts/[id]/approve/route.ts`: When `payout_account_id` is null, auto-links the business's single active+verified payout account (conditional update where `payout_account_id IS NULL`). Returns 400 only if zero or multiple candidates exist.
+- `app/api/admin/payouts/[id]/approve/route.ts`: When `payout_account_id` is null, resolves the business's single active+verified payout account read-only before step-up. All existing account checks (ownership, active, verified, gateway) run against the candidate. After step-up succeeds, writes the link with conditional update (`WHERE payout_account_id IS NULL`) and `.select('id')` requiring exactly 1 row. If 0 rows, re-reads: proceeds if same candidate was linked concurrently, returns 409 if a different account was linked. No DB writes occur when step-up fails.
 
 ### What it affects / could break
 - Admin payouts page only — pending tab unchanged.

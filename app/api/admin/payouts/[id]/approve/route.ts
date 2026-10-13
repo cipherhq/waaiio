@@ -92,7 +92,8 @@ export async function POST(
     }, { status: 400 });
   }
 
-  // ── Auto-link payout account if missing ──
+  // ── Resolve effective payout account (read-only before step-up) ──
+  let candidateAccountId: string | null = null;
   if (!payout.payout_account_id) {
     const { data: candidates } = await serviceClient
       .from('payout_accounts')
@@ -107,27 +108,17 @@ export async function POST(
       }, { status: 400 });
     }
 
-    const { error: linkError } = await serviceClient
-      .from('business_payouts')
-      .update({ payout_account_id: candidates[0].id, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .is('payout_account_id', null);
-
-    if (linkError) {
-      return NextResponse.json({
-        error: 'Failed to link payout account.',
-      }, { status: 500 });
-    }
-
-    payout.payout_account_id = candidates[0].id;
+    candidateAccountId = candidates[0].id;
   }
 
-  // ── Payout account verification ──
+  const effectiveAccountId = payout.payout_account_id || candidateAccountId;
+
+  // ── Payout account verification (against effective account) ──
 
   const { data: payoutAcct } = await serviceClient
     .from('payout_accounts')
     .select('id, business_id, is_active, verified_at, gateway')
-    .eq('id', payout.payout_account_id)
+    .eq('id', effectiveAccountId!)
     .maybeSingle();
 
   if (!payoutAcct) {
@@ -215,7 +206,7 @@ export async function POST(
     const { data: payoutAccount } = await serviceClient
       .from('payout_accounts')
       .select('bank_code, account_number, account_name')
-      .eq('id', payout.payout_account_id)
+      .eq('id', effectiveAccountId!)
       .single();
 
     if (!payoutAccount?.bank_code || !payoutAccount?.account_number) {
@@ -229,7 +220,7 @@ export async function POST(
     const { data: payoutAccount } = await serviceClient
       .from('payout_accounts')
       .select('stripe_account_id')
-      .eq('id', payout.payout_account_id)
+      .eq('id', effectiveAccountId!)
       .single();
 
     if (!payoutAccount?.stripe_account_id) {
@@ -246,6 +237,35 @@ export async function POST(
   } catch (err) {
     const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
+  }
+
+  // ── Auto-link write (after step-up, race-safe) ──
+  if (candidateAccountId) {
+    const { data: linkResult } = await serviceClient
+      .from('business_payouts')
+      .update({ payout_account_id: candidateAccountId, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .is('payout_account_id', null)
+      .select('id');
+
+    if (!linkResult || linkResult.length !== 1) {
+      // Another request may have linked a different account — check
+      const { data: reread } = await serviceClient
+        .from('business_payouts')
+        .select('payout_account_id')
+        .eq('id', id)
+        .single();
+
+      if (reread?.payout_account_id === candidateAccountId) {
+        // Same candidate was linked by a concurrent request — safe to proceed
+      } else {
+        return NextResponse.json({
+          error: 'Cannot approve: payout account changed by a concurrent request.',
+        }, { status: 409 });
+      }
+    }
+
+    payout.payout_account_id = candidateAccountId;
   }
 
   // ═══════════════════════════════════════════════════════════
