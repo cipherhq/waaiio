@@ -4201,13 +4201,13 @@ jobs:
           PGPORT: 5432
           PGUSER: test_runner
           PGPASSWORD: test_only_ephemeral
-          PGDATABASE: security_acl_test
         run: |
-          # Snapshot the provisioned database as a template BEFORE any test
-          # step can mutate it. Each .pg.test.ts file gets its own clone.
-          psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'security_acl_test' AND pid <> pg_backend_pid();" || true
-          psql -d postgres -c "ALTER DATABASE security_acl_test WITH is_template = true;"
-          echo "✅ pg_template_clean ready (security_acl_test marked as template)"
+          # Clone security_acl_test into a separate template BEFORE any test
+          # step can mutate the original. Earlier steps (e.g. the ACL tests)
+          # may change security_acl_test, so we never clone from it later.
+          psql -d postgres -c "CREATE DATABASE pg_template_clean TEMPLATE security_acl_test;"
+          psql -d postgres -c "ALTER DATABASE pg_template_clean WITH is_template = true;"
+          echo "✅ pg_template_clean created from security_acl_test and marked as template"
 
       - name: Run .pg.test.ts files in parallel with isolated databases
         env:
@@ -4218,7 +4218,7 @@ jobs:
           REQUIRE_PG_TESTS: 'true'
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           # Discover files
           mapfile -t PG_FILES < <(find lib -name '*.pg.test.ts' -type f | sort)
@@ -4231,21 +4231,22 @@ jobs:
             exit 1
           fi
 
-          # Create one database per file (cloned from the template).
+          # Create one database per file (cloned from pg_template_clean).
           # Done sequentially because CREATE DATABASE ... TEMPLATE requires
           # no other connections to the template.
           declare -A DB_MAP
           for i in "${!PG_FILES[@]}"; do
             DB_NAME="pg_test_${i}"
             psql -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME};"
-            psql -d postgres -c "CREATE DATABASE ${DB_NAME} TEMPLATE security_acl_test;"
+            psql -d postgres -c "CREATE DATABASE ${DB_NAME} TEMPLATE pg_template_clean;"
             DB_MAP["${PG_FILES[$i]}"]="$DB_NAME"
-            echo "  ✅ ${DB_NAME} ← ${PG_FILES[$i]}"
+            echo "  ✅ ${DB_NAME} (from pg_template_clean) ← ${PG_FILES[$i]}"
           done
 
           # Run each file in parallel, capped at 4 concurrent jobs
           mkdir -p /tmp/pg-test-logs
           PIDS=()
+          FAILED=0
           for file in "${PG_FILES[@]}"; do
             db="${DB_MAP[$file]}"
             slug=$(echo "$file" | sed 's|[/.]|_|g')
@@ -4257,18 +4258,17 @@ jobs:
             PIDS+=($!)
             # Cap at 4 concurrent
             if [ "${#PIDS[@]}" -ge 4 ]; then
-              wait "${PIDS[0]}"
+              wait "${PIDS[0]}" || FAILED=1
               PIDS=("${PIDS[@]:1}")
             fi
           done
 
           # Wait for all remaining
-          FAILED=0
           for pid in "${PIDS[@]}"; do
             wait "$pid" || FAILED=1
           done
 
-          # Print all logs
+          # Always print all logs before deciding to exit
           echo ""
           echo "═══════════════════════════════════════════════════"
           echo "Combined .pg.test.ts results"
@@ -4287,21 +4287,24 @@ jobs:
             exit 1
           fi
 
-      - name: Verify zero skipped .pg.test.ts tests
+      - name: Verify zero skipped .pg.test.ts tests (per-file)
         run: |
-          COMBINED=$(cat /tmp/pg-test-logs/*.txt)
-          if echo "$COMBINED" | grep -qE "[1-9][0-9]* skipped"; then
-            echo "❌ PG integration tests were skipped"
-            exit 1
-          fi
-          if ! echo "$COMBINED" | grep -q "passed"; then
-            echo "❌ No .pg.test.ts tests passed — something is wrong"
-            exit 1
-          fi
-          # Show per-file summary
+          OVERALL=0
           for log in /tmp/pg-test-logs/*.txt; do
-            file=$(basename "$log" .txt | sed 's|_|/|g; s|/ts$|.ts|')
-            summary=$(grep -E "Tests |Test Files" "$log" | tail -2 || true)
-            echo "  $file: $summary"
+            file=$(basename "$log" .txt)
+            if grep -qE "[1-9][0-9]* skipped" "$log"; then
+              echo "❌ $file: tests were skipped"
+              OVERALL=1
+            fi
+            if ! grep -q "passed" "$log"; then
+              echo "❌ $file: no tests passed"
+              OVERALL=1
+            fi
+            # Print per-file summary
+            summary=$(grep -E "Tests |Test Files" "$log" | tail -2 | tr '\n' ' ' || true)
+            echo "  ✔ $file: $summary"
           done
+          if [ "$OVERALL" -ne 0 ]; then
+            exit 1
+          fi
           echo "✅ All .pg.test.ts tests executed (zero skipped, per-database isolation)"
