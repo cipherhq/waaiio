@@ -187,16 +187,20 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
 
   it('anon gets permission denied calling swap_payout_account', () => {
     const r = sql(`
+      BEGIN;
       SET LOCAL ROLE anon;
       SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '0000000001', 'Name', NULL, NULL);
+      COMMIT;
     `);
     expect(r).toMatch(/ERROR|permission denied/i);
   });
 
   it('authenticated gets permission denied calling swap_payout_account', () => {
     const r = sql(`
+      BEGIN;
       SET LOCAL ROLE authenticated;
       SELECT swap_payout_account('${BIZ_ID}', 'paystack', '058', 'Bank', '0000000001', 'Name', NULL, NULL);
+      COMMIT;
     `);
     expect(r).toMatch(/ERROR|permission denied/i);
   });
