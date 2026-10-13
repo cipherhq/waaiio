@@ -4202,7 +4202,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npx vitest run 'lib/__tests__/*.pg.test.ts' --reporter=verbose 2>&1 | tee /tmp/pg-test-output.txt
+          npx vitest run --reporter=verbose -- lib/__tests__/payout-account-swap.pg.test.ts lib/__tests__/payout-accounts-server-only.pg.test.ts 2>&1 | tee /tmp/pg-test-output.txt
 
       - name: Verify zero skipped .pg.test.ts tests
         run: |

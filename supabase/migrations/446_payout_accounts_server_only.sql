@@ -133,9 +133,7 @@ BEGIN
 END;
 $$;
 
--- Permissions: revoke old signature, grant new
-REVOKE ALL ON FUNCTION public.swap_payout_account(uuid, text, text, text, text, text, text, timestamptz) FROM PUBLIC, anon, authenticated;
-
+-- Permissions: the old 8-arg overload was dropped above; grant new only
 REVOKE ALL ON FUNCTION public.swap_payout_account(uuid, text, text, text, text, text, text, timestamptz, text, text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.swap_payout_account(uuid, text, text, text, text, text, text, timestamptz, text, text, text) TO service_role;
 
