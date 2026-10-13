@@ -4,6 +4,11 @@ import { logger } from '@/lib/logger';
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
 
+/** Paystack test-bank 001 is available only in non-production with a test key. */
+function isTestBankEnabled(): boolean {
+  return process.env.WAAIIO_ENVIRONMENT !== 'production' && paystackSecretKey.startsWith('sk_test_');
+}
+
 // In-memory cache: gateway+country → { banks, fetchedAt }
 const bankCache = new Map<string, { banks: { code: string; name: string }[]; fetchedAt: number }>();
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
@@ -47,6 +52,11 @@ export async function GET(request: NextRequest) {
       }
     } else {
       return NextResponse.json({ banks: [] });
+    }
+
+    // Prepend test bank for NG Paystack in non-production with test key
+    if (gateway === 'paystack' && country === 'NG' && isTestBankEnabled()) {
+      banks = [{ code: '001', name: 'Test Bank (staging only)' }, ...banks];
     }
 
     bankCache.set(cacheKey, { banks, fetchedAt: Date.now() });

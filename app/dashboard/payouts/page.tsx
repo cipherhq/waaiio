@@ -7,6 +7,7 @@ import { type CountryCode, formatCurrency } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import Link from 'next/link';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { t } from '@/lib/dashboard-i18n';
 
 interface Bank {
   code: string;
@@ -1042,7 +1043,7 @@ export default function PayoutsPage() {
                   placeholder="Enter your account password"
                   className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                 />
-                <p className="mt-1 text-xs text-gray-400">Required to verify your identity before connecting a payout account</p>
+                <p className="mt-1 text-xs text-gray-400">{t('payouts.setup_password_hint')}</p>
               </div>
             )}
 
