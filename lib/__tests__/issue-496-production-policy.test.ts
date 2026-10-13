@@ -223,6 +223,7 @@ describe('#496 canonical public-directory eligibility', () => {
       ['eq', 'status', 'active'],
       ['not', 'bot_code', 'is', null],
       ['or', 'discovery_enabled.is.null,discovery_enabled.eq.true'],
+      ['eq', 'messaging_suspended', false],
     ]);
   });
 });
