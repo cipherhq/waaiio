@@ -52,6 +52,7 @@ import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults } from '@/lib/marketplace/search';
+import { loadBusinessOverrides, loadPlatformOverrides, getTranslation, fillTranslation, type TranslationOverrides } from '@/lib/bot/translations';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -1359,6 +1360,7 @@ export class BotService {
       // against this business's live entitlement and the production certification
       // boundary. It must never participate in tenant resolution above.
       let rememberedLanguageOffer: string | null = null;
+      let hasRememberedLanguage = false;
       if (business && profile?.id) {
         const {
           readPreferredResponseLanguage,
@@ -1368,6 +1370,7 @@ export class BotService {
         // the runtime Supabase client implements that surface.
         const rememberedLanguage = await readPreferredResponseLanguage(this.supabase as never, profile.id);
         if (rememberedLanguage) {
+          hasRememberedLanguage = true;
           const configuredLanguages = await loadBusinessLanguages(this.supabase, business.id);
           const rememberedEntitlement = getEffectiveLanguages(
             business.subscription_tier,
@@ -1701,6 +1704,25 @@ export class BotService {
       // and can continue eligibility YES/NO or start fresh.
       if (promoHandledFirstMessage) {
         return;
+      }
+
+      // First-contact language picker: if no saved language preference and
+      // business offers multiple certified languages, show a picker instead
+      // of proceeding with the default English greeting.
+      if (business && !hasRememberedLanguage && !canonicalActivatedLanguage) {
+        const pickerConfiguredLangs = await loadBusinessLanguages(this.supabase, business.id);
+        const pickerEntitlement = getEffectiveLanguages(
+          business.subscription_tier,
+          pickerConfiguredLangs,
+        );
+        const { CERTIFIED_LANGUAGES: pickerCertLangs } = await import('./language-policy');
+        const pickerAllowed = pickerEntitlement.allowedLanguages.filter(
+          (code: string) => pickerCertLangs.includes(code),
+        );
+        if (pickerAllowed.length > 1) {
+          await this.sendLanguagePicker(from, business, pickerAllowed, this.messageSender);
+          return; // Wait for picker selection before proceeding
+        }
       }
 
       if (business && waConfig && tierInfo) {
@@ -2166,6 +2188,57 @@ export class BotService {
           .update({ session_data: updatedData })
           .eq('id', session.id);
         await this.sendText(from, 'No problem! I\'ll keep responding in English.');
+      }
+      return;
+    }
+
+    // ── Language picker selection (first-contact picker) ──
+    if (text.startsWith('lang_pick_')) {
+      const langCode = text.replace('lang_pick_', '');
+      const { isSupportedLanguage } = await import('@/lib/bot/languages');
+
+      if (!isSupportedLanguage(langCode)) {
+        await this.sendText(from, 'Invalid selection. Send *Hi* to start over.');
+        return;
+      }
+
+      // Validate language is still allowed for this business
+      const { CERTIFIED_LANGUAGES: pickCertLangs } = await import('@/lib/bot/languages');
+      if (!pickCertLangs.includes(langCode)) {
+        await this.sendText(from, 'This language is not yet available. Send *Hi* to start over.');
+        return;
+      }
+
+      // Set session language
+      if (session) {
+        session.session_data._detected_language = langCode;
+        await this.supabase.from('bot_sessions')
+          .update({ session_data: session.session_data })
+          .eq('id', session.id);
+      }
+
+      // Save to profile for future sessions
+      if (session?.user_id) {
+        const { writePreferredResponseLanguage } = await import('@/lib/bot/language-preference');
+        await writePreferredResponseLanguage(this.supabase as never, session.user_id, langCode);
+      }
+
+      // Send confirmation in the chosen language
+      const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+      const langName = getLanguageName(langCode);
+      const confirmMsg = fillFlowCopy(langCode, 'lang.picker_confirmed', { langName });
+      await this.sendText(from, confirmMsg);
+
+      // Now proceed to greeting/menu in the chosen language
+      if (session && session.business_id) {
+        const { data: pickBiz } = await this.supabase
+          .from('businesses')
+          .select('*')
+          .eq('id', session.business_id)
+          .single();
+        if (pickBiz) {
+          await this.flowExecutor.execute(from, '', session, pickBiz);
+        }
       }
       return;
     }
@@ -3327,6 +3400,52 @@ export class BotService {
 
   private async deactivateSession(sessionId: string): Promise<void> {
     return _deactivateSession(this.supabase, sessionId);
+  }
+
+  /**
+   * Send the first-contact language picker as a WhatsApp interactive list.
+   * Only shown when: no active session, no saved language preference,
+   * and the business offers more than one certified language.
+   */
+  private async sendLanguagePicker(
+    from: string,
+    business: { id: string; name: string },
+    allowedLanguages: string[],
+    sender: MessageSender,
+  ): Promise<void> {
+    // Import language catalog for native names
+    const { LANGUAGE_CATALOG } = await import('@/lib/bot/languages');
+
+    const catalog = LANGUAGE_CATALOG as ReadonlyArray<{ code: string; displayName: string; nativeName: string; certified: boolean }>;
+    const rows = allowedLanguages
+      .filter(code => code !== 'en') // English is the default, show others
+      .map(code => {
+        const entry = catalog.find(l => l.code === code);
+        return {
+          title: entry?.nativeName || entry?.displayName || code,
+          description: entry?.displayName || '',
+          postbackText: `lang_pick_${code}`,
+        };
+      });
+
+    // Always include English as the last option
+    rows.push({
+      title: 'English',
+      description: '',
+      postbackText: 'lang_pick_en',
+    });
+
+    if (rows.length < 2) return; // No point showing a single-option picker
+
+    const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+
+    await sender.sendList({
+      to: from,
+      title: business.name,
+      body: getFlowCopy('en', 'lang.picker_body'),
+      buttonLabel: getFlowCopy('en', 'lang.picker_button'),
+      items: rows,
+    });
   }
 
   private async sendText(to: string, text: string): Promise<void> {
