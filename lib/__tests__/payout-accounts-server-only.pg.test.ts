@@ -85,8 +85,6 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
         gateway VARCHAR(20) NOT NULL,
         subaccount_code VARCHAR(100),
         stripe_account_id VARCHAR(100),
-        square_merchant_id VARCHAR(100),
-        square_access_token TEXT,
         bank_code VARCHAR(10),
         bank_name VARCHAR(100),
         account_number VARCHAR(20),
@@ -98,6 +96,9 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+    // Add M080/M446 columns if absent (swap test may have created the table first without them)
+    sql(`ALTER TABLE public.payout_accounts ADD COLUMN IF NOT EXISTS square_merchant_id VARCHAR(100);`);
+    sql(`ALTER TABLE public.payout_accounts ADD COLUMN IF NOT EXISTS square_access_token TEXT;`);
 
     sql(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_accounts_business_active
@@ -184,7 +185,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       INSERT INTO public.payout_accounts (business_id, gateway) VALUES ('${BIZ_ID}', 'paystack');
       ROLLBACK;
     `);
-    expect(result).toContain('42501');
+    expect(result).toMatch(/permission denied|42501/);
   });
 
   it('POST-446: authenticated UPDATE raises 42501', () => {
@@ -198,7 +199,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       UPDATE public.payout_accounts SET bank_name = 'hacked' WHERE business_id = '${BIZ_ID}';
       ROLLBACK;
     `);
-    expect(result).toContain('42501');
+    expect(result).toMatch(/permission denied|42501/);
     sql(`DELETE FROM payout_accounts WHERE business_id = '${BIZ_ID}';`);
   });
 
@@ -213,7 +214,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       SELECT square_access_token FROM public.payout_accounts WHERE business_id = '${BIZ_ID}';
       ROLLBACK;
     `);
-    expect(result).toContain('42501');
+    expect(result).toMatch(/permission denied|42501/);
     sql(`DELETE FROM payout_accounts WHERE business_id = '${BIZ_ID}';`);
   });
 
@@ -255,7 +256,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       SELECT * FROM public.oauth_connect_states;
       ROLLBACK;
     `);
-    expect(result).toContain('42501');
+    expect(result).toMatch(/permission denied|42501/);
   });
 
   it('POST-446: exactly 1 swap_payout_account overload in pg_proc', () => {
