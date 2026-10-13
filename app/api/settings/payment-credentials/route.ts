@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { business_id, gateway, secret_key, public_key } = body;
+  const { business_id, gateway, secret_key, public_key, webhook_secret_hash } = body;
 
   if (!business_id || !gateway || !secret_key) {
     return NextResponse.json({ error: 'Missing required fields: business_id, gateway, secret_key' }, { status: 400 });
@@ -30,6 +30,17 @@ export async function POST(request: NextRequest) {
 
   if (!['paystack', 'flutterwave', 'stripe'].includes(gateway)) {
     return NextResponse.json({ error: 'Invalid gateway. Must be paystack, flutterwave, or stripe.' }, { status: 400 });
+  }
+
+  // Production: reject test-mode credentials
+  const isProduction = process.env.WAAIIO_ENVIRONMENT === 'production';
+  if (isProduction) {
+    if (secret_key.startsWith('sk_test_') || secret_key.startsWith('FLWSECK_TEST')) {
+      return NextResponse.json({ error: 'Test-mode credentials are not allowed in production' }, { status: 400 });
+    }
+    if (public_key && (public_key.startsWith('pk_test_') || public_key.startsWith('FLWPUBK_TEST'))) {
+      return NextResponse.json({ error: 'Test-mode credentials are not allowed in production' }, { status: 400 });
+    }
   }
 
   // Verify user owns the business
@@ -67,6 +78,13 @@ export async function POST(request: NextRequest) {
       });
       if (!res.ok) {
         return NextResponse.json({ error: 'Invalid Stripe secret key. Could not verify balance.' }, { status: 400 });
+      }
+      // Production: verify Stripe key is in live mode
+      if (isProduction) {
+        const balanceData = await res.json();
+        if (balanceData.livemode === false) {
+          return NextResponse.json({ error: 'Test-mode Stripe keys are not allowed in production' }, { status: 400 });
+        }
       }
     }
 
@@ -155,6 +173,7 @@ export async function POST(request: NextRequest) {
         gateway,
         secret_key: encryptToken(secret_key),
         public_key: public_key || null,
+        webhook_secret_hash: webhook_secret_hash ? encryptToken(webhook_secret_hash) : null,
         platform_subaccount_code: platformSubaccountCode,
         is_active: true,
         verified_at: new Date().toISOString(),

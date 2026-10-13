@@ -12,6 +12,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
+import { getPayableFeeRows } from '@/lib/payments/payable-fees';
 
 /**
  * GET /api/cron/auto-payout
@@ -103,7 +104,7 @@ export async function GET(request: NextRequest) {
       // Platform fees for the period across all businesses
       supabase
         .from('platform_fees')
-        .select('business_id, transaction_amount, fee_total, gateway_fee, waived')
+        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
         .in('business_id', bizIds)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -159,10 +160,12 @@ export async function GET(request: NextRequest) {
       if (alreadyHasPayout.has(biz.id)) continue;
 
       // Calculate gross and fee totals from pre-fetched batch data
+      // Exclude direct transfers — Waaiio never holds those funds
       const fees = feesByBiz.get(biz.id) ?? [];
-      const gross = fees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
-      const totalFees = fees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-      const totalGatewayFees = fees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
+      const payable = getPayableFeeRows(fees);
+      const gross = payable.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
+      const totalFees = payable.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+      const totalGatewayFees = payable.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
       let netAmount = Math.max(0, gross - totalFees - totalGatewayFees);
 
       if (netAmount <= 0) continue;

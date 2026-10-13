@@ -42,6 +42,23 @@ export async function processSuccessfulPayment(
 ): Promise<FinalizationResult> {
   const criticalErrors: string[] = [];
 
+  // Derive payment routing for is_direct_transfer on platform_fees rows.
+  // V1 payments: from fee_basis. Legacy: from payment metadata.
+  let paymentRouting: 'platform' | 'byo' | 'connect' | undefined;
+  if (payment.fee_basis) {
+    const routing = (payment.fee_basis as { payment_routing?: string }).payment_routing;
+    if (routing === 'byo' || routing === 'connect' || routing === 'platform') {
+      paymentRouting = routing;
+    }
+  }
+  if (!paymentRouting && payment.metadata) {
+    const meta = payment.metadata as Record<string, unknown>;
+    const origin = meta.payment_origin as string | undefined;
+    if (origin === 'byo' || origin === 'connect') paymentRouting = origin;
+    else if (meta.byo === true) paymentRouting = 'byo';
+    else if (meta.connect === true) paymentRouting = 'connect';
+  }
+
   // 1. Confirm booking (only if still pending — idempotent)
   if (payment.booking_id) {
     // #385: Persist the first successfully-finalized payment as the booking's
@@ -125,6 +142,7 @@ export async function processSuccessfulPayment(
         paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
+        paymentRouting,
         feePolicyVersion: payment.fee_policy_version,
         configVersionId: payment.config_version_id,
         transactionCategory: payment.transaction_category,
@@ -200,6 +218,7 @@ export async function processSuccessfulPayment(
       await processInvoicePayment(supabase, payment.invoice_id, payment.id, payment.amount, payment.gateway_fee, {
         feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
         transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
+        paymentRouting,
       });
     } catch (err) {
       criticalErrors.push('invoice_payment_failed');
@@ -210,7 +229,7 @@ export async function processSuccessfulPayment(
   // 3. Process campaign donation
   if (payment.campaign_id) {
     try {
-      await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee);
+      await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee, paymentRouting);
     } catch (err) {
       criticalErrors.push('campaign_donation_failed');
       logger.withContext({ op: 'process-success.campaign', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Campaign donation error');
@@ -291,6 +310,7 @@ export async function processSuccessfulPayment(
         try {
           await recordPlatformFee(supabase, {
             orderId, paymentId: payment.id, paymentAmount: payment.amount, gatewayFee: payment.gateway_fee,
+            paymentRouting,
             feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
             transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
           });
@@ -451,6 +471,7 @@ export async function processSuccessfulPayment(
           paymentId: payment.id,
           paymentAmount: payment.amount,
           gatewayFee: payment.gateway_fee,
+          paymentRouting,
           feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
           transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
         });
@@ -540,6 +561,9 @@ export async function recordPlatformFee(
     paymentId?: string;
     paymentAmount: number;
     gatewayFee?: number;
+    // Payment routing — determines is_direct_transfer on the platform_fees row.
+    // BYO/connect payments are direct transfers (gross never in payout pool).
+    paymentRouting?: 'platform' | 'byo' | 'connect';
     // #264: v1 fee-policy fields (passed from authority.ts for pinned payments)
     feePolicyVersion?: number;
     configVersionId?: string;
@@ -663,6 +687,8 @@ export async function recordPlatformFee(
       }
     }
 
+    const v1IsDirectTransfer = feeBasis.payment_routing === 'byo' || feeBasis.payment_routing === 'connect';
+
     const { error: feeErr } = await supabase.from('platform_fees').insert({
       business_id: businessId,
       payment_id: opts.paymentId || null,
@@ -679,6 +705,7 @@ export async function recordPlatformFee(
       tier: feeBasis.tier,
       reseller_id: resellerId,
       reseller_commission: resellerCommission,
+      is_direct_transfer: v1IsDirectTransfer,
     });
     if (feeErr) {
       const isDuplicate = feeErr.message?.includes('duplicate') || feeErr.message?.includes('unique');
@@ -728,6 +755,8 @@ export async function recordPlatformFee(
     }
   }
 
+  const legacyIsDirectTransfer = opts.paymentRouting === 'byo' || opts.paymentRouting === 'connect';
+
   // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race)
   const { error: feeErr } = await supabase.from('platform_fees').insert({
     business_id: businessId,
@@ -745,6 +774,7 @@ export async function recordPlatformFee(
     tier,
     reseller_id: resellerId,
     reseller_commission: resellerCommission,
+    is_direct_transfer: legacyIsDirectTransfer,
   });
   if (feeErr) {
     const isDuplicate = feeErr.message?.includes('duplicate') || feeErr.message?.includes('unique');
@@ -777,7 +807,7 @@ export async function processInvoicePayment(
   paymentId: string,
   paymentAmount: number,
   gatewayFee?: number,
-  feePolicy?: { feePolicyVersion?: number; configVersionId?: string; transactionCategory?: string; feeBasis?: Record<string, unknown> },
+  feePolicy?: { feePolicyVersion?: number; configVersionId?: string; transactionCategory?: string; feeBasis?: Record<string, unknown>; paymentRouting?: 'platform' | 'byo' | 'connect' },
 ): Promise<void> {
   // RPC loads and validates payment + invoice from DB internally
   const { data: result, error: rpcError } = await supabase.rpc('apply_invoice_payment', {
@@ -808,6 +838,7 @@ export async function processInvoicePayment(
         paymentId,
         paymentAmount: authoritativeAmount,
         gatewayFee,
+        paymentRouting: feePolicy?.paymentRouting,
         feePolicyVersion: feePolicy?.feePolicyVersion, configVersionId: feePolicy?.configVersionId,
         transactionCategory: feePolicy?.transactionCategory, feeBasis: feePolicy?.feeBasis,
       });
@@ -836,6 +867,7 @@ export async function processCampaignDonation(
   campaignId: string,
   amount: number,
   gatewayFee?: number,
+  paymentRouting?: 'platform' | 'byo' | 'connect',
 ): Promise<void> {
   const { data: result, error: rpcError } = await supabase.rpc('apply_campaign_donation', {
     p_campaign_id: campaignId,
@@ -870,6 +902,7 @@ export async function processCampaignDonation(
           businessId: campaign.business_id,
           paymentAmount: authoritativeAmount,
           gatewayFee,
+          paymentRouting,
         });
       }
     } else {

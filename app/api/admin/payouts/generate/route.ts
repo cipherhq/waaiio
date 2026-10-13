@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logAdminAudit } from '@/lib/admin-audit';
+import { getPayableFeeRows } from '@/lib/payments/payable-fees';
 
 interface Flag {
   type: string;
@@ -106,7 +107,7 @@ export async function POST(request: NextRequest) {
 
       // Gross from platform_fees.transaction_amount — only gateway payments (Waaiio holds these funds)
       // Direct transfers are excluded: business already has the money, we only invoice the platform fee
-      const gatewayFees = (fees || []).filter(f => !f.is_direct_transfer);
+      const gatewayFees = getPayableFeeRows(fees || []);
       const gross = gatewayFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       if (gross <= 0) continue;
 
