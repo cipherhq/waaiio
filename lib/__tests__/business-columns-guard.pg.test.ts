@@ -14,12 +14,29 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
-const canRun = dbUrl.length > 0;
 
 function psql(sql: string): string {
   return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
     input: sql, encoding: 'utf-8', timeout: 15000,
   }).trim();
+}
+
+// Require TEST_DATABASE_URL AND the businesses table (with our trigger) to exist.
+// The P0 ACL job sets TEST_DATABASE_URL but only has a minimal schema.
+let canRun = dbUrl.length > 0;
+if (canRun) {
+  try {
+    const triggerExists = psql(`
+      SELECT count(*) FROM pg_trigger t
+      JOIN pg_class c ON t.tgrelid = c.oid
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      WHERE n.nspname = 'public' AND c.relname = 'businesses'
+        AND t.tgname = 'trg_guard_server_managed_columns';
+    `);
+    if (triggerExists !== '1') canRun = false;
+  } catch {
+    canRun = false;
+  }
 }
 
 function psqlNoFail(sql: string): { stdout: string; error: boolean } {
