@@ -19,7 +19,16 @@
  */
 import { CERTIFIED_LANGUAGES, SUPPORTED_LANGUAGES } from '@/lib/bot/languages';
 import type { SupportedLanguage } from '@/lib/bot/languages';
-import { getTranslationOverrides } from '@/lib/bot/translations';
+
+// ── Override resolver (set by translations.ts on the server) ────
+// This avoids importing node:async_hooks into client bundles.
+type OverrideResolver = () => { business: Map<string, string>; platform: Map<string, string> } | null;
+let _overrideResolver: OverrideResolver | null = null;
+
+/** Register the ALS-based override resolver (called once from translations.ts). */
+export function _setOverrideResolver(resolver: OverrideResolver): void {
+  _overrideResolver = resolver;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Locale corpus
@@ -5947,8 +5956,8 @@ export function getFlowCopy(effectiveLang: string | undefined, key: string): str
   const lang = effectiveLang && CERTIFIED_LANGUAGES.includes(effectiveLang) ? effectiveLang : 'en';
   const lookupKey = `${lang}.${key}`;
 
-  // Layers 1+2: check ALS store for business/platform overrides
-  const overrides = getTranslationOverrides();
+  // Layers 1+2: check override resolver for business/platform overrides
+  const overrides = _overrideResolver?.();
   if (overrides) {
     const bizVal = overrides.business.get(lookupKey);
     if (bizVal) return bizVal;

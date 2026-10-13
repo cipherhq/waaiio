@@ -17,6 +17,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { _setOverrideResolver } from '@/lib/bot/flows/flow-localization';
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -28,6 +29,10 @@ export interface TranslationOverrides {
 // ── AsyncLocalStorage store ─────────────────────────────────────
 
 const translationStore = new AsyncLocalStorage<TranslationOverrides>();
+
+// Register the ALS resolver with flow-localization.ts (server-only).
+// This avoids flow-localization.ts importing node:async_hooks.
+_setOverrideResolver(() => translationStore.getStore() ?? null);
 
 /**
  * Read the current request's translation overrides from the ALS store.
