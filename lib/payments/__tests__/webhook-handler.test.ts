@@ -31,7 +31,15 @@ import { processPaystackChargeSuccess, processPaystackChargeFailed } from '../we
 import { createAlert } from '@/lib/alerts/create-alert';
 
 function createMockSupabase(paymentData: Record<string, unknown> | null) {
-  const updateFn = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: null }) });
+  const eqChain = (): Record<string, unknown> => {
+    const c: Record<string, unknown> = {};
+    c.eq = vi.fn().mockReturnValue(c);
+    c.select = vi.fn().mockReturnValue(c);
+    c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+    c.then = (r: (v: unknown) => void) => Promise.resolve({ data: null, error: null }).then(r);
+    return c;
+  };
+  const updateFn = vi.fn().mockReturnValue(eqChain());
   const rpcFn = vi.fn().mockResolvedValue({ data: true, error: null });
   const selectResult = paymentData ? { data: paymentData, error: null } : { data: null, error: { message: 'not found' } };
 

@@ -11,81 +11,123 @@ import { normalizePaystackCardAuthorization, persistPaystackCardAuthorization } 
  * Handles charge.success and charge.failed events for deposit bookings.
  */
 
+/** P1-A: optional scope binds finalization to a verified payment + business. */
+export interface PaymentScope {
+  paymentId: string;
+  businessId: string;
+}
+
+/** P1-C: outcome tells the caller what happened. */
+export type SuccessOutcome = 'finalized' | 'already_finalized' | 'amount_mismatch' | 'incomplete';
+
+/** P1-A: typed error for scoped update failures. */
+export class ScopedUpdateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ScopedUpdateError';
+  }
+}
+
 export async function processPaystackChargeSuccess(
   data: Record<string, unknown>,
   reference: string,
   supabase: SupabaseClient,
-): Promise<void> {
-  const { data: existingPayment } = await supabase
-    .from('payments')
-    .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway, payment_authority_version, finalization_completed_at')
-    .eq('gateway_reference', reference)
-    .single();
-
-  if (!existingPayment) return;
+  scope?: PaymentScope,
+): Promise<SuccessOutcome> {
+  let existingPayment: Record<string, unknown> | null;
+  if (scope) {
+    const { data: p, error } = await supabase
+      .from('payments')
+      .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway, payment_authority_version, finalization_completed_at')
+      .eq('id', scope.paymentId)
+      .eq('business_id', scope.businessId)
+      .single();
+    if (error || !p) throw new ScopedUpdateError(`Payment not found for scope id=${scope.paymentId} business=${scope.businessId}`);
+    existingPayment = p;
+  } else {
+    const { data: p } = await supabase
+      .from('payments')
+      .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway, payment_authority_version, finalization_completed_at')
+      .eq('gateway_reference', reference)
+      .single();
+    if (!p) return 'already_finalized';
+    existingPayment = p;
+  }
 
   const authorization = data.authorization as Record<string, unknown> | undefined;
   const customer = data.customer as Record<string, unknown> | undefined;
   const cardAuthorization = normalizePaystackCardAuthorization(authorization, customer);
 
-  // Authorization enrichment is independent of financial finalization. Do it
-  // first so a late success webhook can repair a missing reusable token while
-  // the already-finalized payment remains financially idempotent.
   if (cardAuthorization) {
     const amount = Number(data.amount) / 100;
     const currency = typeof data.currency === 'string' ? data.currency : '';
-    await persistPaystackCardAuthorization(supabase, existingPayment.id, amount, currency, cardAuthorization);
+    await persistPaystackCardAuthorization(supabase, existingPayment.id as string, amount, currency, cardAuthorization);
   }
 
-  // For new-authority payments: always reconcile (Stage 2/3 may be incomplete even if provider-paid)
-  // For legacy payments: skip if already success (preserve existing behavior)
-  if (existingPayment.status === 'success' && existingPayment.payment_authority_version !== 1) return;
-  if (existingPayment.status === 'success' && existingPayment.finalization_completed_at) {
-    // Fully finalized — safe to skip (confirmation has its own lifecycle)
-    return;
-  }
+  if (existingPayment.status === 'success' && existingPayment.payment_authority_version !== 1) return 'already_finalized';
+  if (existingPayment.status === 'success' && existingPayment.finalization_completed_at) return 'already_finalized';
 
-  // Extract Paystack processing fee (in kobo) and convert to naira
   const paystackFeeKobo = (data.fees as number) || 0;
   const gatewayFee = Math.round(paystackFeeKobo / 100);
 
   const webhookAmountKobo = data.amount as number;
-  const expectedKobo = Math.round(existingPayment.amount * 100);
+  const expectedKobo = Math.round((existingPayment.amount as number) * 100);
 
   if (webhookAmountKobo !== expectedKobo) {
     Sentry.captureMessage('Payment amount mismatch', { level: 'warning', extra: { reference, webhookAmountKobo, expectedKobo } });
-    await supabase
-      .from('payments')
-      .update({ status: 'failed', gateway_status: 'amount_mismatch' })
-      .eq('gateway_reference', reference);
-    return;
+    if (scope) {
+      const { data: updated, error } = await supabase
+        .from('payments')
+        .update({ status: 'failed', gateway_status: 'amount_mismatch' })
+        .eq('id', scope.paymentId)
+        .eq('business_id', scope.businessId)
+        .select('id');
+      if (error || !updated?.length) throw new ScopedUpdateError('amount_mismatch scoped update failed');
+    } else {
+      await supabase
+        .from('payments')
+        .update({ status: 'failed', gateway_status: 'amount_mismatch' })
+        .eq('gateway_reference', reference);
+    }
+    return 'amount_mismatch';
   }
 
-  // Persist non-authoritative provider metadata (card info, fee) WITHOUT setting status.
-  // Authority owns the pending → success transition (Stage 1).
-  await supabase
-    .from('payments')
-    .update({
-      payment_method: (data.channel as string) || 'card',
-      card_last_four: (authorization?.last4 as string) || null,
-      card_brand: (authorization?.brand as string) || null,
-      gateway_fee: gatewayFee,
-    })
-    .eq('gateway_reference', reference);
+  if (scope) {
+    const { data: updated, error } = await supabase
+      .from('payments')
+      .update({
+        payment_method: (data.channel as string) || 'card',
+        card_last_four: (authorization?.last4 as string) || null,
+        card_brand: (authorization?.brand as string) || null,
+        gateway_fee: gatewayFee,
+      })
+      .eq('id', scope.paymentId)
+      .eq('business_id', scope.businessId)
+      .select('id');
+    if (error || !updated?.length) throw new ScopedUpdateError('metadata scoped update failed');
+  } else {
+    await supabase
+      .from('payments')
+      .update({
+        payment_method: (data.channel as string) || 'card',
+        card_last_four: (authorization?.last4 as string) || null,
+        card_brand: (authorization?.brand as string) || null,
+        gateway_fee: gatewayFee,
+      })
+      .eq('gateway_reference', reference);
+  }
 
-  // Track payment success
   const posthog = getServerPostHog();
   posthog?.capture({ distinctId: reference, event: 'payment_success', properties: { gateway: 'paystack', amount: existingPayment.amount } });
 
-  // Run fraud detection (non-blocking)
   import('@/lib/fraud/detect').then(({ checkPaymentFraud }) => {
     const customer = data.customer as Record<string, string> | undefined;
     const ipAddress = data.ip_address as string | undefined;
     const metadata = data.metadata as Record<string, string> | undefined;
     checkPaymentFraud(supabase, {
-      paymentId: existingPayment.id,
+      paymentId: existingPayment!.id as string,
       businessId: metadata?.business_id || '',
-      amount: existingPayment.amount,
+      amount: existingPayment!.amount as number,
       currency: (data.currency as string) || 'NGN',
       customerPhone: customer?.phone || '',
       payerIp: ipAddress,
@@ -93,15 +135,13 @@ export async function processPaystackChargeSuccess(
     });
   }).catch(() => {});
 
-  // ── Canonical Payment Authority: one engine for all payment completion ──
-  // Webhook data is already authenticated by signature — pass as pre-verified provider truth.
-  const result = await reconcilePayment(supabase, existingPayment.id, 'webhook', {
+  const result = await reconcilePayment(supabase, existingPayment.id as string, 'webhook', {
     status: 'verified',
     result: {
       provider: 'paystack',
       waaiioReference: reference,
       providerTransactionId: String((data.id as number) || ''),
-      amount: webhookAmountKobo / 100, // kobo → naira
+      amount: webhookAmountKobo / 100,
       currency: ((data.currency as string) || 'NGN').toUpperCase(),
       paymentMethod: (data.channel as string) || 'card',
       cardLast4: (authorization?.last4 as string) || undefined,
@@ -115,39 +155,73 @@ export async function processPaystackChargeSuccess(
 
   if (result.lifecycle) {
     logger.info(`[PAYSTACK WEBHOOK] Authority result: ${result.lifecycle.status} | stages: paid=${result.lifecycle.stages.providerPaid} fin=${result.lifecycle.stages.businessFinalized} conf=${result.lifecycle.stages.customerConfirmed}`);
+    if (result.lifecycle.stages.businessFinalized) return 'finalized';
   }
+
+  if (result.providerOutcome === 'skipped') return 'already_finalized';
+
+  return 'incomplete';
 }
 
 export async function processPaystackChargeFailed(
   data: Record<string, unknown>,
   reference: string,
   supabase: SupabaseClient,
+  scope?: PaymentScope,
 ): Promise<void> {
-  const { data: existingPayment } = await supabase
-    .from('payments')
-    .select('id, status, amount, business_id')
-    .eq('gateway_reference', reference)
-    .single();
+  let existingPayment: Record<string, unknown> | null;
+  if (scope) {
+    const { data: p, error } = await supabase
+      .from('payments')
+      .select('id, status, amount, business_id')
+      .eq('id', scope.paymentId)
+      .eq('business_id', scope.businessId)
+      .single();
+    if (error || !p) throw new ScopedUpdateError(`Payment not found for scope id=${scope.paymentId} business=${scope.businessId}`);
+    existingPayment = p;
+  } else {
+    const { data: p } = await supabase
+      .from('payments')
+      .select('id, status, amount, business_id')
+      .eq('gateway_reference', reference)
+      .single();
+    if (!p) return;
+    existingPayment = p;
+  }
 
-  if (!existingPayment || existingPayment.status === 'success') return;
+  if (existingPayment.status === 'success' || existingPayment.status === 'failed') return;
 
-  await supabase
-    .from('payments')
-    .update({
-      status: 'failed',
-      gateway_status: (data.gateway_response as string) || 'failed',
-    })
-    .eq('gateway_reference', reference);
+  if (scope) {
+    const { data: updated, error } = await supabase
+      .from('payments')
+      .update({
+        status: 'failed',
+        gateway_status: (data.gateway_response as string) || 'failed',
+      })
+      .eq('id', scope.paymentId)
+      .eq('business_id', scope.businessId)
+      .eq('status', 'pending')
+      .select('id');
+    if (error) throw new ScopedUpdateError('chargeFailed scoped update error');
+    if (!updated?.length) return;
+  } else {
+    await supabase
+      .from('payments')
+      .update({
+        status: 'failed',
+        gateway_status: (data.gateway_response as string) || 'failed',
+      })
+      .eq('gateway_reference', reference)
+      .eq('status', 'pending');
+  }
 
-  // Track payment failure
   const posthog = getServerPostHog();
   posthog?.capture({ distinctId: reference, event: 'payment_failed', properties: { gateway: 'paystack', reason: (data.gateway_response as string) || 'unknown' } });
 
-  // Create alert for business owner
   if (existingPayment.business_id) {
     const reason = (data.gateway_response as string) || 'Payment failed';
     await createAlert(supabase, {
-      businessId: existingPayment.business_id,
+      businessId: existingPayment.business_id as string,
       type: 'payment_failed',
       severity: 'warning',
       title: 'Payment Failed',

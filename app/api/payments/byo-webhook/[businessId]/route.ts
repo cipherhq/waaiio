@@ -5,21 +5,14 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
 import { decryptToken } from '@/lib/encryption';
 
-/**
- * BYO (Bring Your Own) Payment Webhook
- *
- * Receives webhooks from a business's own Paystack/Flutterwave account.
- *
- * Security invariants:
- * 1. Signature verification using the business's stored secret (Paystack HMAC)
- *    or dedicated webhook_secret_hash (Flutterwave verif-hash).
- * 2. Payment must belong to the URL's businessId (foreign references are ignored).
- * 3. Server-side provider verification before ANY state change.
- * 4. Only provider-verified data is passed to shared handlers (never webhook body).
- * 5. Transient verify failures (network, 5xx, 429, non-terminal status) → 503.
- * 6. Config errors (401/403, bad key) → 200 + Sentry, payment unchanged.
- * 7. Fast-path dedup read before verify; write-path dedup after processing.
- */
+// Terminal Paystack failure statuses — only these justify marking a payment failed
+const PAYSTACK_TERMINAL_FAILURES = new Set(['failed', 'reversed', 'abandoned']);
+// Terminal Flutterwave failure statuses
+const FLUTTERWAVE_TERMINAL_FAILURES = new Set(['failed']);
+// Non-terminal statuses — transaction may still settle (→ 503)
+const PAYSTACK_TRANSIENT_STATUSES = new Set(['ongoing', 'pending', 'processing', 'queued']);
+const FLUTTERWAVE_TRANSIENT_STATUSES = new Set(['pending']);
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { businessId: string } },
@@ -33,19 +26,51 @@ export async function POST(
     const rawBody = await request.text();
     const supabase = createServiceClient();
 
-    // Look up BYO credentials for this business
-    const { data: creds } = await supabase
-      .from('business_payment_credentials')
-      .select('secret_key, gateway, webhook_secret_hash')
-      .eq('business_id', businessId)
-      .eq('is_active', true)
-      .maybeSingle();
+    // Look up BYO credentials — deployment safety for M443
+    let creds: { secret_key: string | null; gateway: string; webhook_secret_hash: string | null } | null = null;
+    {
+      const { data, error } = await supabase
+        .from('business_payment_credentials')
+        .select('secret_key, gateway, webhook_secret_hash')
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (error) {
+        // Column may not exist (M443 not yet applied) — try without webhook_secret_hash
+        const { data: fallback, error: fallbackError } = await supabase
+          .from('business_payment_credentials')
+          .select('secret_key, gateway')
+          .eq('business_id', businessId)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (fallbackError || !fallback) {
+          Sentry.captureMessage('BYO webhook: credential lookup failed', {
+            level: 'error',
+            extra: { businessId, errorMessage: error.message },
+          });
+          return NextResponse.json({ error: 'Provider temporarily unavailable' }, { status: 503 });
+        }
+
+        if (fallback.gateway === 'flutterwave') {
+          Sentry.captureMessage('BYO webhook: webhook_secret_hash column unavailable', {
+            level: 'error',
+            extra: { businessId },
+          });
+          return NextResponse.json({ error: 'Provider temporarily unavailable' }, { status: 503 });
+        }
+
+        creds = { secret_key: fallback.secret_key, gateway: fallback.gateway, webhook_secret_hash: null };
+      } else {
+        creds = data;
+      }
+    }
 
     if (!creds) {
       return NextResponse.json({ error: 'No active BYO credentials' }, { status: 404 });
     }
 
-    // Decrypt secret key (needed for Paystack signature + provider verification)
     let decryptedKey: string | null = null;
     if (creds.secret_key) {
       decryptedKey = decryptToken(creds.secret_key);
@@ -60,9 +85,7 @@ export async function POST(
         return NextResponse.json({ error: 'Invalid BYO credentials' }, { status: 400 });
       }
       const signature = request.headers.get('x-paystack-signature') || '';
-      const hash = createHmac('sha512', decryptedKey)
-        .update(rawBody)
-        .digest('hex');
+      const hash = createHmac('sha512', decryptedKey).update(rawBody).digest('hex');
       try {
         if (!timingSafeEqual(Buffer.from(hash), Buffer.from(signature))) {
           return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
@@ -96,7 +119,6 @@ export async function POST(
       return NextResponse.json({ error: 'Unsupported gateway' }, { status: 400 });
     }
 
-    // ── Parse body (fix 5: safe JSON parse) ──
     let body: Record<string, unknown>;
     try {
       body = JSON.parse(rawBody);
@@ -106,8 +128,6 @@ export async function POST(
 
     const event = body.event as string;
     const data = body.data as Record<string, unknown>;
-
-    // Extract reference based on gateway
     const reference = creds.gateway === 'flutterwave'
       ? (data.tx_ref as string)
       : (data.reference as string);
@@ -116,7 +136,6 @@ export async function POST(
       return NextResponse.json({ received: true });
     }
 
-    // Look up payment by gateway_reference AND business_id — ignore foreign references
     const { data: payment } = await supabase
       .from('payments')
       .select('id, status, amount, currency')
@@ -128,7 +147,7 @@ export async function POST(
       return NextResponse.json({ received: true });
     }
 
-    // ── Fast-path dedup read (fix 4) ──
+    // Fast-path dedup read
     const eventId = `byo:${businessId}:${event}:${reference}`;
     const { data: existingEvent } = await supabase
       .from('processed_webhook_events')
@@ -140,17 +159,14 @@ export async function POST(
       return NextResponse.json({ received: true, duplicate: true });
     }
 
-    // ── Server-side provider verification BEFORE any state change ──
     const verifyResult = await verifyWithProviderServerSide(
       creds.gateway, data, reference, payment, decryptedKey!,
     );
 
-    // Transient (5xx, 429, network, timeout, non-terminal status) → 503
     if (verifyResult.transient) {
       return NextResponse.json({ error: 'Provider verification temporarily unavailable' }, { status: 503 });
     }
 
-    // Config error (401/403) → 200, payment unchanged, Sentry error
     if (verifyResult.configError) {
       Sentry.captureMessage('BYO webhook: provider credential error', {
         level: 'error',
@@ -159,10 +175,11 @@ export async function POST(
       return NextResponse.json({ received: true });
     }
 
-    // ── Process the event ──
+    // P1-A: scope for all handler calls
+    const scope = { paymentId: payment.id, businessId };
+
     if (event === 'charge.success' || event === 'charge.completed') {
       if (!verifyResult.success) {
-        // Definitive failure — mark payment as failed (only if still pending)
         Sentry.captureMessage('BYO webhook: provider verification failed (definitive)', {
           level: 'warning',
           extra: { businessId, reference, reason: verifyResult.reason, paymentId: payment.id },
@@ -171,21 +188,42 @@ export async function POST(
           .from('payments')
           .update({ status: 'failed', gateway_status: verifyResult.reason })
           .eq('id', payment.id)
+          .eq('business_id', businessId)
           .in('status', ['pending']);
-      } else {
-        // Provider verified — pass ONLY verified data to shared handler (fix 1)
-        await processPaystackChargeSuccess(verifyResult.verifiedData!, reference, supabase);
-      }
-    } else if (event === 'charge.failed') {
-      if (verifyResult.providerStatus === 'success' || verifyResult.providerStatus === 'successful') {
+        // P1-C: amount_mismatch/definitive → NO dedup row
         return NextResponse.json({ received: true });
       }
-      // charge.failed may use webhook data — handler only runs after verify
-      // shows the payment did not succeed
-      await processPaystackChargeFailed(data, reference, supabase);
+
+      const outcome = await processPaystackChargeSuccess(
+        verifyResult.verifiedData!, reference, supabase, scope,
+      );
+
+      if (outcome === 'incomplete') {
+        return NextResponse.json({ error: 'Finalization incomplete' }, { status: 503 });
+      }
+      // amount_mismatch from handler → already returned via throw/early return
+    } else if (event === 'charge.failed') {
+      const ps = verifyResult.providerStatus || '';
+
+      if (ps === 'success' || ps === 'successful') {
+        return NextResponse.json({ received: true });
+      }
+
+      const isTerminal = creds.gateway === 'flutterwave'
+        ? FLUTTERWAVE_TERMINAL_FAILURES.has(ps)
+        : PAYSTACK_TERMINAL_FAILURES.has(ps);
+
+      if (!isTerminal) {
+        return NextResponse.json({ error: 'Provider verification temporarily unavailable' }, { status: 503 });
+      }
+
+      await processPaystackChargeFailed(
+        { gateway_response: verifyResult.reason || ps },
+        reference, supabase, scope,
+      );
     }
 
-    // Processing succeeded — record dedup event
+    // Processing succeeded — write dedup
     await supabase
       .from('processed_webhook_events')
       .upsert(
@@ -200,28 +238,15 @@ export async function POST(
   }
 }
 
-/** Verification outcome. */
 interface VerifyResult {
   success: boolean;
   transient?: boolean;
   configError?: boolean;
   reason?: string;
   providerStatus?: string;
-  /** Normalized data in Paystack shape for processPaystackChargeSuccess. */
   verifiedData?: Record<string, unknown>;
 }
 
-// Non-terminal Paystack statuses — transaction may still settle
-const PAYSTACK_TRANSIENT_STATUSES = new Set(['ongoing', 'pending', 'processing', 'queued']);
-// Non-terminal Flutterwave statuses
-const FLUTTERWAVE_TRANSIENT_STATUSES = new Set(['pending']);
-
-/**
- * Server-side verification with the payment provider.
- *
- * On success, returns `verifiedData` normalized to the Paystack shape that
- * processPaystackChargeSuccess reads. Webhook body data is never passed through.
- */
 async function verifyWithProviderServerSide(
   gateway: string,
   webhookData: Record<string, unknown>,
@@ -237,71 +262,39 @@ async function verifyWithProviderServerSide(
       );
 
       if (!response.ok) {
-        if (response.status === 429 || response.status >= 500) {
-          return { success: false, transient: true, reason: `paystack_verify_http_${response.status}` };
-        }
-        if (response.status === 401 || response.status === 403) {
-          return { success: false, configError: true, reason: `paystack_verify_http_${response.status}` };
-        }
+        if (response.status === 429 || response.status >= 500) return { success: false, transient: true, reason: `paystack_verify_http_${response.status}` };
+        if (response.status === 401 || response.status === 403) return { success: false, configError: true, reason: `paystack_verify_http_${response.status}` };
         return { success: false, reason: `paystack_verify_http_${response.status}` };
       }
 
       const result = await response.json();
       const providerStatus = (result.data?.status as string) || 'unknown';
 
-      // Non-terminal statuses → transient (fix 2)
-      if (PAYSTACK_TRANSIENT_STATUSES.has(providerStatus)) {
-        return { success: false, transient: true, reason: `paystack_verify_status_${providerStatus}`, providerStatus };
-      }
+      if (PAYSTACK_TRANSIENT_STATUSES.has(providerStatus)) return { success: false, transient: true, reason: `paystack_verify_status_${providerStatus}`, providerStatus };
+      if (providerStatus !== 'success') return { success: false, reason: `paystack_verify_status_${providerStatus}`, providerStatus };
 
-      if (providerStatus !== 'success') {
-        return { success: false, reason: `paystack_verify_status_${providerStatus}`, providerStatus };
-      }
-
-      // Compare in integer minor units (kobo)
       const verifiedKobo = result.data.amount as number;
       const expectedKobo = Math.round(payment.amount * 100);
-      if (verifiedKobo !== expectedKobo) {
-        return { success: false, reason: 'amount_mismatch' };
-      }
+      if (verifiedKobo !== expectedKobo) return { success: false, reason: 'amount_mismatch' };
 
       const verifiedCurrency = ((result.data.currency as string) || '').toUpperCase();
-      const expectedCurrency = (payment.currency || '').toUpperCase();
-      if (verifiedCurrency !== expectedCurrency) {
-        return { success: false, reason: 'currency_mismatch' };
-      }
+      if (verifiedCurrency !== (payment.currency || '').toUpperCase()) return { success: false, reason: 'currency_mismatch' };
+      if (result.data.reference !== reference) return { success: false, reason: 'reference_mismatch' };
 
-      if (result.data.reference !== reference) {
-        return { success: false, reason: 'reference_mismatch' };
-      }
-
-      // Build verifiedData from provider response (Paystack)
-      // Strip authorization_code — BYO cards are never reusable through Waaiio
       const psAuth = result.data.authorization as Record<string, unknown> | undefined;
       const sanitizedAuth = psAuth ? {
-        last4: psAuth.last4,
-        brand: psAuth.brand,
-        country_code: psAuth.country_code,
-        bin: psAuth.bin,
-        exp_month: psAuth.exp_month,
-        exp_year: psAuth.exp_year,
-        card_type: psAuth.card_type,
-        bank: psAuth.bank,
-        // authorization_code intentionally omitted
+        last4: psAuth.last4, brand: psAuth.brand, country_code: psAuth.country_code,
+        bin: psAuth.bin, exp_month: psAuth.exp_month, exp_year: psAuth.exp_year,
+        card_type: psAuth.card_type, bank: psAuth.bank,
       } : undefined;
 
       return {
-        success: true,
-        providerStatus: 'success',
+        success: true, providerStatus: 'success',
         verifiedData: {
-          reference: result.data.reference,
-          id: result.data.id,
-          amount: result.data.amount,  // already kobo
-          currency: verifiedCurrency,
-          status: 'success',
-          channel: result.data.channel,
-          fees: result.data.fees,      // already kobo
-          authorization: sanitizedAuth,
+          reference: result.data.reference, id: result.data.id,
+          amount: result.data.amount, currency: verifiedCurrency,
+          status: 'success', channel: result.data.channel,
+          fees: result.data.fees, authorization: sanitizedAuth,
           customer: result.data.customer,
         },
       };
@@ -309,9 +302,7 @@ async function verifyWithProviderServerSide(
 
     if (gateway === 'flutterwave') {
       const txId = webhookData.id as number;
-      if (!txId) {
-        return { success: false, reason: 'missing_transaction_id' };
-      }
+      if (!txId) return { success: false, reason: 'missing_transaction_id' };
 
       const response = await fetch(
         `https://api.flutterwave.com/v3/transactions/${txId}/verify`,
@@ -319,69 +310,42 @@ async function verifyWithProviderServerSide(
       );
 
       if (!response.ok) {
-        if (response.status === 429 || response.status >= 500) {
-          return { success: false, transient: true, reason: `flutterwave_verify_http_${response.status}` };
-        }
-        if (response.status === 401 || response.status === 403) {
-          return { success: false, configError: true, reason: `flutterwave_verify_http_${response.status}` };
-        }
+        if (response.status === 429 || response.status >= 500) return { success: false, transient: true, reason: `flutterwave_verify_http_${response.status}` };
+        if (response.status === 401 || response.status === 403) return { success: false, configError: true, reason: `flutterwave_verify_http_${response.status}` };
         return { success: false, reason: `flutterwave_verify_http_${response.status}` };
       }
 
       const result = await response.json();
       const providerStatus = (result.data?.status as string) || 'unknown';
 
-      // Non-terminal statuses → transient (fix 2)
-      if (FLUTTERWAVE_TRANSIENT_STATUSES.has(providerStatus)) {
-        return { success: false, transient: true, reason: `flutterwave_verify_status_${providerStatus}`, providerStatus };
-      }
+      if (FLUTTERWAVE_TRANSIENT_STATUSES.has(providerStatus)) return { success: false, transient: true, reason: `flutterwave_verify_status_${providerStatus}`, providerStatus };
+      if (providerStatus !== 'successful') return { success: false, reason: `flutterwave_verify_status_${providerStatus}`, providerStatus };
 
-      if (providerStatus !== 'successful') {
-        return { success: false, reason: `flutterwave_verify_status_${providerStatus}`, providerStatus };
-      }
-
-      // Compare in integer minor units
       const verifiedMinor = Math.round((result.data.amount as number) * 100);
       const expectedMinor = Math.round(payment.amount * 100);
-      if (verifiedMinor !== expectedMinor) {
-        return { success: false, reason: 'amount_mismatch' };
-      }
+      if (verifiedMinor !== expectedMinor) return { success: false, reason: 'amount_mismatch' };
 
       const verifiedCurrency = ((result.data.currency as string) || '').toUpperCase();
-      const expectedCurrency = (payment.currency || '').toUpperCase();
-      if (verifiedCurrency !== expectedCurrency) {
-        return { success: false, reason: 'currency_mismatch' };
-      }
+      if (verifiedCurrency !== (payment.currency || '').toUpperCase()) return { success: false, reason: 'currency_mismatch' };
+      if (result.data.tx_ref !== reference) return { success: false, reason: 'reference_mismatch' };
 
-      if (result.data.tx_ref !== reference) {
-        return { success: false, reason: 'reference_mismatch' };
-      }
-
-      // Build verifiedData normalized to Paystack shape (fix 1 — Flutterwave)
       const fwData = result.data as Record<string, unknown>;
       const fwCard = fwData.card as Record<string, unknown> | undefined;
       const fwCustomer = fwData.customer as Record<string, unknown> | undefined;
 
       return {
-        success: true,
-        providerStatus: 'successful',
+        success: true, providerStatus: 'successful',
         verifiedData: {
-          reference: fwData.tx_ref,
-          id: fwData.id,
-          amount: Math.round((fwData.amount as number) * 100), // major → minor
-          currency: verifiedCurrency,
-          status: 'success',
+          reference: fwData.tx_ref, id: fwData.id,
+          amount: Math.round((fwData.amount as number) * 100),
+          currency: verifiedCurrency, status: 'success',
           channel: fwData.payment_type,
-          fees: Math.round(((fwData.app_fee as number) || 0) * 100), // major → minor
+          fees: Math.round(((fwData.app_fee as number) || 0) * 100),
           authorization: fwCard ? {
-            last4: fwCard.last_4digits,
-            brand: fwCard.type,
-            country_code: fwCard.country,
-            // NEVER set authorization_code — BYO cards are not reusable through Waaiio
+            last4: fwCard.last_4digits, brand: fwCard.type, country_code: fwCard.country,
           } : undefined,
           customer: fwCustomer ? {
-            email: fwCustomer.email,
-            phone: fwCustomer.phone_number,
+            email: fwCustomer.email, phone: fwCustomer.phone_number,
           } : undefined,
         },
       };
