@@ -1,5 +1,7 @@
 -- 444_reject_payout_release_adjustments.sql
 -- Additive, safe before or after the app deploy, unapplied until Owner authorization.
+-- Rollout order: migration 440 must be applied before 444, and 444 before the
+-- app deploys the new reject route; until then, reject returns 500.
 --
 -- Adds reject_payout_and_release_adjustments(): atomically rejects a payout,
 -- releases any linked payout_adjustments, and respects the linkage guard
@@ -11,24 +13,22 @@
 -- 1. reject_payout_and_release_adjustments
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.reject_payout_and_release_adjustments(
-  p_payout_id        uuid,
-  p_reason           text,
-  p_rejected_by      uuid,
-  p_rejected_at      timestamptz DEFAULT now()
+  p_payout_id  uuid,
+  p_reason     text
 )
 RETURNS TABLE (
-  rejected_id             uuid,
-  adjustments_released    int
+  rejected_id           uuid,
+  adjustments_released  int
 )
 LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_payout          record;
-  v_has_pending     boolean;
-  v_has_failed      boolean;
-  v_released        int := 0;
+  v_payout        record;
+  v_has_pending   boolean;
+  v_has_failed    boolean;
+  v_released      int := 0;
 BEGIN
   -- Lock the payout row to prevent concurrent modifications
   SELECT id, status, flags
@@ -64,12 +64,11 @@ BEGIN
   -- Reject the payout. The trigger fn_payout_linkage_guard fires on this
   -- UPDATE. Since we are not changing flags and the target status is
   -- 'rejected' (not in R1's blocked set), the trigger will allow it.
+  -- business_payouts has: rejected_reason, updated_at — no rejected_by/rejected_at columns.
   UPDATE public.business_payouts
      SET status          = 'rejected',
          rejected_reason = p_reason,
-         rejected_by     = p_rejected_by,
-         rejected_at     = p_rejected_at,
-         updated_at      = p_rejected_at
+         updated_at      = now()
    WHERE id = p_payout_id;
 
   -- Release linked adjustments so they roll into the next payout
@@ -86,10 +85,10 @@ $$;
 -- ============================================================
 -- 2. Permissions: service_role only
 -- ============================================================
-REVOKE ALL ON FUNCTION public.reject_payout_and_release_adjustments(uuid, text, uuid, timestamptz) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.reject_payout_and_release_adjustments(uuid, text, uuid, timestamptz) FROM anon;
-REVOKE ALL ON FUNCTION public.reject_payout_and_release_adjustments(uuid, text, uuid, timestamptz) FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.reject_payout_and_release_adjustments(uuid, text, uuid, timestamptz) TO service_role;
+REVOKE ALL ON FUNCTION public.reject_payout_and_release_adjustments(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.reject_payout_and_release_adjustments(uuid, text) FROM anon;
+REVOKE ALL ON FUNCTION public.reject_payout_and_release_adjustments(uuid, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.reject_payout_and_release_adjustments(uuid, text) TO service_role;
 
 -- ============================================================
 -- 3. Self-verification

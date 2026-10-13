@@ -54,13 +54,13 @@ export async function POST(
   // Atomic reject + adjustment release via plpgsql function.
   // The function locks the payout row, verifies eligible status, sets rejected,
   // and unlinks any payout_adjustments (applied_to_payout_id → NULL).
+  // Who-rejected is tracked in the admin audit log (logAdminAudit below),
+  // not in business_payouts which has no rejected_by/rejected_at columns.
   const { data: rpcResult, error: rpcError } = await serviceClient.rpc(
     'reject_payout_and_release_adjustments',
     {
       p_payout_id: id,
       p_reason: reason,
-      p_rejected_by: admin.id,
-      p_rejected_at: new Date().toISOString(),
     },
   );
 
