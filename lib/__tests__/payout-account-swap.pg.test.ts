@@ -69,11 +69,12 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
         owner_id UUID,
         name TEXT NOT NULL DEFAULT 'Test',
         slug TEXT,
-        payout_mode VARCHAR(20) NOT NULL DEFAULT 'platform_managed',
         country_code VARCHAR(10) DEFAULT 'NG',
         status VARCHAR(20) DEFAULT 'active'
       );
     `);
+    // Add payout_mode if the table already existed without it (CI provisioning)
+    sql(`ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS payout_mode VARCHAR(20) NOT NULL DEFAULT 'platform_managed';`);
 
     // payout_accounts table (from migration 009)
     sql(`
@@ -119,15 +120,9 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
     }
 
     // Seed test data
-    sql(`
-      INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;
-      INSERT INTO public.businesses (id, owner_id, name, slug, payout_mode)
-        VALUES ('${BIZ_ID}', '${OWNER_ID}', 'Swap Test Biz', 'swap-test', 'platform_managed')
-        ON CONFLICT (id) DO NOTHING;
-      INSERT INTO public.businesses (id, owner_id, name, slug, payout_mode)
-        VALUES ('${BIZ_ID2}', '${OWNER_ID}', 'Swap Test Biz 2', 'swap-test-2', 'direct_split')
-        ON CONFLICT (id) DO NOTHING;
-    `);
+    sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
+    sql(`INSERT INTO public.businesses (id, owner_id, name, payout_mode) VALUES ('${BIZ_ID}', '${OWNER_ID}', 'Swap Test Biz', 'platform_managed') ON CONFLICT (id) DO NOTHING;`);
+    sql(`INSERT INTO public.businesses (id, owner_id, name, payout_mode) VALUES ('${BIZ_ID2}', '${OWNER_ID}', 'Swap Test Biz 2', 'direct_split') ON CONFLICT (id) DO NOTHING;`);
   });
 
   afterAll(() => {
