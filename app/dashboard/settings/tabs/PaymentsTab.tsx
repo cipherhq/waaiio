@@ -6,6 +6,7 @@ import { formatCurrency } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { createClient } from '@/lib/supabase/client';
 import type { SettingsTabProps } from './types';
+import { t } from '@/lib/dashboard-i18n';
 
 interface DeliveryZone {
   id?: string;
@@ -470,6 +471,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
   const [byoGateway, setByoGateway] = useState<'paystack' | 'flutterwave' | 'stripe'>('paystack');
   const [byoSecretKey, setByoSecretKey] = useState('');
   const [byoPublicKey, setByoPublicKey] = useState('');
+  const [byoWebhookHash, setByoWebhookHash] = useState('');
   const [byoVerifying, setByoVerifying] = useState(false);
   const [byoError, setByoError] = useState('');
   const [byoCredential, setByoCredential] = useState<{ id: string; gateway: string; verified_at: string; connection_type?: string; connect_account_id?: string } | null>(null);
@@ -594,6 +596,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
           gateway: byoGateway,
           secret_key: byoSecretKey,
           public_key: byoPublicKey || undefined,
+          ...(byoGateway === 'flutterwave' && byoWebhookHash ? { webhook_secret_hash: byoWebhookHash } : {}),
         }),
       });
       const data = await res.json();
@@ -605,6 +608,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
       setByoWebhookUrl(data.webhookUrl);
       setByoSecretKey('');
       setByoPublicKey('');
+      setByoWebhookHash('');
     } catch {
       setByoError('Network error. Please try again.');
     } finally {
@@ -1089,9 +1093,47 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                         />
                       </div>
 
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">{t('payments.flutterwave_webhook_hash_label')}</label>
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          value={byoWebhookHash}
+                          onChange={(e) => setByoWebhookHash(e.target.value)}
+                          placeholder="Enter your webhook secret hash"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand font-mono"
+                        />
+                        <p className="mt-1 text-xs text-gray-500">
+                          {t('payments.flutterwave_webhook_hash_help')}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">{t('payments.webhook_url_label')}</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            readOnly
+                            value={`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/api/payments/byo-webhook/${business.id}`}
+                            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 font-mono"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(
+                                `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/api/payments/byo-webhook/${business.id}`,
+                              );
+                            }}
+                            className="flex-shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </div>
+
                       <button
                         onClick={() => { setByoGateway('flutterwave'); handleByoVerify(); }}
-                        disabled={byoVerifying || !byoSecretKey}
+                        disabled={byoVerifying || !byoSecretKey || !byoWebhookHash}
                         className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                       >
                         {byoVerifying ? 'Verifying...' : 'Verify & Connect'}

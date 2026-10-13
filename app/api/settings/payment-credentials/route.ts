@@ -32,6 +32,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid gateway. Must be paystack, flutterwave, or stripe.' }, { status: 400 });
   }
 
+  // Flutterwave BYO requires a dedicated webhook secret hash
+  if (gateway === 'flutterwave') {
+    const trimmedHash = typeof webhook_secret_hash === 'string' ? webhook_secret_hash.trim() : '';
+    if (!trimmedHash) {
+      return NextResponse.json({ error: 'Flutterwave requires a webhook secret hash. Create one in your Flutterwave dashboard under Settings → Webhooks.' }, { status: 400 });
+    }
+    if (trimmedHash.length > 256) {
+      return NextResponse.json({ error: 'Webhook secret hash must be 256 characters or fewer.' }, { status: 400 });
+    }
+    if (trimmedHash === secret_key) {
+      return NextResponse.json({ error: 'The webhook secret hash must not be the same as your secret key. Use a separate value from your Flutterwave webhook settings.' }, { status: 400 });
+    }
+  }
+
   // Production: reject test-mode credentials
   const isProduction = process.env.WAAIIO_ENVIRONMENT === 'production';
   if (isProduction) {
@@ -176,7 +190,9 @@ export async function POST(request: NextRequest) {
         gateway,
         secret_key: encryptToken(secret_key),
         public_key: public_key || null,
-        webhook_secret_hash: webhook_secret_hash ? encryptToken(webhook_secret_hash) : null,
+        webhook_secret_hash: gateway === 'flutterwave' && webhook_secret_hash
+          ? encryptToken(webhook_secret_hash.trim())
+          : null,
         platform_subaccount_code: platformSubaccountCode,
         is_active: true,
         verified_at: new Date().toISOString(),

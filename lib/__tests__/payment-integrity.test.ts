@@ -480,7 +480,7 @@ describe('Production Credential Guards — payment-credentials', () => {
     const { POST } = await import('@/app/api/settings/payment-credentials/route');
     const req = new NextRequest(new URL('http://localhost:3000/api/settings/payment-credentials'), {
       method: 'POST',
-      body: JSON.stringify({ business_id: 'biz-1', gateway: 'flutterwave', secret_key: `${FLW_TEST}-abc` }),
+      body: JSON.stringify({ business_id: 'biz-1', gateway: 'flutterwave', secret_key: `${FLW_TEST}-abc`, webhook_secret_hash: 'some_hash' }),
       headers: { 'Content-Type': 'application/json' },
     });
 
@@ -2710,6 +2710,163 @@ describe('Route + real handler: incomplete → 503 (test 3b)', () => {
 
       expect(res.status).toBe(503);
       expect(upsertCalled).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Flutterwave BYO setup: webhook_secret_hash validation
+// ═══════════════════════════════════════════════════════════
+
+describe('Payment credentials route — Flutterwave webhook_secret_hash', () => {
+  const originalEnv = { ...process.env };
+
+  function mockAuthUser() {
+    return {
+      createClient: () => ({
+        auth: { getUser: () => Promise.resolve({ data: { user: { id: 'user-1' } } }) },
+        from: (table: string) => {
+          if (table === 'businesses') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    single: () => Promise.resolve({ data: { id: 'biz-1', name: 'Test Biz', country_code: 'NG' }, error: null }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return { select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }) };
+        },
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doMock('@/lib/supabase/server', () => mockAuthUser());
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: () => ({
+        from: () => ({
+          select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }),
+          update: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }) }),
+          insert: () => ({ select: () => ({ single: () => Promise.resolve({
+            data: { id: 'cred-1', gateway: 'flutterwave', platform_subaccount_code: 'SUB_1', verified_at: new Date().toISOString() },
+            error: null,
+          }) }) }),
+        }),
+      }),
+    }));
+    vi.doMock('@/lib/encryption', () => ({
+      encryptToken: (s: string) => `enc:${s}`,
+    }));
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+  });
+
+  it('Flutterwave without webhook_secret_hash → 400', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'success', data: { id: 1 } }) });
+    try {
+      const { POST } = await import('@/app/api/settings/payment-credentials/route');
+      const req = new NextRequest(new URL('http://localhost:3000/api/settings/payment-credentials'), {
+        method: 'POST',
+        body: JSON.stringify({ business_id: 'biz-1', gateway: 'flutterwave', secret_key: 'FLW_KEY' }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain('webhook secret hash');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('Flutterwave with hash equal to secret key → 400', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'success', data: { id: 1 } }) });
+    try {
+      const { POST } = await import('@/app/api/settings/payment-credentials/route');
+      const req = new NextRequest(new URL('http://localhost:3000/api/settings/payment-credentials'), {
+        method: 'POST',
+        body: JSON.stringify({
+          business_id: 'biz-1', gateway: 'flutterwave',
+          secret_key: 'SAME_VALUE', webhook_secret_hash: 'SAME_VALUE',
+        }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain('must not be the same');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('Flutterwave with valid hash → saved encrypted, response excludes it', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'success', data: { id: 1 } }) });
+    try {
+      const { POST } = await import('@/app/api/settings/payment-credentials/route');
+      const req = new NextRequest(new URL('http://localhost:3000/api/settings/payment-credentials'), {
+        method: 'POST',
+        body: JSON.stringify({
+          business_id: 'biz-1', gateway: 'flutterwave',
+          secret_key: 'FLW_KEY', webhook_secret_hash: 'MY_HASH',
+        }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      const responseText = JSON.stringify(json);
+      expect(responseText).not.toContain('MY_HASH');
+      expect(responseText).not.toContain('FLW_KEY');
+      expect(json.credential.id).toBe('cred-1');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('Paystack without webhook_secret_hash → still works', async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/supabase/server', () => mockAuthUser());
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: () => ({
+        from: () => ({
+          select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: { value: { bank_code: '044', account_number: '1234567890', account_name: 'Test' } }, error: null }) }) }),
+          update: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }) }),
+          insert: () => ({ select: () => ({ single: () => Promise.resolve({
+            data: { id: 'cred-ps', gateway: 'paystack', platform_subaccount_code: 'SUB_PS', verified_at: new Date().toISOString() },
+            error: null,
+          }) }) }),
+        }),
+      }),
+    }));
+    vi.doMock('@/lib/encryption', () => ({ encryptToken: (s: string) => `enc:${s}` }));
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: true, data: { subaccount_code: 'SUB_PS' } }) });
+    try {
+      const { POST } = await import('@/app/api/settings/payment-credentials/route');
+      const req = new NextRequest(new URL('http://localhost:3000/api/settings/payment-credentials'), {
+        method: 'POST',
+        body: JSON.stringify({ business_id: 'biz-1', gateway: 'paystack', secret_key: 'PS_KEY' }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const res = await POST(req);
+      const json = await res.json();
+      if (res.status === 400) {
+        expect(json.error).not.toContain('webhook secret hash');
+      }
     } finally {
       globalThis.fetch = originalFetch;
     }

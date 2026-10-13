@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-13 — #628 fix(payments): Flutterwave BYO webhook secret hash required at setup
+
+### What changed
+- `app/api/settings/payment-credentials/route.ts`: Flutterwave BYO setup now requires `webhook_secret_hash` — trimmed, max 256 chars, must differ from the secret key. Returns 400 with clear message if missing or invalid. Paystack/Stripe unchanged. No GET or response ever returns secret_key or webhook_secret_hash.
+- `app/dashboard/settings/tabs/PaymentsTab.tsx`: Flutterwave BYO form adds password-type input for webhook secret hash (autocomplete=off), read-only webhook URL with copy button, and disables "Verify & Connect" until both secret key and hash are filled. Sends `webhook_secret_hash` for Flutterwave only.
+- `lib/dashboard-i18n.ts`: Added en/pcm keys for webhook hash label, help text, and webhook URL label.
+
+### What could break
+- Existing Flutterwave BYO setups without a webhook_secret_hash will continue to work (credentials already saved). New setups require the hash. The BYO webhook handler already rejects Flutterwave webhooks without a configured hash (added in earlier commit).
+- If a merchant tries to set up Flutterwave BYO without configuring a webhook secret in their Flutterwave dashboard first, the setup will be rejected with a clear error message.
+
 ## 2026-10-13 — #620 fix(admin): make held payouts reviewable; date-only rendering
 
 ### What changed

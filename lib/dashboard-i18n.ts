@@ -10,10 +10,22 @@ const strings: Record<string, Record<string, string>> = {
   en: {
     'payouts.setup_password_hint':
       "Enter your Waaiio account password, the one you log in with, not your bank password.",
+    'payments.flutterwave_webhook_hash_label':
+      'Webhook secret hash',
+    'payments.flutterwave_webhook_hash_help':
+      'Create a secret hash in your Flutterwave dashboard under Settings → Webhooks, and paste the same value here. Use the webhook URL shown below.',
+    'payments.webhook_url_label':
+      'Webhook URL',
   },
   pcm: {
     'payouts.setup_password_hint':
       "Put your Waaiio account password, the one wey you dey use log in, no be your bank password.",
+    'payments.flutterwave_webhook_hash_label':
+      'Webhook secret hash',
+    'payments.flutterwave_webhook_hash_help':
+      'Go your Flutterwave dashboard, Settings → Webhooks, create secret hash there, then paste am here. Use the webhook URL wey dey below.',
+    'payments.webhook_url_label':
+      'Webhook URL',
   },
 };
 
