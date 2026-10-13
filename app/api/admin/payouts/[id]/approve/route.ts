@@ -92,12 +92,37 @@ export async function POST(
     }, { status: 400 });
   }
 
-  // ── Payout account verification ──
+  // ── Auto-link payout account if missing ──
   if (!payout.payout_account_id) {
-    return NextResponse.json({
-      error: 'Cannot approve payout: no payout account configured for this business.',
-    }, { status: 400 });
+    const { data: candidates } = await serviceClient
+      .from('payout_accounts')
+      .select('id')
+      .eq('business_id', payout.business_id)
+      .eq('is_active', true)
+      .not('verified_at', 'is', null);
+
+    if (!candidates || candidates.length !== 1) {
+      return NextResponse.json({
+        error: 'Cannot approve payout: no payout account configured for this business.',
+      }, { status: 400 });
+    }
+
+    const { error: linkError } = await serviceClient
+      .from('business_payouts')
+      .update({ payout_account_id: candidates[0].id, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .is('payout_account_id', null);
+
+    if (linkError) {
+      return NextResponse.json({
+        error: 'Failed to link payout account.',
+      }, { status: 500 });
+    }
+
+    payout.payout_account_id = candidates[0].id;
   }
+
+  // ── Payout account verification ──
 
   const { data: payoutAcct } = await serviceClient
     .from('payout_accounts')
