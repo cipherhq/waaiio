@@ -328,15 +328,18 @@ GRANT SELECT ON TABLE public.whatsapp_channels_public TO service_role;
 
 DO $$
 DECLARE
-  _user_a_id uuid := gen_random_uuid();
-  _user_b_id uuid := gen_random_uuid();
-  _biz_a_id  uuid := gen_random_uuid();
-  _biz_b_id  uuid := gen_random_uuid();
-  _pa_a_id   uuid := gen_random_uuid();
-  _errors    text[] := '{}';
-  _count     bigint;
+  _user_a_id   uuid := gen_random_uuid();
+  _user_b_id   uuid := gen_random_uuid();
+  _biz_a_id    uuid := gen_random_uuid();
+  _biz_b_id    uuid := gen_random_uuid();
+  _payout_a_id uuid := gen_random_uuid();
+  _payout_b_id uuid := gen_random_uuid();
+  _pa_a_id     uuid := gen_random_uuid();
+  _errors      text[] := '{}';
+  _count       bigint;
 BEGIN
   -- ── Create test fixtures as postgres ──────────────────────────────────
+  -- auth.users: id, instance_id, role, aud, email, encrypted_password, confirmed_at, created_at, updated_at
   INSERT INTO auth.users (id, instance_id, role, aud, email, encrypted_password, confirmed_at, created_at, updated_at)
   VALUES
     (_user_a_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -344,30 +347,39 @@ BEGIN
     (_user_b_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      'test-b-' || _user_b_id || '@test.local', crypt('testpass', gen_salt('bf')), now(), now(), now());
 
-  INSERT INTO public.businesses (id, owner_id, name, slug, country, category, phone)
+  -- businesses: owner_id*, name*, slug*, address*, city*, phone*, country_code
+  INSERT INTO public.businesses (id, owner_id, name, slug, address, city, phone, country_code)
   VALUES
-    (_biz_a_id, _user_a_id, 'Test Biz A', 'test-a-' || _biz_a_id, 'NG', 'retail', '+2340000000001'),
-    (_biz_b_id, _user_b_id, 'Test Biz B', 'test-b-' || _biz_b_id, 'NG', 'retail', '+2340000000002');
+    (_biz_a_id, _user_a_id, 'Test Biz A', 'test-a-' || _biz_a_id, '1 Test St', 'Lagos', '+2340000000001', 'NG'),
+    (_biz_b_id, _user_b_id, 'Test Biz B', 'test-b-' || _biz_b_id, '2 Test St', 'Lagos', '+2340000000002', 'NG');
 
-  -- B's sensitive records
-  INSERT INTO public.business_payouts (id, business_id, amount, status, currency, created_at)
-  VALUES (gen_random_uuid(), _biz_b_id, 10000, 'pending', 'NGN', now());
-  INSERT INTO public.payout_accounts (id, business_id, account_name, account_number, bank_code, created_at)
-  VALUES (gen_random_uuid(), _biz_b_id, 'B Account', '1111111111', '058', now());
-  INSERT INTO public.payout_adjustments (id, business_id, amount, reason, created_at)
-  VALUES (gen_random_uuid(), _biz_b_id, 500, 'test', now());
-  INSERT INTO public.business_documents (id, business_id, document_type, file_url, created_at)
-  VALUES (gen_random_uuid(), _biz_b_id, 'id_card', '/test/doc.pdf', now());
-  INSERT INTO public.verification_requests (id, business_id, status, created_at)
-  VALUES (gen_random_uuid(), _biz_b_id, 'pending', now());
-  INSERT INTO public.platform_fees (id, business_id, payment_id, amount, fee_type, created_at)
-  VALUES (gen_random_uuid(), _biz_b_id, gen_random_uuid(), 100, 'platform', now());
+  -- business_payouts: business_id*, period_start*, period_end*, gross_amount*, platform_fee*, net_amount*, status
+  INSERT INTO public.business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, net_amount, status)
+  VALUES
+    (_payout_b_id, _biz_b_id, now() - interval '30 days', now(), 10000, 1000, 9000, 'pending'),
+    (_payout_a_id, _biz_a_id, now() - interval '30 days', now(), 5000, 500, 4500, 'pending');
 
-  -- A's records (positive controls)
-  INSERT INTO public.business_payouts (id, business_id, amount, status, currency, created_at)
-  VALUES (gen_random_uuid(), _biz_a_id, 5000, 'pending', 'NGN', now());
-  INSERT INTO public.payout_accounts (id, business_id, account_name, account_number, bank_code, is_active, created_at, updated_at)
-  VALUES (_pa_a_id, _biz_a_id, 'A Account', '2222222222', '058', true, now(), now());
+  -- payout_accounts: business_id*, gateway*, account_name, account_number, bank_code, is_active
+  INSERT INTO public.payout_accounts (id, business_id, gateway, account_name, account_number, bank_code)
+  VALUES (gen_random_uuid(), _biz_b_id, 'paystack', 'B Account', '1111111111', '058');
+  INSERT INTO public.payout_accounts (id, business_id, gateway, account_name, account_number, bank_code, is_active)
+  VALUES (_pa_a_id, _biz_a_id, 'paystack', 'A Account', '2222222222', '058', true);
+
+  -- payout_adjustments: business_id*, payout_id*, amount*, reason
+  INSERT INTO public.payout_adjustments (id, business_id, payout_id, amount, reason)
+  VALUES (gen_random_uuid(), _biz_b_id, _payout_b_id, 500, 'test');
+
+  -- business_documents: business_id*, type*, file_url*
+  INSERT INTO public.business_documents (id, business_id, type, file_url)
+  VALUES (gen_random_uuid(), _biz_b_id, 'id_card', '/test/doc.pdf');
+
+  -- verification_requests: business_id*, requested_level*, requested_by*
+  INSERT INTO public.verification_requests (id, business_id, requested_level, requested_by)
+  VALUES (gen_random_uuid(), _biz_b_id, 'verified', _user_b_id);
+
+  -- platform_fees: business_id*, transaction_amount*, fee_total
+  INSERT INTO public.platform_fees (id, business_id, transaction_amount, fee_total)
+  VALUES (gen_random_uuid(), _biz_b_id, 10000, 100);
 
   -- ══════════════════════════════════════════════════════════════════════
   -- ANON assertions
@@ -391,14 +403,14 @@ BEGIN
 
   -- anon_insert_blocked: INSERT raises
   BEGIN
-    INSERT INTO public.business_payouts (id, business_id, amount, status, currency, created_at)
-    VALUES (gen_random_uuid(), _biz_b_id, 999, 'pending', 'NGN', now());
+    INSERT INTO public.business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, net_amount, status)
+    VALUES (gen_random_uuid(), _biz_b_id, now(), now(), 999, 0, 999, 'pending');
     _errors := _errors || 'anon_insert_blocked: business_payouts INSERT succeeded';
   EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
   END;
 
   -- anon_update_zero: UPDATE affects 0 rows
-  UPDATE public.business_payouts SET amount = 0;
+  UPDATE public.business_payouts SET net_amount = 0;
   GET DIAGNOSTICS _count = ROW_COUNT;
   IF _count > 0 THEN _errors := _errors || 'anon_update_zero: business_payouts updated ' || _count; END IF;
 
@@ -435,7 +447,7 @@ BEGIN
   IF _count > 0 THEN _errors := _errors || 'cross_tenant_select_zero: verification_requests=' || _count; END IF;
 
   -- cross_tenant_update_zero
-  UPDATE public.business_payouts SET amount = 0 WHERE business_id = _biz_b_id;
+  UPDATE public.business_payouts SET net_amount = 0 WHERE business_id = _biz_b_id;
   GET DIAGNOSTICS _count = ROW_COUNT;
   IF _count > 0 THEN _errors := _errors || 'cross_tenant_update_zero: business_payouts=' || _count; END IF;
 
@@ -450,30 +462,30 @@ BEGIN
 
   -- cross_tenant_insert_blocked: owner A cannot insert for business B
   BEGIN
-    INSERT INTO public.payout_accounts (id, business_id, account_name, account_number, bank_code, created_at)
-    VALUES (gen_random_uuid(), _biz_b_id, 'Evil', '9999999999', '058', now());
+    INSERT INTO public.payout_accounts (id, business_id, gateway, account_name, account_number, bank_code)
+    VALUES (gen_random_uuid(), _biz_b_id, 'paystack', 'Evil', '9999999999', '058');
     _errors := _errors || 'cross_tenant_insert_blocked: payout_accounts INSERT for B succeeded';
   EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
   END;
 
   BEGIN
-    INSERT INTO public.business_documents (id, business_id, document_type, file_url, created_at)
-    VALUES (gen_random_uuid(), _biz_b_id, 'id_card', '/evil.pdf', now());
+    INSERT INTO public.business_documents (id, business_id, type, file_url)
+    VALUES (gen_random_uuid(), _biz_b_id, 'id_card', '/evil.pdf');
     _errors := _errors || 'cross_tenant_insert_blocked: business_documents INSERT for B succeeded';
   EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
   END;
 
   BEGIN
-    INSERT INTO public.verification_requests (id, business_id, status, created_at)
-    VALUES (gen_random_uuid(), _biz_b_id, 'pending', now());
+    INSERT INTO public.verification_requests (id, business_id, requested_level, requested_by)
+    VALUES (gen_random_uuid(), _biz_b_id, 'verified', _user_a_id);
     _errors := _errors || 'cross_tenant_insert_blocked: verification_requests INSERT for B succeeded';
   EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
   END;
 
   -- payout_adjustments_blocked: authenticated cannot INSERT/UPDATE/DELETE at all
   BEGIN
-    INSERT INTO public.payout_adjustments (id, business_id, amount, reason, created_at)
-    VALUES (gen_random_uuid(), _biz_a_id, 1, 'test', now());
+    INSERT INTO public.payout_adjustments (id, business_id, payout_id, amount, reason)
+    VALUES (gen_random_uuid(), _biz_a_id, _payout_a_id, 1, 'test');
     _errors := _errors || 'payout_adjustments_blocked: INSERT succeeded';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
@@ -512,7 +524,7 @@ BEGIN
   END;
 
   -- payout_account_deactivate: UPDATE is_active succeeds (positive control)
-  UPDATE public.payout_accounts SET is_active = false, updated_at = now() WHERE id = _pa_a_id;
+  UPDATE public.payout_accounts SET is_active = false WHERE id = _pa_a_id;
   GET DIAGNOSTICS _count = ROW_COUNT;
   IF _count = 0 THEN _errors := _errors || 'payout_account_deactivate: 0 rows updated'; END IF;
 
