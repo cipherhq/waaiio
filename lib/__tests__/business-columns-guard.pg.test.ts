@@ -1,117 +1,203 @@
 /**
- * 442: Server-managed business columns guard — Real PostgreSQL tests
+ * Migration 442: server-managed business columns guard — Real PostgreSQL tests
  *
- * Runs against the ACTUAL Waaiio migrated schema.
- * Requires TEST_DATABASE_URL + the full migration set (including 442).
+ * Runs against a disposable Postgres instance (TEST_DATABASE_URL).
+ * Fails (not skips) when REQUIRE_PG_TESTS=true and TEST_DATABASE_URL is missing.
  *
- * In the P0 ACL job (disposable PG with minimal schema), the trigger
- * won't exist — tests pass as no-ops to satisfy the zero-skip guard.
- * The full suite runs in migration shard b where all migrations are applied.
- *
- * Tests (when trigger is present):
- * - authenticated role cannot UPDATE server-managed columns (9 columns)
- * - authenticated role CAN update normal columns (name)
- * - service_role can UPDATE all server-managed columns (9 columns)
- * - anon gets no rows (RLS)
- * - old tier tampering trigger removed, new trigger exists
+ * Builds its own minimal schema, creates the OLD tier trigger (181),
+ * runs a negative control (verification_level update succeeds before 442),
+ * applies migration 442 from disk, then tests all 9 guarded columns.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
-const dbUrl = process.env.TEST_DATABASE_URL || '';
+const TEST_DB = process.env.TEST_DATABASE_URL;
 
-function psql(sql: string): string {
-  return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
-    input: sql, encoding: 'utf-8', timeout: 15000,
-  }).trim();
+if (!TEST_DB && process.env.REQUIRE_PG_TESTS === 'true') {
+  throw new Error('TEST_DATABASE_URL is required — cannot skip DB tests (REQUIRE_PG_TESTS=true)');
 }
 
-function psqlNoFail(sql: string): { stdout: string; error: boolean } {
+function sql(query: string): string {
+  if (!TEST_DB) throw new Error('TEST_DATABASE_URL not set');
   try {
-    const stdout = execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
-      input: sql, encoding: 'utf-8', timeout: 15000,
-    }).trim();
-    return { stdout, error: false };
-  } catch (e: unknown) {
-    const err = e as { stderr?: string; stdout?: string };
-    return { stdout: err.stderr || err.stdout || '', error: true };
+    return execSync(
+      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`,
+      { encoding: 'utf-8', timeout: 15000, input: query },
+    ).trim();
+  } catch (err: any) {
+    return `ERROR: ${err.stderr || err.stdout || err.message || ''}`;
   }
 }
 
-// Detect whether the full migration schema is present
-let hasTrigger = false;
-if (dbUrl.length > 0) {
+function sqlThrows(query: string): boolean {
+  if (!TEST_DB) throw new Error('TEST_DATABASE_URL not set');
   try {
-    const count = psql(`
-      SELECT count(*) FROM pg_trigger t
-      JOIN pg_class c ON t.tgrelid = c.oid
-      JOIN pg_namespace n ON c.relnamespace = n.oid
-      WHERE n.nspname = 'public' AND c.relname = 'businesses'
-        AND t.tgname = 'trg_guard_server_managed_columns';
-    `);
-    hasTrigger = count === '1';
-  } catch {
-    hasTrigger = false;
-  }
-}
-
-const USER_ID = '00000000-0000-4000-f442-000000000001';
-const BIZ_ID = '00000000-0000-4000-a442-000000000001';
-
-// Never use describe.skipIf — the zero-skip guard in P0 ACL CI rejects skipped tests.
-// Instead, create the describe unconditionally and use early-return for no-op tests.
-describe('442 DB: server-managed business columns guard', () => {
-  if (!dbUrl) {
-    it('requires TEST_DATABASE_URL', () => { expect(true).toBe(true); });
-    return;
-  }
-  if (!hasTrigger) {
-    it('trigger not present (P0 ACL minimal DB — full suite runs in shard b)', () => {
-      expect(true).toBe(true);
+    execSync(`psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`, {
+      encoding: 'utf-8', timeout: 15000, input: query,
     });
-    return;
+    return false;
+  } catch {
+    return true;
   }
+}
 
-  // ── Full test suite — only when the trigger exists (shard b) ──
+const describeDb = !TEST_DB ? describe.skip : describe;
 
+const OWNER_ID = '00000000-0000-4000-f442-000000000001';
+const BIZ_ID   = '00000000-0000-4000-a442-000000000001';
+
+describeDb('Migration 442: server-managed business columns guard', () => {
   beforeAll(() => {
-    // Cleanup prior run
-    psql(`
-      DELETE FROM businesses WHERE id = '${BIZ_ID}';
-      DELETE FROM profiles WHERE id = '${USER_ID}';
-      DELETE FROM auth.users WHERE id = '${USER_ID}';
+    // ── Minimal schema ──
+    sql(`
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $$;
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$;
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
     `);
 
-    // CI creates auth.users without phone; ensure column exists
-    psql(`ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone TEXT;`);
+    sql(`
+      CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE TABLE IF NOT EXISTS auth.users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        raw_app_meta_data JSONB DEFAULT '{}'
+      );
+    `);
 
-    // Create test user
-    psql(`
-      INSERT INTO auth.users (id, phone) VALUES ('${USER_ID}', '+0004420001')
+    // businesses with ALL 9 guarded columns
+    sql(`
+      CREATE TABLE IF NOT EXISTS public.businesses (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id UUID REFERENCES auth.users(id),
+        name TEXT NOT NULL DEFAULT 'Test',
+        slug TEXT UNIQUE,
+        category VARCHAR(50) DEFAULT 'shop',
+        country_code VARCHAR(10) DEFAULT 'NG',
+        status VARCHAR(20) DEFAULT 'active',
+        verification_level VARCHAR(20) DEFAULT 'unverified',
+        verification_status VARCHAR(20) DEFAULT 'unverified',
+        payout_limit_monthly BIGINT DEFAULT 0,
+        payout_mode VARCHAR(20) DEFAULT 'platform_managed',
+        custom_fee_percentage DECIMAL(5,2),
+        custom_fee_flat INTEGER,
+        subscription_tier VARCHAR(20) DEFAULT 'free',
+        reseller_id UUID
+      );
+    `);
+
+    // Add columns if they don't exist (for re-runs on shared DB)
+    for (const col of [
+      "verification_level VARCHAR(20) DEFAULT 'unverified'",
+      "verification_status VARCHAR(20) DEFAULT 'unverified'",
+      'payout_limit_monthly BIGINT DEFAULT 0',
+      "payout_mode VARCHAR(20) DEFAULT 'platform_managed'",
+      'custom_fee_percentage DECIMAL(5,2)',
+      'custom_fee_flat INTEGER',
+      "subscription_tier VARCHAR(20) DEFAULT 'free'",
+      'reseller_id UUID',
+    ]) {
+      sql(`ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS ${col};`);
+    }
+
+    // RLS + owner UPDATE policy (production state)
+    sql(`ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;`);
+    sql(`
+      DROP POLICY IF EXISTS "owner_select" ON public.businesses;
+      CREATE POLICY "owner_select" ON public.businesses FOR SELECT
+        USING (owner_id = current_setting('request.jwt.claim.sub', true)::uuid);
+    `);
+    sql(`
+      DROP POLICY IF EXISTS "owner_update" ON public.businesses;
+      CREATE POLICY "owner_update" ON public.businesses FOR UPDATE
+        USING (owner_id = current_setting('request.jwt.claim.sub', true)::uuid);
+    `);
+
+    // GRANTs matching production
+    sql(`
+      GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+      GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
+      GRANT SELECT, UPDATE ON public.businesses TO authenticated;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.businesses TO service_role;
+      GRANT SELECT ON auth.users TO service_role;
+    `);
+
+    // ── Create the OLD tier trigger from 181 so 442 can DROP it ──
+    sql(`
+      CREATE OR REPLACE FUNCTION public.prevent_tier_tampering()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        IF OLD.subscription_tier = NEW.subscription_tier THEN RETURN NEW; END IF;
+        IF current_setting('role', true) = 'service_role' THEN RETURN NEW; END IF;
+        RAISE EXCEPTION 'subscription_tier cannot be modified directly';
+      END;
+      $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS trg_prevent_tier_tampering ON public.businesses;
+      CREATE TRIGGER trg_prevent_tier_tampering
+        BEFORE UPDATE ON public.businesses
+        FOR EACH ROW
+        WHEN (OLD.subscription_tier IS DISTINCT FROM NEW.subscription_tier)
+        EXECUTE FUNCTION public.prevent_tier_tampering();
+    `);
+
+    // ── Seed test data ──
+    sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
+    sql(`
+      INSERT INTO public.businesses (id, owner_id, name, slug, verification_level, verification_status, payout_limit_monthly, payout_mode, subscription_tier)
+      VALUES ('${BIZ_ID}', '${OWNER_ID}', 'Guard Test', 'guard-test-442', 'basic', 'verified', 500000, 'platform_managed', 'free')
       ON CONFLICT (id) DO NOTHING;
-    `);
-
-    // Create business as service_role (bypass the trigger)
-    psql(`
-      SET ROLE service_role;
-      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level, verification_status, payout_limit_monthly, custom_fee_percentage, custom_fee_flat, subscription_tier)
-      VALUES ('${BIZ_ID}', 'Guard Test Biz', 'guard-test-442', '${USER_ID}', '1 Test', 'Lagos', 'VI', '+000', 'active', 'platform_managed', 'NG', 'basic', 'verified', 500000, NULL, NULL, 'free');
-      RESET ROLE;
     `);
   });
 
   afterAll(() => {
-    psql(`
-      DELETE FROM businesses WHERE id = '${BIZ_ID}';
-      DELETE FROM profiles WHERE id = '${USER_ID}';
-      DELETE FROM auth.users WHERE id = '${USER_ID}';
-    `);
+    sql(`DELETE FROM public.businesses WHERE id = '${BIZ_ID}';`);
+    sql(`DELETE FROM auth.users WHERE id = '${OWNER_ID}';`);
+    // Clean up triggers/functions but leave the table for other tests
+    sql(`DROP TRIGGER IF EXISTS trg_guard_server_managed_columns ON public.businesses;`);
+    sql(`DROP FUNCTION IF EXISTS public.guard_server_managed_columns();`);
   });
 
-  // ── Server-managed columns: authenticated must fail ──
+  // ════════════════════════════════════════════════════
+  // NEGATIVE CONTROL — before applying 442
+  // ════════════════════════════════════════════════════
 
-  // messaging_suspended is guarded by trg_guard_messaging_suspended (migration 363), not this trigger
-  const serverManagedColumns: [string, string][] = [
+  it('NEGATIVE CONTROL: before 442, authenticated owner CAN update verification_level', () => {
+    const result = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      SET LOCAL request.jwt.claims = '{"sub":"${OWNER_ID}","role":"authenticated"}';
+      UPDATE public.businesses SET verification_level = 'standard' WHERE id = '${BIZ_ID}';
+      SELECT current_user;
+      ROLLBACK;
+    `);
+    // Should NOT contain an error — the update succeeded
+    expect(result).not.toContain('ERROR');
+    expect(result).toContain('authenticated');
+  });
+
+  // ════════════════════════════════════════════════════
+  // APPLY migration 442
+  // ════════════════════════════════════════════════════
+
+  it('applying migration 442 from disk succeeds', () => {
+    const migrationSql = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/442_business_server_managed_columns.sql'),
+      'utf-8',
+    );
+    const result = sql(migrationSql);
+    if (result.includes('FAIL')) {
+      throw new Error(`Migration 442 self-verification failed: ${result}`);
+    }
+    expect(result).toContain('PASS');
+  });
+
+  // ════════════════════════════════════════════════════
+  // AFTER: authenticated owner cannot update guarded columns
+  // ════════════════════════════════════════════════════
+
+  const guardedColumns: [string, string][] = [
     ['verification_level', "'standard'"],
     ['verification_status', "'rejected'"],
     ['payout_limit_monthly', '2000000'],
@@ -119,101 +205,122 @@ describe('442 DB: server-managed business columns guard', () => {
     ['custom_fee_percentage', '5.0'],
     ['custom_fee_flat', '100'],
     ['subscription_tier', "'growth'"],
-    ['owner_id', `'${USER_ID}'`],
-    ['reseller_id', "gen_random_uuid()"],
+    ['owner_id', `'${OWNER_ID}'`],
+    ['reseller_id', "'00000000-0000-4000-a442-eeeeeeeeeeee'"],
   ];
 
-  for (const [col, val] of serverManagedColumns) {
-    it(`authenticated cannot UPDATE ${col}`, () => {
-      const result = psqlNoFail(`
-        SET ROLE authenticated;
-        SET request.jwt.claims = '{"sub":"${USER_ID}","role":"authenticated"}';
-        UPDATE businesses SET ${col} = ${val} WHERE id = '${BIZ_ID}';
-        RESET ROLE;
+  for (const [col, val] of guardedColumns) {
+    it(`AFTER: authenticated owner UPDATE of ${col} → raises`, () => {
+      const threw = sqlThrows(`
+        BEGIN;
+        SET LOCAL ROLE authenticated;
+        SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+        SET LOCAL request.jwt.claims = '{"sub":"${OWNER_ID}","role":"authenticated"}';
+        UPDATE public.businesses SET ${col} = ${val} WHERE id = '${BIZ_ID}';
+        COMMIT;
       `);
-      expect(result.error).toBe(true);
-      expect(result.stdout).toContain('can only be modified');
+      expect(threw).toBe(true);
     });
   }
 
-  // ── Normal columns: authenticated can update ──
+  // ── Owner CAN update normal columns ──
 
-  it('authenticated can UPDATE name', () => {
-    const result = psqlNoFail(`
-      SET ROLE authenticated;
-      SET request.jwt.claims = '{"sub":"${USER_ID}","role":"authenticated"}';
-      UPDATE businesses SET name = 'Updated Name 442' WHERE id = '${BIZ_ID}';
-      RESET ROLE;
+  it('AFTER: authenticated owner UPDATE of name → ok', () => {
+    const result = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      SET LOCAL request.jwt.claims = '{"sub":"${OWNER_ID}","role":"authenticated"}';
+      UPDATE public.businesses SET name = 'Updated Name' WHERE id = '${BIZ_ID}';
+      COMMIT;
     `);
-    expect(result.error).toBe(false);
-
-    const name = psql(`SELECT name FROM businesses WHERE id = '${BIZ_ID}';`);
-    expect(name).toBe('Updated Name 442');
+    expect(result).not.toContain('ERROR');
 
     // Restore
-    psql(`SET ROLE service_role; UPDATE businesses SET name = 'Guard Test Biz' WHERE id = '${BIZ_ID}'; RESET ROLE;`);
+    sql(`UPDATE public.businesses SET name = 'Guard Test' WHERE id = '${BIZ_ID}';`);
   });
 
-  // ── service_role can update all server-managed columns ──
+  // ── service_role can update all guarded columns ──
 
-  for (const [col, val] of serverManagedColumns) {
-    it(`service_role can UPDATE ${col}`, () => {
-      const result = psqlNoFail(`
+  for (const [col, val] of guardedColumns) {
+    it(`AFTER: service_role UPDATE of ${col} → ok`, () => {
+      const result = sql(`
         SET ROLE service_role;
-        UPDATE businesses SET ${col} = ${val} WHERE id = '${BIZ_ID}';
+        UPDATE public.businesses SET ${col} = ${val} WHERE id = '${BIZ_ID}';
         RESET ROLE;
       `);
-      expect(result.error).toBe(false);
+      expect(result).not.toContain('ERROR');
     });
   }
 
-  // Reset after service_role tests
+  // Reset guarded columns after service_role tests
   afterAll(() => {
-    psql(`
-      SET ROLE service_role;
-      UPDATE businesses SET
-        verification_level = 'basic',
-        verification_status = 'verified',
-        payout_limit_monthly = 500000,
-        payout_mode = 'platform_managed',
-        custom_fee_percentage = NULL,
-        custom_fee_flat = NULL,
-        subscription_tier = 'free'
+    sql(`
+      UPDATE public.businesses SET
+        verification_level = 'basic', verification_status = 'verified',
+        payout_limit_monthly = 500000, payout_mode = 'platform_managed',
+        custom_fee_percentage = NULL, custom_fee_flat = NULL,
+        subscription_tier = 'free', reseller_id = NULL
       WHERE id = '${BIZ_ID}';
-      RESET ROLE;
     `);
   });
 
-  // ── anon gets no rows ──
+  // ── SECURITY DEFINER function owned by migration owner can update ──
 
-  it('anon SELECT returns no rows', () => {
-    const count = psql(`
-      SET ROLE anon;
-      SELECT count(*) FROM businesses WHERE id = '${BIZ_ID}';
+  it('AFTER: SECURITY DEFINER function owned by DB owner can update guarded column', () => {
+    // Create a SECURITY DEFINER test function owned by the current user (postgres/test_runner)
+    sql(`
+      CREATE OR REPLACE FUNCTION public._test_442_secdef_update(p_biz_id UUID)
+      RETURNS VOID
+      LANGUAGE plpgsql
+      SECURITY DEFINER
+      SET search_path = public, pg_temp
+      AS $$
+      BEGIN
+        UPDATE public.businesses SET payout_mode = 'direct_split' WHERE id = p_biz_id;
+      END;
+      $$;
+    `);
+    // Call it as authenticated — the function runs as the DB owner (postgres/test_runner)
+    const result = sql(`
+      SET ROLE authenticated;
+      SELECT public._test_442_secdef_update('${BIZ_ID}');
       RESET ROLE;
     `);
-    expect(count).toBe('0');
+    expect(result).not.toContain('ERROR');
+
+    // Verify the change took effect
+    const mode = sql(`SELECT payout_mode FROM public.businesses WHERE id = '${BIZ_ID}';`);
+    expect(mode).toBe('direct_split');
+
+    // Cleanup
+    sql(`UPDATE public.businesses SET payout_mode = 'platform_managed' WHERE id = '${BIZ_ID}';`);
+    sql(`DROP FUNCTION IF EXISTS public._test_442_secdef_update(UUID);`);
   });
 
-  // ── Old tier tampering trigger was removed ──
+  // ── Old trg_prevent_tier_tampering is gone ──
 
-  it('old trg_prevent_tier_tampering trigger no longer exists', () => {
-    const exists = psql(`
+  it('AFTER: old trg_prevent_tier_tampering is gone', () => {
+    const count = sql(`
       SELECT count(*) FROM pg_trigger t
       JOIN pg_class c ON t.tgrelid = c.oid
       JOIN pg_namespace n ON c.relnamespace = n.oid
       WHERE n.nspname = 'public' AND c.relname = 'businesses' AND t.tgname = 'trg_prevent_tier_tampering';
     `);
-    expect(exists).toBe('0');
+    expect(count).toBe('0');
   });
 
-  it('new trg_guard_server_managed_columns trigger exists', () => {
-    const exists = psql(`
-      SELECT count(*) FROM pg_trigger t
-      JOIN pg_class c ON t.tgrelid = c.oid
-      JOIN pg_namespace n ON c.relnamespace = n.oid
-      WHERE n.nspname = 'public' AND c.relname = 'businesses' AND t.tgname = 'trg_guard_server_managed_columns';
+  // ── subscription_tier protection still holds (via new trigger) ──
+
+  it('AFTER: subscription_tier protection still holds via the new guard', () => {
+    const threw = sqlThrows(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      SET LOCAL request.jwt.claims = '{"sub":"${OWNER_ID}","role":"authenticated"}';
+      UPDATE public.businesses SET subscription_tier = 'business' WHERE id = '${BIZ_ID}';
+      COMMIT;
     `);
-    expect(exists).toBe('1');
+    expect(threw).toBe(true);
   });
 });

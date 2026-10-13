@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
@@ -98,8 +99,8 @@ export async function GET(request: NextRequest) {
       verified_at: new Date().toISOString(),
     });
 
-    // Update business payout mode to direct_split
-    await supabase
+    // Update business payout mode to direct_split (service client — guarded column)
+    await createServiceClient()
       .from('businesses')
       .update({ payout_mode: 'direct_split' })
       .eq('id', businessId);
