@@ -52,7 +52,7 @@ import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults } from '@/lib/marketplace/search';
-import { loadBusinessOverrides, loadPlatformOverrides, getTranslation, fillTranslation, type TranslationOverrides } from '@/lib/bot/translations';
+import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides } from '@/lib/bot/translations';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -1355,6 +1355,19 @@ export class BotService {
         tierInfo = tier;
       }
 
+      // ── Translation overrides: load once, scope via AsyncLocalStorage ──
+      const [_bizOverrides, _platOverrides] = business
+        ? await Promise.all([
+            loadBusinessOverrides(this.supabase, business.id),
+            loadPlatformOverrides(this.supabase),
+          ])
+        : [new Map<string, string>(), new Map<string, string>()];
+
+      // eslint-disable-next-line no-inner-declarations -- scoped ALS wrapper
+      const _translationHandled = await runWithTranslationOverrides(
+        { business: _bizOverrides, platform: _platOverrides },
+        async (): Promise<boolean> => {
+
       // #524: A customer-wide response preference is presentation state only.
       // Read it after #266 has authoritatively bound the business, then re-check it
       // against this business's live entitlement and the production certification
@@ -1458,7 +1471,7 @@ export class BotService {
           if (canonicalResult.languageBlocked) {
             const langNames = canonicalResult.allowedLanguageNames || ['English'];
             await this.sendText(from, `This business currently supports ${langNames.join(' and ')}. Please send your message in ${langNames.length === 1 ? langNames[0] : 'one of those languages'}.`);
-            return;
+            return true;
           }
 
           // Confidence check BEFORE any semantic action
@@ -1485,9 +1498,9 @@ export class BotService {
                 requestedAction: canonicalResult.requestedAction,
                 originalText: text,
               });
-              if (actionResult.handled) return;
+              if (actionResult.handled) return true;
               await sendActionRecovery(this.messageSender, from, canonicalResult.requestedAction, actionResult.reason || 'no_handler');
-              return;
+              return true;
             }
 
             // High-confidence CREATE_NEW → try direct canonical routing
@@ -1636,12 +1649,12 @@ export class BotService {
             // Unsafe: cannot recover a business-scoped session. Fail closed.
             logger.error('[BOT] #266 R4: 23505 recovery failed — no safe null-biz session to resume');
             await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-            return;
+            return true;
           }
         } else {
           logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
           await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          return;
+          return true;
         }
       }
 
@@ -1703,25 +1716,43 @@ export class BotService {
       // running greeting/flow executor — the next inbound message will find this session
       // and can continue eligibility YES/NO or start fresh.
       if (promoHandledFirstMessage) {
-        return;
+        return true;
       }
 
       // First-contact language picker: if no saved language preference and
       // business offers multiple certified languages, show a picker instead
       // of proceeding with the default English greeting.
       if (business && !hasRememberedLanguage && !canonicalActivatedLanguage) {
-        const pickerConfiguredLangs = await loadBusinessLanguages(this.supabase, business.id);
-        const pickerEntitlement = getEffectiveLanguages(
-          business.subscription_tier,
-          pickerConfiguredLangs,
-        );
-        const { CERTIFIED_LANGUAGES: pickerCertLangs } = await import('./language-policy');
-        const pickerAllowed = pickerEntitlement.allowedLanguages.filter(
-          (code: string) => pickerCertLangs.includes(code),
-        );
-        if (pickerAllowed.length > 1) {
-          await this.sendLanguagePicker(from, business, pickerAllowed, this.messageSender);
-          return; // Wait for picker selection before proceeding
+        // Check if this contact already picked a language for this business
+        const { data: custProfile } = await this.supabase
+          .from('customer_profiles')
+          .select('preferred_language')
+          .eq('business_id', business.id)
+          .eq('phone', from)
+          .maybeSingle();
+        if (custProfile?.preferred_language) {
+          hasRememberedLanguage = true; // Skip picker, use their saved preference
+        }
+
+        if (!hasRememberedLanguage) {
+          const pickerConfiguredLangs = await loadBusinessLanguages(this.supabase, business.id);
+          const pickerEntitlement = getEffectiveLanguages(
+            business.subscription_tier,
+            pickerConfiguredLangs,
+          );
+          const { CERTIFIED_LANGUAGES: pickerCertLangs } = await import('./language-policy');
+          const pickerAllowed = pickerEntitlement.allowedLanguages.filter(
+            (code: string) => pickerCertLangs.includes(code),
+          );
+          if (pickerAllowed.length > 1) {
+            // Store the original message for processing after picker selection
+            session.session_data._pending_first_message = text;
+            await this.supabase.from('bot_sessions')
+              .update({ session_data: session.session_data })
+              .eq('id', session.id);
+            await this.sendLanguagePicker(from, business, pickerAllowed, this.messageSender);
+            return true; // Wait for picker selection before proceeding
+          }
         }
       }
 
@@ -1760,7 +1791,7 @@ export class BotService {
             ],
           });
           await this.deactivateSession(session.id);
-          return;
+          return true;
         }
 
         // Greeting is merged into the capability selection message (stored in _greeting)
@@ -1856,7 +1887,7 @@ export class BotService {
               session.session_data._quick_rebook_sent = true;
               await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
               // Stop here — don't show the full greeting/menu on top of the rebook prompt
-              return;
+              return true;
             } else {
               // No rebookable service — send text greeting as before
               const returnMsg = buildReturnGreeting(
@@ -2021,8 +2052,13 @@ export class BotService {
         // Delegate to flow executor for the first step prompt
         // CAS-004: pass canonical result ephemerally — NOT persisted to session
         await this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined);
-        return;
+        return true;
       }
+
+      return false; // Not handled — fall through to marketplace greeting
+      }); // end runWithTranslationOverrides
+
+      if (_translationHandled) return;
 
       // Marketplace greeting — no business found from bot code or past history
       // Check if this is a returning user with past businesses for quick-pick
@@ -2195,49 +2231,102 @@ export class BotService {
     // ── Language picker selection (first-contact picker) ──
     if (text.startsWith('lang_pick_')) {
       const langCode = text.replace('lang_pick_', '');
-      const { isSupportedLanguage } = await import('@/lib/bot/languages');
+      const { isSupportedLanguage, CERTIFIED_LANGUAGES: pickCertLangs } = await import('@/lib/bot/languages');
+      const langName = getLanguageName(langCode);
 
       if (!isSupportedLanguage(langCode)) {
         await this.sendText(from, 'Invalid selection. Send *Hi* to start over.');
         return;
       }
 
-      // Validate language is still allowed for this business
-      const { CERTIFIED_LANGUAGES: pickCertLangs } = await import('@/lib/bot/languages');
       if (!pickCertLangs.includes(langCode)) {
         await this.sendText(from, 'This language is not yet available. Send *Hi* to start over.');
         return;
       }
 
-      // Set session language
-      if (session) {
-        session.session_data._detected_language = langCode;
-        await this.supabase.from('bot_sessions')
-          .update({ session_data: session.session_data })
-          .eq('id', session.id);
+      // Re-check entitlement against live business tier + language config
+      const pickTier = session.business_id
+        ? (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free'
+        : 'free';
+      const pickEntitlement = await this.buildTranslationContext(session.business_id, pickTier);
+      const mayActivate = pickCertLangs.includes(langCode)
+        && pickEntitlement.entitlement.allowedLanguages.includes(langCode)
+        && (langCode === 'en' || (pickEntitlement.entitlement.translationAllowed && pickEntitlement.entitlement.llmAllowed));
+      if (!mayActivate) {
+        const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+        await this.sendText(from, fillFlowCopy('en', 'lang.not_available', { langName }));
+        return;
       }
 
+      // Guard: no session (should not happen — picker is shown after session creation)
+      if (!session) {
+        await this.sendText(from, `Send *Hi* to continue in ${langName}.`);
+        return;
+      }
+
+      // CAS update session language
+      session.session_data._detected_language = langCode;
+      await this.supabase.rpc('update_session_cas', {
+        p_session_id: session.id,
+        p_expected_version: session.version,
+        p_current_step: session.current_step,
+        p_session_data: session.session_data,
+      });
+      session.version = (session.version || 0) + 1;
+
       // Save to profile for future sessions
-      if (session?.user_id) {
+      if (session.user_id) {
         const { writePreferredResponseLanguage } = await import('@/lib/bot/language-preference');
         await writePreferredResponseLanguage(this.supabase as never, session.user_id, langCode);
       }
 
+      // Save to customer_profiles for per-business preference
+      // (preferred_language column added by migration 445 — graceful if not yet applied)
+      if (session.business_id) {
+        try {
+          await this.supabase.from('customer_profiles').upsert({
+            business_id: session.business_id,
+            phone: from,
+            preferred_language: langCode,
+          }, { onConflict: 'business_id,phone' });
+        } catch {
+          // Column may not exist yet — non-fatal
+        }
+      }
+
       // Send confirmation in the chosen language
       const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
-      const langName = getLanguageName(langCode);
       const confirmMsg = fillFlowCopy(langCode, 'lang.picker_confirmed', { langName });
       await this.sendText(from, confirmMsg);
 
+      // Process any pending first message stored before the picker was shown
+      const pendingFirstMsg = session.session_data._pending_first_message as string | undefined;
+      if (pendingFirstMsg) {
+        delete session.session_data._pending_first_message;
+        await this.supabase.rpc('update_session_cas', {
+          p_session_id: session.id,
+          p_expected_version: session.version,
+          p_current_step: session.current_step,
+          p_session_data: session.session_data,
+        });
+        session.version = (session.version || 0) + 1;
+      }
+
       // Now proceed to greeting/menu in the chosen language
-      if (session && session.business_id) {
+      if (session.business_id) {
         const { data: pickBiz } = await this.supabase
           .from('businesses')
           .select('*')
           .eq('id', session.business_id)
           .single();
         if (pickBiz) {
-          await this.flowExecutor.execute(from, '', session, pickBiz);
+          const [bizOv, platOv] = await Promise.all([
+            loadBusinessOverrides(this.supabase, session.business_id),
+            loadPlatformOverrides(this.supabase),
+          ]);
+          await runWithTranslationOverrides({ business: bizOv, platform: platOv }, async () => {
+            await this.flowExecutor.execute(from, '', session!, pickBiz);
+          });
         }
       }
       return;
@@ -3439,10 +3528,23 @@ export class BotService {
 
     const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
 
+    // Build multilingual body: English line + one line per non-English offered language
+    const bodyLines: string[] = [getFlowCopy('en', 'lang.picker_body')];
+    for (const code of allowedLanguages) {
+      if (code === 'en') continue;
+      const localizedLine = getFlowCopy(code, 'lang.picker_body');
+      // Only add if it differs from the English line (has a real translation)
+      if (localizedLine && localizedLine !== bodyLines[0]) {
+        const entry = catalog.find(l => l.code === code);
+        const tag = entry?.nativeName ? ` (${entry.nativeName})` : '';
+        bodyLines.push(`${localizedLine}${tag}`);
+      }
+    }
+
     await sender.sendList({
       to: from,
       title: business.name,
-      body: getFlowCopy('en', 'lang.picker_body'),
+      body: bodyLines.join('\n'),
       buttonLabel: getFlowCopy('en', 'lang.picker_button'),
       items: rows,
     });

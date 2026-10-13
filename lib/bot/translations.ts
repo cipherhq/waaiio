@@ -1,14 +1,55 @@
+/**
+ * 4-layer translation resolution via AsyncLocalStorage.
+ *
+ * Layers (checked in order by getFlowCopy/fillFlowCopy):
+ *   1. Business override   (bot_translation_overrides)
+ *   2. Platform override    (bot_translation_platform_overrides)
+ *   3. Code default         (FLOW_COPY in flow-localization.ts)
+ *   4. English fallback     (FLOW_COPY.en)
+ *
+ * Usage:
+ *   const overrides = { business: await loadBusinessOverrides(...), platform: await loadPlatformOverrides(...) };
+ *   await runWithTranslationOverrides(overrides, async () => {
+ *     // All getFlowCopy/fillFlowCopy calls inside here check the store first.
+ *   });
+ */
+
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { logger } from '@/lib/logger';
 
-// Types
+// ── Types ───────────────────────────────────────────────────────
+
 export interface TranslationOverrides {
   business: Map<string, string>;  // keyed by "lang.key"
   platform: Map<string, string>;  // keyed by "lang.key"
 }
 
-// Platform overrides cache (short-lived, shared across sessions)
+// ── AsyncLocalStorage store ─────────────────────────────────────
+
+const translationStore = new AsyncLocalStorage<TranslationOverrides>();
+
+/**
+ * Read the current request's translation overrides from the ALS store.
+ * Returns null when called outside runWithTranslationOverrides.
+ */
+export function getTranslationOverrides(): TranslationOverrides | null {
+  return translationStore.getStore() ?? null;
+}
+
+/**
+ * Execute `fn` with translation overrides available to every
+ * getFlowCopy / fillFlowCopy call within the async scope.
+ */
+export function runWithTranslationOverrides<T>(
+  overrides: TranslationOverrides,
+  fn: () => T,
+): T {
+  return translationStore.run(overrides, fn);
+}
+
+// ── Platform overrides cache ────────────────────────────────────
+
 let platformOverridesCache: Map<string, string> | null = null;
 let platformOverridesCacheTime = 0;
 const PLATFORM_CACHE_TTL_MS = 60_000; // 60 seconds
@@ -73,44 +114,34 @@ export async function loadBusinessOverrides(
   }
 }
 
-/**
- * 4-layer translation resolution:
- * 1. Business override
- * 2. Platform override
- * 3. Code default (flow-localization.ts)
- * 4. English fallback (handled by getFlowCopy)
- */
-export function getTranslation(
-  overrides: TranslationOverrides | null,
-  lang: string,
-  key: string,
-): string {
-  const lookupKey = `${lang}.${key}`;
-
-  // Layer 1: Business override
-  const bizOverride = overrides?.business.get(lookupKey);
-  if (bizOverride) return bizOverride;
-
-  // Layer 2: Platform override
-  const platformOverride = overrides?.platform.get(lookupKey);
-  if (platformOverride) return platformOverride;
-
-  // Layer 3+4: Code default with English fallback
-  return getFlowCopy(lang, key);
-}
+// ── Business-editable key allowlist ─────────────────────────────
 
 /**
- * 4-layer translation with placeholder interpolation.
+ * Prefixes of flow-copy keys a business may override.
+ * Everything not matching is platform-only.
+ * Excluded: payment.*, error.*, docs.*, notification.*, handoff.*,
+ * savedcard.*, chat.*, greeting.powered_by (branding).
  */
-export function fillTranslation(
-  overrides: TranslationOverrides | null,
-  lang: string,
-  key: string,
-  values: Record<string, string | number>,
-): string {
-  let text = getTranslation(overrides, lang, key);
-  for (const [k, v] of Object.entries(values)) {
-    text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
-  }
-  return text;
+const BUSINESS_EDITABLE_PREFIXES = [
+  'cap.', 'greeting.', 'lang.', 'menu.', 'nav.',
+  'booking.', 'ordering.', 'ticketing.', 'reservation.',
+  'account.', 'survey.', 'poll.', 'feedback.', 'queue.',
+  'waitlist.', 'crowdfunding.', 'loyalty.', 'rsvp.',
+  'recurring.', 'invoice.', 'tips.', 'confirm.', 'post.',
+  'orders.', 'order_status.', 'rating.',
+];
+
+const BUSINESS_EDITABLE_EXACT = [
+  'invalidSelection', 'cancelHint', 'yes', 'stayHere',
+  'rerouteBooking', 'rerouteOrdering', 'rerouteTicketing',
+  'reroutePayment', 'rerouteGeneric',
+];
+
+const BUSINESS_BLOCKED_KEYS = ['greeting.powered_by'];
+
+/** Check if a key is editable by businesses. */
+export function isBusinessEditableKey(key: string): boolean {
+  if (BUSINESS_BLOCKED_KEYS.includes(key)) return false;
+  if (BUSINESS_EDITABLE_EXACT.includes(key)) return true;
+  return BUSINESS_EDITABLE_PREFIXES.some(prefix => key.startsWith(prefix));
 }

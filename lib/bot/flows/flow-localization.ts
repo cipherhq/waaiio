@@ -19,6 +19,7 @@
  */
 import { CERTIFIED_LANGUAGES, SUPPORTED_LANGUAGES } from '@/lib/bot/languages';
 import type { SupportedLanguage } from '@/lib/bot/languages';
+import { getTranslationOverrides } from '@/lib/bot/translations';
 
 // ═══════════════════════════════════════════════════════════════
 // Locale corpus
@@ -5873,11 +5874,29 @@ export const KEYS_WITH_COMMANDS: readonly string[] = [
 
 /**
  * Get deterministic flow copy for a framework message.
- * Uses static copy only when the language is both certified AND has the key.
- * Falls back to English for uncertified/unentitled languages.
+ *
+ * 4-layer resolution (when inside runWithTranslationOverrides):
+ *   1. Business override   → bot_translation_overrides
+ *   2. Platform override    → bot_translation_platform_overrides
+ *   3. Code default         → FLOW_COPY[lang][key]
+ *   4. English fallback     → FLOW_COPY.en[key]
+ *
+ * Outside the ALS scope, layers 1+2 are skipped (backwards-compatible).
  */
 export function getFlowCopy(effectiveLang: string | undefined, key: string): string {
   const lang = effectiveLang && CERTIFIED_LANGUAGES.includes(effectiveLang) ? effectiveLang : 'en';
+  const lookupKey = `${lang}.${key}`;
+
+  // Layers 1+2: check ALS store for business/platform overrides
+  const overrides = getTranslationOverrides();
+  if (overrides) {
+    const bizVal = overrides.business.get(lookupKey);
+    if (bizVal) return bizVal;
+    const platVal = overrides.platform.get(lookupKey);
+    if (platVal) return platVal;
+  }
+
+  // Layers 3+4: code default, then English fallback
   return FLOW_COPY[lang]?.[key] ?? FLOW_COPY.en[key] ?? key;
 }
 
