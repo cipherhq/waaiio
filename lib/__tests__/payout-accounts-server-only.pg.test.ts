@@ -19,7 +19,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
   let hasTable = false;
 
   beforeAll(async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Client } = require('pg') as { Client: new (opts: { connectionString: string | undefined }) => any };
     pg = new Client({ connectionString: TEST_DATABASE_URL });
     await pg.connect();
