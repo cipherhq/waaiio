@@ -74,6 +74,7 @@ describe.skipIf(!canRun)('442 DB: server-managed business columns guard (real mi
 
   // ── Server-managed columns: authenticated must fail ──
 
+  // messaging_suspended is guarded by trg_guard_messaging_suspended (migration 363), not this trigger
   const serverManagedColumns: [string, string][] = [
     ['verification_level', "'standard'"],
     ['verification_status', "'rejected'"],
@@ -84,7 +85,6 @@ describe.skipIf(!canRun)('442 DB: server-managed business columns guard (real mi
     ['subscription_tier', "'growth'"],
     ['owner_id', `'${USER_ID}'`],  // same value but trigger still fires on IS DISTINCT FROM check
     ['reseller_id', "gen_random_uuid()"],
-    ['messaging_suspended', 'true'],
   ];
 
   for (const [col, val] of serverManagedColumns) {
@@ -142,8 +142,7 @@ describe.skipIf(!canRun)('442 DB: server-managed business columns guard (real mi
         payout_mode = 'platform_managed',
         custom_fee_percentage = NULL,
         custom_fee_flat = NULL,
-        subscription_tier = 'free',
-        messaging_suspended = false
+        subscription_tier = 'free'
       WHERE id = '${BIZ_ID}';
       RESET ROLE;
     `);

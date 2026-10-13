@@ -7,7 +7,10 @@
 -- Server-managed columns:
 --   verification_level, verification_status, payout_limit_monthly,
 --   payout_mode, custom_fee_percentage, custom_fee_flat,
---   subscription_tier, owner_id, reseller_id, messaging_suspended
+--   subscription_tier, owner_id, reseller_id
+--
+-- Note: messaging_suspended is guarded by the dedicated
+-- trg_guard_messaging_suspended trigger (migration 363).
 --
 -- Owners can still update normal columns (name, description, hours, etc.).
 -- SECURITY INVOKER — runs as the calling role.
@@ -79,9 +82,9 @@ BEGIN
     RAISE EXCEPTION 'reseller_id can only be modified by the server';
   END IF;
 
-  IF NEW.messaging_suspended IS DISTINCT FROM OLD.messaging_suspended THEN
-    RAISE EXCEPTION 'messaging_suspended can only be modified by the server';
-  END IF;
+  -- messaging_suspended is guarded by the dedicated trg_guard_messaging_suspended
+  -- trigger (migration 363) which enforces toggle_messaging_suspension() RPC.
+  -- Do not duplicate that guard here.
 
   RETURN NEW;
 END;
