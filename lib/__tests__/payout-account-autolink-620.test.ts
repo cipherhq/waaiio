@@ -1,167 +1,290 @@
 /**
- * #620 — Payout account auto-link on approve
+ * #620 — Payout account auto-link: executable route-level tests
  *
- * Source analysis tests that verify the approve route:
- * 1. Read-only candidate resolution before step-up (no writes)
- * 2. Write (auto-link) only after step-up succeeds
- * 3. Race detection: concurrent link to different account → 409
- * 4. Existing auto-link cases (none, one, inactive, multiple)
- * 5. Held status accepted by approve route
+ * Each test calls the actual POST handler with mocked Supabase responses.
+ * a) status advanced to processing/paid between read and link → 409
+ * b) different account linked concurrently → 409
+ * c) same account linked, status still eligible → proceeds
+ * d) link update returns DB error → 500, no claim or transfer
+ * e) step-up failure → zero writes
+ * f) existing happy path (link succeeds in 1 row)
  */
-import { describe, it, expect } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
-const ROUTE_SRC = fs.readFileSync(
-  path.resolve(__dirname, '../../app/api/admin/payouts/[id]/approve/route.ts'),
-  'utf-8',
-);
+function makePostRequest(url: string, body: Record<string, unknown>) {
+  return new NextRequest(new URL(url, 'http://localhost:3000'), {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
 
-describe('#620 — Read-only resolution before step-up', () => {
-  it('resolves candidate read-only before consumeStepUp call', () => {
-    // candidateAccountId is set in a read-only section before the step-up invocation
-    const candidatePos = ROUTE_SRC.indexOf('candidateAccountId = candidates[0].id');
-    // Find the actual invocation, not the import
-    const stepUpPos = ROUTE_SRC.indexOf('await consumeStepUp(');
-    expect(candidatePos).toBeGreaterThan(-1);
-    expect(stepUpPos).toBeGreaterThan(candidatePos);
+interface AutoLinkTestConfig {
+  /** What the link UPDATE returns (data array, or null for 0 rows) */
+  linkUpdateResult?: unknown[] | null;
+  /** Error from the link UPDATE */
+  linkUpdateError?: unknown;
+  /** What the re-read returns when link update gives 0 rows */
+  rereadData?: { payout_account_id: string | null; status: string } | null;
+  /** Whether consumeStepUp should throw */
+  stepUpFails?: boolean;
+  /** Manual approval update result */
+  manualUpdateResult?: unknown[] | null;
+}
+
+// Track whether any update was called on business_payouts
+let updateCalls: Array<{ table: string; data: Record<string, unknown> }>;
+
+function setupMocks(config: AutoLinkTestConfig = {}) {
+  const {
+    linkUpdateResult = [{ id: 'p1', status: 'held', payout_account_id: 'pa-candidate' }],
+    linkUpdateError = null,
+    rereadData = null,
+    stepUpFails = false,
+    manualUpdateResult = [{ id: 'p1' }],
+  } = config;
+
+  updateCalls = [];
+
+  // Track single() call count per from('business_payouts') invocation
+  let bpFromCallCount = 0;
+
+  const mockFrom = vi.fn().mockImplementation((table: string) => {
+    const chain: Record<string, unknown> = {};
+    ['select', 'eq', 'neq', 'in', 'is', 'not', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+      chain[m] = vi.fn().mockReturnValue(chain);
+    });
+
+    if (table === 'business_payouts') {
+      bpFromCallCount++;
+      const callNum = bpFromCallCount;
+
+      // First from('business_payouts') → payout read (ends with .single())
+      // Subsequent from('business_payouts') for SELECT → re-read
+      chain.single = vi.fn().mockImplementation(() => {
+        if (callNum === 1) {
+          // Initial payout read — held, no payout_account_id
+          return Promise.resolve({
+            data: {
+              id: 'p1', business_id: 'b1', status: 'held',
+              net_amount: 100, payout_account_id: null,
+              period_start: '2024-01-01', period_end: '2024-01-07',
+              flags: [],
+            },
+          });
+        }
+        // Re-read after failed link
+        return Promise.resolve({ data: rereadData });
+      });
+
+      // .update() → link or manual approval
+      const linkChain: Record<string, unknown> = {};
+      ['eq', 'in', 'is', 'select'].forEach(m => {
+        linkChain[m] = vi.fn().mockReturnValue(linkChain);
+      });
+
+      // The manual approval update chain (different from link chain)
+      const manualChain: Record<string, unknown> = {};
+      ['eq', 'in', 'select'].forEach(m => {
+        manualChain[m] = vi.fn().mockReturnValue(manualChain);
+      });
+      manualChain.select = vi.fn().mockResolvedValue({ data: manualUpdateResult });
+
+      let updateCallNum = 0;
+      chain.update = vi.fn().mockImplementation((data: Record<string, unknown>) => {
+        updateCalls.push({ table, data });
+        updateCallNum++;
+        if (updateCallNum === 1 && data.payout_account_id) {
+          // This is the auto-link update
+          linkChain.select = vi.fn().mockResolvedValue({
+            data: linkUpdateResult,
+            error: linkUpdateError,
+          });
+          return linkChain;
+        }
+        // Manual approval update
+        return manualChain;
+      });
+    } else if (table === 'businesses') {
+      chain.single = vi.fn().mockResolvedValue({
+        data: { verification_level: 'verified', country_code: 'NG', name: 'Test', owner_id: 'u1' },
+      });
+    } else if (table === 'payout_accounts') {
+      // .not() is the terminal for candidate query → returns promise
+      chain.not = vi.fn().mockResolvedValue({
+        data: [{ id: 'pa-candidate' }], error: null,
+      });
+      chain.maybeSingle = vi.fn().mockResolvedValue({
+        data: { id: 'pa-candidate', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' },
+      });
+      chain.single = vi.fn().mockResolvedValue({
+        data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', gateway: 'paystack' },
+      });
+    } else if (table === 'platform_fees') {
+      chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+    } else if (table === 'profiles') {
+      chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
+    } else {
+      chain.single = vi.fn().mockResolvedValue({ data: null });
+      chain.insert = vi.fn().mockResolvedValue({});
+    }
+    chain.neq = vi.fn().mockResolvedValue({ data: [] });
+    return chain;
   });
 
-  it('uses effectiveAccountId for all pre-step-up account checks', () => {
-    // The payout account verification section uses effectiveAccountId, not payout.payout_account_id
-    expect(ROUTE_SRC).toContain("const effectiveAccountId = payout.payout_account_id || candidateAccountId");
-    expect(ROUTE_SRC).toMatch(/\.eq\('id',\s*effectiveAccountId!\)/);
+  vi.doMock('@/lib/supabase/service', () => ({
+    createServiceClient: vi.fn().mockReturnValue({
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      from: mockFrom,
+    }),
+  }));
+
+  vi.doMock('@/lib/supabase/server', () => ({
+    createClient: vi.fn().mockResolvedValue({ from: mockFrom }),
+  }));
+
+  vi.doMock('@/lib/admin-auth', () => ({
+    requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
+    getSessionIdFromToken: vi.fn().mockReturnValue('test-session-id'),
+  }));
+
+  if (stepUpFails) {
+    const StepUpErrorClass = class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } };
+    vi.doMock('@/lib/admin-step-up', () => ({
+      consumeStepUp: vi.fn().mockRejectedValue(new StepUpErrorClass('Step-up required')),
+      StepUpError: StepUpErrorClass,
+    }));
+  } else {
+    vi.doMock('@/lib/admin-step-up', () => ({
+      consumeStepUp: vi.fn().mockResolvedValue(true),
+      StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+    }));
+  }
+
+  vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
+  vi.doMock('@/lib/email/templates', () => ({ payoutApprovedEmail: vi.fn(), payoutPaidEmail: vi.fn() }));
+  vi.doMock('@/lib/logger', () => ({
+    logger: {
+      error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn(),
+      withContext: () => ({ error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn() }),
+    },
+  }));
+  vi.doMock('@/lib/errors', () => ({ safeLogErrorContext: vi.fn().mockReturnValue({}) }));
+  vi.doMock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn().mockResolvedValue(undefined) }));
+  vi.doMock('@/lib/countries', () => ({ getCountry: vi.fn().mockReturnValue({ currency_code: 'NGN' }) }));
+  vi.doMock('@/lib/payments/payout-classification', () => ({
+    classifyPaystackError: vi.fn(), classifyStripeError: vi.fn(),
+  }));
+
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({})));
+}
+
+describe('#620 — Auto-link executable route tests', () => {
+  beforeEach(() => { vi.resetModules(); process.env.ENABLE_PAYOUTS = 'true'; });
+  afterEach(() => { vi.restoreAllMocks(); delete process.env.ENABLE_PAYOUTS; });
+
+  it('(f) happy path: link succeeds, manual approval completes', async () => {
+    setupMocks({
+      linkUpdateResult: [{ id: 'p1', status: 'held', payout_account_id: 'pa-candidate' }],
+    });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', {
+      transfer_method: 'manual_bank', stepUpId: 'step1',
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    // Verify the link update was called
+    expect(updateCalls.length).toBeGreaterThanOrEqual(1);
+    expect(updateCalls[0].data.payout_account_id).toBe('pa-candidate');
   });
 
-  it('no .update() on business_payouts between candidate resolution and consumeStepUp', () => {
-    // Extract the section between candidate resolution and step-up
-    const candidateSection = ROUTE_SRC.match(
-      /Resolve effective payout account[\s\S]*?consumeStepUp/
-    );
-    expect(candidateSection).not.toBeNull();
-    // This section must NOT contain any .update() calls on business_payouts
-    // The only .update() should be in the "Auto-link write" section AFTER step-up
-    expect(candidateSection![0]).not.toMatch(/\.update\(\s*\{[^}]*payout_account_id/);
-  });
-});
+  it('(a) status advanced to processing between read and link → 409', async () => {
+    setupMocks({
+      linkUpdateResult: [],  // 0 rows — status or account changed
+      rereadData: { payout_account_id: null, status: 'processing' },
+    });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', {
+      transfer_method: 'manual_bank', stepUpId: 'step1',
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    const body = await res.json();
 
-describe('#620 — Auto-link write after step-up', () => {
-  it('write happens after consumeStepUp succeeds', () => {
-    const stepUpPos = ROUTE_SRC.indexOf('consumeStepUp');
-    const writePos = ROUTE_SRC.indexOf('Auto-link write (after step-up');
-    expect(writePos).toBeGreaterThan(stepUpPos);
-  });
-
-  it('write uses conditional update where payout_account_id IS NULL', () => {
-    const writeBlock = ROUTE_SRC.match(/Auto-link write[\s\S]*?Manual methods/);
-    expect(writeBlock).not.toBeNull();
-    expect(writeBlock![0]).toMatch(/\.is\('payout_account_id',\s*null\)/);
+    expect(res.status).toBe(409);
+    expect(body.error).toContain('changed by a concurrent request');
+    // Only the link update should have been called, not the manual approval
+    expect(updateCalls.length).toBe(1);
   });
 
-  it('write uses .select("id") and checks linkResult.length', () => {
-    const writeBlock = ROUTE_SRC.match(/Auto-link write[\s\S]*?Manual methods/);
-    expect(writeBlock).not.toBeNull();
-    expect(writeBlock![0]).toMatch(/\.select\('id'\)/);
-    expect(writeBlock![0]).toMatch(/linkResult\.length\s*!==\s*1/);
+  it('(b) different account linked concurrently → 409', async () => {
+    setupMocks({
+      linkUpdateResult: [],  // 0 rows — someone else linked a different account
+      rereadData: { payout_account_id: 'pa-other', status: 'held' },
+    });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', {
+      transfer_method: 'manual_bank', stepUpId: 'step1',
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toContain('changed by a concurrent request');
+    expect(updateCalls.length).toBe(1);
   });
 
-  it('sets payout.payout_account_id after successful link', () => {
-    expect(ROUTE_SRC).toContain('payout.payout_account_id = candidateAccountId');
+  it('(c) same account linked concurrently, status still eligible → proceeds', async () => {
+    setupMocks({
+      linkUpdateResult: [],  // 0 rows, but same candidate was already linked
+      rereadData: { payout_account_id: 'pa-candidate', status: 'held' },
+    });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', {
+      transfer_method: 'manual_bank', stepUpId: 'step1',
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    // Should have called link update + manual approval update
+    expect(updateCalls.length).toBe(2);
   });
 
-  it('only writes when candidateAccountId is truthy (payout had no account)', () => {
-    const writeBlock = ROUTE_SRC.match(/Auto-link write[\s\S]*?Manual methods/);
-    expect(writeBlock).not.toBeNull();
-    expect(writeBlock![0]).toMatch(/if\s*\(candidateAccountId\)/);
-  });
-});
+  it('(d) link update returns DB error → 500, no claim or transfer', async () => {
+    setupMocks({
+      linkUpdateResult: null,
+      linkUpdateError: { message: 'deadlock detected', code: '40P01' },
+    });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', {
+      transfer_method: 'manual_bank', stepUpId: 'step1',
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    const body = await res.json();
 
-describe('#620 — No DB write when step-up fails', () => {
-  it('step-up failure returns 403 before any auto-link write', () => {
-    // consumeStepUp is in a try/catch that returns 403
-    const stepUpBlock = ROUTE_SRC.match(/consumeStepUp[\s\S]*?step_up_required/);
-    expect(stepUpBlock).not.toBeNull();
-    expect(stepUpBlock![0]).toContain('status: 403');
-    // The auto-link write is AFTER this block
-    const failReturn = ROUTE_SRC.indexOf("code: 'step_up_required'");
-    const writeStart = ROUTE_SRC.indexOf('Auto-link write (after step-up');
-    expect(writeStart).toBeGreaterThan(failReturn);
-  });
-
-  it('candidateAccountId is set but no write occurs in the read-only section', () => {
-    // Between "Resolve effective" and "consumeStepUp", there should be no
-    // business_payouts .update() call
-    const readOnlySection = ROUTE_SRC.match(
-      /let candidateAccountId[\s\S]*?consumeStepUp/
-    );
-    expect(readOnlySection).not.toBeNull();
-    // Check that the update with payout_account_id does NOT appear in this section
-    const updateMatches = readOnlySection![0].match(/\.update\(/g);
-    expect(updateMatches).toBeNull();
-  });
-});
-
-describe('#620 — Concurrent link race detection (409)', () => {
-  it('re-reads payout when link update returns 0 rows', () => {
-    const writeBlock = ROUTE_SRC.match(/Auto-link write[\s\S]*?Manual methods/);
-    expect(writeBlock).not.toBeNull();
-    // Must re-read business_payouts to check current payout_account_id
-    expect(writeBlock![0]).toMatch(/\.select\('payout_account_id'\)/);
-    expect(writeBlock![0]).toMatch(/\.eq\('id',\s*id\)/);
-    expect(writeBlock![0]).toContain('.single()');
+    expect(res.status).toBe(500);
+    expect(body.error).toContain('Failed to link payout account');
+    // Only the failed link update, no manual approval
+    expect(updateCalls.length).toBe(1);
   });
 
-  it('proceeds if re-read shows same candidate was linked concurrently', () => {
-    const writeBlock = ROUTE_SRC.match(/Auto-link write[\s\S]*?Manual methods/);
-    expect(writeBlock).not.toBeNull();
-    expect(writeBlock![0]).toContain('reread?.payout_account_id === candidateAccountId');
-    expect(writeBlock![0]).toContain('safe to proceed');
-  });
+  it('(e) step-up failure → zero writes on business_payouts', async () => {
+    setupMocks({ stepUpFails: true });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    const req = makePostRequest('/api/admin/payouts/p1/approve', {
+      transfer_method: 'manual_bank', stepUpId: 'step1',
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    const body = await res.json();
 
-  it('returns 409 if re-read shows a different account was linked', () => {
-    const writeBlock = ROUTE_SRC.match(/Auto-link write[\s\S]*?Manual methods/);
-    expect(writeBlock).not.toBeNull();
-    expect(writeBlock![0]).toContain('payout account changed by a concurrent request');
-    expect(writeBlock![0]).toContain('status: 409');
-  });
-});
-
-describe('#620 — Existing auto-link cases', () => {
-  it('queries payout_accounts filtered by is_active=true', () => {
-    expect(ROUTE_SRC).toMatch(/from\('payout_accounts'\)\s*\n\s*\.select\('id'\)/);
-    expect(ROUTE_SRC).toMatch(/\.eq\('is_active',\s*true\)/);
-  });
-
-  it('queries payout_accounts filtered by verified_at IS NOT NULL', () => {
-    expect(ROUTE_SRC).toMatch(/\.not\('verified_at',\s*'is',\s*null\)/);
-  });
-
-  it('queries payout_accounts scoped to the payout business_id', () => {
-    expect(ROUTE_SRC).toMatch(/\.eq\('business_id',\s*payout\.business_id\)/);
-  });
-
-  it('requires exactly one candidate (rejects 0 or 2+)', () => {
-    expect(ROUTE_SRC).toMatch(/candidates\.length\s*!==\s*1/);
-  });
-
-  it('returns 400 when no single candidate found', () => {
-    const resolveBlock = ROUTE_SRC.match(/Resolve effective payout account[\s\S]*?effectiveAccountId/);
-    expect(resolveBlock).not.toBeNull();
-    expect(resolveBlock![0]).toContain('no payout account configured');
-    expect(resolveBlock![0]).toContain('status: 400');
-  });
-
-  it('only resolves candidate when payout_account_id is falsy', () => {
-    expect(ROUTE_SRC).toMatch(/if\s*\(\s*!payout\.payout_account_id\s*\)\s*\{/);
-  });
-});
-
-describe('#620 — Held status accepted by approve route', () => {
-  it('accepts held status for approval', () => {
-    expect(ROUTE_SRC).toMatch(/\['pending',\s*'approved',\s*'held'\]\.includes\(payout\.status\)/);
-  });
-
-  it('manual update also transitions from held', () => {
-    expect(ROUTE_SRC).toMatch(/\.in\('status',\s*\['pending',\s*'approved',\s*'held'\]\)/);
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('step_up_required');
+    // No update calls at all — step-up failed before any write
+    expect(updateCalls.length).toBe(0);
   });
 });

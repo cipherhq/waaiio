@@ -239,28 +239,36 @@ export async function POST(
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
-  // ── Auto-link write (after step-up, race-safe) ──
+  // ── Auto-link write (after step-up, race-safe + status-guarded) ──
   if (candidateAccountId) {
-    const { data: linkResult } = await serviceClient
+    const { data: linkResult, error: linkError } = await serviceClient
       .from('business_payouts')
       .update({ payout_account_id: candidateAccountId, updated_at: new Date().toISOString() })
       .eq('id', id)
       .is('payout_account_id', null)
-      .select('id');
+      .in('status', ['pending', 'approved', 'held'])
+      .select('id, status, payout_account_id');
+
+    if (linkError) {
+      return NextResponse.json({ error: 'Failed to link payout account.' }, { status: 500 });
+    }
 
     if (!linkResult || linkResult.length !== 1) {
-      // Another request may have linked a different account — check
+      // Zero rows: status advanced or a different account was linked concurrently
       const { data: reread } = await serviceClient
         .from('business_payouts')
-        .select('payout_account_id')
+        .select('payout_account_id, status')
         .eq('id', id)
         .single();
 
-      if (reread?.payout_account_id === candidateAccountId) {
-        // Same candidate was linked by a concurrent request — safe to proceed
+      if (
+        reread?.payout_account_id === candidateAccountId &&
+        ['pending', 'approved', 'held'].includes(reread?.status)
+      ) {
+        // Same candidate was linked by a concurrent request, status still eligible — proceed
       } else {
         return NextResponse.json({
-          error: 'Cannot approve: payout account changed by a concurrent request.',
+          error: 'Cannot approve: payout account or status changed by a concurrent request.',
         }, { status: 409 });
       }
     }
