@@ -280,7 +280,7 @@ export function resolveCompoundLocation(locationText: string): LocationResolutio
     return unknown();
   }
 
-  const matches = tokens.map(resolveLocation);
+  const matches = tokens.map((t) => resolveLocation(t));
   if (matches.some((r) => r.tier === 3)) return unknown();
 
   const neighborhoods = matches.filter((r) => r.tier === 2);
