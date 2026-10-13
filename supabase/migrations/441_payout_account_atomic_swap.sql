@@ -5,6 +5,26 @@
 --   disconnect_payout_account — deactivate account + reset payout_mode
 --
 -- Both are SECURITY INVOKER, callable only by service_role.
+--
+-- The at-most-one-active-account invariant is enforced by the unique
+-- partial index idx_payout_accounts_business_active (migration 009):
+--   CREATE UNIQUE INDEX idx_payout_accounts_business_active
+--     ON payout_accounts(business_id) WHERE is_active = true;
+-- The assertion below fails this migration if that index is missing.
+
+-- ============================================================
+-- Assertion: idx_payout_accounts_business_active must exist
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE indexname = 'idx_payout_accounts_business_active'
+  ) THEN
+    RAISE EXCEPTION 'MIGRATION BLOCKED: required unique partial index idx_payout_accounts_business_active is missing (expected from migration 009)';
+  END IF;
+END;
+$$;
 
 -- ============================================================
 -- 1. swap_payout_account
@@ -27,6 +47,12 @@ AS $$
 DECLARE
   v_new_id uuid;
 BEGIN
+  -- Lock the business row to serialise concurrent payout-account mutations
+  PERFORM 1 FROM businesses WHERE id = p_business_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'business_not_found: %', p_business_id;
+  END IF;
+
   -- Lock existing active accounts for this business to prevent concurrent swaps
   PERFORM id FROM payout_accounts
     WHERE business_id = p_business_id AND is_active = true
@@ -65,8 +91,9 @@ SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  -- Verify business exists
-  IF NOT EXISTS (SELECT 1 FROM businesses WHERE id = p_business_id) THEN
+  -- Lock the business row; raises NO_DATA_FOUND-style if missing
+  PERFORM 1 FROM businesses WHERE id = p_business_id FOR UPDATE;
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'business_not_found: %', p_business_id;
   END IF;
 

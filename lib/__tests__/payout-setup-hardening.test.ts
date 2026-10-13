@@ -514,54 +514,5 @@ describe('Payout disconnect: re-auth uses throwaway client, not session client',
   });
 });
 
-// ═══════════════════════════════════════════════════════════
-// Scope 9: Migration — EXECUTE granted only to service_role
-// ═══════════════════════════════════════════════════════════
-
-const TEST_DB = process.env.TEST_DATABASE_URL;
-const describeIfDb = !TEST_DB ? describe.skip : describe;
-
-function runSQL(sql: string): string {
-  if (!TEST_DB) throw new Error('TEST_DATABASE_URL not set');
-  const { execSync } = require('child_process');
-  try {
-    return execSync(
-      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`,
-      { encoding: 'utf-8', timeout: 15000, input: sql },
-    ).trim();
-  } catch (err: any) {
-    return `ERROR: ${err.stderr || err.stdout || err.message || ''}`;
-  }
-}
-
-describeIfDb('Migration 441: payout account atomic RPCs — permission grants', () => {
-  it('swap_payout_account EXECUTE denied to authenticated', () => {
-    const r = runSQL("SELECT has_function_privilege('authenticated', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');");
-    expect(r).toBe('f');
-  });
-
-  it('swap_payout_account EXECUTE denied to anon', () => {
-    const r = runSQL("SELECT has_function_privilege('anon', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');");
-    expect(r).toBe('f');
-  });
-
-  it('swap_payout_account EXECUTE granted to service_role', () => {
-    const r = runSQL("SELECT has_function_privilege('service_role', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');");
-    expect(r).toBe('t');
-  });
-
-  it('disconnect_payout_account EXECUTE denied to authenticated', () => {
-    const r = runSQL("SELECT has_function_privilege('authenticated', 'disconnect_payout_account(uuid)', 'EXECUTE');");
-    expect(r).toBe('f');
-  });
-
-  it('disconnect_payout_account EXECUTE denied to anon', () => {
-    const r = runSQL("SELECT has_function_privilege('anon', 'disconnect_payout_account(uuid)', 'EXECUTE');");
-    expect(r).toBe('f');
-  });
-
-  it('disconnect_payout_account EXECUTE granted to service_role', () => {
-    const r = runSQL("SELECT has_function_privilege('service_role', 'disconnect_payout_account(uuid)', 'EXECUTE');");
-    expect(r).toBe('t');
-  });
-});
+// DB permission and atomicity tests are in payout-account-swap.pg.test.ts
+// (run against real Postgres in the P0 security ACL CI job)
