@@ -590,9 +590,9 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
     expect(successes.length).toBe(1);
     expect(failures.length).toBe(1);
 
-    // The failure should be a unique violation (23505)
+    // The failure should be a unique violation (duplicate key)
     const failedResult = failures[0];
-    expect(failedResult.stderr).toContain('23505');
+    expect(failedResult.stderr).toContain('duplicate key value violates unique constraint');
 
     // Clean up whichever succeeded
     cleanPayout(PAYOUT_CONC_A);
