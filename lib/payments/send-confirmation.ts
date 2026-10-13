@@ -857,9 +857,9 @@ export async function sendProactiveConfirmation(
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
         const customerName = await getCustomerName(supabase, customerPhone);
-        // Orders: amountPaid=0 (existing ACC-008 behavior, unchanged by #161).
-        // Bookings/Reservations: real payment.amount for receipts/loyalty + skipCustomerSpend
-        // because Stage 2 owns durable spend via apply_payment_spend_once.
+        // All entity types: pass real payment.amount so receipts are generated.
+        // Stage 2 owns durable spend for bookings/reservations/orders via RPCs;
+        // skipCustomerSpend prevents double-counting in post-completion.
         const isOrderPayment = !!payment.order_id;
         const isBookingPayment = !!payment.booking_id;
         const isReservationPayment = !!payment.reservation_id;
@@ -881,12 +881,11 @@ export async function sendProactiveConfirmation(
           serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
           referenceId: payment.booking_id || payment.reservation_id || undefined,
           sender: resolved?.sender,
-          amountPaid: isOrderPayment ? 0 : payment.amount,
+          amountPaid: payment.amount,
           // Skip automation for entities that don't have booking/order semantics (#173)
           skipAutomation: isOrderPayment || isCampaignPayment || isInvoicePayment,
-          // Only booking/reservation: suppress legacy additive spend (Stage 2 owns it).
-          // Orders: do NOT set skipCustomerSpend — existing amountPaid=0 behavior is unchanged.
-          skipCustomerSpend: isBookingPayment || isReservationPayment,
+          // Stage 2 owns durable spend for bookings, reservations, and orders.
+          skipCustomerSpend: isBookingPayment || isReservationPayment || isOrderPayment,
           // #167: Direct Giving skips loyalty; ambiguous payment-family fails closed
           skipLoyalty: isGivingPayment || isAmbiguousPayment,
           serviceName, referenceCode,
