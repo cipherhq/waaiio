@@ -84,10 +84,10 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
         LANGUAGE sql STABLE
         AS $fn$ SELECT current_setting('app.current_user_id', true)::UUID; $fn$;
 
-      -- Minimal businesses table
-      CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY, owner_id UUID);
-      INSERT INTO businesses VALUES ('${BIZ_A}', '${OWNER_A}') ON CONFLICT DO NOTHING;
-      INSERT INTO businesses VALUES ('${BIZ_B}', '${OWNER_B}') ON CONFLICT DO NOTHING;
+      -- Minimal businesses table (in CI the full table exists; IF NOT EXISTS keeps it safe)
+      CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY, owner_id UUID, name TEXT NOT NULL DEFAULT 'test');
+      INSERT INTO businesses (id, owner_id, name) VALUES ('${BIZ_A}', '${OWNER_A}', 'Biz A') ON CONFLICT DO NOTHING;
+      INSERT INTO businesses (id, owner_id, name) VALUES ('${BIZ_B}', '${OWNER_B}', 'Biz B') ON CONFLICT DO NOTHING;
 
       -- ===== bot_translation_platform_overrides =====
       CREATE TABLE IF NOT EXISTS bot_translation_platform_overrides (
