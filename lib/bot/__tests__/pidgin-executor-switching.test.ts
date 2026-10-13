@@ -257,4 +257,106 @@ describe('Pidgin executor switching — executable tests', () => {
     // "talk pidgin" is a verb phrase (isBare=false) → MUST switch regardless of step
     expect(session.session_data._detected_language).toBe('pcm');
   });
+
+  it('(g) live-chat step + "pidgin" → insert called once, forward called once, no language switch', async () => {
+    // Simulate chat.flow.ts chat_start validate: always valid, does DB writes
+    const insertMock = vi.fn().mockResolvedValue({ error: null });
+    const upsertMock = vi.fn().mockResolvedValue({ error: null });
+    const forwardMock = vi.fn();
+
+    const chatStep = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Chat with us!' }]),
+      validate: vi.fn(async (input: string, ctx: any) => {
+        if (!input?.trim()) return { valid: true };
+        // Simulate the real chat.flow side effects
+        upsertMock({ table: 'chat_conversations', input });
+        insertMock({ table: 'chat_messages', input });
+        forwardMock({ to: 'owner', input });
+        return { valid: true };
+      }),
+      next: vi.fn(async () => 'chat_handoff'),
+    };
+    mockGetFlowStep.mockReturnValue(chatStep);
+
+    const session = createSession();
+    await executor.execute('+2348001234567', 'pidgin', session, BIZ);
+
+    // "pidgin" is a bare name, but step accepts it → treated as answer, NOT a switch
+    expect(session.session_data._detected_language).toBeUndefined();
+    // validate called exactly once (not twice)
+    expect(chatStep.validate).toHaveBeenCalledTimes(1);
+    // Side effects fired exactly once
+    expect(insertMock).toHaveBeenCalledTimes(1);
+    expect(forwardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('(h) options step where "pidgin" is invalid → switches to pcm, no validation error sent', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a service:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Please pick a valid service' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+
+    const session = createSession();
+    sender.clear();
+    await executor.execute('+2348001234567', 'pidgin', session, BIZ);
+
+    // Language switched
+    expect(session.session_data._detected_language).toBe('pcm');
+    // Confirmation sent in Pidgin
+    expect(sender.hasMessageContaining('Pidgin')).toBe(true);
+    // The step's validation error "Please pick a valid service" must NOT appear
+    const allTexts = sender.getTextMessages();
+    expect(allTexts.some(t => t.includes('valid service'))).toBe(false);
+  });
+
+  it('(i) validate called exactly once for bare "pidgin" on valid step, and once on invalid step', async () => {
+    // Valid step
+    const validStep = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Enter name:' }]),
+      validate: vi.fn(async () => ({ valid: true, data: { name: 'pidgin' } })),
+      next: vi.fn(async () => 'next'),
+    };
+    mockGetFlowStep.mockReturnValue(validStep);
+
+    const session1 = createSession();
+    await executor.execute('+2348001234567', 'pidgin', session1, BIZ);
+    expect(validStep.validate).toHaveBeenCalledTimes(1);
+
+    // Invalid step
+    vi.clearAllMocks();
+    sender = createCaptureSender();
+    supabase = createMockSupabase();
+    executor = new FlowExecutor(supabase, sender, {} as any, {} as any);
+
+    const invalidStep = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid date' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(invalidStep);
+
+    const session2 = createSession();
+    await executor.execute('+2348001234567', 'pidgin', session2, BIZ);
+    // Probe called once (invalid), then language switches → no second call
+    expect(invalidStep.validate).toHaveBeenCalledTimes(1);
+  });
+
+  it('(j) "abeg talk pidgin" on free-text step → switches, validate() never called', async () => {
+    const freeTextStep = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Enter name:' }]),
+      validate: vi.fn(async () => ({ valid: true, data: { name: 'abeg talk pidgin' } })),
+      next: vi.fn(async () => 'next'),
+    };
+    mockGetFlowStep.mockReturnValue(freeTextStep);
+
+    const session = createSession();
+    await executor.execute('+2348001234567', 'abeg talk pidgin', session, BIZ);
+
+    // Verb phrase → switches without probing validate
+    expect(session.session_data._detected_language).toBe('pcm');
+    // validate must NOT have been called (verb phrases skip the probe entirely)
+    expect(freeTextStep.validate).not.toHaveBeenCalled();
+  });
 });

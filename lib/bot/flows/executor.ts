@@ -406,10 +406,11 @@ export class FlowExecutor {
     // step accepts the word as an answer (option match, free-text), treat it as
     // input, not a language switch. Verb phrases always switch regardless of step.
     const languagePreferenceIntent = parseLanguagePreferenceIntent(input);
+    let preValidation: Awaited<ReturnType<typeof step.validate>> | undefined;
     let skipBareSwitch = false;
     if (languagePreferenceIntent?.isBare && step) {
-      const probeResult = await step.validate(input, ctx);
-      if (probeResult.valid) skipBareSwitch = true;
+      preValidation = await step.validate(input, ctx);
+      if (preValidation.valid) skipBareSwitch = true;
     }
     if (languagePreferenceIntent && !skipBareSwitch) {
       const targetLang = languagePreferenceIntent.language as SupportedLanguage;
@@ -666,9 +667,9 @@ export class FlowExecutor {
       return;
     }
 
-    // Validate input
+    // Validate input — reuse the probe result from bare-name disambiguation if available
     _fmark('pre_validate');
-    const result = await step.validate(input, ctx);
+    const result = preValidation ?? await step.validate(input, ctx);
     _fmark('step_validate');
 
     if (!result.valid) {
