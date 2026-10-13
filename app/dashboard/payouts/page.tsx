@@ -1035,6 +1035,8 @@ export default function PayoutsPage() {
                 <label className="block text-sm font-medium text-gray-700">Confirm your password</label>
                 <input
                   type="password"
+                  name="current-password"
+                  autoComplete="current-password"
                   value={setupPassword}
                   onChange={(e) => setSetupPassword(e.target.value)}
                   placeholder="Enter your account password"
