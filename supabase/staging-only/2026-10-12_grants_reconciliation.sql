@@ -339,8 +339,9 @@ DECLARE
   _count       bigint;
 BEGIN
   -- ── Create test fixtures as postgres ──────────────────────────────────
-  -- auth.users: id, instance_id, role, aud, email, encrypted_password, confirmed_at, created_at, updated_at
-  INSERT INTO auth.users (id, instance_id, role, aud, email, encrypted_password, confirmed_at, created_at, updated_at)
+  -- auth.users: id, instance_id, role, aud, email, encrypted_password, email_confirmed_at, created_at, updated_at
+  -- (confirmed_at is GENERATED ALWAYS AS LEAST(email_confirmed_at, phone_confirmed_at) — cannot be written)
+  INSERT INTO auth.users (id, instance_id, role, aud, email, encrypted_password, email_confirmed_at, created_at, updated_at)
   VALUES
     (_user_a_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      'test-a-' || _user_a_id || '@test.local', crypt('testpass', gen_salt('bf')), now(), now(), now()),
