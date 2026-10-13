@@ -125,12 +125,12 @@ describe('Slice 2 multilingual explicit language commands', () => {
     ['Respóndeme en Español', 'es'],
     ['Abeg use Pidgin', 'pcm'],
   ])('recognizes explicit session language choice: %s', (text, language) => {
-    expect(parseLanguagePreferenceIntent(text)).toEqual({ language, persistence: 'session' });
+    expect(parseLanguagePreferenceIntent(text)).toEqual({ language, persistence: 'session', isBare: false });
   });
 
   it('keeps durable preference persistence explicit', () => {
-    expect(parseLanguagePreferenceIntent('always use English')).toEqual({ language: 'en', persistence: 'persistent' });
-    expect(parseLanguagePreferenceIntent('Parlez moi en Francais toujours')).toEqual({ language: 'fr', persistence: 'persistent' });
+    expect(parseLanguagePreferenceIntent('always use English')).toEqual({ language: 'en', persistence: 'persistent', isBare: false });
+    expect(parseLanguagePreferenceIntent('Parlez moi en Francais toujours')).toEqual({ language: 'fr', persistence: 'persistent', isBare: false });
   });
 
   it.each([

@@ -35,6 +35,7 @@ describe('language preference intent boundaries', () => {
     expect(parseLanguagePreferenceIntent(text)).toEqual({
       language,
       persistence: 'session',
+      isBare: false,
     });
   });
 
@@ -45,6 +46,7 @@ describe('language preference intent boundaries', () => {
     expect(parseLanguagePreferenceIntent(text)).toEqual({
       language,
       persistence: 'persistent',
+      isBare: false,
     });
   });
 
@@ -56,6 +58,7 @@ describe('language preference intent boundaries', () => {
     expect(parseLanguagePreferenceIntent(text)).toEqual({
       language,
       persistence: 'session',
+      isBare: false,
     });
   });
 
