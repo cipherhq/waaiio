@@ -240,14 +240,14 @@ describe('PUT /api/translations', () => {
   it('returns 400 when button title exceeds 20 characters', async () => {
     setupMockFrom({ businesses: { data: BIZ, error: null } });
     setupServiceFrom({});
-    // 'nav.back' is a BUTTON_TITLE_KEY
+    // 'lang.picker_button' is a BUTTON_TITLE_KEY and business-editable
     const res = await PUT(
       makeRequest('PUT', '/api/translations', {
         businessId: 'biz-1',
         overrides: [
           {
             lang: 'en',
-            key: 'nav.back',
+            key: 'lang.picker_button',
             value: 'This Is Way Too Long Button Title Text',
           },
         ],
@@ -288,14 +288,14 @@ describe('PUT /api/translations', () => {
   it('returns 400 when a required placeholder is missing', async () => {
     setupMockFrom({ businesses: { data: BIZ, error: null } });
     setupServiceFrom({});
-    // 'lang.switched' requires {langName}
+    // 'lang.picker_confirmed' requires {langName} and is business-editable
     const res = await PUT(
       makeRequest('PUT', '/api/translations', {
         businessId: 'biz-1',
         overrides: [
           {
             lang: 'en',
-            key: 'lang.switched',
+            key: 'lang.picker_confirmed',
             value: 'Language changed!',
           },
         ],
@@ -312,13 +312,14 @@ describe('PUT /api/translations', () => {
   it('returns 400 when an extra placeholder is introduced', async () => {
     setupMockFrom({ businesses: { data: BIZ, error: null } });
     setupServiceFrom({});
+    // 'lang.picker_confirmed' requires {langName} only — {user} is unexpected
     const res = await PUT(
       makeRequest('PUT', '/api/translations', {
         businessId: 'biz-1',
         overrides: [
           {
             lang: 'en',
-            key: 'lang.switched',
+            key: 'lang.picker_confirmed',
             value: 'Switched to {langName} by {user}',
           },
         ],
@@ -335,16 +336,15 @@ describe('PUT /api/translations', () => {
   it('returns 400 when a required command token is dropped', async () => {
     setupMockFrom({ businesses: { data: BIZ, error: null } });
     setupServiceFrom({});
-    // 'cancelHint' is in KEYS_WITH_COMMANDS and contains *back*, *menu*, *exit*
+    // 'greeting.cancel_hint' is in KEYS_WITH_COMMANDS and contains *cancel*
     const res = await PUT(
       makeRequest('PUT', '/api/translations', {
         businessId: 'biz-1',
         overrides: [
           {
             lang: 'en',
-            key: 'cancelHint',
-            // Dropping *menu* and *exit*
-            value: 'Type *back* to return.',
+            key: 'greeting.cancel_hint',
+            value: 'Type cancel to stop.',
           },
         ],
       }),
@@ -413,10 +413,10 @@ describe('PUT /api/translations', () => {
         overrides: [
           // Valid upsert: 'menu.title' is editable, <=24 chars, no placeholders needed
           { lang: 'en', key: 'menu.title', value: 'Main Menu' },
-          // Valid upsert: 'nav.back' is editable button title, <=20 chars
-          { lang: 'en', key: 'nav.back', value: 'Go Back' },
+          // Valid upsert: 'cap.scheduling' is editable
+          { lang: 'en', key: 'cap.scheduling', value: 'Our Stuff' },
           // Deletion (null value)
-          { lang: 'en', key: 'menu.what_to_do', value: null },
+          { lang: 'en', key: 'greeting.welcome_default', value: null },
         ],
       }),
     );

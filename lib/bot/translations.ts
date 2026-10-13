@@ -124,23 +124,23 @@ export async function loadBusinessOverrides(
 /**
  * Prefixes of flow-copy keys a business may override.
  * Everything not matching is platform-only.
- * Excluded: payment.*, error.*, docs.*, notification.*, handoff.*,
- * savedcard.*, chat.*, greeting.powered_by (branding).
+ *
+ * Allowed: greetings (except branding), menu/capability labels, language picker.
+ * Platform-only: payment.*, bank-transfer.*, refund.*, error.*, docs.*,
+ * notification.*, handoff.*, savedcard.*, chat.*, confirm.*, post.*,
+ * booking.*, ordering.*, ticketing.*, reservation.*, recurring.*,
+ * invoice.*, survey.*, poll.*, queue.*, waitlist.*, crowdfunding.*,
+ * loyalty.*, rsvp.*, feedback.*, tips.*, orders.*, order_status.*,
+ * rating.*, nav.*, account.*, greeting.powered_by (branding).
  */
 const BUSINESS_EDITABLE_PREFIXES = [
-  'cap.', 'greeting.', 'lang.', 'menu.', 'nav.',
-  'booking.', 'ordering.', 'ticketing.', 'reservation.',
-  'account.', 'survey.', 'poll.', 'feedback.', 'queue.',
-  'waitlist.', 'crowdfunding.', 'loyalty.', 'rsvp.',
-  'recurring.', 'invoice.', 'tips.', 'confirm.', 'post.',
-  'orders.', 'order_status.', 'rating.',
+  'cap.',           // capability/menu option labels
+  'greeting.',      // greeting strings (except powered_by)
+  'lang.picker_',   // language picker strings
+  'menu.',          // menu title
 ];
 
-const BUSINESS_EDITABLE_EXACT = [
-  'invalidSelection', 'cancelHint', 'yes', 'stayHere',
-  'rerouteBooking', 'rerouteOrdering', 'rerouteTicketing',
-  'reroutePayment', 'rerouteGeneric',
-];
+const BUSINESS_EDITABLE_EXACT: string[] = [];
 
 const BUSINESS_BLOCKED_KEYS = ['greeting.powered_by'];
 

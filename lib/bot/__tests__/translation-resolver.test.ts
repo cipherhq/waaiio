@@ -409,111 +409,114 @@ describe('isBusinessEditableKey', () => {
     });
   });
 
-  describe('allows flow-specific keys', () => {
-    it('booking.select_location', () => {
-      expect(isBusinessEditableKey('booking.select_location')).toBe(true);
+  describe('blocks flow-specific keys (tightened allowlist)', () => {
+    it('booking.select_location is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('booking.select_location')).toBe(false);
     });
-    it('ordering.welcome', () => {
-      expect(isBusinessEditableKey('ordering.welcome')).toBe(true);
+    it('ordering.welcome is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('ordering.welcome')).toBe(false);
     });
-    it('ticketing.events_title', () => {
-      expect(isBusinessEditableKey('ticketing.events_title')).toBe(true);
+    it('ticketing.events_title is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('ticketing.events_title')).toBe(false);
     });
-    it('reservation.* allowed', () => {
-      expect(isBusinessEditableKey('reservation.select_date')).toBe(true);
+    it('reservation.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('reservation.select_date')).toBe(false);
     });
-    it('survey.* allowed', () => {
-      expect(isBusinessEditableKey('survey.start')).toBe(true);
+    it('survey.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('survey.start')).toBe(false);
     });
-    it('poll.* allowed', () => {
-      expect(isBusinessEditableKey('poll.vote')).toBe(true);
+    it('poll.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('poll.vote')).toBe(false);
     });
-    it('feedback.* allowed', () => {
-      expect(isBusinessEditableKey('feedback.thanks')).toBe(true);
+    it('feedback.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('feedback.thanks')).toBe(false);
     });
-    it('queue.* allowed', () => {
-      expect(isBusinessEditableKey('queue.position')).toBe(true);
+    it('queue.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('queue.position')).toBe(false);
     });
-    it('waitlist.* allowed', () => {
-      expect(isBusinessEditableKey('waitlist.joined')).toBe(true);
+    it('waitlist.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('waitlist.joined')).toBe(false);
     });
-    it('crowdfunding.* allowed', () => {
-      expect(isBusinessEditableKey('crowdfunding.goal')).toBe(true);
+    it('crowdfunding.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('crowdfunding.goal')).toBe(false);
     });
-    it('loyalty.* allowed', () => {
-      expect(isBusinessEditableKey('loyalty.balance')).toBe(true);
+    it('loyalty.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('loyalty.balance')).toBe(false);
     });
-    it('recurring.* allowed', () => {
-      expect(isBusinessEditableKey('recurring.manage')).toBe(true);
+    it('recurring.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('recurring.manage')).toBe(false);
     });
-    it('invoice.* allowed', () => {
-      expect(isBusinessEditableKey('invoice.details')).toBe(true);
+    it('invoice.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('invoice.details')).toBe(false);
     });
   });
 
-  describe('allows other editable prefixes', () => {
-    it('lang.* allowed', () => {
-      expect(isBusinessEditableKey('lang.switched')).toBe(true);
+  describe('allows tightened editable prefixes', () => {
+    it('lang.picker_* allowed', () => {
+      expect(isBusinessEditableKey('lang.picker_prompt')).toBe(true);
+    });
+    it('lang.switched is NOW BLOCKED (not lang.picker_*)', () => {
+      expect(isBusinessEditableKey('lang.switched')).toBe(false);
     });
     it('menu.* allowed', () => {
       expect(isBusinessEditableKey('menu.title')).toBe(true);
     });
-    it('nav.* allowed', () => {
-      expect(isBusinessEditableKey('nav.back')).toBe(true);
+    it('nav.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('nav.back')).toBe(false);
     });
-    it('account.* allowed', () => {
-      expect(isBusinessEditableKey('account.menu')).toBe(true);
+    it('account.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('account.menu')).toBe(false);
     });
-    it('confirm.* allowed', () => {
-      expect(isBusinessEditableKey('confirm.done')).toBe(true);
+    it('confirm.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('confirm.done')).toBe(false);
     });
-    it('post.* allowed', () => {
-      expect(isBusinessEditableKey('post.completion')).toBe(true);
+    it('post.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('post.completion')).toBe(false);
     });
-    it('rsvp.* allowed', () => {
-      expect(isBusinessEditableKey('rsvp.confirm')).toBe(true);
+    it('rsvp.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('rsvp.confirm')).toBe(false);
     });
-    it('tips.* allowed', () => {
-      expect(isBusinessEditableKey('tips.add')).toBe(true);
+    it('tips.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('tips.add')).toBe(false);
     });
-    it('orders.* allowed', () => {
-      expect(isBusinessEditableKey('orders.status')).toBe(true);
+    it('orders.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('orders.status')).toBe(false);
     });
-    it('order_status.* allowed', () => {
-      expect(isBusinessEditableKey('order_status.ready')).toBe(true);
+    it('order_status.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('order_status.ready')).toBe(false);
     });
-    it('rating.* allowed', () => {
-      expect(isBusinessEditableKey('rating.prompt')).toBe(true);
+    it('rating.* NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('rating.prompt')).toBe(false);
     });
   });
 
-  describe('allows legacy exact-match keys', () => {
-    it('invalidSelection', () => {
-      expect(isBusinessEditableKey('invalidSelection')).toBe(true);
+  describe('blocks legacy exact-match keys (no longer in allowlist)', () => {
+    it('invalidSelection is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('invalidSelection')).toBe(false);
     });
-    it('cancelHint', () => {
-      expect(isBusinessEditableKey('cancelHint')).toBe(true);
+    it('cancelHint is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('cancelHint')).toBe(false);
     });
-    it('yes', () => {
-      expect(isBusinessEditableKey('yes')).toBe(true);
+    it('yes is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('yes')).toBe(false);
     });
-    it('stayHere', () => {
-      expect(isBusinessEditableKey('stayHere')).toBe(true);
+    it('stayHere is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('stayHere')).toBe(false);
     });
-    it('rerouteBooking', () => {
-      expect(isBusinessEditableKey('rerouteBooking')).toBe(true);
+    it('rerouteBooking is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('rerouteBooking')).toBe(false);
     });
-    it('rerouteOrdering', () => {
-      expect(isBusinessEditableKey('rerouteOrdering')).toBe(true);
+    it('rerouteOrdering is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('rerouteOrdering')).toBe(false);
     });
-    it('rerouteTicketing', () => {
-      expect(isBusinessEditableKey('rerouteTicketing')).toBe(true);
+    it('rerouteTicketing is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('rerouteTicketing')).toBe(false);
     });
-    it('reroutePayment', () => {
-      expect(isBusinessEditableKey('reroutePayment')).toBe(true);
+    it('reroutePayment is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('reroutePayment')).toBe(false);
     });
-    it('rerouteGeneric', () => {
-      expect(isBusinessEditableKey('rerouteGeneric')).toBe(true);
+    it('rerouteGeneric is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('rerouteGeneric')).toBe(false);
     });
   });
 
