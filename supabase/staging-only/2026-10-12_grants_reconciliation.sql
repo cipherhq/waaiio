@@ -376,7 +376,7 @@ BEGIN
 
   -- verification_requests: business_id*, requested_level*, requested_by*
   INSERT INTO public.verification_requests (id, business_id, requested_level, requested_by)
-  VALUES (gen_random_uuid(), _biz_b_id, 'verified', _user_b_id);
+  VALUES (gen_random_uuid(), _biz_b_id, 'basic', _user_b_id);
 
   -- platform_fees: business_id*, transaction_amount*, fee_total
   INSERT INTO public.platform_fees (id, business_id, transaction_amount, fee_total)
@@ -388,19 +388,37 @@ BEGIN
   SET LOCAL ROLE anon;
   PERFORM set_config('request.jwt.claims', '{}', true);
 
-  -- anon_select_zero: SELECT returns 0 rows on sensitive tables
-  SELECT count(*) INTO _count FROM public.business_payouts;
-  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: business_payouts=' || _count; END IF;
-  SELECT count(*) INTO _count FROM public.payout_accounts;
-  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: payout_accounts=' || _count; END IF;
-  SELECT count(*) INTO _count FROM public.payout_adjustments;
-  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: payout_adjustments=' || _count; END IF;
-  SELECT count(*) INTO _count FROM public.business_documents;
-  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: business_documents=' || _count; END IF;
-  SELECT count(*) INTO _count FROM public.verification_requests;
-  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: verification_requests=' || _count; END IF;
-  SELECT count(*) INTO _count FROM public.platform_fees;
-  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: platform_fees=' || _count; END IF;
+  -- anon_select_zero: SELECT returns 0 rows or permission denied (both = PASS)
+  BEGIN
+    SELECT count(*) INTO _count FROM public.business_payouts;
+    IF _count > 0 THEN _errors := _errors || 'anon_select_zero: business_payouts=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    SELECT count(*) INTO _count FROM public.payout_accounts;
+    IF _count > 0 THEN _errors := _errors || 'anon_select_zero: payout_accounts=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    SELECT count(*) INTO _count FROM public.payout_adjustments;
+    IF _count > 0 THEN _errors := _errors || 'anon_select_zero: payout_adjustments=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    SELECT count(*) INTO _count FROM public.business_documents;
+    IF _count > 0 THEN _errors := _errors || 'anon_select_zero: business_documents=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    SELECT count(*) INTO _count FROM public.verification_requests;
+    IF _count > 0 THEN _errors := _errors || 'anon_select_zero: verification_requests=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    SELECT count(*) INTO _count FROM public.platform_fees;
+    IF _count > 0 THEN _errors := _errors || 'anon_select_zero: platform_fees=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   -- anon_insert_blocked: INSERT raises
   BEGIN
@@ -410,23 +428,33 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
   END;
 
-  -- anon_update_zero: UPDATE affects 0 rows
-  UPDATE public.business_payouts SET net_amount = 0;
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'anon_update_zero: business_payouts updated ' || _count; END IF;
+  -- anon_update_zero: UPDATE affects 0 rows or permission denied
+  BEGIN
+    UPDATE public.business_payouts SET net_amount = 0;
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'anon_update_zero: business_payouts updated ' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE public.payout_accounts SET account_name = 'hacked';
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'anon_update_zero: payout_accounts updated ' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
-  UPDATE public.payout_accounts SET account_name = 'hacked';
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'anon_update_zero: payout_accounts updated ' || _count; END IF;
-
-  -- anon_delete_zero: DELETE affects 0 rows
-  DELETE FROM public.business_payouts;
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'anon_delete_zero: business_payouts deleted ' || _count; END IF;
-
-  DELETE FROM public.payout_accounts;
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'anon_delete_zero: payout_accounts deleted ' || _count; END IF;
+  -- anon_delete_zero: DELETE affects 0 rows or permission denied
+  BEGIN
+    DELETE FROM public.business_payouts;
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'anon_delete_zero: business_payouts deleted ' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM public.payout_accounts;
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'anon_delete_zero: payout_accounts deleted ' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   -- ══════════════════════════════════════════════════════════════════════
   -- CROSS-TENANT assertions (owner A vs B's data)
@@ -478,7 +506,7 @@ BEGIN
 
   BEGIN
     INSERT INTO public.verification_requests (id, business_id, requested_level, requested_by)
-    VALUES (gen_random_uuid(), _biz_b_id, 'verified', _user_a_id);
+    VALUES (gen_random_uuid(), _biz_b_id, 'basic', _user_a_id);
     _errors := _errors || 'cross_tenant_insert_blocked: verification_requests INSERT for B succeeded';
   EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
   END;
