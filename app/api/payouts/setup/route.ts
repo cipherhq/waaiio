@@ -22,6 +22,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
+  // Reject test bank code in production
+  if (bank_code === '001' && (process.env.WAAIIO_ENVIRONMENT === 'production' || !(process.env.PAYSTACK_SECRET_KEY || '').startsWith('sk_test_'))) {
+    return NextResponse.json({ error: 'Invalid bank' }, { status: 400 });
+  }
+
   // Re-authentication required
   if (!password || typeof password !== 'string') {
     return NextResponse.json({ error: 'Password required for payout account changes' }, { status: 403 });
