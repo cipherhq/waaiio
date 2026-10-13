@@ -11,8 +11,9 @@ CREATE TABLE IF NOT EXISTS public.bot_translation_platform_overrides (
     CHECK (lang IN ('en','pcm','yo','ig','ha','tw','fr','es')),
   key        TEXT        NOT NULL,
   value      TEXT        NOT NULL
-    CHECK (char_length(trim(value)) > 0),
-  updated_by UUID        REFERENCES auth.users(id),
+    CHECK (char_length(trim(value)) > 0)
+    CHECK (char_length(value) <= 4096),
+  updated_by UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (lang, key)
 );
@@ -30,8 +31,9 @@ CREATE TABLE IF NOT EXISTS public.bot_translation_overrides (
     CHECK (lang IN ('en','pcm','yo','ig','ha','tw','fr','es')),
   key         TEXT        NOT NULL,
   value       TEXT        NOT NULL
-    CHECK (char_length(trim(value)) > 0),
-  updated_by  UUID        REFERENCES auth.users(id),
+    CHECK (char_length(trim(value)) > 0)
+    CHECK (char_length(value) <= 4096),
+  updated_by  UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (business_id, lang, key)
 );
@@ -67,23 +69,8 @@ GRANT SELECT ON public.bot_translation_overrides TO authenticated;
 -- 5. RLS Policies
 -- =============================================================================
 
--- ---- bot_translation_platform_overrides ----
-
-CREATE POLICY service_role_all
-  ON public.bot_translation_platform_overrides
-  FOR ALL
-  TO service_role
-  USING (true)
-  WITH CHECK (true);
-
--- ---- bot_translation_overrides ----
-
-CREATE POLICY service_role_all
-  ON public.bot_translation_overrides
-  FOR ALL
-  TO service_role
-  USING (true)
-  WITH CHECK (true);
+-- service_role bypasses RLS; explicit policies for it are unnecessary.
+-- GRANTs above provide the required DML permissions.
 
 CREATE POLICY owners_read
   ON public.bot_translation_overrides
@@ -97,3 +84,14 @@ CREATE POLICY owners_read
          AND b.owner_id = auth.uid()
     )
   );
+
+-- =============================================================================
+-- 6. preferred_language on customer_profiles (picker choice persistence)
+-- =============================================================================
+
+ALTER TABLE public.customer_profiles
+  ADD COLUMN IF NOT EXISTS preferred_language TEXT
+    CHECK (preferred_language IN ('en','pcm','yo','ig','ha','tw','fr','es'));
+
+COMMENT ON COLUMN public.customer_profiles.preferred_language
+  IS 'Language chosen via the first-contact picker. Persists across sessions for non-auth customers.';
