@@ -84,6 +84,10 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
         LANGUAGE sql STABLE
         AS $fn$ SELECT current_setting('app.current_user_id', true)::UUID; $fn$;
 
+      -- Seed auth.users for FK constraints in CI (full schema has businesses.owner_id → auth.users.id)
+      INSERT INTO auth.users (id) VALUES ('${OWNER_A}') ON CONFLICT DO NOTHING;
+      INSERT INTO auth.users (id) VALUES ('${OWNER_B}') ON CONFLICT DO NOTHING;
+
       -- Minimal businesses table (in CI the full table exists; IF NOT EXISTS keeps it safe)
       CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY, owner_id UUID, name TEXT NOT NULL DEFAULT 'test');
       INSERT INTO businesses (id, owner_id, name) VALUES ('${BIZ_A}', '${OWNER_A}', 'Biz A') ON CONFLICT DO NOTHING;
