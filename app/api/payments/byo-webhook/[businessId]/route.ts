@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
-import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
+import { processPaystackChargeSuccess, processPaystackChargeFailed, type SuccessOutcome } from '@/lib/payments/webhook-handler';
 import { decryptToken } from '@/lib/encryption';
 
 // Terminal Paystack failure statuses — only these justify marking a payment failed
@@ -198,10 +198,20 @@ export async function POST(
         verifyResult.verifiedData!, reference, supabase, scope,
       );
 
-      if (outcome === 'incomplete') {
-        return NextResponse.json({ error: 'Finalization incomplete' }, { status: 503 });
+      // Exhaustive outcome handling — every SuccessOutcome must be addressed
+      switch (outcome) {
+        case 'finalized':
+        case 'already_finalized':
+          break; // fall through to dedup write below
+        case 'incomplete':
+          return NextResponse.json({ error: 'Finalization incomplete' }, { status: 503 });
+        case 'amount_mismatch':
+          return NextResponse.json({ received: true }); // NO dedup row
+        default: {
+          const _exhaustive: never = outcome;
+          throw new Error(`Unhandled SuccessOutcome: ${_exhaustive}`);
+        }
       }
-      // amount_mismatch from handler → already returned via throw/early return
     } else if (event === 'charge.failed') {
       const ps = verifyResult.providerStatus || '';
 
