@@ -266,21 +266,20 @@ describeDb('Migration 442: server-managed business columns guard', () => {
         RESET ROLE;
       `);
       expect(result).not.toContain('ERROR');
+
+      // Reset immediately so subsequent tests see the original values
+      // (especially owner_id, which affects RLS visibility)
+      sql(`
+        UPDATE public.businesses SET
+          verification_level = 'basic', verification_status = 'verified',
+          payout_limit_monthly = 500000, payout_mode = 'platform_managed',
+          custom_fee_percentage = NULL, custom_fee_flat = NULL,
+          subscription_tier = 'free', reseller_id = NULL,
+          owner_id = '${OWNER_ID}'
+        WHERE id = '${BIZ_ID}';
+      `);
     });
   }
-
-  // Reset guarded columns after service_role tests
-  afterAll(() => {
-    sql(`
-      UPDATE public.businesses SET
-        verification_level = 'basic', verification_status = 'verified',
-        payout_limit_monthly = 500000, payout_mode = 'platform_managed',
-        custom_fee_percentage = NULL, custom_fee_flat = NULL,
-        subscription_tier = 'free', reseller_id = NULL,
-        owner_id = '${OWNER_ID}'
-      WHERE id = '${BIZ_ID}';
-    `);
-  });
 
   // ── SECURITY DEFINER function owned by migration owner can update ──
 
