@@ -75,7 +75,7 @@ describe('reject_payout_and_release_adjustments — real DB', () => {
       ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO businesses (id, name, owner_id, category, country_code)
-      VALUES ('${BIZ_ID}', 'Reject Test Biz 444', '${OWNER_UUID}', 'food_beverage', 'NG')
+      VALUES ('${BIZ_ID}', 'Reject Test Biz 444', '${OWNER_UUID}', 'restaurant', 'NG')
       ON CONFLICT (id) DO NOTHING;
     `);
 
