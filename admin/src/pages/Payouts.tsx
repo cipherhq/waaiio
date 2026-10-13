@@ -4,6 +4,8 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { loadCountries, getCountryCurrencyDetailMap } from '@/lib/countries';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 
 interface PayoutRecord {
   id: string;
@@ -74,6 +76,9 @@ export default function Payouts() {
     verified_at: string | null;
   } | null>(null);
   const [loadingAccount, setLoadingAccount] = useState(false);
+
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   const loadingRef = useRef(false);
 
@@ -168,136 +173,178 @@ export default function Payouts() {
     loadApproveAccount(p.payout_account_id, p.business_id);
   }
 
-  // Approve payout via API route
+  // Approve payout via API route — gated by step-up MFA
   async function handleApprove() {
     if (!approveTarget) return;
     setApproving(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        return;
-      }
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/payouts/${approveTarget.id}/approve`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          transfer_method: transferMethod,
-          reference: transferRef || null,
-          notes: approveNotes || null,
-        }),
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/${approveTarget.id}/approve`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            transfer_method: transferMethod,
+            reference: transferRef || null,
+            notes: approveNotes || null,
+            stepUpId,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to approve payout');
+          return;
+        }
+
+        setApproveTarget(null);
+        setApproveAccountInfo(null);
+        setTransferMethod('manual_bank');
+        setTransferRef('');
+        setApproveNotes('');
+        await loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'payout_approve',
+        targetId: approveTarget.id,
+        params: { transfer_method: transferMethod, reference: transferRef || null, notes: approveNotes || null },
+        description: `Approve payout for ${approveTarget.business_name} — ${formatMoney(approveTarget.net_amount, approveTarget.country_code)}`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to approve payout');
-        return;
-      }
-
-      setApproveTarget(null);
-      setApproveAccountInfo(null);
-      setTransferMethod('manual_bank');
-      setTransferRef('');
-      setApproveNotes('');
-      await loadData();
     } catch (error) {
       console.error('Approve error:', error);
       alert('Failed to approve payout');
+      stepUp.reset();
     } finally {
       setApproving(false);
     }
   }
 
-  // Reject payout via API route
+  // Reject payout via API route — gated by step-up MFA
   async function handleReject() {
     if (!rejectTarget || !rejectReason) return;
     setRejecting(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        return;
-      }
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/payouts/${rejectTarget.id}/reject`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ reason: rejectReason }),
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/${rejectTarget.id}/reject`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ reason: rejectReason, stepUpId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') {
+            alert('Step-up authorization failed — please try again');
+            return;
+          }
+          alert(data.error || 'Failed to reject payout');
+          return;
+        }
+
+        setRejectTarget(null);
+        setRejectReason('');
+        await loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'payout_reject',
+        targetId: rejectTarget.id,
+        params: { reason: rejectReason },
+        description: `Reject payout for ${rejectTarget.business_name} — ${formatMoney(rejectTarget.net_amount, rejectTarget.country_code)}`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to reject payout');
-        return;
-      }
-
-      setRejectTarget(null);
-      setRejectReason('');
-      await loadData();
     } catch (error) {
       console.error('Reject error:', error);
       alert('Failed to reject payout');
+      stepUp.reset();
     } finally {
       setRejecting(false);
     }
   }
 
-  // Generate weekly payouts via API route
+  // Generate weekly payouts via API route (SEC-005: requires step-up)
   async function handleGenerate() {
     if (!confirm('Generate pending payouts for all platform-managed businesses?')) return;
     setGenerating(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        setGenerating(false);
-        return;
-      }
+      stepUpCallbackRef.current = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/payouts/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/generate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ stepUpId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to generate payouts');
+          return;
+        }
+
+        const msg = [
+          `Created: ${data.created} payout(s)`,
+          data.held ? `Held: ${data.held} (flagged for review)` : null,
+          data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
+        ].filter(Boolean).join('\n');
+        alert(msg);
+
+        await loadData();
+      };
+
+      await stepUp.execute({
+        actionType: 'payout_generate',
+        targetId: null,
+        params: { action: 'generate' },
+        description: 'Generate pending payouts for all businesses',
+        onAuthorized: stepUpCallbackRef.current,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to generate payouts');
-        setGenerating(false);
-        return;
-      }
-
-      const msg = [
-        `Created: ${data.created} payout(s)`,
-        data.held ? `Held: ${data.held} (flagged for review)` : null,
-        data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
-      ].filter(Boolean).join('\n');
-      alert(msg);
-
-      await loadData();
     } catch (error) {
       console.error('Generate error:', error);
-      alert('Failed to generate payouts');
+      if (stepUp.state.phase !== 'awaiting-code') {
+        alert('Failed to generate payouts');
+      }
     } finally {
-      setGenerating(false);
+      if (stepUp.state.phase !== 'awaiting-code' && stepUp.state.phase !== 'verifying') {
+        setGenerating(false);
+      }
     }
   }
 
@@ -617,6 +664,19 @@ export default function Payouts() {
           </div>
         </div>
       )}
+
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (stepUpCallbackRef.current) {
+            stepUp.submitCode(code, stepUpCallbackRef.current);
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }

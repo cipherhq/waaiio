@@ -565,6 +565,44 @@ export function payoutFailedEmail(businessName: string, amount: string, reason: 
   };
 }
 
+/**
+ * #597: Transfer webhook notification — status confirmed.
+ * Does NOT claim monetary amounts or bank receipt (currency/settlement unverified).
+ * Used by transfer webhook handlers until PR-A2 establishes currency provenance.
+ */
+export function payoutTransferStatusEmail(businessName: string, reference: string) {
+  return {
+    subject: `Payout update — ${esc(businessName)}`,
+    html: wrap(`
+      ${h('Payout Status Updated')}
+      ${p(`A payout for <strong>${esc(businessName)}</strong> has been processed by the payment provider.`)}
+      ${table(kv('Reference', esc(reference || '—')))}
+      ${p('Check your dashboard for full details.')}
+      ${btn('View Payouts', `${appUrl}/dashboard/payouts`)}
+    `),
+  };
+}
+
+/**
+ * #597: Transfer webhook notification — failure/reversal.
+ * Does NOT claim monetary amounts, bank receipt or automatic retry.
+ */
+export function payoutTransferFailureEmail(businessName: string, reference: string, reason: string) {
+  return {
+    subject: `Payout issue — ${esc(businessName)}`,
+    html: wrap(`
+      ${h('Payout Issue')}
+      ${p(`A payout for <strong>${esc(businessName)}</strong> encountered an issue.`)}
+      ${table(
+        kv('Reference', esc(reference || '—')) +
+        kv('Status', esc(reason))
+      )}
+      ${p('Check your dashboard for details or contact support.')}
+      ${btn('View Payouts', `${appUrl}/dashboard/payouts`)}
+    `),
+  };
+}
+
 export function paymentFailedEmail(businessName: string, amount: string, reason: string) {
   return {
     subject: `Payment failed — ${businessName}`,

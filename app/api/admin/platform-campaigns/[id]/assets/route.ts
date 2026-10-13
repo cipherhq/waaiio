@@ -3,6 +3,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
 import { generateAttributionToken, buildTrackedMessage } from '@/lib/platform-campaigns/token';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -146,13 +147,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // Canonical publishable link is the tracked redirect only — no direct wa.me exposed
   const trackedMessage = buildTrackedMessage((prefilled_message as string).trim(), token);
 
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  await logAdminAudit({
+    actorId: admin.userId,
     action: 'platform_campaign_asset_created',
-    entity_type: 'platform_campaign_asset',
-    entity_id: insertedAsset.id as string,
+    entityType: 'platform_campaign_asset',
+    entityId: insertedAsset.id as string,
     details: { campaign_id: campaignId, source_type, market, token },
-  }).then(() => {}, () => {});
+  });
 
   return NextResponse.json({
     data: insertedAsset,

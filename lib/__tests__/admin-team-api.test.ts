@@ -46,7 +46,12 @@ vi.mock('@/lib/supabase/service', () => ({
   }),
 }));
 
-let mockAdminUser: { id: string; userId: string; email: string; role: string } | null = null;
+let mockAdminUser: { id: string; userId: string; email: string; role: string; aal?: string; bearerToken?: string } | null = null;
+vi.mock('@/lib/admin-step-up', () => ({
+  consumeStepUp: vi.fn().mockResolvedValue(true),
+  StepUpError: class StepUpError extends Error { constructor(msg: string) { super(msg); this.name = 'StepUpError'; } },
+}));
+
 vi.mock('@/lib/admin-auth', () => ({
   requirePlatformAdmin: vi.fn(async (_req: unknown, opts?: { requiredRole?: string | string[] }) => {
     if (!mockAdminUser) return null;
@@ -108,7 +113,7 @@ describe('AdminTeam API route tests (#217)', () => {
 
     mockUsers.set(ADMIN_ID, { id: ADMIN_ID, email: 'admin@test.com', app_metadata: { role: 'admin' } });
     mockUsers.set(TARGET_ID, { id: TARGET_ID, email: 'target@test.com', app_metadata: { provider: 'google' } });
-    mockAdminUser = { id: ADMIN_ID, userId: ADMIN_ID, email: 'admin@test.com', role: 'admin' };
+    mockAdminUser = { id: ADMIN_ID, userId: ADMIN_ID, email: 'admin@test.com', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer-token' };
     resetMockBehavior();
   });
 

@@ -1,3 +1,8 @@
+---
+name: code-path-simulator
+description: "Simulate user interactions by tracing actual code execution line by line. Run before saying 'done' on any bot or API change to catch logic errors before deployment."
+---
+
 # Code Path Simulator
 
 > **MANDATORY: Run this BEFORE saying "done" on any bot or API change.** Simulates real user actions by tracing actual code execution line by line. This is the last check before deployment.

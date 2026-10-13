@@ -6,6 +6,7 @@ import { encryptToken } from '@/lib/encryption';
 import { randomInt } from 'crypto';
 import { logger } from '@/lib/logger';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 /**
  * POST /api/auth/facebook/callback
@@ -46,6 +47,20 @@ export async function POST(request: NextRequest) {
       phone_number_id: providedPhoneNumberId,
       connection_method,
     } = await request.json();
+
+    // Coexistence MUST NOT fall through to standard Cloud API registration.
+    // An untrusted browser connection_method value is not Meta provider evidence.
+    // The dedicated Meta Business App onboarding + signed FINISH attestation
+    // requires a separate audited implementation before any number mutation.
+    if (connection_method === 'coexist' || connection_method === 'coexistence') {
+      return NextResponse.json({
+        error: 'coexistence_not_ready',
+        message: 'Business App Connect requires Meta eligibility verification and dedicated onboarding. Your existing WhatsApp Business app number has not been changed.',
+      }, { status: 409 });
+    }
+    if (connection_method && connection_method !== 'transfer') {
+      return NextResponse.json({ error: 'Unsupported connection method' }, { status: 400 });
+    }
 
     if (!business_id || (!code && !providedAccessToken)) {
       return NextResponse.json(
@@ -385,7 +400,7 @@ export async function POST(request: NextRequest) {
         .eq('status', 'customer_action_required').in('whatsapp_method', ['dedicated', 'coexistence']).maybeSingle();
       if (assisted) {
         const activatedAt = new Date().toISOString();
-        const { error: auditError } = await service.from('admin_audit_logs').insert({ actor_id: assisted.created_by_admin_id, action: 'admin_onboarding_activated', entity_type: 'admin_onboarding', entity_id: assisted.id, details: { target_user_id: assisted.target_user_id, business_id, meta_authorized_by_customer: true, channel_id: channelId } });
+        const { error: auditError } = await logAdminAudit({ actorId: assisted.created_by_admin_id, action: 'admin_onboarding_activated', entityType: 'admin_onboarding', entityId: assisted.id, details: { target_user_id: assisted.target_user_id, business_id, meta_authorized_by_customer: true, channel_id: channelId } });
         if (auditError) {
           logger.error('[FB-CALLBACK] Assisted onboarding completion audit failed:', auditError);
         } else {

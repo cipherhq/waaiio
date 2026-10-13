@@ -169,7 +169,7 @@ describe('P0-ADMIN: Admin capability route security', () => {
   });
 
   it('12. invalid capability ID rejected with 400', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', aal: 'aal2', bearerToken: 'test-bearer' });
 
     const { POST } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
     const res = await POST(
@@ -184,7 +184,7 @@ describe('P0-ADMIN: Admin capability route security', () => {
   });
 
   it('13. invalid action rejected with 400', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', aal: 'aal2', bearerToken: 'test-bearer' });
 
     const { POST } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
     const res = await POST(
@@ -197,7 +197,7 @@ describe('P0-ADMIN: Admin capability route security', () => {
   });
 
   it('14. grant calls admin_grant_capability RPC via service client', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', aal: 'aal2', bearerToken: 'test-bearer' });
     mockRpc.mockResolvedValue({ data: { success: true }, error: null });
 
     const { POST } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
@@ -216,7 +216,7 @@ describe('P0-ADMIN: Admin capability route security', () => {
   });
 
   it('15. revoke calls admin_revoke_capability RPC via service client', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', aal: 'aal2', bearerToken: 'test-bearer' });
     mockRpc.mockResolvedValue({ data: { success: true }, error: null });
 
     const { POST } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
@@ -233,7 +233,7 @@ describe('P0-ADMIN: Admin capability route security', () => {
   });
 
   it('16. RPC error returns 500', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', aal: 'aal2', bearerToken: 'test-bearer' });
     mockRpc.mockResolvedValue({ data: null, error: { message: 'constraint violation' } });
 
     const { POST } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
@@ -286,7 +286,7 @@ describe('P0-ADMIN: Admin capability route security', () => {
   });
 
   it('20. route does NOT use cookie-based createClient (Bearer-only)', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', aal: 'aal2', bearerToken: 'test-bearer' });
     mockRpc.mockResolvedValue({ data: { success: true }, error: null });
 
     const { POST } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
@@ -307,7 +307,7 @@ describe('P0-ADMIN: Admin capability route security', () => {
   });
 
   it('22. GET works with Bearer-only (no cookies)', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', aal: 'aal2', bearerToken: 'test-bearer' });
 
     const { GET } = await import('@/app/api/admin/businesses/[id]/capabilities/route');
     const req = new NextRequest('http://localhost/api/admin/businesses/biz-1/capabilities', {

@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
+import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility';
 import { buildListItem, truncTitle } from '../utils/truncate';
 import { savedPaymentAdapter } from '@/lib/payments/saved-payment-adapter';
 import { resolveRuntimeDeposit } from '@/lib/payments/deposit-amount-authority';
@@ -1476,6 +1477,12 @@ export const schedulingFlow: FlowDefinition = {
           .maybeSingle();
 
         if (!promo) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_invalid') };
+        const eligibility = validatePromoForCheckout(promo, {
+          businessId: ctx.business!.id, flow: 'scheduling',
+          itemIds: [ctx.session.session_data.service_id as string],
+          subtotal: (ctx.session.session_data.service_price as number) || 0,
+        });
+        if (!eligibility.ok) return { valid: false, errorMessage: eligibility.reason };
         if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_limit') };
         if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_expired') };
 
@@ -1497,9 +1504,7 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: false, errorMessage: `Minimum amount for this code is ${formatCurrency(promo.min_order_amount, (ctx.business?.country_code || 'NG') as CountryCode)}.` };
         }
 
-        const discount = promo.discount_type === 'percentage'
-          ? Math.round(servicePrice * promo.discount_value / 100)
-          : Math.min(promo.discount_value, servicePrice);
+        const discount = eligibility.discount;
 
         return { valid: true, data: { _promo_code: code, _promo_id: promo.id, _promo_discount: discount } };
       },
@@ -1534,6 +1539,12 @@ export const schedulingFlow: FlowDefinition = {
           .maybeSingle();
 
         if (!promo) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_invalid') };
+        const eligibility = validatePromoForCheckout(promo, {
+          businessId: ctx.business!.id, flow: 'scheduling',
+          itemIds: [ctx.session.session_data.service_id as string],
+          subtotal: (ctx.session.session_data.service_price as number) || 0,
+        });
+        if (!eligibility.ok) return { valid: false, errorMessage: eligibility.reason };
         if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_limit') };
         if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_expired') };
 
@@ -1555,9 +1566,7 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: false, errorMessage: `Minimum amount for this code is ${formatCurrency(promo.min_order_amount, (ctx.business?.country_code || 'NG') as CountryCode)}.` };
         }
 
-        const discount = promo.discount_type === 'percentage'
-          ? Math.round(servicePrice * promo.discount_value / 100)
-          : Math.min(promo.discount_value, servicePrice);
+        const discount = eligibility.discount;
 
         return { valid: true, data: { _promo_code: code, _promo_id: promo.id, _promo_discount: discount } };
       },

@@ -6,6 +6,7 @@ import { sendEmail } from '@/lib/email/client';
 import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboardingInput } from '@/lib/onboarding/admin-assisted';
 import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
@@ -65,11 +66,11 @@ export async function POST(request: NextRequest) {
   }).select('*').single();
   if (recordError || !onboarding) return NextResponse.json({ error: recordError?.code === '23505' ? 'An onboarding already exists for this email.' : 'Unable to start onboarding' }, { status: recordError?.code === '23505' ? 409 : 500 });
 
-  const { error: createAuditError } = await service.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  const { error: createAuditError } = await logAdminAudit({
+    actorId: admin.userId,
     action: 'admin_onboarding_create',
-    entity_type: 'admin_onboarding',
-    entity_id: onboarding.id,
+    entityType: 'admin_onboarding',
+    entityId: onboarding.id,
     details: { target_email: input.owner_email, intended_plan: input.intended_plan, whatsapp_method: input.whatsapp_method },
   });
   if (createAuditError) {
@@ -106,14 +107,14 @@ export async function POST(request: NextRequest) {
       last_error: null,
     }).eq('id', onboarding.id).eq('status', 'provisioning');
     if (updateError) throw new Error(`Onboarding state update failed: ${updateError.message}`);
-    const { error: auditError } = await service.from('admin_audit_logs').insert({
-      actor_id: admin.userId,
+    const { error: auditError } = await logAdminAudit({
+      actorId: admin.userId,
       action: 'admin_onboarding_invitation_sent',
-      entity_type: 'admin_onboarding',
-      entity_id: onboarding.id,
+      entityType: 'admin_onboarding',
+      entityId: onboarding.id,
       details: { target_email: input.owner_email, target_user_id: userId, business_id: businessId, intended_plan: input.intended_plan, whatsapp_method: input.whatsapp_method },
     });
-    if (auditError) throw new Error(`Audit write failed: ${auditError.message}`);
+    if (auditError) throw new Error(`Audit write failed: ${auditError}`);
     return NextResponse.json({ onboarding: { ...onboarding, target_user_id: userId, business_id: businessId, status: 'customer_action_required' } }, { status: 201 });
   } catch (error) {
     // Extract businessId from provisioning error if the local variable was never set
@@ -144,7 +145,7 @@ export async function POST(request: NextRequest) {
       target_user_id: userCleaned ? null : userId ?? null,
       business_id: bizCleaned ? null : businessId ?? null,
     }).eq('id', onboarding.id);
-    await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_failed', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { target_email: input.owner_email, reason, cleanup_failures: cleanupFailures } });
+    await logAdminAudit({ actorId: admin.userId, action: 'admin_onboarding_failed', entityType: 'admin_onboarding', entityId: onboarding.id, details: { target_email: input.owner_email, reason, cleanup_failures: cleanupFailures } });
     const safetyNote = cleanupFailures.length > 0
       ? `Cleanup incomplete — manual reconciliation required for: ${cleanupFailures.join(', ')}.`
       : 'Resources cleaned up successfully.';

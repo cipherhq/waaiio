@@ -36,7 +36,7 @@ function makeReq(url: string, method: string, body?: Record<string, unknown>): N
   return new NextRequest(url, opts);
 }
 
-const ADMIN = { userId: 'admin-439', email: 'admin@test.com', role: 'admin' };
+const ADMIN = { userId: 'admin-439', email: 'admin@test.com', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' };
 
 // Helper: make a chain of .from().select().eq()... that resolves to given data
 function mockTable(table: string, handlers: Record<string, unknown>) {

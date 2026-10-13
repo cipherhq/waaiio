@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } fro
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
+import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility';
 import { truncTitle } from '../utils/truncate';
 import { getOrderConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
@@ -1602,13 +1603,20 @@ export const orderingFlow: FlowDefinition = {
         if (code.length >= 3) {
           const { data: promo } = await ctx.supabase
             .from('promo_codes')
-            .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, valid_until, is_active')
+            .select('*')
             .eq('business_id', ctx.business!.id)
             .eq('code', code)
             .eq('is_active', true)
             .maybeSingle();
 
           if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Try again or tap *No, continue*.' };
+          const promoCart = (ctx.session.session_data.cart as CartItem[]) || [];
+          const eligibility = validatePromoForCheckout(promo, {
+            businessId: ctx.business!.id, flow: 'ordering',
+            itemIds: promoCart.map(item => item.product_id).filter((id): id is string => typeof id === 'string'),
+            subtotal: promoCart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+          });
+          if (!eligibility.ok) return { valid: false, errorMessage: eligibility.reason };
           if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has been fully redeemed.' };
           if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
 
@@ -1632,9 +1640,7 @@ export const orderingFlow: FlowDefinition = {
             return { valid: false, errorMessage: `Minimum order of ${formatCurrency(promo.min_order_amount, cc)} required for this code.` };
           }
 
-          const discount = promo.discount_type === 'percentage'
-            ? Math.round(total * promo.discount_value / 100)
-            : Math.min(promo.discount_value, total);
+          const discount = eligibility.discount;
 
           return { valid: true, data: { promo_code_id: promo.id, discount_amount: discount, promo_code: code, _promo_action: 'applied' } };
         }
@@ -1665,13 +1671,20 @@ export const orderingFlow: FlowDefinition = {
         const code = input.trim().toUpperCase();
         const { data: promo } = await ctx.supabase
           .from('promo_codes')
-          .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, valid_until, is_active')
+          .select('*')
           .eq('business_id', ctx.business!.id)
           .eq('code', code)
           .eq('is_active', true)
           .maybeSingle();
 
         if (!promo) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_promo') };
+        const promoCart = (ctx.session.session_data.cart as CartItem[]) || [];
+        const eligibility = validatePromoForCheckout(promo, {
+          businessId: ctx.business!.id, flow: 'ordering',
+          itemIds: promoCart.map(item => item.product_id).filter((id): id is string => typeof id === 'string'),
+          subtotal: promoCart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+        });
+        if (!eligibility.ok) return { valid: false, errorMessage: eligibility.reason };
         if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This code has been fully redeemed.' };
         if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This code has expired.' };
 
@@ -1695,9 +1708,7 @@ export const orderingFlow: FlowDefinition = {
           return { valid: false, errorMessage: `Minimum order ${formatCurrency(promo.min_order_amount, cc)} required.` };
         }
 
-        const discount = promo.discount_type === 'percentage'
-          ? Math.round(total * promo.discount_value / 100)
-          : Math.min(promo.discount_value, total);
+        const discount = eligibility.discount;
 
         return { valid: true, data: { promo_code_id: promo.id, discount_amount: discount, promo_code: code } };
       },

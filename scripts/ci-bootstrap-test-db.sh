@@ -103,6 +103,13 @@ GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
 GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
 
+-- DO NOT add ALTER DEFAULT PRIVILEGES for any role here.
+-- Individual migrations grant specific per-table privileges (e.g., M415 for
+-- business_members, M426 for payment tables). Broad default privileges conflict
+-- with tests that verify permission boundaries (e.g., staging-payment-parity
+-- expects service_role to NOT have DELETE on bot_sequences).
+-- The main branch CI passes without any ALTER DEFAULT PRIVILEGES.
+
 -- Seed common test user (many test suites reference this UUID)
 INSERT INTO auth.users (id, email) VALUES
   ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),

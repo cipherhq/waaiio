@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError, type StepUpAction } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,10 +22,19 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { action, notes } = body;
+    const { action, notes, stepUpId } = body;
 
     if (!action || !['approve', 'reject', 'mark_paid'].includes(action)) {
       return NextResponse.json({ error: 'Invalid action. Must be approve, reject, or mark_paid' }, { status: 400 });
+    }
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    const stepUpAction = `reseller_payout_${action}` as StepUpAction;
+    try {
+      await consumeStepUp(auth, stepUpId, stepUpAction, id, { action, notes: notes ?? null });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
     }
 
     const service = createServiceClient();
@@ -66,18 +77,18 @@ export async function PATCH(
       }
 
       // Audit log (server-side, separate write — failure logged but does not roll back payout)
-      const { error: auditErr } = await service.from('admin_audit_logs').insert({
-        actor_id: auth.id,
+      const { error: auditErr } = await logAdminAudit({
+        actorId: auth.id,
         action: 'reseller_payout_mark_paid',
-        entity_type: 'reseller_payout',
-        entity_id: id,
+        entityType: 'reseller_payout',
+        entityId: id,
         details: {
           available_after: rpcResult.available_after,
           ...(notes ? { notes } : {}),
         },
       });
       if (auditErr) {
-        logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for mark_paid ${id}:`, auditErr.message);
+        logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for mark_paid ${id}:`, auditErr);
       }
 
       logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout ${id} mark_paid: available_after=${rpcResult.available_after}`);
@@ -140,11 +151,11 @@ export async function PATCH(
     }
 
     // Audit log (server-side, separate write — failure logged but does not roll back)
-    const { error: auditErr } = await service.from('admin_audit_logs').insert({
-      actor_id: auth.id,
+    const { error: auditErr } = await logAdminAudit({
+      actorId: auth.id,
       action: `reseller_payout_${action}`,
-      entity_type: 'reseller_payout',
-      entity_id: id,
+      entityType: 'reseller_payout',
+      entityId: id,
       details: {
         reseller_id: payout.reseller_id,
         previous_status: payout.status,
@@ -154,7 +165,7 @@ export async function PATCH(
       },
     });
     if (auditErr) {
-      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for ${action} ${id}:`, auditErr.message);
+      logger.error(`[ADMIN_RESELLER_PAYOUTS] Audit log failed for ${action} ${id}:`, auditErr);
     }
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout ${id} ${action}: status=${updated.status}`);

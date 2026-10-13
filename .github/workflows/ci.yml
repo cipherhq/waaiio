@@ -1639,6 +1639,48 @@ jobs:
           PGDATABASE: waaiio_test
         run: bash scripts/ci-bootstrap-test-db.sh
 
+      # ── M435: Ordering price authority (#602) ──
+      # Disposable PG: promo/volume discount DB authority in create_order_atomic
+      - name: M435 ordering price authority DB tests
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m435_test
+          createdb --maintenance-db=waaiio_test waaiio_m435_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m435_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m435_test
+
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+
+          echo "Running M435 ordering price authority DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/ordering-price-authority-602.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M435 ordering price authority tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M435 tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M435 ordering price authority tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M435 ordering price authority DB tests complete — zero skips, zero failures."
+
+
       - name: Verify key tables exist
         env:
           PGHOST: localhost
@@ -3711,6 +3753,127 @@ jobs:
           fi
           echo "✅ M428 customer response-language preference DB tests complete — zero skips, zero failures."
 
+
+      # #598 M434: execute the actual installed RPC with role denial,
+      # transaction rollback, replay, and two-session row-lock contention.
+      - name: M434 atomic loyalty reward PostgreSQL acceptance
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          bash scripts/test-m434-loyalty-receipt-db.sh
+
+      # SEC-005 M439: admin MFA enforcement DB tests
+      # Step-up concurrency (exactly-once consumption) + RLS policy inventory
+      - name: M439 SEC-005 admin MFA enforcement DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+
+          echo "Running SEC-005 step-up concurrency + RLS policy inventory DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/admin-step-up-concurrency-db.test.ts lib/__tests__/admin-rls-policy-inventory-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ SEC-005 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ SEC-005 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No SEC-005 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ SEC-005 admin MFA enforcement DB tests complete — zero skips, zero failures."
+
+      # Admin Bearer RLS proof: proves anon/authenticated cannot access admin-gated
+      # tables but service_role can. Validates the cookie→service-client fix.
+      - name: Admin Bearer RLS proof DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+
+          echo "Running admin Bearer RLS proof DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/admin-bearer-rls-proof.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Admin Bearer RLS proof tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Admin Bearer RLS proof tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Admin Bearer RLS proof tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Admin Bearer RLS proof DB tests complete — zero skips, zero failures."
+
+      # M440: Payout linkage guard trigger tests (real PostgreSQL)
+      - name: M440 payout linkage guard DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+
+          echo "Running M440 payout linkage guard DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/payout-linkage-guard-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M440 payout linkage guard DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M440 payout linkage guard DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M440 payout linkage guard DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M440 payout linkage guard DB tests complete — zero skips, zero failures."
+
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
@@ -3899,3 +4062,97 @@ jobs:
             exit 1
           fi
           echo "✅ No wildcard dependencies."
+
+  security-acl-tests:
+    name: P0 security ACL tests (disposable PG)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test_runner
+          POSTGRES_PASSWORD: test_only_ephemeral
+          POSTGRES_DB: security_acl_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_runner -d security_acl_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pg driver
+        run: npm install --save-dev pg
+
+      - name: Provision Supabase-compatible roles and schemas
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+          PGDATABASE: security_acl_test
+        run: |
+          psql <<'SETUP_SQL'
+            CREATE ROLE service_role NOLOGIN BYPASSRLS;
+            CREATE ROLE anon NOLOGIN;
+            CREATE ROLE authenticated NOLOGIN;
+            CREATE EXTENSION IF NOT EXISTS pgcrypto;
+            CREATE SCHEMA IF NOT EXISTS auth;
+            CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+              SELECT COALESCE(
+                current_setting('request.jwt.claim.sub', true)::uuid,
+                '00000000-0000-0000-0000-000000000000'::uuid
+              );
+            $$ LANGUAGE sql STABLE;
+            CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
+              SELECT current_user::text;
+            $$ LANGUAGE sql STABLE;
+            CREATE TABLE auth.users (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              instance_id UUID, aud VARCHAR(255), role VARCHAR(255),
+              email VARCHAR(255), encrypted_password VARCHAR(255),
+              created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE TABLE public.businesses (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              owner_id UUID REFERENCES auth.users(id),
+              name TEXT NOT NULL, slug TEXT UNIQUE,
+              category VARCHAR(50) DEFAULT 'shop', flow_type VARCHAR(50) DEFAULT 'ordering',
+              country_code VARCHAR(10) DEFAULT 'US', status VARCHAR(20) DEFAULT 'pending'
+            );
+            GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+            GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
+            GRANT SELECT ON public.businesses TO service_role, authenticated;
+            GRANT SELECT ON auth.users TO service_role;
+            GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
+            GRANT EXECUTE ON FUNCTION auth.role() TO anon, authenticated, service_role;
+          SETUP_SQL
+          echo "✅ Disposable PG roles and schemas provisioned"
+
+      - name: Run security ACL tests against disposable PG
+        env:
+          TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/security_acl_test
+        shell: bash
+        run: |
+          set -o pipefail
+          npx vitest run lib/__tests__/p0-business-members-acl.test.ts --reporter=verbose 2>&1 | tee /tmp/security-acl-output.txt
+
+      - name: Verify zero skipped DB tests
+        run: |
+          if grep -qE "[1-9][0-9]* skipped" /tmp/security-acl-output.txt; then
+            echo "❌ DB tests were skipped — disposable PG connection failed"
+            exit 1
+          fi
+          echo "✅ All tests executed (zero skipped)"

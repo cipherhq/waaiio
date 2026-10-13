@@ -10,7 +10,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
+import { logAdminAudit } from '@/lib/admin-audit';
 import {
   resolveAuthUser,
   grantPlatformRole,
@@ -87,13 +89,21 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { identifier, role } = body as { identifier?: string; role?: string };
+    const { identifier, role, stepUpId } = body as { identifier?: string; role?: string; stepUpId?: string };
 
     if (!identifier?.trim()) {
       return NextResponse.json({ error: 'identifier is required (UUID or email)' }, { status: 400 });
     }
     if (!role || !VALID_ROLES.includes(role)) {
       return NextResponse.json({ error: `Invalid role. Must be one of: ${VALID_ROLES.join(', ')}` }, { status: 400 });
+    }
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    try {
+      await consumeStepUp(admin, stepUpId!, 'team_grant', identifier.trim(), { role });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
     }
 
     const supabase = createServiceClient();
@@ -115,16 +125,16 @@ export async function POST(request: NextRequest) {
     const result = await grantPlatformRole(supabase, targetUser.id, role as AdminRole);
 
     // Server-side audit
-    const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-      actor_id: admin.userId,
+    const { error: auditError } = await logAdminAudit({
+      actorId: admin.userId,
       action: 'grant_platform_role',
-      entity_type: 'platform_team',
-      entity_id: targetUser.id,
+      entityType: 'platform_team',
+      entityId: targetUser.id,
       details: { target_email: targetUser.email, role, preserved_keys: result.preservedKeys },
     });
 
     if (auditError) {
-      console.error('[ADMIN_TEAM] Grant audit failed:', auditError.message);
+      console.error('[ADMIN_TEAM] Grant audit failed:', auditError);
       return NextResponse.json({
         error: 'ROLE_MUTATION_APPLIED_AUDIT_FAILED',
         message: 'Role change was applied, but the audit record could not be written. Verify/reconcile before continuing.',
@@ -157,10 +167,18 @@ export async function DELETE(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { identifier } = body as { identifier?: string };
+    const { identifier, stepUpId } = body as { identifier?: string; stepUpId?: string };
 
     if (!identifier?.trim()) {
       return NextResponse.json({ error: 'identifier is required (UUID or email)' }, { status: 400 });
+    }
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    try {
+      await consumeStepUp(admin, stepUpId!, 'team_revoke', identifier.trim(), { action: 'revoke' });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
     }
 
     const supabase = createServiceClient();
@@ -182,16 +200,16 @@ export async function DELETE(request: NextRequest) {
     const result = await revokePlatformRole(supabase, targetUser.id);
 
     // Server-side audit
-    const { error: auditError } = await supabase.from('admin_audit_logs').insert({
-      actor_id: admin.userId,
+    const { error: auditError } = await logAdminAudit({
+      actorId: admin.userId,
       action: 'revoke_platform_role',
-      entity_type: 'platform_team',
-      entity_id: targetUser.id,
+      entityType: 'platform_team',
+      entityId: targetUser.id,
       details: { target_email: targetUser.email, preserved_keys: result.preservedKeys },
     });
 
     if (auditError) {
-      console.error('[ADMIN_TEAM] Revoke audit failed:', auditError.message);
+      console.error('[ADMIN_TEAM] Revoke audit failed:', auditError);
       return NextResponse.json({
         error: 'ROLE_MUTATION_APPLIED_AUDIT_FAILED',
         message: 'Role revocation was applied, but the audit record could not be written. Verify/reconcile before continuing.',

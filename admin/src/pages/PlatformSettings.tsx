@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
-import { adminDb } from '@/lib/supabase';
+import { useEffect, useState, useRef } from 'react';
+import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { adminApiPut, adminApiFetch, adminApiDelete } from '@/lib/adminApi';
 import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 
 interface PlatformSetting {
   key: string;
@@ -342,6 +344,8 @@ export default function PlatformSettings() {
   const [newValue, setNewValue] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [adding, setAdding] = useState(false);
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // Delete state
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -433,6 +437,39 @@ export default function PlatformSettings() {
   // Combined 19-key protected set (for display classification / badges)
   const ALL_PROTECTED_KEYS = new Set([...COMMERCIAL_KEYS, ...MESSAGING_BUNDLE_KEYS]);
 
+  // C6: Save commercial config via step-up-protected server route
+  async function saveCommercialViaStepUp(key: string, value: unknown, description?: string | null): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) { reject(new Error('Session expired')); return; }
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/platform-settings/commercial`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ key, value, description: description ?? null, stepUpId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') { reject(new Error('Step-up authorization failed')); return; }
+          if (data.code === 'version_conflict') { reject(new Error(data.error)); return; }
+          reject(new Error(data.error || 'Failed to save'));
+          return;
+        }
+        resolve();
+      };
+      stepUpCallbackRef.current = onAuthorized;
+      stepUp.execute({
+        actionType: 'commercial_config',
+        targetId: key,
+        params: { key, value, description: description ?? null, expected_version_id: null },
+        description: `Update commercial setting: ${key}`,
+        onAuthorized,
+      }).catch(reject);
+    });
+  }
+
   // Save a single setting
   async function handleSave(key: string) {
     setSavingKey(key);
@@ -451,12 +488,8 @@ export default function PlatformSettings() {
         alert('This key is managed through the Countries/Messaging configuration page. It cannot be edited individually here.');
         return;
       } else if (COMMERCIAL_KEYS.has(key)) {
-        // Individually writable commercial keys: versioned save RPC
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: key,
-          p_value: parsedValue,
-        });
-        if (error) throw error;
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(key, parsedValue);
       } else {
         // Non-commercial keys: server-authorized API route
         const res = await adminApiPut('/api/admin/platform-settings', { key, value: parsedValue });
@@ -498,13 +531,8 @@ export default function PlatformSettings() {
         alert('This key is managed through the Countries/Messaging configuration page.');
         return;
       } else if (COMMERCIAL_KEYS.has(trimmedKey)) {
-        // Individually writable commercial keys: versioned save RPC
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: trimmedKey,
-          p_value: parsedValue,
-          p_description: newDescription.trim() || null,
-        });
-        if (error) throw error;
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(trimmedKey, parsedValue, newDescription.trim() || null);
       } else {
         // Non-commercial keys: server-authorized API route
         const res = await adminApiFetch('/api/admin/platform-settings', {
@@ -550,11 +578,8 @@ export default function PlatformSettings() {
         alert('This key is managed through the Countries/Messaging configuration page.');
         return;
       } else if (COMMERCIAL_KEYS.has(key)) {
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: key,
-          p_value: parsedValue,
-        });
-        if (error) throw error;
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(key, parsedValue);
       } else {
         // Non-commercial keys: server-authorized API route
         const res = await adminApiFetch('/api/admin/platform-settings', {
@@ -898,6 +923,14 @@ export default function PlatformSettings() {
           </div>
         )}
       </div>
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => { if (stepUpCallbackRef.current) stepUp.submitCode(code, stepUpCallbackRef.current); }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }

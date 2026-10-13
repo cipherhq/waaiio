@@ -78,17 +78,28 @@ describe('FIN-001: Payout kill switch (approve route)', () => {
   });
 
   async function loadApproveRoute() {
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
-        from: vi.fn().mockReturnThis(),
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: null }),
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        from: vi.fn().mockImplementation(() => {
+          const chain: Record<string, unknown> = {};
+          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+            chain[m] = vi.fn().mockReturnValue(chain);
+          });
+          chain.single = vi.fn().mockResolvedValue({ data: null });
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null });
+          chain.insert = vi.fn().mockResolvedValue({ error: null });
+          return chain;
+        }),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
     }));
+  vi.doMock('@/lib/admin-step-up', () => ({
+    consumeStepUp: vi.fn().mockResolvedValue(true),
+    StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+  }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
     vi.doMock('@/lib/email/templates', () => ({
       payoutApprovedEmail: vi.fn(),
@@ -492,8 +503,12 @@ describe('FIN-001: Admin query column restrictions', () => {
 
   function mockAdminQuery(role: string, tableData: Record<string, unknown>[]) {
     vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role }),
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role, aal: 'aal2', bearerToken: 'test-bearer' }),
     }));
+  vi.doMock('@/lib/admin-step-up', () => ({
+    consumeStepUp: vi.fn().mockResolvedValue(true),
+    StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+  }));
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn().mockReturnValue({
         from: vi.fn().mockImplementation(() => {
@@ -753,17 +768,28 @@ describe('FIN-001: Transfer-method allowlist', () => {
   });
 
   async function loadApproveRoute() {
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
-        from: vi.fn().mockReturnThis(),
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: null }),
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        from: vi.fn().mockImplementation(() => {
+          const chain: Record<string, unknown> = {};
+          ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'update', 'insert'].forEach(m => {
+            chain[m] = vi.fn().mockReturnValue(chain);
+          });
+          chain.single = vi.fn().mockResolvedValue({ data: null });
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null });
+          chain.insert = vi.fn().mockResolvedValue({ error: null });
+          return chain;
+        }),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
     }));
+  vi.doMock('@/lib/admin-step-up', () => ({
+    consumeStepUp: vi.fn().mockResolvedValue(true),
+    StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+  }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
     vi.doMock('@/lib/email/templates', () => ({
       payoutApprovedEmail: vi.fn(),
