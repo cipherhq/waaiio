@@ -241,7 +241,7 @@ describe('sendProactiveConfirmation → handlePostCompletion call boundary', () 
     expect(args.customerPhone).toBe('+2341234567890');
   });
 
-  it('Order: passes real amountPaid + skipCustomerSpend=true (#631 fix)', async () => {
+  it('Order: passes real amountPaid + skipCustomerSpend=true (#630 fix)', async () => {
     const { sendProactiveConfirmation } = await import('../send-confirmation');
     const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
     const supabase = buildSupabase('order');
