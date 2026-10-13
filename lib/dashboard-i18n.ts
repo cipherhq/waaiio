@@ -9,11 +9,11 @@
 const strings: Record<string, Record<string, string>> = {
   en: {
     'payouts.setup_password_hint':
-      "Enter your Waaiio account password — the one you log in with, not your bank password.",
+      "Enter your Waaiio account password, the one you log in with, not your bank password.",
   },
   pcm: {
     'payouts.setup_password_hint':
-      "Put your Waaiio account password — the one wey you dey use log in, no be your bank password.",
+      "Put your Waaiio account password, the one wey you dey use log in, no be your bank password.",
   },
 };
 

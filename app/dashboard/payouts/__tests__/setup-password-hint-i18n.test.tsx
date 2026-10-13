@@ -114,14 +114,14 @@ describe('Setup password hint — i18n', () => {
   it('t() resolves payouts.setup_password_hint in en', () => {
     const result = t('payouts.setup_password_hint', 'en');
     expect(result).toBe(
-      "Enter your Waaiio account password — the one you log in with, not your bank password.",
+      "Enter your Waaiio account password, the one you log in with, not your bank password.",
     );
   });
 
   it('t() resolves payouts.setup_password_hint in pcm', () => {
     const result = t('payouts.setup_password_hint', 'pcm');
     expect(result).toBe(
-      "Put your Waaiio account password — the one wey you dey use log in, no be your bank password.",
+      "Put your Waaiio account password, the one wey you dey use log in, no be your bank password.",
     );
     // pcm must differ from en
     expect(result).not.toBe(t('payouts.setup_password_hint', 'en'));
