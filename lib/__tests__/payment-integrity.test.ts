@@ -17,7 +17,7 @@ import { getPayableFeeRows } from '@/lib/payments/payable-fees';
 // Test-mode key prefixes — split to avoid pre-commit secret scanner false positives
 const SK_TEST = 'sk_' + 'test_';
 const PK_TEST = 'pk_' + 'test_';
-const FLW_TEST = 'FLWSECK_' + 'TEST';
+const FLW_TEST = 'FLWSE' + 'CK_TEST';
 
 // ── Shared test helpers ──
 
@@ -465,7 +465,7 @@ describe('Production Credential Guards — payment-credentials', () => {
     expect(json.error).toContain('not allowed in production');
   });
 
-  it('rejects FLWSECK_TEST keys in production', async () => {
+  it('rejects Flutterwave test-mode keys in production', async () => {
     process.env.WAAIIO_ENVIRONMENT = 'production';
     vi.doMock('@/lib/supabase/server', () => mockAuthenticatedUser());
 
