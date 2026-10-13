@@ -127,11 +127,14 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
     sql(`INSERT INTO public.businesses (id, owner_id, name, slug) VALUES ('${BIZ_ID}', '${OWNER_ID}', 'M446 Test Biz', 'm446-test') ON CONFLICT (id) DO NOTHING;`);
 
     // ── PRE-446 NEGATIVE CONTROL ──
-    // Prove authenticated CAN insert before M446 revokes the privilege
+    // Prove authenticated CAN insert before M446 revokes the privilege.
+    // Also set request.jwt.claim.sub (Supabase v2 format) for auth.uid().
     const insertResult = sql(`
       BEGIN;
       SET LOCAL ROLE authenticated;
       SELECT set_config('request.jwt.claims', '{"sub":"${OWNER_ID}","role":"authenticated"}', true);
+      SELECT set_config('request.jwt.claim.sub', '${OWNER_ID}', true);
+      SELECT set_config('request.jwt.claim.sub', '${OWNER_ID}', true);
       DO $$ BEGIN IF current_user != 'authenticated' THEN RAISE EXCEPTION 'wrong role: %', current_user; END IF; END $$;
       INSERT INTO public.payout_accounts (business_id, gateway) VALUES ('${BIZ_ID}', 'paystack') RETURNING id;
       ROLLBACK;
@@ -176,6 +179,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       BEGIN;
       SET LOCAL ROLE authenticated;
       SELECT set_config('request.jwt.claims', '{"sub":"${OWNER_ID}","role":"authenticated"}', true);
+      SELECT set_config('request.jwt.claim.sub', '${OWNER_ID}', true);
       DO $$ BEGIN IF current_user != 'authenticated' THEN RAISE EXCEPTION 'wrong role: %', current_user; END IF; END $$;
       INSERT INTO public.payout_accounts (business_id, gateway) VALUES ('${BIZ_ID}', 'paystack');
       ROLLBACK;
@@ -189,6 +193,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       BEGIN;
       SET LOCAL ROLE authenticated;
       SELECT set_config('request.jwt.claims', '{"sub":"${OWNER_ID}","role":"authenticated"}', true);
+      SELECT set_config('request.jwt.claim.sub', '${OWNER_ID}', true);
       DO $$ BEGIN IF current_user != 'authenticated' THEN RAISE EXCEPTION 'wrong role: %', current_user; END IF; END $$;
       UPDATE public.payout_accounts SET bank_name = 'hacked' WHERE business_id = '${BIZ_ID}';
       ROLLBACK;
@@ -203,6 +208,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       BEGIN;
       SET LOCAL ROLE authenticated;
       SELECT set_config('request.jwt.claims', '{"sub":"${OWNER_ID}","role":"authenticated"}', true);
+      SELECT set_config('request.jwt.claim.sub', '${OWNER_ID}', true);
       DO $$ BEGIN IF current_user != 'authenticated' THEN RAISE EXCEPTION 'wrong role: %', current_user; END IF; END $$;
       SELECT square_access_token FROM public.payout_accounts WHERE business_id = '${BIZ_ID}';
       ROLLBACK;
@@ -217,6 +223,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       BEGIN;
       SET LOCAL ROLE authenticated;
       SELECT set_config('request.jwt.claims', '{"sub":"${OWNER_ID}","role":"authenticated"}', true);
+      SELECT set_config('request.jwt.claim.sub', '${OWNER_ID}', true);
       DO $$ BEGIN IF current_user != 'authenticated' THEN RAISE EXCEPTION 'wrong role: %', current_user; END IF; END $$;
       SELECT bank_name, account_number FROM public.payout_accounts WHERE business_id = '${BIZ_ID}';
       ROLLBACK;
@@ -243,6 +250,7 @@ describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
       BEGIN;
       SET LOCAL ROLE authenticated;
       SELECT set_config('request.jwt.claims', '{"sub":"${OWNER_ID}","role":"authenticated"}', true);
+      SELECT set_config('request.jwt.claim.sub', '${OWNER_ID}', true);
       DO $$ BEGIN IF current_user != 'authenticated' THEN RAISE EXCEPTION 'wrong role: %', current_user; END IF; END $$;
       SELECT * FROM public.oauth_connect_states;
       ROLLBACK;
