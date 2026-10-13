@@ -74,8 +74,8 @@ describe('reject_payout_and_release_adjustments — real DB', () => {
       VALUES ('${OWNER_UUID}', 'reject-test-owner-444@test.com')
       ON CONFLICT (id) DO NOTHING;
 
-      INSERT INTO businesses (id, name, owner_id, category, country_code)
-      VALUES ('${BIZ_ID}', 'Reject Test Biz 444', '${OWNER_UUID}', 'restaurant', 'NG')
+      INSERT INTO businesses (id, name, owner_id, category, country_code, slug)
+      VALUES ('${BIZ_ID}', 'Reject Test Biz 444', '${OWNER_UUID}', 'restaurant', 'NG', 'reject-test-biz-444')
       ON CONFLICT (id) DO NOTHING;
     `);
 
