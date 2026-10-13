@@ -12,15 +12,14 @@ const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeDb = TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let pg: any;
+  let pg: any; // pg types not available at lint-time; CI installs pg at runtime
   let userId: string;
   let businessId: string;
   let hasTable = false;
 
   beforeAll(async () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { Client } = require('pg') as { Client: new (opts: { connectionString: string | undefined }) => any };
+    const pgModule = await import('pg');
+    const Client = pgModule.default?.Client || pgModule.Client;
     pg = new Client({ connectionString: TEST_DATABASE_URL });
     await pg.connect();
 
