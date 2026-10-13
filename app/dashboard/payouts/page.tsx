@@ -1030,7 +1030,7 @@ export default function PayoutsPage() {
             )}
 
             {/* Password for setup */}
-            {(step === 'idle' || step === 'confirming') && !setupPassword && (
+            {(step === 'idle' || step === 'confirming') && (
               <div className="mt-4">
                 <label className="block text-sm font-medium text-gray-700">Confirm your password</label>
                 <input
