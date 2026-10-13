@@ -419,7 +419,7 @@ export default function PlatformSettings() {
   const COMMERCIAL_KEYS = new Set([
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
-    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'payout_cooling_period_days', 'minimum_payout',
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
