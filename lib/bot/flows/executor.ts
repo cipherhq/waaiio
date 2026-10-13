@@ -398,12 +398,13 @@ export class FlowExecutor {
       return;
     }
 
-    // #524: Explicit durable intent is distinct from an ordinary session switch.
-    // It may write only through the canonical profile identity already attached to
-    // the authoritatively routed session, and only after live policy validation.
+    // #524: Language preference intent covers both persistent ("always speak pidgin")
+    // and session-scoped ("pidgin", "speak pidgin", "abeg talk pidgin") requests.
+    // Persistent writes to the profile; session-scoped only updates session_data.
     const languagePreferenceIntent = parseLanguagePreferenceIntent(input);
-    if (languagePreferenceIntent?.persistence === 'persistent') {
+    if (languagePreferenceIntent) {
       const targetLang = languagePreferenceIntent.language as SupportedLanguage;
+      const isPersistent = languagePreferenceIntent.persistence === 'persistent';
       const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
       const mayActivate = CERTIFIED_LANGUAGES.includes(targetLang)
         && entitlement.allowedLanguages.includes(targetLang)
@@ -420,7 +421,7 @@ export class FlowExecutor {
         });
         if (!langSaved) return;
 
-        if (session.user_id) {
+        if (isPersistent && session.user_id) {
           try {
             // The helper intentionally exposes only the narrow profiles operations it
             // needs; the runtime Supabase client provides that same surface.
@@ -449,7 +450,7 @@ export class FlowExecutor {
     }
 
     // Language switching escape hatch: "switch to yoruba" / "speak hausa" / "parle français"
-    const langSwitchMatch = lowerInput.match(/\b(?:switch\s+to|speak|change\s+(?:to|language\s+to)|use)\s+(pidgin|yoruba|igbo|hausa|twi|french|spanish|english|français|español)\b/i);
+    const langSwitchMatch = lowerInput.match(/\b(?:switch\s+to|speak|talk|change\s+(?:to|language\s+to)|use)\s+(pidgin|yoruba|igbo|hausa|twi|french|spanish|english|français|español)\b/i);
     if (langSwitchMatch) {
       const langMap: Record<string, SupportedLanguage> = {
         pidgin: 'pcm', yoruba: 'yo', igbo: 'ig', hausa: 'ha', twi: 'tw',
