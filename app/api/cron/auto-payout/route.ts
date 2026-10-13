@@ -234,28 +234,36 @@ export async function GET(request: NextRequest) {
       // Mark adjustments as applied to this payout
       if (payout && adjustments && adjustments.length > 0) {
         const adjIds = adjustments.map((a) => a.id);
-        const { error: adjLinkError } = await supabase
+        const { data: adjLinked, error: adjLinkError } = await supabase
           .from('payout_adjustments')
           .update({ applied_to_payout_id: payout.id })
-          .in('id', adjIds);
+          .in('id', adjIds)
+          .select('id');
 
-        if (adjLinkError) {
+        // Treat error OR partial update (fewer rows than expected) as failure
+        const adjLinkFailed = adjLinkError || !adjLinked || adjLinked.length !== adjIds.length;
+
+        if (adjLinkFailed) {
           // Containment: set payout to held with adjustment_link_failed flag
           // holdReasons is string[] — convert to structured flags and add the critical one
           const adjFlags: { type: string; message: string; severity: string }[] = holdReasons.map(
             (r: string) => ({ type: 'hold_reason', message: r, severity: 'info' }),
           );
+          const reason = adjLinkError
+            ? `Failed to link ${adjIds.length} adjustment(s): ${adjLinkError.message}`
+            : `Adjustment link updated ${adjLinked?.length ?? 0} of ${adjIds.length} row(s)`;
           adjFlags.push({
             type: 'adjustment_link_failed',
-            message: `Failed to link ${adjIds.length} adjustment(s): ${adjLinkError.message}`,
+            message: reason,
             severity: 'critical',
           });
-          const { error: containErr } = await supabase
+          const { data: containResult, error: containErr } = await supabase
             .from('business_payouts')
             .update({ status: 'held', flags: adjFlags })
-            .eq('id', payout.id);
+            .eq('id', payout.id)
+            .select('id');
 
-          if (containErr) {
+          if (containErr || !containResult || containResult.length === 0) {
             logger.withContext({ op: 'auto-payout.containment', payoutId: payout.id, businessId: biz.id })
               .error('[AUTO-PAYOUT] Containment update failed — payout may remain approved without flag');
           } else {

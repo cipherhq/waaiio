@@ -1401,10 +1401,12 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else if (idx === 2) {
-          // Containment update: .update({}).eq('id',...)
+          // Containment update: .update({}).eq('id',...).select('id')
           chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             containmentPayload = payload;
-            return { eq: vi.fn().mockResolvedValue({ error: null }) };
+            return { eq: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-adj-1' }], error: null }),
+            }) };
           });
         } else {
           // Held payouts query: .select().eq('status','held')
@@ -1437,9 +1439,11 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else {
-          // Adjustment link update: .update({}).in('id', adjIds)
+          // Adjustment link update: .update({}).in('id', adjIds).select('id')
           chain.update = vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ error: { message: 'connection timeout' } }),
+            in: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: null, error: { message: 'connection timeout' } }),
+            }),
           });
         }
       } else if (table === 'payout_accounts') {
@@ -1482,7 +1486,7 @@ describe('cron auto-payout: flagged held payout handling', () => {
     vi.restoreAllMocks();
   });
 
-  it('cron: containment update fails after adj link failure, still no claim, error logged', async () => {
+  it('cron: containment update fails (error or 0 rows) after adj link failure, still no claim, error logged', async () => {
     let claimCalled = false;
 
     let bizIdx = 0;
@@ -1523,9 +1527,11 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else if (idx === 2) {
-          // Containment update: .update({}).eq('id',...) — returns error
+          // Containment update: .update({}).eq('id',...).select('id') — returns 0 rows (no error)
           chain.update = vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({ error: { message: 'disk full' } }),
+            eq: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           });
         } else {
           // Held payouts query: .select().eq('status','held')
@@ -1558,9 +1564,11 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else {
-          // Adjustment link update: .update({}).in('id', adjIds) — returns error
+          // Adjustment link update: .update({}).in('id', adjIds).select('id') — returns error
           chain.update = vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ error: { message: 'link fail' } }),
+            in: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: null, error: { message: 'link fail' } }),
+            }),
           });
         }
       } else if (table === 'payout_accounts') {
@@ -1596,6 +1604,118 @@ describe('cron auto-payout: flagged held payout handling', () => {
     expect(mockLoggerError).toHaveBeenCalledWith(
       expect.stringContaining('Containment update failed'),
     );
+
+    delete process.env.ENABLE_PAYOUTS;
+  });
+
+  it('cron: adjustment link updates 0 rows with no error, payout held, claim NOT called', async () => {
+    let containmentPayload: Record<string, unknown> | null = null;
+    let claimCalled = false;
+
+    let bizIdx = 0;
+    let payoutsIdx = 0;
+    let adjIdx = 0;
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        if (bizIdx++ === 0) {
+          chain.eq = vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'biz-0row', name: '0Row Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
+              error: null,
+            }),
+          });
+        } else {
+          chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
+        }
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) }) }),
+          });
+        } else if (idx === 1) {
+          chain.insert = vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'payout-0row', net_amount: 9000 }, error: null }),
+            }),
+          });
+        } else if (idx === 2) {
+          // Containment update: captures payload
+          chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            containmentPayload = payload;
+            return { eq: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: [{ id: 'payout-0row' }], error: null }),
+            }) };
+          });
+        } else {
+          chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
+        }
+      } else if (table === 'platform_fees') {
+        chain.in = vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({ gte: vi.fn().mockReturnValue({ lte: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({
+              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+              error: null,
+            }),
+          }) }) }),
+        });
+      } else if (table === 'payout_adjustments') {
+        const aIdx = adjIdx++;
+        if (aIdx === 0) {
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({
+                data: [{ id: 'adj-0row', business_id: 'biz-0row', amount: -200 }],
+                error: null,
+              }),
+            }),
+          });
+        } else {
+          // Adjustment link: NO error, but returns 0 rows (data: [])
+          chain.update = vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        }
+      } else if (table === 'payout_accounts') {
+        chain.in = vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({
+              data: [{ business_id: 'biz-0row', id: 'pa-0row', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' }],
+              error: null,
+            }),
+          }),
+        });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'claim_payout_for_transfer') claimCalled = true;
+          return Promise.resolve({ data: null, error: null });
+        }),
+      })),
+    }));
+
+    process.env.ENABLE_PAYOUTS = 'true';
+    cronModule = await import('@/app/api/cron/auto-payout/route');
+    const res = await cronModule.GET(makeCronRequest());
+    expect(res.status).toBe(200);
+
+    // Containment should have set held + flag
+    expect(containmentPayload).not.toBeNull();
+    expect(containmentPayload!.status).toBe('held');
+    const flagArr = containmentPayload!.flags as { type: string }[];
+    expect(flagArr.some(f => f.type === 'adjustment_link_failed')).toBe(true);
+
+    // claim must NOT have been called
+    expect(claimCalled).toBe(false);
 
     delete process.env.ENABLE_PAYOUTS;
   });
@@ -1672,9 +1792,11 @@ describe('cron auto-payout: flagged held payout handling', () => {
             }),
           });
         } else {
-          // Adjustment link update: .update({}).in('id', adjIds) — succeeds
+          // Adjustment link update: .update({}).in('id', adjIds).select('id') — succeeds
           chain.update = vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ error: null }),
+            in: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({ data: [{ id: 'adj-ok' }], error: null }),
+            }),
           });
         }
       } else if (table === 'payout_accounts') {
