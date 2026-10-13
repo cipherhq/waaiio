@@ -186,11 +186,25 @@ describeDb('Migration 442: server-managed business columns guard', () => {
       resolve(process.cwd(), 'supabase/migrations/442_business_server_managed_columns.sql'),
       'utf-8',
     );
-    const result = sql(migrationSql);
-    if (result.includes('FAIL')) {
-      throw new Error(`Migration 442 self-verification failed: ${result}`);
-    }
-    expect(result).toContain('PASS');
+    // psql -t -A sends NOTICEs to stderr. Our sql() helper catches errors and returns
+    // stderr content. For a successful migration with RAISE NOTICE, we get clean stdout.
+    // Use execSync directly to capture both stdout and stderr.
+    const combined = execSync(
+      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`,
+      { encoding: 'utf-8', timeout: 15000, input: migrationSql },
+    );
+    // The self-verification DO block uses RAISE NOTICE on success (which goes to stderr
+    // in psql) or RAISE EXCEPTION on failure (which would throw execSync).
+    // If we reach here without throwing, the migration succeeded.
+    // Verify the trigger exists as a secondary check.
+    const triggerCount = sql(`
+      SELECT count(*) FROM pg_trigger t
+      JOIN pg_class c ON t.tgrelid = c.oid
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      WHERE n.nspname = 'public' AND c.relname = 'businesses'
+        AND t.tgname = 'trg_guard_server_managed_columns';
+    `);
+    expect(triggerCount).toBe('1');
   });
 
   // ════════════════════════════════════════════════════
@@ -205,7 +219,7 @@ describeDb('Migration 442: server-managed business columns guard', () => {
     ['custom_fee_percentage', '5.0'],
     ['custom_fee_flat', '100'],
     ['subscription_tier', "'growth'"],
-    ['owner_id', `'${OWNER_ID}'`],
+    ['owner_id', "'00000000-0000-4000-f442-999999999999'"],
     ['reseller_id', "'00000000-0000-4000-a442-eeeeeeeeeeee'"],
   ];
 
