@@ -401,8 +401,17 @@ export class FlowExecutor {
     // #524: Language preference intent covers both persistent ("always speak pidgin")
     // and session-scoped ("pidgin", "speak pidgin", "abeg talk pidgin") requests.
     // Persistent writes to the profile; session-scoped only updates session_data.
+    //
+    // Bare language names ("pidgin", "english") defer to the active step: if the
+    // step accepts the word as an answer (option match, free-text), treat it as
+    // input, not a language switch. Verb phrases always switch regardless of step.
     const languagePreferenceIntent = parseLanguagePreferenceIntent(input);
-    if (languagePreferenceIntent) {
+    let skipBareSwitch = false;
+    if (languagePreferenceIntent?.isBare && step) {
+      const probeResult = await step.validate(input, ctx);
+      if (probeResult.valid) skipBareSwitch = true;
+    }
+    if (languagePreferenceIntent && !skipBareSwitch) {
       const targetLang = languagePreferenceIntent.language as SupportedLanguage;
       const isPersistent = languagePreferenceIntent.persistence === 'persistent';
       const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
