@@ -209,6 +209,113 @@ describe('POST /api/verification/review', () => {
     expect(body.payout_limit_monthly).toBe(500_000);
   });
 
+  it('returns 401 for aal1 admin (requirePlatformAdmin returns null)', async () => {
+    // requirePlatformAdmin checks aal2; aal1 returns null
+    const { requirePlatformAdmin } = await import('@/lib/admin-auth');
+    vi.mocked(requirePlatformAdmin).mockResolvedValue(null);
+
+    const { POST } = await import('@/app/api/verification/review/route');
+    const res = await POST(makeRequest({ business_id: 'biz-1', action: 'set_level', level: 'standard', reason: 'test' }));
+    expect(res.status).toBe(401);
+  });
+
+  it('set_custom_fees requires a reason', async () => {
+    const { requirePlatformAdmin } = await import('@/lib/admin-auth');
+    vi.mocked(requirePlatformAdmin).mockResolvedValue({
+      id: 'admin-1', userId: 'admin-1', email: 'a@t.com', role: 'admin', aal: 'aal2', bearerToken: 'tok',
+    });
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({ data: { name: 'Test', owner_id: 'o1', country_code: 'NG' }, error: null }),
+            }),
+          }),
+        };
+      }
+      return { select: () => ({ in: () => ({ eq: () => ({ select: () => Promise.resolve({ data: [], error: null }) }) }) }) };
+    });
+
+    const { POST } = await import('@/app/api/verification/review/route');
+    const res = await POST(makeRequest({
+      business_id: 'biz-1',
+      action: 'set_custom_fees',
+      custom_fee_percentage: 3.5,
+      custom_fee_flat: 50,
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('Reason is required');
+  });
+
+  it('set_custom_fees persists and writes audit row', async () => {
+    const { requirePlatformAdmin } = await import('@/lib/admin-auth');
+    vi.mocked(requirePlatformAdmin).mockResolvedValue({
+      id: 'admin-1', userId: 'admin-1', email: 'a@t.com', role: 'admin', aal: 'aal2', bearerToken: 'tok',
+    });
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'businesses') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('name')) {
+              return {
+                eq: () => ({
+                  single: () => Promise.resolve({ data: { name: 'Test', owner_id: 'o1', country_code: 'NG' }, error: null }),
+                }),
+              };
+            }
+            if (cols.includes('custom_fee')) {
+              return {
+                eq: () => ({
+                  single: () => Promise.resolve({
+                    data: { custom_fee_percentage: null, custom_fee_flat: null },
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return { eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) };
+          }),
+          update: () => ({
+            eq: () => ({
+              select: () => Promise.resolve({
+                data: [{ id: 'biz-1', custom_fee_percentage: 3.5, custom_fee_flat: 50 }],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return { select: () => ({ in: () => ({ eq: () => ({ select: () => Promise.resolve({ data: [], error: null }) }) }) }) };
+    });
+
+    const { POST } = await import('@/app/api/verification/review/route');
+    const res = await POST(makeRequest({
+      business_id: 'biz-1',
+      action: 'set_custom_fees',
+      custom_fee_percentage: 3.5,
+      custom_fee_flat: 50,
+      reason: 'Volume discount',
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.custom_fee_percentage).toBe(3.5);
+    expect(body.custom_fee_flat).toBe(50);
+
+    const { logAdminAudit } = await import('@/lib/admin-audit');
+    expect(logAdminAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'set_custom_fees',
+        entityType: 'business',
+        entityId: 'biz-1',
+      }),
+    );
+  });
+
   it('reject requires reason', async () => {
     const { requirePlatformAdmin } = await import('@/lib/admin-auth');
     vi.mocked(requirePlatformAdmin).mockResolvedValue({
