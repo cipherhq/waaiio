@@ -16,6 +16,9 @@ const nextConfig = {
     ],
   },
   experimental: {
+    // Required for @sentry/nextjs v10 to load sentry.server.config.ts and
+    // sentry.edge.config.ts via instrumentation.ts in Next.js 14.
+    instrumentationHook: true,
     // PDFKit loads its built-in AFM font data via fs.readFileSync(__dirname + '/data/...').
     // Keep it externalized so __dirname resolves inside node_modules/pdfkit on Vercel
     // instead of a bundled .next/server/chunks directory.
