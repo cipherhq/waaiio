@@ -130,6 +130,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
         ('annual_discount_percentage', '20'::jsonb),
         ('payout_cooling_period_days', '7'::jsonb),
         ('minimum_payout', '{"NG":5000}'::jsonb),
+        ('payout_verification_limits', '{"unverified":0}'::jsonb),
         ('transfer_expiry_hours', '4'::jsonb),
         ('maintenance_mode', 'false'::jsonb),
         ('support_email', '"support@waaiio.com"'::jsonb)
@@ -689,12 +690,12 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       'default_platform_fee_percent',
       'minimum_payout',
       'payout_cooling_period_days',
+      'payout_verification_limits',
       'pricing_tiers',
       'transfer_expiry_hours',
       'trial_days',
     ]);
     expect(parsed).not.toHaveProperty('minimum_bank_transfer');
-    expect(parsed).not.toHaveProperty('payout_verification_limits');
 
     // Bootstrap created_by must be NULL (migration runner, not an auth'd user)
     const createdBy = psql("SELECT created_by::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
@@ -867,6 +868,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
         ('annual_discount_percentage', '20'::jsonb),
         ('payout_cooling_period_days', '7'::jsonb),
         ('minimum_payout', '{"NG":5000}'::jsonb),
+        ('payout_verification_limits', '{"unverified":0}'::jsonb),
         ('transfer_expiry_hours', '4'::jsonb),
         ('maintenance_mode', 'false'::jsonb)
       ON CONFLICT (key) DO NOTHING;
@@ -930,10 +932,9 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     expect(keys).toEqual([
       'annual_discount_percentage', 'broadcast_limits', 'conversation_limits',
       'default_platform_fee_percent', 'minimum_payout', 'payout_cooling_period_days',
-      'pricing_tiers', 'transfer_expiry_hours', 'trial_days',
+      'payout_verification_limits', 'pricing_tiers', 'transfer_expiry_hours', 'trial_days',
     ]);
     expect(parsed).not.toHaveProperty('minimum_bank_transfer');
-    expect(parsed).not.toHaveProperty('payout_verification_limits');
 
     const createdBy = nsuPsql("SELECT created_by::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
     expect(createdBy).toBe('');
