@@ -241,7 +241,7 @@ describe('sendProactiveConfirmation → handlePostCompletion call boundary', () 
     expect(args.customerPhone).toBe('+2341234567890');
   });
 
-  it('Order: passes amountPaid=0 + skipCustomerSpend=false (pre-#161 behavior)', async () => {
+  it('Order: passes real amountPaid + skipCustomerSpend=true (#631 fix)', async () => {
     const { sendProactiveConfirmation } = await import('../send-confirmation');
     const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
     const supabase = buildSupabase('order');
@@ -254,8 +254,8 @@ describe('sendProactiveConfirmation → handlePostCompletion call boundary', () 
     expect(result.status).toBe('completed');
     expect(handlePostCompletion).toHaveBeenCalledOnce();
     const args = (handlePostCompletion as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(args.amountPaid).toBe(0);              // Orders: amountPaid=0 (unchanged)
-    expect(args.skipCustomerSpend).toBe(false);   // NOT set for orders
+    expect(args.amountPaid).toBe(8000);           // Orders: real amount for receipts
+    expect(args.skipCustomerSpend).toBe(true);    // Stage 2 owns durable spend
     expect(args.skipAutomation).toBe(true);       // Orders skip automation at webhook
   });
 });
