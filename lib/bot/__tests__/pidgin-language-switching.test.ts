@@ -117,7 +117,7 @@ describe('Pidgin-mode reply generation', () => {
 
   it('format-date maps pcm to en for calendar formatting', async () => {
     const { formatDisplayDate } = await import('../format-date');
-    const result = formatDisplayDate(new Date('2026-01-15'), 'pcm');
+    const result = formatDisplayDate(new Date('2026-01-15'), 'short', 'pcm', 'NG');
     expect(result).toBeTruthy();
   });
 });
