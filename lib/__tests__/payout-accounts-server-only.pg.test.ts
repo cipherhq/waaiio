@@ -12,13 +12,15 @@ const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeDb = TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb('M446: payout_accounts server-only privileges (real PG)', () => {
-  let pg: import('pg').Client;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let pg: any;
   let userId: string;
   let businessId: string;
   let hasTable = false;
 
   beforeAll(async () => {
-    const { Client } = await import('pg');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Client } = require('pg') as { Client: new (opts: { connectionString: string | undefined }) => any };
     pg = new Client({ connectionString: TEST_DATABASE_URL });
     await pg.connect();
 
