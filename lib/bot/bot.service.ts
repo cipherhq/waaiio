@@ -88,6 +88,19 @@ export class BotService {
     const _bmark = (l: string) => { _btimings[l] = Date.now() - _bt0; };
     logger.debug('[BOT] handleMessage from: ...', from.slice(-4), 'type:', messageType, 'textLen:', text.length);
 
+    // Translation overrides — loaded once per request when business is known
+    let _overridesPromise: Promise<{ business: Map<string, string>; platform: Map<string, string> }> | null = null;
+    const getOverrides = (bizId: string) => {
+      if (!_overridesPromise) {
+        _overridesPromise = Promise.all([
+          loadBusinessOverrides(this.supabase, bizId),
+          loadPlatformOverrides(this.supabase),
+        ]).then(([biz, plat]) => ({ business: biz, platform: plat }));
+      }
+      return _overridesPromise;
+    };
+    const emptyOverrides = { business: new Map<string, string>(), platform: new Map<string, string>() };
+
     // Pre-check: Input length cap (prevents regex timeout, LLM token burn, DoS)
     if (text.length > 5000) {
       logger.warn(`[BOT] Message too long from ${from}: ${text.length} chars`);
@@ -461,28 +474,31 @@ export class BotService {
 
         if (newSession) {
           // Build the business context and execute the rsvp flow prompt
-          await this.flowExecutor.execute(
-            from,
-            '', // empty input = send prompt
-            {
-              id: newSession.id,
-              user_id: null,
-              business_id: biz.id as string,
-              current_step: 'rsvp_welcome',
-              session_data: newSession.session_data as Record<string, unknown>,
-              version: (newSession as Record<string, unknown>).version as number ?? 0,
-            },
-            {
-              id: biz.id as string,
-              name: biz.name as string,
-              slug: biz.slug as string,
-              category: biz.category as BusinessCategoryKey,
-              flow_type: biz.flow_type as FlowType,
-              subscription_tier: biz.subscription_tier as string,
-              trial_ends_at: biz.trial_ends_at as string,
-              metadata: (biz.metadata || {}) as Record<string, unknown>,
-              country_code: biz.country_code as CountryCode | undefined,
-            },
+          const _rsvpOv = await getOverrides(biz.id as string);
+          await runWithTranslationOverrides(_rsvpOv, () =>
+            this.flowExecutor.execute(
+              from,
+              '', // empty input = send prompt
+              {
+                id: newSession.id,
+                user_id: null,
+                business_id: biz.id as string,
+                current_step: 'rsvp_welcome',
+                session_data: newSession.session_data as Record<string, unknown>,
+                version: (newSession as Record<string, unknown>).version as number ?? 0,
+              },
+              {
+                id: biz.id as string,
+                name: biz.name as string,
+                slug: biz.slug as string,
+                category: biz.category as BusinessCategoryKey,
+                flow_type: biz.flow_type as FlowType,
+                subscription_tier: biz.subscription_tier as string,
+                trial_ends_at: biz.trial_ends_at as string,
+                metadata: (biz.metadata || {}) as Record<string, unknown>,
+                country_code: biz.country_code as CountryCode | undefined,
+              },
+            )
           );
           return;
         }
@@ -967,7 +983,10 @@ export class BotService {
             .eq('id', session.business_id).single();
           biz = data;
         }
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz, mediaUrl, messageType);
+        const _restartNoOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+        await runWithTranslationOverrides(_restartNoOv, () =>
+          this.flowExecutor.execute(from, '', session as unknown as BotSession, biz, mediaUrl, messageType)
+        );
         return;
       }
       if (text === 'restart_yes') {
@@ -1004,7 +1023,10 @@ export class BotService {
             .eq('id', session.business_id).single();
           biz = data;
         }
-        await this.flowExecutor.execute(from, text, session as unknown as BotSession, biz, mediaUrl, messageType);
+        const _restartElseOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+        await runWithTranslationOverrides(_restartElseOv, () =>
+          this.flowExecutor.execute(from, text, session as unknown as BotSession, biz, mediaUrl, messageType)
+        );
         return;
       }
     }
@@ -1355,19 +1377,6 @@ export class BotService {
         tierInfo = tier;
       }
 
-      // ── Translation overrides: load once, scope via AsyncLocalStorage ──
-      const [_bizOverrides, _platOverrides] = business
-        ? await Promise.all([
-            loadBusinessOverrides(this.supabase, business.id),
-            loadPlatformOverrides(this.supabase),
-          ])
-        : [new Map<string, string>(), new Map<string, string>()];
-
-      // eslint-disable-next-line no-inner-declarations -- scoped ALS wrapper
-      const _translationHandled = await runWithTranslationOverrides(
-        { business: _bizOverrides, platform: _platOverrides },
-        async (): Promise<boolean> => {
-
       // #524: A customer-wide response preference is presentation state only.
       // Read it after #266 has authoritatively bound the business, then re-check it
       // against this business's live entitlement and the production certification
@@ -1471,7 +1480,7 @@ export class BotService {
           if (canonicalResult.languageBlocked) {
             const langNames = canonicalResult.allowedLanguageNames || ['English'];
             await this.sendText(from, `This business currently supports ${langNames.join(' and ')}. Please send your message in ${langNames.length === 1 ? langNames[0] : 'one of those languages'}.`);
-            return true;
+            return;
           }
 
           // Confidence check BEFORE any semantic action
@@ -1498,9 +1507,9 @@ export class BotService {
                 requestedAction: canonicalResult.requestedAction,
                 originalText: text,
               });
-              if (actionResult.handled) return true;
+              if (actionResult.handled) return;
               await sendActionRecovery(this.messageSender, from, canonicalResult.requestedAction, actionResult.reason || 'no_handler');
-              return true;
+              return;
             }
 
             // High-confidence CREATE_NEW → try direct canonical routing
@@ -1649,12 +1658,12 @@ export class BotService {
             // Unsafe: cannot recover a business-scoped session. Fail closed.
             logger.error('[BOT] #266 R4: 23505 recovery failed — no safe null-biz session to resume');
             await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-            return true;
+            return;
           }
         } else {
           logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
           await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          return true;
+          return;
         }
       }
 
@@ -1716,7 +1725,7 @@ export class BotService {
       // running greeting/flow executor — the next inbound message will find this session
       // and can continue eligibility YES/NO or start fresh.
       if (promoHandledFirstMessage) {
-        return true;
+        return;
       }
 
       // First-contact language picker: if no saved language preference and
@@ -1724,11 +1733,12 @@ export class BotService {
       // of proceeding with the default English greeting.
       if (business && !hasRememberedLanguage && !canonicalActivatedLanguage) {
         // Check if this contact already picked a language for this business
+        const phoneWithPlusRead = from.startsWith('+') ? from : '+' + from;
         const { data: custProfile } = await this.supabase
           .from('customer_profiles')
           .select('preferred_language')
           .eq('business_id', business.id)
-          .eq('phone', from)
+          .eq('phone', phoneWithPlusRead)
           .maybeSingle();
         if (custProfile?.preferred_language) {
           hasRememberedLanguage = true; // Skip picker, use their saved preference
@@ -1745,13 +1755,19 @@ export class BotService {
             (code: string) => pickerCertLangs.includes(code),
           );
           if (pickerAllowed.length > 1) {
-            // Store the original message for processing after picker selection
+            // Store the original message for processing after picker selection (CAS)
             session.session_data._pending_first_message = text;
-            await this.supabase.from('bot_sessions')
-              .update({ session_data: session.session_data })
-              .eq('id', session.id);
+            const pickerCas = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version,
+              p_current_step: session.current_step,
+              p_session_data: session.session_data,
+            });
+            if (pickerCas.data?.success) {
+              session.version = pickerCas.data.version;
+            }
             await this.sendLanguagePicker(from, business, pickerAllowed, this.messageSender);
-            return true; // Wait for picker selection before proceeding
+            return; // Wait for picker selection before proceeding
           }
         }
       }
@@ -1791,7 +1807,7 @@ export class BotService {
             ],
           });
           await this.deactivateSession(session.id);
-          return true;
+          return;
         }
 
         // Greeting is merged into the capability selection message (stored in _greeting)
@@ -1887,7 +1903,7 @@ export class BotService {
               session.session_data._quick_rebook_sent = true;
               await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
               // Stop here — don't show the full greeting/menu on top of the rebook prompt
-              return true;
+              return;
             } else {
               // No rebookable service — send text greeting as before
               const returnMsg = buildReturnGreeting(
@@ -2051,16 +2067,14 @@ export class BotService {
 
         // Delegate to flow executor for the first step prompt
         // CAS-004: pass canonical result ephemerally — NOT persisted to session
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined);
-        return true;
+        const _newSessionOv = business ? await getOverrides(business.id) : emptyOverrides;
+        await runWithTranslationOverrides(_newSessionOv, () =>
+          this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined)
+        );
+        return;
       }
 
-      return false; // Not handled — fall through to marketplace greeting
-      }); // end runWithTranslationOverrides
-
-      if (_translationHandled) return;
-
-      // Marketplace greeting — no business found from bot code or past history
+      // Fall through to marketplace greeting — no business found from bot code or past history
       // Check if this is a returning user with past businesses for quick-pick
       const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
@@ -2266,13 +2280,17 @@ export class BotService {
 
       // CAS update session language
       session.session_data._detected_language = langCode;
-      await this.supabase.rpc('update_session_cas', {
+      const langCasResult = await this.supabase.rpc('update_session_cas', {
         p_session_id: session.id,
         p_expected_version: session.version,
         p_current_step: session.current_step,
         p_session_data: session.session_data,
       });
-      session.version = (session.version || 0) + 1;
+      if (!langCasResult.data?.success) {
+        logger.warn('[BOT] CAS conflict in lang_pick handler (language set)');
+        return; // Don't send duplicate messages
+      }
+      session.version = langCasResult.data.version;
 
       // Save to profile for future sessions
       if (session.user_id) {
@@ -2284,11 +2302,16 @@ export class BotService {
       // (preferred_language column added by migration 445 — graceful if not yet applied)
       if (session.business_id) {
         try {
-          await this.supabase.from('customer_profiles').upsert({
+          const phoneWithPlus = from.startsWith('+') ? from : '+' + from;
+          const { error: cpError } = await this.supabase.from('customer_profiles').upsert({
             business_id: session.business_id,
-            phone: from,
+            phone: phoneWithPlus,
             preferred_language: langCode,
           }, { onConflict: 'business_id,phone' });
+          if (cpError) {
+            logger.warn('[BOT] customer_profiles preferred_language upsert failed:', cpError.message);
+            Sentry.captureMessage(`customer_profiles preferred_language upsert failed: ${cpError.message}`, 'error');
+          }
         } catch {
           // Column may not exist yet — non-fatal
         }
@@ -2301,18 +2324,28 @@ export class BotService {
 
       // Process any pending first message stored before the picker was shown
       const pendingFirstMsg = session.session_data._pending_first_message as string | undefined;
-      if (pendingFirstMsg) {
-        delete session.session_data._pending_first_message;
-        await this.supabase.rpc('update_session_cas', {
-          p_session_id: session.id,
-          p_expected_version: session.version,
-          p_current_step: session.current_step,
-          p_session_data: session.session_data,
-        });
-        session.version = (session.version || 0) + 1;
-      }
+      delete session.session_data._pending_first_message; // Clear it (saved in CAS write below)
 
-      // Now proceed to greeting/menu in the chosen language
+      // Is the pending message a greeting? If so, treat as empty input (show menu).
+      const greetingPattern = /^(hi|hello|hey|menu|start|eku|bawo|sannu|kedu|maakye|bonjour|hola|abeg|wetin)$/i;
+      const pendingTrimmed = pendingFirstMsg?.trim() ?? '';
+      const isPickerGreeting = !pendingFirstMsg || greetingPattern.test(pendingTrimmed);
+      const executeInput = isPickerGreeting ? '' : pendingFirstMsg!.trim();
+
+      // CAS write to clear _pending_first_message
+      const pendingCasResult = await this.supabase.rpc('update_session_cas', {
+        p_session_id: session.id,
+        p_expected_version: session.version,
+        p_current_step: session.current_step,
+        p_session_data: session.session_data,
+      });
+      if (!pendingCasResult.data?.success) {
+        logger.warn('[BOT] CAS conflict clearing _pending_first_message');
+        return; // Don't send duplicate messages
+      }
+      session.version = pendingCasResult.data.version;
+
+      // Now proceed to greeting/menu in the chosen language, passing pending message if non-greeting
       if (session.business_id) {
         const { data: pickBiz } = await this.supabase
           .from('businesses')
@@ -2320,13 +2353,10 @@ export class BotService {
           .eq('id', session.business_id)
           .single();
         if (pickBiz) {
-          const [bizOv, platOv] = await Promise.all([
-            loadBusinessOverrides(this.supabase, session.business_id),
-            loadPlatformOverrides(this.supabase),
-          ]);
-          await runWithTranslationOverrides({ business: bizOv, platform: platOv }, async () => {
-            await this.flowExecutor.execute(from, '', session!, pickBiz);
-          });
+          const _pickOv = await getOverrides(session.business_id);
+          await runWithTranslationOverrides(_pickOv, () =>
+            this.flowExecutor.execute(from, executeInput, session!, pickBiz)
+          );
         }
       }
       return;
@@ -2500,7 +2530,10 @@ export class BotService {
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
         : null;
       if (business) {
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business);
+        const _rebookOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+        await runWithTranslationOverrides(_rebookOv, () =>
+          this.flowExecutor.execute(from, '', session as unknown as BotSession, business)
+        );
       }
       return;
     }
@@ -2538,7 +2571,10 @@ export class BotService {
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
         : null;
       if (bizForMenu) {
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, bizForMenu);
+        const _menuOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+        await runWithTranslationOverrides(_menuOv, () =>
+          this.flowExecutor.execute(from, '', session as unknown as BotSession, bizForMenu)
+        );
       }
       return;
     }
@@ -3056,7 +3092,10 @@ export class BotService {
               .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel')
               .eq('id', session.business_id)
               .single();
-            await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
+            const _startFlowOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+            await runWithTranslationOverrides(_startFlowOv, () =>
+              this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null)
+            );
             return;
           }
         }
@@ -3344,7 +3383,10 @@ export class BotService {
     }
 
     _bmark('flow_exec_start');
-    await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType, resumedCanonical || undefined);
+    const _finalOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+    await runWithTranslationOverrides(_finalOv, () =>
+      this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType, resumedCanonical || undefined)
+    );
     _bmark('flow_exec_done');
     logger.info('[BOT-PERF] timings_ms', _btimings);
     } catch (err) {
