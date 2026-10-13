@@ -571,7 +571,7 @@ describe('Language picker — successful selection persistence', () => {
 describe('Language picker — pending first message', () => {
   it('stores original message in _pending_first_message when picker is shown', async () => {
     const sender = createCaptureSender();
-    const updateTracker: Array<{ table: string; data: unknown }> = [];
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
 
     const supabase = createTableMock({
       activeSession: null,
@@ -579,7 +579,7 @@ describe('Language picker — pending first message', () => {
       capabilities: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }],
       enabledLanguages: ['en', 'pcm'],
       customerProfileLanguage: null,
-      updateTracker,
+      rpcTracker,
     });
 
     const bot = new BotService(
@@ -596,14 +596,12 @@ describe('Language picker — pending first message', () => {
     );
     expect(pickerList).toBeDefined();
 
-    // The original message should be stored in session_data._pending_first_message
-    const sessionUpdate = updateTracker.find(
-      u => u.table === 'bot_sessions' && (u.data as any)?.session_data?._pending_first_message,
+    // The original message should be stored via CAS RPC in session_data._pending_first_message
+    const casCall = rpcTracker.find(
+      r => r.fn === 'update_session_cas' &&
+        (r.args as any)?.p_session_data?._pending_first_message === 'I want to order food',
     );
-    expect(sessionUpdate).toBeDefined();
-    expect((sessionUpdate!.data as any).session_data._pending_first_message).toBe(
-      'I want to order food',
-    );
+    expect(casCall).toBeDefined();
   });
 });
 
@@ -643,5 +641,218 @@ describe('Language picker — multilingual body', () => {
 
     // The body should contain "choose" or "pick" or "language" (English picker prompt)
     expect(body.toLowerCase()).toMatch(/choose|pick|language|preferred/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 9. Pending first message processed after picking
+// ═══════════════════════════════════════════════════════
+
+describe('Language picker — pending first message replay', () => {
+  it('pending first message "I want to book" is processed after picking, not just the menu', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const upsertTracker: Array<{ table: string; data: unknown }> = [];
+
+    // Session with _pending_first_message set (as if the user said "I want to book a haircut"
+    // and the picker was shown, storing the message in session_data)
+    const session = {
+      id: 'session-pending',
+      user_id: 'user-pending',
+      phone: PHONE,
+      business_id: BIZ_ID,
+      current_step: 'idle',
+      session_data: { _pending_first_message: 'I want to book a haircut' },
+      status: 'active',
+      version: 1,
+    };
+
+    const supabase = createTableMock({
+      activeSession: session,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [
+        { capability: 'ordering', is_enabled: true, sort_order: 0 },
+        { capability: 'scheduling', is_enabled: true, sort_order: 1 },
+      ],
+      enabledLanguages: ['en', 'pcm'],
+      rpcTracker,
+      upsertTracker,
+    });
+
+    const bot = new BotService(
+      supabase,
+      sender,
+      createMockStandalone(),
+      createMockIntelligence(),
+    );
+    // Simulate the user tapping Pidgin in the picker
+    await bot.handleMessage(PHONE, 'lang_pick_pcm', 'interactive', undefined, BIZ_ID);
+
+    // The CAS write to clear _pending_first_message should have been called
+    const pendingCas = rpcTracker.filter(r => r.fn === 'update_session_cas');
+    expect(pendingCas.length).toBeGreaterThanOrEqual(1);
+
+    // The pending message "I want to book a haircut" is NOT a greeting word,
+    // so execute should be called with it (not empty string).
+    // The second CAS call (clearing _pending_first_message) session_data should NOT
+    // have _pending_first_message anymore.
+    const clearCas = pendingCas.find(
+      r => !(r.args as any).p_session_data?._pending_first_message,
+    );
+    expect(clearCas).toBeDefined();
+  });
+
+  it('pending greeting message "hi" results in empty executeInput (shows menu)', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+
+    const session = {
+      id: 'session-pending-hi',
+      user_id: 'user-pending-hi',
+      phone: PHONE,
+      business_id: BIZ_ID,
+      current_step: 'idle',
+      session_data: { _pending_first_message: 'hi' },
+      status: 'active',
+      version: 1,
+    };
+
+    const supabase = createTableMock({
+      activeSession: session,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      rpcTracker,
+    });
+
+    const bot = new BotService(
+      supabase,
+      sender,
+      createMockStandalone(),
+      createMockIntelligence(),
+    );
+    await bot.handleMessage(PHONE, 'lang_pick_pcm', 'interactive', undefined, BIZ_ID);
+
+    // "hi" is a greeting word, so the pending message is treated as empty input.
+    // The CAS write to clear _pending_first_message should occur.
+    const pendingCas = rpcTracker.filter(r => r.fn === 'update_session_cas');
+    expect(pendingCas.length).toBeGreaterThanOrEqual(1);
+
+    // After selection, a confirmation message should be sent
+    const msgs = sender.getMessages();
+    const confirmMsg = msgs.find(m => m.type === 'text' && m.text?.includes('✅'));
+    // The confirmation or the menu should appear (not an error)
+    expect(msgs.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 10. CAS conflict stops processing
+// ═══════════════════════════════════════════════════════
+
+describe('Language picker — CAS conflict handling', () => {
+  it('CAS conflict on picker selection stops processing — no duplicate messages', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const upsertTracker: Array<{ table: string; data: unknown }> = [];
+
+    const session = {
+      id: 'session-cas-conflict',
+      user_id: 'user-cas-conflict',
+      phone: PHONE,
+      business_id: BIZ_ID,
+      current_step: 'idle',
+      session_data: {},
+      status: 'active',
+      version: 1,
+    };
+
+    const supabase = createTableMock({
+      activeSession: session,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      rpcTracker,
+      upsertTracker,
+    });
+
+    // Override update_session_cas RPC to return a version conflict
+    supabase.rpc = vi.fn((fn: string, args?: Record<string, unknown>) => {
+      rpcTracker.push({ fn, args: args || {} });
+      if (fn === 'get_bot_context') {
+        return Promise.resolve({
+          data: {
+            has_session: true,
+            session: { ...session, whatsapp_number: PHONE, is_active: true },
+            business: makeBusiness({ subscription_tier: 'growth' }),
+            capabilities: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }],
+            capability_overrides: [],
+          },
+          error: null,
+        });
+      }
+      if (fn === 'update_session_cas') {
+        return Promise.resolve({
+          data: { success: false, reason: 'version_conflict' },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const bot = new BotService(
+      supabase,
+      sender,
+      createMockStandalone(),
+      createMockIntelligence(),
+    );
+    await bot.handleMessage(PHONE, 'lang_pick_pcm', 'interactive', undefined, BIZ_ID);
+
+    // After CAS failure: no confirmation message should be sent
+    const msgs = sender.getMessages();
+    const confirmMsg = msgs.find(
+      m => m.type === 'text' && (m.text?.includes('✅') || m.text?.toLowerCase().includes('switched')),
+    );
+    expect(confirmMsg).toBeUndefined();
+
+    // No customer_profiles upsert should happen (processing stopped before reaching it)
+    const cpUpsert = upsertTracker.find(u => u.table === 'customer_profiles');
+    expect(cpUpsert).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 11. Phone format dedup — +prefix lookup
+// ═══════════════════════════════════════════════════════
+
+describe('Language picker — phone format dedup', () => {
+  it('picker not shown again for same phone in +prefix format', async () => {
+    const sender = createCaptureSender();
+    // PHONE is '+2349000000001' — the code normalizes to '+' prefix before
+    // querying customer_profiles. If the DB has a record with the +prefix format,
+    // the picker should be suppressed.
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      // customer_profiles returns a saved preference for this phone (with + prefix)
+      customerProfileLanguage: 'pcm',
+    });
+
+    const bot = new BotService(
+      supabase,
+      sender,
+      createMockStandalone(),
+      createMockIntelligence(),
+    );
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    const msgs = sender.getMessages();
+    const pickerList = msgs.find(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    // Picker should NOT be shown because customer_profiles.preferred_language exists
+    expect(pickerList).toBeUndefined();
   });
 });

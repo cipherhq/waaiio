@@ -591,4 +591,20 @@ describe('ALS scope isolation', () => {
   it('getTranslationOverrides returns null outside scope', () => {
     expect(getTranslationOverrides()).toBeNull();
   });
+
+  it('different business does not see another business override', async () => {
+    const bizAOverrides = makeOverrides({ 'en.cap.ordering': 'Pase Oda' });
+    const bizBOverrides = makeOverrides(); // no overrides
+
+    const resultA = await runWithTranslationOverrides(bizAOverrides, () =>
+      getFlowCopy('en', 'cap.ordering'),
+    );
+    const resultB = await runWithTranslationOverrides(bizBOverrides, () =>
+      getFlowCopy('en', 'cap.ordering'),
+    );
+
+    expect(resultA).toBe('Pase Oda');
+    expect(resultB).not.toBe('Pase Oda'); // Should be the code default
+    expect(resultB).toBe('Place an Order'); // English code default
+  });
 });
