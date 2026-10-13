@@ -12,6 +12,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
+import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 
 /**
  * GET /api/cron/auto-payout
@@ -193,6 +194,11 @@ export async function GET(request: NextRequest) {
       const avgPerDay = transactionCount / 7;
       const autoApproveLimit = isNG ? AUTO_APPROVE_LIMIT_NGN : AUTO_APPROVE_LIMIT_USD;
 
+      // Check monthly verification-tier limit
+      const payoutMinor = Math.round(net * 100);
+      const limitCheck = await checkVerificationLimit(supabase, biz.id, payoutMinor);
+      const withinLimit = limitCheck.allowed;
+
       // FIN-002: Auto-approval requires ALL conditions — eligible Paystack
       // account in a supported country with a configured provider key.
       // Any failure creates the payout as pending for admin review.
@@ -205,7 +211,9 @@ export async function GET(request: NextRequest) {
         net <= autoApproveLimit &&
         (biz.verification_level || 'unverified') !== 'unverified';
 
-      const status = canAutoApprove ? 'approved' : 'pending';
+      // Over-limit payouts become 'held' with a flag, never approved
+      const overLimit = !withinLimit;
+      const status = overLimit ? 'held' : (canAutoApprove ? 'approved' : 'pending');
       const holdReasons: string[] = [];
       if (!isNG) holdReasons.push('Business country not supported for automatic Paystack transfer');
       if (!payoutAccount) holdReasons.push('No payout account configured');
@@ -215,6 +223,7 @@ export async function GET(request: NextRequest) {
       if (avgPerDay >= VELOCITY_THRESHOLD) holdReasons.push('High transaction velocity');
       if (net > autoApproveLimit) holdReasons.push(`Amount exceeds auto-approve limit`);
       if ((biz.verification_level || 'unverified') === 'unverified') holdReasons.push('Business not verified');
+      if (overLimit) holdReasons.push(limitCheck.reason || 'Verification limit exceeded');
 
       // ── Create payout record ──
       // Two paths: with adjustments (three-phase INSERT→link→promote) and
@@ -228,6 +237,9 @@ export async function GET(request: NextRequest) {
         // Convert holdReasons to structured flags for the adjustment path
         const structuredFlags: { type: string; message: string; severity: string; adjustment_ids?: string[] }[] =
           holdReasons.map(r => ({ type: 'hold_reason', message: r, severity: 'info' }));
+        if (overLimit) {
+          structuredFlags.push({ type: 'verification_limit_exceeded', message: limitCheck.reason || 'Monthly limit exceeded', severity: 'critical' });
+        }
         const insertFlags = [...structuredFlags, {
           type: 'adjustment_link_pending',
           message: `Linking ${adjIds.length} adjustment(s)`,
@@ -512,7 +524,12 @@ export async function GET(request: NextRequest) {
           continue;
         }
       } else {
-        // --- No adjustments: INSERT with computed status (plain holdReasons for backward compat) ---
+        // --- No adjustments: INSERT with computed status ---
+        const insertFlags: (string | { type: string; message?: string; severity?: string })[] =
+          holdReasons.map(r => r);
+        if (overLimit) {
+          insertFlags.push({ type: 'verification_limit_exceeded', message: limitCheck.reason || 'Monthly limit exceeded', severity: 'critical' });
+        }
         const { data: payout } = await supabase.from('business_payouts').insert({
           business_id: biz.id,
           period_start: periodStartStr,
@@ -523,7 +540,7 @@ export async function GET(request: NextRequest) {
           net_amount: net,
           status,
           payout_account_id: payoutAccount?.id || null,
-          flags: holdReasons.length > 0 ? holdReasons : [],
+          flags: insertFlags.length > 0 ? insertFlags : [],
           auto_generated: true,
         }).select('id, net_amount').single();
 
