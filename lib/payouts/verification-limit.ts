@@ -1,10 +1,15 @@
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { getVerificationTiers, type CountryCode, type VerificationLevel } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
+import { logger } from '@/lib/logger';
 
 export interface VerificationLimitResult {
   allowed: boolean;
+  /** Limit in minor currency units (kobo/cents/pesewas) */
   limit: number;
+  /** Amount already used this month in minor units */
   used: number;
+  /** Remaining capacity in minor units */
   remaining: number;
   reason?: string;
 }
@@ -14,9 +19,19 @@ export interface VerificationLimitResult {
  * without exceeding its monthly verification-tier limit.
  *
  * All amounts are in minor currency units (kobo, cents, pesewas).
+ * Tier limits from countries.verification_tiers are in MAJOR units
+ * and are converted to minor (×100) internally.
  *
  * The monthly total includes payouts with status: approved, processing, paid.
  * The current payout (if it already has a DB row) is excluded via `excludePayoutId`.
+ *
+ * Concurrency note: this is a read-only check. Two concurrent approvals for
+ * different payouts of the same business could both pass. This is acceptable
+ * because: (a) admin payout approval requires per-payout step-up authorization,
+ * making simultaneous approvals impractical; (b) the claim_payout_for_transfer
+ * RPC provides atomic single-winner for the same payout; (c) auto-payout runs
+ * sequentially per business. If stricter enforcement is needed later, add a
+ * SELECT ... FOR UPDATE on the business row inside a transaction.
  */
 export async function checkVerificationLimit(
   supabase: SupabaseClient,
@@ -37,6 +52,10 @@ export async function checkVerificationLimit(
 
   const level = (biz.verification_level || 'unverified') as VerificationLevel;
   const cc = (biz.country_code || 'NG') as CountryCode;
+
+  // Ensure DB-backed countries cache is populated for getVerificationTiers
+  await loadCountries().catch(() => {});
+
   const tiers = getVerificationTiers(cc);
   const tierEntry = tiers[level];
 
@@ -45,17 +64,20 @@ export async function checkVerificationLimit(
     return { allowed: false, limit: 0, used: 0, remaining: 0, reason: `No verification tier for level "${level}"` };
   }
 
-  const limit = tierEntry.limit;
+  const limitMajor = tierEntry.limit;
 
   // Limit of 0 → payouts held
-  if (limit === 0) {
+  if (limitMajor === 0) {
     return { allowed: false, limit: 0, used: 0, remaining: 0, reason: 'Verification level does not allow payouts' };
   }
 
-  // Unlimited (999999999+)
-  if (limit >= 999_999_999) {
-    return { allowed: true, limit, used: 0, remaining: limit };
+  // Unlimited (999_999_999+ in major units)
+  if (limitMajor >= 999_999_999) {
+    return { allowed: true, limit: limitMajor, used: 0, remaining: limitMajor };
   }
+
+  // Convert major-unit limit to minor units (kobo/cents/pesewas)
+  const limitMinor = Math.round(limitMajor * 100);
 
   // 2. Sum this month's approved + processing + paid payouts for the business
   const now = new Date();
@@ -74,20 +96,20 @@ export async function checkVerificationLimit(
 
   const { data: payouts } = await query;
 
-  // Convert to minor units — net_amount is stored as a numeric (major units)
+  // net_amount is stored in major units → convert to minor
   const usedMinor = (payouts || []).reduce((sum, p) => sum + Math.round(Number(p.net_amount) * 100), 0);
-  const remaining = limit - usedMinor;
-  const wouldExceed = usedMinor + payoutAmountMinor > limit;
+  const remaining = limitMinor - usedMinor;
+  const wouldExceed = usedMinor + payoutAmountMinor > limitMinor;
 
   if (wouldExceed) {
     return {
       allowed: false,
-      limit,
+      limit: limitMinor,
       used: usedMinor,
       remaining: Math.max(0, remaining),
-      reason: `Monthly payout limit exceeded: used ${usedMinor} + requested ${payoutAmountMinor} > limit ${limit}`,
+      reason: `Monthly payout limit exceeded: used ${usedMinor} + requested ${payoutAmountMinor} > limit ${limitMinor}`,
     };
   }
 
-  return { allowed: true, limit, used: usedMinor, remaining: remaining - payoutAmountMinor };
+  return { allowed: true, limit: limitMinor, used: usedMinor, remaining: remaining - payoutAmountMinor };
 }
