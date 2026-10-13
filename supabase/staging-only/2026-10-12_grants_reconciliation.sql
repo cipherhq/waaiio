@@ -476,18 +476,26 @@ BEGIN
   IF _count > 0 THEN _errors := _errors || 'cross_tenant_select_zero: verification_requests=' || _count; END IF;
 
   -- cross_tenant_update_zero
-  UPDATE public.business_payouts SET net_amount = 0 WHERE business_id = _biz_b_id;
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'cross_tenant_update_zero: business_payouts=' || _count; END IF;
-
-  UPDATE public.payout_accounts SET account_name = 'x' WHERE business_id = _biz_b_id;
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'cross_tenant_update_zero: payout_accounts=' || _count; END IF;
+  BEGIN
+    UPDATE public.business_payouts SET net_amount = 0 WHERE business_id = _biz_b_id;
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'cross_tenant_update_zero: business_payouts=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE public.payout_accounts SET account_name = 'x' WHERE business_id = _biz_b_id;
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'cross_tenant_update_zero: payout_accounts=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   -- cross_tenant_delete_zero
-  DELETE FROM public.business_payouts WHERE business_id = _biz_b_id;
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'cross_tenant_delete_zero: business_payouts=' || _count; END IF;
+  BEGIN
+    DELETE FROM public.business_payouts WHERE business_id = _biz_b_id;
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'cross_tenant_delete_zero: business_payouts=' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   -- cross_tenant_insert_blocked: owner A cannot insert for business B
   BEGIN
@@ -519,13 +527,18 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 
-  UPDATE public.payout_adjustments SET amount = 0 WHERE business_id = _biz_a_id;
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'payout_adjustments_blocked: UPDATE affected ' || _count; END IF;
-
-  DELETE FROM public.payout_adjustments WHERE business_id = _biz_a_id;
-  GET DIAGNOSTICS _count = ROW_COUNT;
-  IF _count > 0 THEN _errors := _errors || 'payout_adjustments_blocked: DELETE affected ' || _count; END IF;
+  BEGIN
+    UPDATE public.payout_adjustments SET amount = 0 WHERE business_id = _biz_a_id;
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'payout_adjustments_blocked: UPDATE affected ' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM public.payout_adjustments WHERE business_id = _biz_a_id;
+    GET DIAGNOSTICS _count = ROW_COUNT;
+    IF _count > 0 THEN _errors := _errors || 'payout_adjustments_blocked: DELETE affected ' || _count; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   -- ══════════════════════════════════════════════════════════════════════
   -- POSITIVE CONTROLS (owner A on own data)
