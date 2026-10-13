@@ -10,16 +10,18 @@ type PreferencePersistence = 'persistent' | 'session';
 export interface LanguagePreferenceIntent {
   language: string;
   persistence: PreferencePersistence;
+  /** True when the input was just a bare language name with no verb phrase. */
+  isBare: boolean;
 }
 
 const LANGUAGE_SWITCH_PATTERNS: readonly RegExp[] = [
   // English / code-switched commands
-  /^(?:always\s+)?(?:speak|use)\s+(.+?)(?:\s+(?:for now|from now on))?$/,
+  /^(?:always\s+)?(?:speak|talk|use)\s+(.+?)(?:\s+(?:for now|from now on))?$/,
   /^reply\s+to\s+me\s+in\s+(.+?)(?:\s+from now on)?$/,
   /^switch\s+to\s+(.+?)$/,
   /^(?:change|set)\s+(?:my\s+)?language\s+to\s+(.+?)$/,
   // Nigerian Pidgin
-  /^(?:abeg\s+)?(?:speak|use)\s+(.+?)(?:\s+for\s+now)?$/,
+  /^(?:abeg\s+)?(?:speak|talk|use)\s+(.+?)(?:\s+for\s+now)?$/,
   /^reply\s+me\s+(?:for|in)\s+(.+?)$/,
   // Yoruba (normalized ASCII form also covers native orthography)
   /^(?:jowo\s+)?so\s+(?:ede\s+)?(.+?)(?:\s+fun\s+mi)?$/,
@@ -57,6 +59,7 @@ export function parseLanguagePreferenceIntent(
   const normalized = normalizeInboundCommand(text);
   let alias: string | undefined;
 
+  let bare = false;
   for (const pattern of LANGUAGE_SWITCH_PATTERNS) {
     const match = pattern.exec(normalized);
     if (match?.[1]) {
@@ -64,6 +67,12 @@ export function parseLanguagePreferenceIntent(
       break;
     }
   }
+  // Bare language name: "pidgin", "english", "yoruba", etc.
+  if (!alias && normalizeLanguageAlias(normalized)) {
+    alias = normalized;
+    bare = true;
+  }
+
   if (!alias) return null;
 
   // Remove persistence suffixes before alias lookup; the marker itself is
@@ -79,6 +88,7 @@ export function parseLanguagePreferenceIntent(
   return {
     language,
     persistence: persistent ? 'persistent' : 'session',
+    isBare: bare,
   };
 }
 
