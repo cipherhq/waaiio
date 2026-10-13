@@ -39,7 +39,7 @@ export async function POST(
     return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
   }
 
-  if (!['pending', 'approved'].includes(payout.status)) {
+  if (!['pending', 'approved', 'held'].includes(payout.status)) {
     return NextResponse.json({ error: 'Payout cannot be rejected in current status' }, { status: 400 });
   }
 
@@ -51,25 +51,39 @@ export async function POST(
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
-  // Atomic reject: include status guard in UPDATE to prevent TOCTOU race
-  // SEC-005: uses service client — authenticated DML revoked on business_payouts.
-  const { data: updated, error: updateError } = await serviceClient
-    .from('business_payouts')
-    .update({
-      status: 'rejected',
-      rejected_reason: reason,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id)
-    .in('status', ['pending', 'approved'])
-    .select('id')
-    .maybeSingle();
+  // Atomic reject + adjustment release via plpgsql function.
+  // The function locks the payout row, verifies eligible status, sets rejected,
+  // and unlinks any payout_adjustments (applied_to_payout_id → NULL).
+  const { data: rpcResult, error: rpcError } = await serviceClient.rpc(
+    'reject_payout_and_release_adjustments',
+    {
+      p_payout_id: id,
+      p_reason: reason,
+      p_rejected_by: admin.id,
+      p_rejected_at: new Date().toISOString(),
+    },
+  );
 
-  if (updateError) {
+  if (rpcError) {
+    const rpcMessage: string = rpcError.message || '';
+    const rpcHas = (token: string) => rpcMessage.search(token) >= 0;
+
+    if (rpcHas('payout_not_found')) {
+      return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
+    }
+    if (rpcHas('ineligible_status')) {
+      return NextResponse.json({ error: 'Payout status has changed — please refresh and try again' }, { status: 409 });
+    }
+    if (rpcHas('linkage_flag_blocks_rejection')) {
+      return NextResponse.json({
+        error: 'This payout has an unresolved adjustment linkage flag and cannot be rejected until linkage is resolved.',
+      }, { status: 409 });
+    }
+
     return NextResponse.json({ error: 'Failed to reject payout' }, { status: 500 });
   }
 
-  if (!updated) {
+  if (!rpcResult || (Array.isArray(rpcResult) && rpcResult.length === 0)) {
     return NextResponse.json({ error: 'Payout status has changed — please refresh and try again' }, { status: 409 });
   }
 
@@ -83,6 +97,7 @@ export async function POST(
       business_id: payout.business_id,
       amount: payout.net_amount,
       reason,
+      adjustments_released: Array.isArray(rpcResult) ? rpcResult[0]?.adjustments_released : rpcResult?.adjustments_released,
     },
   });
 
