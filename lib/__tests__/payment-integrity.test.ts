@@ -889,3 +889,150 @@ describe('BYO Webhook — thrown error → 500', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════
+// 8. Handler throw → 500 → retry succeeds (dedup not consumed)
+// ═══════════════════════════════════════════════════════════
+
+describe('BYO Webhook — handler throws then retry succeeds', () => {
+  const secretKey = `${SK_TEST}throw_retry`;
+
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('handler throws once → 500 → retry processes the payment', async () => {
+    // ── Call 1: handler throws ──
+    let callCount = 0;
+    const mockThrowingSuccess = vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) throw new Error('transient DB error');
+      // Second call succeeds
+    });
+
+    const mockSb1 = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-throw', status: 'pending', amount: 1000, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb1 }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: mockThrowingSuccess,
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    const sentryMock1 = { captureException: vi.fn(), captureMessage: vi.fn() };
+    vi.doMock('@sentry/nextjs', () => sentryMock1);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        data: { status: 'success', amount: 100000, currency: 'NGN', reference: 'ref-throw' },
+      }),
+    });
+
+    try {
+      const { POST: POST1 } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-throw', amount: 100000 } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+
+      const req1 = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
+      const res1 = await POST1(req1, { params: { businessId: 'biz-1' } });
+
+      // First call: 500 (handler threw)
+      expect(res1.status).toBe(500);
+      expect(sentryMock1.captureException).toHaveBeenCalled();
+      expect(callCount).toBe(1);
+
+      // ── Call 2: retry succeeds ──
+      // Reset modules to get a fresh import (simulates a new request)
+      vi.resetModules();
+
+      const mockSb2 = createMockSupabase({
+        credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+        payment: { id: 'pay-throw', status: 'pending', amount: 1000, currency: 'NGN' },
+        // Dedup returns a new row — event was NOT consumed by the failed first call
+        upsertResult: { data: [{ id: 'evt-retry-2' }] },
+      });
+      vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb2 }));
+      vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+      const mockRetrySuccess = vi.fn(); // This time it succeeds
+      vi.doMock('@/lib/payments/webhook-handler', () => ({
+        processPaystackChargeSuccess: mockRetrySuccess,
+        processPaystackChargeFailed: vi.fn(),
+      }));
+      vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
+
+      const { POST: POST2 } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const req2 = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
+      const res2 = await POST2(req2, { params: { businessId: 'biz-1' } });
+
+      // Second call: 200 (retry succeeded)
+      expect(res2.status).toBe(200);
+      expect(mockRetrySuccess).toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 9. Provider 401 → payment unchanged, Sentry called
+// ═══════════════════════════════════════════════════════════
+
+describe('BYO Webhook — provider auth error (401) leaves payment unchanged', () => {
+  const secretKey = `${SK_TEST}auth_err`;
+
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('provider 401 → 200 response, payment unchanged, Sentry error captured', async () => {
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-auth', status: 'pending', amount: 3000, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn(),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    const sentryMock = { captureException: vi.fn(), captureMessage: vi.fn() };
+    vi.doMock('@sentry/nextjs', () => sentryMock);
+
+    const originalFetch = globalThis.fetch;
+    // Provider returns 401 — business API key is wrong/expired
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-401', amount: 300000 } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+
+      const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
+      const res = await POST(req, { params: { businessId: 'biz-1' } });
+
+      // Returns 200 to stop provider retries
+      expect(res.status).toBe(200);
+
+      // Payment NOT updated (no state change)
+      expect(mockSb._updates.filter(u => u.table === 'payments')).toHaveLength(0);
+
+      // Sentry captured at error level with businessId
+      expect(sentryMock.captureMessage).toHaveBeenCalledWith(
+        'BYO webhook: provider credential error',
+        expect.objectContaining({
+          level: 'error',
+          extra: expect.objectContaining({ businessId: 'biz-1', paymentId: 'pay-auth' }),
+        }),
+      );
+
+      // processPaystackChargeSuccess NOT called
+      const { processPaystackChargeSuccess } = await import('@/lib/payments/webhook-handler');
+      expect(processPaystackChargeSuccess).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
