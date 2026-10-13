@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { generateState, storeState } from '@/lib/oauth-connect-state';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
@@ -18,9 +20,12 @@ async function stripeRequest(path: string, body: Record<string, string>) {
 }
 
 export async function POST(request: NextRequest) {
-  // FIN-001: Stripe Connect feature gate — must be explicitly enabled
   if (process.env.ENABLE_STRIPE_CONNECT !== 'true') {
     return NextResponse.json({ error: 'Stripe Connect is currently disabled' }, { status: 503 });
+  }
+
+  if (!stripeSecretKey) {
+    return NextResponse.json({ error: 'Stripe not configured' }, { status: 503 });
   }
 
   const supabase = await createClient();
@@ -34,7 +39,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing business_id' }, { status: 400 });
   }
 
-  // Verify the user owns this business
   const { data: biz } = await supabase
     .from('businesses')
     .select('id, name')
@@ -47,11 +51,6 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    if (!stripeSecretKey) {
-      return NextResponse.json({ url: `/dashboard/payouts?connected=true&mock=true` });
-    }
-
-    // Create Stripe Express account
     const account = await stripeRequest('/accounts', {
       type: 'express',
       'business_profile[name]': biz.name,
@@ -63,13 +62,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create payout account. Please try again.' }, { status: 400 });
     }
 
+    // Generate and store CSRF state bound to user + business + provider
+    const { raw: stateRaw, hash: stateHash } = generateState();
+    const serviceClient = createServiceClient();
+    const storeResult = await storeState(serviceClient, {
+      stateHash,
+      userId: user.id,
+      businessId: business_id,
+      provider: 'stripe',
+    });
+    if (!storeResult.ok) {
+      logger.error('[STRIPE-CONNECT] Failed to store OAuth state:', storeResult.error);
+      return NextResponse.json({ error: 'Failed to start onboarding' }, { status: 500 });
+    }
+
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
-    // Create onboarding link
+    // State carries the CSRF token; business_id is NOT in the URL
     const link = await stripeRequest('/account_links', {
       account: account.id,
       refresh_url: `${appUrl}/dashboard/payouts?refresh=true`,
-      return_url: `${appUrl}/api/payouts/stripe-callback?account_id=${account.id}&business_id=${business_id}`,
+      return_url: `${appUrl}/api/payouts/stripe-callback?state=${stateRaw}&stripe_account=${account.id}`,
       type: 'account_onboarding',
     });
 
