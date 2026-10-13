@@ -45,8 +45,9 @@ function sqlThrows(query: string): boolean {
 
 const describeDb = !TEST_DB ? describe.skip : describe;
 
-const OWNER_ID = '00000000-0000-4000-f442-000000000001';
-const BIZ_ID   = '00000000-0000-4000-a442-000000000001';
+const OWNER_ID  = '00000000-0000-4000-f442-000000000001';
+const OWNER_ID2 = '00000000-0000-4000-f442-000000000002'; // for owner_id change tests
+const BIZ_ID    = '00000000-0000-4000-a442-000000000001';
 
 describeDb('Migration 442: server-managed business columns guard', () => {
   beforeAll(() => {
@@ -143,6 +144,7 @@ describeDb('Migration 442: server-managed business columns guard', () => {
 
     // ── Seed test data ──
     sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
+    sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID2}') ON CONFLICT DO NOTHING;`);
     sql(`
       INSERT INTO public.businesses (id, owner_id, name, slug, verification_level, verification_status, payout_limit_monthly, payout_mode, subscription_tier)
       VALUES ('${BIZ_ID}', '${OWNER_ID}', 'Guard Test', 'guard-test-442', 'basic', 'verified', 500000, 'platform_managed', 'free')
@@ -152,7 +154,7 @@ describeDb('Migration 442: server-managed business columns guard', () => {
 
   afterAll(() => {
     sql(`DELETE FROM public.businesses WHERE id = '${BIZ_ID}';`);
-    sql(`DELETE FROM auth.users WHERE id = '${OWNER_ID}';`);
+    sql(`DELETE FROM auth.users WHERE id IN ('${OWNER_ID}', '${OWNER_ID2}');`);
     // Clean up triggers/functions but leave the table for other tests
     sql(`DROP TRIGGER IF EXISTS trg_guard_server_managed_columns ON public.businesses;`);
     sql(`DROP FUNCTION IF EXISTS public.guard_server_managed_columns();`);
@@ -219,7 +221,7 @@ describeDb('Migration 442: server-managed business columns guard', () => {
     ['custom_fee_percentage', '5.0'],
     ['custom_fee_flat', '100'],
     ['subscription_tier', "'growth'"],
-    ['owner_id', "'00000000-0000-4000-f442-999999999999'"],
+    ['owner_id', `'${OWNER_ID2}'`],
     ['reseller_id', "'00000000-0000-4000-a442-eeeeeeeeeeee'"],
   ];
 
@@ -274,7 +276,8 @@ describeDb('Migration 442: server-managed business columns guard', () => {
         verification_level = 'basic', verification_status = 'verified',
         payout_limit_monthly = 500000, payout_mode = 'platform_managed',
         custom_fee_percentage = NULL, custom_fee_flat = NULL,
-        subscription_tier = 'free', reseller_id = NULL
+        subscription_tier = 'free', reseller_id = NULL,
+        owner_id = '${OWNER_ID}'
       WHERE id = '${BIZ_ID}';
     `);
   });
