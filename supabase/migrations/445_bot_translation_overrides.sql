@@ -89,9 +89,13 @@ CREATE POLICY owners_read
 -- 6. preferred_language on customer_profiles (picker choice persistence)
 -- =============================================================================
 
-ALTER TABLE public.customer_profiles
-  ADD COLUMN IF NOT EXISTS preferred_language TEXT
-    CHECK (preferred_language IN ('en','pcm','yo','ig','ha','tw','fr','es'));
-
-COMMENT ON COLUMN public.customer_profiles.preferred_language
-  IS 'Language chosen via the first-contact picker. Persists across sessions for non-auth customers.';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'customer_profiles') THEN
+    ALTER TABLE public.customer_profiles
+      ADD COLUMN IF NOT EXISTS preferred_language TEXT
+        CHECK (preferred_language IN ('en','pcm','yo','ig','ha','tw','fr','es'));
+    COMMENT ON COLUMN public.customer_profiles.preferred_language
+      IS 'Language chosen via the first-contact picker. Persists across sessions for non-auth customers.';
+  END IF;
+END $$;
