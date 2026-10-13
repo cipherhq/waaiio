@@ -4179,6 +4179,19 @@ jobs:
           SETUP_SQL
           echo "✅ Disposable PG roles and schemas provisioned"
 
+      - name: Create clean template database for .pg.test.ts isolation
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+        run: |
+          # Snapshot security_acl_test BEFORE any test step can mutate it.
+          # Each .pg.test.ts file gets its own clone of this template.
+          psql -d postgres -c "CREATE DATABASE pg_template_clean TEMPLATE security_acl_test;"
+          psql -d postgres -c "ALTER DATABASE pg_template_clean WITH is_template = true;"
+          echo "✅ pg_template_clean created from security_acl_test and marked as template"
+
       - name: Run security ACL tests against disposable PG
         env:
           TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/security_acl_test
@@ -4194,20 +4207,6 @@ jobs:
             exit 1
           fi
           echo "✅ All tests executed (zero skipped)"
-
-      - name: Create clean template database for .pg.test.ts isolation
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: test_runner
-          PGPASSWORD: test_only_ephemeral
-        run: |
-          # Clone security_acl_test into a separate template BEFORE any test
-          # step can mutate the original. Earlier steps (e.g. the ACL tests)
-          # may change security_acl_test, so we never clone from it later.
-          psql -d postgres -c "CREATE DATABASE pg_template_clean TEMPLATE security_acl_test;"
-          psql -d postgres -c "ALTER DATABASE pg_template_clean WITH is_template = true;"
-          echo "✅ pg_template_clean created from security_acl_test and marked as template"
 
       - name: Run .pg.test.ts files in parallel with isolated databases
         env:
