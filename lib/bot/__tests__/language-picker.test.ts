@@ -856,3 +856,143 @@ describe('Language picker — phone format dedup', () => {
     expect(pickerList).toBeUndefined();
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// 12. Pending non-greeting message re-dispatches through handleMessage
+// ═══════════════════════════════════════════════════════
+
+describe('Language picker — pending message re-dispatch routing', () => {
+  it('pending first message "I want to book" re-dispatches through handleMessage, not flowExecutor.execute', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+
+    const session = {
+      id: 'session-redispatch',
+      user_id: 'user-redispatch',
+      phone: PHONE,
+      business_id: BIZ_ID,
+      current_step: 'idle',
+      session_data: { _pending_first_message: 'I want to book' },
+      status: 'active',
+      version: 1,
+    };
+
+    const supabase = createTableMock({
+      activeSession: session,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [
+        { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+      ],
+      enabledLanguages: ['en', 'pcm'],
+      rpcTracker,
+    });
+
+    const bot = new BotService(
+      supabase,
+      sender,
+      createMockStandalone(),
+      createMockIntelligence(),
+    );
+
+    // Spy on handleMessage to verify the recursive self-call
+    const handleMessageSpy = vi.spyOn(bot, 'handleMessage');
+
+    await bot.handleMessage(PHONE, 'lang_pick_en', 'interactive', undefined, BIZ_ID);
+
+    // handleMessage should have been called at least twice:
+    //   1. The original call with 'lang_pick_en'
+    //   2. The re-dispatch call with 'I want to book' and provenance 'lang_pick_redispatch'
+    expect(handleMessageSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    const redispatchCall = handleMessageSpy.mock.calls.find(
+      (args) => args[1] === 'I want to book' && args[7] === 'lang_pick_redispatch',
+    );
+    expect(redispatchCall).toBeDefined();
+
+    // The provenance 'lang_pick_redispatch' prevents the picker from showing again
+    // Verify the picker is NOT shown on the re-dispatch (no second picker list)
+    const msgs = sender.getMessages();
+    const pickerLists = msgs.filter(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    expect(pickerLists.length).toBe(0);
+
+    handleMessageSpy.mockRestore();
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 13. CAS conflict on picker trigger — picker not sent, message not lost
+// ═══════════════════════════════════════════════════════
+
+describe('Language picker — picker trigger CAS conflict', () => {
+  it('picker trigger CAS conflict: picker not sent, session reloaded, normal handling continues', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [
+        { capability: 'ordering', is_enabled: true, sort_order: 0 },
+      ],
+      enabledLanguages: ['en', 'pcm'],
+      customerProfileLanguage: null,
+      rpcTracker,
+    });
+
+    // Override rpc to make the FIRST update_session_cas fail (CAS conflict)
+    // on the _pending_first_message store, while get_bot_context still works
+    // and subsequent CAS calls succeed (so normal handling can proceed).
+    const originalRpc = supabase.rpc;
+    let casCallCount = 0;
+    supabase.rpc = vi.fn((fn: string, args?: Record<string, unknown>) => {
+      rpcTracker.push({ fn, args: args || {} });
+      if (fn === 'get_bot_context') {
+        return originalRpc(fn, args);
+      }
+      if (fn === 'update_session_cas') {
+        casCallCount++;
+        if (casCallCount === 1) {
+          // First CAS call = storing _pending_first_message → conflict
+          return Promise.resolve({
+            data: { success: false, reason: 'version_conflict' },
+            error: null,
+          });
+        }
+        // Subsequent CAS calls succeed (normal flow handling)
+        return Promise.resolve({
+          data: { success: true, version: ((args as any)?.p_expected_version || 0) + 1 },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const bot = new BotService(
+      supabase,
+      sender,
+      createMockStandalone(),
+      createMockIntelligence(),
+    );
+    await bot.handleMessage(PHONE, 'I want to order food', 'text', undefined, BIZ_ID);
+
+    const msgs = sender.getMessages();
+
+    // The picker list should NOT be sent (CAS failed before sendLanguagePicker)
+    const pickerList = msgs.find(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    expect(pickerList).toBeUndefined();
+
+    // Session should have been reloaded (a select on bot_sessions happens)
+    const sessionSelect = (supabase.from as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => call[0] === 'bot_sessions',
+    );
+    expect(sessionSelect.length).toBeGreaterThanOrEqual(1);
+
+    // Normal handling should continue — the bot should send SOME response
+    // (greeting, menu, or flow output), so the message is not lost
+    expect(msgs.length).toBeGreaterThanOrEqual(1);
+  });
+});

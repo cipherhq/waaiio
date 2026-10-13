@@ -1744,7 +1744,7 @@ export class BotService {
           hasRememberedLanguage = true; // Skip picker, use their saved preference
         }
 
-        if (!hasRememberedLanguage) {
+        if (!hasRememberedLanguage && !_internalProvenance) {
           const pickerConfiguredLangs = await loadBusinessLanguages(this.supabase, business.id);
           const pickerEntitlement = getEffectiveLanguages(
             business.subscription_tier,
@@ -1763,11 +1763,24 @@ export class BotService {
               p_current_step: session.current_step,
               p_session_data: session.session_data,
             });
-            if (pickerCas.data?.success) {
+            if (!pickerCas.data?.success) {
+              // CAS conflict — session changed concurrently. Reload and continue
+              // with normal handling (don't show the picker, don't lose the message).
+              logger.warn('[BOT] CAS conflict storing _pending_first_message — skipping picker');
+              const { data: reloaded } = await this.supabase
+                .from('bot_sessions')
+                .select('*')
+                .eq('id', session.id)
+                .single();
+              if (reloaded) {
+                Object.assign(session, reloaded);
+              }
+              // Fall through to normal greeting/flow handling below
+            } else {
               session.version = pickerCas.data.version;
+              await this.sendLanguagePicker(from, business, pickerAllowed, this.messageSender);
+              return; // Wait for picker selection before proceeding
             }
-            await this.sendLanguagePicker(from, business, pickerAllowed, this.messageSender);
-            return; // Wait for picker selection before proceeding
           }
         }
       }
@@ -2345,18 +2358,26 @@ export class BotService {
       }
       session.version = pendingCasResult.data.version;
 
-      // Now proceed to greeting/menu in the chosen language, passing pending message if non-greeting
+      // Now proceed in the chosen language
       if (session.business_id) {
-        const { data: pickBiz } = await this.supabase
-          .from('businesses')
-          .select('*')
-          .eq('id', session.business_id)
-          .single();
-        if (pickBiz) {
-          const _pickOv = await getOverrides(session.business_id);
-          await runWithTranslationOverrides(_pickOv, () =>
-            this.flowExecutor.execute(from, executeInput, session!, pickBiz)
-          );
+        if (!isPickerGreeting && executeInput) {
+          // Non-greeting pending message → re-dispatch through full routing
+          // (intent detection, canonical understanding, flow start).
+          // _internalProvenance prevents the picker from re-triggering.
+          await this.handleMessage(from, executeInput, 'text', destinationPhone, session.business_id, undefined, undefined, 'lang_pick_redispatch');
+        } else {
+          // Greeting or no pending message → show the menu
+          const { data: pickBiz } = await this.supabase
+            .from('businesses')
+            .select('*')
+            .eq('id', session.business_id)
+            .single();
+          if (pickBiz) {
+            const _pickOv = await getOverrides(session.business_id);
+            await runWithTranslationOverrides(_pickOv, () =>
+              this.flowExecutor.execute(from, '', session!, pickBiz)
+            );
+          }
         }
       }
       return;

@@ -383,11 +383,13 @@ describe('PUT /api/translations', () => {
     ).toBe(true);
   });
 
-  // 11. 400 for dropped *command* token
-  it('returns 400 when a required command token is dropped', async () => {
+  // 11. 400 for greeting.cancel_hint — now blocked (not editable)
+  // greeting.* keys are no longer business-editable, so the command-token
+  // validation is unreachable for business-editable keys. This test verifies
+  // the key is rejected at the editable-key check stage.
+  it('returns 400 for greeting.cancel_hint (now blocked, not editable)', async () => {
     setupMockFrom({ businesses: { data: BIZ, error: null } });
     setupServiceFrom({});
-    // 'greeting.cancel_hint' is in KEYS_WITH_COMMANDS and contains *cancel*
     const res = await PUT(
       makeRequest('PUT', '/api/translations', {
         businessId: 'biz-1',
@@ -395,7 +397,7 @@ describe('PUT /api/translations', () => {
           {
             lang: 'en',
             key: 'greeting.cancel_hint',
-            value: 'Type cancel to stop.',
+            value: 'Type *cancel* to stop.',
           },
         ],
       }),
@@ -403,7 +405,7 @@ describe('PUT /api/translations', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(
-      body.errors.some((e: string) => e.includes('command token')),
+      body.errors.some((e: string) => e.includes('not editable')),
     ).toBe(true);
   });
 
@@ -467,7 +469,7 @@ describe('PUT /api/translations', () => {
           // Valid upsert: 'cap.scheduling' is editable
           { lang: 'en', key: 'cap.scheduling', value: 'Our Stuff' },
           // Deletion (null value)
-          { lang: 'en', key: 'greeting.welcome_default', value: null },
+          { lang: 'en', key: 'menu.what_to_do', value: null },
         ],
       }),
     );

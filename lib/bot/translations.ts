@@ -135,14 +135,13 @@ export async function loadBusinessOverrides(
  */
 const BUSINESS_EDITABLE_PREFIXES = [
   'cap.',           // capability/menu option labels
-  'greeting.',      // greeting strings (except powered_by)
   'lang.picker_',   // language picker strings
   'menu.',          // menu title
 ];
 
 const BUSINESS_EDITABLE_EXACT: string[] = [];
 
-const BUSINESS_BLOCKED_KEYS = ['greeting.powered_by'];
+const BUSINESS_BLOCKED_KEYS: string[] = [];
 
 /** Check if a key is editable by businesses. */
 export function isBusinessEditableKey(key: string): boolean {

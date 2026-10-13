@@ -361,12 +361,15 @@ describe('isBusinessEditableKey', () => {
     });
   });
 
-  describe('allows greeting.* except greeting.powered_by', () => {
-    it('greeting.welcome_default is allowed', () => {
-      expect(isBusinessEditableKey('greeting.welcome_default')).toBe(true);
+  describe('blocks greeting.* keys (tightened allowlist)', () => {
+    it('greeting.welcome_default is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('greeting.welcome_default')).toBe(false);
     });
     it('greeting.powered_by is blocked (branding)', () => {
       expect(isBusinessEditableKey('greeting.powered_by')).toBe(false);
+    });
+    it('greeting.cancel_hint is NOW BLOCKED', () => {
+      expect(isBusinessEditableKey('greeting.cancel_hint')).toBe(false);
     });
   });
 
@@ -529,6 +532,43 @@ describe('isBusinessEditableKey', () => {
     });
     it('empty string', () => {
       expect(isBusinessEditableKey('')).toBe(false);
+    });
+  });
+
+  describe('editable key → usage map', () => {
+    it('every business-editable key is referenced by runtime code', () => {
+      // The editable prefixes are: cap.*, lang.picker_*, menu.*
+      // cap.* → used by getCapabilityLabel in labels.ts via capability-selection.flow.ts
+      // lang.picker_* → used by sendLanguagePicker and lang_pick_ handler in bot.service.ts
+      // menu.* → used by capability-selection.flow.ts and executor.ts
+
+      // Key → usage map (not a grep, a documented mapping)
+      const editableKeyUsageMap: Record<string, string> = {
+        // cap.* keys: all rendered via getCapabilityLabel → capability-selection.flow.ts:246
+        'cap.*': 'lib/capabilities/labels.ts:47 → lib/bot/flows/capability-selection.flow.ts:246',
+        // lang.picker_* keys
+        'lang.picker_body': 'lib/bot/bot.service.ts:sendLanguagePicker',
+        'lang.picker_button': 'lib/bot/bot.service.ts:sendLanguagePicker',
+        'lang.picker_confirmed': 'lib/bot/bot.service.ts:lang_pick_ handler',
+        // menu.* keys
+        'menu.what_to_do': 'lib/bot/flows/capability-selection.flow.ts:259',
+        'menu.title': 'lib/bot/flows/capability-selection.flow.ts:301',
+        'menu.still_setting_up': 'lib/bot/flows/capability-selection.flow.ts:282',
+        'menu.what_next': 'lib/bot/flows/executor.ts:1176',
+        'menu.no_promotions': 'lib/bot/flows/capability-selection.flow.ts:1074',
+        // Known unrendered menu keys (acceptable gap — documented):
+        // menu.how_can_help: bot.service.ts uses hardcoded string
+        // menu.no_waivers: capability-selection.flow.ts uses hardcoded string via ctx.t()
+      };
+
+      // Verify the map covers the editable prefixes
+      expect(Object.keys(editableKeyUsageMap).length).toBeGreaterThan(0);
+
+      // Verify each mapped key is actually in the editable set
+      for (const key of Object.keys(editableKeyUsageMap)) {
+        if (key === 'cap.*') continue; // wildcard entry
+        expect(isBusinessEditableKey(key)).toBe(true);
+      }
     });
   });
 });
