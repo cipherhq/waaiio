@@ -106,6 +106,7 @@ const PAYOUT_EMPTY   = '00000000-0000-0000-0440-f00000000003';
 const PAYOUT_MALFORM = '00000000-0000-0000-0440-f00000000004';
 const PAYOUT_CONC_A  = '00000000-0000-0000-0440-cc0000000001';
 const PAYOUT_CONC_B  = '00000000-0000-0000-0440-cc0000000002';
+const PAYOUT_BAD_UUID = '00000000-0000-0000-0440-dd0000000001';
 
 // Adjustment IDs
 const ADJ_1          = '00000000-0000-0000-0440-ad0000000001';
@@ -123,7 +124,7 @@ const ALL_PAYOUTS = [
   PAYOUT_R4A, PAYOUT_R4B, PAYOUT_R4C, PAYOUT_R4D,
   PAYOUT_R5,
   PAYOUT_BYPASS, PAYOUT_MIXED, PAYOUT_EMPTY, PAYOUT_MALFORM,
-  PAYOUT_CONC_A, PAYOUT_CONC_B,
+  PAYOUT_CONC_A, PAYOUT_CONC_B, PAYOUT_BAD_UUID,
   PAYOUT_OTHER,
 ];
 
@@ -547,54 +548,97 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
   });
 
   // ═══════════════════════════════════════════════════════════
-  // Concurrency: two sessions inserting same business+period,
-  // one gets 23505 (unique violation)
+  // Malformed UUID in adjustment_ids — fail closed (R2)
   // ═══════════════════════════════════════════════════════════
 
-  it('Concurrency: two sessions inserting same business+period, one gets 23505', async () => {
-    // Both sessions try to insert a payout for the same business + period
-    // The unique partial index idx_business_payouts_period_unique
-    // on (business_id, period_start, period_end) WHERE status NOT IN ('rejected','failed')
-    // ensures only one survives.
+  it('R2: rejects pending flag with malformed UUID in adjustment_ids', () => {
+    const flags = JSON.stringify([{
+      type: 'adjustment_link_pending',
+      message: 'test',
+      severity: 'critical',
+      adjustment_ids: [ADJ_1, 'not-a-uuid'],
+    }]);
+    const r = psqlMayFail(`
+      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_BAD_UUID}', '${TEST_BIZ_ID}', '2026-11-01', '2026-11-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+    `);
+    expect(r.ok).toBe(false);
+    expect(r.output).toContain('linkage_guard_r2');
+    cleanPayout(PAYOUT_BAD_UUID);
+  });
 
-    // Use advisory locks for synchronization:
-    //   1. Both sessions acquire a shared advisory lock (blocking until both are ready)
-    //   2. A third connection releases them simultaneously
-    // Simplified approach: just race them with psqlAsync
+  // ═══════════════════════════════════════════════════════════
+  // Concurrency: in-flight insert for same business+period
+  // blocks, then fails 23505
+  // ═══════════════════════════════════════════════════════════
 
-    const lockKey = 440001;
+  it('Concurrency: in-flight insert for same business+period blocks, then fails 23505', async () => {
+    // Session A: BEGIN, INSERT, sleep 2s, COMMIT (holds the row lock)
+    // Session B: starts ~300ms later, plain INSERT, blocks on A's lock,
+    //            then fails with unique violation after A commits.
+    // Run psql with -v VERBOSITY=verbose so SQLSTATE appears in stderr.
 
-    // Session A: acquire advisory lock, wait, then insert
     const sqlA = `
-      SELECT pg_advisory_lock(${lockKey});
+      BEGIN;
       INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
       VALUES ('${PAYOUT_CONC_A}', '${TEST_BIZ_ID}', '2026-10-01', '2026-10-07', 5000, 500, 100, 4400, 'pending');
-      SELECT pg_advisory_unlock(${lockKey});
+      SELECT pg_sleep(2);
+      COMMIT;
     `;
 
-    // Session B: acquire same advisory lock (blocks until A releases), then insert
     const sqlB = `
-      SELECT pg_advisory_lock(${lockKey});
       INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
       VALUES ('${PAYOUT_CONC_B}', '${TEST_BIZ_ID}', '2026-10-01', '2026-10-07', 5000, 500, 100, 4400, 'pending');
-      SELECT pg_advisory_unlock(${lockKey});
     `;
 
-    const [rA, rB] = await Promise.all([psqlAsync(sqlA), psqlAsync(sqlB)]);
+    // Custom psqlAsync with VERBOSITY=verbose for SQLSTATE in stderr
+    function psqlVerbose(sql: string): Promise<{ ok: boolean; stdout: string; stderr: string; elapsed: number }> {
+      const start = Date.now();
+      return new Promise((resolve) => {
+        const child = require('child_process').execFile(
+          'psql',
+          [TEST_DB!, '-tAXq', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=verbose'],
+          { timeout: 15000 },
+          (err: Error | null, stdout: string, stderr: string) => {
+            resolve({
+              ok: !err,
+              stdout: (stdout || '').trim(),
+              stderr: (stderr || '').trim(),
+              elapsed: Date.now() - start,
+            });
+          },
+        );
+        child.stdin?.end(sql);
+      });
+    }
 
-    const results = [rA, rB];
-    const successes = results.filter(r => r.ok);
-    const failures = results.filter(r => !r.ok);
+    // Start A immediately, start B after 300ms
+    const promiseA = psqlVerbose(sqlA);
+    await new Promise(r => setTimeout(r, 300));
+    const promiseB = psqlVerbose(sqlB);
 
-    // Exactly one should succeed, one should fail with unique violation
-    expect(successes.length).toBe(1);
-    expect(failures.length).toBe(1);
+    const [rA, rB] = await Promise.all([promiseA, promiseB]);
 
-    // The failure should be a unique violation (duplicate key)
-    const failedResult = failures[0];
-    expect(failedResult.stderr).toContain('duplicate key value violates unique constraint');
+    // A should succeed
+    expect(rA.ok).toBe(true);
 
-    // Clean up whichever succeeded
+    // B should fail with unique violation
+    expect(rB.ok).toBe(false);
+    expect(rB.stderr).toContain('23505');
+    expect(rB.stderr).toContain('idx_business_payouts_period_unique');
+
+    // B should have blocked for at least 1.2s (A sleeps 2s, B starts 0.3s later)
+    expect(rB.elapsed).toBeGreaterThanOrEqual(1200);
+
+    // Exactly one row should exist for this business+period
+    const count = psql(`
+      SELECT count(*) FROM business_payouts
+      WHERE business_id = '${TEST_BIZ_ID}'
+        AND period_start = '2026-10-01'
+        AND period_end = '2026-10-07';
+    `);
+    expect(count).toBe('1');
+
     cleanPayout(PAYOUT_CONC_A);
     cleanPayout(PAYOUT_CONC_B);
   });

@@ -275,7 +275,7 @@ export async function GET(request: NextRequest) {
           // Step 3: Promote with CAS — remove the pending flag
           const { data: promoteResult, error: promoteError } = await supabase
             .from('business_payouts')
-            .update({ status: intendedStatus, flags: structuredFlags.length > 0 ? structuredFlags : null })
+            .update({ status: intendedStatus, flags: structuredFlags.length > 0 ? structuredFlags : [] })
             .eq('id', payout.id)
             .eq('status', 'held')
             .contains('flags', [{ type: 'adjustment_link_pending' }])
@@ -523,7 +523,7 @@ export async function GET(request: NextRequest) {
           net_amount: net,
           status,
           payout_account_id: payoutAccount?.id || null,
-          flags: holdReasons.length > 0 ? holdReasons : null,
+          flags: holdReasons.length > 0 ? holdReasons : [],
           auto_generated: true,
         }).select('id, net_amount').single();
 

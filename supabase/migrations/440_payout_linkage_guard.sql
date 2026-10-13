@@ -89,10 +89,13 @@ BEGIN
         BEGIN
           result := result || id_text::uuid;
         EXCEPTION WHEN invalid_text_representation THEN
-          -- Skip malformed UUID strings
-          NULL;
+          -- Fail closed: any malformed UUID invalidates the entire flag
+          RETURN NULL;
         END;
       END LOOP;
+
+      -- Return distinct IDs (deduplicate)
+      SELECT array_agg(DISTINCT u) INTO result FROM unnest(result) u;
 
       IF array_length(result, 1) IS NULL THEN
         RETURN NULL;
@@ -183,7 +186,7 @@ BEGIN
           INTO linked_count
           FROM public.payout_adjustments
          WHERE id = ANY(ids_pending_old)
-           AND applied_to_payout_id = NEW.id;
+           AND applied_to_payout_id = OLD.id;
 
         IF linked_count <> array_length(ids_pending_old, 1) THEN
           RAISE EXCEPTION 'linkage_guard_r4: cannot clear adjustment_link_pending — only %/% adjustment(s) are linked to this payout',

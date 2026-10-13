@@ -1183,6 +1183,80 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     }
   });
 
+  it('generate: no-adjustment insert has flags as array, not null', async () => {
+    // Business with fees but NO adjustments — exercises the no-adjustment code path.
+    // We capture the INSERT payload and verify flags is [], not null/undefined.
+    let capturedInsertPayload: Record<string, unknown> | null = null;
+    let payoutsIdx = 0;
+
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        chain.eq = vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ id: 'b1', created_at: '2025-01-01', verification_level: 'basic', payout_limit_monthly: 500000, country_code: 'NG' }],
+            error: null,
+          }),
+        });
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          // Dedup check
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        } else if (idx === 1) {
+          // Monthly limit check
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 2) {
+          // INSERT — capture the payload
+          chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            capturedInsertPayload = payload;
+            return {
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'payout-no-adj' }, error: null }),
+              }),
+            };
+          });
+        }
+      } else if (table === 'platform_fees') {
+        chain.lte = vi.fn().mockResolvedValue({
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          error: null,
+        });
+      } else if (table === 'payments') {
+        chain.lte = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_adjustments') {
+        // Empty adjustments — no adjustments for this business
+        chain.is = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_accounts') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1' }, error: null });
+      } else if (table === 'admin_audit_logs') {
+        chain.insert = vi.fn().mockResolvedValue({ error: null });
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      })),
+    }));
+
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(
+      makeRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.created).toBeGreaterThan(0);
+
+    // The INSERT payload must have flags as an array, never null or undefined
+    expect(capturedInsertPayload).not.toBeNull();
+    expect(Array.isArray(capturedInsertPayload!.flags)).toBe(true);
+    expect(capturedInsertPayload!.flags).not.toBeNull();
+  });
+
   it('generate: insert unique violation -> failed, nothing linked', async () => {
     let adjLinkCalled = false;
     let payoutsIdx = 0;
@@ -2352,5 +2426,124 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
     expect(claimCalled).toBe(false);
 
     delete process.env.ENABLE_PAYOUTS;
+  });
+
+  it('cron: no-adjustment insert has flags as array, not null', async () => {
+    // Business with fees but NO adjustments — the cron path should still set flags to []
+    let capturedInsertPayload: Record<string, unknown> | null = null;
+
+    let bizIdx = 0;
+    let payoutsIdx = 0;
+    mockFromImpl = (table: string) => {
+      const chain = chainMock({ data: null, error: null });
+
+      if (table === 'businesses') {
+        if (bizIdx++ === 0) {
+          chain.eq = vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'biz-noAdj', name: 'NoAdj Biz', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic', payout_limit_monthly: 999999 }],
+              error: null,
+            }),
+          });
+        } else {
+          chain.in = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
+        }
+      } else if (table === 'business_payouts') {
+        const idx = payoutsIdx++;
+        if (idx === 0) {
+          // Batch dedup
+          chain.in = vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          });
+        } else if (idx === 1) {
+          // INSERT — capture payload
+          chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            capturedInsertPayload = payload;
+            return {
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'payout-noAdj-1', net_amount: 9400 }, error: null }),
+              }),
+            };
+          });
+        } else {
+          // Held payouts query
+          chain.eq = vi.fn().mockResolvedValue({ data: [], error: null });
+        }
+      } else if (table === 'platform_fees') {
+        chain.in = vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              lte: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ business_id: 'biz-noAdj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        });
+      } else if (table === 'payout_adjustments') {
+        // Empty adjustments batch — no adjustments for this business
+        chain.in = vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        });
+      } else if (table === 'payout_accounts') {
+        chain.in = vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({
+              data: [{ business_id: 'biz-noAdj', id: 'pa-noAdj', is_active: true, verified_at: '2024-01-01', gateway: 'paystack', bank_code: '058', account_number: '1234567890', account_name: 'Test' }],
+              error: null,
+            }),
+          }),
+        });
+      }
+      return chain;
+    };
+
+    cronPaystackEligible = true;
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn(() => ({
+        from: (table: string) => mockFromImpl(table),
+        rpc: vi.fn().mockImplementation((name: string, args: Record<string, unknown>) => {
+          if (name === 'claim_payout_for_transfer') {
+            return Promise.resolve({
+              data: [{ claimed_token: 'tok', idempotency_key: 'key' }],
+              error: null,
+            });
+          }
+          if (name === 'mark_payout_provider_submitted') {
+            return Promise.resolve({ data: [{ submitted_id: args.p_payout_id }], error: null });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
+      })),
+    }));
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ status: true, data: { recipient_code: 'rc', transfer_code: 'tc' } }), { status: 200 }),
+    );
+
+    process.env.ENABLE_PAYOUTS = 'true';
+    process.env.PAYSTACK_SECRET_KEY = 'test-not-a-real-key';
+
+    cronModule = await import('@/app/api/cron/auto-payout/route');
+    const res = await cronModule.GET(makeCronRequest());
+    expect(res.status).toBe(200);
+
+    // The INSERT payload must have flags as an array, never null or undefined
+    expect(capturedInsertPayload).not.toBeNull();
+    expect(Array.isArray(capturedInsertPayload!.flags)).toBe(true);
+    expect(capturedInsertPayload!.flags).not.toBeNull();
+
+    delete process.env.ENABLE_PAYOUTS;
+    process.env.PAYSTACK_SECRET_KEY = '';
+    vi.restoreAllMocks();
   });
 });
