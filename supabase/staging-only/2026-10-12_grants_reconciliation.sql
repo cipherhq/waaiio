@@ -4,245 +4,78 @@
 -- Target: staging project tqjvrzopvtczxfxiwmnz
 -- ══════════════════════════════════════════════════════════════════════════
 --
--- Reconcile staging table and view grants to match production.
+-- Least-privilege grants reconciliation for staging, derived from:
+--   - Production effective privileges (has_table_privilege, 2026-10-12)
+--   - Staging RLS policies (pg_policy, polcmd, polroles)
 --
--- Root cause: staging pg_default_acl has 18 entries; production has 27.
--- The 9 missing entries are all in the public schema (tables + sequences
--- + functions) for roles postgres and supabase_admin. Without these,
--- tables/views created by migrations have no privileges for
--- anon/authenticated/service_role unless explicitly GRANTed.
+-- Grant policy per role:
+--   service_role: production mirror — if production has it, staging gets it.
+--   authenticated: grant only if production has it AND staging has at least
+--     one RLS policy for that command whose roles include authenticated or
+--     PUBLIC.
+--   anon: grant nothing unless a policy explicitly names the anon role for
+--     that command AND production grants it. Only 3 anon grants issued.
 --
--- Deliberate deviation — TRUNCATE, REFERENCES, TRIGGER:
---   Production's Supabase defaults (arwdDxtm) grant TRUNCATE (D),
---   REFERENCES (x), TRIGGER (t), and MAINTAIN (m) in addition to
---   SELECT/INSERT/UPDATE/DELETE. This file grants only S/I/U/D because
---   the application never uses TRUNCATE, REFERENCES, or TRIGGER via
---   API roles. This is a least-privilege choice: staging will have
---   narrower DML-only grants on existing relations, while §1's
---   ALTER DEFAULT PRIVILEGES (GRANT ALL) matches production's full
---   privilege set for future tables — including TRUNCATE/REFERENCES/TRIGGER.
+-- Privilege scope: SELECT, INSERT, UPDATE, DELETE only.
+--   Production also has TRUNCATE, REFERENCES, TRIGGER from Supabase
+--   ALTER DEFAULT PRIVILEGES (arwdDxtm). These are deliberately omitted:
+--   the app never uses them via API roles. This is a least-privilege
+--   choice for existing relations.
 --
--- This file contains:
---   §1  ALTER DEFAULT PRIVILEGES — 2 entries (tables + sequences;
---       functions excluded per P0 review)
---   §2  Exact GRANT diff — 451 statements (154 anon, 149 authenticated,
---       148 service_role) including 2 views. Generated from
---       has_table_privilege() on both catalogs (relkind r,v,m), 2026-10-12.
---   §3  Verification — confirms user-reported tables are fixed
+-- No ALTER DEFAULT PRIVILEGES in this file. See #622 for the forward
+-- policy: explicit grants per migration + CI check.
 --
--- Excluded from this file:
---   - Function grants (production has ALTER DEFAULT PRIVILEGES ... ON
---     FUNCTIONS granting EXECUTE to all roles — excluded per P0 security
---     review: 266 SECURITY DEFINER functions in public; blanket EXECUTE
---     would expose financial RPCs like claim_payout_for_transfer to anon)
---   - TRUNCATE, REFERENCES, TRIGGER on existing relations (see above)
---   - 3 cron-schema defaults (supabase_admin-internal, postgres-only)
---   - 8 staging-only tables not on production
+-- RLS-disabled relations: businesses_public (view), whatsapp_channels_public
+-- (view). No anon/authenticated grants issued for these; only service_role
+-- SELECT (production mirror).
 --
--- Over-grants (staging has but production lacks): NONE (0 entries)
+-- Over-grants (staging has, production lacks): 0
+-- Functions: out of scope (P0)
+--
+-- DRY RUN mode: change COMMIT on the last line to ROLLBACK. The security
+-- proof in §3 will still run and report results, but all changes
+-- (grants + test fixtures) will be rolled back. Use this to verify on
+-- staging without changing anything.
 
 BEGIN;
 
 -- ══════════════════════════════════════════════════════════════════════════
--- §1  ALTER DEFAULT PRIVILEGES — root cause fix (tables + sequences only)
+-- §1  anon grants (3 relations)
 -- ══════════════════════════════════════════════════════════════════════════
+-- Each grant is justified by an RLS policy that explicitly names the anon
+-- role for the corresponding command.
 --
--- Production has 6 entries for public schema that staging lacks.
--- We emit 2 (tables + sequences for postgres role).
--- The remaining 4 are either functions (excluded, P0) or supabase_admin
--- (requires superuser — flagged for Owner to apply separately).
---
--- Note: GRANT ALL ON TABLES includes TRUNCATE/REFERENCES/TRIGGER, matching
--- production's defaults exactly. This applies only to future tables.
+-- event_ticket_types / SELECT: policy "event_ticket_types_anon_select"
+--   polroles = {anon, authenticated}, polcmd = r
+-- events / SELECT: policy "events_anon_select"
+--   polroles = {anon, authenticated}, polcmd = r
+-- properties / SELECT: policy "properties_anon_select"
+--   polroles = {anon, authenticated}, polcmd = r
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  GRANT ALL ON TABLES TO anon, authenticated, service_role;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+GRANT SELECT ON TABLE public.event_ticket_types TO anon;
+GRANT SELECT ON TABLE public.events TO anon;
+GRANT SELECT ON TABLE public.properties TO anon;
 
 -- ══════════════════════════════════════════════════════════════════════════
--- §2  Exact GRANT diff — 451 statements (tables + views)
+-- §2a  authenticated grants (128 relations)
 -- ══════════════════════════════════════════════════════════════════════════
--- Each statement adds only the specific S/I/U/D privileges present on
--- production but missing on staging. GRANT is idempotent.
--- No REVOKE statements. No blanket GRANT ALL ON ALL TABLES.
--- Covers relkind r (tables) and v (views).
---
--- Source: has_table_privilege() on both databases, 2026-10-12.
+-- Granted only where production has the privilege AND staging has a policy
+-- for that command with roles including authenticated or PUBLIC.
 
--- anon grants (154 relations)
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_audit_logs TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_broadcasts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_impersonation_tokens TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_role_permissions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_classification_log TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_conversation_config TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_usage TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.alerts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.api_keys TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.attendance_log TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.audit_log TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.blocked_phones TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.booking_confirmation_intents TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.booking_slots TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bookings TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bot_rules TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bot_sequence_enrollments TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bot_sequence_steps TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bot_sequences TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bot_step_overrides TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.broadcast_usage TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_bank_accounts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_broadcasts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_documents TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_faq TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_locations TO anon;
-GRANT SELECT ON TABLE public.business_members TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_payment_credentials TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_payouts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_staff TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.campaign_donations TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.campaigns TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.canned_responses TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.catalog_sync_logs TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.category_definitions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.category_templates TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.chat_conversations TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.chat_forward_usage TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.chat_messages TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contract_signers TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contract_templates TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contracts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.conversation_usage TO anon;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.countries TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_consents TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_feedback TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_profiles TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_reports TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_subscriptions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.daily_summary_log TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.delivery_zones TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.demo_requests TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.event_invites TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.event_ticket_types TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.event_tickets TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.events TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.flow_dropoffs TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.flow_execution_aggregates TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.flow_execution_summaries TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.form_responses TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.forms TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.fraud_events TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_campaign_recipients TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_campaigns TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_contacts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_credit_transactions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_credits TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_imports TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_pricing TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.impersonation_logs TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.invoice_items TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.invoice_payment_applications TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.invoices TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.keyword_campaign_responses TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.keyword_campaigns TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.launch_delivery_confirmations TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.launch_subscribers TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.llm_classifications TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.loyalty_points TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.loyalty_transactions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.membership_tiers TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.message_send_attempts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.messaging_opt_outs TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.messaging_suspension_audit TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.notifications TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.order_spend_applications TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.order_stock_applications TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.order_tracking_notifications TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.package_enrollments TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.package_redemptions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.parties TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payment_confirmation_deliveries TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payment_links TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payment_spend_applications TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payout_accounts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payout_adjustments TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payout_terms_acceptance TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.paystack_billing_attempts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.pending_transfers TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.platform_config_versions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.platform_fee_invoices TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.platform_fees TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.poll_votes TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.polls TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.product_addons TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_campaign_codes TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_campaigns TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_code_batches TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_codes TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_eligibility_acks TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_fulfillment_notification_intents TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_pending_eligibility TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_pickup_verifications TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_prizes TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_redemptions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_reservations TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_verification_attempts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_winner_contacts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.properties TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.property_blocked_dates TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.queue_entries TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.queue_reopen_subscriptions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.quote_requests TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.recurring_setup_intents TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.referrals TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.refund_requests TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reseller_invoices TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reseller_payouts TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.resellers TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reservations TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.saved_payment_methods TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.security_events TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.security_sessions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.service_addons TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.service_packages TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.signed_waivers TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.site_pages TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.stripe_recurring_finalizations TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscription_charges TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscription_checkout_intents TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscription_payment_quarantine TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscription_payments TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscriptions TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.support_ticket_messages TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.support_tickets TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.survey_responses TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.surveys TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.unmatched_delivery_statuses TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.verification_requests TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.volume_discount_rules TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.waitlist_entries TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.waiver_templates TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_deliveries TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_endpoints TO anon;
-
--- authenticated grants (149 relations)
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_audit_logs TO authenticated;
+GRANT SELECT ON TABLE public.admin_audit_logs TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_broadcasts TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_impersonation_tokens TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_role_permissions TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_classification_log TO authenticated;
+GRANT SELECT ON TABLE public.ai_classification_log TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_conversation_config TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_usage TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.alerts TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.api_keys TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.attendance_log TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.audit_log TO authenticated;
+GRANT SELECT, DELETE ON TABLE public.attendance_log TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.audit_log TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.blocked_phones TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.booking_confirmation_intents TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.booking_slots TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bookings TO authenticated;
+GRANT SELECT, UPDATE ON TABLE public.bookings TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.bot_keywords TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bot_rules TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.bot_sequence_enrollments TO authenticated;
@@ -253,132 +86,115 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_broadcasts TO auth
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_documents TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_faq TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_locations TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_payment_credentials TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_payouts TO authenticated;
+GRANT SELECT ON TABLE public.business_payment_credentials TO authenticated;
+GRANT SELECT ON TABLE public.business_payouts TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_staff TO authenticated;
 GRANT DELETE ON TABLE public.businesses TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.campaign_donations TO authenticated;
 GRANT DELETE ON TABLE public.campaigns TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.canned_responses TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.catalog_sync_logs TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.category_definitions TO authenticated;
+GRANT SELECT ON TABLE public.category_definitions TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.category_templates TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.chat_conversations TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.chat_forward_usage TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.chat_messages TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.chat_messages TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contract_signers TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contract_templates TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contracts TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.conversation_usage TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.countries TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_consents TO authenticated;
+GRANT SELECT ON TABLE public.customer_consents TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_feedback TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_profiles TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_reports TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customer_subscriptions TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.daily_summary_log TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.demo_requests TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.daily_summary_log TO authenticated;
+GRANT SELECT, UPDATE ON TABLE public.demo_requests TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.event_invites TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.event_tickets TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.flow_dropoffs TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.flow_execution_aggregates TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.flow_execution_summaries TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.form_responses TO authenticated;
+GRANT SELECT, DELETE ON TABLE public.form_responses TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.forms TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.fraud_events TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_campaign_recipients TO authenticated;
+GRANT SELECT ON TABLE public.growth_campaign_recipients TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_campaigns TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_contacts TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_credit_transactions TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.growth_credit_transactions TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_credits TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_imports TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.growth_pricing TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.growth_pricing TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.impersonation_logs TO authenticated;
 GRANT UPDATE ON TABLE public.invoice_items TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.invoice_payment_applications TO authenticated;
 GRANT DELETE ON TABLE public.invoices TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.keyword_campaign_responses TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.keyword_campaign_responses TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.keyword_campaigns TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.launch_delivery_confirmations TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.launch_subscribers TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.llm_classifications TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.loyalty_points TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.loyalty_transactions TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.loyalty_transactions TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.membership_tiers TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.message_send_attempts TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.messaging_opt_outs TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.messaging_suspension_audit TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.notifications TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.order_spend_applications TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.order_stock_applications TO authenticated;
+GRANT SELECT ON TABLE public.messaging_opt_outs TO authenticated;
+GRANT SELECT ON TABLE public.messaging_suspension_audit TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.notifications TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.order_tracking_notifications TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.package_enrollments TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.package_redemptions TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payment_confirmation_deliveries TO authenticated;
+GRANT SELECT ON TABLE public.package_redemptions TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.payment_links TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payment_spend_applications TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payout_accounts TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.payout_accounts TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payout_adjustments TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.payout_terms_acceptance TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.paystack_billing_attempts TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.payout_terms_acceptance TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.pending_transfers TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.platform_config_versions TO authenticated;
+GRANT SELECT ON TABLE public.platform_config_versions TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.platform_fee_invoices TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.platform_fees TO authenticated;
+GRANT SELECT ON TABLE public.platform_fees TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.poll_votes TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.product_addons TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_campaign_codes TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_campaigns TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_code_batches TO authenticated;
+GRANT SELECT ON TABLE public.promo_campaigns TO authenticated;
+GRANT SELECT ON TABLE public.promo_code_batches TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.promo_codes TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_eligibility_acks TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_fulfillment_notification_intents TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_pending_eligibility TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_pickup_verifications TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_prizes TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_redemptions TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_reservations TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_verification_attempts TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.promo_winner_contacts TO authenticated;
+GRANT SELECT ON TABLE public.promo_prizes TO authenticated;
+GRANT SELECT ON TABLE public.promo_redemptions TO authenticated;
+GRANT SELECT ON TABLE public.promo_verification_attempts TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.properties TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.property_blocked_dates TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.queue_entries TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.queue_reopen_subscriptions TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.quote_requests TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.recurring_setup_intents TO authenticated;
+GRANT SELECT, UPDATE ON TABLE public.quote_requests TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.referrals TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.refund_requests TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON TABLE public.refunds TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reseller_invoices TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.reseller_payouts TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.resellers TO authenticated;
 GRANT INSERT, DELETE ON TABLE public.reservations TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.saved_payment_methods TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.security_events TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.security_sessions TO authenticated;
+GRANT SELECT ON TABLE public.security_events TO authenticated;
+GRANT SELECT ON TABLE public.security_sessions TO authenticated;
 GRANT DELETE ON TABLE public.service_addons TO authenticated;
 GRANT DELETE ON TABLE public.service_packages TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.signed_waivers TO authenticated;
+GRANT SELECT ON TABLE public.signed_waivers TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.site_pages TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.stripe_recurring_finalizations TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscription_charges TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscription_checkout_intents TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscription_payment_quarantine TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscription_payments TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.subscriptions TO authenticated;
+GRANT SELECT ON TABLE public.subscription_payments TO authenticated;
+GRANT SELECT ON TABLE public.subscriptions TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.support_ticket_messages TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.support_tickets TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.survey_responses TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.unmatched_delivery_statuses TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.verification_requests TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.volume_discount_rules TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.waitlist_entries TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.waiver_templates TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_deliveries TO authenticated;
+GRANT SELECT ON TABLE public.webhook_deliveries TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_endpoints TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON TABLE public.whatsapp_channels TO authenticated;
 
--- service_role grants (148 relations)
+-- ══════════════════════════════════════════════════════════════════════════
+-- §2b  service_role grants (148 relations) — production mirror
+-- ══════════════════════════════════════════════════════════════════════════
+
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_broadcasts TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_role_permissions TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_classification_log TO service_role;
@@ -529,54 +345,162 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.webhook_endpoints TO servic
 GRANT SELECT ON TABLE public.whatsapp_channels_public TO service_role;
 
 -- ══════════════════════════════════════════════════════════════════════════
--- §3  VERIFICATION
+-- §3  Security proof — in-transaction, rolls back on any failure
 -- ══════════════════════════════════════════════════════════════════════════
+-- Creates temporary test fixtures (2 businesses, payouts, etc.) inside the
+-- transaction. Asserts RLS isolation for anon and cross-tenant authenticated.
+-- All fixtures are rolled back with the transaction (or COMMIT deletes them
+-- via the cleanup block).
+--
+-- Assertions:
+--   anon_select_zero:           anon sees 0 rows on sensitive tables
+--   anon_insert_blocked:        anon cannot insert into business_payouts
+--   cross_tenant_select_zero:   owner of A cannot read B's payout
+--   cross_tenant_update_zero:   owner of A cannot update B's payout
+--   cross_tenant_delete_zero:   owner of A cannot delete B's payout
+--   owner_reads_own_payout:     owner of A can read A's payout (positive)
 
 DO $$
 DECLARE
-  _errors text[] := '{}';
+  _user_a_id uuid := gen_random_uuid();
+  _user_b_id uuid := gen_random_uuid();
+  _biz_a_id  uuid := gen_random_uuid();
+  _biz_b_id  uuid := gen_random_uuid();
+  _errors    text[] := '{}';
+  _count     bigint;
+  _saved_role text;
 BEGIN
-  -- User-reported tables
-  IF NOT has_table_privilege('authenticated', 'public.business_payouts', 'SELECT') THEN
-    _errors := _errors || 'business_payouts: authenticated missing SELECT';
-  END IF;
-  IF NOT has_table_privilege('service_role', 'public.payout_adjustments', 'SELECT') THEN
-    _errors := _errors || 'payout_adjustments: service_role missing SELECT';
-  END IF;
-  IF NOT has_table_privilege('service_role', 'public.payout_accounts', 'SELECT') THEN
-    _errors := _errors || 'payout_accounts: service_role missing SELECT';
-  END IF;
-  IF NOT has_table_privilege('service_role', 'public.verification_requests', 'SELECT') THEN
-    _errors := _errors || 'verification_requests: service_role missing SELECT';
-  END IF;
-  IF NOT has_table_privilege('service_role', 'public.business_documents', 'SELECT') THEN
-    _errors := _errors || 'business_documents: service_role missing SELECT';
-  END IF;
-  -- Correction #1 tables
-  IF NOT has_table_privilege('service_role', 'public.admin_broadcasts', 'SELECT') THEN
-    _errors := _errors || 'admin_broadcasts: service_role missing SELECT';
-  END IF;
-  IF NOT has_table_privilege('service_role', 'public.admin_role_permissions', 'SELECT') THEN
-    _errors := _errors || 'admin_role_permissions: service_role missing SELECT';
-  END IF;
-  IF NOT has_table_privilege('service_role', 'public.ai_classification_log', 'SELECT') THEN
-    _errors := _errors || 'ai_classification_log: service_role missing SELECT';
-  END IF;
-  IF NOT has_table_privilege('service_role', 'public.ai_usage', 'SELECT') THEN
-    _errors := _errors || 'ai_usage: service_role missing SELECT';
-  END IF;
-  -- Views
-  IF NOT has_table_privilege('service_role', 'public.businesses_public', 'SELECT') THEN
-    _errors := _errors || 'businesses_public: service_role missing SELECT';
-  END IF;
-  IF NOT has_table_privilege('service_role', 'public.whatsapp_channels_public', 'SELECT') THEN
-    _errors := _errors || 'whatsapp_channels_public: service_role missing SELECT';
+  -- Save current role for restoration
+  _saved_role := current_setting('role');
+
+  -- ── Create test fixtures as postgres ──────────────────────────────────
+
+  -- Users (minimal auth.users rows)
+  INSERT INTO auth.users (id, instance_id, role, aud, email, encrypted_password, confirmed_at, created_at, updated_at)
+  VALUES
+    (_user_a_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+     'test-a-' || _user_a_id || '@test.local', crypt('testpass', gen_salt('bf')), now(), now(), now()),
+    (_user_b_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+     'test-b-' || _user_b_id || '@test.local', crypt('testpass', gen_salt('bf')), now(), now(), now());
+
+  -- Businesses
+  INSERT INTO public.businesses (id, owner_id, name, slug, country, category, phone)
+  VALUES
+    (_biz_a_id, _user_a_id, 'Test Biz A', 'test-biz-a-' || _biz_a_id, 'NG', 'retail', '+2340000000001'),
+    (_biz_b_id, _user_b_id, 'Test Biz B', 'test-biz-b-' || _biz_b_id, 'NG', 'retail', '+2340000000002');
+
+  -- B's sensitive records
+  INSERT INTO public.business_payouts (id, business_id, amount, status, currency, created_at)
+  VALUES (gen_random_uuid(), _biz_b_id, 10000, 'pending', 'NGN', now());
+
+  INSERT INTO public.payout_accounts (id, business_id, account_name, account_number, bank_code, created_at)
+  VALUES (gen_random_uuid(), _biz_b_id, 'Test Account', '0000000000', '058', now());
+
+  INSERT INTO public.payout_adjustments (id, business_id, amount, reason, created_at)
+  VALUES (gen_random_uuid(), _biz_b_id, 500, 'test adjustment', now());
+
+  INSERT INTO public.business_documents (id, business_id, document_type, file_url, created_at)
+  VALUES (gen_random_uuid(), _biz_b_id, 'id_card', '/test/doc.pdf', now());
+
+  INSERT INTO public.verification_requests (id, business_id, status, created_at)
+  VALUES (gen_random_uuid(), _biz_b_id, 'pending', now());
+
+  INSERT INTO public.platform_fees (id, business_id, payment_id, amount, fee_type, created_at)
+  VALUES (gen_random_uuid(), _biz_b_id, gen_random_uuid(), 100, 'platform', now());
+
+  -- A's payout (for positive control)
+  INSERT INTO public.business_payouts (id, business_id, amount, status, currency, created_at)
+  VALUES (gen_random_uuid(), _biz_a_id, 5000, 'pending', 'NGN', now());
+
+  -- ── Assertion 1: anon_select_zero ─────────────────────────────────────
+  SET LOCAL ROLE anon;
+  PERFORM set_config('request.jwt.claims', '{}', true);
+
+  SELECT count(*) INTO _count FROM public.business_payouts;
+  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: business_payouts returned ' || _count || ' rows'; END IF;
+
+  SELECT count(*) INTO _count FROM public.payout_accounts;
+  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: payout_accounts returned ' || _count || ' rows'; END IF;
+
+  SELECT count(*) INTO _count FROM public.payout_adjustments;
+  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: payout_adjustments returned ' || _count || ' rows'; END IF;
+
+  SELECT count(*) INTO _count FROM public.business_documents;
+  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: business_documents returned ' || _count || ' rows'; END IF;
+
+  SELECT count(*) INTO _count FROM public.verification_requests;
+  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: verification_requests returned ' || _count || ' rows'; END IF;
+
+  SELECT count(*) INTO _count FROM public.platform_fees;
+  IF _count > 0 THEN _errors := _errors || 'anon_select_zero: platform_fees returned ' || _count || ' rows'; END IF;
+
+  -- ── Assertion 2: anon_insert_blocked ──────────────────────────────────
+  BEGIN
+    INSERT INTO public.business_payouts (id, business_id, amount, status, currency, created_at)
+    VALUES (gen_random_uuid(), _biz_b_id, 999, 'pending', 'NGN', now());
+    _errors := _errors || 'anon_insert_blocked: INSERT into business_payouts succeeded (should fail)';
+  EXCEPTION WHEN insufficient_privilege OR check_violation THEN
+    NULL; -- expected
+  END;
+
+  -- ── Assertion 3: cross_tenant_select_zero ─────────────────────────────
+  SET LOCAL ROLE authenticated;
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', _user_a_id, 'role', 'authenticated')::text, true);
+
+  SELECT count(*) INTO _count FROM public.business_payouts WHERE business_id = _biz_b_id;
+  IF _count > 0 THEN _errors := _errors || 'cross_tenant_select_zero: owner A read ' || _count || ' of B''s payouts'; END IF;
+
+  SELECT count(*) INTO _count FROM public.payout_accounts WHERE business_id = _biz_b_id;
+  IF _count > 0 THEN _errors := _errors || 'cross_tenant_select_zero: payout_accounts leaked ' || _count || ' rows'; END IF;
+
+  SELECT count(*) INTO _count FROM public.payout_adjustments WHERE business_id = _biz_b_id;
+  IF _count > 0 THEN _errors := _errors || 'cross_tenant_select_zero: payout_adjustments leaked ' || _count || ' rows'; END IF;
+
+  SELECT count(*) INTO _count FROM public.business_documents WHERE business_id = _biz_b_id;
+  IF _count > 0 THEN _errors := _errors || 'cross_tenant_select_zero: business_documents leaked ' || _count || ' rows'; END IF;
+
+  SELECT count(*) INTO _count FROM public.verification_requests WHERE business_id = _biz_b_id;
+  IF _count > 0 THEN _errors := _errors || 'cross_tenant_select_zero: verification_requests leaked ' || _count || ' rows'; END IF;
+
+  -- ── Assertion 4: cross_tenant_update_zero ──────────────────────────────
+  UPDATE public.business_payouts SET amount = 0 WHERE business_id = _biz_b_id;
+  GET DIAGNOSTICS _count = ROW_COUNT;
+  IF _count > 0 THEN _errors := _errors || 'cross_tenant_update_zero: updated ' || _count || ' of B''s payouts'; END IF;
+
+  -- ── Assertion 5: cross_tenant_delete_zero ──────────────────────────────
+  DELETE FROM public.business_payouts WHERE business_id = _biz_b_id;
+  GET DIAGNOSTICS _count = ROW_COUNT;
+  IF _count > 0 THEN _errors := _errors || 'cross_tenant_delete_zero: deleted ' || _count || ' of B''s payouts'; END IF;
+
+  -- ── Assertion 6: owner_reads_own_payout (positive control) ────────────
+  SELECT count(*) INTO _count FROM public.business_payouts WHERE business_id = _biz_a_id;
+  IF _count = 0 THEN _errors := _errors || 'owner_reads_own_payout: owner A cannot read own payout (0 rows)'; END IF;
+
+  -- ── Restore role and clean up ─────────────────────────────────────────
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  -- Delete test fixtures (so COMMIT leaves no artifacts)
+  DELETE FROM public.platform_fees WHERE business_id IN (_biz_a_id, _biz_b_id);
+  DELETE FROM public.verification_requests WHERE business_id IN (_biz_a_id, _biz_b_id);
+  DELETE FROM public.business_documents WHERE business_id IN (_biz_a_id, _biz_b_id);
+  DELETE FROM public.payout_adjustments WHERE business_id IN (_biz_a_id, _biz_b_id);
+  DELETE FROM public.payout_accounts WHERE business_id IN (_biz_a_id, _biz_b_id);
+  DELETE FROM public.business_payouts WHERE business_id IN (_biz_a_id, _biz_b_id);
+  DELETE FROM public.businesses WHERE id IN (_biz_a_id, _biz_b_id);
+  DELETE FROM auth.users WHERE id IN (_user_a_id, _user_b_id);
+
+  -- ── Report ────────────────────────────────────────────────────────────
+  IF array_length(_errors, 1) > 0 THEN
+    RAISE EXCEPTION 'SECURITY PROOF FAILED — rolling back all grants: %',
+      array_to_string(_errors, E'\n  ');
   END IF;
 
-  IF array_length(_errors, 1) > 0 THEN
-    RAISE EXCEPTION 'VERIFICATION FAILED — rolling back: %', array_to_string(_errors, '; ');
-  END IF;
-  RAISE NOTICE 'Grants reconciliation: all verification checks passed.';
+  RAISE NOTICE 'Security proof passed: 6/6 assertions OK.';
 END $$;
 
+-- ══════════════════════════════════════════════════════════════════════════
+-- To dry-run: change COMMIT to ROLLBACK below.
+-- ══════════════════════════════════════════════════════════════════════════
 COMMIT;
