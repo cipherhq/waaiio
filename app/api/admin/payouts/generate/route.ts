@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
@@ -12,6 +11,7 @@ interface Flag {
   type: string;
   message: string;
   severity: 'info' | 'warning' | 'critical';
+  adjustment_ids?: string[];
 }
 
 export async function POST(request: NextRequest) {
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   try {
     const settings = await loadPlatformSettings({ useServiceClient: true });
@@ -49,11 +49,15 @@ export async function POST(request: NextRequest) {
     const periodEndStr = periodEnd.toISOString().split('T')[0];
 
     // Get all active platform-managed businesses with verification info
-    const { data: businesses } = await supabase
+    const { data: businesses, error: bizError } = await supabase
       .from('businesses')
       .select('id, created_at, verification_level, payout_limit_monthly, country_code')
       .eq('payout_mode', 'platform_managed')
       .eq('status', 'active');
+
+    if (bizError) {
+      return NextResponse.json({ error: 'Failed to load businesses' }, { status: 500 });
+    }
 
     if (!businesses?.length) {
       return NextResponse.json({ success: true, created: 0, skipped: 0, held: 0, message: 'No platform-managed businesses' });
@@ -62,10 +66,12 @@ export async function POST(request: NextRequest) {
     let created = 0;
     let skipped = 0;
     let held = 0;
+    let failed = 0;
+    const needsAttention: string[] = [];
 
     for (const biz of businesses) {
       // Check if payout already exists for this period
-      const { data: existing } = await supabase
+      const { data: existing, error: existingError } = await supabase
         .from('business_payouts')
         .select('id')
         .eq('business_id', biz.id)
@@ -73,17 +79,30 @@ export async function POST(request: NextRequest) {
         .eq('period_end', periodEndStr)
         .maybeSingle();
 
+      // Fail closed: if we can't check for duplicates, count as failed
+      if (existingError) {
+        logger.error('[PAYOUT] Dedup check failed for business', { business_id: biz.id, error: existingError.message });
+        failed++;
+        continue;
+      }
       if (existing) continue;
 
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
       // Exclude direct transfers — Waaiio never holds those funds (money goes straight to business bank account)
-      const { data: fees } = await supabase
+      const { data: fees, error: feesError } = await supabase
         .from('platform_fees')
         .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
+
+      // Fail closed: if fee data is unavailable, count as failed (never generate with partial data)
+      if (feesError) {
+        logger.error('[PAYOUT] Fee query failed for business', { business_id: biz.id, error: feesError.message });
+        failed++;
+        continue;
+      }
 
       // Gross from platform_fees.transaction_amount — only gateway payments (Waaiio holds these funds)
       // Direct transfers are excluded: business already has the money, we only invoice the platform fee
@@ -95,7 +114,7 @@ export async function POST(request: NextRequest) {
       const totalGatewayFees = gatewayFees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
 
       // Still fetch payments for velocity check below
-      const { data: payments } = await supabase
+      const { data: payments, error: paymentsError } = await supabase
         .from('payments')
         .select('created_at')
         .eq('business_id', biz.id)
@@ -103,12 +122,24 @@ export async function POST(request: NextRequest) {
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
 
+      if (paymentsError) {
+        logger.error('[PAYOUT] Payments query failed for business', { business_id: biz.id, error: paymentsError.message });
+        failed++;
+        continue;
+      }
+
       // Deduct any unapplied payout adjustments (e.g. post-payout refunds)
-      const { data: adjustments } = await supabase
+      const { data: adjustments, error: adjQueryError } = await supabase
         .from('payout_adjustments')
         .select('id, amount')
         .eq('business_id', biz.id)
         .is('applied_to_payout_id', null);
+
+      if (adjQueryError) {
+        logger.error('[PAYOUT] Adjustments query failed for business', { business_id: biz.id, error: adjQueryError.message });
+        failed++;
+        continue;
+      }
 
       const totalAdjustments = (adjustments || []).reduce((s, a) => s + Number(a.amount || 0), 0);
       const net = Math.max(0, gross - totalFees - totalGatewayFees + totalAdjustments);
@@ -207,33 +238,153 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
-      const serviceClient = createServiceClient();
-      const { data: newPayout } = await serviceClient.from('business_payouts').insert({
-        business_id: biz.id,
-        payout_account_id: payoutAccount?.id || null,
-        period_start: periodStartStr,
-        period_end: periodEndStr,
-        gross_amount: gross,
-        platform_fee: totalFees,
-        gateway_fee: totalGatewayFees,
-        net_amount: net,
-        status,
-        flags,
-      }).select('id').single();
+      if (adjustments && adjustments.length > 0) {
+        // --- Adjustment-linked payout: INSERT held → link → promote ---
+        const adjIds = [...new Set(adjustments.map(a => a.id))];
+        const intendedStatus = status; // remember the computed status
 
-      // Mark adjustments as applied to this payout
-      if (newPayout && adjustments && adjustments.length > 0) {
-        const adjIds = adjustments.map((a) => a.id);
-        await supabase
+        const insertFlags: Flag[] = [...flags, {
+          type: 'adjustment_link_pending',
+          message: `Linking ${adjIds.length} adjustment(s)`,
+          severity: 'critical',
+          adjustment_ids: adjIds,
+        }];
+
+        // Step 1: INSERT as held with adjustment_link_pending flag
+        const { data: payout, error: insertError } = await supabase.from('business_payouts').insert({
+          business_id: biz.id,
+          payout_account_id: payoutAccount?.id || null,
+          period_start: periodStartStr,
+          period_end: periodEndStr,
+          gross_amount: gross,
+          platform_fee: totalFees,
+          gateway_fee: totalGatewayFees,
+          net_amount: net,
+          status: 'held',
+          flags: insertFlags,
+        }).select('id').single();
+
+        if (insertError || !payout) {
+          // Unique violation (23505) or any insert error: nothing linked, safe to skip
+          logger.error('[PAYOUT] Failed to insert payout for business', {
+            business_id: biz.id, error: insertError?.message, code: insertError?.code,
+          });
+          failed++;
+          continue;
+        }
+
+        // Step 2: Link adjustments with CAS (only unlinked)
+        const { data: linkedRows, error: linkError } = await supabase
           .from('payout_adjustments')
-          .update({ applied_to_payout_id: newPayout.id })
-          .in('id', adjIds);
-      }
+          .update({ applied_to_payout_id: payout.id })
+          .in('id', adjIds)
+          .is('applied_to_payout_id', null) // CAS: only unlinked
+          .select('id');
 
-      if (status === 'held') {
-        held++;
+        const linkedIds = (linkedRows || []).map(r => r.id);
+        const linkedSet = new Set(linkedIds);
+        const expectedSet = new Set(adjIds);
+        const linkSuccess = !linkError
+          && linkedSet.size === expectedSet.size
+          && adjIds.every(id => linkedSet.has(id));
+
+        if (linkSuccess) {
+          // Step 3: Promote with CAS — remove the pending flag
+          const { data: promoteResult, error: promoteError } = await supabase
+            .from('business_payouts')
+            .update({ status: intendedStatus, flags })
+            .eq('id', payout.id)
+            .eq('status', 'held')
+            .contains('flags', [{ type: 'adjustment_link_pending' }])
+            .select('id');
+
+          if (promoteError || !promoteResult || promoteResult.length !== 1) {
+            // Promote failed — re-read to understand state
+            const { data: reread } = await supabase
+              .from('business_payouts')
+              .select('id, status, flags')
+              .eq('id', payout.id)
+              .single();
+            logger.error('[PAYOUT] Promote CAS failed after successful link', {
+              payout_id: payout.id, business_id: biz.id,
+              promote_error: promoteError?.message,
+              persisted_status: reread?.status,
+              persisted_flags: reread?.flags,
+            });
+            needsAttention.push(payout.id);
+            failed++;
+            continue;
+          }
+
+          // Promote succeeded
+          if (intendedStatus === 'held') {
+            held++;
+          } else {
+            created++;
+          }
+        } else {
+          // Step 4: Link failed — swap pending flag with failed flag
+          const reason = linkError
+            ? `Link error: ${linkError.message}`
+            : `Linked ${linkedSet.size}/${expectedSet.size} adjustment(s) — set mismatch`;
+
+          const failedFlags: Flag[] = flags.filter(f => f.type !== 'adjustment_link_pending');
+          failedFlags.push({
+            type: 'adjustment_link_failed',
+            message: reason,
+            severity: 'critical',
+            adjustment_ids: adjIds,
+          });
+
+          const { data: swapResult, error: swapError } = await supabase
+            .from('business_payouts')
+            .update({ status: 'held', flags: failedFlags })
+            .eq('id', payout.id)
+            .select('id');
+
+          if (swapError || !swapResult || swapResult.length === 0) {
+            // Swap failed — payout stays held+pending (still blocked)
+            logger.error('[PAYOUT] Flag swap failed — payout stays held+pending', {
+              payout_id: payout.id, business_id: biz.id, adjIds,
+              swap_error: swapError?.message,
+            });
+            needsAttention.push(payout.id);
+          } else {
+            logger.error('[PAYOUT] Adjustment link failed — payout held with failed flag', {
+              payout_id: payout.id, business_id: biz.id, adjIds, reason,
+            });
+          }
+          failed++;
+          continue;
+        }
       } else {
-        created++;
+        // --- No adjustments: INSERT with computed status and flags ---
+        const { data: newPayout, error: insertError } = await supabase.from('business_payouts').insert({
+          business_id: biz.id,
+          payout_account_id: payoutAccount?.id || null,
+          period_start: periodStartStr,
+          period_end: periodEndStr,
+          gross_amount: gross,
+          platform_fee: totalFees,
+          gateway_fee: totalGatewayFees,
+          net_amount: net,
+          status,
+          flags,
+        }).select('id').single();
+
+        if (insertError || !newPayout) {
+          logger.error('[PAYOUT] Failed to insert payout for business', {
+            business_id: biz.id, error: insertError?.message,
+          });
+          failed++;
+          continue;
+        }
+
+        if (status === 'held') {
+          held++;
+        } else {
+          created++;
+        }
       }
     }
 
@@ -249,13 +400,42 @@ export async function POST(request: NextRequest) {
         businesses_checked: businesses.length,
         payouts_created: created,
         payouts_held: held,
+        payouts_failed: failed,
+        needs_attention: needsAttention,
       },
     });
+
+    // Never report success when any INSERT failed
+    if (failed > 0) {
+      return NextResponse.json({
+        error: `Payout generation completed with ${failed} failed write(s)`,
+        created,
+        held,
+        skipped,
+        needs_attention: needsAttention.length > 0 ? needsAttention : undefined,
+        failed,
+        period: { start: periodStartStr, end: periodEndStr },
+      }, { status: 207 });
+    }
+
+    if (created === 0 && held === 0) {
+      return NextResponse.json({
+        success: true,
+        created: 0,
+        held: 0,
+        skipped,
+        failed: 0,
+        period: { start: periodStartStr, end: periodEndStr },
+        message: 'No eligible payouts for this period',
+      });
+    }
 
     return NextResponse.json({
       success: true,
       created,
       held,
+      skipped,
+      failed: 0,
       period: { start: periodStartStr, end: periodEndStr },
     });
   } catch (error) {

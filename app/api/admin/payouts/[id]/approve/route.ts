@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutApprovedEmail, payoutPaidEmail } from '@/lib/email/templates';
@@ -40,17 +39,9 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
-  const supabase = await createClient();
+  const serviceClient = createServiceClient();
   const body = await request.json();
   const { transfer_method, reference, notes, stepUpId } = body;
-
-  // SEC-005 Layer 4: Consume operation-bound step-up authorization
-  try {
-    await consumeStepUp(admin, stepUpId, 'payout_approve', id, { transfer_method, reference: reference ?? null, notes: notes ?? null });
-  } catch (err) {
-    const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
-    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
-  }
 
   // FIN-001: Strict transfer-method allowlist
   if (!transfer_method || !ALLOWED_TRANSFER_METHODS.includes(transfer_method as TransferMethod)) {
@@ -60,7 +51,7 @@ export async function POST(
   }
 
   // ── Fetch and validate payout ──
-  const { data: payout } = await supabase
+  const { data: payout } = await serviceClient
     .from('business_payouts')
     .select('*, payout_account_id')
     .eq('id', id)
@@ -74,8 +65,19 @@ export async function POST(
     return NextResponse.json({ error: 'Payout cannot be approved in current status' }, { status: 400 });
   }
 
+  // Block payouts with adjustment linkage flags that require resolution
+  const payoutFlags = Array.isArray(payout.flags) ? payout.flags : [];
+  const hasLinkageFlag = payoutFlags.some(
+    (f: { type?: string }) => f.type === 'adjustment_link_pending' || f.type === 'adjustment_link_failed',
+  );
+  if (hasLinkageFlag) {
+    return NextResponse.json({
+      error: 'This payout has an adjustment linkage flag and cannot be approved until the linkage is resolved. See issue #620.',
+    }, { status: 409 });
+  }
+
   // ── Business verification ──
-  const { data: bizCheck } = await supabase
+  const { data: bizCheck } = await serviceClient
     .from('businesses')
     .select('verification_level, payout_limit_monthly, country_code')
     .eq('id', payout.business_id)
@@ -97,7 +99,7 @@ export async function POST(
     }, { status: 400 });
   }
 
-  const { data: payoutAcct } = await supabase
+  const { data: payoutAcct } = await serviceClient
     .from('payout_accounts')
     .select('id, business_id, is_active, verified_at, gateway')
     .eq('id', payout.payout_account_id)
@@ -137,18 +139,26 @@ export async function POST(
   }
 
   // ── Balance verification (includes review_required as reserved) ──
-  const { data: balancePayments } = await supabase
+  const { data: balancePayments, error: balanceError } = await serviceClient
     .from('platform_fees')
     .select('transaction_amount, fee_total')
     .eq('business_id', payout.business_id)
     .is('refunded_at', null);
 
-  const { data: priorPayouts } = await supabase
+  if (balanceError) {
+    return NextResponse.json({ error: 'Failed to load balance data' }, { status: 500 });
+  }
+
+  const { data: priorPayouts, error: priorError } = await serviceClient
     .from('business_payouts')
     .select('net_amount')
     .eq('business_id', payout.business_id)
     .in('status', ['paid', 'processing', 'approved', 'review_required'])
     .neq('id', id);
+
+  if (priorError) {
+    return NextResponse.json({ error: 'Failed to load prior payout data' }, { status: 500 });
+  }
 
   const totalEarned = (balancePayments || []).reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
   const totalPaidOut = (priorPayouts || []).reduce((sum, p) => sum + Number(p.net_amount), 0);
@@ -161,13 +171,65 @@ export async function POST(
   }
 
   // ═══════════════════════════════════════════════════════════
+  // Provider config and destination pre-checks (read-only)
+  // ═══════════════════════════════════════════════════════════
+
+  // Provider config pre-checks
+  if (transfer_method === 'paystack_transfer' && !paystackSecretKey) {
+    return NextResponse.json({ error: 'Paystack is not configured for transfers' }, { status: 400 });
+  }
+  if (transfer_method === 'stripe_transfer' && !stripeSecretKey) {
+    return NextResponse.json({ error: 'Stripe is not configured for transfers' }, { status: 400 });
+  }
+
+  // Destination details pre-check — before step-up and claim
+  let paystackBankDetails: { bank_code: string; account_number: string; account_name: string } | null = null;
+  let stripeDestination: string | null = null;
+
+  if (transfer_method === 'paystack_transfer') {
+    const { data: payoutAccount } = await serviceClient
+      .from('payout_accounts')
+      .select('bank_code, account_number, account_name')
+      .eq('id', payout.payout_account_id)
+      .single();
+
+    if (!payoutAccount?.bank_code || !payoutAccount?.account_number) {
+      return NextResponse.json({ error: 'Payout account missing required bank details for Paystack transfer' }, { status: 400 });
+    }
+    if (typeof payoutAccount.account_name !== 'string' || payoutAccount.account_name.trim().length === 0) {
+      return NextResponse.json({ error: 'Payout account missing account_name for Paystack transfer' }, { status: 400 });
+    }
+    paystackBankDetails = { bank_code: payoutAccount.bank_code, account_number: payoutAccount.account_number, account_name: payoutAccount.account_name };
+  } else if (transfer_method === 'stripe_transfer') {
+    const { data: payoutAccount } = await serviceClient
+      .from('payout_accounts')
+      .select('stripe_account_id')
+      .eq('id', payout.payout_account_id)
+      .single();
+
+    if (!payoutAccount?.stripe_account_id) {
+      return NextResponse.json({ error: 'Payout account missing Stripe destination account' }, { status: 400 });
+    }
+    stripeDestination = payoutAccount.stripe_account_id;
+  }
+
+  // SEC-005 Layer 4: Consume operation-bound step-up authorization
+  // Placed AFTER all read-only validation so the step-up is not burned on a request
+  // that would have failed precondition checks anyway.
+  try {
+    await consumeStepUp(admin, stepUpId, 'payout_approve', id, { transfer_method, reference: reference ?? null, notes: notes ?? null });
+  } catch (err) {
+    const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // Manual methods: no claim, no provider call
   // ═══════════════════════════════════════════════════════════
 
   if (!AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
     // Atomic conditional update — verifies exactly one row transitions
     // SEC-005: uses service client — authenticated DML revoked on business_payouts.
-    const serviceClient = createServiceClient();
     const { data: manualResult } = await serviceClient
       .from('business_payouts')
       .update({
@@ -190,59 +252,14 @@ export async function POST(
       }, { status: 409 });
     }
 
-    await logAndNotify(supabase, id, payout, admin, 'paid', transfer_method, null, reference);
+    await logAndNotify(serviceClient, id, payout, admin, 'paid', transfer_method, null, reference);
     return NextResponse.json({ success: true, status: 'paid' });
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // Automated methods: all deterministic checks before claim
-  // ═══════════════════════════════════════════════════════════
-
-  // Provider config pre-checks
-  if (transfer_method === 'paystack_transfer' && !paystackSecretKey) {
-    return NextResponse.json({ error: 'Paystack is not configured for transfers' }, { status: 400 });
-  }
-  if (transfer_method === 'stripe_transfer' && !stripeSecretKey) {
-    return NextResponse.json({ error: 'Stripe is not configured for transfers' }, { status: 400 });
-  }
-
-  // Destination details pre-check — before claim, not after
-  let paystackBankDetails: { bank_code: string; account_number: string; account_name: string } | null = null;
-  let stripeDestination: string | null = null;
-
-  if (transfer_method === 'paystack_transfer') {
-    const { data: payoutAccount } = await supabase
-      .from('payout_accounts')
-      .select('bank_code, account_number, account_name')
-      .eq('id', payout.payout_account_id)
-      .single();
-
-    if (!payoutAccount?.bank_code || !payoutAccount?.account_number) {
-      return NextResponse.json({ error: 'Payout account missing required bank details for Paystack transfer' }, { status: 400 });
-    }
-    if (typeof payoutAccount.account_name !== 'string' || payoutAccount.account_name.trim().length === 0) {
-      return NextResponse.json({ error: 'Payout account missing account_name for Paystack transfer' }, { status: 400 });
-    }
-    paystackBankDetails = { bank_code: payoutAccount.bank_code, account_number: payoutAccount.account_number, account_name: payoutAccount.account_name };
-  } else if (transfer_method === 'stripe_transfer') {
-    const { data: payoutAccount } = await supabase
-      .from('payout_accounts')
-      .select('stripe_account_id')
-      .eq('id', payout.payout_account_id)
-      .single();
-
-    if (!payoutAccount?.stripe_account_id) {
-      return NextResponse.json({ error: 'Payout account missing Stripe destination account' }, { status: 400 });
-    }
-    stripeDestination = payoutAccount.stripe_account_id;
   }
 
   // ═══════════════════════════════════════════════════════════
   // FIN-002: Atomic claim — immediately before first provider side effect
   // PostgreSQL generates claim_token and provider_idempotency_key
   // ═══════════════════════════════════════════════════════════
-
-  const serviceClient = createServiceClient();
 
   const { data: claimResult, error: claimError } = await serviceClient.rpc(
     'claim_payout_for_transfer',
@@ -408,7 +425,7 @@ export async function POST(
       return NextResponse.json({ error: 'Payout transfer submitted but finalization failed — requires review' }, { status: 500 });
     }
 
-    await logAndNotify(supabase, id, payout, admin, 'processing', transfer_method, gatewayTransferCode, reference);
+    await logAndNotify(serviceClient, id, payout, admin, 'processing', transfer_method, gatewayTransferCode, reference);
     return NextResponse.json({ success: true, status: 'processing' });
 
   } catch (error) {
@@ -456,7 +473,7 @@ async function transitionReviewRequired(
  * Non-blocking audit log, email notification, and in-app notification.
  */
 async function logAndNotify(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  client: ReturnType<typeof createServiceClient>,
   payoutId: string,
   payout: Record<string, unknown>,
   admin: { id: string },
@@ -478,7 +495,7 @@ async function logAndNotify(
     },
   });
 
-  const { data: biz } = await supabase
+  const { data: biz } = await client
     .from('businesses')
     .select('name, owner_id, country_code')
     .eq('id', payout.business_id as string)
@@ -488,7 +505,7 @@ async function logAndNotify(
     const cc = (biz.country_code || 'NG') as CountryCode;
     const amountStr = formatCurrency(Number(payout.net_amount), cc);
 
-    const { data: ownerProfile } = await supabase
+    const { data: ownerProfile } = await client
       .from('profiles')
       .select('email')
       .eq('id', biz.owner_id)
@@ -502,7 +519,7 @@ async function logAndNotify(
     }
 
     try {
-      await supabase.from('notifications').insert({
+      await client.from('notifications').insert({
         business_id: payout.business_id,
         type: 'payment',
         channel: 'email',
