@@ -306,7 +306,7 @@ describe('561-G: capability menu labels', () => {
     expect(_FLOW_COPY_FOR_TESTS.ig['cap.queue']).toBe("Banye n'Ahịrị");
     expect(_FLOW_COPY_FOR_TESTS.yo['cap.crowdfunding']).toBe('Àtìlẹ́yìn Ìpolongo');
     expect(_FLOW_COPY_FOR_TESTS.yo['cap.giving']).toBe('Ṣa n owo');
-    expect(_FLOW_COPY_FOR_TESTS.tw['cap.appointment.car_wash']).toBe('Gye Bere Wɔnhoro Kaa');
+    expect(_FLOW_COPY_FOR_TESTS.tw['cap.appointment.car_wash']).toBe('Hyɛ Kaa Hohoro');
     expect(_FLOW_COPY_FOR_TESTS.fr['cap.waitlist']).toBe("Liste d'attente");
   });
 
