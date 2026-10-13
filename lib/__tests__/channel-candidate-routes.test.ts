@@ -135,6 +135,7 @@ vi.mock('@/lib/onboarding/finalize', () => ({ finalizeOnboarding: vi.fn(() => Pr
 vi.mock('@/lib/constants', () => ({
   generateSlug: () => 'ts', generateBotCode: () => 'TC', CATEGORY_FLOW_MAP: {},
   PRICING_TIERS: { free: { name: 'Free', price: 0 }, growth: { name: 'Pro', price: 5000 }, business: { name: 'Premium', price: 15000 } },
+  getPayoutLimit: () => 500_000,
 }));
 vi.mock('@/lib/email/client', () => ({ sendEmail: vi.fn(() => Promise.resolve()) }));
 vi.mock('@/lib/email/templates', () => ({ welcomeEmail: () => ({ subject: 'x', html: 'x' }), businessRegisteredEmail: () => ({ subject: 'x', html: 'x' }) }));

@@ -74,6 +74,7 @@ vi.mock('@/lib/constants', () => ({
   generateBotCode: (name: string) => name.toUpperCase().replace(/\s+/g, '-').slice(0, 10),
   CATEGORY_FLOW_MAP: { salon: 'appointment', restaurant: 'ordering', shop: 'ordering' },
   TRIAL_DAYS: 30,
+  getPayoutLimit: () => 500_000,
 }));
 
 vi.mock('@/lib/email/client', () => ({

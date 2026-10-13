@@ -279,6 +279,7 @@ vi.mock('@/lib/constants', () => ({
   generateSlug: () => 'test-slug',
   generateBotCode: () => 'TESTCODE',
   CATEGORY_FLOW_MAP: {},
+  getPayoutLimit: () => 500_000,
 }));
 
 vi.mock('@/lib/email/client', () => ({
