@@ -254,6 +254,11 @@ export default function PayoutsPage() {
 
   // Confirm and create payout account
   async function handleConfirm() {
+    const pw = setupPassword;
+    if (!pw) {
+      setError('Please enter your password to confirm');
+      return;
+    }
     setStep('creating');
     setError('');
     const selectedBank = banks.find(b => b.code === bankCode);
@@ -268,6 +273,7 @@ export default function PayoutsPage() {
           bank_name: selectedBank?.name || '',
           account_number: accountNumber,
           account_name: resolvedName,
+          password: pw,
         }),
       });
       const data = await res.json();
@@ -276,6 +282,7 @@ export default function PayoutsPage() {
         setStep('confirming');
         return;
       }
+      setSetupPassword('');
       setExisting({
         id: data.payout_account_id,
         gateway,
@@ -283,8 +290,8 @@ export default function PayoutsPage() {
         stripe_account_id: null,
         bank_name: selectedBank?.name || '',
         account_number: accountNumber,
-        account_name: resolvedName,
-        verified_at: new Date().toISOString(),
+        account_name: data.account_name || resolvedName,
+        verified_at: data.verified ? new Date().toISOString() : null,
       });
       setPageView('connected');
     } catch {
@@ -344,6 +351,7 @@ export default function PayoutsPage() {
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
   const [changePassword, setChangePassword] = useState('');
   const [changingAccount, setChangingAccount] = useState(false);
+  const [setupPassword, setSetupPassword] = useState('');
 
   async function handleChangeAccount() {
     setShowChangeConfirm(true);
@@ -354,52 +362,16 @@ export default function PayoutsPage() {
       setError('Please enter your password to confirm');
       return;
     }
-    setChangingAccount(true);
-    setError('');
-
-    try {
-      // Verify password
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user?.email) { setError('Authentication error'); return; }
-
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email: user.email,
-        password: changePassword,
-      });
-
-      if (authError) {
-        setError('Incorrect password. Please try again.');
-        return;
-      }
-
-      // Send notification email about the change
-      try {
-        await fetch('/api/email/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: user.email,
-            subject: `⚠️ Payout account change requested — ${business.name}`,
-            html: `<p>Someone requested to change the payout account for <strong>${business.name}</strong>.</p><p>If this wasn't you, please contact support immediately at <a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/support">waaiio.com/dashboard/support</a>.</p><p>Time: ${new Date().toLocaleString()}</p>`,
-          }),
-        });
-      } catch {}
-
-      // Proceed with change
-      setExisting(null);
-      setBankCode('');
-      setAccountNumber('');
-      setResolvedName('');
-      setStep('idle');
-      setShowChangeConfirm(false);
-      setChangePassword('');
-      setPageView('setup');
-    } catch {
-      setError('Something went wrong. Try again.');
-    } finally {
-      setChangingAccount(false);
-    }
+    // Store password for the setup API call (server will verify it)
+    setSetupPassword(changePassword);
+    setExisting(null);
+    setBankCode('');
+    setAccountNumber('');
+    setResolvedName('');
+    setStep('idle');
+    setShowChangeConfirm(false);
+    setChangePassword('');
+    setPageView('setup');
   }
 
   // Loading state
@@ -734,31 +706,21 @@ export default function PayoutsPage() {
                   onClick={async () => {
                     if (!changePassword) { setError('Enter your password'); return; }
                     setChangingAccount(true);
+                    setError('');
                     try {
-                      const supabase = createClient();
-                      const { data: { user } } = await supabase.auth.getUser();
-                      if (!user?.email) { setError('Auth error'); return; }
-                      const { error: authErr } = await supabase.auth.signInWithPassword({ email: user.email, password: changePassword });
-                      if (authErr) { setError('Incorrect password'); return; }
-
-                      // Deactivate payout account
-                      await supabase.from('payout_accounts').update({ is_active: false, updated_at: new Date().toISOString() }).eq('business_id', business.id).eq('is_active', true);
-                      // Reset business payout mode
-                      await supabase.from('businesses').update({ payout_mode: 'platform_managed' }).eq('id', business.id);
-
-                      // Send notification
-                      try {
-                        await fetch('/api/email/send', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            to: user.email,
-                            subject: `⚠️ Payout account disconnected — ${business.name}`,
-                            html: `<p>The payout account for <strong>${business.name}</strong> has been disconnected.</p><p>Payments will be held until a new account is connected.</p><p>If this wasn't you, contact support immediately.</p>`,
-                          }),
-                        });
-                      } catch {}
-
+                      const res = await fetch('/api/payouts/disconnect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          business_id: business.id,
+                          password: changePassword,
+                        }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        setError(data.error || 'Failed to disconnect');
+                        return;
+                      }
                       setExisting(null);
                       setShowDisconnectConfirm(false);
                       setChangePassword('');
@@ -1067,6 +1029,21 @@ export default function PayoutsPage() {
               </div>
             )}
 
+            {/* Password for setup */}
+            {(step === 'idle' || step === 'confirming') && !setupPassword && (
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700">Confirm your password</label>
+                <input
+                  type="password"
+                  value={setupPassword}
+                  onChange={(e) => setSetupPassword(e.target.value)}
+                  placeholder="Enter your account password"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                />
+                <p className="mt-1 text-xs text-gray-400">Required to verify your identity before connecting a payout account</p>
+              </div>
+            )}
+
             {/* Confirm Name */}
             {step === 'confirming' && (
               <div className="mt-4">
@@ -1078,7 +1055,8 @@ export default function PayoutsPage() {
                 <div className="mt-3 flex gap-3">
                   <button
                     onClick={handleConfirm}
-                    className="flex-1 rounded-xl bg-brand px-6 py-3 text-sm font-bold text-white transition hover:bg-brand-600"
+                    disabled={!setupPassword}
+                    className="flex-1 rounded-xl bg-brand px-6 py-3 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                   >
                     Yes, set up payouts
                   </button>
