@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
 import { decryptToken } from '@/lib/encryption';
@@ -13,7 +14,9 @@ import { decryptToken } from '@/lib/encryption';
  * 1. Signature verification using the business's stored secret (Paystack HMAC)
  *    or dedicated webhook_secret_hash (Flutterwave verif-hash).
  * 2. Payment must belong to the URL's businessId (foreign references are ignored).
- * 3. Server-side provider verification before marking success (amount, currency, reference).
+ * 3. Server-side provider verification before ANY state change.
+ * 4. Transient verify failures (network, 5xx, 429) → 503 so the provider retries.
+ * 5. Dedup event recorded only after successful verification.
  */
 export async function POST(
   request: NextRequest,
@@ -67,8 +70,6 @@ export async function POST(
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
     } else if (creds.gateway === 'flutterwave') {
-      // (c) Flutterwave: compare verif-hash against a dedicated webhook secret hash,
-      //     never the secret key. If none is configured, reject.
       if (!creds.webhook_secret_hash) {
         return NextResponse.json({ error: 'Flutterwave webhook secret not configured' }, { status: 400 });
       }
@@ -87,7 +88,6 @@ export async function POST(
       } catch {
         return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
       }
-      // Flutterwave provider verification also needs the secret key
       if (!decryptedKey) {
         return NextResponse.json({ error: 'Invalid BYO credentials' }, { status: 400 });
       }
@@ -108,7 +108,7 @@ export async function POST(
       return NextResponse.json({ received: true });
     }
 
-    // (a) Look up payment by gateway_reference AND business_id — ignore foreign references
+    // Look up payment by gateway_reference AND business_id — ignore foreign references
     const { data: payment } = await supabase
       .from('payments')
       .select('id, status, amount, currency')
@@ -117,11 +117,24 @@ export async function POST(
       .maybeSingle();
 
     if (!payment) {
-      // No matching payment for this business — silently acknowledge
       return NextResponse.json({ received: true });
     }
 
-    // Idempotency: atomic dedup via ON CONFLICT
+    // ── Server-side provider verification BEFORE any state change ──
+    // Both success and failure events are verified — a forged failure must not
+    // corrupt a pending payment.
+    const verifyResult = await verifyWithProviderServerSide(
+      creds.gateway, data, reference, payment, decryptedKey!,
+    );
+
+    // Transient failures → 503 so the provider retries. Do NOT consume the
+    // event ID or touch the payment.
+    if (verifyResult.transient) {
+      return NextResponse.json({ error: 'Provider verification temporarily unavailable' }, { status: 503 });
+    }
+
+    // ── Dedup: insert event ONLY after verification succeeds or returns
+    //    a definitive result. Transient failures exit above without consuming. ──
     const eventId = `byo:${businessId}:${event}:${reference}`;
     const { data: inserted } = await supabase
       .from('processed_webhook_events')
@@ -137,13 +150,12 @@ export async function POST(
 
     // Paystack uses 'charge.success', Flutterwave uses 'charge.completed'
     if (event === 'charge.success' || event === 'charge.completed') {
-      // (b) Server-side provider verification before marking success
-      const verifyResult = await verifyWithProviderServerSide(
-        creds.gateway, data, reference, payment, decryptedKey!,
-      );
-
       if (!verifyResult.success) {
-        // Provider verification failed — mark payment as failed (only if still pending)
+        // Definitive failure — mark payment as failed (only if still pending)
+        Sentry.captureMessage('BYO webhook: provider verification failed (definitive)', {
+          level: 'warning',
+          extra: { businessId, reference, reason: verifyResult.reason, paymentId: payment.id },
+        });
         await supabase
           .from('payments')
           .update({ status: 'failed', gateway_status: verifyResult.reason })
@@ -155,19 +167,44 @@ export async function POST(
       // Provider verified — delegate to shared handler
       await processPaystackChargeSuccess(data, reference, supabase);
     } else if (event === 'charge.failed') {
+      if (verifyResult.providerStatus === 'success') {
+        // Provider says success but webhook says failed — do NOT mark as failed.
+        // The success webhook will handle it.
+        return NextResponse.json({ received: true });
+      }
+      // Provider confirms non-success (failed, abandoned, etc.) — safe to proceed
       await processPaystackChargeFailed(data, reference, supabase);
     }
 
     return NextResponse.json({ received: true });
-  } catch {
-    return NextResponse.json({ received: true }, { status: 200 });
+  } catch (err) {
+    // Unhandled errors → 500 so providers retry. Capture to Sentry.
+    Sentry.captureException(err, { tags: { component: 'byo-webhook' } });
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
+}
+
+/** Verification outcome with transient/definitive distinction. */
+interface VerifyResult {
+  success: boolean;
+  transient?: boolean;
+  reason?: string;
+  /** The provider's reported transaction status (for charge.failed cross-check). */
+  providerStatus?: string;
 }
 
 /**
  * Server-side verification with the payment provider.
- * Calls the provider's verify endpoint using the business's decrypted key
- * and validates status, amount, currency, and reference.
+ *
+ * Returns:
+ * - `{ success: true }` when provider confirms paid + amounts match
+ * - `{ success: false, transient: true }` for network errors, timeouts, 5xx, 429
+ *   (caller should return 503 so the provider retries)
+ * - `{ success: false, transient: false }` for definitive mismatches or non-success
+ *   (caller should mark payment as failed)
+ *
+ * Amounts are compared in integer minor units (kobo/cents) using Math.round
+ * to avoid floating-point drift.
  */
 async function verifyWithProviderServerSide(
   gateway: string,
@@ -175,71 +212,103 @@ async function verifyWithProviderServerSide(
   reference: string,
   payment: { id: string; amount: number; currency: string },
   decryptedKey: string,
-): Promise<{ success: boolean; reason?: string }> {
+): Promise<VerifyResult> {
   try {
     if (gateway === 'paystack') {
       const response = await fetch(
         `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
         { headers: { Authorization: `Bearer ${decryptedKey}` }, signal: AbortSignal.timeout(15000) },
       );
+
+      // Transient HTTP errors → provider should retry
       if (!response.ok) {
-        return { success: false, reason: `paystack_verify_http_${response.status}` };
+        if (response.status === 429 || response.status >= 500) {
+          return { success: false, transient: true, reason: `paystack_verify_http_${response.status}` };
+        }
+        return { success: false, transient: false, reason: `paystack_verify_http_${response.status}` };
       }
+
       const result = await response.json();
-      if (result.data?.status !== 'success') {
-        return { success: false, reason: `paystack_verify_status_${result.data?.status || 'unknown'}` };
+      const providerStatus = (result.data?.status as string) || 'unknown';
+
+      if (providerStatus !== 'success') {
+        return { success: false, transient: false, reason: `paystack_verify_status_${providerStatus}`, providerStatus };
       }
-      // Paystack amounts are in kobo
-      const verifiedAmountKobo = result.data.amount as number;
-      const expectedAmountKobo = payment.amount * 100;
-      if (verifiedAmountKobo !== expectedAmountKobo) {
-        return { success: false, reason: 'amount_mismatch' };
+
+      // Compare in integer minor units (kobo) to avoid floating-point drift
+      const verifiedKobo = result.data.amount as number;
+      const expectedKobo = Math.round(payment.amount * 100);
+      if (verifiedKobo !== expectedKobo) {
+        return { success: false, transient: false, reason: 'amount_mismatch' };
       }
+
       const verifiedCurrency = ((result.data.currency as string) || '').toUpperCase();
       const expectedCurrency = (payment.currency || '').toUpperCase();
       if (verifiedCurrency !== expectedCurrency) {
-        return { success: false, reason: 'currency_mismatch' };
+        return { success: false, transient: false, reason: 'currency_mismatch' };
       }
+
       if (result.data.reference !== reference) {
-        return { success: false, reason: 'reference_mismatch' };
+        return { success: false, transient: false, reason: 'reference_mismatch' };
       }
-      return { success: true };
+
+      return { success: true, providerStatus: 'success' };
     }
 
     if (gateway === 'flutterwave') {
-      // Flutterwave: verify by transaction ID from webhook data
       const txId = webhookData.id as number;
       if (!txId) {
-        return { success: false, reason: 'missing_transaction_id' };
+        return { success: false, transient: false, reason: 'missing_transaction_id' };
       }
+
       const response = await fetch(
         `https://api.flutterwave.com/v3/transactions/${txId}/verify`,
         { headers: { Authorization: `Bearer ${decryptedKey}` }, signal: AbortSignal.timeout(15000) },
       );
+
       if (!response.ok) {
-        return { success: false, reason: `flutterwave_verify_http_${response.status}` };
+        if (response.status === 429 || response.status >= 500) {
+          return { success: false, transient: true, reason: `flutterwave_verify_http_${response.status}` };
+        }
+        return { success: false, transient: false, reason: `flutterwave_verify_http_${response.status}` };
       }
+
       const result = await response.json();
-      if (result.data?.status !== 'successful') {
-        return { success: false, reason: `flutterwave_verify_status_${result.data?.status || 'unknown'}` };
+      const providerStatus = (result.data?.status as string) || 'unknown';
+
+      if (providerStatus !== 'successful') {
+        return { success: false, transient: false, reason: `flutterwave_verify_status_${providerStatus}`, providerStatus };
       }
-      // Flutterwave amounts are in major currency units
-      if (result.data.amount !== payment.amount) {
-        return { success: false, reason: 'amount_mismatch' };
+
+      // Compare in integer minor units to avoid floating-point drift
+      const verifiedMinor = Math.round((result.data.amount as number) * 100);
+      const expectedMinor = Math.round(payment.amount * 100);
+      if (verifiedMinor !== expectedMinor) {
+        return { success: false, transient: false, reason: 'amount_mismatch' };
       }
+
       const verifiedCurrency = ((result.data.currency as string) || '').toUpperCase();
       const expectedCurrency = (payment.currency || '').toUpperCase();
       if (verifiedCurrency !== expectedCurrency) {
-        return { success: false, reason: 'currency_mismatch' };
+        return { success: false, transient: false, reason: 'currency_mismatch' };
       }
+
       if (result.data.tx_ref !== reference) {
-        return { success: false, reason: 'reference_mismatch' };
+        return { success: false, transient: false, reason: 'reference_mismatch' };
       }
-      return { success: true };
+
+      return { success: true, providerStatus: 'successful' };
     }
 
-    return { success: false, reason: 'unsupported_gateway' };
-  } catch {
-    return { success: false, reason: 'verify_network_error' };
+    return { success: false, transient: false, reason: 'unsupported_gateway' };
+  } catch (err) {
+    // Network errors, timeouts → transient (provider should retry)
+    const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
+    const isNetwork = err instanceof TypeError && (err.message.includes('fetch') || err.message.includes('network'));
+    if (isTimeout || isNetwork || (err instanceof Error && err.name === 'AbortError')) {
+      return { success: false, transient: true, reason: 'verify_network_error' };
+    }
+    // Unknown errors are also transient — fail safe
+    return { success: false, transient: true, reason: 'verify_network_error' };
   }
 }
