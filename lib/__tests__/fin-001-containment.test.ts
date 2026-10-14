@@ -318,6 +318,7 @@ describe('FIN-001: Square Connect feature gate', () => {
 
   it('proceeds past gate when enabled', async () => {
     process.env.ENABLE_SQUARE_CONNECT = 'true';
+    process.env.SQUARE_OAUTH_APP_ID = 'sq_test_app_id';
     const { POST } = await loadSquareConnect();
     const req = makePostRequest('/api/payouts/square-connect', { business_id: 'b1' });
     const res = await POST(req);

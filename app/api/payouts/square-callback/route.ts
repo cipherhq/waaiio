@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
+import { consumeState } from '@/lib/oauth-connect-state';
+import { encryptToken } from '@/lib/encryption';
+import { sendEmail } from '@/lib/email/client';
 
 const squareAppId = process.env.SQUARE_OAUTH_APP_ID || process.env.SQUARE_APPLICATION_ID || '';
 const squareAppSecret = process.env.SQUARE_OAUTH_APP_SECRET || process.env.SQUARE_APPLICATION_SECRET || '';
@@ -15,35 +19,61 @@ function getSquareBaseUrl(): string {
 }
 
 export async function GET(request: NextRequest) {
-  // FIN-001: Square Connect feature gate — must be explicitly enabled
   if (process.env.ENABLE_SQUARE_CONNECT !== 'true') {
     return NextResponse.json({ error: 'Square Connect is currently disabled' }, { status: 503 });
   }
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
-  const state = searchParams.get('state');
+  const stateRaw = searchParams.get('state');
   const error = searchParams.get('error');
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
   if (error) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=square_denied`);
   }
 
-  if (!code || !state) {
+  if (!code || !stateRaw) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=missing_params`);
   }
 
-  // Extract business_id from state (format: "business_id:random")
-  const businessId = state.split(':')[0];
-  if (!businessId) {
+  // Require authenticated user
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=not_authenticated`);
+  }
+
+  const serviceClient = createServiceClient();
+
+  // Consume state atomically
+  const stateResult = await consumeState(serviceClient, {
+    stateRaw,
+    userId: user.id,
+    provider: 'square',
+  });
+  if (!stateResult.ok || !stateResult.businessId) {
+    logger.warn('[SQUARE-CALLBACK] State validation failed:', stateResult.error);
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=invalid_state`);
   }
 
-  const supabase = await createClient();
+  const businessId = stateResult.businessId;
+
+  // Re-check ownership
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('id, name, owner_id')
+    .eq('id', businessId)
+    .eq('owner_id', user.id)
+    .single();
+
+  if (!biz) {
+    logger.warn('[SQUARE-CALLBACK] Ownership re-check failed for business', businessId);
+    return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=not_authorized`);
+  }
 
   try {
-    // Exchange authorization code for access token
+    // Exchange authorization code for access token (server-side)
     const tokenRes = await fetch(`${getSquareBaseUrl()}/oauth2/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -65,13 +95,12 @@ export async function GET(request: NextRequest) {
     const merchantId = tokenData.merchant_id as string;
 
     // Verify the merchant account
-    const merchantRes = await fetch(`${getSquareBaseUrl().replace('connect.', 'connect.')}/v2/merchants/${merchantId}`, {
+    const merchantRes = await fetch(`${getSquareBaseUrl()}/v2/merchants/${merchantId}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const merchantData = await merchantRes.json();
-    const merchant = merchantData.merchant;
 
-    if (!merchant) {
+    if (!merchantData.merchant) {
       logger.withContext({
         op: 'square-callback.merchant-verify',
         businessId,
@@ -80,31 +109,49 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=not_verified`);
     }
 
-    // Deactivate existing payout accounts
-    await supabase
-      .from('payout_accounts')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('business_id', businessId)
-      .eq('is_active', true);
+    // Encrypt the access token before storage
+    const encryptedToken = encryptToken(accessToken);
 
-    // Save the connected Square account
-    await supabase.from('payout_accounts').insert({
-      business_id: businessId,
-      gateway: 'square',
-      square_merchant_id: merchantId,
-      square_access_token: accessToken,
-      platform_percentage: 2.5,
-      is_active: true,
-      verified_at: new Date().toISOString(),
+    // Save via atomic RPC (service_role)
+    const { data: newAccountId, error: rpcError } = await serviceClient.rpc('swap_payout_account', {
+      p_business_id: businessId,
+      p_gateway: 'square',
+      p_square_merchant_id: merchantId,
+      p_square_access_token: encryptedToken,
+      p_verified_at: new Date().toISOString(),
     });
 
-    // Update business payout mode to direct_split
-    await supabase
+    if (rpcError) {
+      logger.withContext({ op: 'square-callback.rpc', ...safeLogErrorContext(rpcError) }).error('[SQUARE-CALLBACK] RPC error');
+      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=save_failed`);
+    }
+
+    // Update business payout mode
+    const { error: modeError } = await serviceClient
       .from('businesses')
       .update({ payout_mode: 'direct_split' })
       .eq('id', businessId);
+    if (modeError) {
+      const Sentry = await import('@sentry/nextjs');
+      Sentry.captureException(modeError, { tags: { component: 'square-callback', operation: 'payout_mode_update' } });
+      logger.error('[SQUARE-CALLBACK] payout_mode update failed:', modeError);
+      return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=mode_update_failed`);
+    }
 
-    logger.debug('[SQUARE-CALLBACK] Connected merchant:', merchantId, 'for business:', businessId);
+    // Owner notification email (non-blocking)
+    try {
+      const { data: ownerProfile } = await serviceClient.from('profiles').select('email').eq('id', biz.owner_id).single();
+      if (ownerProfile?.email) {
+        await sendEmail({
+          to: ownerProfile.email,
+          subject: `Square payout account connected — ${biz.name}`,
+          html: `<p>A Square payout account has been connected to <strong>${biz.name}</strong>.</p><p>If you did not do this, please contact support immediately.</p>`,
+        });
+      }
+    } catch (emailErr) {
+      logger.warn('[SQUARE-CALLBACK] Owner notification email failed (non-blocking):', emailErr);
+    }
+
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?connected=true`);
   } catch (err) {
     logger.withContext({

@@ -159,7 +159,7 @@ describe('Provider adapters', () => {
 
   it('15. Square merchant token → exact merchant credential', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ payment: { status: 'COMPLETED', id: 'sq_pay', amount_money: { amount: 5000, currency: 'USD' }, source_type: 'CARD' } }) });
-    const supabase = buildSupabase(null, { id: 'payout-sq-1', business_id: 'biz-sq', access_token: 'sq_merchant_encrypted', merchant_id: 'merch_1' });
+    const supabase = buildSupabase(null, { id: 'payout-sq-1', business_id: 'biz-sq', square_access_token: 'sq_merchant_encrypted', square_merchant_id: 'merch_1' });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(supabase, {
       provider: 'square', gatewayReference: 'sq_ref', expectedAmount: 50, expectedCurrency: 'USD',

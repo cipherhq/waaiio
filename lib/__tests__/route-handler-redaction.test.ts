@@ -376,18 +376,34 @@ describe('Square-callback route handler', () => {
   }
 
   function setupSquareCallbackMocks() {
-    // Mock supabase client
+    const mockChain = () => {
+      const chain: any = {};
+      for (const m of ['select', 'eq', 'is', 'gt', 'update', 'insert', 'single', 'maybeSingle']) {
+        chain[m] = vi.fn().mockReturnValue(chain);
+      }
+      chain.single = vi.fn().mockResolvedValue({ data: { id: 'biz-456', name: 'Test', owner_id: 'u1' }, error: null });
+      return chain;
+    };
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockResolvedValue({
-        from: vi.fn().mockReturnValue({
-          update: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockResolvedValue({ data: null, error: null }),
-            }),
-          }),
-          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
-        }),
+        auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'u1' } } }) },
+        from: vi.fn().mockReturnValue(mockChain()),
       }),
+    }));
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue(mockChain()),
+        rpc: vi.fn().mockResolvedValue({ data: 'new-id', error: null }),
+      }),
+    }));
+    vi.doMock('@/lib/oauth-connect-state', () => ({
+      consumeState: vi.fn().mockResolvedValue({ ok: true, businessId: 'biz-456' }),
+    }));
+    vi.doMock('@/lib/encryption', () => ({
+      encryptToken: vi.fn().mockReturnValue('encrypted_token'),
+    }));
+    vi.doMock('@/lib/email/client', () => ({
+      sendEmail: vi.fn().mockResolvedValue(undefined),
     }));
   }
 
