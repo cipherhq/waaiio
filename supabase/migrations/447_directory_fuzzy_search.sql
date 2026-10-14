@@ -44,7 +44,7 @@ BEGIN
       similarity(b.name, p_query),
       similarity(b.category::text, p_query) * 0.8,
       similarity(COALESCE(b.city, ''), p_query) * 0.7
-    ) AS match_score
+    )::real AS match_score
   FROM public.businesses b
   WHERE b.status = 'active'
     AND b.bot_code IS NOT NULL

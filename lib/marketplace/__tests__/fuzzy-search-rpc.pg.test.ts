@@ -126,38 +126,39 @@ describeDb('Migration 447: search_businesses_fuzzy', () => {
       throw new Error(`Migration 447 self-check failed: ${result}`);
     }
 
-    // ── Seed test data ──
-    sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
+    // ── Seed test data (assert each INSERT succeeds) ──
+    const seedUser = sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
+    expect(seedUser).not.toContain('ERROR');
 
-    // Active, eligible business in Lagos
-    sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, state, country_code, status, bot_code, discovery_enabled, messaging_suspended)
+    const seedActive = sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, state, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_ACTIVE}', '${OWNER_ID}', 'Fuzzy Salon Lagos', 'fuzzy-salon-447', 'salon', 'Lagos', 'Lagos', 'NG', 'active', 'FZSL', true, false)
          ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy Salon Lagos', status = 'active', bot_code = 'FZSL', discovery_enabled = true, messaging_suspended = false;`);
+    expect(seedActive).not.toContain('ERROR');
 
-    // Inactive
-    sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
+    const seedInactive = sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_INACTIVE}', '${OWNER_ID}', 'Fuzzy Barber Inactive', 'fuzzy-barber-447', 'barber', 'Lagos', 'NG', 'pending', 'FZBI', true, false)
          ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy Barber Inactive', status = 'pending';`);
+    expect(seedInactive).not.toContain('ERROR');
 
-    // No bot_code
-    sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
+    const seedNoBot = sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_NO_BOT}', '${OWNER_ID}', 'Fuzzy NoBotCode', 'fuzzy-nobot-447', 'salon', 'Lagos', 'NG', 'active', NULL, true, false)
          ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy NoBotCode', bot_code = NULL;`);
+    expect(seedNoBot).not.toContain('ERROR');
 
-    // Opted out
-    sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
+    const seedOptOut = sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_OPT_OUT}', '${OWNER_ID}', 'Fuzzy OptOut Salon', 'fuzzy-optout-447', 'salon', 'Lagos', 'NG', 'active', 'FZOO', false, false)
          ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy OptOut Salon', discovery_enabled = false;`);
+    expect(seedOptOut).not.toContain('ERROR');
 
-    // Hidden (passed via p_hidden_ids)
-    sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
+    const seedHidden = sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_HIDDEN}', '${OWNER_ID}', 'Fuzzy Hidden Biz', 'fuzzy-hidden-447', 'salon', 'Lagos', 'NG', 'active', 'FZHD', true, false)
          ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy Hidden Biz', status = 'active', discovery_enabled = true;`);
+    expect(seedHidden).not.toContain('ERROR');
 
-    // Active business in Abuja (different city for location scoping test)
-    sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, state, country_code, status, bot_code, discovery_enabled, messaging_suspended)
+    const seedAbuja = sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, state, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_ABUJA}', '${OWNER_ID}', 'Fuzzy Salon Abuja', 'fuzzy-salon-abuja-447', 'salon', 'Abuja', 'FCT', 'NG', 'active', 'FZSA', true, false)
          ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy Salon Abuja', city = 'Abuja', status = 'active', bot_code = 'FZSA', discovery_enabled = true;`);
+    expect(seedAbuja).not.toContain('ERROR');
   });
 
   afterAll(() => {
@@ -201,6 +202,20 @@ describeDb('Migration 447: search_businesses_fuzzy', () => {
     const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy Salon Lagos', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
     expect(result).not.toContain('ERROR');
     expect(result).toContain('Fuzzy Salon Lagos');
+  });
+
+  it('returns match_score as a numeric value (proves return structure)', () => {
+    const result = sql(`SELECT name, match_score FROM search_businesses_fuzzy('Fuzzy Salon Lagos', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
+    expect(result).not.toContain('ERROR');
+    expect(result).toContain('Fuzzy Salon Lagos');
+    // match_score should be a number between 0 and 1 — psql outputs it as e.g. "0.65"
+    const lines = result.split('\n');
+    const scoreLine = lines.find(l => l.includes('Fuzzy Salon Lagos'));
+    expect(scoreLine).toBeDefined();
+    // psql -A uses | as delimiter, so: "Fuzzy Salon Lagos|0.65..."
+    const score = parseFloat(scoreLine!.split('|').pop()!);
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThanOrEqual(1);
   });
 
   it('excludes inactive businesses', () => {
