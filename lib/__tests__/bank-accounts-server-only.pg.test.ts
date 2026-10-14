@@ -152,9 +152,13 @@ describeDb('Migration 448: business_bank_accounts server-only', () => {
       resolve(process.cwd(), 'supabase/migrations/448_business_bank_accounts_server_only.sql'),
       'utf-8',
     );
-    const result = sql(migrationSql);
+    // Apply with 2>&1 so RAISE NOTICE (stderr) is captured alongside stdout.
+    // execSync throws on non-zero exit, so reaching the assertions proves exit code 0.
+    const result = execSync(
+      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A 2>&1`,
+      { encoding: 'utf-8', timeout: 15000, input: migrationSql },
+    ).trim();
     expect(result).not.toMatch(/M448 FAILED/);
-    // Self-check PASSED notice should be present
     expect(result).toContain('M448 self-check PASSED');
   });
 
