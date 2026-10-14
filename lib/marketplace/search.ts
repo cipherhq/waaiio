@@ -343,6 +343,13 @@ export async function searchMarketplace(
     }
 
     if (!businesses || businesses.length === 0) {
+      // Zero DB rows — try fuzzy "did you mean?" before returning empty
+      if (safeQuery) {
+        const suggestions = await searchFuzzy(supabase, safeQuery, effectiveCountry || null, criteria.excludeIds || [], resolvedCity, null);
+        if (suggestions.length > 0) {
+          return { results: [], ok: true, suggestions, hasMore: false };
+        }
+      }
       return { results: [], ok: true };
     }
 

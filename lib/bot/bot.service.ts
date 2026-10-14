@@ -51,7 +51,7 @@ import { ConversationOrchestrator } from './conversation-orchestrator';
 import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
-import { searchMarketplace, formatMarketplaceResults } from '@/lib/marketplace/search';
+import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -3063,6 +3063,7 @@ export class BotService {
 
           // Handle marketplace search (no business context needed)
           if (understanding.recommendedAction === 'search_marketplace') {
+            const hiddenIds = await loadDirectoryHiddenIds(this.supabase);
             const searchResult = await searchMarketplace(this.supabase, {
               category: understanding.entities.category,
               query:
@@ -3075,6 +3076,7 @@ export class BotService {
               partySize: understanding.entities.partySize,
               budgetMax: understanding.entities.budgetMax,
               country: undefined, // country_code not on BusinessRecord at this point
+              excludeIds: hiddenIds,
             });
             if (!searchResult.ok) {
               await this.sendText(from, 'Business search is temporarily unavailable. Please try again shortly.');
