@@ -1557,6 +1557,7 @@ jobs:
           PGPASSWORD: postgres
           PGDATABASE: waaiio_test
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+          REQUIRE_PG_TESTS: "true"
         run: |
           set -e
           dropdb --maintenance-db=waaiio_test --if-exists waaiio_m443_test
