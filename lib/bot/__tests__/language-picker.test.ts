@@ -1049,4 +1049,97 @@ describe('Language picker — picker trigger CAS conflict', () => {
     // (greeting, menu, or flow output), so the message is not lost
     expect(msgs.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('CAS conflict because another message set the language — picker not shown, continues in stored language', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+
+    // Simulate: user sent "I want to order food" but a concurrent message
+    // already set the language to 'pcm' on the session (CAS version bumped).
+    // The reloaded session has preferred_language already set.
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [
+        { capability: 'ordering', is_enabled: true, sort_order: 0 },
+      ],
+      enabledLanguages: ['en', 'pcm'],
+      customerProfileLanguage: null,
+      rpcTracker,
+    });
+
+    // Override rpc: first CAS fails (concurrent write set the language),
+    // then reload returns session with preferred_language already set.
+    const originalRpc = supabase.rpc;
+    let casCallCount = 0;
+    supabase.rpc = vi.fn((fn: string, args?: Record<string, unknown>) => {
+      rpcTracker.push({ fn, args: args || {} });
+      if (fn === 'get_bot_context') {
+        return originalRpc(fn, args);
+      }
+      if (fn === 'update_session_cas') {
+        casCallCount++;
+        if (casCallCount === 1) {
+          // First CAS = storing _pending_first_message → conflict
+          // (another message already wrote to the session)
+          return Promise.resolve({
+            data: { success: false, reason: 'version_conflict' },
+            error: null,
+          });
+        }
+        return Promise.resolve({
+          data: { success: true, version: ((args as any)?.p_expected_version || 0) + 1 },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    // Override session reload: returns a session where preferred_language
+    // was already set by the concurrent message.
+    const originalFrom = supabase.from;
+    supabase.from = vi.fn((table: string) => {
+      if (table === 'bot_sessions') {
+        const chain = originalFrom(table);
+        // Override select→eq→single to return session with language set
+        const origSingle = chain.single;
+        chain.single = vi.fn().mockImplementation(() => {
+          return Promise.resolve({
+            data: {
+              id: 'session-cas-lang',
+              whatsapp_number: PHONE,
+              business_id: BIZ_ID,
+              current_step: 'idle',
+              session_data: { preferred_language: 'pcm' },
+              status: 'active',
+              version: 2, // bumped by concurrent write
+              is_active: true,
+            },
+            error: null,
+          });
+        });
+        return chain;
+      }
+      return originalFrom(table);
+    });
+
+    const bot = new BotService(
+      supabase,
+      sender,
+      createMockStandalone(),
+      createMockIntelligence(),
+    );
+    await bot.handleMessage(PHONE, 'I want to order food', 'text', undefined, BIZ_ID);
+
+    const msgs = sender.getMessages();
+
+    // Picker must NOT be shown (CAS failed, so sendLanguagePicker was never called)
+    const pickerList = msgs.find(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    expect(pickerList).toBeUndefined();
+
+    // Bot should send at least one response (normal handling continues)
+    expect(msgs.length).toBeGreaterThanOrEqual(1);
+  });
 });
