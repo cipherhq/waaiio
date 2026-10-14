@@ -1143,3 +1143,84 @@ describe('Language picker — picker trigger CAS conflict', () => {
     expect(msgs.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// 14. Greeting key translation overrides — resolver path
+// ═══════════════════════════════════════════════════════
+
+describe('Greeting key overrides — translation resolver', () => {
+  it("business A's greeting.welcome_default override renders through fillFlowCopy", async () => {
+    const { fillFlowCopy, getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+    const { runWithTranslationOverrides } = await import('@/lib/bot/translations');
+
+    const bizOverrides = new Map([
+      ['en.greeting.welcome_default', 'Howdy partner! What can we do for ya?'],
+    ]);
+    const platOverrides = new Map<string, string>();
+
+    const result = runWithTranslationOverrides({ business: bizOverrides, platform: platOverrides }, () =>
+      getFlowCopy('en', 'greeting.welcome_default')
+    );
+    expect(result).toBe('Howdy partner! What can we do for ya?');
+  });
+
+  it("business B (no overrides) gets the platform default", async () => {
+    const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+    const { runWithTranslationOverrides } = await import('@/lib/bot/translations');
+
+    // No business overrides
+    const bizOverrides = new Map<string, string>();
+    const platOverrides = new Map<string, string>();
+
+    const result = runWithTranslationOverrides({ business: bizOverrides, platform: platOverrides }, () =>
+      getFlowCopy('en', 'greeting.welcome_default')
+    );
+    // Platform default from FLOW_COPY.en
+    expect(result).toBe('Welcome! How can I help you today?');
+  });
+
+  it('welcome_back_named with {name} renders the customer name', async () => {
+    const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+    const { runWithTranslationOverrides } = await import('@/lib/bot/translations');
+
+    const bizOverrides = new Map([
+      ['en.greeting.welcome_back_named', 'Hey {name}, glad you came back!'],
+    ]);
+    const platOverrides = new Map<string, string>();
+
+    const result = runWithTranslationOverrides({ business: bizOverrides, platform: platOverrides }, () =>
+      fillFlowCopy('en', 'greeting.welcome_back_named', { name: 'Aisha' })
+    );
+    expect(result).toBe('Hey Aisha, glad you came back!');
+  });
+
+  it('greeting.powered_by override is NOT applied (platform-only)', async () => {
+    const { isBusinessEditableKey, PLATFORM_ONLY_KEYS } = await import('@/lib/bot/translations');
+
+    expect(isBusinessEditableKey('greeting.powered_by')).toBe(false);
+    expect(PLATFORM_ONLY_KEYS).toContain('greeting.powered_by');
+  });
+
+  it('override missing {name} is rejected by PLACEHOLDER_SCHEMA', async () => {
+    const { PLACEHOLDER_SCHEMA } = await import('@/lib/bot/flows/flow-localization');
+    const required = PLACEHOLDER_SCHEMA.get('greeting.welcome_back_named');
+    expect(required).toEqual(['name']);
+    // A value without {name} would fail the API placeholder validation
+    const testValue = 'Welcome back friend!';
+    const found = [...testValue.matchAll(/\{(\w+)\}/g)].map((m: RegExpMatchArray) => m[1]);
+    for (const r of required!) {
+      expect(found).not.toContain(r); // confirms {name} is missing → would be rejected
+    }
+  });
+
+  it('with no override, platform default welcome_default is returned', async () => {
+    const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+    const { runWithTranslationOverrides } = await import('@/lib/bot/translations');
+
+    const result = runWithTranslationOverrides(
+      { business: new Map(), platform: new Map() },
+      () => getFlowCopy('en', 'greeting.welcome_default'),
+    );
+    expect(result).toBe('Welcome! How can I help you today?');
+  });
+});

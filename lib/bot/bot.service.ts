@@ -1448,10 +1448,10 @@ export class BotService {
         );
         if (!isOpen && !session) {
           // Outside business hours: send away message once, then continue the flow
-          await this.sendText(
-            from,
-            waConfig.away_message || 'We\'re currently outside business hours, but you can still browse, book, and order! 🕐',
-          );
+          const _awayOv = business ? await getOverrides(business.id) : emptyOverrides;
+          const { getFlowCopy: getFlowCopyAway } = await import('@/lib/bot/flows/flow-localization');
+          const awayText = waConfig.away_message || runWithTranslationOverrides(_awayOv, () => getFlowCopyAway('en', 'greeting.away'));
+          await this.sendText(from, awayText);
         } else if (isOpen && !session && waConfig.instant_reply_enabled && waConfig.instant_reply_message) {
           // P1-AUTO-1: During business hours, send instant acknowledgment on first contact
           await this.sendText(from, waConfig.instant_reply_message);
@@ -1787,36 +1787,42 @@ export class BotService {
 
       if (business && waConfig && tierInfo) {
         // Standalone bot greeting — use pre-fetched config (no extra queries)
-        let greeting: string;
-        const isCustomGreeting = waConfig.templates.greeting !== 'Welcome! How can I help you today?';
-        if (isCustomGreeting) {
-          // Custom greeting set by business owner — always use it
-          greeting = this.standaloneService.fillTemplate(waConfig.templates.greeting, {
-            restaurant_name: business.name,
-            business_name: business.name,
-          });
-        } else if (waConfig.alias) {
-          const catLabels = getCategoryLabels(business.category);
-          greeting = this.intelligence.getPersonaGreeting(waConfig.alias, business.name, catLabels.confirmationEmoji);
-        } else {
-          greeting = this.standaloneService.fillTemplate(waConfig.templates.greeting, {
-            restaurant_name: business.name,
-            business_name: business.name,
-          });
-        }
+        // All greeting keys render through the translation resolver (ALS overrides)
+        const _greetOv = await getOverrides(business.id);
+        const greeting: string = await runWithTranslationOverrides(_greetOv, async () => {
+          const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+          let g: string;
+          const isCustomGreeting = waConfig!.templates.greeting !== 'Welcome! How can I help you today?';
+          if (isCustomGreeting) {
+            // Custom greeting set by business owner — always use it
+            g = this.standaloneService.fillTemplate(waConfig!.templates.greeting, {
+              restaurant_name: business!.name,
+              business_name: business!.name,
+            });
+          } else if (waConfig!.alias) {
+            const catLabels = getCategoryLabels(business!.category);
+            g = this.intelligence.getPersonaGreeting(waConfig!.alias, business!.name, catLabels.confirmationEmoji);
+          } else {
+            // Default greeting — resolve through translation overrides
+            g = getFlowCopy('en', 'greeting.welcome_default');
+          }
 
-        if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by Waaiio_';
-        greeting += '\n\n_Type *cancel* anytime to exit._';
+          // Powered by and cancel hint — always from resolver
+          if (!tierInfo!.isWhitelabel) g += '\n\n' + getFlowCopy('en', 'greeting.powered_by');
+          g += '\n\n' + getFlowCopy('en', 'greeting.cancel_hint');
+          return g;
+        });
 
         // Store greeting in session for capability selection to merge into one message
         session.session_data._greeting = greeting;
 
         if (!tierInfo.allowed) {
+          const { getFlowCopy: getFlowCopyTier } = await import('@/lib/bot/flows/flow-localization');
           await this.messageSender.sendButtons({
             to: from,
             body: `Thank you for contacting ${business.name}! We're currently unavailable on WhatsApp. Please try again later.`,
             buttons: [
-              { id: 'cap_chat', title: 'Chat with Us' },
+              { id: 'cap_chat', title: runWithTranslationOverrides(_greetOv, () => getFlowCopyTier('en', 'greeting.chat_with_us')) },
             ],
           });
           await this.deactivateSession(session.id);
@@ -1856,14 +1862,15 @@ export class BotService {
             const rebookServiceId = custHistory.lastServiceId || custHistory.favoriteServiceId;
 
             if (rebookServiceName && rebookServiceId) {
+              const { getFlowCopy: getFlowCopyRebook, fillFlowCopy: fillFlowCopyRebook } = await import('@/lib/bot/flows/flow-localization');
+              const _rebookGreetOv = await getOverrides(business.id);
               const isVip = custHistory.ltvTier === 'vip';
-              const rebookMsg = customerName
-                ? isVip
-                  ? `Welcome back, ${customerName}! Great to see you again. 👋`
-                  : `Welcome back, ${customerName}! 👋`
-                : isVip
-                  ? 'Welcome back! Great to see you again. 👋'
-                  : 'Welcome back! 👋';
+              const rebookMsg = runWithTranslationOverrides(_rebookGreetOv, () => {
+                const base = customerName
+                  ? fillFlowCopyRebook('en', 'greeting.welcome_back_named', { name: customerName })
+                  : getFlowCopyRebook('en', 'greeting.welcome_back');
+                return isVip ? base.replace('👋', 'Great to see you again. 👋') : base;
+              });
 
               // Determine giving vs booking by checking service_type on the actual service
               // This is more reliable than lastFlowType which can be wrong for giving categories
@@ -1918,20 +1925,25 @@ export class BotService {
               // Stop here — don't show the full greeting/menu on top of the rebook prompt
               return;
             } else {
-              // No rebookable service — send text greeting as before
-              const returnMsg = buildReturnGreeting(
-                customerName,
-                custHistory,
-                business.name,
-              );
-              if (returnMsg) {
+              // No rebookable service — send translated return greeting
+              if (custHistory.isReturning && custHistory.totalVisits >= 2) {
+                const { getFlowCopy: getFlowCopyReturn, fillFlowCopy: fillFlowCopyReturn } = await import('@/lib/bot/flows/flow-localization');
+                const _returnOv = await getOverrides(business.id);
+                const returnBase = runWithTranslationOverrides(_returnOv, () =>
+                  customerName
+                    ? fillFlowCopyReturn('en', 'greeting.welcome_back_named', { name: customerName })
+                    : getFlowCopyReturn('en', 'greeting.welcome_back')
+                );
+                // Append contextual info from history (not translatable — they contain data)
+                const returnMsg = buildReturnGreeting(customerName, custHistory, business.name);
+                const msgToSend = returnMsg || returnBase;
                 const lang = session.session_data._detected_language as string | undefined;
                 const returnTCtx: TranslationContext = {
                   entitlement: canonicalResult?.languageEntitlement || getEffectiveLanguages(business!.subscription_tier),
                   businessId: businessId!,
                   supabase: this.supabase,
                 };
-                await this.sendText(from, lang ? await translateBotResponse(returnMsg, lang, returnTCtx) : returnMsg);
+                await this.sendText(from, lang ? await translateBotResponse(msgToSend, lang, returnTCtx) : msgToSend);
               }
             }
           }

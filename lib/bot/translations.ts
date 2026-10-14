@@ -135,17 +135,24 @@ export async function loadBusinessOverrides(
  */
 export const BUSINESS_EDITABLE_PREFIXES = [
   'cap.',           // capability/menu option labels
+  'greeting.',      // bot greetings (except platform-only keys below)
   'lang.picker_',   // language picker strings
   'menu.',          // menu title
 ] as const;
 
 const BUSINESS_EDITABLE_EXACT: string[] = [];
 
-const BUSINESS_BLOCKED_KEYS: string[] = [];
+/**
+ * Keys that match an editable prefix but are platform-only.
+ * This deny list wins over BUSINESS_EDITABLE_PREFIXES.
+ */
+export const PLATFORM_ONLY_KEYS: readonly string[] = [
+  'greeting.powered_by',  // Branding — Owner rule: never business-editable
+];
 
 /** Check if a key is editable by businesses. */
 export function isBusinessEditableKey(key: string): boolean {
-  if (BUSINESS_BLOCKED_KEYS.includes(key)) return false;
+  if (PLATFORM_ONLY_KEYS.includes(key)) return false;
   if (BUSINESS_EDITABLE_EXACT.includes(key)) return true;
   return BUSINESS_EDITABLE_PREFIXES.some(prefix => key.startsWith(prefix));
 }

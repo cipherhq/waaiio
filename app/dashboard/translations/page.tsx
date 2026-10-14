@@ -34,6 +34,7 @@ function getCategory(key: string): string {
 
 /** Human-readable category labels */
 const CATEGORY_LABELS: Record<string, string> = {
+  greeting: 'Greeting',
   nav: 'Navigation',
   error: 'Errors & Recovery',
   menu: 'Menu',

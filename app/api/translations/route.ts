@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ALL_FLOW_COPY_KEYS, BUTTON_TITLE_KEYS, LIST_TITLE_KEYS, PLACEHOLDER_SCHEMA, KEYS_WITH_COMMANDS, getFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { loadBusinessLanguages, getEffectiveLanguages } from '@/lib/bot/language-policy';
 import { isSupportedLanguage } from '@/lib/bot/languages';
-import { isBusinessEditableKey } from '@/lib/bot/translations';
+import { isBusinessEditableKey, PLATFORM_ONLY_KEYS } from '@/lib/bot/translations';
 
 /**
  * GET /api/translations
@@ -114,6 +114,12 @@ export async function PUT(request: NextRequest) {
     }
 
     const trimmedValue = override.value.trim();
+
+    // Reject platform-only keys with 403-grade message (deny list wins)
+    if (PLATFORM_ONLY_KEYS.includes(override.key)) {
+      errors.push(`${override.key}: platform-only (not editable by businesses)`);
+      continue;
+    }
 
     // Validate key is business-editable
     if (!isBusinessEditableKey(override.key)) {

@@ -18,6 +18,7 @@ import {
   invalidatePlatformOverridesCache,
   isBusinessEditableKey,
   BUSINESS_EDITABLE_PREFIXES,
+  PLATFORM_ONLY_KEYS,
   type TranslationOverrides,
 } from '@/lib/bot/translations';
 import { getFlowCopy, fillFlowCopy, ALL_FLOW_COPY_KEYS } from '@/lib/bot/flows/flow-localization';
@@ -362,15 +363,27 @@ describe('isBusinessEditableKey', () => {
     });
   });
 
-  describe('blocks greeting.* keys (tightened allowlist)', () => {
-    it('greeting.welcome_default is NOW BLOCKED', () => {
-      expect(isBusinessEditableKey('greeting.welcome_default')).toBe(false);
+  describe('greeting.* keys: editable except platform-only', () => {
+    it('greeting.welcome_default is editable', () => {
+      expect(isBusinessEditableKey('greeting.welcome_default')).toBe(true);
     });
-    it('greeting.powered_by is blocked (branding)', () => {
+    it('greeting.powered_by is platform-only (branding)', () => {
       expect(isBusinessEditableKey('greeting.powered_by')).toBe(false);
     });
-    it('greeting.cancel_hint is NOW BLOCKED', () => {
-      expect(isBusinessEditableKey('greeting.cancel_hint')).toBe(false);
+    it('greeting.cancel_hint is editable', () => {
+      expect(isBusinessEditableKey('greeting.cancel_hint')).toBe(true);
+    });
+    it('greeting.welcome_back is editable', () => {
+      expect(isBusinessEditableKey('greeting.welcome_back')).toBe(true);
+    });
+    it('greeting.welcome_back_named is editable', () => {
+      expect(isBusinessEditableKey('greeting.welcome_back_named')).toBe(true);
+    });
+    it('greeting.away is editable', () => {
+      expect(isBusinessEditableKey('greeting.away')).toBe(true);
+    });
+    it('greeting.chat_with_us is editable', () => {
+      expect(isBusinessEditableKey('greeting.chat_with_us')).toBe(true);
     });
   });
 
