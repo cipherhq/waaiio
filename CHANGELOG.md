@@ -16,6 +16,8 @@ If something breaks, check this log to find what changed and when.
 - `app/maintenance/page.tsx`: `<a href="/">` → `<Link href="/">` (eslint-config-next 15 now errors on internal `<a>` links).
 - `app/(marketing)/reseller-setup/SetupWizard.tsx`: same `<a>` → `<Link>` fix.
 - `lib/pdf/__tests__/pdfkit-packaging-config.test.ts`: updated assertion from `serverComponentsExternalPackages` → `serverExternalPackages` to match the config rename.
+- `instrumentation.ts`: added `onRequestError = Sentry.captureRequestError` (Next 15 hook for nested RSC errors), updated comment to reflect Next 15 built-in instrumentation.
+- `package.json`: pinned exact versions (no `^`) for next, react, react-dom, @types/react, @types/react-dom, eslint-config-next.
 
 ### What it affects / could break
 - Client router cache now uses staleTimes {dynamic:30, static:180} matching Next 14 defaults. Remove after launch if we want Next 15's more aggressive invalidation.
