@@ -14,6 +14,15 @@ If something breaks, check this log to find what changed and when.
 - Existing Flutterwave BYO setups without a webhook_secret_hash will continue to work (credentials already saved). New setups require the hash. The BYO webhook handler already rejects Flutterwave webhooks without a configured hash (added in earlier commit).
 - If a merchant tries to set up Flutterwave BYO without configuring a webhook secret in their Flutterwave dashboard first, the setup will be rejected with a clear error message.
 
+## 2026-10-14 — fix(security): harden image source URL validation
+
+### What changed
+- `app/api/images/convert/route.ts`: Replaced string-prefix URL validation with parsed URL validation. Non-image input now returns 400 instead of 500. Fetch uses `redirect: 'error'` to reject redirects.
+
+### What it affects / could break
+- URLs that previously passed the prefix check but fail strict parsing will now be rejected (400). This is correct behavior.
+- Non-image bodies now return 400 (was 500).
+
 ## 2026-10-14 — test(security): real route-handler test for images/convert + pdfjs-dist v6 smoke
 
 ### What changed
