@@ -10,6 +10,7 @@ If something breaks, check this log to find what changed and when.
 - `admin/src/pages/Businesses.tsx:263-268`: If the GET pre-check fails (network error, non-OK status, or bad JSON), shows alert "Could not check whether this business has a paid plan. Tier not changed." and aborts without sending POST.
 - `admin/src/pages/Subscriptions.tsx:317-322`: Same pre-check failure handling.
 - `lib/__tests__/admin-tier-change.test.ts`: Added tests 14 (GET 500 on subscription read error) and 15 (POST 500 on subscription read error — no write, no audit). Total: 15 tests, 0 skips.
+- `admin/src/__tests__/tier-change-precheck.test.tsx`: 8 tests — GET non-OK and network error abort with alert (no POST) for both Businesses and Subscriptions pages; paying business confirm(false) blocks POST, confirm(true) proceeds; source code structure assertions for both pages.
 
 ### What it affects / could break
 - If the subscriptions table is unreachable, admin tier changes are blocked until it recovers. This is intentional — the route needs subscription status to populate the response and audit log.
