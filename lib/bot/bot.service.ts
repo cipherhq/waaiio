@@ -53,6 +53,15 @@ import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
 import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
+import {
+  sendDirectoryGreeting,
+  sendReturningGreeting,
+  handleDirectorySearch,
+  handleDirectorySelection,
+  handleConnectCommand,
+  CONNECT_PATTERN,
+  type DirectorySessionData,
+} from './handlers/directory-search';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -220,30 +229,41 @@ export class BotService {
       return;
     }
 
-    // ── "home" command — return to Waaiio marketplace / business picker ──
+    // ── "home" / "directory" / "search" — return to directory ──
     if (HOME_PATTERN.test(text.trim())) {
       const activeSession = await this.getActiveSession(from);
       if (activeSession) await this.deactivateSession(activeSession.id);
       // S-1 (#256): Explicitly transition to platform discovery
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-      // Show marketplace greeting (platform-scoped: pre-business discovery)
+
+      const dirSend = this.buildDirectorySend();
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 0) {
-        const quickPick = recentBiz.slice(0, 3);
-        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
-        if (sugSess) {
-          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
-          if (persisted.length === 0) {
-            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          } else {
-            await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
-              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
-          }
-        } else {
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        }
+        await sendReturningGreeting(dirSend, from, recentBiz, null);
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'directory_search',
+          session_data: { _directory_mode: true, suggestions: recentBiz.slice(0, 2) },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
       } else {
-        await this.sendPlatformText(from, 'Welcome to Waaiio! Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
+        await sendDirectoryGreeting(dirSend, from);
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'directory_search',
+          session_data: { _directory_mode: true },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
       }
       return;
     }
@@ -878,8 +898,8 @@ export class BotService {
     // Update session in case handleGlobalQuery modified it (e.g. reference code fall-through)
     session = globalResult.session;
 
-    // Check for "switch <keyword>" command — lets users swap between businesses
-    const switchMatch = text.match(/^switch\s+(.+)$/i);
+    // Check for "connect <name>" / "switch <keyword>" command — lets users swap between businesses
+    const switchMatch = text.match(/^(?:switch|connect)\s+(.+)$/i);
     if (switchMatch) {
       const keyword = switchMatch[1].trim().toLowerCase();
       if (session) {
@@ -931,7 +951,7 @@ export class BotService {
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
     const isChatStep = currentStep === 'chat_handoff' || currentStep === 'chat_start';
-    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'].includes(currentStep);
+    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion', 'directory_search', 'directory_results', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'].includes(currentStep);
 
     // Detect greetings and booking intent for restart detection (without detectIntent)
     const normalizedForRestart = text.toLowerCase().trim();
@@ -2512,43 +2532,15 @@ export class BotService {
         return;
       }
 
-      // Fall through to marketplace greeting — no business found from bot code or past history
-      // S-1: No business bound — all sends below must be platform-scoped
+      // ── Directory flow: no business found from bot code or past history ──
+      // S-1 (#256): Transition to platform discovery for directory sends
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+      const dirSend = this.buildDirectorySend();
 
       // Check if this is a returning user with past businesses for quick-pick
       const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
-      // ── Returning user with past businesses — quick-pick ──
-      if (recentBusinesses.length >= 1) {
-        const { data: returningProfile } = profile ? await this.supabase
-          .from('profiles').select('first_name').eq('id', profile.id).single()
-          : { data: null };
-
-        const name = (returningProfile as { first_name?: string } | null)?.first_name;
-        const quickPick = recentBusinesses.slice(0, 3);
-        const sugSess = await this.createNullBizSuggestionSession(from, profile?.id || null, { suggestions: quickPick });
-        if (sugSess) {
-          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
-          if (persisted.length === 0) {
-            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          } else {
-            await this.sendPlatformText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
-            await this.sendPlatformButtons(from,
-              'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
-              persisted.map((s, i) => ({
-                id: `biz_${i}`,
-                title: truncTitle(s.name),
-              })),
-            );
-          }
-        } else {
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        }
-        return;
-      }
-
-      // ── Business registration via WhatsApp Flow ──
+      // ── Business registration via WhatsApp Flow (before directory) ──
       const onboardingKeywords = /\b(register|sign\s*up|onboard|create\s*(my\s*)?business|start\s*(my\s*)?business|set\s*up)\b/i;
       if (onboardingKeywords.test(text)) {
         const flowId = process.env.WHATSAPP_ONBOARDING_FLOW_ID;
@@ -2575,36 +2567,68 @@ export class BotService {
         return;
       }
 
-      // ── First-time user — onboarding message (platform-scoped: no business bound) ──
+      // ── Returning user with past businesses — directory greeting + quick-pick ──
+      if (recentBusinesses.length >= 1) {
+        const { data: returningProfile } = profile ? await this.supabase
+          .from('profiles').select('first_name').eq('id', profile.id).single()
+          : { data: null };
+
+        const name = (returningProfile as { first_name?: string } | null)?.first_name;
+
+        await sendReturningGreeting(dirSend, from, recentBusinesses, name || null);
+
+        // Clean up old sessions
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: profile?.id || null,
+          business_id: null,
+          current_step: 'directory_search',
+          session_data: { _directory_mode: true, suggestions: recentBusinesses.slice(0, 2), _directory_country: sharedNumberCountry },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        return;
+      }
+
+      // ── First-time user — directory greeting ──
       const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {
-        await this.sendPlatformText(from, [
-          '*Welcome to Waaiio!* 👋',
-          '',
-          'I help you book appointments, buy tickets, place orders, and make payments — all through WhatsApp.',
-          '',
-          '*How to get started:*',
-          '1️⃣ Send a *business code* (from their website, card, or socials)',
-          '2️⃣ Or browse businesses at *waaiio.com/directory*',
-          '',
-          '*Useful commands:*',
-          '• *switch <name>* — visit a different business',
-          '• *my account* — view bookings, orders & receipts',
-          '• *my bookings* — check upcoming appointments',
-          '• *receipt* — get your last receipt',
-        ].join('\n'));
-      } else {
-        await this.sendPlatformText(from, [
-          `I couldn't find a business matching "${text.trim().slice(0, 30)}". 🤔`,
-          '',
-          'Try sending the exact *business code*, or type *switch* followed by a business name.',
-          '',
-          'Browse businesses at *waaiio.com/directory*',
-          '',
-          '_Example: switch FacesByKoph_',
-          '',
-          'Type *Hi* for help getting started.',
-        ].join('\n'));
+        await sendDirectoryGreeting(dirSend, from);
+
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: profile?.id || null,
+          business_id: null,
+          current_step: 'directory_search',
+          session_data: { _directory_mode: true, _directory_country: sharedNumberCountry },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        return;
+      }
+
+      // ── Unrecognized text — run a directory search immediately ──
+      {
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+
+        const searchData = await handleDirectorySearch(
+          this.supabase, dirSend, from, text, sharedNumberCountry,
+        );
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: profile?.id || null,
+          business_id: null,
+          current_step: 'directory_results',
+          session_data: { _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}) },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
       }
       return;
     }
@@ -3366,6 +3390,102 @@ export class BotService {
 
     // (saved-card commands moved earlier — before no-session path)
 
+    // ── Directory flow steps (shared-number business discovery) ──
+    if (step === 'directory_search' || step === 'directory_results') {
+      // S-1 (#256): Ensure platform discovery mode for all directory sends
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+      const dirSend = this.buildDirectorySend();
+      const dirData = session.session_data as unknown as DirectorySessionData;
+
+      // Navigation commands → restart directory
+      if (/^(menu|back|exit|home|cancel|quit|stop|restart|start\s*over|directory|search)$/i.test(text)) {
+        await this.deactivateSession(session.id);
+        await this.handleMessage(from, 'home', messageType, destinationPhone);
+        return;
+      }
+
+      // "Find a business" button from returning greeting
+      if (text === 'dir_find') {
+        const { getFlowCopy } = await import('./flows/flow-localization');
+        await this.sendPlatformText(from, getFlowCopy(undefined, 'directory.search_prompt'));
+        return;
+      }
+
+      // Handle result/suggestion selection (dir_result_N, dir_sug_N, numeric)
+      if (step === 'directory_results' || dirData._directory_results || dirData._directory_suggestions) {
+        const selection = await handleDirectorySelection(this.supabase, dirSend, from, text, dirData);
+        if (selection) {
+          await this.deactivateSession(session.id);
+          await this.handleMessage(from, selection.botCode, messageType, destinationPhone, selection.businessId);
+          return;
+        }
+        // dir_find was handled above; dir_result/dir_sug that didn't match → fall through to search
+      }
+
+      // Returning-customer quick-pick buttons (biz_0, biz_1)
+      const bizBtnMatch = text.match(/^biz_(\d+)$/i);
+      if (bizBtnMatch && dirData.suggestions) {
+        const idx = parseInt(bizBtnMatch[1], 10);
+        const picks = (dirData.suggestions as Array<{ id: string; name: string; bot_code: string }>);
+        const pick = picks[idx];
+        if (pick) {
+          await this.deactivateSession(session.id);
+          await this.handleMessage(from, pick.bot_code, messageType, destinationPhone, pick.id);
+          return;
+        }
+      }
+
+      // Check if text is a bot code (exact match bypasses directory)
+      const botCodeDetection = await this.detectBotCode(text);
+      if (botCodeDetection) {
+        await this.deactivateSession(session.id);
+        await this.handleMessage(from, text, messageType, destinationPhone, botCodeDetection);
+        return;
+      }
+
+      // Check for "connect <name>" / "switch <name>"
+      const connectMatch = text.match(/^(?:connect|switch)\s+(.+)$/i);
+      if (connectMatch) {
+        const connectResult = await handleConnectCommand(
+          this.supabase, dirSend, from, connectMatch[1].trim(),
+          dirData._directory_country || null,
+        );
+        if (connectResult.action === 'enter') {
+          await this.deactivateSession(session.id);
+          await this.handleMessage(from, connectResult.botCode, messageType, destinationPhone, connectResult.businessId);
+          return;
+        }
+        if (connectResult.action === 'suggestions' && connectResult.sessionData) {
+          await this.supabase.from('bot_sessions').update({
+            current_step: 'directory_results',
+            session_data: { ...session.session_data, ...connectResult.sessionData },
+          }).eq('id', session.id);
+          return;
+        }
+        if (connectResult.action === 'search' && connectResult.sessionData) {
+          await this.supabase.from('bot_sessions').update({
+            current_step: 'directory_results',
+            session_data: { ...session.session_data, ...connectResult.sessionData },
+          }).eq('id', session.id);
+          return;
+        }
+        // action === 'none' → fall through to directory search below
+      }
+
+      // Run a directory search with the text
+      const searchData = await handleDirectorySearch(
+        this.supabase, dirSend, from, text,
+        dirData._directory_country || null,
+      );
+      if (searchData) {
+        await this.supabase.from('bot_sessions').update({
+          current_step: 'directory_results',
+          session_data: { ...session.session_data, ...searchData },
+        }).eq('id', session.id);
+      }
+      return;
+    }
+
     // Handle "Did you mean?" business selection
     if (step === 'select_business_suggestion') {
       // S-1: No business is bound in this step — all replies must be platform-scoped
@@ -3559,7 +3679,7 @@ export class BotService {
     const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
     // Skip AI classification for deterministic postback IDs — these are button/list taps
     // that will be handled by the flow executor's step-specific validate() function
-    const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|\d{1,2})$/.test(text)
+    const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|dir_result_\d+|dir_sug_\d+|dir_find|\d{1,2})$/.test(text)
       || (messageType === 'button' || messageType === 'list');
     let resumedCanonical: import('./canonical-understanding').CanonicalUnderstanding | null = null;
     _bmark(isDeterministicPostback ? 'cas004_skipped_deterministic' : 'cas004_start');
@@ -4163,6 +4283,40 @@ export class BotService {
     } else {
       await this.messageSender.sendButtons({ to, body, buttons });
     }
+  }
+
+  /**
+   * Platform-scoped list send for pre-business directory results.
+   */
+  private async sendPlatformList(to: string, msg: {
+    title: string;
+    body: string;
+    buttonLabel: string;
+    items: Array<{ title: string; description?: string; postbackText: string }>;
+    footer?: string;
+  }): Promise<void> {
+    // Use the regular sendList — list messages don't have a platform-scoped variant
+    // but the directory uses this when no business is bound. The sender's hard-stop
+    // guard is bypassed because we call enterPlatformDiscovery before directory sends.
+    await this.messageSender.sendList({
+      to,
+      title: msg.title,
+      body: msg.body,
+      buttonLabel: msg.buttonLabel,
+      items: msg.items,
+      footer: msg.footer,
+    });
+  }
+
+  /**
+   * Build the platform send helpers needed by the directory handler.
+   */
+  private buildDirectorySend(): Parameters<typeof sendDirectoryGreeting>[0] {
+    return {
+      sendPlatformText: this.sendPlatformText.bind(this),
+      sendPlatformButtons: this.sendPlatformButtons.bind(this),
+      sendPlatformList: this.sendPlatformList.bind(this),
+    };
   }
 
   /** Send text with auto-translation based on session language */

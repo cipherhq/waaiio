@@ -3,6 +3,7 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+<<<<<<< HEAD
 ## 2026-10-18 — fix(ticketing): race-loss error handling — DB errors and cancellation race
 
 ### What changed
@@ -839,6 +840,22 @@ Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `i
 ### What it affects / could break
 - Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
 - If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
+
+## 2026-10-14 — feat(bot): WhatsApp directory search on shared number
+
+### What changed
+- `lib/bot/handlers/directory-search.ts` (NEW): Directory search handler — greeting, search, fuzzy suggestions, result selection, "connect <name>" command.
+- `lib/bot/bot.service.ts`: Replaced no-business-found greeting with directory flow. Added `directory_search` and `directory_results` session steps. `home` command now shows directory. "connect <name>" works alongside "switch <name>". Added `sendPlatformList` and `buildDirectorySend` helpers.
+- `lib/bot/flows/flow-localization.ts`: Added 17 translation keys under `directory.*` prefix (en + pcm). Platform-owned, not business-editable.
+- `lib/bot/inbound-command-normalization.ts`: Added `directory` and `search` as aliases for the `home` navigation command.
+- `lib/bot/__tests__/directory-flow.test.ts` (NEW): 11 integration tests covering the full directory flow via handleMessage.
+
+### What it affects / could break
+- Shared-number customers now see a directory search prompt instead of "Send a business code". Returning customers get quick-pick buttons + search.
+- The `home`, `directory`, and `search` commands all return to the directory.
+- "connect <name>" is a new command alias for "switch <name>".
+- Dedicated-number messaging is unchanged — directory never shows.
+- Depends on #636 (marketplace search infrastructure). Depends on #633 (platform translation overrides) for admin-editable directory text.
 
 ## 2026-10-13 — fix(security): move bank account writes server-side (M448)
 

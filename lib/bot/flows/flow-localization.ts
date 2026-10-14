@@ -812,6 +812,26 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'handoff.session_closed': 'This chat session has been closed. ✅\n\nSend *Hi* to continue with bookings, payments, and other services. 🙏\n\n💡 *What you can do:*\n• Type *Hi* to start a new conversation\n• Type *my bookings* to check your bookings',
     'notification.receipt_caption': 'Your payment receipt',
     'notification.ticket_pdf_caption': 'Your {quantity} {ticketLabel} for {eventName}',
+
+    // Directory — shared-number business discovery (platform-owned, not business-editable)
+    'directory.welcome': 'Welcome to Waaiio! 👋 I can help you find businesses (salons, restaurants, spas and more) right here on WhatsApp.\n\nType what you\'re looking for, e.g. *salon in Lagos*.\n\nAlready know the business? Type *connect* and its name, e.g. _connect Glow Studio_, or send its business code.',
+    'directory.welcome_returning': 'Welcome back, {name}! 👋',
+    'directory.welcome_returning_noname': 'Welcome back! 👋',
+    'directory.returning_search_hint': 'Or type what you\'re looking for, e.g. _salon in Lekki_.',
+    'directory.find_button': 'Find a business',
+    'directory.search_prompt': 'Type what you\'re looking for, e.g. *salon in Lagos*, *restaurant in Ikeja*, or *spa near me*.',
+    'directory.results_title': 'Search Results',
+    'directory.view_results': 'View Results',
+    'directory.results_found': 'I found {count} business(es) for {description}. Tap below to choose one.',
+    'directory.results_hint_more': '{count} found. Add an area to narrow it down, e.g. _salon in Lekki_.',
+    'directory.showing_corrected': 'Showing results for *{corrected}*.',
+    'directory.did_you_mean': 'Did you mean one of these businesses?',
+    'directory.did_you_mean_title': 'Did you mean?',
+    'directory.view_suggestions': 'View',
+    'directory.no_results': 'I couldn\'t find any businesses matching your search. Try a different area or category, or browse at *waaiio.com/directory*.',
+    'directory.business_unavailable': 'This business is currently unavailable. Try another one.',
+    'directory.search_unavailable': 'Business search is temporarily unavailable. Please try again shortly.',
+    'directory.rate_limited': 'You\'re searching too fast. Please wait a moment and try again.',
   },
 
   // ─────────────────────────────────────────────────────────────
@@ -1585,6 +1605,26 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'handoff.session_closed': 'This chat session don close. ✅\n\nSend *Hi* to continue with bookings, payments, and other services. 🙏\n\n💡 *Wetin you fit do:*\n• Type *Hi* to start new conversation\n• Type *my bookings* to check your bookings',
     'notification.receipt_caption': 'Your payment receipt',
     'notification.ticket_pdf_caption': 'Your {quantity} {ticketLabel} for {eventName}',
+
+    // Directory — shared-number business discovery
+    'directory.welcome': 'Welcome to Waaiio! 👋 I fit help you find businesses (salon, restaurant, spa and the rest) right here for WhatsApp.\n\nType wetin you dey find, e.g. *salon in Lagos*.\n\nYou don already know the business? Type *connect* plus the name, e.g. _connect Glow Studio_, or send the business code.',
+    'directory.welcome_returning': 'Welcome back, {name}! 👋',
+    'directory.welcome_returning_noname': 'Welcome back! 👋',
+    'directory.returning_search_hint': 'Or type wetin you dey find, e.g. _salon in Lekki_.',
+    'directory.find_button': 'Find a business',
+    'directory.search_prompt': 'Type wetin you dey find, e.g. *salon in Lagos*, *restaurant in Ikeja*, or *spa near me*.',
+    'directory.results_title': 'Search Results',
+    'directory.view_results': 'View Results',
+    'directory.results_found': 'I find {count} business(es) for {description}. Tap below to pick one.',
+    'directory.results_hint_more': '{count} dey. Add area to narrow am, e.g. _salon in Lekki_.',
+    'directory.showing_corrected': 'Showing results for *{corrected}*.',
+    'directory.did_you_mean': 'You mean one of these businesses?',
+    'directory.did_you_mean_title': 'You mean?',
+    'directory.view_suggestions': 'View',
+    'directory.no_results': 'I no fit find any business wey match your search. Try another area or category, or check *waaiio.com/directory*.',
+    'directory.business_unavailable': 'This business no dey available right now. Try another one.',
+    'directory.search_unavailable': 'Business search no dey work right now. Abeg try again later.',
+    'directory.rate_limited': 'You dey search too fast. Wait small make you try again.',
   },
 
   yo: {
