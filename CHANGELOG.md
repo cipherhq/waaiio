@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — chore(deps): patch critical and high dependency advisories
+
+### What changed
+- `package.json`: Added `overrides` to patch vulnerable transitive dependencies: `simple-git` 3.36.0→4.0.1 (CRITICAL), `jsondiffpatch` 0.6.0→0.7.6 (HIGH), `source-map-js` 1.2.1→1.2.2 (HIGH), `fast-uri` 3.1.4→3.1.8 (HIGH), `js-yaml` 4.3.0→4.3.2 (HIGH), `dompurify` 3.4.12→3.4.16 (medium), `postcss` deduped to root 8.5.28 (HIGH, fixes next@14 nested 8.4.31), `glob` 10.3.10→10.5.0 under eslint-plugin-next (HIGH).
+- `package-lock.json`: Updated transitive `brace-expansion` 5.0.7→5.0.12 and 2.1.2→2.1.7 (HIGH, within semver range of parents).
+- `admin/package.json`: Bumped `react-router` ^7.6.1→^7.18.2 (HIGH, 6 CVEs), `postcss` ^8.4.38→^8.5.23 (HIGH), `vite` 6.3.5→6.4.3 (HIGH). Added `overrides` for transitive deps: `ws` 8.21.0 (HIGH), `fast-uri` 3.1.8, `browserslist` 4.28.7, `nanoid` 3.3.12, `source-map-js` 1.2.2, `undici` 7.29.1 (HIGH), `simple-git` 4.0.1 (CRITICAL), `brace-expansion` 2.1.7, `baseline-browser-mapping` 2.11.0.
+- `admin/package-lock.json`: Regenerated with all bumps and overrides.
+
+### What it affects / could break
+- **simple-git 3→4**: Major version override via @antiwork/shortest (dev-only E2E tool). If shortest E2E tests break, pin simple-git back to 3.x in overrides.
+- **react-router 7.14→7.18**: Minor bump but touches routing internals. Admin panel routing verified via vite build.
+- **postcss override in next@14**: Forces next's nested postcss from 8.4.31 to root 8.5.28. Same major version, API-compatible. Verified via next build.
+- **Remaining unfixed** (need major bumps — decision cards pending): `next` 14→15 (2 CRITICAL + 16 HIGH), `sharp` 0.34→0.35 (3 HIGH), `pdfjs-dist` 5→6 (1 HIGH).
+
 ## 2026-10-14 — fix(admin): replace JSON input with country-amount form for per-country settings
 
 ### What changed
