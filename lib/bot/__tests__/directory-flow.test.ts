@@ -280,7 +280,7 @@ describe('WhatsApp Directory Flow', () => {
 
   // ─── Search results ───
 
-  it('search results are a WhatsApp list with titles ≤ 24 chars', async () => {
+  it('search results are sent as a numbered text list with results', async () => {
     const biz = Array.from({ length: 5 }, (_, i) => ({
       id: `biz-${i}`, name: i === 0 ? 'A Very Long Business Name Over 24' : `Salon ${i}`,
       category: 'salon', description: 'Great', address: '1 St', phone: '+234',
@@ -295,13 +295,13 @@ describe('WhatsApp Directory Flow', () => {
     const { bot, sender } = createBot(db);
     await bot.handleMessage(PHONE, 'salon in Lagos', 'text', SHARED_PNID);
 
-    const listMsg = msgs(sender).find((m: CapturedMessage) => m.type === 'list');
-    expect(listMsg).toBeDefined();
-    expect(listMsg!.items).toBeDefined();
-    expect(listMsg!.items!.length).toBeGreaterThan(0);
-    for (const item of listMsg!.items!) {
-      expect(item.title.length).toBeLessThanOrEqual(24);
-    }
+    // Results are sent as text (platform-scoped list rendered as numbered text)
+    const resultMsg = msgs(sender).find(m => textOf(m).includes('1.'));
+    expect(resultMsg).toBeDefined();
+    // Should contain numbered items
+    expect(textOf(resultMsg!)).toMatch(/1\.\s+\*/);
+    // Should include "Reply with a number"
+    expect(textOf(resultMsg!)).toContain('Reply with a number');
   });
 
   it('more than 10 results shows the "N found" hint', async () => {
@@ -318,11 +318,13 @@ describe('WhatsApp Directory Flow', () => {
     const { bot, sender } = createBot(db);
     await bot.handleMessage(PHONE, 'salon in Lagos', 'text', SHARED_PNID);
 
-    const listMsg = msgs(sender).find((m: CapturedMessage) => m.type === 'list');
-    expect(listMsg).toBeDefined();
-    expect(listMsg!.items!.length).toBeLessThanOrEqual(10);
-    // Body must mention narrowing down
-    expect(textOf(listMsg!)).toMatch(/found|narrow/i);
+    const resultMsg = msgs(sender).find(m => textOf(m).includes('1.'));
+    expect(resultMsg).toBeDefined();
+    // Should mention narrowing down (more than 10 results)
+    expect(textOf(resultMsg!)).toMatch(/found|narrow/i);
+    // Should have at most 10 numbered items
+    const numberedLines = textOf(resultMsg!).match(/^\d+\./gm) || [];
+    expect(numberedLines.length).toBeLessThanOrEqual(10);
   });
 
   it('typo correction shows "Showing results for"', async () => {
