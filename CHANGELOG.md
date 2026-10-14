@@ -3,6 +3,57 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(bot): apply business overrides to language picker (#633)
+
+### What changed
+- `lib/bot/bot.service.ts`: Wrapped `sendLanguagePicker()` call (~L1806) and `lang.picker_confirmed` rendering (~L2388) inside `runWithTranslationOverrides` with the business's overrides. Previously these ran outside override context, so business overrides for `lang.picker_body`, `lang.picker_button`, and `lang.picker_confirmed` were silently ignored.
+
+### What it affects / could break
+- Businesses that set custom translations for picker keys will now see them applied.
+- No change for businesses without overrides (default text unchanged).
+
+## 2026-10-14 — fix(api): validate deletes before executing, CAS failure logging (#633)
+
+### What changed
+- `app/api/translations/route.ts` PUT: validation now runs BEFORE the delete/upsert branch. Deletes are validated for platform-only keys, non-editable keys, unknown keys, and disallowed languages — same checks as upserts. Any error → 400, no deletes and no upserts run (all-or-nothing).
+- `lib/bot/bot.service.ts` (~L1758): CAS failure during saved-language activation now logs `logger.warn` (with session id, no phone number) and `Sentry.captureMessage`. In-memory language is kept for the current message.
+
+### What it affects / could break
+- API consumers that relied on deletes bypassing key validation will now get 400 errors for invalid keys. This is the correct behavior.
+- No behavior change for valid delete/upsert requests.
+
+## 2026-10-14 — fix(bot): activate remembered language from customer_profiles (#633)
+
+### What changed
+- `lib/bot/bot.service.ts` (~L1735): When `customer_profiles.preferred_language` is set, verify it against the business's current allowed + certified languages before skipping the picker. If allowed, set `session_data._detected_language` and persist via CAS — greeting and flows now render in the saved language. If not allowed (business removed it or tier dropped), fall through to the picker instead of silently defaulting to English.
+
+### What it affects / could break
+- Returning customers who previously picked a language now get responses in that language immediately (no picker). Previously they got English despite having a saved preference.
+- If a business removes a language from its config, returning customers with that preference will see the picker again (correct behavior).
+
+## 2026-10-14 — feat(bot): business-editable greeting keys with platform-only deny list (#633)
+
+### Owner decision
+- Main greeting (welcome_default) is edited ONLY on the WhatsApp settings page (bot_greeting).
+- Away message (greeting.away) is edited ONLY in Settings > Features (away_message).
+- Both are platform-overridable by admins as fallbacks but NOT business-editable.
+- greeting.powered_by stays platform-only (branding).
+- Business-editable greeting keys: welcome_back, welcome_back_named, cancel_hint, chat_with_us.
+
+### What changed
+- `lib/bot/translations.ts`: Added PLATFORM_ONLY_KEYS deny list (powered_by, welcome_default, away). Exported createOverridesLoader factory keyed by business id (replaces single-promise memo). loadBusinessOverrides filters out non-editable keys.
+- `lib/bot/bot.service.ts`: All greeting send paths (new session, away, returning customer rebook/no-rebook, tier not allowed) render through getFlowCopy/fillFlowCopy inside runWithTranslationOverrides. Uses effective customer language (session._detected_language), not hardcoded 'en'. Override loader keyed by business id.
+- `lib/bot/customer-intelligence.ts`: buildReturnGreeting accepts optional welcomeLine parameter. New buildDefaultWelcomeLine function for exact-text fallback.
+- `lib/bot/flows/flow-localization.ts`: fillFlowCopy uses function replacer `() => String(v)` so names with $& render literally. Added greeting.cancel_hint to KEYS_WITH_COMMANDS.
+- `app/api/translations/route.ts`: Explicit PLATFORM_ONLY_KEYS check with "platform-only" error message.
+- `app/dashboard/translations/page.tsx`: Added "Greeting" category with note about where to edit main greeting and away message.
+
+### What it affects / could break
+- Businesses can now override welcome_back, welcome_back_named, cancel_hint, chat_with_us via dashboard translations page.
+- cancel_hint overrides must preserve *cancel* command token (API enforced).
+- Bot greeting text is unchanged with no overrides (byte-identical to main).
+- No DB schema changes.
+
 ## 2026-10-14 — fix(admin): handle subscription read errors in tier change route
 
 ### What changed

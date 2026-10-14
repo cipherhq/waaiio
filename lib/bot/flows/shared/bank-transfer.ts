@@ -4,6 +4,7 @@ import { loadPlatformSettings } from '@/lib/platformSettings';
 import { getCurrencyCode } from '@/lib/constants';
 import type { CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { getFlowCopy, fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 
 interface BankAccount {
   bank_name: string;
@@ -111,30 +112,51 @@ export function formatBankTransferBlock(
   bankAccount: BankAccount,
   amount: string,
   transferRef: string,
+  lang?: string,
 ): string {
+  const l = lang || 'en';
   return [
-    `Bank: ${bankAccount.bank_name}`,
-    `Account: ${bankAccount.account_number}`,
-    `Name: ${bankAccount.account_name}`,
-    `Amount: ${amount}`,
-    `Reference/Narration: *${transferRef}*`,
+    fillFlowCopy(l, 'payment.bank_label', { bankName: bankAccount.bank_name }),
+    fillFlowCopy(l, 'payment.account_label', { accountNumber: bankAccount.account_number }),
+    fillFlowCopy(l, 'payment.name_label', { accountName: bankAccount.account_name }),
+    fillFlowCopy(l, 'payment.amount_label', { amount }),
+    fillFlowCopy(l, 'payment.ref_label', { transferRef }),
     '',
-    `⚠️ Use reference *${transferRef}* as your transfer narration.`,
-    `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+    fillFlowCopy(l, 'payment.ref_warning', { transferRef }),
+    getFlowCopy(l, 'payment.transfer_hint'),
   ].join('\n');
 }
 
 /**
- * Standard buttons for bank-transfer-only payment (no online option).
+ * Localized buttons for bank-transfer-only payment (no online option).
  */
+export function getBankOnlyButtons(lang?: string): Array<{ id: string; title: string }> {
+  const l = lang || 'en';
+  return [
+    { id: 'sent_transfer', title: getFlowCopy(l, 'payment.ive_sent_transfer') },
+    { id: 'go_back', title: getFlowCopy(l, 'nav.cancel') },
+  ];
+}
+
+/** @deprecated Use getBankOnlyButtons(lang) for localized buttons */
 export const BANK_ONLY_BUTTONS = [
   { id: 'sent_transfer', title: "I've Sent Transfer" },
   { id: 'go_back', title: 'Cancel' },
 ] as const;
 
 /**
- * Standard buttons for dual-option payment (online + bank transfer).
+ * Localized buttons for dual-option payment (online + bank transfer).
  */
+export function getDualOptionButtons(lang?: string): Array<{ id: string; title: string }> {
+  const l = lang || 'en';
+  return [
+    { id: 'i_paid_online', title: getFlowCopy(l, 'payment.paid_online_btn') },
+    { id: 'sent_transfer', title: getFlowCopy(l, 'payment.ive_sent_transfer') },
+    { id: 'go_back', title: getFlowCopy(l, 'nav.cancel') },
+  ];
+}
+
+/** @deprecated Use getDualOptionButtons(lang) for localized buttons */
 export const DUAL_OPTION_BUTTONS = [
   { id: 'i_paid_online', title: "I've Paid Online" },
   { id: 'sent_transfer', title: "I've Sent Transfer" },
