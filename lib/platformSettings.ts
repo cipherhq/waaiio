@@ -41,7 +41,7 @@ export interface PlatformSettings {
   transfer_expiry_hours: number;
   /** Days a new business must wait before payouts are eligible (default: 7) */
   payout_cooling_period_days: number;
-  /** Minimum payout amount per country in local currency minor units */
+  /** Minimum payout amount per country in whole (major) currency units (e.g. ₦5,000 = 5000, $25 = 2500) */
   minimum_payout: Record<string, number>;
   /** Max transactions per day before flagging for fraud review (default: 50) */
   fraud_velocity_threshold: number;

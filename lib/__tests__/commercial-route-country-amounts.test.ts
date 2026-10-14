@@ -79,7 +79,7 @@ describe('POST /api/admin/platform-settings/commercial — country-amount valida
   it('rejects minimum_bank_transfer with string value "1000"', async () => {
     const { status, json } = await callRoute({
       key: 'minimum_bank_transfer',
-      value: { NG: '1000' },
+      value: { NG: '1000', GH: 5000 },
       stepUpId: 'su-1',
     });
     expect(status).toBe(400);
@@ -90,7 +90,7 @@ describe('POST /api/admin/platform-settings/commercial — country-amount valida
   it('rejects minimum_bank_transfer with negative value', async () => {
     const { status } = await callRoute({
       key: 'minimum_bank_transfer',
-      value: { NG: -1 },
+      value: { NG: -1, GH: 5000 },
       stepUpId: 'su-1',
     });
     expect(status).toBe(400);
@@ -100,7 +100,7 @@ describe('POST /api/admin/platform-settings/commercial — country-amount valida
   it('rejects minimum_bank_transfer with decimal value', async () => {
     const { status } = await callRoute({
       key: 'minimum_bank_transfer',
-      value: { NG: 1.5 },
+      value: { NG: 1.5, GH: 5000 },
       stepUpId: 'su-1',
     });
     expect(status).toBe(400);
@@ -110,11 +110,33 @@ describe('POST /api/admin/platform-settings/commercial — country-amount valida
   it('rejects minimum_bank_transfer with unknown country', async () => {
     const { status, json } = await callRoute({
       key: 'minimum_bank_transfer',
-      value: { US: 5000 },
+      value: { NG: 5000, GH: 5000, US: 5000 },
       stepUpId: 'su-1',
     });
     expect(status).toBe(400);
     expect(json.error).toContain('not allowed');
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects minimum_bank_transfer missing GH', async () => {
+    const { status, json } = await callRoute({
+      key: 'minimum_bank_transfer',
+      value: { NG: 5000 },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.error).toContain('required');
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects minimum_payout missing US', async () => {
+    const { status, json } = await callRoute({
+      key: 'minimum_payout',
+      value: { NG: 5000, GB: 2000, CA: 2500, GH: 50 },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.error).toContain('required');
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
@@ -163,7 +185,7 @@ describe('POST /api/admin/platform-settings/commercial — country-amount valida
   it('rejects minimum_payout with nested object', async () => {
     const { status } = await callRoute({
       key: 'minimum_payout',
-      value: { NG: { amount: 5000 } },
+      value: { NG: { amount: 5000 }, US: 2500, GB: 2000, CA: 2500, GH: 50 },
       stepUpId: 'su-1',
     });
     expect(status).toBe(400);
@@ -171,14 +193,11 @@ describe('POST /api/admin/platform-settings/commercial — country-amount valida
   });
 
   it('rejects minimum_payout with NaN', async () => {
-    // JSON.parse doesn't produce NaN, but direct API calls could
     const { status } = await callRoute({
       key: 'minimum_payout',
-      value: { NG: NaN },
+      value: { NG: NaN, US: 2500, GB: 2000, CA: 2500, GH: 50 },
       stepUpId: 'su-1',
     });
-    // NaN becomes null in JSON serialization, but test the validator directly
-    // In practice, JSON.parse("NaN") fails, so this tests the raw object path
     expect(status).toBe(400);
     expect(rpcMock).not.toHaveBeenCalled();
   });

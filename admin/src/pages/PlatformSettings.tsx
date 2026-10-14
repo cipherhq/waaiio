@@ -97,7 +97,7 @@ function CountryAmountEditor({
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
 
   function handleChange(cc: string, raw: string) {
-    // Allow empty while typing
+    // Allow empty while typing, but mark as required
     const updated = { ...value };
     if (raw === '') {
       delete updated[cc];
@@ -106,8 +106,13 @@ function CountryAmountEditor({
       updated[cc] = num;
     }
 
-    // Validate
+    // Validate — every allowed country must have a value
     const errors: Record<string, string> = {};
+    for (const country of countries) {
+      if (!(country in updated)) {
+        errors[country] = 'Required';
+      }
+    }
     for (const [country, val] of Object.entries(updated)) {
       if (typeof val !== 'number' || !Number.isFinite(val)) {
         errors[country] = 'Must be a number';
@@ -116,9 +121,6 @@ function CountryAmountEditor({
       } else if (!Number.isInteger(val)) {
         errors[country] = 'Must be a whole number';
       }
-    }
-    if (raw !== '' && raw.trim() === '') {
-      errors[cc] = 'Must be a number';
     }
     setLocalErrors(errors);
 

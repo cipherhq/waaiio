@@ -60,7 +60,7 @@ export interface CountryAmountError {
  *
  * Rules:
  * - Must be a plain object (not null, not an array, not a string)
- * - Must not be empty
+ * - Every allowed country for the key must be present (no silent omissions)
  * - Keys must be allowed country codes for the setting
  * - Values must be finite, non-negative integers (no strings, no floats, no NaN)
  */
@@ -82,15 +82,18 @@ export function validateCountryAmounts(
   }
 
   const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj);
-
-  if (keys.length === 0) {
-    return [{ field: key, message: 'At least one country must be configured' }];
-  }
-
   const errors: CountryAmountError[] = [];
 
-  for (const countryCode of keys) {
+  // Every allowed country must be present
+  for (const cc of allowedCountries) {
+    if (!(cc in obj)) {
+      const name = COUNTRY_NAMES[cc] || cc;
+      errors.push({ field: cc, message: `${name} (${cc}): amount is required` });
+    }
+  }
+
+  // Validate each provided key
+  for (const countryCode of Object.keys(obj)) {
     if (!allowedCountries.includes(countryCode)) {
       errors.push({
         field: countryCode,
