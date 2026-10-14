@@ -133,11 +133,11 @@ export async function loadBusinessOverrides(
  * loyalty.*, rsvp.*, feedback.*, tips.*, orders.*, order_status.*,
  * rating.*, nav.*, account.*, greeting.powered_by (branding).
  */
-const BUSINESS_EDITABLE_PREFIXES = [
+export const BUSINESS_EDITABLE_PREFIXES = [
   'cap.',           // capability/menu option labels
   'lang.picker_',   // language picker strings
   'menu.',          // menu title
-];
+] as const;
 
 const BUSINESS_EDITABLE_EXACT: string[] = [];
 
