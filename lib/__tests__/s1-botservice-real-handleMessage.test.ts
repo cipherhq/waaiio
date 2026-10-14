@@ -174,12 +174,18 @@ function createStandaloneService() {
   } as any;
 }
 
-/** Count all business-scoped cloud calls (sendText, sendButtons, sendList, sendTemplate). */
-function totalBusinessScopedCalls(cloud: ReturnType<typeof createMockCloud>): number {
-  return cloud.sendText.mock.calls.length
+/** Count all business-scoped cloud calls (sendText, sendButtons, sendList, sendTemplate).
+ *  When `sender` is provided, subtracts platform-scoped calls (sendPlatformText, sendPlatformButtons)
+ *  so only genuinely business-attributable cloud calls remain. */
+function totalBusinessScopedCalls(cloud: ReturnType<typeof createMockCloud>, sender?: { sendPlatformText: { mock: { calls: unknown[] } }; sendPlatformButtons: { mock: { calls: unknown[] } } }): number {
+  const total = cloud.sendText.mock.calls.length
     + cloud.sendButtons.mock.calls.length
     + cloud.sendList.mock.calls.length
     + cloud.sendTemplate.mock.calls.length;
+  if (!sender) return total;
+  const platformCalls = sender.sendPlatformText.mock.calls.length
+    + sender.sendPlatformButtons.mock.calls.length;
+  return total - platformCalls;
 }
 
 /**
@@ -357,9 +363,11 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     expect(totalBusinessScopedCalls(cloud)).toBe(0);
   });
 
-  it('6. missing tenant: no-business replies use platform-scoped sends, not business-scoped', async () => {
+  it('6. missing tenant: platform-scoped reply delivered, zero business-scoped provider calls', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
+    const spyPlatformButtons = vi.spyOn(sender, 'sendPlatformButtons');
     mockDetectionResult = { businessId: null, suggestions: [] };
     // Provide a realistic tenantless session so the flow proceeds past session insert
     const tenantlessSession = {
@@ -372,12 +380,13 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     await bot.handleMessage('+234800', 'random text', 'text', 'pnid-1');
     // Sender transitioned to platform discovery (tenantless)
     expect(sender.boundBusinessId).toBe('');
-    // Platform-scoped send delivered the "couldn't find" message (not silently blocked)
-    const cloudCalls = cloud.sendText.mock.calls;
-    expect(cloudCalls.length).toBeGreaterThan(0);
-    const sentText = cloudCalls[0]?.[0]?.text || '';
-    expect(sentText).toContain('couldn\'t find a business');
-    // Guard: no generic fallback — the reply is a helpful marketplace message
+    // Platform-scoped sendPlatformText delivered the "couldn't find" message
+    expect(spyPlatformText).toHaveBeenCalled();
+    const platformTextArg = spyPlatformText.mock.calls[0]?.[0] as { text?: string } | undefined;
+    expect(platformTextArg?.text ?? '').toContain('couldn\'t find a business');
+    // ALL business-scoped cloud calls must be exactly zero (platform sends excluded)
+    expect(totalBusinessScopedCalls(cloud, { sendPlatformText: spyPlatformText, sendPlatformButtons: spyPlatformButtons })).toBe(0);
+    // Guard: no generic fallback
     const fallbackCalls = cloud.sendText.mock.calls.filter(
       (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Something went wrong')
     );
