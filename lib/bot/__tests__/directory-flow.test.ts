@@ -196,6 +196,7 @@ function createBot(supabase: any) {
   const sender = createCaptureSender();
   (sender as any).sendPlatformText = vi.fn(async (msg: any) => (sender as any).sendText(msg));
   (sender as any).sendPlatformButtons = vi.fn(async (msg: any) => (sender as any).sendButtons(msg));
+  (sender as any).sendPlatformList = vi.fn(async (msg: any) => (sender as any).sendList(msg));
   (sender as any).enterPlatformDiscovery = vi.fn();
   (sender as any).bindBusiness = vi.fn();
 
@@ -280,7 +281,7 @@ describe('WhatsApp Directory Flow', () => {
 
   // ─── Search results ───
 
-  it('search results are sent as a numbered text list with results', async () => {
+  it('search results arrive as a list (≤10 rows, titles ≤24 chars)', async () => {
     const biz = Array.from({ length: 5 }, (_, i) => ({
       id: `biz-${i}`, name: i === 0 ? 'A Very Long Business Name Over 24' : `Salon ${i}`,
       category: 'salon', description: 'Great', address: '1 St', phone: '+234',
@@ -295,16 +296,17 @@ describe('WhatsApp Directory Flow', () => {
     const { bot, sender } = createBot(db);
     await bot.handleMessage(PHONE, 'salon in Lagos', 'text', SHARED_PNID);
 
-    // Results are sent as text (platform-scoped list rendered as numbered text)
-    const resultMsg = msgs(sender).find(m => textOf(m).includes('1.'));
-    expect(resultMsg).toBeDefined();
-    // Should contain numbered items
-    expect(textOf(resultMsg!)).toMatch(/1\.\s+\*/);
-    // Should include "Reply with a number"
-    expect(textOf(resultMsg!)).toContain('Reply with a number');
+    const listMsg = msgs(sender).find((m: CapturedMessage) => m.type === 'list');
+    expect(listMsg).toBeDefined();
+    expect(listMsg!.items).toBeDefined();
+    expect(listMsg!.items!.length).toBeGreaterThan(0);
+    expect(listMsg!.items!.length).toBeLessThanOrEqual(10);
+    for (const item of listMsg!.items!) {
+      expect(item.title.length).toBeLessThanOrEqual(24);
+    }
   });
 
-  it('more than 10 results shows the "N found" hint', async () => {
+  it('more than 10 results: list has ≤10 rows plus "N found" hint', async () => {
     const biz = Array.from({ length: 15 }, (_, i) => ({
       id: `biz-${i}`, name: `Salon ${i + 1}`, category: 'salon', description: '',
       address: '', phone: '', bot_code: `S-${i}`, city: 'Lagos', state: 'Lagos',
@@ -318,13 +320,11 @@ describe('WhatsApp Directory Flow', () => {
     const { bot, sender } = createBot(db);
     await bot.handleMessage(PHONE, 'salon in Lagos', 'text', SHARED_PNID);
 
-    const resultMsg = msgs(sender).find(m => textOf(m).includes('1.'));
-    expect(resultMsg).toBeDefined();
-    // Should mention narrowing down (more than 10 results)
-    expect(textOf(resultMsg!)).toMatch(/found|narrow/i);
-    // Should have at most 10 numbered items
-    const numberedLines = textOf(resultMsg!).match(/^\d+\./gm) || [];
-    expect(numberedLines.length).toBeLessThanOrEqual(10);
+    const listMsg = msgs(sender).find((m: CapturedMessage) => m.type === 'list');
+    expect(listMsg).toBeDefined();
+    expect(listMsg!.items!.length).toBeLessThanOrEqual(10);
+    // Body must mention narrowing down
+    expect(textOf(listMsg!)).toMatch(/found|narrow/i);
   });
 
   it('typo correction shows "Showing results for"', async () => {
@@ -370,27 +370,165 @@ describe('WhatsApp Directory Flow', () => {
 
   // ─── Result selection ───
 
-  it('directory handoff code passes correct provenance arguments', () => {
-    // Provenance is verified by code inspection of bot.service.ts directory step handler.
-    // Each recursive handleMessage call passes the 8th arg (_internalProvenance):
-    //
-    // - dir_result_N / dir_sug_N / numeric selection → 'fuzzy'
-    //   (bot.service.ts, handleDirectorySelection selection branch)
-    // - biz_N returning pick → 'returning_customer'
-    //   (bot.service.ts, bizBtnMatch branch)
-    // - typed bot code → 'bot_code'
-    //   (bot.service.ts, botCodeDetection branch)
-    // - connect command match → 'fuzzy'
-    //   (bot.service.ts, connectResult.action === 'enter' branch)
-    // - switch/connect exact match → 'fuzzy'
-    //   (bot.service.ts, switch handler detection.businessId branch)
-    //
-    // The provenance flows into session_data.biz_resolution via the
-    // _internalProvenance → bizResolution assignment at line ~1100.
-    //
-    // Full recursive handleMessage tests are skipped to avoid OOM on
-    // constrained machines. CI runs the full test suite with sufficient memory.
-    expect(true).toBe(true);
+  it('search result tap passes provenance fuzzy', async () => {
+    const db = buildMock({
+      existingSession: dirSession({
+        _directory_results: [{ businessId: 'biz-tap', name: 'FBK', botCode: 'FBK', category: 'salon', city: 'Lagos' }],
+      }),
+    });
+    const origFrom = db.from;
+    db.from = vi.fn().mockImplementation((t: string) => {
+      if (t === 'businesses') return chain({
+        id: 'biz-tap', name: 'FBK', bot_code: 'FBK', slug: 'fbk', category: 'salon',
+        flow_type: 'scheduling', subscription_tier: 'growth', metadata: {}, country_code: 'NG',
+        status: 'active', discovery_enabled: true, messaging_suspended: false,
+        trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+      }, { asList: true });
+      return origFrom(t);
+    });
+    const { bot } = createBot(db);
+    // Spy that captures the recursive call but does NOT execute it (avoids OOM)
+    const origHM = bot.handleMessage.bind(bot);
+    const calls: any[][] = [];
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+      calls.push(args);
+      if (calls.length === 1) return origHM(...args); // first call: real
+      // recursive calls: captured but not executed
+    }) as any;
+    await bot.handleMessage(PHONE, 'dir_result_0', 'text', SHARED_PNID);
+    const recursive = calls.find(c => c[4] === 'biz-tap');
+    expect(recursive).toBeDefined();
+    expect(recursive![7]).toBe('fuzzy');
+  });
+
+  it('suggestion tap passes provenance fuzzy', async () => {
+    const db = buildMock({
+      existingSession: dirSession({
+        _directory_suggestions: [{ id: 'biz-sug', name: 'SugBiz', botCode: 'SB', category: 'salon', city: 'Lagos', matchScore: 0.5 }],
+      }),
+    });
+    const origFrom = db.from;
+    db.from = vi.fn().mockImplementation((t: string) => {
+      if (t === 'businesses') return chain({
+        id: 'biz-sug', name: 'SugBiz', bot_code: 'SB', slug: 'sb', category: 'salon',
+        flow_type: 'scheduling', subscription_tier: 'growth', metadata: {}, country_code: 'NG',
+        status: 'active', discovery_enabled: true, messaging_suspended: false,
+        trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+      }, { asList: true });
+      return origFrom(t);
+    });
+    const { bot } = createBot(db);
+    const origHM = bot.handleMessage.bind(bot);
+    const calls: any[][] = [];
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+      calls.push(args);
+      if (calls.length === 1) return origHM(...args);
+    }) as any;
+    await bot.handleMessage(PHONE, 'dir_sug_0', 'text', SHARED_PNID);
+    const recursive = calls.find(c => c[4] === 'biz-sug');
+    expect(recursive).toBeDefined();
+    expect(recursive![7]).toBe('fuzzy');
+  });
+
+  it('numeric pick passes provenance fuzzy', async () => {
+    const db = buildMock({
+      existingSession: dirSession({
+        _directory_results: [{ businessId: 'biz-num', name: 'NumBiz', botCode: 'NB', category: 'salon', city: 'Lagos' }],
+      }),
+    });
+    const origFrom = db.from;
+    db.from = vi.fn().mockImplementation((t: string) => {
+      if (t === 'businesses') return chain({
+        id: 'biz-num', name: 'NumBiz', bot_code: 'NB', slug: 'nb', category: 'salon',
+        flow_type: 'scheduling', subscription_tier: 'growth', metadata: {}, country_code: 'NG',
+        status: 'active', discovery_enabled: true, messaging_suspended: false,
+        trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+      }, { asList: true });
+      return origFrom(t);
+    });
+    const { bot } = createBot(db);
+    const origHM = bot.handleMessage.bind(bot);
+    const calls: any[][] = [];
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+      calls.push(args);
+      if (calls.length === 1) return origHM(...args);
+    }) as any;
+    await bot.handleMessage(PHONE, '1', 'text', SHARED_PNID);
+    const recursive = calls.find(c => c[4] === 'biz-num');
+    expect(recursive).toBeDefined();
+    expect(recursive![7]).toBe('fuzzy');
+  });
+
+  it('connect exact match passes provenance fuzzy', async () => {
+    const db = buildMock({ existingSession: dirSession() });
+    const origFrom = db.from;
+    db.from = vi.fn().mockImplementation((t: string) => {
+      if (t === 'businesses') return chain({
+        id: 'biz-cx', name: 'ConnBiz', bot_code: 'CB', slug: 'cb', category: 'salon',
+        flow_type: 'scheduling', subscription_tier: 'growth', metadata: {}, country_code: 'NG',
+        status: 'active', discovery_enabled: true, messaging_suspended: false,
+        trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+      }, { asList: true });
+      return origFrom(t);
+    });
+    db.rpc = vi.fn().mockImplementation((fn: string) => {
+      if (fn === 'get_bot_context') return Promise.resolve({ data: { has_session: true, ambiguous: false, session: dirSession(), business: null, capabilities: null, capability_overrides: null }, error: null });
+      if (fn === 'search_businesses_fuzzy') return Promise.resolve({ data: [{ id: 'biz-cx', name: 'ConnBiz', bot_code: 'CB', category: 'salon', city: 'Lagos', state: 'Lagos', country_code: 'NG', match_score: 0.8 }], error: null });
+      return Promise.resolve({ data: { success: true }, error: null });
+    });
+    const { bot } = createBot(db);
+    const origHM = bot.handleMessage.bind(bot);
+    const calls: any[][] = [];
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+      calls.push(args);
+      if (calls.length === 1) return origHM(...args);
+    }) as any;
+    await bot.handleMessage(PHONE, 'connect ConnBiz', 'text', SHARED_PNID);
+    const recursive = calls.find(c => c[4] === 'biz-cx');
+    expect(recursive).toBeDefined();
+    expect(recursive![7]).toBe('fuzzy');
+  });
+
+  it('biz_N returning pick passes provenance returning_customer', async () => {
+    const db = buildMock({
+      existingSession: dirSession({ suggestions: [{ id: 'biz-ret', name: 'RetBiz', bot_code: 'RB' }] }),
+    });
+    const { bot } = createBot(db);
+    const origHM = bot.handleMessage.bind(bot);
+    const calls: any[][] = [];
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+      calls.push(args);
+      if (calls.length === 1) return origHM(...args);
+    }) as any;
+    await bot.handleMessage(PHONE, 'biz_0', 'text', SHARED_PNID);
+    const recursive = calls.find(c => c[4] === 'biz-ret');
+    expect(recursive).toBeDefined();
+    expect(recursive![7]).toBe('returning_customer');
+  });
+
+  it('typed bot code passes provenance bot_code', async () => {
+    const db = buildMock({ existingSession: dirSession() });
+    const origFrom = db.from;
+    db.from = vi.fn().mockImplementation((t: string) => {
+      if (t === 'businesses') return chain({
+        id: 'biz-bc', name: 'CodeBiz', bot_code: 'CODEBIZ', slug: 'cb', category: 'salon',
+        flow_type: 'scheduling', subscription_tier: 'growth', metadata: {}, country_code: 'NG',
+        status: 'active', discovery_enabled: true, messaging_suspended: false,
+        trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+      }, { asList: true });
+      return origFrom(t);
+    });
+    const { bot } = createBot(db);
+    const origHM = bot.handleMessage.bind(bot);
+    const calls: any[][] = [];
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+      calls.push(args);
+      if (calls.length === 1) return origHM(...args);
+    }) as any;
+    await bot.handleMessage(PHONE, 'CODEBIZ', 'text', SHARED_PNID);
+    const recursive = calls.find(c => c[4] === 'biz-bc');
+    expect(recursive).toBeDefined();
+    expect(recursive![7]).toBe('bot_code');
   });
 
   // ─── connect/switch command ───

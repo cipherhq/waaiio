@@ -174,18 +174,22 @@ function createStandaloneService() {
   } as any;
 }
 
-/** Count all business-scoped cloud calls (sendText, sendButtons, sendList, sendTemplate).
- *  When `sender` is provided, subtracts platform-scoped calls (sendPlatformText, sendPlatformButtons)
- *  so only genuinely business-attributable cloud calls remain. */
-function totalBusinessScopedCalls(cloud: ReturnType<typeof createMockCloud>, sender?: { sendPlatformText: { mock: { calls: unknown[] } }; sendPlatformButtons: { mock: { calls: unknown[] } } }): number {
-  const total = cloud.sendText.mock.calls.length
+/**
+ * Count business-scoped cloud calls: total cloud calls minus platform-scoped sends.
+ * Platform-scoped sends (sendPlatformText, sendPlatformButtons, sendPlatformList)
+ * each produce one cloud call but are NOT business-scoped.
+ */
+function totalBusinessScopedCalls(cloud: ReturnType<typeof createMockCloud>, sender?: InstanceType<typeof MetaCloudSender>): number {
+  const totalCloud = cloud.sendText.mock.calls.length
     + cloud.sendButtons.mock.calls.length
     + cloud.sendList.mock.calls.length
     + cloud.sendTemplate.mock.calls.length;
-  if (!sender) return total;
-  const platformCalls = sender.sendPlatformText.mock.calls.length
-    + sender.sendPlatformButtons.mock.calls.length;
-  return total - platformCalls;
+  if (!sender) return totalCloud;
+  // Subtract platform-scoped sends (each produces exactly one cloud call)
+  const platformCalls = (sender.sendPlatformText as any)?.mock?.calls?.length ?? 0;
+  const platformBtnCalls = (sender.sendPlatformButtons as any)?.mock?.calls?.length ?? 0;
+  const platformListCalls = (sender.sendPlatformList as any)?.mock?.calls?.length ?? 0;
+  return totalCloud - platformCalls - platformBtnCalls - platformListCalls;
 }
 
 /**
@@ -365,13 +369,14 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     expect(totalBusinessScopedCalls(cloud)).toBe(0);
   });
 
-  it('6. missing tenant: zero business-scoped provider calls (directory uses platform-scoped sends)', async () => {
+  it('6. missing tenant: zero business-scoped provider calls, platform sends allowed', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
-    const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
-    const spyPlatformButtons = vi.spyOn(sender, 'sendPlatformButtons');
+    // Spy on platform-scoped methods to distinguish from business-scoped cloud calls
+    vi.spyOn(sender, 'sendPlatformText');
+    vi.spyOn(sender, 'sendPlatformButtons');
+    vi.spyOn(sender, 'sendPlatformList');
     mockDetectionResult = { businessId: null, suggestions: [] };
-    // Provide a realistic tenantless session so the flow proceeds past session insert
     const tenantlessSession = {
       id: 'sess-notenent', business_id: null, current_step: 'select_capability',
       is_active: true, session_data: { capabilities: [] },
@@ -382,12 +387,9 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     await bot.handleMessage('+234800', 'random text', 'text', 'pnid-1');
     // Sender transitioned to platform discovery (tenantless)
     expect(sender.boundBusinessId).toBe('');
-    // S-1 property: no business identity was bound when sends happened.
-    // With the directory flow, missing-tenant scenarios produce platform-scoped
-    // sends (via sendPlatformText with platformScopeAllowed:true) which correctly
-    // bypass the business guard. Cloud calls exist (directory greeting) but are
-    // platform-scoped, not business-scoped.
-    // Guard: no generic fallback — the sends are deliberate platform-scoped directory messages, not crashes
+    // S-1 property: zero BUSINESS-scoped cloud calls (platform-scoped are legitimate)
+    expect(totalBusinessScopedCalls(cloud, sender)).toBe(0);
+    // Guard: no generic fallback — the sends are deliberate platform-scoped directory messages
     const fallbackCalls = cloud.sendText.mock.calls.filter(
       (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Something went wrong')
     );

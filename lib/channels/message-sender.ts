@@ -148,6 +148,14 @@ export interface MessageSender {
    */
   sendPlatformText?(msg: { to: string; text: string }): Promise<{ success?: boolean; messageId?: string }>;
   sendPlatformButtons?(msg: { to: string; body: string; buttons: Array<{ id: string; title: string }>; footer?: string }): Promise<{ success?: boolean; messageId?: string }>;
+  sendPlatformList?(msg: {
+    to: string;
+    title: string;
+    body: string;
+    buttonLabel: string;
+    items: Array<{ title: string; description?: string; postbackText: string }>;
+    footer?: string;
+  }): Promise<{ success?: boolean; messageId?: string }>;
   /** S-1 (#256): Bind a resolved business to this sender for hard-stop guard. */
   bindBusiness?(businessId: string): void;
   /** S-1 (#256): Transition to tenantless platform discovery scope. */
@@ -465,6 +473,43 @@ export class MetaCloudSender implements MessageSender {
           to: msg.to, bodyText: msg.body.slice(0, 1024),
           footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
           buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
+        }),
+        { recipientPhone: msg.to },
+        { platformScopeAllowed: true },
+      );
+    }, 2, 1000, this.beforeEachAttempt);
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendPlatformList(msg: {
+    to: string;
+    title: string;
+    body: string;
+    buttonLabel: string;
+    items: Array<{ title: string; description?: string; postbackText: string }>;
+    footer?: string;
+  }) {
+    const truncatedTitle = msg.title.length > 24 ? msg.title.slice(0, 21) + '...' : msg.title;
+    const truncatedBody = msg.body.slice(0, 1024);
+    const truncatedButtonLabel = msg.buttonLabel.slice(0, 20);
+    const sections = [{
+      title: truncatedTitle,
+      rows: msg.items.map(item => ({
+        id: item.postbackText,
+        title: item.title.length > 24 ? item.title.slice(0, 21) + '...' : item.title,
+        description: item.description ? item.description.slice(0, 72) : item.description,
+      })),
+    }];
+
+    const result = await withRetry(async () => {
+      return this.withAttemptAndGuard(
+        () => this.cloud.sendList({
+          to: msg.to,
+          headerText: truncatedTitle,
+          bodyText: truncatedBody,
+          footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
+          buttonText: truncatedButtonLabel,
+          sections,
         }),
         { recipientPhone: msg.to },
         { platformScopeAllowed: true },

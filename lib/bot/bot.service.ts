@@ -4330,11 +4330,8 @@ export class BotService {
 
   /**
    * Platform-scoped list send for pre-business directory results.
-   *
-   * Uses sendPlatformText with a numbered list because sendList goes through
-   * the business guard (assertMessagingAllowed) which fails closed on empty
-   * businessId. Platform-scoped list will be added as a proper sender method
-   * in a follow-up (#633 Part B).
+   * Uses the sender's sendPlatformList (same guard semantics as sendPlatformText:
+   * allowed only in platform discovery mode, refused with a business bound).
    */
   private async sendPlatformList(to: string, msg: {
     title: string;
@@ -4343,14 +4340,12 @@ export class BotService {
     items: Array<{ title: string; description?: string; postbackText: string }>;
     footer?: string;
   }): Promise<void> {
-    const lines = [msg.body, ''];
-    msg.items.forEach((item, i) => {
-      lines.push(`${i + 1}. *${item.title}*`);
-      if (item.description) lines.push(`   ${item.description}`);
-    });
-    if (msg.footer) lines.push('', msg.footer);
-    lines.push('', '_Reply with a number to select._');
-    await this.sendPlatformText(to, lines.join('\n'));
+    if (this.messageSender.sendPlatformList) {
+      await this.messageSender.sendPlatformList({ to, ...msg });
+    } else {
+      // Fallback for test senders without sendPlatformList
+      await this.messageSender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, footer: msg.footer });
+    }
   }
 
   /**

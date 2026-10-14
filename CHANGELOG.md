@@ -840,6 +840,18 @@ Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `i
 - Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
 - If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
 
+## 2026-10-14 — fix(bot): sendPlatformList, provenance tests, s1 guard restoration
+
+### What changed
+- `lib/channels/message-sender.ts`: Added `sendPlatformList` to interface and `MetaCloudSender` with the same guard semantics as `sendPlatformText`/`sendPlatformButtons` (`platformScopeAllowed: true` — allowed only in platform discovery mode, refused with a business bound).
+- `lib/bot/bot.service.ts`: `sendPlatformList` now delegates to the sender's platform-scoped list method (real WhatsApp interactive list, not text fallback).
+- `lib/bot/__tests__/directory-flow.test.ts`: Replaced code-inspection provenance test with 6 real behavior tests (search result tap, suggestion tap, numeric pick, connect match, biz_N pick, typed bot code). List tests assert `type === 'list'` with ≤10 rows and ≤24 char titles.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts`: Restored `totalBusinessScopedCalls === 0` assertion. Extended helper to subtract platform-scoped sends (`sendPlatformText`/`sendPlatformButtons`/`sendPlatformList` spies) from total cloud calls.
+
+### What it affects / could break
+- Directory results now use proper WhatsApp interactive list messages (not text fallback).
+- `sendPlatformList` on a sender with a bound business will throw (same as `sendPlatformText`).
+
 ## 2026-10-14 — fix(bot): directory flow Part A — security, provenance, localization
 
 ### What changed
