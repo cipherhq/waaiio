@@ -1100,70 +1100,66 @@ export class BotService {
         }
       }
 
-      // If verification failed, ignore the tap entirely (fall through to normal handling)
+      // FIX #2: Unverified tap → return immediately. No fall-through.
       if (!_scNavVerified) {
-        // Do not bind, do not change session — treat as unknown text
-      } else if (navAction === 'savedcard_done') {
-        // Deactivate session and send goodbye
+        return;
+      }
+
+      if (navAction === 'savedcard_done') {
+        // FIX #1: Deactivate after verification, send once, never switch to platform scope on failure.
         if (session) await this.deactivateSession(session.id);
         const lang = (session?.session_data as Record<string, unknown> | undefined)?._detected_language as string || 'en';
         const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
-        // Session was bound to a business — use business-scoped send
-        if (this.messageSender.boundBusinessId) {
-          try {
-            await this.sendText(from, getFlowCopy(lang, 'savedcard.session_done'));
-          } catch {
-            // S-1 guard may throw if business was unbound during deactivation
-            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-            await this.sendPlatformText(from, getFlowCopy(lang, 'savedcard.session_done'));
-          }
-        } else {
-          if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-          await this.sendPlatformText(from, getFlowCopy(lang, 'savedcard.session_done'));
+        try {
+          await this.sendText(from, getFlowCopy(lang, 'savedcard.session_done'));
+        } catch (err) {
+          // Business send failed (suspended, ambiguous, etc.) — log and stop. Never retry or switch scope.
+          logger.warn('[SAVED-CARD-NAV] Done goodbye send failed', { paymentId: navPaymentId });
         }
         return;
-      } else if (navAction === 'savedcard_menu') {
-        // Show the business's capability menu
+      }
+
+      if (navAction === 'savedcard_menu') {
+        // FIX #3: Show the business's capability menu
         const bizId = _scNavBizId || session?.business_id;
-        if (bizId) {
-          // Only bind if not already bound to this business
-          if (this.messageSender.boundBusinessId !== bizId) {
-            this.messageSender.bindBusiness?.(bizId);
-          }
-          const { data: biz } = await this.supabase.from('businesses')
-            .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code, is_whitelabel, payment_gateway')
-            .eq('id', bizId).single();
-          if (biz) {
-            // Reset session to capability selection — no p_business_id change if already bound
-            if (session) {
-              const newData = { ...session.session_data, active_capability: undefined };
-              const casParams: Record<string, unknown> = {
-                p_session_id: session.id,
-                p_expected_version: session.version ?? 0,
-                p_current_step: 'select_capability',
-                p_session_data: newData,
-              };
-              // Only send p_business_id if session needs rebinding
-              if (session.business_id !== bizId) {
-                casParams.p_business_id = bizId;
-              }
-              const { data: casResult } = await this.supabase.rpc('update_session_cas', casParams);
-              if (casResult?.success) {
-                session.current_step = 'select_capability';
-                session.session_data = newData;
-                session.version = casResult.version;
-              }
-            }
-            const _menuOv = await getOverrides(bizId);
-            await runWithTranslationOverrides(_menuOv, () =>
-              this.flowExecutor.execute(from, '', session as unknown as BotSession, biz)
-            );
-            return;
-          }
+        if (!bizId) return; // No business — silently consume
+        // Only bind if not already bound to this business
+        if (this.messageSender.boundBusinessId !== bizId) {
+          this.messageSender.bindBusiness?.(bizId);
         }
-        // Fallback: no business resolvable — platform-scoped guidance
-        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-        await this.sendPlatformText(from, 'Send *Hi* to start over.');
+        const { data: biz } = await this.supabase.from('businesses')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code, is_whitelabel, payment_gateway')
+          .eq('id', bizId).single();
+        if (!biz) return; // Business not found — silently consume
+
+        // FIX #3: Only execute if session exists AND CAS succeeds. No null→BotSession cast.
+        if (!session) {
+          // No session — redirect to normal session-creation path via handleMessage('Hi')
+          return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
+        }
+        const newData = { ...session.session_data, active_capability: undefined };
+        const casParams: Record<string, unknown> = {
+          p_session_id: session.id,
+          p_expected_version: session.version ?? 0,
+          p_current_step: 'select_capability',
+          p_session_data: newData,
+        };
+        if (session.business_id !== bizId) {
+          casParams.p_business_id = bizId;
+        }
+        const { data: casResult } = await this.supabase.rpc('update_session_cas', casParams);
+        if (!casResult?.success) {
+          logger.warn('[SAVED-CARD-NAV] Menu CAS failed', { paymentId: navPaymentId, reason: casResult?.reason });
+          return;
+        }
+        session.current_step = 'select_capability';
+        session.session_data = newData;
+        session.version = casResult.version;
+
+        const _menuOv = await getOverrides(bizId);
+        await runWithTranslationOverrides(_menuOv, () =>
+          this.flowExecutor.execute(from, '', session as BotSession, biz)
+        );
         return;
       }
     }

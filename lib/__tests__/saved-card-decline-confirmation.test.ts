@@ -100,8 +100,14 @@ function buildMockSupabase(overrides: {
       chain.single = vi.fn().mockResolvedValue({ data: payment, error: null });
     }
     if (table === 'saved_payment_methods') {
+      // Support both .maybeSingle() (old path) and .order().limit() (new path) as thenable
       chain.maybeSingle = vi.fn().mockResolvedValue({
         data: existingMethods?.[0] || null, error: null,
+      });
+      const pmResult = { data: existingMethods || [], error: null };
+      Object.defineProperty(chain, 'then', {
+        value: (ok?: (v: unknown) => void, er?: (e: unknown) => void) => Promise.resolve(pmResult).then(ok, er),
+        configurable: true,
       });
     }
     if (table === 'bookings') {
@@ -267,5 +273,49 @@ describe('Saved-card decline confirmation', () => {
     const call = sendButtons.mock.calls[0][0];
     // PCM copy: "No wahala..."
     expect(call.body).toContain('wahala');
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // FIX #4a: session business A, payment business B → no bind, no send
+  // ═══════════════════════════════════════════════════════════════
+  it('decline with session business != payment business → no bind, no send', async () => {
+    const OTHER_BIZ = 'biz-other-999';
+    const supabase = buildMockSupabase({
+      payment: { ...PLATFORM_PAYMENT, business_id: OTHER_BIZ },
+    });
+    const session = { id: 'sess-1', business_id: BIZ_ID, session_data: {}, version: 1 };
+    const bindBusiness = vi.fn();
+    const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+    await handleSavedCardOfferAction(
+      supabase as any, sendText, PHONE, session as any, 'replace_decline', PAY_ID, bindBusiness, sendButtons,
+    );
+
+    // bindBusiness never called
+    expect(bindBusiness).not.toHaveBeenCalled();
+    // No buttons or text sent
+    expect(sendButtons).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // FIX #4b: two active cards → no error, deterministic pick (most recent)
+  // ═══════════════════════════════════════════════════════════════
+  it('replace_decline with two active cards → no error, picks first card last4', async () => {
+    const twoCards = [
+      { ...EXISTING_METHOD, card_last4: '9999' },
+      { ...EXISTING_METHOD, id: 'method-2', card_last4: '1111' },
+    ];
+    const supabase = buildMockSupabase({ existingMethods: twoCards });
+    const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+    await handleSavedCardOfferAction(
+      supabase as any, sendText, PHONE, null, 'replace_decline', PAY_ID, vi.fn(), sendButtons,
+    );
+
+    // Should not throw, should send confirmation
+    expect(sendButtons).toHaveBeenCalledTimes(1);
+    const call = sendButtons.mock.calls[0][0];
+    // Should contain first card's last4 (deterministic: ordered by last_used_at desc)
+    expect(call.body).toContain('9999');
+    expect(call.buttons).toHaveLength(2);
   });
 });

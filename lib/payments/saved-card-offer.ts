@@ -280,7 +280,16 @@ async function sendDeclineConfirmation(
   // Resolve business from payment for S-1 binding and override context
   const { data: payment } = await supabase.from('payments')
     .select('business_id').eq('id', paymentId).single();
-  const businessId = payment?.business_id || session?.business_id;
+  const paymentBizId = payment?.business_id;
+  const sessionBizId = session?.business_id;
+
+  // FIX #4: If session is bound to a different business than the payment, do not bind or send
+  if (sessionBizId && paymentBizId && sessionBizId !== paymentBizId) {
+    logger.warn('[SAVED-CARD-DECLINE] Business mismatch — session vs payment', { paymentId });
+    return;
+  }
+
+  const businessId = paymentBizId || sessionBizId;
   if (businessId) bindBusiness?.(businessId);
 
   // Resolve language: session._detected_language → default 'en' (same source as bot flows)
@@ -301,11 +310,18 @@ async function sendDeclineConfirmation(
   await runWithTranslationOverrides({ business: businessOverrides, platform: platformOverrides }, async () => {
     let body: string;
     if (action === 'replace_decline') {
-      // Look up the saved card's last4 for the customer + business
+      // FIX #4: Saved cards are scoped per-business (UNIQUE(business_id, customer_phone, gateway)).
+      // Scope query by business_id. Use .limit(1) + .order('last_used_at') instead of .maybeSingle()
+      // to avoid errors when >1 active card exists (e.g. cross-gateway). Pick most recently used.
       const phoneN = canonPhone.slice(1);
-      const { data: savedCard } = await supabase.from('saved_payment_methods')
-        .select('card_last4').in('customer_phone', [canonPhone, phoneN])
-        .eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+      const { data: savedCards } = await supabase.from('saved_payment_methods')
+        .select('card_last4')
+        .in('customer_phone', [canonPhone, phoneN])
+        .eq('is_active', true).eq('gateway', 'paystack')
+        .eq('business_id', businessId!)
+        .order('last_used_at', { ascending: false, nullsFirst: false })
+        .limit(1);
+      const savedCard = savedCards?.[0];
       if (savedCard?.card_last4) {
         body = fillFlowCopy(lang, 'savedcard.decline_keep_last4', { last4: savedCard.card_last4 });
       } else {
