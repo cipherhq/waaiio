@@ -1,13 +1,11 @@
+import * as Sentry from '@sentry/nextjs';
+
 /**
  * Next.js instrumentation hook — loads Sentry for server and edge runtimes.
  *
  * @sentry/nextjs v10 requires this file to initialize server-side and edge
- * Sentry SDKs in Next.js 14. Without it, sentry.server.config.ts and
- * sentry.edge.config.ts are never loaded, and only client-side errors are
- * captured.
- *
- * Requires experimental.instrumentationHook: true in next.config.mjs for
- * Next.js 14.
+ * Sentry SDKs. In Next.js 15 the instrumentation hook is built-in (no
+ * experimental flag needed).
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
@@ -18,3 +16,9 @@ export async function register() {
     await import('./sentry.edge.config');
   }
 }
+
+/**
+ * Next.js 15 request-error hook — captures errors from nested React Server
+ * Components that the global error boundary cannot reach.
+ */
+export const onRequestError = Sentry.captureRequestError;

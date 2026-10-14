@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import Image from 'next/image';
 
@@ -11,8 +11,8 @@ interface BusinessInfo {
   logo_url: string | null;
 }
 
-export default function CheckInPage({ params }: { params: { businessId: string } }) {
-  const { businessId } = params;
+export default function CheckInPage(props: { params: Promise<{ businessId: string }> }) {
+  const { businessId } = use(props.params);
   const [state, setState] = useState<PageState>('loading');
   const [business, setBusiness] = useState<BusinessInfo | null>(null);
   const [name, setName] = useState('');
