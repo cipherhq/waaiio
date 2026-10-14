@@ -257,12 +257,25 @@ export default function Businesses() {
       if (!token) { alert('Session expired. Please log in again.'); return; }
 
       const apiUrl = import.meta.env.VITE_API_URL || '';
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+      // Pre-check: warn if this is a paying business
+      const checkRes = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, { headers });
+      if (checkRes.ok) {
+        const info = await checkRes.json();
+        if (info.paidPlan) {
+          const planLabel = info.paidPlan.charAt(0).toUpperCase() + info.paidPlan.slice(1);
+          const dateStr = info.revertsOn ? new Date(info.revertsOn).toLocaleDateString() : 'next renewal';
+          const confirmed = confirm(
+            `This business pays for the ${planLabel} plan. Your change lasts until their next renewal on ${dateStr}, then returns to ${planLabel}. Billing is not changed.`,
+          );
+          if (!confirmed) { setTierSaving(false); return; }
+        }
+      }
+
       const res = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({ tier: selectedTier }),
       });
 

@@ -11,20 +11,20 @@ interface SubscriptionRecord {
   business_id: string;
   business_name?: string;
   business_category?: string;
-  plan_name: string | null;
-  tier: string;
+  /** DB column: subscriptions.plan (varchar) — the paid plan name */
+  plan: string;
   status: string;
   amount: number;
   currency: string | null;
-  interval: string | null;
-  auto_renew: boolean;
+  billing_interval: string | null;
   trial_ends_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
   cancelled_at: string | null;
   cancellation_reason: string | null;
   gateway: string | null;
-  gateway_subscription_id: string | null;
+  /** Business's current subscription_tier (joined from businesses table) */
+  business_tier?: string;
   metadata: Record<string, unknown> | null;
   created_at: string;
   updated_at: string | null;
@@ -199,7 +199,7 @@ export default function Subscriptions() {
 
       const { data: subData, error } = await adminDb
         .from('subscriptions')
-        .select('*, businesses(name, category)')
+        .select('*, businesses(name, category, subscription_tier)')
         .order('created_at', { ascending: false });
 
       if (error || !subData) {
@@ -210,15 +210,16 @@ export default function Subscriptions() {
 
         const bizIds = [...new Set((rawSubs || []).map(s => s.business_id).filter(Boolean))];
         const { data: businesses } = bizIds.length > 0
-          ? await adminDb.from('businesses').select('id, name, category').in('id', bizIds)
+          ? await adminDb.from('businesses').select('id, name, category, subscription_tier').in('id', bizIds)
           : { data: [] };
 
-        const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, category: b.category }]));
+        const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, category: b.category, subscription_tier: b.subscription_tier }]));
 
         const enriched: SubscriptionRecord[] = (rawSubs || []).map(s => ({
           ...s,
           business_name: bizMap.get(s.business_id)?.name || 'Unknown',
           business_category: bizMap.get(s.business_id)?.category || '—',
+          business_tier: bizMap.get(s.business_id)?.subscription_tier || 'free',
         }));
 
         setSubscriptions(enriched);
@@ -230,6 +231,7 @@ export default function Subscriptions() {
             ...rest,
             business_name: biz?.name || 'Unknown',
             business_category: biz?.category || '—',
+            business_tier: biz?.subscription_tier || 'free',
           };
         });
 
@@ -287,7 +289,7 @@ export default function Subscriptions() {
       setSelectedOverrideCount(null);
       return;
     }
-    setActionTier(selected.tier);
+    setActionTier(selected.business_tier || selected.plan);
     setTrialDays(7);
     setCancelReason('');
     setShowCancelConfirm(false);
@@ -301,7 +303,7 @@ export default function Subscriptions() {
   // ── Admin Actions ──
 
   async function handleChangeTier() {
-    if (!selected || actionTier === selected.tier) return;
+    if (!selected || actionTier === (selected.business_tier || selected.plan)) return;
     setActionSaving(true);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -309,12 +311,25 @@ export default function Subscriptions() {
       if (!token) { alert('Session expired. Please log in again.'); return; }
 
       const apiUrl = import.meta.env.VITE_API_URL || '';
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+      // Pre-check: warn if this is a paying business
+      const checkRes = await fetch(`${apiUrl}/api/admin/businesses/${selected.business_id}/tier`, { headers });
+      if (checkRes.ok) {
+        const info = await checkRes.json();
+        if (info.paidPlan) {
+          const planLabel = info.paidPlan.charAt(0).toUpperCase() + info.paidPlan.slice(1);
+          const dateStr = info.revertsOn ? new Date(info.revertsOn).toLocaleDateString() : 'next renewal';
+          const confirmed = confirm(
+            `This business pays for the ${planLabel} plan. Your change lasts until their next renewal on ${dateStr}, then returns to ${planLabel}. Billing is not changed.`,
+          );
+          if (!confirmed) { setActionSaving(false); return; }
+        }
+      }
+
       const res = await fetch(`${apiUrl}/api/admin/businesses/${selected.business_id}/tier`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({ tier: actionTier }),
       });
 
@@ -323,8 +338,8 @@ export default function Subscriptions() {
         throw new Error(err.error || 'Failed to change tier');
       }
 
-      setSubscriptions(prev => prev.map(s => s.id === selected.id ? { ...s, tier: actionTier } : s));
-      setSelected(prev => prev ? { ...prev, tier: actionTier } : prev);
+      setSubscriptions(prev => prev.map(s => s.id === selected.id ? { ...s, business_tier: actionTier } : s));
+      setSelected(prev => prev ? { ...prev, business_tier: actionTier } : prev);
     } catch (err) {
       console.error('Tier change error:', err);
       alert(err instanceof Error ? err.message : 'Failed to change tier');
@@ -414,11 +429,11 @@ export default function Subscriptions() {
 
   // ── Derived Data ──
 
-  const uniqueTiers = [...new Set(subscriptions.map(s => s.tier).filter(Boolean))].sort();
+  const uniqueTiers = [...new Set(subscriptions.map(s => s.plan).filter(Boolean))].sort();
 
   const filtered = subscriptions.filter(s => {
     if (statusFilter !== 'all' && s.status !== statusFilter) return false;
-    if (tierFilter !== 'all' && s.tier !== tierFilter) return false;
+    if (tierFilter !== 'all' && s.plan !== tierFilter) return false;
     return true;
   });
 
@@ -433,7 +448,7 @@ export default function Subscriptions() {
   for (const s of subscriptions.filter(s => s.status === 'active')) {
     const cur = s.currency || 'NGN';
     const amt = Number(s.amount || 0);
-    const monthly = (s.interval === 'yearly' || s.interval === 'annual') ? amt / 12 : amt;
+    const monthly = (s.billing_interval === 'yearly' || s.billing_interval === 'annual') ? amt / 12 : amt;
     mrrByCurrency[cur] = (mrrByCurrency[cur] || 0) + monthly;
   }
 
@@ -446,13 +461,13 @@ export default function Subscriptions() {
 
   // Analytics: tier distribution
   const tierDistribution = TIERS.map(tier => {
-    const subs = subscriptions.filter(s => s.tier === tier);
+    const subs = subscriptions.filter(s => s.plan === tier);
     const activeSubs = subs.filter(s => s.status === 'active');
     const tierMrrByCurrency: Record<string, number> = {};
     for (const s of activeSubs) {
       const cur = s.currency || 'NGN';
       const amt = Number(s.amount || 0);
-      const monthly = (s.interval === 'yearly' || s.interval === 'annual') ? amt / 12 : amt;
+      const monthly = (s.billing_interval === 'yearly' || s.billing_interval === 'annual') ? amt / 12 : amt;
       tierMrrByCurrency[cur] = (tierMrrByCurrency[cur] || 0) + monthly;
     }
     return {
@@ -591,10 +606,10 @@ export default function Subscriptions() {
                     >
                       <td className="px-4 py-3 font-medium text-gray-900">{s.business_name}</td>
                       <td className="px-4 py-3 text-gray-600">
-                        <span className="capitalize">{s.plan_name || s.tier}</span>
-                        {s.plan_name && s.tier && s.plan_name !== s.tier && (
-                          <span className="ml-1.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500 capitalize">
-                            {s.tier}
+                        <span className="capitalize">{s.plan}</span>
+                        {s.business_tier && s.business_tier !== s.plan && (
+                          <span className="ml-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 capitalize">
+                            override: {s.business_tier}
                           </span>
                         )}
                       </td>
@@ -603,8 +618,8 @@ export default function Subscriptions() {
                       </td>
                       <td className="px-4 py-3 text-right font-medium text-gray-900">
                         {fmtCurrency(s.amount, s.currency || undefined)}
-                        {s.interval && (
-                          <span className="ml-1 text-xs text-gray-400">/{s.interval === 'yearly' || s.interval === 'annual' ? 'yr' : 'mo'}</span>
+                        {s.billing_interval && (
+                          <span className="ml-1 text-xs text-gray-400">/{s.billing_interval === 'yearly' || s.billing_interval === 'annual' ? 'yr' : 'mo'}</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
@@ -818,8 +833,8 @@ export default function Subscriptions() {
             <DetailRow label="Subscription ID" value={selected.id} />
             <DetailRow label="Business" value={selected.business_name || 'Unknown'} />
             <DetailRow label="Category" value={selected.business_category} />
-            <DetailRow label="Plan" value={selected.plan_name} />
-            <DetailRow label="Tier" value={selected.tier} />
+            <DetailRow label="Paid Plan" value={selected.plan} />
+            <DetailRow label="Current Tier" value={selected.business_tier} />
             <DetailRow label="Status" value={selected.status} />
             {selectedOverrideCount !== null && selectedOverrideCount > 0 && (
               <DetailRow label="Capability Overrides" value={
@@ -836,7 +851,7 @@ export default function Subscriptions() {
 
             <DetailRow label="Amount" value={fmtCurrency(selected.amount, selected.currency || undefined)} />
             <DetailRow label="Currency" value={selected.currency?.toUpperCase()} />
-            <DetailRow label="Interval" value={selected.interval} />
+            <DetailRow label="Interval" value={selected.billing_interval} />
             <DetailRow label="Auto-renew" value={selected.auto_renew ? 'Yes' : 'No'} />
 
             <div className="my-3 border-t border-gray-100" />
@@ -912,7 +927,7 @@ export default function Subscriptions() {
                     </select>
                     <button
                       onClick={handleChangeTier}
-                      disabled={actionSaving || actionTier === selected.tier}
+                      disabled={actionSaving || actionTier === (selected.business_tier || selected.plan)}
                       className="rounded-lg bg-brand px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
                     >
                       {actionSaving ? 'Saving...' : 'Save'}

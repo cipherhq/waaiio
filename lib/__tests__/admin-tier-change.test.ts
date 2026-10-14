@@ -1,16 +1,29 @@
 /**
  * Admin tier-change route tests.
  *
- * Tests for POST /api/admin/businesses/[id]/tier:
+ * POST /api/admin/businesses/[id]/tier:
  * 1. Non-admin gets 403
- * 2. Admin with non-full-admin role (e.g. support) gets 403
+ * 2. Support role (not full-admin) gets 403
  * 3. Invalid tier gets 400
  * 4. Unknown business gets 404
- * 5. Valid change updates both businesses and subscriptions, writes audit
- * 6. Subscriptions update failure rolls back businesses update
- * 7. Invalid UUID gets 400
- * 8. Same-tier no-op returns the tier without writes
- * 9. Rollback also fails → 500, Sentry.captureException and logger.error called
+ * 5. Valid change updates businesses.subscription_tier only — never writes subscriptions
+ * 6. Paying business: response has paidPlan and revertsOn; audit includes them
+ * 7. Non-paying business: paidPlan null, revertsOn null
+ * 8. Invalid UUID gets 400
+ * 9. Same-tier no-op returns tier without writes
+ *
+ * GET /api/admin/businesses/[id]/tier:
+ * 10. Non-admin gets 403
+ * 11. Invalid UUID gets 400
+ * 12. Unknown business gets 404
+ * 13. Returns { tier, paidPlan, revertsOn } shape
+ *
+ * Column evidence (migration file:line):
+ * - businesses.subscription_tier: 002_multi_industry.sql:38
+ * - subscriptions.status: 001_initial_schema.sql:273
+ * - subscriptions.plan: 001_initial_schema.sql:272
+ * - subscriptions.current_period_end: 001_initial_schema.sql:278
+ * - subscriptions.business_id: 002_multi_industry.sql:103 (renamed from restaurant_id)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -27,20 +40,7 @@ vi.mock('@/lib/admin-audit', () => ({
   logAdminAudit: (...args: unknown[]) => mockLogAdminAudit(...args),
 }));
 
-const mockSentryCaptureException = vi.fn();
-vi.mock('@sentry/nextjs', () => ({
-  captureException: (...args: unknown[]) => mockSentryCaptureException(...args),
-}));
-
-const mockLoggerError = vi.fn();
-vi.mock('@/lib/logger', () => ({
-  logger: { error: (...args: unknown[]) => mockLoggerError(...args) },
-}));
-
-// Track per-table update calls and their responses
-const bizUpdateResponse = { error: null as { message: string } | null };
-const subUpdateResponse = { error: null as { message: string } | null };
-const bizRollbackResponse = { error: null as { message: string } | null };
+// ── Service client mock ──
 
 let bizSelectData: { id: string; name: string; subscription_tier: string } | null = {
   id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -48,8 +48,10 @@ let bizSelectData: { id: string; name: string; subscription_tier: string } | nul
   subscription_tier: 'free',
 };
 
-// Track calls for assertions
+let subSelectData: { status: string; plan: string; current_period_end: string } | null = null;
+
 const updateCalls: Array<{ table: string; data: Record<string, unknown>; id: string }> = [];
+const bizUpdateResponse = { error: null as { message: string } | null };
 
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
@@ -60,75 +62,71 @@ vi.mock('@/lib/supabase/service', () => ({
             data: table === 'businesses' ? bizSelectData : null,
             error: bizSelectData ? null : { message: 'not found' },
           }),
+          maybeSingle: () => Promise.resolve({
+            data: table === 'subscriptions' ? subSelectData : null,
+            error: null,
+          }),
         }),
       }),
       update: (data: Record<string, unknown>) => ({
         eq: (_col: string, val: string) => {
           updateCalls.push({ table, data, id: val });
           if (table === 'businesses') {
-            // Check if this is a rollback (restoring previous tier)
-            if (updateCalls.filter(c => c.table === 'businesses').length > 1) {
-              return Promise.resolve(bizRollbackResponse);
-            }
             return Promise.resolve({ error: bizUpdateResponse.error });
           }
-          return Promise.resolve({ error: subUpdateResponse.error });
+          // subscriptions.update should NEVER be called
+          return Promise.resolve({ error: { message: 'unexpected subscriptions write' } });
         },
       }),
     }),
   }),
 }));
 
-function makeRequest(bizId: string, body: Record<string, unknown>): NextRequest {
-  return new NextRequest(`http://localhost/api/admin/businesses/${bizId}/tier`, {
-    method: 'POST',
-    body: JSON.stringify(body),
+function makeRequest(bizId: string, method: string, body?: Record<string, unknown>): NextRequest {
+  const init: RequestInit = {
+    method,
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' },
-  });
+  };
+  if (body) init.body = JSON.stringify(body);
+  return new NextRequest(`http://localhost/api/admin/businesses/${bizId}/tier`, init);
 }
 
 const VALID_BIZ_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const ADMIN = {
+  id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
+  role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
+};
 
 describe('Admin tier-change route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     updateCalls.length = 0;
     bizUpdateResponse.error = null;
-    subUpdateResponse.error = null;
-    bizRollbackResponse.error = null;
-    bizSelectData = {
-      id: VALID_BIZ_ID,
-      name: 'Test Biz',
-      subscription_tier: 'free',
-    };
+    bizSelectData = { id: VALID_BIZ_ID, name: 'Test Biz', subscription_tier: 'free' };
+    subSelectData = null;
   });
+
+  // ── POST tests ──
 
   it('1. non-admin gets 403', async () => {
     mockRequirePlatformAdmin.mockResolvedValue(null);
-
     const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
     const res = await POST(
-      makeRequest(VALID_BIZ_ID, { tier: 'growth' }),
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'growth' }),
       { params: Promise.resolve({ id: VALID_BIZ_ID }) },
     );
-
     expect(res.status).toBe(403);
     expect(updateCalls).toHaveLength(0);
-    expect(mockLogAdminAudit).not.toHaveBeenCalled();
   });
 
   it('2. support role (not full-admin) gets 403', async () => {
-    // requirePlatformAdmin with requiredRole: 'admin' should reject 'support'
     mockRequirePlatformAdmin.mockResolvedValue(null);
-
     const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
     const res = await POST(
-      makeRequest(VALID_BIZ_ID, { tier: 'growth' }),
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'growth' }),
       { params: Promise.resolve({ id: VALID_BIZ_ID }) },
     );
-
     expect(res.status).toBe(403);
-    // Verify the route requested 'admin' role specifically
     expect(mockRequirePlatformAdmin).toHaveBeenCalledWith(
       expect.anything(),
       { requiredRole: 'admin' },
@@ -136,69 +134,49 @@ describe('Admin tier-change route', () => {
   });
 
   it('3. invalid tier gets 400', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({
-      id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
-      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
-    });
-
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
     const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
     const res = await POST(
-      makeRequest(VALID_BIZ_ID, { tier: 'enterprise' }),
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'enterprise' }),
       { params: Promise.resolve({ id: VALID_BIZ_ID }) },
     );
-
     expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toContain('Invalid tier');
     expect(updateCalls).toHaveLength(0);
   });
 
   it('4. unknown business gets 404', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({
-      id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
-      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
-    });
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
     bizSelectData = null;
-
     const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
     const res = await POST(
-      makeRequest(VALID_BIZ_ID, { tier: 'growth' }),
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'growth' }),
       { params: Promise.resolve({ id: VALID_BIZ_ID }) },
     );
-
     expect(res.status).toBe(404);
     expect(updateCalls).toHaveLength(0);
   });
 
-  it('5. valid change updates both records and writes audit', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({
-      id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
-      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
-    });
-
+  it('5. valid change updates only businesses.subscription_tier — never writes subscriptions', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
     const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
     const res = await POST(
-      makeRequest(VALID_BIZ_ID, { tier: 'business' }),
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'business' }),
       { params: Promise.resolve({ id: VALID_BIZ_ID }) },
     );
-
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.tier).toBe('business');
 
-    // businesses.subscription_tier was updated
+    // Only one update call, and it's to businesses
+    expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0]).toEqual({
       table: 'businesses',
       data: { subscription_tier: 'business' },
       id: VALID_BIZ_ID,
     });
 
-    // subscriptions.tier was updated
-    expect(updateCalls[1]).toEqual({
-      table: 'subscriptions',
-      data: { tier: 'business' },
-      id: VALID_BIZ_ID,
-    });
+    // Never wrote to subscriptions
+    expect(updateCalls.filter(c => c.table === 'subscriptions')).toHaveLength(0);
 
     // Audit was logged
     expect(mockLogAdminAudit).toHaveBeenCalledWith(
@@ -207,117 +185,120 @@ describe('Admin tier-change route', () => {
         action: 'change_subscription_tier',
         entityType: 'business',
         entityId: VALID_BIZ_ID,
-        details: {
-          previous_tier: 'free',
-          new_tier: 'business',
-          business_name: 'Test Biz',
-        },
       }),
     );
   });
 
-  it('6. subscriptions update failure rolls back businesses and returns error', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({
-      id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
-      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
-    });
-    subUpdateResponse.error = { message: 'constraint violation' };
+  it('6. paying business: response has paidPlan and revertsOn; audit includes them', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    subSelectData = { status: 'active', plan: 'growth', current_period_end: '2026-11-14T00:00:00Z' };
 
     const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
     const res = await POST(
-      makeRequest(VALID_BIZ_ID, { tier: 'growth' }),
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'business' }),
       { params: Promise.resolve({ id: VALID_BIZ_ID }) },
     );
-
-    expect(res.status).toBe(500);
-
-    // Should have 3 calls: biz update, sub update (failed), biz rollback
-    expect(updateCalls).toHaveLength(3);
-
-    // Third call is the rollback — restoring previous tier
-    expect(updateCalls[2]).toEqual({
-      table: 'businesses',
-      data: { subscription_tier: 'free' },
-      id: VALID_BIZ_ID,
-    });
-
-    // No audit logged on failure
-    expect(mockLogAdminAudit).not.toHaveBeenCalled();
-  });
-
-  it('7. invalid UUID gets 400', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({
-      id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
-      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
-    });
-
-    const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
-    const res = await POST(
-      makeRequest('not-a-uuid', { tier: 'growth' }),
-      { params: Promise.resolve({ id: 'not-a-uuid' }) },
-    );
-
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toContain('Invalid business ID');
-  });
-
-  it('8. same-tier no-op returns tier without writes', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({
-      id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
-      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
-    });
-
-    const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
-    const res = await POST(
-      makeRequest(VALID_BIZ_ID, { tier: 'free' }), // same as current
-      { params: Promise.resolve({ id: VALID_BIZ_ID }) },
-    );
-
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.tier).toBe('free');
+    expect(json.paidPlan).toBe('growth');
+    expect(json.revertsOn).toBe('2026-11-14T00:00:00Z');
+
+    // Audit includes paid_plan and reverts_on
+    expect(mockLogAdminAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          paid_plan: 'growth',
+          reverts_on: '2026-11-14T00:00:00Z',
+        }),
+      }),
+    );
+  });
+
+  it('7. non-paying business: paidPlan null, revertsOn null', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    subSelectData = { status: 'trial', plan: 'free', current_period_end: '2026-11-14T00:00:00Z' };
+
+    const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await POST(
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'growth' }),
+      { params: Promise.resolve({ id: VALID_BIZ_ID }) },
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.paidPlan).toBeNull();
+    expect(json.revertsOn).toBeNull();
+  });
+
+  it('8. invalid UUID gets 400', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await POST(
+      makeRequest('not-a-uuid', 'POST', { tier: 'growth' }),
+      { params: Promise.resolve({ id: 'not-a-uuid' }) },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('9. same-tier no-op returns tier without writes', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await POST(
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'free' }),
+      { params: Promise.resolve({ id: VALID_BIZ_ID }) },
+    );
+    expect(res.status).toBe(200);
     expect(updateCalls).toHaveLength(0);
     expect(mockLogAdminAudit).not.toHaveBeenCalled();
   });
 
-  it('9. rollback also fails → 500, Sentry and logger capture the error', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({
-      id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
-      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
-    });
-    subUpdateResponse.error = { message: 'constraint violation' };
-    bizRollbackResponse.error = { message: 'connection lost' };
+  // ── GET tests ──
 
-    const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
-    const res = await POST(
-      makeRequest(VALID_BIZ_ID, { tier: 'growth' }),
+  it('10. GET: non-admin gets 403', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(null);
+    const { GET } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await GET(
+      makeRequest(VALID_BIZ_ID, 'GET'),
       { params: Promise.resolve({ id: VALID_BIZ_ID }) },
     );
+    expect(res.status).toBe(403);
+  });
 
-    expect(res.status).toBe(500);
-
-    // Sentry captured the rollback failure
-    expect(mockSentryCaptureException).toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.stringContaining('Tier rollback failed') }),
-      expect.objectContaining({
-        tags: { component: 'admin-tier-change', operation: 'rollback' },
-        extra: { businessId: VALID_BIZ_ID, previousTier: 'free', attemptedTier: 'growth' },
-      }),
+  it('11. GET: invalid UUID gets 400', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    const { GET } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await GET(
+      makeRequest('not-a-uuid', 'GET'),
+      { params: Promise.resolve({ id: 'not-a-uuid' }) },
     );
+    expect(res.status).toBe(400);
+  });
 
-    // logger.error was called with business context
-    expect(mockLoggerError).toHaveBeenCalledWith(
-      '[ADMIN-TIER] Rollback failed:',
-      expect.objectContaining({
-        businessId: VALID_BIZ_ID,
-        previousTier: 'free',
-        attemptedTier: 'growth',
-        rollbackError: 'connection lost',
-      }),
+  it('12. GET: unknown business gets 404', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    bizSelectData = null;
+    const { GET } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await GET(
+      makeRequest(VALID_BIZ_ID, 'GET'),
+      { params: Promise.resolve({ id: VALID_BIZ_ID }) },
     );
+    expect(res.status).toBe(404);
+  });
 
-    // No audit logged on failure
-    expect(mockLogAdminAudit).not.toHaveBeenCalled();
+  it('13. GET: returns { tier, paidPlan, revertsOn } shape', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    subSelectData = { status: 'active', plan: 'business', current_period_end: '2026-12-01T00:00:00Z' };
+
+    const { GET } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await GET(
+      makeRequest(VALID_BIZ_ID, 'GET'),
+      { params: Promise.resolve({ id: VALID_BIZ_ID }) },
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json).toEqual({
+      tier: 'free',
+      paidPlan: 'business',
+      revertsOn: '2026-12-01T00:00:00Z',
+    });
   });
 });

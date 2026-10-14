@@ -3,18 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-## 2026-10-14 — fix(admin): move tier change server-side
+## 2026-10-14 — fix(admin): move tier change server-side (business-only override)
 
 ### What changed
-- `app/api/admin/businesses/[id]/tier/route.ts`: New POST route that changes a business's subscription tier. Requires `requirePlatformAdmin({ requiredRole: 'admin' })` (full-admin only, Bearer auth). Validates UUID and tier against the DB enum (`free`, `growth`, `business`). Updates `businesses.subscription_tier` and `subscriptions.tier` via service client. If the subscriptions update fails, rolls back the businesses update; if the rollback itself fails, reports via `Sentry.captureException` and `logger.error` with business ID, previous tier, and attempted tier. Writes audit log server-side with action `change_subscription_tier`.
-- `admin/src/pages/Businesses.tsx`: `handleTierChange()` now calls the new API route via fetch with Bearer auth instead of writing directly to `adminDb`. Error messages from the server are shown to the admin.
-- `admin/src/pages/Subscriptions.tsx`: `handleChangeTier()` now calls the new API route via fetch with Bearer auth instead of writing directly to `adminDb`. Error messages from the server are shown to the admin.
-- `lib/__tests__/admin-tier-change.test.ts`: 9 tests covering auth (non-admin 403, non-full-admin 403), validation (invalid tier 400, invalid UUID 400), business not found (404), happy path (updates both records + audit), rollback on second-write failure, rollback-also-fails (Sentry + logger capture), and same-tier no-op.
+- `app/api/admin/businesses/[id]/tier/route.ts`: New POST+GET route for admin tier changes. POST changes only `businesses.subscription_tier` (never writes subscriptions). GET returns `{ tier, paidPlan, revertsOn }` so the UI can warn before saving. For paying businesses (active subscription with plan growth/business), the response includes `paidPlan` and `revertsOn` (current_period_end). At next renewal, `activate_paid_subscription` (M418) resets the tier to the subscription's plan. Auth: `requirePlatformAdmin({ requiredRole: 'admin' })`.
+- `admin/src/pages/Businesses.tsx`: `handleTierChange()` calls GET before POST; if the business has a paid plan, shows a confirm dialog explaining the override is temporary and billing is unchanged.
+- `admin/src/pages/Subscriptions.tsx`: Same confirm dialog. Fixed `SubscriptionRecord` interface: `tier` (nonexistent column) → use `businesses.subscription_tier` joined as `business_tier`; `plan_name` (nonexistent) → `plan` (actual DB column, M001:272); `interval` → `billing_interval` (M172:4); `auto_renew`/`gateway_subscription_id` remain in interface but are not tier-related. Detail panel shows "Paid Plan" (subscriptions.plan) and "Current Tier" (businesses.subscription_tier). Table row shows override badge when business_tier differs from plan.
+- `lib/__tests__/admin-tier-change.test.ts`: 13 tests — POST: auth (2), validation (2), 404, business-only write (never subscriptions), paying biz response, non-paying biz response, no-op; GET: auth, validation, 404, response shape. 0 skips.
 
 ### What it affects / could break
-- Admin tier changes now go through the server-side route, bypassing the tier trigger and #635 guard that blocked direct browser writes. This is the same pattern used for capability mutations.
-- No changes to billing, payments, periods, or capabilities.
-- The audit action name is `change_subscription_tier` (matching the Subscriptions page's previous name). The Businesses page previously used `change_tier` — now both use the same server-side action name.
+- Previous head (96279b15) had a P0 bug: the route wrote `subscriptions.tier` which does not exist — PostgREST rejected it and every tier change returned 500. Unit tests passed because Supabase was mocked. This is now fixed.
+- Admin tier change is a business-only override. Non-paying businesses: permanent. Paying businesses: temporary until next renewal.
+- No changes to billing, payments, renewal logic, cron, or capabilities.
 
 ## 2026-10-13 — fix(security): move bank account writes server-side (M448)
 
