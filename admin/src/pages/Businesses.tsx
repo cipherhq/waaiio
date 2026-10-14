@@ -252,26 +252,50 @@ export default function Businesses() {
     if (!selected || selectedTier === selected.subscription_tier || !isFullAdmin) return;
     setTierSaving(true);
     try {
-      const { error } = await adminDb
-        .from('businesses')
-        .update({ subscription_tier: selectedTier })
-        .eq('id', selected.id);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) { alert('Session expired. Please log in again.'); return; }
 
-      if (error) throw error;
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
-      await logAudit({
-        action: 'change_tier',
-        entity_type: 'business',
-        entity_id: selected.id,
-        details: { previous_tier: selected.subscription_tier, new_tier: selectedTier, business_name: selected.name },
+      // Pre-check: warn if this is a paying business
+      let info: { paidPlan?: string | null; revertsOn?: string | null };
+      try {
+        const checkRes = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, { headers });
+        if (!checkRes.ok) throw new Error();
+        info = await checkRes.json();
+      } catch {
+        alert('Could not check whether this business has a paid plan. Tier not changed.');
+        setTierSaving(false);
+        return;
+      }
+      if (info.paidPlan) {
+        const planLabel = info.paidPlan.charAt(0).toUpperCase() + info.paidPlan.slice(1);
+        const dateStr = info.revertsOn ? new Date(info.revertsOn).toLocaleDateString() : 'next renewal';
+        const confirmed = confirm(
+          `This business pays for the ${planLabel} plan. Your change lasts until their next renewal on ${dateStr}, then returns to ${planLabel}. Billing is not changed.`,
+        );
+        if (!confirmed) { setTierSaving(false); return; }
+      }
+
+      const res = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ tier: selectedTier }),
       });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || 'Failed to change tier');
+      }
 
       // Update local state
       setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, subscription_tier: selectedTier } : b));
       setSelected(prev => prev ? { ...prev, subscription_tier: selectedTier } : prev);
     } catch (err) {
       console.error('Tier change error:', err);
-      alert('Failed to change tier');
+      alert(err instanceof Error ? err.message : 'Failed to change tier');
     } finally {
       setTierSaving(false);
     }
