@@ -61,13 +61,19 @@
     "vitest": "^4.1.4"
   },
   "overrides": {
-    "simple-git": "4.0.1",
-    "jsondiffpatch": "0.7.6",
+    "@antiwork/shortest": {
+      "simple-git": "4.0.1"
+    },
+    "ai": {
+      "jsondiffpatch": "0.7.6"
+    },
     "source-map-js": "1.2.2",
     "fast-uri": "3.1.8",
     "js-yaml": "4.3.2",
     "dompurify": "3.4.16",
-    "postcss": "$postcss",
+    "next": {
+      "postcss": "$postcss"
+    },
     "@next/eslint-plugin-next": {
       "glob": "10.5.0"
     }

@@ -3,18 +3,35 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1627-1666`: 23505 null-biz recovery now checks if the recovered session is expired (`expires_at < now`). If expired: deactivates the stale row (`is_active=false`, scoped by id + `business_id IS NULL`), retries the insert once. If retry fails: logs, Sentry, sends fallback via platform path. Only resumes non-expired sessions.
+- `lib/bot/bot.service.ts:1659-1669`: 23505 fallback "Something went wrong" messages changed from `this.sendText` (business-scoped, crashes with MessagingSuspendedError when no business) to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2039-2041`: Added `enterPlatformDiscovery()` call at the start of the marketplace greeting section (no business bound).
+- `lib/bot/bot.service.ts:2053,2070-2076,2095,2110,2126`: Changed all no-business sends from `this.sendText` / `this.messageSender.sendButtons` to `this.sendPlatformText` / `this.sendPlatformButtons` — "Welcome back", quick-pick buttons, registration fallback, first-time greeting, "couldn't find a business".
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering stale session deactivation + retry, Hi with stale session, brand-new phone greeting, returning customer picker.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts:360-388`: Updated test 6 — no longer expects guard to block (sends are now platform-scoped), instead verifies "couldn't find" message is delivered.
+
+### What it affects / could break
+- The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
+- PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
+- The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
 ## 2026-10-14 — chore(deps): patch critical and high dependency advisories
 
 ### What changed
-- `package.json`: Added `overrides` to patch vulnerable transitive dependencies: `simple-git` 3.36.0→4.0.1 (CRITICAL), `jsondiffpatch` 0.6.0→0.7.6 (HIGH), `source-map-js` 1.2.1→1.2.2 (HIGH), `fast-uri` 3.1.4→3.1.8 (HIGH), `js-yaml` 4.3.0→4.3.2 (HIGH), `dompurify` 3.4.12→3.4.16 (medium), `postcss` deduped to root 8.5.28 (HIGH, fixes next@14 nested 8.4.31), `glob` 10.3.10→10.5.0 under eslint-plugin-next (HIGH).
+- `package.json`: Added scoped `overrides` to patch vulnerable transitive dependencies: `simple-git` 3.36.0→4.0.1 scoped to `@antiwork/shortest` (CRITICAL), `jsondiffpatch` 0.6.0→0.7.6 scoped to `ai` (HIGH), `source-map-js` 1.2.1→1.2.2 (HIGH), `fast-uri` 3.1.4→3.1.8 (HIGH), `js-yaml` 4.3.0→4.3.2 (HIGH), `dompurify` 3.4.12→3.4.16 (medium), `postcss` deduped to root 8.5.28 scoped to `next` (HIGH, fixes next@14 nested 8.4.31), `glob` 10.3.10→10.5.0 scoped to `@next/eslint-plugin-next` (HIGH).
 - `package-lock.json`: Updated transitive `brace-expansion` 5.0.7→5.0.12 and 2.1.2→2.1.7 (HIGH, within semver range of parents).
-- `admin/package.json`: Bumped `react-router` ^7.6.1→^7.18.2 (HIGH, 6 CVEs), `postcss` ^8.4.38→^8.5.23 (HIGH), `vite` 6.3.5→6.4.3 (HIGH). Added `overrides` for transitive deps: `ws` 8.21.0 (HIGH), `fast-uri` 3.1.8, `browserslist` 4.28.7, `nanoid` 3.3.12, `source-map-js` 1.2.2, `undici` 7.29.1 (HIGH), `simple-git` 4.0.1 (CRITICAL), `brace-expansion` 2.1.7, `baseline-browser-mapping` 2.11.0.
+- `admin/package.json`: Bumped `react-router` ^7.6.1→^7.18.2 (HIGH, 6 CVEs), `postcss` ^8.4.38→^8.5.23 (HIGH), `vite` 6.3.5→6.4.3 (HIGH). Added overrides for transitive deps: `ws` 8.21.0 (HIGH), `fast-uri` 3.1.8, `browserslist` 4.28.7, `source-map-js` 1.2.2, `undici` 7.29.1 (HIGH), `simple-git` 4.0.1 scoped to `@antiwork/shortest` (CRITICAL), `brace-expansion` 2.1.7, `baseline-browser-mapping` 2.11.0.
 - `admin/package-lock.json`: Regenerated with all bumps and overrides.
 
 ### What it affects / could break
-- **simple-git 3→4**: Major version override via @antiwork/shortest (dev-only E2E tool). If shortest E2E tests break, pin simple-git back to 3.x in overrides.
+- **simple-git 3→4** (scoped to @antiwork/shortest): Major version override, dev-only E2E tool. Compatibility verified: shortest calls `simpleGit()`, `.branch()`, `.revparse()` only (bin.js:5503-5519) — all stable in v4. If shortest E2E tests break, pin simple-git back to 3.x in overrides.
 - **react-router 7.14→7.18**: Minor bump but touches routing internals. Admin panel routing verified via vite build.
-- **postcss override in next@14**: Forces next's nested postcss from 8.4.31 to root 8.5.28. Same major version, API-compatible. Verified via next build.
+- **jsondiffpatch 0.6→0.7** (scoped to ai): 0.x semver major, dev-only via shortest→ai. Compatibility verified: ai uses `patch()`, `clone()`, `diff()` only (rsc-shared.mjs:138,165,192,218; rsc-server.mjs:2,136) — all stable in v0.7.
+- **postcss override in next@14** (scoped to next): Forces next's nested postcss from 8.4.31 to root 8.5.28. Same major version, API-compatible. Verified via next build.
+- **nanoid override removed from admin**: postcss@8.5.30 declares ^3.3.20 which already satisfies the alert (>=3.3.12). The previous override to 3.3.12 was actively downgrading.
 - **Remaining unfixed** (need major bumps — decision cards pending): `next` 14→15 (2 CRITICAL + 16 HIGH), `sharp` 0.34→0.35 (3 HIGH), `pdfjs-dist` 5→6 (1 HIGH).
 
 ## 2026-10-14 — fix(admin): replace JSON input with country-amount form for per-country settings
