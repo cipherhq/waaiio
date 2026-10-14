@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { CATEGORY_FLOW_MAP, generateBotCode, generateSlug, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
+import { CATEGORY_FLOW_MAP, generateBotCode, generateSlug, getPayoutLimit, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
 import { initCapabilities } from '@/lib/capabilities/service';
 import { finalizeOnboarding } from '@/lib/onboarding/finalize';
 import type { CapabilityId } from '@/lib/capabilities/types';
@@ -56,6 +56,8 @@ export async function provisionPendingBusiness(service: SupabaseClient, input: P
   const { resolveCountryGateway } = await import('@/lib/payments/gateway-resolver');
   const gateway = await resolveCountryGateway(service, input.countryCode);
 
+  const basicLimit = getPayoutLimit(input.countryCode, 'basic');
+
   const { data: business, error } = await service.from('businesses').insert({
     owner_id: input.ownerId,
     name: input.name,
@@ -73,6 +75,8 @@ export async function provisionPendingBusiness(service: SupabaseClient, input: P
     subscription_tier: 'free',
     status: 'pending',
     payment_gateway: gateway.gateway ?? null,
+    verification_level: 'basic',
+    payout_limit_monthly: basicLimit,
     ...(input.metadata ? { metadata: input.metadata } : {}),
   }).select('id, bot_code, slug').single();
   if (error || !business) {

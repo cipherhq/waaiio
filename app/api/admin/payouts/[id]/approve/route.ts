@@ -10,6 +10,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { classifyPaystackError, classifyStripeError } from '@/lib/payments/payout-classification';
 import { logAdminAudit } from '@/lib/admin-audit';
+import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -90,6 +91,18 @@ export async function POST(
     return NextResponse.json({
       error: 'Cannot approve payout: business is unverified. Request verification first.',
     }, { status: 400 });
+  }
+
+  // ── Monthly verification-tier limit check ──
+  const payoutAmountMinor = Math.round(Number(payout.net_amount) * 100);
+  const limitCheck = await checkVerificationLimit(serviceClient, payout.business_id, payoutAmountMinor, id);
+  if (!limitCheck.allowed) {
+    return NextResponse.json({
+      error: `Cannot approve payout: ${limitCheck.reason}`,
+      limit: limitCheck.limit,
+      used: limitCheck.used,
+      remaining: limitCheck.remaining,
+    }, { status: 409 });
   }
 
   // ── Resolve effective payout account (read-only before step-up) ──

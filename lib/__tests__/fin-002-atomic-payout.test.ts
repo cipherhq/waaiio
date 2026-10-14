@@ -19,6 +19,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
+// Mock verification limit helper — always allow in these payout-mechanism tests
+vi.mock('@/lib/payouts/verification-limit', () => ({
+  checkVerificationLimit: vi.fn().mockResolvedValue({ allowed: true, limit: 999_999_999, used: 0, remaining: 999_999_999 }),
+}));
+
 // ── Shared helpers ──
 
 let capturedLogs: string[] = [];

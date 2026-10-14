@@ -117,12 +117,12 @@ export default function Businesses() {
   const [selectedProducts, setSelectedProducts] = useState<Array<{ id: string; name: string; price: number | null; stock: number | null; is_active: boolean }>>([]);
   const [showServices, setShowServices] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
-  // Payout verification limits from platform_settings (single source of truth)
-  const [payoutVerificationLimits, setPayoutVerificationLimits] = useState<Record<string, number>>({ unverified: 0, basic: 500000, standard: 2000000, full: 999999999 });
+  // Payout verification limits now live in countries.verification_tiers;
+  // the server route resolves them per-country — no client-side lookup needed.
   const perPage = 20;
 
   async function loadData() {
-    const [bizRes, chRes, limitsRes] = await Promise.all([
+    const [bizRes, chRes] = await Promise.all([
       adminDb
         .from('businesses')
         .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels, messaging_suspended')
@@ -132,20 +132,10 @@ export default function Businesses() {
         .select('id, phone_number, display_name, country_code')
         .eq('is_active', true)
         .order('country_code'),
-      adminDb
-        .from('platform_settings')
-        .select('value')
-        .eq('key', 'payout_verification_limits')
-        .single(),
     ]);
 
     setBusinesses(bizRes.data || []);
     setChannels(chRes.data || []);
-
-    // Load payout verification limits from DB (fall back to hardcoded defaults)
-    if (limitsRes.data?.value && typeof limitsRes.data.value === 'object') {
-      setPayoutVerificationLimits(limitsRes.data.value as Record<string, number>);
-    }
 
     setLoading(false);
   }
@@ -807,15 +797,31 @@ export default function Businesses() {
                       key={level}
                       disabled={selected.verification_level === level}
                       onClick={async () => {
-                        if (!confirm(`Set verification to "${level}" for ${selected.name}?`)) return;
-                        const limitForLevel = payoutVerificationLimits[level] ?? 0;
-                        await adminDb.from('businesses').update({
-                          verification_level: level,
-                          verification_status: level === 'unverified' ? 'unverified' : 'verified',
-                          payout_limit_monthly: limitForLevel,
-                        }).eq('id', selected.id);
-                        await logAudit({ action: 'set_verification', entity_type: 'business', entity_id: selected.id, details: { level, previous: selected.verification_level } });
-                        setSelected({ ...selected, verification_level: level, verification_status: level === 'unverified' ? 'unverified' : 'verified', payout_limit_monthly: limitForLevel });
+                        const reasonInput = prompt(`Reason for setting verification to "${level}" for ${selected.name}:`);
+                        if (!reasonInput) return;
+                        try {
+                          const { data: sessionData } = await supabase.auth.getSession();
+                          const token = sessionData?.session?.access_token;
+                          if (!token) { alert('Session expired'); return; }
+                          const apiUrl = import.meta.env.VITE_API_URL || '';
+                          const res = await fetch(`${apiUrl}/api/verification/review`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                            body: JSON.stringify({
+                              business_id: selected.id,
+                              action: 'set_level',
+                              level,
+                              reason: reasonInput.trim(),
+                            }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || 'Failed');
+                          setSelected({ ...selected, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly });
+                          setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly } : b));
+                        } catch (err) {
+                          console.error('Verification level change error:', err);
+                          alert(err instanceof Error ? err.message : 'Failed to update verification level');
+                        }
                       }}
                       className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                         selected.verification_level === level
@@ -974,27 +980,30 @@ export default function Businesses() {
                       try {
                         const feePercentage = customFeePercentage.trim() !== '' ? parseFloat(customFeePercentage) : null;
                         const feeFlat = customFeeFlat.trim() !== '' ? parseInt(customFeeFlat, 10) : null;
-                        await adminDb.from('businesses').update({
-                          custom_fee_percentage: feePercentage,
-                          custom_fee_flat: feeFlat,
-                        }).eq('id', selected.id);
-                        await logAudit({
-                          action: 'set_custom_fees',
-                          entity_type: 'business',
-                          entity_id: selected.id,
-                          details: {
-                            business_name: selected.name,
+                        const reasonInput = prompt('Reason for setting custom fees:');
+                        if (!reasonInput) { setCustomFeeSaving(false); return; }
+                        const { data: sessionData } = await supabase.auth.getSession();
+                        const token = sessionData?.session?.access_token;
+                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
+                        const apiUrl = import.meta.env.VITE_API_URL || '';
+                        const res = await fetch(`${apiUrl}/api/verification/review`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({
+                            business_id: selected.id,
+                            action: 'set_custom_fees',
                             custom_fee_percentage: feePercentage,
                             custom_fee_flat: feeFlat,
-                            previous_fee_percentage: selected.custom_fee_percentage,
-                            previous_fee_flat: selected.custom_fee_flat,
-                          },
+                            reason: reasonInput.trim(),
+                          }),
                         });
-                        setSelected({ ...selected, custom_fee_percentage: feePercentage, custom_fee_flat: feeFlat });
-                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: feePercentage, custom_fee_flat: feeFlat } : b));
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Failed');
+                        setSelected({ ...selected, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat });
+                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat } : b));
                       } catch (err) {
                         console.error('Custom fee save error:', err);
-                        alert('Failed to save custom fees');
+                        alert(err instanceof Error ? err.message : 'Failed to save custom fees');
                       } finally {
                         setCustomFeeSaving(false);
                       }
@@ -1008,20 +1017,23 @@ export default function Businesses() {
                     onClick={async () => {
                       setCustomFeeSaving(true);
                       try {
-                        await adminDb.from('businesses').update({
-                          custom_fee_percentage: null,
-                          custom_fee_flat: null,
-                        }).eq('id', selected.id);
-                        await logAudit({
-                          action: 'clear_custom_fees',
-                          entity_type: 'business',
-                          entity_id: selected.id,
-                          details: {
-                            business_name: selected.name,
-                            previous_fee_percentage: selected.custom_fee_percentage,
-                            previous_fee_flat: selected.custom_fee_flat,
-                          },
+                        const { data: sessionData } = await supabase.auth.getSession();
+                        const token = sessionData?.session?.access_token;
+                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
+                        const apiUrl = import.meta.env.VITE_API_URL || '';
+                        const res = await fetch(`${apiUrl}/api/verification/review`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({
+                            business_id: selected.id,
+                            action: 'set_custom_fees',
+                            custom_fee_percentage: null,
+                            custom_fee_flat: null,
+                            reason: 'Clearing custom fee overrides',
+                          }),
                         });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Failed');
                         setCustomFeePercentage('');
                         setCustomFeeFlat('');
                         setSelected({ ...selected, custom_fee_percentage: null, custom_fee_flat: null });
