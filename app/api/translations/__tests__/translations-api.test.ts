@@ -383,11 +383,11 @@ describe('PUT /api/translations', () => {
     ).toBe(true);
   });
 
-  // 11. 400 for greeting.cancel_hint — now blocked (not editable)
-  // greeting.* keys are no longer business-editable, so the command-token
-  // validation is unreachable for business-editable keys. This test verifies
-  // the key is rejected at the editable-key check stage.
-  it('returns 400 for greeting.cancel_hint (now blocked, not editable)', async () => {
+  // 11. 400 for greeting.powered_by — platform-only (not business-editable)
+  // greeting.* keys are business-editable EXCEPT platform-only keys like
+  // greeting.powered_by (branding). This test verifies the platform-only
+  // deny list rejects the key.
+  it('returns 400 for greeting.powered_by (platform-only, not editable)', async () => {
     setupMockFrom({ businesses: { data: BIZ, error: null } });
     setupServiceFrom({});
     const res = await PUT(
@@ -396,8 +396,8 @@ describe('PUT /api/translations', () => {
         overrides: [
           {
             lang: 'en',
-            key: 'greeting.cancel_hint',
-            value: 'Type *cancel* to stop.',
+            key: 'greeting.powered_by',
+            value: 'Powered by Us!',
           },
         ],
       }),
@@ -405,7 +405,7 @@ describe('PUT /api/translations', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(
-      body.errors.some((e: string) => e.includes('not editable')),
+      body.errors.some((e: string) => e.includes('platform-only')),
     ).toBe(true);
   });
 
