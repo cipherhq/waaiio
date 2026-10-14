@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — chore(deps): upgrade sharp 0.34→0.35.5 and pdfjs-dist 5→6.4
+
+### What changed
+- `package.json`: `sharp` ^0.34.5 → ^0.35.5, `pdfjs-dist` ^5.6.205 → ^6.2.108.
+- `package-lock.json`: sharp 0.35.5 (fixes GHSA-wq5f/rgj7/f88m), pdfjs-dist 6.4.299 (fixes GHSA-hq66).
+
+### Why it's safe
+- **sharp 0.35**: All API calls used in `lib/security/sanitize-image.ts:22-78` (`sharp()`, `.rotate()`, `.resize()`, `.jpeg()`, `.png()`, `.webp()`, `.toBuffer()`, `.metadata()`) and `app/api/images/convert/route.ts:31` (`.jpeg()`, `.toBuffer()`) are unchanged in v0.35. Requires Node ≥20.9 (CI runs 24.11). Build verified.
+- **pdfjs-dist 6.x**: `app/sign/[token]/page.tsx:158-182` uses dynamic import, `GlobalWorkerOptions.workerSrc`, `getDocument({data})`, `page.getViewport()`, `page.render()` — all unchanged in v6. Worker CDN URL template (`pdf.js/${version}/pdf.worker.min.mjs`) resolves correctly for 6.4.299. `isEvalSupported` removed in v6 but was not used. Build verified.
+
+### What it affects / could break
+- **sharp**: Native binary rebuild. If Vercel build fails on sharp install, check platform compatibility (should auto-detect).
+- **pdfjs-dist**: Client-side only (contract signing page). No server-side rendering of PDFs. CDN worker URL changes with version.
+
 ## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
 
 ### What changed

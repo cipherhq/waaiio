@@ -30,7 +30,7 @@
     "next": "14.2.35",
     "openai": "^6.35.0",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^5.6.205",
+    "pdfjs-dist": "^6.2.108",
     "pdfkit": "^0.15.0",
     "posthog-js": "^1.370.1",
     "posthog-node": "^5.29.5",
@@ -39,7 +39,7 @@
     "react": "^18",
     "react-dom": "^18",
     "resend": "^6.10.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@antiwork/shortest": "^0.4.9",
