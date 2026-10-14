@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1627-1666`: 23505 null-biz recovery now checks if the recovered session is expired (`expires_at < now`). If expired: deactivates the stale row (`is_active=false`, scoped by id + `business_id IS NULL`), retries the insert once. If retry fails: logs, Sentry, sends fallback via platform path. Only resumes non-expired sessions.
+- `lib/bot/bot.service.ts:1659-1669`: 23505 fallback "Something went wrong" messages changed from `this.sendText` (business-scoped, crashes with MessagingSuspendedError when no business) to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2039-2041`: Added `enterPlatformDiscovery()` call at the start of the marketplace greeting section (no business bound).
+- `lib/bot/bot.service.ts:2053,2070-2076,2095,2110,2126`: Changed all no-business sends from `this.sendText` / `this.messageSender.sendButtons` to `this.sendPlatformText` / `this.sendPlatformButtons` — "Welcome back", quick-pick buttons, registration fallback, first-time greeting, "couldn't find a business".
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering stale session deactivation + retry, Hi with stale session, brand-new phone greeting, returning customer picker.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts:360-388`: Updated test 6 — no longer expects guard to block (sends are now platform-scoped), instead verifies "couldn't find" message is delivered.
+
+### What it affects / could break
+- The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
+- PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
+- The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
 ## 2026-10-14 — fix(admin): handle subscription read errors in tier change route
 
 ### What changed

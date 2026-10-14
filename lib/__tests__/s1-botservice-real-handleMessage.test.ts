@@ -357,7 +357,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     expect(totalBusinessScopedCalls(cloud)).toBe(0);
   });
 
-  it('6. missing tenant: guard evaluates missing identity, zero business-scoped provider calls', async () => {
+  it('6. missing tenant: no-business replies use platform-scoped sends, not business-scoped', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     mockDetectionResult = { businessId: null, suggestions: [] };
@@ -370,17 +370,14 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     const supabase = createTableAwareSupabase({ insertedSession: tenantlessSession });
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
     await bot.handleMessage('+234800', 'random text', 'text', 'pnid-1');
-    // Sender remains tenantless
+    // Sender transitioned to platform discovery (tenantless)
     expect(sender.boundBusinessId).toBe('');
-    // The missing-identity guard was called (assertMessagingAllowed with empty/falsy businessId)
-    const { assertMessagingAllowed } = await import('@/lib/channels/send-guard');
-    const guardCalls = (assertMessagingAllowed as any).mock.calls.filter(
-      (c: string[]) => !c[0] || c[0] === ''
-    );
-    expect(guardCalls.length).toBeGreaterThan(0);
-    // ALL business-scoped cloud calls must be exactly zero (guard blocked them)
-    expect(totalBusinessScopedCalls(cloud)).toBe(0);
-    // Guard: no generic fallback — the zero calls come from the guard, not a crash
+    // Platform-scoped send delivered the "couldn't find" message (not silently blocked)
+    const cloudCalls = cloud.sendText.mock.calls;
+    expect(cloudCalls.length).toBeGreaterThan(0);
+    const sentText = cloudCalls[0]?.[0]?.text || '';
+    expect(sentText).toContain('couldn\'t find a business');
+    // Guard: no generic fallback — the reply is a helpful marketplace message
     const fallbackCalls = cloud.sendText.mock.calls.filter(
       (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Something went wrong')
     );

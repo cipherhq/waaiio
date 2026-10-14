@@ -1625,19 +1625,53 @@ export class BotService {
             .eq('is_active', true)
             .single();
           if (existingNullSession && !existingNullSession.business_id) {
-            // Safe: this is a platform/disambiguation session with no business authority
-            session = existingNullSession as BotSession;
-            logger.info('[BOT] #266 R4: Recovered existing null-biz disambiguation session:', existingNullSession.id);
-            // Continue with the recovered session — do NOT auto-bind any business
+            // Check if the recovered session is expired — if so, deactivate and retry insert once
+            if (existingNullSession.expires_at && new Date(existingNullSession.expires_at) < new Date()) {
+              logger.info('[BOT] #266 R4: Stale expired null-biz session detected, deactivating:', existingNullSession.id);
+              await this.supabase.from('bot_sessions')
+                .update({ is_active: false })
+                .eq('id', existingNullSession.id)
+                .is('business_id', null);
+              // Retry the insert once
+              const { data: retrySession, error: retryError } = await this.supabase
+                .from('bot_sessions')
+                .insert({
+                  whatsapp_number: from,
+                  user_id: profile?.id || null,
+                  business_id: businessId,
+                  current_step: firstStep,
+                  session_data: sessionData,
+                  is_active: true,
+                  expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                })
+                .select()
+                .single();
+              if (retryError || !retrySession) {
+                logger.error('[BOT] #266 R4: Retry insert after stale deactivation failed:', retryError?.message);
+                Sentry.captureException(retryError || new Error('Retry null-biz session insert returned no data'));
+                if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+                await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                return;
+              }
+              session = retrySession as unknown as BotSession;
+              logger.info('[BOT] #266 R4: Retry insert succeeded after stale deactivation:', retrySession.id);
+            } else {
+              // Safe: non-expired platform/disambiguation session with no business authority
+              session = existingNullSession as BotSession;
+              logger.info('[BOT] #266 R4: Recovered existing null-biz disambiguation session:', existingNullSession.id);
+              // Continue with the recovered session — do NOT auto-bind any business
+            }
           } else {
             // Unsafe: cannot recover a business-scoped session. Fail closed.
             logger.error('[BOT] #266 R4: 23505 recovery failed — no safe null-biz session to resume');
-            await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
             return;
           }
         } else {
           logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
-          await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
           return;
         }
       }
@@ -2003,6 +2037,9 @@ export class BotService {
       }
 
       // Marketplace greeting — no business found from bot code or past history
+      // S-1: No business bound — all sends below must be platform-scoped
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+
       // Check if this is a returning user with past businesses for quick-pick
       const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
@@ -2013,7 +2050,7 @@ export class BotService {
           : { data: null };
 
         const name = (returningProfile as { first_name?: string } | null)?.first_name;
-        await this.sendText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
+        await this.sendPlatformText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
 
         // Clean up old sessions
         await this.supabase.from('bot_sessions').delete()
@@ -2030,14 +2067,13 @@ export class BotService {
           expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
 
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
-          buttons: quickPick.map((s, i) => ({
+        await this.sendPlatformButtons(from,
+          'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
+          quickPick.map((s, i) => ({
             id: `biz_${i}`,
             title: truncTitle(s.name),
           })),
-        });
+        );
         return;
       }
 
@@ -2055,8 +2091,8 @@ export class BotService {
             flowToken: `onboarding:${from}`,
           });
         } else {
-          // Fallback: direct to web registration
-          await this.sendText(from, [
+          // Fallback: direct to web registration (platform-scoped: no business bound)
+          await this.sendPlatformText(from, [
             '*Register your business on Waaiio!*',
             '',
             'Set up your business in under 2 minutes:',
@@ -2068,10 +2104,10 @@ export class BotService {
         return;
       }
 
-      // ── First-time user — onboarding message ──
+      // ── First-time user — onboarding message (platform-scoped: no business bound) ──
       const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {
-        await this.sendText(from, [
+        await this.sendPlatformText(from, [
           '*Welcome to Waaiio!* 👋',
           '',
           'I help you book appointments, buy tickets, place orders, and make payments — all through WhatsApp.',
@@ -2087,7 +2123,7 @@ export class BotService {
           '• *receipt* — get your last receipt',
         ].join('\n'));
       } else {
-        await this.sendText(from, [
+        await this.sendPlatformText(from, [
           `I couldn't find a business matching "${text.trim().slice(0, 30)}". 🤔`,
           '',
           'Try sending the exact *business code*, or type *switch* followed by a business name.',
