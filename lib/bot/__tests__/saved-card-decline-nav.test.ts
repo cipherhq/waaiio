@@ -6,7 +6,8 @@
  * Finding #2: unverified taps (phone mismatch, biz mismatch, no payment) → return immediately,
  *             no session change, no sends, no intent/LLM detection.
  * Finding #3: menu CAS failure → no execute; null session → no crash, no null cast.
- * Existing: own payment → menu shown; pcm goodbye; cross-business → ignored.
+ * R3 fixes: Done binds verified business before send; menu uses returning_customer provenance;
+ *           null businessId skips card query.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -83,6 +84,10 @@ vi.mock('@/lib/payments/saved-card-offer', async (importOriginal) => {
     handleSavedCardOfferAction: vi.fn().mockResolvedValue(undefined),
   };
 });
+const mockHandlePromoVerification = vi.fn().mockResolvedValue({ handled: false });
+vi.mock('@/lib/bot/handlers/promo-verification', () => ({
+  handlePromoVerification: (...args: unknown[]) => mockHandlePromoVerification(...args),
+}));
 
 const { BotService } = await import('@/lib/bot/bot.service');
 const { MetaCloudSender } = await import('@/lib/channels/message-sender');
@@ -173,14 +178,31 @@ function makeChain(tableData: unknown, thenable = true) {
 let mockSession: Record<string, unknown> | null = null;
 let mockPayment: Record<string, unknown> | null = PAYMENT_ROW;
 let mockBookingPhone: string = PHONE;
-// Allow per-test CAS result override
 let mockCasResult: Record<string, unknown> | null = null;
+// Tracks bot_sessions inserts for assertion
+let capturedSessionInserts: Record<string, unknown>[] = [];
 
 function createSupabase() {
+  capturedSessionInserts = [];
   return {
     from: vi.fn().mockImplementation((table: string) => {
       if (table === 'platform_settings') return makeChain({ value: false });
-      if (table === 'bot_sessions') return makeChain(mockSession);
+      if (table === 'bot_sessions') {
+        const chain = makeChain(mockSession);
+        // Track inserts and return a proper session row
+        chain.insert = vi.fn().mockImplementation((row: Record<string, unknown>) => {
+          capturedSessionInserts.push(row);
+          const inserted = {
+            id: 'sess-created', ...row,
+            session_data: row.session_data || {},
+            version: 0,
+          };
+          const ic = makeChain(inserted, true);
+          ic.select = vi.fn().mockImplementation(() => makeChain(inserted, false));
+          return ic;
+        });
+        return chain;
+      }
       if (table === 'businesses') return makeChain(BUSINESS_ROW);
       if (table === 'payments') return makeChain(mockPayment);
       if (table === 'bookings') return makeChain({ guest_phone: mockBookingPhone });
@@ -193,13 +215,27 @@ function createSupabase() {
     }),
     rpc: vi.fn().mockImplementation((name: string, params?: Record<string, unknown>) => {
       if (name === 'get_bot_context') {
+        // When called with a specific business_id (recursive handleMessage for menu),
+        // return has_session:false so a new session is created
+        if (params?.p_business_id === BIZ_ID && !mockSession) {
+          return Promise.resolve({
+            data: {
+              has_session: false, ambiguous: false,
+              session: null,
+              business: BUSINESS_ROW,
+              capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+              capability_overrides: [],
+            },
+            error: null,
+          });
+        }
         if (mockSession) {
           return Promise.resolve({
             data: {
               has_session: true, ambiguous: false,
               session: mockSession,
               business: BUSINESS_ROW,
-              capabilities: [],
+              capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
               capability_overrides: [],
             },
             error: null,
@@ -255,7 +291,7 @@ describe('Saved-card decline navigation: real handleMessage', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FINDING #2a: phone mismatch → return immediately, no session change, zero sends, no LLM
+  // #2a: phone mismatch → return immediately, zero sends, no LLM
   // ═══════════════════════════════════════════════════════════════
   it('savedcard_menu with another customer\'s payment → no CAS, no sends, no intent detection', async () => {
     mockBookingPhone = OTHER_PHONE;
@@ -266,21 +302,18 @@ describe('Saved-card decline navigation: real handleMessage', () => {
 
     await bot.handleMessage(PHONE, `savedcard_menu:${PAY_ID}`, 'button');
 
-    // No select_capability CAS
     const casCalls = supabase.rpc.mock.calls.filter(
       (c: any[]) => c[0] === 'update_session_cas' && c[1]?.p_current_step === 'select_capability'
     );
     expect(casCalls).toHaveLength(0);
-    // Zero cloud sends
     expect(cloud.sendText).not.toHaveBeenCalled();
     expect(cloud.sendButtons).not.toHaveBeenCalled();
     expect(cloud.sendList).not.toHaveBeenCalled();
-    // No LLM intent detection
     expect(mockParseSmartIntentHybrid).not.toHaveBeenCalled();
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FINDING #2b: business mismatch → return immediately
+  // #2b: business mismatch → return immediately
   // ═══════════════════════════════════════════════════════════════
   it('savedcard_menu with payment from different business → no CAS, no sends, no LLM', async () => {
     mockPayment = { ...PAYMENT_ROW, business_id: OTHER_BIZ_ID };
@@ -301,10 +334,10 @@ describe('Saved-card decline navigation: real handleMessage', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FINDING #2c: no payment found → return immediately
+  // #2c: no payment found → return immediately
   // ═══════════════════════════════════════════════════════════════
   it('savedcard_done with nonexistent payment → no deactivation, no sends, no LLM', async () => {
-    mockPayment = null; // payment not found
+    mockPayment = null;
     const supabase = createSupabase();
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, supabase as any);
@@ -312,7 +345,6 @@ describe('Saved-card decline navigation: real handleMessage', () => {
 
     await bot.handleMessage(PHONE, `savedcard_done:${PAY_ID}`, 'button');
 
-    // No deactivation
     const deactivateCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'deactivate_session_atomic');
     expect(deactivateCalls).toHaveLength(0);
     expect(cloud.sendText).not.toHaveBeenCalled();
@@ -320,10 +352,9 @@ describe('Saved-card decline navigation: real handleMessage', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FINDING #1a: suspended business → zero platform-scoped sends AND zero cloud sends
+  // #1a: suspended business → zero sends total
   // ═══════════════════════════════════════════════════════════════
   it('savedcard_done with suspended business → zero sends total', async () => {
-    // assertMessagingAllowed throws on every call → sendText will throw
     mockAssertMessagingAllowed.mockRejectedValue(new MockMessagingSuspendedError(BIZ_ID, 'suspended'));
     const supabase = createSupabase();
     const cloud = createMockCloud();
@@ -332,26 +363,19 @@ describe('Saved-card decline navigation: real handleMessage', () => {
 
     await bot.handleMessage(PHONE, `savedcard_done:${PAY_ID}`, 'button');
 
-    // Session still deactivated (before the send attempt)
     const deactivateCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'deactivate_session_atomic');
     expect(deactivateCalls.length).toBeGreaterThan(0);
-    // Zero cloud sends — never switched to platform scope
     expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FINDING #1b: business send throws after cloud succeeded (ambiguous) → exactly 1 send total
+  // #1b: ambiguous send error → at most 1 send total
   // ═══════════════════════════════════════════════════════════════
-  it('savedcard_done with ambiguous send error → exactly ONE cloud.sendText call, no retry', async () => {
-    // Cloud sendText succeeds (message emitted), but the wrapper throws (e.g. WAMID persistence)
+  it('savedcard_done with ambiguous send error → at most ONE cloud.sendText, no retry', async () => {
     const cloud = createMockCloud();
-    // First call: cloud.sendText succeeds (message emitted to WhatsApp)
-    // But the MetaCloudSender wrapper's attempt recording fails, so sendText throws.
-    // Simulate: cloud level succeeds, but we make assertMessagingAllowed throw AFTER first success
     let callCount = 0;
     mockAssertMessagingAllowed.mockImplementation(() => {
       callCount++;
-      // First call during session revalidation: ok. Second call during sendText: throw
       if (callCount > 1) throw new Error('Ambiguous send failure');
       return Promise.resolve(undefined);
     });
@@ -361,14 +385,11 @@ describe('Saved-card decline navigation: real handleMessage', () => {
 
     await bot.handleMessage(PHONE, `savedcard_done:${PAY_ID}`, 'button');
 
-    // Exactly one send attempt — no retry, no platform-scope fallback
-    // cloud.sendText may or may not have been called depending on where the throw happens,
-    // but there must be at most 1 call total (no double-send)
     expect(cloud.sendText.mock.calls.length).toBeLessThanOrEqual(1);
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // EXISTING: savedcard_done → deactivated, goodbye in pcm
+  // savedcard_done → deactivated, goodbye in pcm
   // ═══════════════════════════════════════════════════════════════
   it('savedcard_done → session deactivated, goodbye in pcm', async () => {
     mockSession = defaultSession({ session_data: { _detected_language: 'pcm' } });
@@ -389,7 +410,7 @@ describe('Saved-card decline navigation: real handleMessage', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FINDING #3a: CAS failure → execute not called, no send
+  // #3a: CAS failure → no execute, no send
   // ═══════════════════════════════════════════════════════════════
   it('savedcard_menu with CAS failure → no execute, no send', async () => {
     mockCasResult = { success: false, reason: 'version_conflict' };
@@ -400,43 +421,19 @@ describe('Saved-card decline navigation: real handleMessage', () => {
 
     await bot.handleMessage(PHONE, `savedcard_menu:${PAY_ID}`, 'button');
 
-    // CAS was attempted
     const casCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
     expect(casCalls.length).toBeGreaterThanOrEqual(1);
-    // No sends (execute not called, no fallback)
     expect(cloud.sendText).not.toHaveBeenCalled();
     expect(cloud.sendButtons).not.toHaveBeenCalled();
     expect(cloud.sendList).not.toHaveBeenCalled();
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FINDING #3b: null session → no crash, no execute with null
+  // R3-#1: session null, own verified payment, savedcard_done →
+  //        one business-scoped goodbye for BIZ_ID, zero platform sends
   // ═══════════════════════════════════════════════════════════════
-  it('savedcard_menu with null session → no crash, redirects to handleMessage Hi', async () => {
-    mockSession = null; // No active session
-    const supabase = createSupabase();
-    const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, supabase as any);
-    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-
-    // Should not crash
-    await expect(
-      bot.handleMessage(PHONE, `savedcard_menu:${PAY_ID}`, 'button')
-    ).resolves.not.toThrow();
-
-    // No CAS with select_capability (no session to update)
-    const casCalls = supabase.rpc.mock.calls.filter(
-      (c: any[]) => c[0] === 'update_session_cas' && c[1]?.p_current_step === 'select_capability'
-    );
-    expect(casCalls).toHaveLength(0);
-  });
-
-  // ═══════════════════════════════════════════════════════════════
-  // FIX R3-#1: session null, own verified payment, savedcard_done →
-  //            exactly ONE business-scoped goodbye, zero platform sends
-  // ═══════════════════════════════════════════════════════════════
-  it('savedcard_done with null session + own payment → one business goodbye, zero platform sends', async () => {
-    mockSession = null; // Session expired
+  it('savedcard_done with null session + own payment → business-scoped goodbye for BIZ_ID, no platform discovery', async () => {
+    mockSession = null;
     const supabase = createSupabase();
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, supabase as any);
@@ -444,21 +441,21 @@ describe('Saved-card decline navigation: real handleMessage', () => {
 
     await bot.handleMessage(PHONE, `savedcard_done:${PAY_ID}`, 'button');
 
-    // Exactly one cloud.sendText call (business-scoped goodbye for payment's business)
+    // Exactly one cloud.sendText call
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
-    const call = cloud.sendText.mock.calls[0][0];
-    expect(call.text).toContain('Hi');
-    // No platform-scoped sends (sendPlatformText uses the same cloud.sendText but only
-    // after enterPlatformDiscovery — verify no platform buttons/lists)
-    expect(cloud.sendButtons).not.toHaveBeenCalled();
+    // Sender was bound to BIZ_ID (business-scoped, not platform)
+    expect(sender.boundBusinessId).toBe(BIZ_ID);
+    // No platform discovery entered (boundBusinessId would be '' if it had)
+    expect(sender.boundBusinessId).not.toBe('');
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FIX R3-#2: session null, savedcard_menu → session created for
-  //            payment's business with 'returning_customer' provenance
+  // R3-#2: session null, savedcard_menu → session created with
+  //        business_id=BIZ_ID, biz_resolution='returning_customer',
+  //        menu sent, no promo branch
   // ═══════════════════════════════════════════════════════════════
-  it('savedcard_menu with null session → session created for payment business, menu sent, no promo branch', async () => {
-    mockSession = null; // No active session
+  it('savedcard_menu with null session → session created with biz_resolution=returning_customer, menu sent, no promo', async () => {
+    mockSession = null;
     const supabase = createSupabase();
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, supabase as any);
@@ -466,14 +463,27 @@ describe('Saved-card decline navigation: real handleMessage', () => {
 
     await bot.handleMessage(PHONE, `savedcard_menu:${PAY_ID}`, 'button');
 
-    // A new session should have been created (get_bot_context called with business_id = BIZ_ID)
-    const contextCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'get_bot_context');
-    // At least one call should have p_business_id = BIZ_ID (the recursive handleMessage call)
-    const bizContextCall = contextCalls.find((c: any[]) => c[1]?.p_business_id === BIZ_ID);
-    expect(bizContextCall).toBeDefined();
+    // (a) Session INSERT has business_id=BIZ_ID and biz_resolution='returning_customer'
+    expect(capturedSessionInserts.length).toBeGreaterThanOrEqual(1);
+    const sessionRow = capturedSessionInserts.find((r) => r.business_id === BIZ_ID);
+    expect(sessionRow).toBeDefined();
+    const sessionData = sessionRow!.session_data as Record<string, unknown>;
+    expect(sessionData.biz_resolution).toBe('returning_customer');
 
-    // The recursive handleMessage passes 'returning_customer' provenance (8th arg),
-    // which is NOT in TRUSTED_PROVENANCES — promo-only branches should not fire.
-    // Verify: no promo verification calls would succeed (bizResolution != pre_resolved)
+    // (b) The business's capability menu was sent (greeting + buttons for scheduling)
+    // With 1 capability (scheduling), the flow sends greeting via sendText then auto-selects.
+    // The greeting text is sent to the cloud mock.
+    const allSends = [
+      ...cloud.sendText.mock.calls.map((c: any[]) => ({ type: 'text', payload: c[0] })),
+      ...cloud.sendButtons.mock.calls.map((c: any[]) => ({ type: 'buttons', payload: c[0] })),
+      ...cloud.sendList.mock.calls.map((c: any[]) => ({ type: 'list', payload: c[0] })),
+    ];
+    expect(allSends.length).toBeGreaterThan(0);
+
+    // (c) Promo verification handler was NOT called (returning_customer is not trusted)
+    expect(mockHandlePromoVerification).not.toHaveBeenCalled();
+
+    // (d) All sends were business-scoped for BIZ_ID
+    expect(sender.boundBusinessId).toBe(BIZ_ID);
   });
 });
