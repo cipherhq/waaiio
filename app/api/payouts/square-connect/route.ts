@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-import { randomUUID } from 'crypto';
+import { generateState, storeState } from '@/lib/oauth-connect-state';
 
 const squareAppId = process.env.SQUARE_OAUTH_APP_ID || process.env.SQUARE_APPLICATION_ID || '';
 const squareEnvironment = process.env.SQUARE_ENVIRONMENT || 'sandbox';
@@ -14,9 +15,12 @@ function getSquareOAuthUrl(): string {
 }
 
 export async function POST(request: NextRequest) {
-  // FIN-001: Square Connect feature gate — must be explicitly enabled
   if (process.env.ENABLE_SQUARE_CONNECT !== 'true') {
     return NextResponse.json({ error: 'Square Connect is currently disabled' }, { status: 503 });
+  }
+
+  if (!squareAppId) {
+    return NextResponse.json({ error: 'Square not configured' }, { status: 503 });
   }
 
   const supabase = await createClient();
@@ -42,11 +46,20 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    if (!squareAppId) {
-      return NextResponse.json({ url: `/dashboard/payouts?connected=true&mock=true` });
+    // Generate and store CSRF state bound to user + business + provider
+    const { raw: stateRaw, hash: stateHash } = generateState();
+    const serviceClient = createServiceClient();
+    const storeResult = await storeState(serviceClient, {
+      stateHash,
+      userId: user.id,
+      businessId: business_id,
+      provider: 'square',
+    });
+    if (!storeResult.ok) {
+      logger.error('[SQUARE-CONNECT] Failed to store OAuth state:', storeResult.error);
+      return NextResponse.json({ error: 'Failed to start onboarding' }, { status: 500 });
     }
 
-    const state = `${business_id}:${randomUUID().slice(0, 8)}`;
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     const redirectUri = `${appUrl}/api/payouts/square-callback`;
 
@@ -54,7 +67,7 @@ export async function POST(request: NextRequest) {
       client_id: squareAppId,
       scope: 'PAYMENTS_WRITE PAYMENTS_READ ORDERS_WRITE ORDERS_READ MERCHANT_PROFILE_READ',
       session: 'false',
-      state,
+      state: stateRaw,
       redirect_uri: redirectUri,
     });
 
