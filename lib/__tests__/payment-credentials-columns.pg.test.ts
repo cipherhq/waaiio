@@ -1,16 +1,13 @@
 /**
- * Migration 443: business_payment_credentials column-level access hardening
+ * Migration 443: least-privilege grants on business_payment_credentials
  *
  * Runs against a disposable Postgres instance (TEST_DATABASE_URL).
  * Skips when TEST_DATABASE_URL is absent (main-app job has no PG).
- * FAILS (not skips) when REQUIRE_PG_TESTS=true and TEST_DATABASE_URL is missing
- * — the dedicated migration-shard CI step sets both.
+ * FAILS (not skips) when REQUIRE_PG_TESTS=true and TEST_DATABASE_URL is missing.
  *
- * Creates the table, grants broad SELECT (simulating production defaults),
- * applies M443, then verifies:
- *   - authenticated/anon cannot SELECT secret_key or webhook_secret_hash
- *   - authenticated CAN SELECT the allowed columns
- *   - service_role retains full access
+ * Starts from production-shaped ACL (table-level ALL to anon/authenticated,
+ * owner CRUD policy for role public, service read policy), applies M443,
+ * then verifies least-privilege grants are in effect.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -39,10 +36,11 @@ function sql(query: string): string {
 
 const BIZ_ID = '00000000-0000-0000-0000-000000443001';
 const OWNER_ID = '00000000-0000-0000-0000-000000443010';
+const ROW_ID = '00000000-0000-0000-0000-000000443099';
 
-describeDb('Migration 443: payment credentials column-level access hardening', () => {
+describeDb('Migration 443: least-privilege grants on payment credentials', () => {
   beforeAll(() => {
-    // ── Create roles if not present ──
+    // ── Roles ──
     sql(`
       DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $$;
       DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$;
@@ -69,7 +67,7 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
       GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
     `);
 
-    // ── businesses table ──
+    // ── businesses ──
     sql(`
       CREATE TABLE IF NOT EXISTS public.businesses (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -82,7 +80,7 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
       GRANT SELECT ON public.businesses TO service_role, authenticated;
     `);
 
-    // ── business_payment_credentials table (matching M426 schema) ──
+    // ── business_payment_credentials (M426 schema) ──
     sql(`
       CREATE TABLE IF NOT EXISTS public.business_payment_credentials (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -101,22 +99,26 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
       ALTER TABLE public.business_payment_credentials ENABLE ROW LEVEL SECURITY;
     `);
 
-    // Simulate production broad grants — table-level SELECT to authenticated
+    // ── Production-shaped ACL: broad grants ──
+    // Simulates historical Supabase defaults where all roles had broad access
     sql(`
+      GRANT ALL ON TABLE public.business_payment_credentials TO anon;
+      GRANT ALL ON TABLE public.business_payment_credentials TO authenticated;
       GRANT SELECT, INSERT, UPDATE ON TABLE public.business_payment_credentials TO service_role;
-      GRANT SELECT ON TABLE public.business_payment_credentials TO authenticated;
     `);
 
-    // RLS policy
+    // Owner CRUD policy (FOR ALL, role public — matches historical production shape)
     sql(`
       DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'business_payment_credentials' AND policyname = 'bpc_owner_select') THEN
-          CREATE POLICY bpc_owner_select ON public.business_payment_credentials
-            FOR SELECT TO authenticated
-            USING (business_id IN (SELECT id FROM public.businesses WHERE owner_id = auth.uid()));
+        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'business_payment_credentials' AND policyname = 'owner_crud') THEN
+          CREATE POLICY owner_crud ON public.business_payment_credentials
+            FOR ALL
+            USING (business_id IN (SELECT id FROM public.businesses WHERE owner_id = auth.uid()))
+            WITH CHECK (business_id IN (SELECT id FROM public.businesses WHERE owner_id = auth.uid()));
         END IF;
       END $$;
     `);
+    // Service read policy
     sql(`
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'business_payment_credentials' AND policyname = 'bpc_service_all') THEN
@@ -126,13 +128,13 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
       END $$;
     `);
 
-    // Seed test data
+    // Seed
     sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
     sql(`INSERT INTO public.businesses (id, owner_id, name) VALUES ('${BIZ_ID}', '${OWNER_ID}', 'Cred Test Biz') ON CONFLICT (id) DO NOTHING;`);
     sql(`
       SET ROLE service_role;
-      INSERT INTO public.business_payment_credentials (business_id, gateway, secret_key, public_key, is_active)
-        VALUES ('${BIZ_ID}', 'paystack', 'encrypted_fixture_value_443', 'pub_fixture_443', true)
+      INSERT INTO public.business_payment_credentials (id, business_id, gateway, secret_key, public_key, is_active, connection_type, platform_subaccount_code)
+        VALUES ('${ROW_ID}', '${BIZ_ID}', 'paystack', 'encrypted_fixture_value_443', 'pub_fixture_443', true, 'manual', 'SUB_TEST')
         ON CONFLICT DO NOTHING;
       RESET ROLE;
     `);
@@ -145,14 +147,19 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // A. Pre-migration: authenticated CAN read secret_key (negative control)
+  // A. Pre-migration negative controls: production-shaped ACL is broad
   // ═══════════════════════════════════════════════════════════════
 
-  it('pre-migration: authenticated can SELECT secret_key (negative control)', () => {
-    const r = sql(`
-      SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'secret_key', 'SELECT');
-    `);
-    expect(r).toBe('t');
+  it('pre-migration: authenticated has table-level SELECT (negative control)', () => {
+    expect(sql("SELECT has_table_privilege('authenticated', 'public.business_payment_credentials', 'SELECT');")).toBe('t');
+  });
+
+  it('pre-migration: authenticated has INSERT (negative control)', () => {
+    expect(sql("SELECT has_table_privilege('authenticated', 'public.business_payment_credentials', 'INSERT');")).toBe('t');
+  });
+
+  it('pre-migration: anon has table-level SELECT (negative control)', () => {
+    expect(sql("SELECT has_table_privilege('anon', 'public.business_payment_credentials', 'SELECT');")).toBe('t');
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -173,21 +180,19 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // C. Post-migration: authenticated cannot SELECT secret columns
+  // C. Post-migration: authenticated read restrictions
   // ═══════════════════════════════════════════════════════════════
 
-  it('post-migration: authenticated cannot SELECT secret_key (privilege check)', () => {
-    const r = sql(`
-      SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'secret_key', 'SELECT');
-    `);
-    expect(r).toBe('f');
+  it('post-migration: authenticated cannot SELECT secret_key (privilege)', () => {
+    expect(sql("SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'secret_key', 'SELECT');")).toBe('f');
   });
 
-  it('post-migration: authenticated cannot SELECT webhook_secret_hash (privilege check)', () => {
-    const r = sql(`
-      SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'webhook_secret_hash', 'SELECT');
-    `);
-    expect(r).toBe('f');
+  it('post-migration: authenticated cannot SELECT webhook_secret_hash (privilege)', () => {
+    expect(sql("SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'webhook_secret_hash', 'SELECT');")).toBe('f');
+  });
+
+  it('post-migration: authenticated cannot SELECT public_key (privilege)', () => {
+    expect(sql("SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'public_key', 'SELECT');")).toBe('f');
   });
 
   it('post-migration: authenticated gets permission denied on SELECT secret_key', () => {
@@ -201,51 +206,99 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
     expect(r).toMatch(/permission denied|42501/i);
   });
 
-  it('post-migration: authenticated gets permission denied on SELECT webhook_secret_hash', () => {
+  // ═══════════════════════════════════════════════════════════════
+  // D. Post-migration: authenticated write restrictions (owner JWT)
+  // ═══════════════════════════════════════════════════════════════
+
+  it('post-migration: owner cannot INSERT', () => {
     const r = sql(`
       BEGIN;
       SET LOCAL ROLE authenticated;
       SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
-      SELECT webhook_secret_hash FROM business_payment_credentials WHERE business_id = '${BIZ_ID}';
+      INSERT INTO business_payment_credentials (business_id, gateway, secret_key)
+        VALUES ('${BIZ_ID}', 'paystack', 'attempt');
       COMMIT;
     `);
     expect(r).toMatch(/permission denied|42501/i);
   });
 
-  it('post-migration: authenticated cannot SELECT public_key (M426 treats as sensitive)', () => {
+  it('post-migration: owner cannot UPDATE verified_at', () => {
     const r = sql(`
-      SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'public_key', 'SELECT');
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      UPDATE business_payment_credentials SET verified_at = NOW() WHERE id = '${ROW_ID}';
+      COMMIT;
     `);
-    expect(r).toBe('f');
+    expect(r).toMatch(/permission denied|42501/i);
+  });
+
+  it('post-migration: owner cannot UPDATE platform_subaccount_code', () => {
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      UPDATE business_payment_credentials SET platform_subaccount_code = 'HACK' WHERE id = '${ROW_ID}';
+      COMMIT;
+    `);
+    expect(r).toMatch(/permission denied|42501/i);
+  });
+
+  it('post-migration: owner cannot UPDATE connection_type', () => {
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      UPDATE business_payment_credentials SET connection_type = 'connect' WHERE id = '${ROW_ID}';
+      COMMIT;
+    `);
+    expect(r).toMatch(/permission denied|42501/i);
+  });
+
+  it('post-migration: owner cannot UPDATE secret_key', () => {
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      UPDATE business_payment_credentials SET secret_key = 'stolen' WHERE id = '${ROW_ID}';
+      COMMIT;
+    `);
+    expect(r).toMatch(/permission denied|42501/i);
+  });
+
+  it('post-migration: owner cannot DELETE own row', () => {
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      DELETE FROM business_payment_credentials WHERE id = '${ROW_ID}';
+      COMMIT;
+    `);
+    expect(r).toMatch(/permission denied|42501/i);
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // D. Post-migration: anon cannot SELECT any column
+  // E. Post-migration: anon has no access at all
   // ═══════════════════════════════════════════════════════════════
 
-  it('post-migration: anon cannot SELECT secret_key', () => {
-    const r = sql(`
-      SELECT has_column_privilege('anon', 'public.business_payment_credentials', 'secret_key', 'SELECT');
-    `);
-    expect(r).toBe('f');
+  it('post-migration: anon has no column SELECT', () => {
+    expect(sql("SELECT has_any_column_privilege('anon', 'public.business_payment_credentials', 'SELECT');")).toBe('f');
   });
 
-  it('post-migration: anon cannot SELECT webhook_secret_hash', () => {
-    const r = sql(`
-      SELECT has_column_privilege('anon', 'public.business_payment_credentials', 'webhook_secret_hash', 'SELECT');
-    `);
-    expect(r).toBe('f');
+  it('post-migration: anon has no INSERT', () => {
+    expect(sql("SELECT has_table_privilege('anon', 'public.business_payment_credentials', 'INSERT');")).toBe('f');
   });
 
-  it('post-migration: anon has no column SELECT on entire table', () => {
-    const r = sql(`
-      SELECT has_any_column_privilege('anon', 'public.business_payment_credentials', 'SELECT');
-    `);
-    expect(r).toBe('f');
+  it('post-migration: anon has no UPDATE', () => {
+    expect(sql("SELECT has_table_privilege('anon', 'public.business_payment_credentials', 'UPDATE');")).toBe('f');
+  });
+
+  it('post-migration: anon has no DELETE', () => {
+    expect(sql("SELECT has_table_privilege('anon', 'public.business_payment_credentials', 'DELETE');")).toBe('f');
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // E. Post-migration: authenticated CAN SELECT allowed columns
+  // F. Post-migration: authenticated CAN SELECT allowed metadata columns
   // ═══════════════════════════════════════════════════════════════
 
   it('post-migration: authenticated can SELECT id', () => {
@@ -256,11 +309,7 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
     expect(sql("SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'gateway', 'SELECT');")).toBe('t');
   });
 
-  it('post-migration: authenticated can SELECT is_active', () => {
-    expect(sql("SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'is_active', 'SELECT');")).toBe('t');
-  });
-
-  it('post-migration: authenticated can SELECT allowed columns via actual query', () => {
+  it('post-migration: authenticated can SELECT the GET route column list', () => {
     const r = sql(`
       BEGIN;
       SET LOCAL ROLE authenticated;
@@ -274,7 +323,7 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // F. Post-migration: service_role retains full access
+  // G. Post-migration: service_role retains full access
   // ═══════════════════════════════════════════════════════════════
 
   it('post-migration: service_role can SELECT secret_key', () => {
@@ -288,11 +337,26 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
     expect(r).toContain('encrypted_fixture_value_443');
   });
 
-  it('post-migration: service_role can SELECT webhook_secret_hash', () => {
+  it('post-migration: service_role can INSERT', () => {
     const r = sql(`
       BEGIN;
       SET LOCAL ROLE service_role;
-      SELECT webhook_secret_hash FROM business_payment_credentials WHERE business_id = '${BIZ_ID}';
+      INSERT INTO business_payment_credentials (business_id, gateway, secret_key, connect_account_id)
+        VALUES ('${BIZ_ID}', 'flutterwave', 'svc_test', 'conn_test')
+        RETURNING id;
+      COMMIT;
+    `);
+    expect(r).not.toMatch(/permission denied|42501|ERROR/i);
+    expect(r).toMatch(/[0-9a-f]{8}-/);
+    // Clean up
+    sql(`DELETE FROM business_payment_credentials WHERE gateway = 'flutterwave' AND business_id = '${BIZ_ID}';`);
+  });
+
+  it('post-migration: service_role can UPDATE', () => {
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE business_payment_credentials SET verified_at = NOW() WHERE id = '${ROW_ID}';
       COMMIT;
     `);
     expect(r).not.toMatch(/permission denied|42501|ERROR/i);

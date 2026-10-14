@@ -1,21 +1,13 @@
--- M443: Dedicated Flutterwave webhook secret hash for BYO integrations
---        + column-level access hardening for secret_key / webhook_secret_hash
+-- M443: webhook_secret_hash column + least-privilege grants on payment credentials
 --
--- Flutterwave BYO webhooks must verify the verif-hash header against a
--- per-business webhook secret configured in the Flutterwave dashboard,
--- NOT the API secret key. This column stores the encrypted value.
+-- 1. Adds webhook_secret_hash column for Flutterwave BYO webhook verification.
+-- 2. Applies least-privilege grants: only service_role may write; authenticated
+--    may SELECT a fixed set of non-sensitive metadata columns; anon has no access.
+-- 3. Self-check verifies the final privilege state.
 --
--- Invariants touched:
---   DB-003  — RLS remains enabled (not changed here).
---   SEC-001 — secret_key / webhook_secret_hash must never be readable by
---             anon or authenticated roles via PostgREST.
---
--- Client-side reads: app/api/settings/payment-credentials/route.ts GET
---   uses createClient() (SSR, RLS-protected) and selects:
---   id, gateway, platform_subaccount_code, is_active, verified_at,
---   created_at, connection_type, connect_account_id.
---   Neither secret_key nor webhook_secret_hash is selected, but without
---   column-level restrictions a crafted PostgREST request could read them.
+-- All writes go through createServiceClient() (service_role). The only
+-- authenticated SELECT path is the GET route returning metadata columns.
+-- RLS policies and service_role grants are unchanged.
 
 -- ══════════════════════════════════════════════════════════════
 -- 1. Add webhook_secret_hash column
@@ -25,19 +17,20 @@ ALTER TABLE public.business_payment_credentials
 ADD COLUMN IF NOT EXISTS webhook_secret_hash TEXT;
 
 -- ══════════════════════════════════════════════════════════════
--- 2. Column-level access hardening
+-- 2. Least-privilege grants
 -- ══════════════════════════════════════════════════════════════
 
--- Revoke any table-level SELECT from anon and authenticated.
--- Production may have historical broad grants from Supabase defaults.
-REVOKE SELECT ON TABLE public.business_payment_credentials FROM anon;
+-- Remove all privileges from PUBLIC and anon
+REVOKE ALL ON TABLE public.business_payment_credentials FROM PUBLIC;
+REVOKE ALL ON TABLE public.business_payment_credentials FROM anon;
+
+-- Remove write + broad read from authenticated; keep only column-level SELECT below
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES
+  ON TABLE public.business_payment_credentials FROM authenticated;
 REVOKE SELECT ON TABLE public.business_payment_credentials FROM authenticated;
 
--- Grant column-level SELECT on safe columns to authenticated.
--- Excluded: secret_key, webhook_secret_hash (secrets), public_key
--- (M426 negative contract treats it as sensitive alongside secret_key).
--- The GET route uses only: id, gateway, platform_subaccount_code,
--- is_active, verified_at, created_at, connection_type, connect_account_id.
+-- Authenticated: column-level SELECT on metadata columns only.
+-- Matches M426 positive contract + GET route column list.
 GRANT SELECT (
   id, business_id, gateway, platform_subaccount_code,
   connect_account_id, connection_type, is_active, verified_at,
@@ -45,12 +38,12 @@ GRANT SELECT (
 ) ON TABLE public.business_payment_credentials TO authenticated;
 
 -- ══════════════════════════════════════════════════════════════
--- 3. Self-check: column exists + access hardening verified
+-- 3. Self-check
 -- ══════════════════════════════════════════════════════════════
 
 DO $$
 BEGIN
-  -- Verify webhook_secret_hash column exists
+  -- Column existence
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public'
@@ -60,20 +53,33 @@ BEGIN
     RAISE EXCEPTION 'M443: webhook_secret_hash column missing after ALTER';
   END IF;
 
-  -- Verify anon cannot SELECT any column
-  IF has_any_column_privilege('anon', 'public.business_payment_credentials', 'SELECT') THEN
-    RAISE EXCEPTION 'M443 FAILED: anon can still SELECT columns on business_payment_credentials';
+  -- anon must have no privilege at all
+  IF has_any_column_privilege('anon', 'public.business_payment_credentials', 'SELECT')
+     OR has_any_column_privilege('anon', 'public.business_payment_credentials', 'INSERT')
+     OR has_any_column_privilege('anon', 'public.business_payment_credentials', 'UPDATE')
+     OR has_table_privilege('anon', 'public.business_payment_credentials', 'DELETE')
+     OR has_table_privilege('anon', 'public.business_payment_credentials', 'TRUNCATE') THEN
+    RAISE EXCEPTION 'M443 FAILED: anon retains privileges on business_payment_credentials';
   END IF;
 
-  -- Verify authenticated cannot SELECT secret_key
+  -- authenticated must not write
+  IF has_table_privilege('authenticated', 'public.business_payment_credentials', 'INSERT')
+     OR has_table_privilege('authenticated', 'public.business_payment_credentials', 'UPDATE')
+     OR has_table_privilege('authenticated', 'public.business_payment_credentials', 'DELETE')
+     OR has_table_privilege('authenticated', 'public.business_payment_credentials', 'TRUNCATE') THEN
+    RAISE EXCEPTION 'M443 FAILED: authenticated retains write privileges on business_payment_credentials';
+  END IF;
+
+  -- authenticated must not SELECT sensitive columns
   IF has_column_privilege('authenticated', 'public.business_payment_credentials', 'secret_key', 'SELECT') THEN
-    RAISE EXCEPTION 'M443 FAILED: authenticated can still SELECT secret_key';
+    RAISE EXCEPTION 'M443 FAILED: authenticated can SELECT secret_key';
   END IF;
-
-  -- Verify authenticated cannot SELECT webhook_secret_hash
   IF has_column_privilege('authenticated', 'public.business_payment_credentials', 'webhook_secret_hash', 'SELECT') THEN
-    RAISE EXCEPTION 'M443 FAILED: authenticated can still SELECT webhook_secret_hash';
+    RAISE EXCEPTION 'M443 FAILED: authenticated can SELECT webhook_secret_hash';
+  END IF;
+  IF has_column_privilege('authenticated', 'public.business_payment_credentials', 'public_key', 'SELECT') THEN
+    RAISE EXCEPTION 'M443 FAILED: authenticated can SELECT public_key';
   END IF;
 
-  RAISE NOTICE 'M443 self-check PASSED: column-level access hardening verified';
+  RAISE NOTICE 'M443 self-check PASSED: least-privilege grants verified';
 END $$;
