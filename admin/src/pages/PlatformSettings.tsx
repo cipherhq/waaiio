@@ -6,6 +6,14 @@ import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
+import {
+  isCountryAmountKey,
+  validateCountryAmounts,
+  COUNTRY_AMOUNT_COUNTRIES,
+  COUNTRY_CURRENCY_SYMBOLS,
+  COUNTRY_NAMES,
+  COUNTRY_AMOUNT_HELP,
+} from '@shared/country-amounts';
 
 interface PlatformSetting {
   key: string;
@@ -69,6 +77,109 @@ function formatValue(val: unknown): string {
   return JSON.stringify(val, null, 2);
 }
 
+/**
+ * Structured editor for country-amount settings (minimum_bank_transfer, minimum_payout).
+ * Shows one row per allowed country with currency symbol and number input.
+ */
+function CountryAmountEditor({
+  settingKey,
+  value,
+  changed,
+  onChange,
+}: {
+  settingKey: string;
+  value: Record<string, number>;
+  changed: boolean;
+  onChange: (val: string) => void;
+}) {
+  const countries = COUNTRY_AMOUNT_COUNTRIES[settingKey] || [];
+  const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+
+  function handleChange(cc: string, raw: string) {
+    // Allow empty while typing, but mark as required
+    const updated = { ...value };
+    if (raw === '') {
+      delete updated[cc];
+    } else {
+      const num = Number(raw);
+      updated[cc] = num;
+    }
+
+    // Validate — every allowed country must have a value
+    const errors: Record<string, string> = {};
+    for (const country of countries) {
+      if (!(country in updated)) {
+        errors[country] = 'Required';
+      }
+    }
+    for (const [country, val] of Object.entries(updated)) {
+      if (typeof val !== 'number' || !Number.isFinite(val)) {
+        errors[country] = 'Must be a number';
+      } else if (val < 0) {
+        errors[country] = 'Must be 0 or greater';
+      } else if (!Number.isInteger(val)) {
+        errors[country] = 'Must be a whole number';
+      }
+    }
+    setLocalErrors(errors);
+
+    onChange(JSON.stringify(updated, null, 2));
+  }
+
+  return (
+    <div className={`rounded-lg border p-3 space-y-2 ${borderClass}`}>
+      {countries.map(cc => {
+        const symbol = COUNTRY_CURRENCY_SYMBOLS[cc] || cc;
+        const name = COUNTRY_NAMES[cc] || cc;
+        const currentVal = value[cc];
+        const error = localErrors[cc];
+        return (
+          <div key={cc}>
+            <div className="flex items-center gap-2">
+              <label className="w-36 text-xs font-medium text-gray-500 shrink-0">
+                {name} ({symbol})
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={currentVal !== undefined ? currentVal : ''}
+                onChange={e => handleChange(cc, e.target.value)}
+                onKeyDown={e => {
+                  // Block decimal point, comma, letter e
+                  if (e.key === '.' || e.key === ',' || e.key === 'e' || e.key === 'E') {
+                    e.preventDefault();
+                  }
+                }}
+                placeholder="0"
+                className={`flex-1 rounded border px-2 py-1.5 text-sm outline-none focus:border-brand ${
+                  error ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                }`}
+              />
+            </div>
+            {error && <p className="ml-36 pl-2 text-[10px] text-red-500 mt-0.5">{error}</p>}
+          </div>
+        );
+      })}
+      {Object.keys(localErrors).length > 0 && (
+        <p className="text-[10px] text-red-500 font-medium">Fix errors above before saving.</p>
+      )}
+    </div>
+  );
+}
+
+/** Check if a country-amount value has validation errors (for disabling Save) */
+function hasCountryAmountErrors(key: string, jsonStr: string): boolean {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const errors = validateCountryAmounts(key, parsed);
+    return errors !== null;
+  } catch {
+    return true;
+  }
+}
+
 /** Render a friendly editor based on the setting's value type */
 function renderSettingEditor(
   setting: PlatformSetting,
@@ -77,6 +188,19 @@ function renderSettingEditor(
   onChange: (val: string) => void,
 ) {
   const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+
+  // Country-amount editor (minimum_bank_transfer, minimum_payout)
+  if (isCountryAmountKey(setting.key)) {
+    const parsed = (() => { try { return JSON.parse(currentVal); } catch { return {}; } })();
+    return (
+      <CountryAmountEditor
+        settingKey={setting.key}
+        value={typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {}}
+        changed={changed}
+        onChange={onChange}
+      />
+    );
+  }
 
   // Boolean toggle (maintenance_mode, etc.)
   if (setting.value === true || setting.value === false) {
@@ -393,7 +517,8 @@ export default function PlatformSettings() {
 
   // Human-readable descriptions for known unconfigured keys
   const KEY_DESCRIPTIONS: Record<string, string> = {
-    minimum_bank_transfer: 'Minimum amount (per country) for direct bank transfer payment option. JSON object keyed by country code, e.g. {"NG": 5000, "GH": 5000}.',
+    minimum_bank_transfer: COUNTRY_AMOUNT_HELP.minimum_bank_transfer,
+    minimum_payout: COUNTRY_AMOUNT_HELP.minimum_payout,
     fraud_velocity_threshold: 'Maximum number of payment attempts per time window before flagging.',
     invoice_expiry_days: 'Number of days before an unpaid invoice expires.',
   };
@@ -419,7 +544,7 @@ export default function PlatformSettings() {
   const COMMERCIAL_KEYS = new Set([
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
-    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'payout_cooling_period_days', 'minimum_payout',
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
@@ -776,7 +901,7 @@ export default function PlatformSettings() {
                                 <>
                                   <button
                                     onClick={() => handleSave(setting.key)}
-                                    disabled={isSaving}
+                                    disabled={isSaving || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val))}
                                     className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                                   >
                                     {isSaving ? 'Saving...' : 'Save'}
@@ -867,33 +992,51 @@ export default function PlatformSettings() {
                       )}
                       {isConfiguring && (
                         <div className="mt-2 ml-6 rounded-lg border border-amber-200 bg-white p-4 space-y-3">
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Value</label>
-                            <input
-                              type="text"
-                              value={configValue}
-                              onChange={e => setConfigValue(e.target.value)}
-                              placeholder={KEY_DESCRIPTIONS[key] ? 'e.g. {"NG": 5000, "GH": 5000}' : 'Enter value (JSON or plain text)'}
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
-                            <input
-                              type="text"
-                              value={configDescription}
-                              onChange={e => setConfigDescription(e.target.value)}
-                              placeholder="Human-readable description"
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-                            />
-                          </div>
+                          {isCountryAmountKey(key) ? (
+                            <>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                  {COUNTRY_AMOUNT_HELP[key] || 'Amount per country'}
+                                </label>
+                                <CountryAmountEditor
+                                  settingKey={key}
+                                  value={(() => { try { const p = JSON.parse(configValue); return typeof p === 'object' && p !== null && !Array.isArray(p) ? p : {}; } catch { return {}; } })()}
+                                  changed={false}
+                                  onChange={v => setConfigValue(v)}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Value</label>
+                              <input
+                                type="text"
+                                value={configValue}
+                                onChange={e => setConfigValue(e.target.value)}
+                                placeholder="Enter value (JSON or plain text)"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                              />
+                            </div>
+                          )}
+                          {!isCountryAmountKey(key) && (
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
+                              <input
+                                type="text"
+                                value={configDescription}
+                                onChange={e => setConfigDescription(e.target.value)}
+                                placeholder="Human-readable description"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                              />
+                            </div>
+                          )}
                           {COMMERCIAL_KEYS.has(key) && (
                             <p className="text-[10px] text-gray-400">This is a commercial config key. It will be saved via the versioned save_commercial_config RPC.</p>
                           )}
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleConfigure(key)}
-                              disabled={isSaving || !configValue.trim()}
+                              disabled={isSaving || !configValue.trim() || (isCountryAmountKey(key) && hasCountryAmountErrors(key, configValue))}
                               className="rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                             >
                               {isSaving ? 'Saving...' : 'Create Setting'}

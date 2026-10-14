@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+
+const ALLOWED_PAYOUT_MODES = ['direct_split', 'platform_managed'] as const;
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -16,11 +19,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
-  if (!['direct_split', 'platform_managed'].includes(payout_mode)) {
+  if (!ALLOWED_PAYOUT_MODES.includes(payout_mode as typeof ALLOWED_PAYOUT_MODES[number])) {
     return NextResponse.json({ error: 'Invalid payout mode' }, { status: 400 });
   }
 
-  // Verify the user owns this business
+  // Verify the user owns this business (session client respects RLS)
   const { data: biz } = await supabase
     .from('businesses')
     .select('id')
@@ -29,11 +32,13 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (!biz) {
-    return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+    return NextResponse.json({ error: 'Business not found or not owned by you' }, { status: 403 });
   }
 
+  const serviceClient = createServiceClient();
+
   try {
-    // Record terms acceptance
+    // Record terms acceptance (session client — RLS scoped)
     const { error: termsError } = await supabase
       .from('payout_terms_acceptance')
       .insert({
@@ -49,8 +54,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to record terms acceptance' }, { status: 500 });
     }
 
-    // Update business payout mode
-    const { error: updateError } = await supabase
+    // Update business payout mode via service client (guarded column)
+    const { error: updateError } = await serviceClient
       .from('businesses')
       .update({ payout_mode })
       .eq('id', business_id);

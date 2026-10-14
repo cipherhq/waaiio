@@ -14,6 +14,122 @@ If something breaks, check this log to find what changed and when.
 - Existing Flutterwave BYO setups without a webhook_secret_hash will continue to work (credentials already saved). New setups require the hash. The BYO webhook handler already rejects Flutterwave webhooks without a configured hash (added in earlier commit).
 - If a merchant tries to set up Flutterwave BYO without configuring a webhook secret in their Flutterwave dashboard first, the setup will be rejected with a clear error message.
 
+## 2026-10-14 — chore: upgrade Next.js 14.2.35 → 15.5.27 + React 18 → 19
+
+### What changed
+- `package.json`: next 14.2.35→15.5.27, react/react-dom ^18→^19, @types/react/react-dom ^18→^19, eslint-config-next ^14→^15.
+- `next.config.mjs`: removed `experimental.instrumentationHook` (built-in in Next 15), moved `experimental.serverComponentsExternalPackages` → top-level `serverExternalPackages`, added `experimental.staleTimes` to preserve Next 14 client router cache behaviour.
+- `app/api/payments/byo-webhook/[businessId]/route.ts`: params type → `Promise<…>` + `await` (Next 15 async request API).
+- `app/api/admin/onboarding/[id]/route.ts`: params type → `Promise<…>` + `await`, extracted `id` before use.
+- `app/checkin/[businessId]/page.tsx`: client component params → `Promise<…>` + `use()` (React 19).
+- `app/dashboard/products/components/ProductForm.tsx`: `RefObject<HTMLInputElement>` → `RefObject<HTMLInputElement | null>` (React 19 stricter ref types).
+- `app/dashboard/products/components/BulkUpload.tsx`: same RefObject fix.
+- `app/maintenance/page.tsx`: `<a href="/">` → `<Link href="/">` (eslint-config-next 15 now errors on internal `<a>` links).
+- `app/(marketing)/reseller-setup/SetupWizard.tsx`: same `<a>` → `<Link>` fix.
+- `lib/pdf/__tests__/pdfkit-packaging-config.test.ts`: updated assertion from `serverComponentsExternalPackages` → `serverExternalPackages` to match the config rename.
+- `instrumentation.ts`: added `onRequestError = Sentry.captureRequestError` (Next 15 hook for nested RSC errors), updated comment to reflect Next 15 built-in instrumentation.
+- `package.json`: pinned exact versions (no `^`) for next, react, react-dom, @types/react, @types/react-dom, eslint-config-next.
+
+### What it affects / could break
+- Client router cache now uses staleTimes {dynamic:30, static:180} matching Next 14 defaults. Remove after launch if we want Next 15's more aggressive invalidation.
+- All other dependencies (Sentry, framer-motion, Supabase SSR, PostHog, etc.) verified React 19 compatible at current versions — no upgrades needed.
+- Admin app (Vite, separate repo section) stays on React 18 — unaffected.
+
+## 2026-10-14 — fix(bot): apply business overrides to language picker (#633)
+
+### What changed
+- `lib/bot/bot.service.ts`: Wrapped `sendLanguagePicker()` call (~L1806) and `lang.picker_confirmed` rendering (~L2388) inside `runWithTranslationOverrides` with the business's overrides. Previously these ran outside override context, so business overrides for `lang.picker_body`, `lang.picker_button`, and `lang.picker_confirmed` were silently ignored.
+
+### What it affects / could break
+- Businesses that set custom translations for picker keys will now see them applied.
+- No change for businesses without overrides (default text unchanged).
+
+## 2026-10-14 — fix(api): validate deletes before executing, CAS failure logging (#633)
+
+### What changed
+- `app/api/translations/route.ts` PUT: validation now runs BEFORE the delete/upsert branch. Deletes are validated for platform-only keys, non-editable keys, unknown keys, and disallowed languages — same checks as upserts. Any error → 400, no deletes and no upserts run (all-or-nothing).
+- `lib/bot/bot.service.ts` (~L1758): CAS failure during saved-language activation now logs `logger.warn` (with session id, no phone number) and `Sentry.captureMessage`. In-memory language is kept for the current message.
+
+### What it affects / could break
+- API consumers that relied on deletes bypassing key validation will now get 400 errors for invalid keys. This is the correct behavior.
+- No behavior change for valid delete/upsert requests.
+
+## 2026-10-14 — fix(bot): activate remembered language from customer_profiles (#633)
+
+### What changed
+- `lib/bot/bot.service.ts` (~L1735): When `customer_profiles.preferred_language` is set, verify it against the business's current allowed + certified languages before skipping the picker. If allowed, set `session_data._detected_language` and persist via CAS — greeting and flows now render in the saved language. If not allowed (business removed it or tier dropped), fall through to the picker instead of silently defaulting to English.
+
+### What it affects / could break
+- Returning customers who previously picked a language now get responses in that language immediately (no picker). Previously they got English despite having a saved preference.
+- If a business removes a language from its config, returning customers with that preference will see the picker again (correct behavior).
+
+## 2026-10-14 — feat(bot): business-editable greeting keys with platform-only deny list (#633)
+
+### Owner decision
+- Main greeting (welcome_default) is edited ONLY on the WhatsApp settings page (bot_greeting).
+- Away message (greeting.away) is edited ONLY in Settings > Features (away_message).
+- Both are platform-overridable by admins as fallbacks but NOT business-editable.
+- greeting.powered_by stays platform-only (branding).
+- Business-editable greeting keys: welcome_back, welcome_back_named, cancel_hint, chat_with_us.
+
+### What changed
+- `lib/bot/translations.ts`: Added PLATFORM_ONLY_KEYS deny list (powered_by, welcome_default, away). Exported createOverridesLoader factory keyed by business id (replaces single-promise memo). loadBusinessOverrides filters out non-editable keys.
+- `lib/bot/bot.service.ts`: All greeting send paths (new session, away, returning customer rebook/no-rebook, tier not allowed) render through getFlowCopy/fillFlowCopy inside runWithTranslationOverrides. Uses effective customer language (session._detected_language), not hardcoded 'en'. Override loader keyed by business id.
+- `lib/bot/customer-intelligence.ts`: buildReturnGreeting accepts optional welcomeLine parameter. New buildDefaultWelcomeLine function for exact-text fallback.
+- `lib/bot/flows/flow-localization.ts`: fillFlowCopy uses function replacer `() => String(v)` so names with $& render literally. Added greeting.cancel_hint to KEYS_WITH_COMMANDS.
+- `app/api/translations/route.ts`: Explicit PLATFORM_ONLY_KEYS check with "platform-only" error message.
+- `app/dashboard/translations/page.tsx`: Added "Greeting" category with note about where to edit main greeting and away message.
+
+### What it affects / could break
+- Businesses can now override welcome_back, welcome_back_named, cancel_hint, chat_with_us via dashboard translations page.
+- cancel_hint overrides must preserve *cancel* command token (API enforced).
+- Bot greeting text is unchanged with no overrides (byte-identical to main).
+- No DB schema changes.
+
+## 2026-10-14 — fix(admin): handle subscription read errors in tier change route
+
+### What changed
+- `app/api/admin/businesses/[id]/tier/route.ts:18-19`: `getSubscriptionInfo` now checks the Supabase query error. On error, GET and POST return 500 `{"error":"Could not check subscription status"}`. POST makes no write and no audit entry when the subscription read fails.
+- `admin/src/pages/Businesses.tsx:263-268`: If the GET pre-check fails (network error, non-OK status, or bad JSON), shows alert "Could not check whether this business has a paid plan. Tier not changed." and aborts without sending POST.
+- `admin/src/pages/Subscriptions.tsx:317-322`: Same pre-check failure handling.
+- `lib/__tests__/admin-tier-change.test.ts`: Added tests 14 (GET 500 on subscription read error) and 15 (POST 500 on subscription read error — no write, no audit). Total: 15 tests, 0 skips.
+- `admin/src/__tests__/tier-change-precheck.test.tsx`: 6 tests — renders real Businesses and Subscriptions pages with @testing-library/react; drives tier-change UI (select tier, click Save); asserts GET non-OK and network error abort with alert (no POST) for both pages; paying business confirm(false) blocks POST, confirm(true) proceeds with exactly one POST.
+
+### What it affects / could break
+- If the subscriptions table is unreachable, admin tier changes are blocked until it recovers. This is intentional — the route needs subscription status to populate the response and audit log.
+
+## 2026-10-14 — fix(admin): move tier change server-side (business-only override)
+
+### What changed
+- `app/api/admin/businesses/[id]/tier/route.ts`: New POST+GET route for admin tier changes. POST changes only `businesses.subscription_tier` (never writes subscriptions). GET returns `{ tier, paidPlan, revertsOn }` so the UI can warn before saving. For paying businesses (active subscription with plan growth/business), the response includes `paidPlan` and `revertsOn` (current_period_end). At next renewal, `activate_paid_subscription` (M418) resets the tier to the subscription's plan. Auth: `requirePlatformAdmin({ requiredRole: 'admin' })`.
+- `admin/src/pages/Businesses.tsx`: `handleTierChange()` calls GET before POST; if the business has a paid plan, shows a confirm dialog explaining the override is temporary and billing is unchanged.
+- `admin/src/pages/Subscriptions.tsx`: Same confirm dialog. Fixed `SubscriptionRecord` interface: `tier` (nonexistent column) → use `businesses.subscription_tier` joined as `business_tier`; `plan_name` (nonexistent) → `plan` (actual DB column, M001:272); `interval` → `billing_interval` (M172:4); `auto_renew`/`gateway_subscription_id` remain in interface but are not tier-related. Detail panel shows "Paid Plan" (subscriptions.plan) and "Current Tier" (businesses.subscription_tier). Table row shows override badge when business_tier differs from plan.
+- `lib/__tests__/admin-tier-change.test.ts`: 13 tests — POST: auth (2), validation (2), 404, business-only write (never subscriptions), paying biz response, non-paying biz response, no-op; GET: auth, validation, 404, response shape. 0 skips.
+
+### What it affects / could break
+- Previous head (96279b15) had a P0 bug: the route wrote `subscriptions.tier` which does not exist — PostgREST rejected it and every tier change returned 500. Unit tests passed because Supabase was mocked. This is now fixed.
+- Admin tier change is a business-only override. Non-paying businesses: permanent. Paying businesses: temporary until next renewal.
+- No changes to billing, payments, renewal logic, cron, or capabilities.
+
+## 2026-10-14 — fix(admin): replace JSON input with country-amount form for per-country settings
+
+### What changed
+- `shared/country-amounts.ts` (new): Shared validator for `minimum_bank_transfer` (NG, GH) and `minimum_payout` (NG, US, GB, CA, GH). All allowed countries are required — omitting one is a validation error. Validates: plain object, all allowed country codes present, no unknown countries, finite non-negative integers. Also exports country names, currency symbols, and help text.
+- `admin/src/pages/PlatformSettings.tsx`: Added `CountryAmountEditor` component showing one row per country with currency symbol (₦, GH₵, $, £, CA$) and number input. Replaces raw JSON text input for both the "Configure" (unconfigured) path and the existing editor path. Inline validation: blocks decimal, comma, letter-e keystrokes; shows "Required" for empty boxes; disables Save when invalid. Updated `KEY_DESCRIPTIONS` to plain-language help text, removed JSON placeholder/wording.
+- `app/api/admin/platform-settings/commercial/route.ts`: Server-side validation for `minimum_bank_transfer` and `minimum_payout` — rejects with 400 if value is not a plain object with all required country keys and non-negative integer values.
+- `admin/src/__tests__/platform-settings-discoverability.test.tsx`: Updated tests 3 and 5 for country-amount form (no JSON textbox). Added tests 6-8: existing minimum_payout renders number inputs; editing produces numeric values not strings; Save disabled when a country box is empty.
+- `lib/platformSettings.ts`: Fixed incorrect docstring on `minimum_payout` — was "minor units", corrected to "whole (major) currency units".
+- `lib/__tests__/country-amounts-validation.test.ts` (new): 29 unit tests for the shared validator (valid, missing countries, null, string "1000", -1, 1.5, NaN, Infinity, unknown country, nested objects, empty object, multiple errors).
+- `lib/__tests__/commercial-route-country-amounts.test.ts` (new): 15 route-level tests proving bad values get 400 (including missing countries) and valid values reach the RPC as numbers.
+
+### Units finding
+- `minimum_bank_transfer`: **whole (major) currency units** — naira, cedis. Evidence: `bank-transfer.ts:48` compares `amount >= minBankTransfer` where `amount` is in major units (line 93: `Math.round(params.amount * 100)` converts to minor for DB storage). `platformSettings.ts:67` docstring confirms "major currency units".
+- `minimum_payout`: **whole (major) currency units** — naira, dollars, pounds, cedis. Evidence: `auto-payout/route.ts:165-181` compares `netAmount < minPayout` where `netAmount` = sum of `platform_fees.transaction_amount` which = `payment.amount` (major units, proven by `paystack.ts:218`: `payment.amount * 100` = kobo). The docstring at `platformSettings.ts:44` says "minor units" but this is incorrect per the actual comparison chain.
+
+### What it affects / could break
+- Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
+- If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
+
 ## 2026-10-13 — fix(security): move bank account writes server-side (M448)
 
 ### What changed

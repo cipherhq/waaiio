@@ -25,8 +25,8 @@ const pdfkitReachableRoutes = [
 ] as const;
 
 describe('PDFKit serverless packaging config', () => {
-  it('externalizes PDFKit using the Next.js 14 config surface', () => {
-    expect(config).toContain("serverComponentsExternalPackages: ['pdfkit']");
+  it('externalizes PDFKit using the Next.js 15 config surface', () => {
+    expect(config).toContain("serverExternalPackages: ['pdfkit']");
   });
 
   it.each(pdfkitReachableRoutes)('traces PDFKit AFM data for %s', (route) => {

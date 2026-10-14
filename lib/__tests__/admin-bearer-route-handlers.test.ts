@@ -13,6 +13,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
+// Mock verification limit helper — always allow in these route handler tests
+vi.mock('@/lib/payouts/verification-limit', () => ({
+  checkVerificationLimit: vi.fn().mockResolvedValue({ allowed: true, limit: 999_999_999, used: 0, remaining: 999_999_999 }),
+}));
+
 // ── Shared mock infrastructure ──
 
 let mockFromImpl: (table: string) => Record<string, unknown>;

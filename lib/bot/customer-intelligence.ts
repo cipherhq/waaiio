@@ -146,29 +146,37 @@ export async function getCustomerHistory(
  * - Regular: "Welcome back, [name]!"
  * - New: standard greeting (returns null)
  */
+/**
+ * Build the default (English, no-override) welcome line for a returning customer.
+ * Used as the fallback when no translation override is set.
+ */
+export function buildDefaultWelcomeLine(
+  customerName: string | null,
+  ltvTier: string,
+): string {
+  const name = customerName ? customerName.split(' ')[0] : '';
+  if (ltvTier === 'vip') {
+    return name
+      ? `Welcome back, *${name}*! Great to see you again. 👋`
+      : 'Welcome back! Great to see you again. 👋';
+  }
+  return name
+    ? `Welcome back, *${name}*! 👋`
+    : 'Welcome back! 👋';
+}
+
 export function buildReturnGreeting(
   customerName: string | null,
   history: CustomerHistory,
   businessName: string,
+  /** Override-aware welcome line. When provided, replaces the default welcome. */
+  welcomeLine?: string,
 ): string | null {
   if (!history.isReturning || history.totalVisits < 2) return null;
 
-  const name = customerName ? customerName.split(' ')[0] : '';
   const parts: string[] = [];
 
-  if (history.ltvTier === 'vip') {
-    if (name) {
-      parts.push(`Welcome back, *${name}*! Great to see you again. 👋`);
-    } else {
-      parts.push('Welcome back! Great to see you again. 👋');
-    }
-  } else {
-    if (name) {
-      parts.push(`Welcome back, *${name}*! 👋`);
-    } else {
-      parts.push('Welcome back! 👋');
-    }
-  }
+  parts.push(welcomeLine ?? buildDefaultWelcomeLine(customerName, history.ltvTier));
 
   if (history.lastServiceName && history.daysSinceLastVisit !== null) {
     if (history.daysSinceLastVisit <= 7) {

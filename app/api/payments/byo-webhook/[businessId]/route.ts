@@ -15,10 +15,10 @@ const FLUTTERWAVE_TRANSIENT_STATUSES = new Set(['pending']);
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { businessId: string } },
+  { params }: { params: Promise<{ businessId: string }> },
 ) {
   try {
-    const { businessId } = params;
+    const { businessId } = await params;
     if (!businessId) {
       return NextResponse.json({ error: 'Missing businessId' }, { status: 400 });
     }
