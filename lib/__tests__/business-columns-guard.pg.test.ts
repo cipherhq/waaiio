@@ -477,8 +477,8 @@ describeDb('Migration 442: server-managed business columns guard', () => {
       RESET ROLE;
     `);
     expect(result).not.toContain('ERROR');
-    // The result should be a UUID (the new payout account id)
-    expect(result).toMatch(/^[0-9a-f-]{36}$/);
+    // The result contains SET/RESET command tags plus the UUID
+    expect(result).toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
 
     // Clean up the payout account for subsequent tests
     sql(`DELETE FROM public.payout_accounts WHERE business_id = '${BIZ_ID}';`);
@@ -499,7 +499,7 @@ describeDb('Migration 442: server-managed business columns guard', () => {
       RESET ROLE;
     `);
     expect(rpcResult).not.toContain('ERROR');
-    expect(rpcResult).toMatch(/^[0-9a-f-]{36}$/);
+    expect(rpcResult).toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
 
     // Update payout_mode as service_role (what square-callback route does)
     const modeUpdate = sql(`
