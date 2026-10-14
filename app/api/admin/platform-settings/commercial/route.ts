@@ -3,6 +3,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
+import { isCountryAmountKey, validateCountryAmounts } from '@/shared/country-amounts';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,17 @@ export async function POST(request: NextRequest) {
 
     if (!key || value === undefined) {
       return NextResponse.json({ error: 'key and value are required' }, { status: 400, headers: cors });
+    }
+
+    // Validate country-amount keys (minimum_bank_transfer, minimum_payout)
+    if (isCountryAmountKey(key)) {
+      const errors = validateCountryAmounts(key, value);
+      if (errors) {
+        return NextResponse.json(
+          { error: errors.map(e => e.message).join('; '), code: 'validation_error', details: errors },
+          { status: 400, headers: cors },
+        );
+      }
     }
 
     // SEC-005 Layer 4: Consume operation-bound step-up authorization

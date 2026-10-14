@@ -45,6 +45,25 @@ If something breaks, check this log to find what changed and when.
 - Bot greeting text is unchanged with no overrides (byte-identical to main).
 - No DB schema changes.
 
+## 2026-10-14 — fix(admin): replace JSON input with country-amount form for per-country settings
+
+### What changed
+- `shared/country-amounts.ts` (new): Shared validator for `minimum_bank_transfer` (NG, GH) and `minimum_payout` (NG, US, GB, CA, GH). All allowed countries are required — omitting one is a validation error. Validates: plain object, all allowed country codes present, no unknown countries, finite non-negative integers. Also exports country names, currency symbols, and help text.
+- `admin/src/pages/PlatformSettings.tsx`: Added `CountryAmountEditor` component showing one row per country with currency symbol (₦, GH₵, $, £, CA$) and number input. Replaces raw JSON text input for both the "Configure" (unconfigured) path and the existing editor path. Inline validation: blocks decimal, comma, letter-e keystrokes; shows "Required" for empty boxes; disables Save when invalid. Updated `KEY_DESCRIPTIONS` to plain-language help text, removed JSON placeholder/wording.
+- `app/api/admin/platform-settings/commercial/route.ts`: Server-side validation for `minimum_bank_transfer` and `minimum_payout` — rejects with 400 if value is not a plain object with all required country keys and non-negative integer values.
+- `admin/src/__tests__/platform-settings-discoverability.test.tsx`: Updated tests 3 and 5 for country-amount form (no JSON textbox). Added tests 6-8: existing minimum_payout renders number inputs; editing produces numeric values not strings; Save disabled when a country box is empty.
+- `lib/platformSettings.ts`: Fixed incorrect docstring on `minimum_payout` — was "minor units", corrected to "whole (major) currency units".
+- `lib/__tests__/country-amounts-validation.test.ts` (new): 29 unit tests for the shared validator (valid, missing countries, null, string "1000", -1, 1.5, NaN, Infinity, unknown country, nested objects, empty object, multiple errors).
+- `lib/__tests__/commercial-route-country-amounts.test.ts` (new): 15 route-level tests proving bad values get 400 (including missing countries) and valid values reach the RPC as numbers.
+
+### Units finding
+- `minimum_bank_transfer`: **whole (major) currency units** — naira, cedis. Evidence: `bank-transfer.ts:48` compares `amount >= minBankTransfer` where `amount` is in major units (line 93: `Math.round(params.amount * 100)` converts to minor for DB storage). `platformSettings.ts:67` docstring confirms "major currency units".
+- `minimum_payout`: **whole (major) currency units** — naira, dollars, pounds, cedis. Evidence: `auto-payout/route.ts:165-181` compares `netAmount < minPayout` where `netAmount` = sum of `platform_fees.transaction_amount` which = `payment.amount` (major units, proven by `paystack.ts:218`: `payment.amount * 100` = kobo). The docstring at `platformSettings.ts:44` says "minor units" but this is incorrect per the actual comparison chain.
+
+### What it affects / could break
+- Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
+- If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
+
 ## 2026-10-13 — fix(security): move bank account writes server-side (M448)
 
 ### What changed
