@@ -41,7 +41,7 @@ REVOKE SELECT ON TABLE public.business_payment_credentials FROM authenticated;
 GRANT SELECT (
   id, business_id, gateway, platform_subaccount_code,
   connect_account_id, connection_type, is_active, verified_at,
-  created_at, updated_at
+  created_at
 ) ON TABLE public.business_payment_credentials TO authenticated;
 
 -- ══════════════════════════════════════════════════════════════
