@@ -21,11 +21,21 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
+  // Load hidden IDs before search — fail closed on DB error
+  const hiddenIds = await loadDirectoryHiddenIds(supabase);
+  if (hiddenIds === null) {
+    return NextResponse.json(
+      { error: 'Directory search is temporarily unavailable' },
+      { status: 503 },
+    );
+  }
+
   // Step 1: Use unified marketplace search for filtering & ranking
   const searchResult = await searchMarketplace(supabase, {
     category: category || undefined,
     query: search || undefined,
     country: country || undefined,
+    excludeIds: hiddenIds,
     limit: 50,
   });
 
@@ -75,7 +85,7 @@ export async function GET(request: NextRequest) {
     supabase
       .from('platform_settings')
       .select('key, value')
-      .in('key', ['directory_hidden', 'directory_featured']),
+      .eq('key', 'directory_featured'),
     supabase
       .from('business_capabilities')
       .select('business_id, capability')
@@ -97,15 +107,15 @@ export async function GET(request: NextRequest) {
       .order('name', { ascending: true }),
   ]);
 
-  // Apply directory visibility settings (featured/hidden)
-  const settingsMap = new Map((settingsData || []).map(s => [s.key, s.value]));
-  const hiddenIds = (settingsMap.get('directory_hidden') as string[]) || [];
-  const featuredIds = (settingsMap.get('directory_featured') as string[]) || [];
+  // Apply directory visibility settings (featured sorting)
+  // Hidden IDs are already excluded pre-search via excludeIds
+  const featuredIds = (
+    (settingsData || []).find(s => s.key === 'directory_featured')?.value as string[] | undefined
+  ) || [];
 
-  // Filter hidden, then sort: featured first, then by search rank
-  const visible = results.filter(r => !hiddenIds.includes(r.businessId));
-  const featured = visible.filter(r => featuredIds.includes(r.businessId));
-  const rest = visible.filter(r => !featuredIds.includes(r.businessId));
+  // Sort: featured first, then by search rank
+  const featured = results.filter(r => featuredIds.includes(r.businessId));
+  const rest = results.filter(r => !featuredIds.includes(r.businessId));
   const sorted = [...featured, ...rest];
 
   // Build capability map
