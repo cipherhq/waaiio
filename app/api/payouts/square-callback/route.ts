@@ -126,7 +126,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=save_failed`);
     }
 
-    // Update business payout mode
+    // Update business payout mode (service_role bypasses guard trigger)
     const { error: modeError } = await serviceClient
       .from('businesses')
       .update({ payout_mode: 'direct_split' })
