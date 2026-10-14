@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(bot): DRY suggestion session creation via createNullBizSuggestionSession helper
+
+### What changed
+- `lib/bot/bot.service.ts:3664-3720`: New `createNullBizSuggestionSession(from, userId, sessionData, ttlMs)` helper. Deactivates expired active null-biz sessions, cleans up inactive rows, inserts new session. On 23505: if existing is expired, deactivates + retries once; if not expired, updates in place. Returns null on unrecoverable failure (log + Sentry).
+- All 6 call sites that created null-biz `select_business_suggestion` sessions now use the helper: `switch_biz` (L204), `home` (L228), switch-keyword suggestions (L852), did-you-mean (L1216), "Welcome back" quick-pick (L2170), in-session `switch_biz` (L2482). Buttons/suggestions only sent if helper returns a session; otherwise platform-scoped "Something went wrong" fallback.
+- Generic session-insert failure branch (L1688): only calls `enterPlatformDiscovery + sendPlatformText` when `!businessId`; when businessId is set, sends fallback business-scoped with guard (MessagingSuspendedError caught).
+- `lib/__tests__/stale-null-session.test.ts`: Added tests 8-11: returning customer picker via helper, did-you-mean via helper, 23505 in-place update, hard insert failure → fallback.
+
+### What it affects / could break
+- Session creation is now atomic per helper call — stale sessions cleaned up before insert. Prevents 23505 from silently dropping the session.
+- Buttons are only sent after session is confirmed stored — prevents orphaned buttons with no backing session.
+
 ## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
 
 ### What changed
