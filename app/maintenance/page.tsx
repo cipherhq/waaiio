@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Under Maintenance — Waaiio',
@@ -25,12 +26,12 @@ export default function MaintenancePage() {
           <a href="mailto:hello@waaiio.com" className="text-brand hover:underline">hello@waaiio.com</a>
         </p>
         <div className="mt-8">
-          <a
+          <Link
             href="/"
             className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:bg-brand/90 transition inline-block"
           >
             Try Again
-          </a>
+          </Link>
         </div>
       </div>
     </div>
