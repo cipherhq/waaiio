@@ -93,20 +93,38 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
         ON public.payout_accounts(business_id) WHERE is_active = true;
     `);
 
+    // Add M080/M446 columns (may already exist from server-only test)
+    sql(`ALTER TABLE public.payout_accounts ADD COLUMN IF NOT EXISTS square_merchant_id VARCHAR(100);`);
+    sql(`ALTER TABLE public.payout_accounts ADD COLUMN IF NOT EXISTS square_access_token TEXT;`);
+
     sql(`
       GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.businesses TO service_role;
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.payout_accounts TO service_role;
     `);
 
-    // Apply migration 441 from disk
-    const migrationSql = readFileSync(
+    // Apply migration 441 then 446 from disk
+    const m441Sql = readFileSync(
       resolve(process.cwd(), 'supabase/migrations/441_payout_account_atomic_swap.sql'),
       'utf-8',
     );
-    const result = sql(migrationSql);
-    if (result.includes('MIGRATION BLOCKED')) {
-      throw new Error(`Migration 441 assertion failed: ${result}`);
+    const m441Result = sql(m441Sql);
+    if (m441Result.includes('MIGRATION BLOCKED')) {
+      throw new Error(`Migration 441 assertion failed: ${m441Result}`);
+    }
+
+    const m446Sql = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/446_payout_accounts_server_only.sql'),
+      'utf-8',
+    );
+    const m446Result = sql(m446Sql);
+    if (m446Result.includes('VERIFICATION FAILED') || m446Result.includes('ERROR')) {
+      throw new Error(`Migration 446 failed: ${m446Result}`);
+    }
+    // Verify exactly 1 overload after both migrations
+    const overloadCount = sql(`SELECT count(*) FROM pg_proc WHERE proname = 'swap_payout_account' AND pronamespace = 'public'::regnamespace;`);
+    if (overloadCount !== '1') {
+      throw new Error(`Expected 1 swap_payout_account overload after M441+M446, got ${overloadCount}`);
     }
 
     // Seed test data
@@ -136,15 +154,15 @@ describeDb('Migration 441: payout account atomic RPCs', () => {
   // ════════════════════════════════════════════════════════
 
   it('swap_payout_account EXECUTE denied to authenticated', () => {
-    expect(sql("SELECT has_function_privilege('authenticated', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');")).toBe('f');
+    expect(sql("SELECT has_function_privilege('authenticated', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz,text,text,text)', 'EXECUTE');")).toBe('f');
   });
 
   it('swap_payout_account EXECUTE denied to anon', () => {
-    expect(sql("SELECT has_function_privilege('anon', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');")).toBe('f');
+    expect(sql("SELECT has_function_privilege('anon', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz,text,text,text)', 'EXECUTE');")).toBe('f');
   });
 
   it('swap_payout_account EXECUTE granted to service_role', () => {
-    expect(sql("SELECT has_function_privilege('service_role', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz)', 'EXECUTE');")).toBe('t');
+    expect(sql("SELECT has_function_privilege('service_role', 'swap_payout_account(uuid,text,text,text,text,text,text,timestamptz,text,text,text)', 'EXECUTE');")).toBe('t');
   });
 
   it('disconnect_payout_account EXECUTE denied to authenticated', () => {
