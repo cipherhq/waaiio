@@ -1106,13 +1106,17 @@ export class BotService {
       }
 
       if (navAction === 'savedcard_done') {
-        // FIX #1: Deactivate after verification, send once, never switch to platform scope on failure.
+        // Bind the verified business before sending — required for S-1 guard
+        if (!_scNavBizId) return; // No business known — cannot send business-scoped message
+        if (this.messageSender.boundBusinessId !== _scNavBizId) {
+          this.messageSender.bindBusiness?.(_scNavBizId);
+        }
         if (session) await this.deactivateSession(session.id);
         const lang = (session?.session_data as Record<string, unknown> | undefined)?._detected_language as string || 'en';
         const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
         try {
           await this.sendText(from, getFlowCopy(lang, 'savedcard.session_done'));
-        } catch (err) {
+        } catch {
           // Business send failed (suspended, ambiguous, etc.) — log and stop. Never retry or switch scope.
           logger.warn('[SAVED-CARD-NAV] Done goodbye send failed', { paymentId: navPaymentId });
         }
@@ -1134,8 +1138,11 @@ export class BotService {
 
         // FIX #3: Only execute if session exists AND CAS succeeds. No null→BotSession cast.
         if (!session) {
-          // No session — redirect to normal session-creation path via handleMessage('Hi')
-          return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
+          // No session — redirect to normal session-creation path via handleMessage('Hi').
+          // Pass 'returning_customer' provenance: the customer verified payment ownership for
+          // this business but has no active session. 'returning_customer' is NOT in
+          // TRUSTED_PROVENANCES so promo-only branches are correctly denied.
+          return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, 'returning_customer');
         }
         const newData = { ...session.session_data, active_capability: undefined };
         const casParams: Record<string, unknown> = {

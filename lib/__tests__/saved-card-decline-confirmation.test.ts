@@ -318,4 +318,25 @@ describe('Saved-card decline confirmation', () => {
     expect(call.body).toContain('9999');
     expect(call.buttons).toHaveLength(2);
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // FIX R3-#3: no payment business and no session business → generic copy, no card query
+  // ═══════════════════════════════════════════════════════════════
+  it('replace_decline with null businessId → generic copy, no saved_payment_methods query', async () => {
+    const supabase = buildMockSupabase({
+      payment: { ...PLATFORM_PAYMENT, business_id: null },
+    });
+    const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+    await handleSavedCardOfferAction(
+      supabase as any, sendText, PHONE, null, 'replace_decline', PAY_ID, vi.fn(), sendButtons,
+    );
+
+    // Should send generic copy (no last4)
+    expect(sendButtons).toHaveBeenCalledTimes(1);
+    const call = sendButtons.mock.calls[0][0];
+    expect(call.body).toContain('current card');
+    // saved_payment_methods should NOT have been queried
+    const pmCalls = supabase.from.mock.calls.filter((c: unknown[]) => c[0] === 'saved_payment_methods');
+    expect(pmCalls).toHaveLength(0);
+  });
 });

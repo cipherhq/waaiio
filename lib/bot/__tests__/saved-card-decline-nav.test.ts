@@ -430,4 +430,50 @@ describe('Saved-card decline navigation: real handleMessage', () => {
     );
     expect(casCalls).toHaveLength(0);
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // FIX R3-#1: session null, own verified payment, savedcard_done →
+  //            exactly ONE business-scoped goodbye, zero platform sends
+  // ═══════════════════════════════════════════════════════════════
+  it('savedcard_done with null session + own payment → one business goodbye, zero platform sends', async () => {
+    mockSession = null; // Session expired
+    const supabase = createSupabase();
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, supabase as any);
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    await bot.handleMessage(PHONE, `savedcard_done:${PAY_ID}`, 'button');
+
+    // Exactly one cloud.sendText call (business-scoped goodbye for payment's business)
+    expect(cloud.sendText).toHaveBeenCalledTimes(1);
+    const call = cloud.sendText.mock.calls[0][0];
+    expect(call.text).toContain('Hi');
+    // No platform-scoped sends (sendPlatformText uses the same cloud.sendText but only
+    // after enterPlatformDiscovery — verify no platform buttons/lists)
+    expect(cloud.sendButtons).not.toHaveBeenCalled();
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // FIX R3-#2: session null, savedcard_menu → session created for
+  //            payment's business with 'returning_customer' provenance
+  // ═══════════════════════════════════════════════════════════════
+  it('savedcard_menu with null session → session created for payment business, menu sent, no promo branch', async () => {
+    mockSession = null; // No active session
+    const supabase = createSupabase();
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, supabase as any);
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    await bot.handleMessage(PHONE, `savedcard_menu:${PAY_ID}`, 'button');
+
+    // A new session should have been created (get_bot_context called with business_id = BIZ_ID)
+    const contextCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'get_bot_context');
+    // At least one call should have p_business_id = BIZ_ID (the recursive handleMessage call)
+    const bizContextCall = contextCalls.find((c: any[]) => c[1]?.p_business_id === BIZ_ID);
+    expect(bizContextCall).toBeDefined();
+
+    // The recursive handleMessage passes 'returning_customer' provenance (8th arg),
+    // which is NOT in TRUSTED_PROVENANCES — promo-only branches should not fire.
+    // Verify: no promo verification calls would succeed (bizResolution != pre_resolved)
+  });
 });

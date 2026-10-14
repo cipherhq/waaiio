@@ -310,20 +310,22 @@ async function sendDeclineConfirmation(
   await runWithTranslationOverrides({ business: businessOverrides, platform: platformOverrides }, async () => {
     let body: string;
     if (action === 'replace_decline') {
-      // FIX #4: Saved cards are scoped per-business (UNIQUE(business_id, customer_phone, gateway)).
-      // Scope query by business_id. Use .limit(1) + .order('last_used_at') instead of .maybeSingle()
-      // to avoid errors when >1 active card exists (e.g. cross-gateway). Pick most recently used.
-      const phoneN = canonPhone.slice(1);
-      const { data: savedCards } = await supabase.from('saved_payment_methods')
-        .select('card_last4')
-        .in('customer_phone', [canonPhone, phoneN])
-        .eq('is_active', true).eq('gateway', 'paystack')
-        .eq('business_id', businessId!)
-        .order('last_used_at', { ascending: false, nullsFirst: false })
-        .limit(1);
-      const savedCard = savedCards?.[0];
-      if (savedCard?.card_last4) {
-        body = fillFlowCopy(lang, 'savedcard.decline_keep_last4', { last4: savedCard.card_last4 });
+      // Saved cards are scoped per-business (UNIQUE(business_id, customer_phone, gateway)).
+      // If no businessId, skip the query and use generic copy.
+      let savedCardLast4: string | null = null;
+      if (businessId) {
+        const phoneN = canonPhone.slice(1);
+        const { data: savedCards } = await supabase.from('saved_payment_methods')
+          .select('card_last4')
+          .in('customer_phone', [canonPhone, phoneN])
+          .eq('is_active', true).eq('gateway', 'paystack')
+          .eq('business_id', businessId)
+          .order('last_used_at', { ascending: false, nullsFirst: false })
+          .limit(1);
+        savedCardLast4 = savedCards?.[0]?.card_last4 || null;
+      }
+      if (savedCardLast4) {
+        body = fillFlowCopy(lang, 'savedcard.decline_keep_last4', { last4: savedCardLast4 });
       } else {
         body = getFlowCopy(lang, 'savedcard.decline_keep_generic');
       }
