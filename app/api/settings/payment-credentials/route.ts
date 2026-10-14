@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     if (trimmedHash.length > 256) {
       return NextResponse.json({ error: 'Webhook secret hash must be 256 characters or fewer.' }, { status: 400 });
     }
-    if (trimmedHash === secret_key) {
+    if (trimmedHash === secret_key.trim()) {
       return NextResponse.json({ error: 'The webhook secret hash must not be the same as your secret key. Use a separate value from your Flutterwave webhook settings.' }, { status: 400 });
     }
   }

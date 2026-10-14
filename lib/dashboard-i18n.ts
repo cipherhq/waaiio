@@ -16,6 +16,10 @@ const strings: Record<string, Record<string, string>> = {
       'Create a secret hash in your Flutterwave dashboard under Settings → Webhooks, and paste the same value here. Use the webhook URL shown below.',
     'payments.webhook_url_label':
       'Webhook URL',
+    'payments.flutterwave_webhook_hash_placeholder':
+      'Enter your webhook secret hash',
+    'payments.copy':
+      'Copy',
   },
   pcm: {
     'payouts.setup_password_hint':
@@ -26,6 +30,10 @@ const strings: Record<string, Record<string, string>> = {
       'Go your Flutterwave dashboard, Settings → Webhooks, create secret hash there, then paste am here. Use the webhook URL wey dey below.',
     'payments.webhook_url_label':
       'Webhook URL',
+    'payments.flutterwave_webhook_hash_placeholder':
+      'Put your webhook secret hash',
+    'payments.copy':
+      'Copy',
   },
 };
 

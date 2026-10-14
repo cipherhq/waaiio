@@ -1100,7 +1100,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                           autoComplete="off"
                           value={byoWebhookHash}
                           onChange={(e) => setByoWebhookHash(e.target.value)}
-                          placeholder="Enter your webhook secret hash"
+                          placeholder={t('payments.flutterwave_webhook_hash_placeholder')}
                           className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand font-mono"
                         />
                         <p className="mt-1 text-xs text-gray-500">
@@ -1110,25 +1110,29 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
 
                       <div>
                         <label className="mb-1 block text-sm font-medium text-gray-700">{t('payments.webhook_url_label')}</label>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            readOnly
-                            value={`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/api/payments/byo-webhook/${business.id}`}
-                            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 font-mono"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(
-                                `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/api/payments/byo-webhook/${business.id}`,
-                              );
-                            }}
-                            className="flex-shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                          >
-                            Copy
-                          </button>
-                        </div>
+                        {process.env.NEXT_PUBLIC_APP_URL ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              readOnly
+                              value={`${process.env.NEXT_PUBLIC_APP_URL}/api/payments/byo-webhook/${business.id}`}
+                              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  `${process.env.NEXT_PUBLIC_APP_URL}/api/payments/byo-webhook/${business.id}`,
+                                );
+                              }}
+                              className="flex-shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                            >
+                              {t('payments.copy')}
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-red-600">Webhook URL unavailable — app configuration error.</p>
+                        )}
                       </div>
 
                       <button

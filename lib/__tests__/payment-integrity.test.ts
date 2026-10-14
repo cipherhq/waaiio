@@ -148,6 +148,7 @@ describe('BYO Webhook — foreign-business reference ignored', () => {
       processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
       processPaystackChargeFailed: vi.fn(),
     }));
+    vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
   });
 
   afterEach(() => { vi.restoreAllMocks(); });
