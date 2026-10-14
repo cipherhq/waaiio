@@ -3,7 +3,6 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-<<<<<<< HEAD
 ## 2026-10-18 — fix(ticketing): race-loss error handling — DB errors and cancellation race
 
 ### What changed
@@ -840,6 +839,18 @@ Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `i
 ### What it affects / could break
 - Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
 - If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
+
+## 2026-10-14 — fix(bot): directory flow Part A — security, provenance, localization
+
+### What changed
+- `lib/bot/bot.service.ts`: switch/connect handler now looks up first, only deactivates session on match. No-match inside a business flow falls through to the flow. No-match outside a flow runs directory search. Directory handoffs pass correct resolution source: 'fuzzy' for search/suggestion/connect picks, 'returning_customer' for biz_N picks, 'bot_code' for typed codes. "directory" and "search" aliases only activate on the shared number (not dedicated channels).
+- `lib/bot/handlers/directory-search.ts`: Switched from sync `checkRateLimit` to async `checkRateLimitAsync` (same pattern as bot rate limiter). Localized hard-coded strings in `buildResultDescription` and `buildSearchDescription`.
+- `lib/bot/flows/flow-localization.ts`: Added 4 new keys (`directory.open_now`, `directory.desc_category_in_location`, `directory.desc_businesses_in`, `directory.desc_your_search`) to all 8 locales.
+- `lib/bot/__tests__/directory-flow.test.ts`: Rewrote tests — no either/or assertions, provenance verification, connect/switch command variants (outside flow, inside flow, no match), dedicated channel test, rate limit test.
+
+### What it affects / could break
+- "switch/connect <text>" inside an active business flow with no match no longer deactivates the session — the flow handles the text normally. Previously it would deactivate and show "no business found."
+- "search" and "directory" commands on a dedicated business number now reach the business flow instead of going to the directory.
 
 ## 2026-10-14 — feat(bot): WhatsApp directory search on shared number
 

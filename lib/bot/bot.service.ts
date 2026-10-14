@@ -230,7 +230,14 @@ export class BotService {
     }
 
     // ── "home" / "directory" / "search" — return to directory ──
-    if (HOME_PATTERN.test(text.trim())) {
+    // "directory" and "search" only act as directory navigation on the shared number.
+    // On a dedicated channel (preResolvedBusinessId set), they fall through to the
+    // business flow so the business can handle them as keywords or flow input.
+    // "home" always returns to directory regardless of channel type (existing behavior).
+    // Detection: preResolvedBusinessId is set by the webhook from dedicated channel's
+    // business_id (route.ts:540). Shared channels have business_id stripped to null
+    // by stripSharedChannelBusinessAuthority (channel-resolver.ts:38-44).
+    if (HOME_PATTERN.test(text.trim()) && !preResolvedBusinessId) {
       const activeSession = await this.getActiveSession(from);
       if (activeSession) await this.deactivateSession(activeSession.id);
       // S-1 (#256): Explicitly transition to platform discovery
@@ -898,54 +905,86 @@ export class BotService {
     // Update session in case handleGlobalQuery modified it (e.g. reference code fall-through)
     session = globalResult.session;
 
-    // Check for "connect <name>" / "switch <keyword>" command — lets users swap between businesses
+    // Check for "connect <name>" / "switch <keyword>" command — lets users swap between businesses.
+    // Owner rule: message must START with the keyword; look up first; only deactivate
+    // the current session on a match or suggestions. Inside an active business flow
+    // with no match: fall through so the flow handles the text normally.
     const switchMatch = text.match(/^(?:switch|connect)\s+(.+)$/i);
     if (switchMatch) {
       const keyword = switchMatch[1].trim().toLowerCase();
-      if (session) {
-        await this.deactivateSession(session.id);
-      }
-      // S-1 (#256): Transition to platform discovery for business switching
-      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
 
-      // Use the full fuzzy matching engine (same as bot code detection)
+      // Look up BEFORE deactivating — preserve the current session until we know
       const detection = await this.detectBotCodeWithSuggestions(keyword, from);
 
       if (detection.businessId) {
-        // Exact/confident match — route directly
+        // Exact/confident match — deactivate current session, then route
+        if (session) await this.deactivateSession(session.id);
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
         const { data: biz } = await this.supabase
           .from('businesses')
           .select('id, bot_code')
           .eq('id', detection.businessId)
           .single();
         if (biz) {
-          // ACC-204 R4: Keyword/switch match is user-initiated fuzzy lookup — NOT authoritative
-          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id, undefined, undefined, 'bot_code');
+          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id, undefined, undefined, 'fuzzy');
           return;
         }
       }
 
       if (detection.suggestions && detection.suggestions.length > 0) {
-        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: detection.suggestions });
-        if (sugSess) {
-          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
-          if (persisted.length === 0) {
-            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          } else if (persisted.length <= 3) {
-            await this.sendPlatformButtons(from, 'Which business did you mean?',
-              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
-          } else {
-            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
-            await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
-          }
+        // Suggestions found — deactivate current session, show picker
+        if (session) await this.deactivateSession(session.id);
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+
+        if (detection.suggestions.length <= 3) {
+          await this.sendPlatformButtons(from, 'Which business did you mean?',
+            detection.suggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
         } else {
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          const list = detection.suggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+          await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
         }
+
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'select_business_suggestion',
+          session_data: { suggestions: detection.suggestions },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
         return;
       }
 
-      await this.sendPlatformText(from, `No business found matching "${keyword}". Try: switch restaurant, switch spa, switch church, switch shop, etc.`);
-      return;
+      // No match. Inside an active business flow (including free-text steps): fall through
+      // so the flow handles "connect/switch <text>" as normal input.
+      if (session?.business_id) {
+        // Do NOT deactivate, do NOT reply — let the flow process the full text.
+        // Fall through to restart/escape-hatch/flow-executor handling below.
+      } else {
+        // Outside a business flow (e.g., directory_search or no session at all):
+        // run a directory search with the keyword.
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        const dirSend = this.buildDirectorySend();
+        const searchData = await handleDirectorySearch(
+          this.supabase, dirSend, from, keyword, null,
+        );
+        if (session) await this.deactivateSession(session.id);
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'directory_results',
+          session_data: { _directory_mode: true, ...(searchData || {}) },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        return;
+      }
     }
 
     // Check for restart keywords (skip on free-text steps)
@@ -3416,7 +3455,8 @@ export class BotService {
         const selection = await handleDirectorySelection(this.supabase, dirSend, from, text, dirData);
         if (selection) {
           await this.deactivateSession(session.id);
-          await this.handleMessage(from, selection.botCode, messageType, destinationPhone, selection.businessId);
+          // Directory handoffs set resolution source to 'fuzzy' — user-initiated search pick
+          await this.handleMessage(from, selection.botCode, messageType, destinationPhone, selection.businessId, undefined, undefined, 'fuzzy');
           return;
         }
         // dir_find was handled above; dir_result/dir_sug that didn't match → fall through to search
@@ -3430,7 +3470,8 @@ export class BotService {
         const pick = picks[idx];
         if (pick) {
           await this.deactivateSession(session.id);
-          await this.handleMessage(from, pick.bot_code, messageType, destinationPhone, pick.id);
+          // Returning-customer pick — resolution source 'returning_customer'
+          await this.handleMessage(from, pick.bot_code, messageType, destinationPhone, pick.id, undefined, undefined, 'returning_customer');
           return;
         }
       }
@@ -3439,7 +3480,8 @@ export class BotService {
       const botCodeDetection = await this.detectBotCode(text);
       if (botCodeDetection) {
         await this.deactivateSession(session.id);
-        await this.handleMessage(from, text, messageType, destinationPhone, botCodeDetection);
+        // Typed bot code in directory — resolution source 'bot_code'
+        await this.handleMessage(from, text, messageType, destinationPhone, botCodeDetection, undefined, undefined, 'bot_code');
         return;
       }
 
@@ -3452,7 +3494,8 @@ export class BotService {
         );
         if (connectResult.action === 'enter') {
           await this.deactivateSession(session.id);
-          await this.handleMessage(from, connectResult.botCode, messageType, destinationPhone, connectResult.businessId);
+          // Connect command match — resolution source 'fuzzy'
+          await this.handleMessage(from, connectResult.botCode, messageType, destinationPhone, connectResult.businessId, undefined, undefined, 'fuzzy');
           return;
         }
         if (connectResult.action === 'suggestions' && connectResult.sessionData) {

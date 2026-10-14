@@ -832,6 +832,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.business_unavailable': 'This business is currently unavailable. Try another one.',
     'directory.search_unavailable': 'Business search is temporarily unavailable. Please try again shortly.',
     'directory.rate_limited': 'You\'re searching too fast. Please wait a moment and try again.',
+    'directory.open_now': 'Open now',
+    'directory.desc_category_in_location': '{category} in {location}',
+    'directory.desc_businesses_in': 'businesses in {location}',
+    'directory.desc_your_search': 'your search',
   },
 
   // ─────────────────────────────────────────────────────────────
@@ -1625,6 +1629,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.business_unavailable': 'This business no dey available right now. Try another one.',
     'directory.search_unavailable': 'Business search no dey work right now. Abeg try again later.',
     'directory.rate_limited': 'You dey search too fast. Wait small make you try again.',
+    'directory.open_now': 'Open now',
+    'directory.desc_category_in_location': '{category} for {location}',
+    'directory.desc_businesses_in': 'businesses for {location}',
+    'directory.desc_your_search': 'your search',
   },
 
   yo: {
@@ -2353,6 +2361,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.business_unavailable': 'Iṣẹ́ yìí kò sí fún báyìí. Gbìyànjú ọ̀kan mìíràn.',
     'directory.search_unavailable': 'Wíwá iṣẹ́ kò sí fún báyìí. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí.',
     'directory.rate_limited': 'Ẹ ń wá jù. Jọ̀wọ́ dúró díẹ̀ kí ẹ tún gbìyànjú.',
+    'directory.open_now': 'Ṣí ní báyìí',
+    'directory.desc_category_in_location': '{category} ní {location}',
+    'directory.desc_businesses_in': 'àwọn iṣẹ́ ní {location}',
+    'directory.desc_your_search': 'ohun tí ẹ wá',
   },
   ig: {
     invalidSelection: 'Nhọrọ ahụ adịghị. Pịa otu n\'ime nhọrọ ndị dị n\'elu.',
@@ -3080,6 +3092,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.business_unavailable': 'Azụmaahịa a adịghị ugbu a. Nwaa nke ọzọ.',
     'directory.search_unavailable': 'Ịchọ azụmaahịa adịghị arụ ọrụ ugbu a. Biko nwaa ọzọ mechaa.',
     'directory.rate_limited': 'Ị na-achọ ngwa ngwa. Biko chere ntakịrị wee nwaa ọzọ.',
+    'directory.open_now': 'Mepere ugbu a',
+    'directory.desc_category_in_location': '{category} na {location}',
+    'directory.desc_businesses_in': 'azụmaahịa na {location}',
+    'directory.desc_your_search': 'ihe ị chọrọ',
   },
   ha: {
     invalidSelection: 'Wannan zaɓi baya nan. Taɓa ɗayan zaɓuɓɓukan da ke sama.',
@@ -3807,6 +3823,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.business_unavailable': 'Wannan kasuwancin ba ya samuwa yanzu. Gwada wani.',
     'directory.search_unavailable': 'Neman kasuwanci ba ya aiki yanzu. Don Allah gwada kuma daga baya.',
     'directory.rate_limited': 'Kana nema da sauri. Don Allah jira kaɗan ka sake gwadawa.',
+    'directory.open_now': 'A buɗe yanzu',
+    'directory.desc_category_in_location': '{category} a {location}',
+    'directory.desc_businesses_in': 'kasuwanci a {location}',
+    'directory.desc_your_search': 'abin da kake nema',
   },
   tw: {
     invalidSelection: 'Yiyi no nni ho. Pɛ wo nsam so kɔ ne mu biara wɔ supra.',
@@ -4534,6 +4554,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.business_unavailable': 'Saa adwumayɛfo yi nni hɔ mprempren. Sɔ foforo hwɛ.',
     'directory.search_unavailable': 'Adwumayɛfo nhwehwɛmu nyɛ adwuma mprempren. Yɛsrɛ wo sɔ bio akyire yi.',
     'directory.rate_limited': 'Worehwehwɛ ntɛmntɛm dodo. Yɛsrɛ wo twɛn kakra na sɔ bio.',
+    'directory.open_now': 'Abue mprempren',
+    'directory.desc_category_in_location': '{category} wɔ {location}',
+    'directory.desc_businesses_in': 'adwumayɛfo wɔ {location}',
+    'directory.desc_your_search': 'nea worehwehwɛ',
   },
   fr: {
     invalidSelection: 'Cette option n\'est pas disponible. Tapez l\'un des choix ci-dessus.',
@@ -5261,6 +5285,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.business_unavailable': 'Cette entreprise n\'est pas disponible actuellement. Essayez-en une autre.',
     'directory.search_unavailable': 'La recherche d\'entreprises est temporairement indisponible. Veuillez réessayer sous peu.',
     'directory.rate_limited': 'Vous cherchez trop vite. Veuillez patienter un instant et réessayer.',
+    'directory.open_now': 'Ouvert',
+    'directory.desc_category_in_location': '{category} à {location}',
+    'directory.desc_businesses_in': 'entreprises à {location}',
+    'directory.desc_your_search': 'votre recherche',
   },
   es: {
     invalidSelection: 'Esa opción no está disponible. Toque una de las opciones anteriores.',
@@ -5988,6 +6016,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.business_unavailable': 'Este negocio no está disponible ahora. Prueba otro.',
     'directory.search_unavailable': 'La búsqueda de negocios no está disponible temporalmente. Intenta de nuevo pronto.',
     'directory.rate_limited': 'Estás buscando demasiado rápido. Espera un momento e intenta de nuevo.',
+    'directory.open_now': 'Abierto',
+    'directory.desc_category_in_location': '{category} en {location}',
+    'directory.desc_businesses_in': 'negocios en {location}',
+    'directory.desc_your_search': 'tu búsqueda',
   },
 };
 

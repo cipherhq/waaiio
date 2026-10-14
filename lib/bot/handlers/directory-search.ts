@@ -29,7 +29,7 @@ import {
   type MarketplaceResult,
   type FuzzySuggestion,
 } from '@/lib/marketplace/search';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { checkRateLimitAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 // ── Constants ─────────────────────────────────────────────
@@ -130,8 +130,8 @@ export async function handleDirectorySearch(
   sharedCountry: string | null,
   lang?: string,
 ): Promise<DirectorySessionData | null> {
-  // Rate limit
-  const rl = checkRateLimit(`dir-search:${from}`, SEARCH_RATE_LIMIT, SEARCH_RATE_WINDOW_MS);
+  // Rate limit — uses the shared async limiter (same pattern as bot:${from})
+  const rl = await checkRateLimitAsync(`dir-search:${from}`, SEARCH_RATE_LIMIT, SEARCH_RATE_WINDOW_MS);
   if (!rl.allowed) {
     await send.sendPlatformText(from, getFlowCopy(lang, 'directory.rate_limited'));
     return null;
@@ -182,7 +182,7 @@ export async function handleDirectorySearch(
       ? searchResult.results.length + '+' // indicate more exist
       : String(searchResult.results.length);
 
-    const description = buildSearchDescription(parsed.categories[0], parsed.locationText);
+    const description = buildSearchDescription(parsed.categories[0], parsed.locationText, lang);
 
     let bodyText = correctionPrefix
       ? `${correctionPrefix}\n\n`
@@ -483,7 +483,7 @@ async function sendResultsList(
     buttonLabel: truncTitle(getFlowCopy(lang, 'directory.view_results'), LIST_TITLE_MAX),
     items: items.map((r, i) => ({
       title: truncTitle(r.name, LIST_TITLE_MAX),
-      description: buildResultDescription(r),
+      description: buildResultDescription(r, lang),
       postbackText: `dir_result_${i}`,
     })),
   });
@@ -492,11 +492,11 @@ async function sendResultsList(
 /**
  * Build a short description for a list row (max 72 chars for WhatsApp).
  */
-function buildResultDescription(r: MarketplaceResult): string {
+function buildResultDescription(r: MarketplaceResult, lang?: string): string {
   const parts: string[] = [];
   if (r.category) parts.push(r.category);
   if (r.city) parts.push(r.city);
-  if (r.isOpenNow) parts.push('Open now');
+  if (r.isOpenNow) parts.push(getFlowCopy(lang, 'directory.open_now'));
   return parts.join(' · ').slice(0, 72);
 }
 
@@ -513,9 +513,9 @@ function buildSuggestionDescription(s: FuzzySuggestion): string {
 /**
  * Build a human-readable search description from category + location.
  */
-function buildSearchDescription(category?: string, location?: string | null): string {
-  if (category && location) return `${category} in ${location}`;
+function buildSearchDescription(category?: string, location?: string | null, lang?: string): string {
+  if (category && location) return fillFlowCopy(lang, 'directory.desc_category_in_location', { category, location });
   if (category) return category;
-  if (location) return `businesses in ${location}`;
-  return 'your search';
+  if (location) return fillFlowCopy(lang, 'directory.desc_businesses_in', { location });
+  return getFlowCopy(lang, 'directory.desc_your_search');
 }
