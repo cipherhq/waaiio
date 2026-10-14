@@ -10,17 +10,21 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Read the business's active subscription to determine if they are paying.
- * Returns { paidPlan, revertsOn } or nulls if no active paid subscription.
+ * Returns { error, paidPlan, revertsOn }. error is set if the query fails.
  */
 async function getSubscriptionInfo(
   supabase: ReturnType<typeof createServiceClient>,
   businessId: string,
-) {
-  const { data: sub } = await supabase
+): Promise<{ error?: string; paidPlan: string | null; revertsOn: string | null }> {
+  const { data: sub, error } = await supabase
     .from('subscriptions')
     .select('status, plan, current_period_end')
     .eq('business_id', businessId)
     .maybeSingle();
+
+  if (error) {
+    return { error: error.message, paidPlan: null, revertsOn: null };
+  }
 
   const isPaying =
     sub?.status === 'active' &&
@@ -58,12 +62,15 @@ export async function GET(
     return NextResponse.json({ error: 'Business not found' }, { status: 404 });
   }
 
-  const { paidPlan, revertsOn } = await getSubscriptionInfo(supabase, id);
+  const subInfo = await getSubscriptionInfo(supabase, id);
+  if (subInfo.error) {
+    return NextResponse.json({ error: 'Could not check subscription status' }, { status: 500 });
+  }
 
   return NextResponse.json({
     tier: biz.subscription_tier,
-    paidPlan,
-    revertsOn,
+    paidPlan: subInfo.paidPlan,
+    revertsOn: subInfo.revertsOn,
   });
 }
 
@@ -109,7 +116,11 @@ export async function POST(
   const previousTier = biz.subscription_tier;
 
   // Read subscription info for the response and audit log
-  const { paidPlan, revertsOn } = await getSubscriptionInfo(supabase, id);
+  const subInfo = await getSubscriptionInfo(supabase, id);
+  if (subInfo.error) {
+    return NextResponse.json({ error: 'Could not check subscription status' }, { status: 500 });
+  }
+  const { paidPlan, revertsOn } = subInfo;
 
   if (previousTier === tier) {
     return NextResponse.json({ tier, paidPlan, revertsOn });

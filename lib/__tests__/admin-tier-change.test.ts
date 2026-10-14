@@ -17,6 +17,10 @@
  * 11. Invalid UUID gets 400
  * 12. Unknown business gets 404
  * 13. Returns { tier, paidPlan, revertsOn } shape
+ * 14. Returns 500 when subscriptions read errors
+ *
+ * Subscription read error handling:
+ * 15. POST returns 500 when subscriptions read errors — no write, no audit
  *
  * Column evidence (migration file:line):
  * - businesses.subscription_tier: 002_multi_industry.sql:38
@@ -49,6 +53,7 @@ let bizSelectData: { id: string; name: string; subscription_tier: string } | nul
 };
 
 let subSelectData: { status: string; plan: string; current_period_end: string } | null = null;
+let subSelectError: { message: string } | null = null;
 
 const updateCalls: Array<{ table: string; data: Record<string, unknown>; id: string }> = [];
 const bizUpdateResponse = { error: null as { message: string } | null };
@@ -64,7 +69,7 @@ vi.mock('@/lib/supabase/service', () => ({
           }),
           maybeSingle: () => Promise.resolve({
             data: table === 'subscriptions' ? subSelectData : null,
-            error: null,
+            error: table === 'subscriptions' ? subSelectError : null,
           }),
         }),
       }),
@@ -104,6 +109,7 @@ describe('Admin tier-change route', () => {
     bizUpdateResponse.error = null;
     bizSelectData = { id: VALID_BIZ_ID, name: 'Test Biz', subscription_tier: 'free' };
     subSelectData = null;
+    subSelectError = null;
   });
 
   // ── POST tests ──
@@ -300,5 +306,39 @@ describe('Admin tier-change route', () => {
       paidPlan: 'business',
       revertsOn: '2026-12-01T00:00:00Z',
     });
+  });
+
+  it('14. GET: returns 500 when subscriptions read errors', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    subSelectError = { message: 'connection refused' };
+
+    const { GET } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await GET(
+      makeRequest(VALID_BIZ_ID, 'GET'),
+      { params: Promise.resolve({ id: VALID_BIZ_ID }) },
+    );
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe('Could not check subscription status');
+  });
+
+  it('15. POST: returns 500 when subscriptions read errors — no write, no audit', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue(ADMIN);
+    subSelectError = { message: 'connection refused' };
+
+    const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await POST(
+      makeRequest(VALID_BIZ_ID, 'POST', { tier: 'growth' }),
+      { params: Promise.resolve({ id: VALID_BIZ_ID }) },
+    );
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe('Could not check subscription status');
+
+    // No write to businesses
+    expect(updateCalls).toHaveLength(0);
+
+    // No audit logged
+    expect(mockLogAdminAudit).not.toHaveBeenCalled();
   });
 });

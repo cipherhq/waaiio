@@ -260,17 +260,23 @@ export default function Businesses() {
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
       // Pre-check: warn if this is a paying business
-      const checkRes = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, { headers });
-      if (checkRes.ok) {
-        const info = await checkRes.json();
-        if (info.paidPlan) {
-          const planLabel = info.paidPlan.charAt(0).toUpperCase() + info.paidPlan.slice(1);
-          const dateStr = info.revertsOn ? new Date(info.revertsOn).toLocaleDateString() : 'next renewal';
-          const confirmed = confirm(
-            `This business pays for the ${planLabel} plan. Your change lasts until their next renewal on ${dateStr}, then returns to ${planLabel}. Billing is not changed.`,
-          );
-          if (!confirmed) { setTierSaving(false); return; }
-        }
+      let info: { paidPlan?: string | null; revertsOn?: string | null };
+      try {
+        const checkRes = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, { headers });
+        if (!checkRes.ok) throw new Error();
+        info = await checkRes.json();
+      } catch {
+        alert('Could not check whether this business has a paid plan. Tier not changed.');
+        setTierSaving(false);
+        return;
+      }
+      if (info.paidPlan) {
+        const planLabel = info.paidPlan.charAt(0).toUpperCase() + info.paidPlan.slice(1);
+        const dateStr = info.revertsOn ? new Date(info.revertsOn).toLocaleDateString() : 'next renewal';
+        const confirmed = confirm(
+          `This business pays for the ${planLabel} plan. Your change lasts until their next renewal on ${dateStr}, then returns to ${planLabel}. Billing is not changed.`,
+        );
+        if (!confirmed) { setTierSaving(false); return; }
       }
 
       const res = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, {
