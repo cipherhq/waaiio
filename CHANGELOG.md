@@ -30,6 +30,16 @@ If something breaks, check this log to find what changed and when.
 - PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
 - The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
 
+## 2026-10-14 — test(security): real route-handler test for images/convert + pdfjs-dist v6 smoke
+
+### What changed
+- `lib/security/__tests__/sanitize-image.test.ts`: Replaced test #10 ("images/convert route handler → converts a PNG buffer to JPEG") which tested sharp directly, with 4 tests that import the real GET handler from `app/api/images/convert/route.ts`, call it with a real `NextRequest`, mock only the outbound `fetch` (returns a real PNG buffer) and `@/lib/rate-limit`. Asserts: status 200, content-type image/jpeg, JPEG magic bytes (FF D8 FF), dimensions via sharp metadata. Added cases for missing URL (400), non-Supabase URL (400), and non-image input (500).
+- `lib/security/__tests__/pdfjs-dist-smoke.test.ts` (new): Smoke test for pdfjs-dist v6. Creates a real PDF via pdf-lib, parses with pdfjs-dist legacy build, verifies numPages, viewport dimensions, and text extraction.
+
+### What it affects / could break
+- Test-only changes. No production code modified.
+- pdfjs-dist smoke uses the `legacy` build for Node.js compatibility (the app uses the default browser build via dynamic import in `app/sign/[token]/page.tsx`).
+
 ## 2026-10-14 — chore: upgrade Next.js 14.2.35 → 15.5.27 + React 18 → 19
 
 ### What changed
@@ -50,6 +60,51 @@ If something breaks, check this log to find what changed and when.
 - Client router cache now uses staleTimes {dynamic:30, static:180} matching Next 14 defaults. Remove after launch if we want Next 15's more aggressive invalidation.
 - All other dependencies (Sentry, framer-motion, Supabase SSR, PostHog, etc.) verified React 19 compatible at current versions — no upgrades needed.
 - Admin app (Vite, separate repo section) stays on React 18 — unaffected.
+
+## 2026-10-14 — chore(deps): upgrade sharp 0.34→0.35.5 and pdfjs-dist 5→6.4
+
+### What changed
+- `package.json`: `sharp` ^0.34.5 → ^0.35.5, `pdfjs-dist` ^5.6.205 → ^6.2.108.
+- `package-lock.json`: sharp 0.35.5 (fixes GHSA-wq5f/rgj7/f88m), pdfjs-dist 6.4.299 (fixes GHSA-hq66).
+
+### Why it's safe
+- **sharp 0.35**: All API calls used in `lib/security/sanitize-image.ts:22-78` (`sharp()`, `.rotate()`, `.resize()`, `.jpeg()`, `.png()`, `.webp()`, `.toBuffer()`, `.metadata()`) and `app/api/images/convert/route.ts:31` (`.jpeg()`, `.toBuffer()`) are unchanged in v0.35. Requires Node ≥20.9 (CI runs 24.11). Build verified.
+- **pdfjs-dist 6.x**: `app/sign/[token]/page.tsx:158-182` uses dynamic import, `GlobalWorkerOptions.workerSrc`, `getDocument({data})`, `page.getViewport()`, `page.render()` — all unchanged in v6. Worker CDN URL template (`pdf.js/${version}/pdf.worker.min.mjs`) resolves correctly for 6.4.299. `isEvalSupported` removed in v6 but was not used. Build verified.
+
+### What it affects / could break
+- **sharp**: Native binary rebuild. If Vercel build fails on sharp install, check platform compatibility (should auto-detect).
+- **pdfjs-dist**: Client-side only (contract signing page). No server-side rendering of PDFs. CDN worker URL changes with version.
+
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1627-1666`: 23505 null-biz recovery now checks if the recovered session is expired (`expires_at < now`). If expired: deactivates the stale row (`is_active=false`, scoped by id + `business_id IS NULL`), retries the insert once. If retry fails: logs, Sentry, sends fallback via platform path. Only resumes non-expired sessions.
+- `lib/bot/bot.service.ts:1659-1669`: 23505 fallback "Something went wrong" messages changed from `this.sendText` (business-scoped, crashes with MessagingSuspendedError when no business) to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2039-2041`: Added `enterPlatformDiscovery()` call at the start of the marketplace greeting section (no business bound).
+- `lib/bot/bot.service.ts:2053,2070-2076,2095,2110,2126`: Changed all no-business sends from `this.sendText` / `this.messageSender.sendButtons` to `this.sendPlatformText` / `this.sendPlatformButtons` — "Welcome back", quick-pick buttons, registration fallback, first-time greeting, "couldn't find a business".
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering stale session deactivation + retry, Hi with stale session, brand-new phone greeting, returning customer picker.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts:360-388`: Updated test 6 — no longer expects guard to block (sends are now platform-scoped), instead verifies "couldn't find" message is delivered.
+
+### What it affects / could break
+- The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
+- PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
+- The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
+## 2026-10-14 — chore(deps): patch critical and high dependency advisories
+
+### What changed
+- `package.json`: Added scoped `overrides` to patch vulnerable transitive dependencies: `simple-git` 3.36.0→4.0.1 scoped to `@antiwork/shortest` (CRITICAL), `jsondiffpatch` 0.6.0→0.7.6 scoped to `ai` (HIGH), `source-map-js` 1.2.1→1.2.2 (HIGH), `fast-uri` 3.1.4→3.1.8 (HIGH), `js-yaml` 4.3.0→4.3.2 (HIGH), `dompurify` 3.4.12→3.4.16 (medium), `postcss` deduped to root 8.5.28 scoped to `next` (HIGH, fixes next@14 nested 8.4.31), `glob` 10.3.10→10.5.0 scoped to `@next/eslint-plugin-next` (HIGH).
+- `package-lock.json`: Updated transitive `brace-expansion` 5.0.7→5.0.12 and 2.1.2→2.1.7 (HIGH, within semver range of parents).
+- `admin/package.json`: Bumped `react-router` ^7.6.1→^7.18.2 (HIGH, 6 CVEs), `postcss` ^8.4.38→^8.5.23 (HIGH), `vite` 6.3.5→6.4.3 (HIGH). Added overrides for transitive deps: `ws` 8.21.0 (HIGH), `fast-uri` 3.1.8, `browserslist` 4.28.7, `source-map-js` 1.2.2, `undici` 7.29.1 (HIGH), `simple-git` 4.0.1 scoped to `@antiwork/shortest` (CRITICAL), `brace-expansion` 2.1.7, `baseline-browser-mapping` 2.11.0.
+- `admin/package-lock.json`: Regenerated with all bumps and overrides.
+
+### What it affects / could break
+- **simple-git 3→4** (scoped to @antiwork/shortest): Major version override, dev-only E2E tool. Compatibility verified: shortest calls `simpleGit()`, `.branch()`, `.revparse()` only (bin.js:5503-5519) — all stable in v4. If shortest E2E tests break, pin simple-git back to 3.x in overrides.
+- **react-router 7.14→7.18**: Minor bump but touches routing internals. Admin panel routing verified via vite build.
+- **jsondiffpatch 0.6→0.7** (scoped to ai): 0.x semver major, dev-only via shortest→ai. Compatibility verified: ai uses `patch()`, `clone()`, `diff()` only (rsc-shared.mjs:138,165,192,218; rsc-server.mjs:2,136) — all stable in v0.7.
+- **postcss override in next@14** (scoped to next): Forces next's nested postcss from 8.4.31 to root 8.5.28. Same major version, API-compatible. Verified via next build.
+- **nanoid override removed from admin**: postcss@8.5.30 declares ^3.3.20 which already satisfies the alert (>=3.3.12). The previous override to 3.3.12 was actively downgrading.
+- **Remaining unfixed** (need major bumps — decision cards pending): `next` 14→15 (2 CRITICAL + 16 HIGH).
 
 ## 2026-10-14 — fix(bot): apply business overrides to language picker (#633)
 
