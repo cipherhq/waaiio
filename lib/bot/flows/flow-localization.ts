@@ -20,6 +20,16 @@
 import { CERTIFIED_LANGUAGES, SUPPORTED_LANGUAGES } from '@/lib/bot/languages';
 import type { SupportedLanguage } from '@/lib/bot/languages';
 
+// ── Override resolver (set by translations.ts on the server) ────
+// This avoids importing node:async_hooks into client bundles.
+type OverrideResolver = () => { business: Map<string, string>; platform: Map<string, string> } | null;
+let _overrideResolver: OverrideResolver | null = null;
+
+/** Register the ALS-based override resolver (called once from translations.ts). */
+export function _setOverrideResolver(resolver: OverrideResolver): void {
+  _overrideResolver = resolver;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Locale corpus
 // ═══════════════════════════════════════════════════════════════
@@ -269,6 +279,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.pay_here': 'Pay here 👇',
     'payment.setup_failed_saved': "Sorry, we couldn't set up payment right now. Your booking has been saved but is pending payment.",
     'payment.link_title': '💳 *Payment Link*',
+    'payment.bank_label': 'Bank: {bankName}',
+    'payment.account_label': 'Account: {accountNumber}',
+    'payment.name_label': 'Name: {accountName}',
+    'payment.amount_label': 'Amount: {amount}',
+    'payment.ref_label': 'Reference/Narration: *{transferRef}*',
+    'payment.ref_warning': '⚠️ Use reference *{transferRef}* as your transfer narration.',
+    'payment.transfer_hint': 'After transferring, tap "I\'ve Sent It" or send your receipt screenshot.',
+    'payment.paid_online_btn': "I've Paid Online",
 
     // Chat
     'chat.unavailable': "Live chat isn't available for *{businessName}* right now.\n\nYou can continue with the assistant — type *menu* to see what's available.",
@@ -465,11 +483,21 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'lang.keep_english': "No problem! I'll keep responding in English.",
     'lang.english_fine': 'English is fine',
     'lang.offer_yes': 'Yes, {langName}',
+    'lang.picker_body': 'Please choose your preferred language:',
+    'lang.picker_button': 'Choose Language',
+    'lang.picker_confirmed': "Great! I'll respond in {langName} from now on. ✅",
+    'lang.detected_offer': 'I noticed you might prefer {langName}. Would you like me to respond in {langName}?',
+    'lang.remembered_offer': 'You previously chose {langName}. Would you like me to respond in {langName}?',
+    'lang.unavailable': '{langName} is no longer available for this business.',
 
     // Greeting
     'greeting.away': "We're currently outside business hours, but you can still browse, book, and order! 🕐",
     'greeting.chat_with_us': 'Chat with Us',
     'greeting.powered_by': '_Powered by Waaiio_',
+    'greeting.welcome_default': 'Welcome! How can I help you today?',
+    'greeting.cancel_hint': '_Type *cancel* anytime to exit._',
+    'greeting.welcome_back': 'Welcome back! 👋',
+    'greeting.welcome_back_named': 'Welcome back, {name}! 👋',
 
     // Recurring payment chrome
     'recurring.title': 'Your Recurring Payments',
@@ -738,6 +766,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.waiver': 'Sign Waiver',
     'cap.class_booking': 'Book a Class',
     'cap.promo_verification': 'Instant Win',
+    'cap.my_account': 'My Account',
     'ordering.pay_online_option': '*Option 1 — Pay Online* 👇',
     'ordering.bank_transfer_option': '*Option 2 — Bank Transfer* 🏦',
     'ordering.pay_here': '💳 Pay here 👇\n{paymentUrl}\n\n⚠️ {autoConfirm}',
@@ -1023,6 +1052,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.pay_here': 'Pay here 👇',
     'payment.setup_failed_saved': 'Sorry, we no fit set up payment now. Your booking don save but e dey wait for payment.',
     'payment.link_title': '💳 *Payment Link*',
+    'payment.bank_label': 'Bank: {bankName}',
+    'payment.account_label': 'Account: {accountNumber}',
+    'payment.name_label': 'Name: {accountName}',
+    'payment.amount_label': 'Amount: {amount}',
+    'payment.ref_label': 'Reference/Narration: *{transferRef}*',
+    'payment.ref_warning': '⚠️ Use dis reference *{transferRef}* when you dey transfer.',
+    'payment.transfer_hint': 'After you don transfer, tap "I\'ve Sent It" or send your receipt screenshot.',
+    'payment.paid_online_btn': 'I Don Pay Online',
 
     // Chat
     'chat.unavailable': 'Live chat no dey available for *{businessName}* now.\n\nYou fit continue with the assistant — type *menu* to see wetin dey available.',
@@ -1214,11 +1251,21 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'lang.keep_english': 'No wahala! I go continue to respond for English.',
     'lang.english_fine': 'English dey okay',
     'lang.offer_yes': 'Yes, {langName}',
+    'lang.picker_body': 'Abeg pick the language wey you wan use:',
+    'lang.picker_button': 'Pick Language',
+    'lang.picker_confirmed': "Nice one! I go dey reply you for {langName} from now. ✅",
+    'lang.detected_offer': 'E be like say you prefer {langName}. You wan make I dey reply you for {langName}?',
+    'lang.remembered_offer': 'You bin choose {langName} before. You wan make I use {langName} here?',
+    'lang.unavailable': '{langName} no dey available for dis business again.',
 
     // Greeting
     'greeting.away': 'We no dey office now, but you fit still browse, book, and order! 🕐',
     'greeting.chat_with_us': 'Chat with Us',
     'greeting.powered_by': '_Waaiio power am_',
+    'greeting.welcome_default': 'Welcome! Wetin you wan do today?',
+    'greeting.cancel_hint': '_Type *cancel* anytime wey you wan stop._',
+    'greeting.welcome_back': 'You don come back! 👋',
+    'greeting.welcome_back_named': 'Welcome back, {name}! 👋',
 
     // Recurring
     'recurring.title': 'Your Recurring Payments',
@@ -1486,6 +1533,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.waiver': 'Sign Waiver',
     'cap.class_booking': 'Book Class',
     'cap.promo_verification': 'Instant Win',
+    'cap.my_account': 'My Account',
     'ordering.pay_online_option': '*Option 1 — Pay Online* 👇',
     'ordering.bank_transfer_option': '*Option 2 — Bank Transfer* 🏦',
     'ordering.pay_here': '💳 Pay here 👇\n{paymentUrl}\n\n⚠️ {autoConfirm}',
@@ -1755,6 +1803,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.pay_here': 'San níbí 👇',
     'payment.setup_failed_saved': 'Màá bẹ̀ẹ̀ jẹ́, a kò lè ṣètò ìsanwó báyìí. A ti fipamọ́ ìpàmọ́ rẹ ṣùgbọ́n ó ń dúró fún ìsanwó.',
     'payment.link_title': '💳 *Ìjápọ̀ Ìsanwó*',
+    'payment.bank_label': 'Bank: {bankName}',
+    'payment.account_label': 'Account: {accountNumber}',
+    'payment.name_label': 'Name: {accountName}',
+    'payment.amount_label': 'Amount: {amount}',
+    'payment.ref_label': 'Reference/Narration: *{transferRef}*',
+    'payment.ref_warning': '⚠️ Use reference *{transferRef}* as your transfer narration.',
+    'payment.transfer_hint': 'After transferring, tap "I\'ve Sent It" or send your receipt screenshot.',
+    'payment.paid_online_btn': "I've Paid Online",
     'chat.unavailable': 'Ìjíròrò ko sí fún *{businessName}* báyìí.\n\nO lè tẹ̀síwájú pẹ̀lú olùrànlọ́wọ́ — tẹ *menu* láti wo ohun tó wà.',
     'account.switch_instructions': 'Láti yí padà sí iṣòwò mìíràn:\n\n• Tẹ *switch* àti orúkọ iṣòwò náà\n  _f.a. switch FacesByKoph_\n\n• Tàbí fi *Hi* ránṣẹ́ láti rí àwọn iṣòwò rẹ tó ṣẹ̀ṣẹ̀',
 
@@ -1907,9 +1963,19 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'lang.keep_english': 'Kò burú! Emi óò máa dáhùn ní Gẹ̀ẹ́sì.',
     'lang.english_fine': 'Gẹ̀ẹ́sì dára',
     'lang.offer_yes': 'Bẹ́ẹ̀ni, {langName}',
+    'lang.picker_body': 'Please choose your preferred language:',
+    'lang.picker_button': 'Choose Language',
+    'lang.picker_confirmed': "Great! I'll respond in {langName} from now on. ✅",
+    'lang.detected_offer': 'I noticed you might prefer {langName}. Would you like me to respond in {langName}?',
+    'lang.remembered_offer': 'You previously chose {langName}. Would you like me to respond in {langName}?',
+    'lang.unavailable': '{langName} is no longer available for this business.',
     'greeting.away': 'A wà ní ìwọ̀ọrọ̀ iṣẹ́ báyìí, ṣùgbọ́n o ṣì lè wo, ṣe ìpèdè, àti pàṣẹ! 🕐',
     'greeting.chat_with_us': 'Bá Wa Sọ̀rọ̀',
     'greeting.powered_by': '_Waaiio gbà jẹ_',
+    'greeting.welcome_default': 'Welcome! How can I help you today?',
+    'greeting.cancel_hint': '_Type *cancel* anytime to exit._',
+    'greeting.welcome_back': 'Welcome back! 👋',
+    'greeting.welcome_back_named': 'Welcome back, {name}! 👋',
     'recurring.title': 'Ìsanwó Léraléra',
     'recurring.select': 'Yan',
     'recurring.no_active': 'O kò ní àwọn ìsanwó tó ń sọ̀rọ̀ tó ń ṣiṣẹ́.',
@@ -2167,9 +2233,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.queue': 'Wọ Ìlà',
     'cap.loyalty': 'Ẹ̀bùn Mi',
     'cap.invoice': 'Àwọn Invoice Mi',
-    'cap.waiver': 'Fọwọ́ Sí Ìwé Ìfọwọ́ sí',
+    'cap.waiver': 'Fọwọ́ Sí Ìwé Ìfọwọ́sí',
     'cap.class_booking': 'Forúkọ Sílẹ̀ fún Kíláàsì',
     'cap.promo_verification': 'Ẹ̀bùn Lẹ́sẹ̀kẹsẹ̀',
+    'cap.my_account': 'Àkọọ́lẹ̀ Mi',
     'ordering.pay_online_option': '*Option 1 — Pay Online* 👇',
     'ordering.bank_transfer_option': '*Option 2 — Bank Transfer* 🏦',
     'ordering.pay_here': '💳 Pay here 👇\n{paymentUrl}\n\n⚠️ {autoConfirm}',
@@ -2438,6 +2505,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.pay_here': 'Kwụọ ụgwọ ebe a 👇',
     'payment.setup_failed_saved': 'Ndo, anyị enweghị ike ịhazi ịkwụ ụgwọ ugbu a. Echekwara booking gị mana ọ na-echere ịkwụ ụgwọ.',
     'payment.link_title': '💳 *Njikọ Ụgwọ*',
+    'payment.bank_label': 'Bank: {bankName}',
+    'payment.account_label': 'Account: {accountNumber}',
+    'payment.name_label': 'Name: {accountName}',
+    'payment.amount_label': 'Amount: {amount}',
+    'payment.ref_label': 'Reference/Narration: *{transferRef}*',
+    'payment.ref_warning': '⚠️ Use reference *{transferRef}* as your transfer narration.',
+    'payment.transfer_hint': 'After transferring, tap "I\'ve Sent It" or send your receipt screenshot.',
+    'payment.paid_online_btn': "I've Paid Online",
     'chat.unavailable': 'Live chat adịghị maka *{businessName}* ugbu a.\n\nỊ nwere ike ịga n\'ihu na onye enyemaka — pịnye *menu* ịhụ ihe dị.',
     'account.switch_instructions': 'Iji gbanwee na azụmaahịa ọzọ:\n\n• Pịnye *switch* yana aha azụmaahịa\n  _ọ.d. switch FacesByKoph_\n\n• Ma ọ bụ zipu *Hi* ịhụ azụmaahịa gị ndị na-adị nso',
 
@@ -2590,9 +2665,19 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'lang.keep_english': 'Ọ dịghị nsogbu! M ga-aga n\'ihu na Bekee.',
     'lang.english_fine': 'Bekee dị mma',
     'lang.offer_yes': 'Ee, {langName}',
+    'lang.picker_body': 'Please choose your preferred language:',
+    'lang.picker_button': 'Choose Language',
+    'lang.picker_confirmed': "Great! I'll respond in {langName} from now on. ✅",
+    'lang.detected_offer': 'I noticed you might prefer {langName}. Would you like me to respond in {langName}?',
+    'lang.remembered_offer': 'You previously chose {langName}. Would you like me to respond in {langName}?',
+    'lang.unavailable': '{langName} is no longer available for this business.',
     'greeting.away': 'Anyị nọghị n\'ọrụ ugbu a, mana ị nwere ike ịchọ, ideba aha, ma ọ bụ iwere iwu! 🕐',
     'greeting.chat_with_us': 'Kọnvee na Anyị',
     'greeting.powered_by': '_Nke Waaiio emepụtara_',
+    'greeting.welcome_default': 'Welcome! How can I help you today?',
+    'greeting.cancel_hint': '_Type *cancel* anytime to exit._',
+    'greeting.welcome_back': 'Welcome back! 👋',
+    'greeting.welcome_back_named': 'Welcome back, {name}! 👋',
     'recurring.title': 'Ụgwọ Ugboro Gị',
     'recurring.select': 'Họrọ',
     'recurring.no_active': 'Ị nweghị ụgwọ ugboro na-arụ ọrụ.',
@@ -2853,6 +2938,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.waiver': 'Bịanye Aka na Waiver',
     'cap.class_booking': 'Debe Klas',
     'cap.promo_verification': 'Mmeri Ozugbo',
+    'cap.my_account': 'Akaụntụ M',
     'ordering.pay_online_option': '*Option 1 — Pay Online* 👇',
     'ordering.bank_transfer_option': '*Option 2 — Bank Transfer* 🏦',
     'ordering.pay_here': '💳 Pay here 👇\n{paymentUrl}\n\n⚠️ {autoConfirm}',
@@ -3121,6 +3207,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.pay_here': 'Biya a nan 👇',
     'payment.setup_failed_saved': 'Yi haƙuri, ba mu iya shirya biyan kuɗi a yanzu ba. An ajiye ajiyarka amma tana jiran biyan kuɗi.',
     'payment.link_title': '💳 *Hanyar Biyan Kuɗi*',
+    'payment.bank_label': 'Bank: {bankName}',
+    'payment.account_label': 'Account: {accountNumber}',
+    'payment.name_label': 'Name: {accountName}',
+    'payment.amount_label': 'Amount: {amount}',
+    'payment.ref_label': 'Reference/Narration: *{transferRef}*',
+    'payment.ref_warning': '⚠️ Use reference *{transferRef}* as your transfer narration.',
+    'payment.transfer_hint': 'After transferring, tap "I\'ve Sent It" or send your receipt screenshot.',
+    'payment.paid_online_btn': "I've Paid Online",
     'chat.unavailable': 'Live chat baya nan don *{businessName}* a yanzu.\n\nZa ka iya ci gaba da mataimaki — rubuta *menu* don ganin abin da ke nan.',
     'account.switch_instructions': 'Don canza zuwa wani kasuwanci:\n\n• Rubuta *switch* da sunan kasuwancin\n  _m.s. switch FacesByKoph_\n\n• Ko aika *Hi* don ganin kasuwancin ka na baya',
 
@@ -3273,9 +3367,19 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'lang.keep_english': 'Babu matsala! Zan ci gaba da amsa da Turanci.',
     'lang.english_fine': 'Turanci ya yi',
     'lang.offer_yes': 'I, {langName}',
+    'lang.picker_body': 'Please choose your preferred language:',
+    'lang.picker_button': 'Choose Language',
+    'lang.picker_confirmed': "Great! I'll respond in {langName} from now on. ✅",
+    'lang.detected_offer': 'I noticed you might prefer {langName}. Would you like me to respond in {langName}?',
+    'lang.remembered_offer': 'You previously chose {langName}. Would you like me to respond in {langName}?',
+    'lang.unavailable': '{langName} is no longer available for this business.',
     'greeting.away': 'Muna wajen aiki a yanzu, amma har yanzu zaka iya binciko, ajiyawa, da oda! 🕐',
     'greeting.chat_with_us': 'Yi Hira da Mu',
     'greeting.powered_by': '_Waaiio ya ba da iko_',
+    'greeting.welcome_default': 'Welcome! How can I help you today?',
+    'greeting.cancel_hint': '_Type *cancel* anytime to exit._',
+    'greeting.welcome_back': 'Welcome back! 👋',
+    'greeting.welcome_back_named': 'Welcome back, {name}! 👋',
     'recurring.title': 'Biyan Kuɗi na Akai-Akai',
     'recurring.select': 'Zaɓa',
     'recurring.no_active': 'Ba ka da biyan kuɗi na akai-akai mai aiki.',
@@ -3524,18 +3628,19 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.payment': 'Biya',
     'cap.ordering': 'Yi Oda',
     'cap.ticketing': 'Sayi Tikiti',
-    'cap.reservation': 'Yi Ajiyar Masauki',
+    'cap.reservation': 'Kama daki',
     'cap.table_reservation': 'Yi Ajiyar Wuri',
     'cap.crowdfunding': 'Tallafa wa Kamfen',
-    'cap.reminders': 'Tunatarwa Ta',
+    'cap.reminders': 'Tunatarwata',
     'cap.chat': 'Yi Magana da Mu',
     'cap.waitlist': 'Shiga Jerin Jira',
     'cap.queue': 'Shiga Layi',
     'cap.loyalty': 'Ladana',
-    'cap.invoice': 'Rasitocin Kuɗina',
+    'cap.invoice': 'Takardun Biyana',
     'cap.waiver': 'Sa Hannu kan Waiver',
     'cap.class_booking': 'Yi Ajiyar Aji',
     'cap.promo_verification': 'Nasara Nan Take',
+    'cap.my_account': 'Asusuna',
     'ordering.pay_online_option': '*Option 1 — Pay Online* 👇',
     'ordering.bank_transfer_option': '*Option 2 — Bank Transfer* 🏦',
     'ordering.pay_here': '💳 Pay here 👇\n{paymentUrl}\n\n⚠️ {autoConfirm}',
@@ -3804,6 +3909,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.pay_here': 'Tua wɔ ha 👇',
     'payment.setup_failed_saved': 'Kafra, yɛantumi ayɛ tua no seesei. Wɔde wo booking ahyɛ nanso ɛretwɛn tua.',
     'payment.link_title': '💳 *Tua Nkitaho*',
+    'payment.bank_label': 'Bank: {bankName}',
+    'payment.account_label': 'Account: {accountNumber}',
+    'payment.name_label': 'Name: {accountName}',
+    'payment.amount_label': 'Amount: {amount}',
+    'payment.ref_label': 'Reference/Narration: *{transferRef}*',
+    'payment.ref_warning': '⚠️ Use reference *{transferRef}* as your transfer narration.',
+    'payment.transfer_hint': 'After transferring, tap "I\'ve Sent It" or send your receipt screenshot.',
+    'payment.paid_online_btn': "I've Paid Online",
     'chat.unavailable': 'Live chat nni hɔ maa *{businessName}* seesei.\n\nWotwere toa so ne boafo no — daa *menu* hwɛ dɛn wɔwɔ hɔ.',
     'account.switch_instructions': 'Sɛ wobɛsesa kɔ adwuma foforo:\n\n• Daa *switch* ne adwuma din\n  _s.n. switch FacesByKoph_\n\n• Anaa soma *Hi* hwɛ wo adwuma a ɛwɔ hɔ',
 
@@ -3956,9 +4069,19 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'lang.keep_english': 'Hwan! Mɛtoa so kasa Borɔfo.',
     'lang.english_fine': 'Borɔfo yɛ',
     'lang.offer_yes': 'Yiw, {langName}',
+    'lang.picker_body': 'Please choose your preferred language:',
+    'lang.picker_button': 'Choose Language',
+    'lang.picker_confirmed': "Great! I'll respond in {langName} from now on. ✅",
+    'lang.detected_offer': 'I noticed you might prefer {langName}. Would you like me to respond in {langName}?',
+    'lang.remembered_offer': 'You previously chose {langName}. Would you like me to respond in {langName}?',
+    'lang.unavailable': '{langName} is no longer available for this business.',
     'greeting.away': 'Yɛnni adwuma sɛ saa ara, nanso wotwere hwɛ, book, na tua order! 🕐',
     'greeting.chat_with_us': 'Kasa Yɛn Ho',
     'greeting.powered_by': '_Waaiio yɛe no_',
+    'greeting.welcome_default': 'Welcome! How can I help you today?',
+    'greeting.cancel_hint': '_Type *cancel* anytime to exit._',
+    'greeting.welcome_back': 'Welcome back! 👋',
+    'greeting.welcome_back_named': 'Welcome back, {name}! 👋',
     'recurring.title': 'Wo Tua So Akatua',
     'recurring.select': 'Yi',
     'recurring.no_active': 'Wo nni tua so akatua a reyɛ adwuma.',
@@ -4197,12 +4320,12 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.scheduling': 'Yɛn Nnwuma',
     'cap.appointment': 'Gye Bere',
     'cap.appointment.restaurant': 'Gye Pon',
-    'cap.appointment.event_services': 'Gye Ɔsom',
+    'cap.appointment.event_services': 'Gye Adwuma',
     'cap.appointment.photographer': 'Gye Bere',
     'cap.appointment.gym': 'Gye Bere',
     'cap.appointment.tutor': 'Gye Bere',
     'cap.appointment.coworking': 'Gye Beae',
-    'cap.appointment.car_wash': 'Gye Bere Wɔnhoro Kaa',
+    'cap.appointment.car_wash': 'Hyɛ Kaa Hohoro',
     'cap.giving': 'Yi Ntoboa',
     'cap.payment': 'Tua Ka',
     'cap.ordering': 'Ma Wo Order',
@@ -4211,14 +4334,15 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.table_reservation': 'Yɛ Reservation',
     'cap.crowdfunding': 'Boa Campaign No',
     'cap.reminders': 'Me Nkaebɔ',
-    'cap.chat': 'Ne Yɛn Nkasakasa',
+    'cap.chat': 'Ne Yɛn Nkɔmmɔ',
     'cap.waitlist': 'Kɔ Twɛn-List Mu',
     'cap.queue': 'Kɔ Queue Mu',
-    'cap.loyalty': "M'Akatua",
+    'cap.loyalty': 'Me Akyɛde',
     'cap.invoice': 'Me Invoice',
     'cap.waiver': 'Hyɛ Waiver No Ase',
     'cap.class_booking': 'Gye Klas',
     'cap.promo_verification': 'Nkonimdi Ntɛm Ara',
+    'cap.my_account': 'Me Account',
     'ordering.pay_online_option': '*Option 1 — Pay Online* 👇',
     'ordering.bank_transfer_option': '*Option 2 — Bank Transfer* 🏦',
     'ordering.pay_here': '💳 Pay here 👇\n{paymentUrl}\n\n⚠️ {autoConfirm}',
@@ -4487,6 +4611,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.pay_here': 'Payez ici 👇',
     'payment.setup_failed_saved': 'Désolé, nous n\'avons pas pu configurer le paiement. Votre réservation a été enregistrée mais est en attente de paiement.',
     'payment.link_title': '💳 *Lien de paiement*',
+    'payment.bank_label': 'Bank: {bankName}',
+    'payment.account_label': 'Account: {accountNumber}',
+    'payment.name_label': 'Name: {accountName}',
+    'payment.amount_label': 'Amount: {amount}',
+    'payment.ref_label': 'Reference/Narration: *{transferRef}*',
+    'payment.ref_warning': '⚠️ Use reference *{transferRef}* as your transfer narration.',
+    'payment.transfer_hint': 'After transferring, tap "I\'ve Sent It" or send your receipt screenshot.',
+    'payment.paid_online_btn': "I've Paid Online",
     'chat.unavailable': 'Le chat en direct n\'est pas disponible pour *{businessName}* en ce moment.\n\nVous pouvez continuer avec l\'assistant — tapez *menu* pour voir les options.',
     'account.switch_instructions': 'Pour changer d\'entreprise :\n\n• Tapez *switch* suivi du nom\n  _ex. switch FacesByKoph_\n\n• Ou envoyez *Hi* pour voir vos entreprises récentes',
 
@@ -4639,9 +4771,19 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'lang.keep_english': 'Pas de problème ! Je continuerai à répondre en anglais.',
     'lang.english_fine': 'L\'anglais convient',
     'lang.offer_yes': 'Oui, {langName}',
+    'lang.picker_body': 'Please choose your preferred language:',
+    'lang.picker_button': 'Choose Language',
+    'lang.picker_confirmed': "Great! I'll respond in {langName} from now on. ✅",
+    'lang.detected_offer': 'I noticed you might prefer {langName}. Would you like me to respond in {langName}?',
+    'lang.remembered_offer': 'You previously chose {langName}. Would you like me to respond in {langName}?',
+    'lang.unavailable': '{langName} is no longer available for this business.',
     'greeting.away': 'Nous sommes actuellement hors des heures d\'ouverture, mais vous pouvez toujours parcourir, réserver et commander ! 🕐',
     'greeting.chat_with_us': 'Nous contacter',
     'greeting.powered_by': '_Propulsé par Waaiio_',
+    'greeting.welcome_default': 'Welcome! How can I help you today?',
+    'greeting.cancel_hint': '_Type *cancel* anytime to exit._',
+    'greeting.welcome_back': 'Welcome back! 👋',
+    'greeting.welcome_back_named': 'Welcome back, {name}! 👋',
     'recurring.title': 'Vos paiements récurrents',
     'recurring.select': 'Sélectionner',
     'recurring.no_active': 'Vous n\'avez aucun paiement récurrent actif.',
@@ -4902,6 +5044,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.waiver': 'Signer la décharge',
     'cap.class_booking': 'Réserver un cours',
     'cap.promo_verification': 'Gain instantané',
+    'cap.my_account': 'Mon compte',
     'ordering.pay_online_option': '*Option 1 — Pay Online* 👇',
     'ordering.bank_transfer_option': '*Option 2 — Bank Transfer* 🏦',
     'ordering.pay_here': '💳 Pay here 👇\n{paymentUrl}\n\n⚠️ {autoConfirm}',
@@ -5170,6 +5313,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.pay_here': 'Pague aquí 👇',
     'payment.setup_failed_saved': 'Lo sentimos, no pudimos configurar el pago. Su reserva fue guardada pero está pendiente de pago.',
     'payment.link_title': '💳 *Enlace de pago*',
+    'payment.bank_label': 'Bank: {bankName}',
+    'payment.account_label': 'Account: {accountNumber}',
+    'payment.name_label': 'Name: {accountName}',
+    'payment.amount_label': 'Amount: {amount}',
+    'payment.ref_label': 'Reference/Narration: *{transferRef}*',
+    'payment.ref_warning': '⚠️ Use reference *{transferRef}* as your transfer narration.',
+    'payment.transfer_hint': 'After transferring, tap "I\'ve Sent It" or send your receipt screenshot.',
+    'payment.paid_online_btn': "I've Paid Online",
     'chat.unavailable': 'El chat en vivo no está disponible para *{businessName}* en este momento.\n\nPuede continuar con el asistente — escriba *menu* para ver las opciones.',
     'account.switch_instructions': 'Para cambiar de negocio:\n\n• Escriba *switch* seguido del nombre\n  _ej. switch FacesByKoph_\n\n• O envíe *Hi* para ver sus negocios recientes',
 
@@ -5322,9 +5473,19 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'lang.keep_english': '¡Sin problema! Seguiré respondiendo en inglés.',
     'lang.english_fine': 'El inglés está bien',
     'lang.offer_yes': 'Sí, {langName}',
+    'lang.picker_body': 'Please choose your preferred language:',
+    'lang.picker_button': 'Choose Language',
+    'lang.picker_confirmed': "Great! I'll respond in {langName} from now on. ✅",
+    'lang.detected_offer': 'I noticed you might prefer {langName}. Would you like me to respond in {langName}?',
+    'lang.remembered_offer': 'You previously chose {langName}. Would you like me to respond in {langName}?',
+    'lang.unavailable': '{langName} is no longer available for this business.',
     'greeting.away': 'Actualmente estamos fuera del horario de atención, ¡pero igual puede navegar, reservar y ordenar! 🕐',
     'greeting.chat_with_us': 'Chatea con nosotros',
     'greeting.powered_by': '_Desarrollado por Waaiio_',
+    'greeting.welcome_default': 'Welcome! How can I help you today?',
+    'greeting.cancel_hint': '_Type *cancel* anytime to exit._',
+    'greeting.welcome_back': 'Welcome back! 👋',
+    'greeting.welcome_back_named': 'Welcome back, {name}! 👋',
     'recurring.title': 'Sus pagos recurrentes',
     'recurring.select': 'Seleccionar',
     'recurring.no_active': 'No tiene pagos recurrentes activos.',
@@ -5573,7 +5734,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.payment': 'Pagar',
     'cap.ordering': 'Hacer pedido',
     'cap.ticketing': 'Comprar entradas',
-    'cap.reservation': 'Reservar estancia',
+    'cap.reservation': 'Reservar alojamiento',
     'cap.table_reservation': 'Hacer una reserva',
     'cap.crowdfunding': 'Apoyar campaña',
     'cap.reminders': 'Mis recordatorios',
@@ -5582,9 +5743,10 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.queue': 'Unirse a la fila',
     'cap.loyalty': 'Mis recompensas',
     'cap.invoice': 'Mis facturas',
-    'cap.waiver': 'Firmar exención',
+    'cap.waiver': 'Firmar exoneración',
     'cap.class_booking': 'Reservar clase',
     'cap.promo_verification': 'Premio instantáneo',
+    'cap.my_account': 'Mi cuenta',
     'ordering.pay_online_option': '*Option 1 — Pay Online* 👇',
     'ordering.bank_transfer_option': '*Option 2 — Bank Transfer* 🏦',
     'ordering.pay_here': '💳 Pay here 👇\n{paymentUrl}\n\n⚠️ {autoConfirm}',
@@ -5677,6 +5839,11 @@ export const PLACEHOLDER_SCHEMA: ReadonlyMap<string, readonly string[]> = new Ma
   ['lang.switched', ['langName']],
   ['lang.not_available', ['langName']],
   ['lang.offer_yes', ['langName']],
+  ['lang.picker_confirmed', ['langName']],
+  ['lang.detected_offer', ['langName']],
+  ['lang.remembered_offer', ['langName']],
+  ['lang.unavailable', ['langName']],
+  ['greeting.welcome_back_named', ['name']],
   ['payment.wrong_pin', ['remaining']],
   ['chat.unavailable', ['businessName']],
   ['docs.generating', ['docType']],
@@ -5711,6 +5878,13 @@ export const PLACEHOLDER_SCHEMA: ReadonlyMap<string, readonly string[]> = new Ma
   ['savedcard.pay_with_last4', ['last4']],
   ['ordering.pay_here', ['paymentUrl', 'autoConfirm']],
   ['ordering.option_not_available', ['input']],
+  // Bank transfer flow placeholders
+  ['payment.bank_label', ['bankName']],
+  ['payment.account_label', ['accountNumber']],
+  ['payment.name_label', ['accountName']],
+  ['payment.amount_label', ['amount']],
+  ['payment.ref_label', ['transferRef']],
+  ['payment.ref_warning', ['transferRef']],
 ]);
 
 /** Keys used as WhatsApp button titles (max 20 chars). */
@@ -5724,6 +5898,7 @@ export const BUTTON_TITLE_KEYS: readonly string[] = [
   'booking.skip_names', 'booking.myself', 'booking.someone_else',
   'booking.enter_code', 'booking.skip', 'booking.delivery_choose', 'booking.choose_end_date',
   'payment.ive_paid', 'payment.ive_paid_online', 'payment.ive_sent_transfer',
+  'payment.paid_online_btn',
   'payment.get_new_link', 'payment.try_again', 'payment.chat_business',
   'payment.cancel_booking', 'payment.use_different_card',
   'payment.accept_confirm',
@@ -5760,6 +5935,7 @@ export const BUTTON_TITLE_KEYS: readonly string[] = [
   'reservation.airport_pickup', 'reservation.early_checkin',
   'refund.view_payments',
   'greeting.chat_with_us',
+  'lang.picker_button',
   'yes', 'stayHere',
 ];
 
@@ -5794,6 +5970,7 @@ export const FOOTER_KEYS: readonly string[] = ['nav.footer'];
 /** Keys that embed bot command keywords that must be preserved across locales. */
 export const KEYS_WITH_COMMANDS: readonly string[] = [
   'cancelHint',
+  'greeting.cancel_hint',
   'nav.footer', 'nav.cancelled', 'nav.no_problem', 'nav.at_beginning',
   'nav.cancel_hint', 'nav.no_business_guide',
   'error.generic', 'error.escalation_failed',
@@ -5810,7 +5987,7 @@ export const KEYS_WITH_COMMANDS: readonly string[] = [
   'payment.ive_paid_hint', 'payment.already_paid_hint',
   'payment.still_verifying', 'payment.enter_pin',
   'payment.enter_pin_short', 'payment.card_locked', 'payment.card_locked_temp',
-  'payment.complete_payment', 'payment.confirm_payment_link',
+  'payment.complete_payment', 'payment.confirm_payment_link', 'payment.transfer_hint',
   'ordering.order_cancelled', 'ordering.order_create_failed',
   'ticketing.type_not_found',
   'survey.start_hint', 'survey.cancelled',
@@ -5830,6 +6007,7 @@ export const KEYS_WITH_COMMANDS: readonly string[] = [
   'tips.receipt', 'tips.hi_new', 'tips.hi_order', 'tips.hi_tickets',
   'tips.subscriptions', 'tips.my_reservations', 'tips.my_tickets',
   'tips.receipt_purchase',
+  'greeting.cancel_hint',
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -5838,11 +6016,29 @@ export const KEYS_WITH_COMMANDS: readonly string[] = [
 
 /**
  * Get deterministic flow copy for a framework message.
- * Uses static copy only when the language is both certified AND has the key.
- * Falls back to English for uncertified/unentitled languages.
+ *
+ * 4-layer resolution (when inside runWithTranslationOverrides):
+ *   1. Business override   → bot_translation_overrides
+ *   2. Platform override    → bot_translation_platform_overrides
+ *   3. Code default         → FLOW_COPY[lang][key]
+ *   4. English fallback     → FLOW_COPY.en[key]
+ *
+ * Outside the ALS scope, layers 1+2 are skipped (backwards-compatible).
  */
 export function getFlowCopy(effectiveLang: string | undefined, key: string): string {
   const lang = effectiveLang && CERTIFIED_LANGUAGES.includes(effectiveLang) ? effectiveLang : 'en';
+  const lookupKey = `${lang}.${key}`;
+
+  // Layers 1+2: check override resolver for business/platform overrides
+  const overrides = _overrideResolver?.();
+  if (overrides) {
+    const bizVal = overrides.business.get(lookupKey);
+    if (bizVal) return bizVal;
+    const platVal = overrides.platform.get(lookupKey);
+    if (platVal) return platVal;
+  }
+
+  // Layers 3+4: code default, then English fallback
   return FLOW_COPY[lang]?.[key] ?? FLOW_COPY.en[key] ?? key;
 }
 
@@ -5858,7 +6054,8 @@ export function fillFlowCopy(
 ): string {
   let text = getFlowCopy(effectiveLang, key);
   for (const [k, v] of Object.entries(values)) {
-    text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+    // Function replacer so names with $& or $1 render literally
+    text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), () => String(v));
   }
   return text;
 }

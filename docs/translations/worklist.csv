@@ -1,0 +1,11 @@
+key,en_text,status
+lang.picker_body,Please choose your preferred language:,needs_translation
+lang.picker_button,Choose Language,needs_translation
+lang.picker_confirmed,"Great! I'll respond in {langName} from now on.",needs_translation
+lang.detected_offer,"I noticed you might prefer {langName}. Would you like me to respond in {langName}?",needs_translation
+lang.remembered_offer,"You previously chose {langName}. Would you like me to respond in {langName}?",needs_translation
+lang.unavailable,{langName} is no longer available for this business.,needs_translation
+greeting.welcome_default,Welcome! How can I help you today?,needs_translation
+greeting.cancel_hint,_Type *cancel* anytime to exit._,needs_translation
+greeting.welcome_back,Welcome back!,needs_translation
+greeting.welcome_back_named,"Welcome back, {name}!",needs_translation
