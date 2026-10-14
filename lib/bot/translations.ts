@@ -110,6 +110,8 @@ export async function loadBusinessOverrides(
     if (error) throw error;
     const map = new Map<string, string>();
     for (const row of data || []) {
+      // Defense in depth: drop rows for non-editable keys (powered_by, welcome_default, away, stale)
+      if (!isBusinessEditableKey(row.key)) continue;
       map.set(`${row.lang}.${row.key}`, row.value);
     }
     return map;
@@ -147,7 +149,9 @@ const BUSINESS_EDITABLE_EXACT: string[] = [];
  * This deny list wins over BUSINESS_EDITABLE_PREFIXES.
  */
 export const PLATFORM_ONLY_KEYS: readonly string[] = [
-  'greeting.powered_by',  // Branding — Owner rule: never business-editable
+  'greeting.powered_by',        // Branding — Owner rule: never business-editable
+  'greeting.welcome_default',   // Edited on WhatsApp settings page (bot_greeting)
+  'greeting.away',              // Edited in Settings > Features (away_message)
 ];
 
 /** Check if a key is editable by businesses. */
@@ -155,4 +159,33 @@ export function isBusinessEditableKey(key: string): boolean {
   if (PLATFORM_ONLY_KEYS.includes(key)) return false;
   if (BUSINESS_EDITABLE_EXACT.includes(key)) return true;
   return BUSINESS_EDITABLE_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+
+// ── Override loader factory ───────────────────────────────────────
+
+export type OverridesResult = { business: Map<string, string>; platform: Map<string, string> };
+
+/**
+ * Create a per-request override loader keyed by business id.
+ * Platform overrides are loaded once; business overrides are loaded
+ * once per distinct business id within the same request.
+ */
+export function createOverridesLoader(supabase: SupabaseClient) {
+  const bizCache = new Map<string, Promise<Map<string, string>>>();
+  let platPromise: Promise<Map<string, string>> | null = null;
+  const emptyOverrides: OverridesResult = { business: new Map(), platform: new Map() };
+
+  return {
+    get(bizId: string): Promise<OverridesResult> {
+      if (!bizCache.has(bizId)) {
+        bizCache.set(bizId, loadBusinessOverrides(supabase, bizId));
+      }
+      if (!platPromise) {
+        platPromise = loadPlatformOverrides(supabase);
+      }
+      return Promise.all([bizCache.get(bizId)!, platPromise])
+        .then(([biz, plat]) => ({ business: biz, platform: plat }));
+    },
+    empty: emptyOverrides,
+  };
 }

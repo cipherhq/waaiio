@@ -409,6 +409,29 @@ describe('PUT /api/translations', () => {
     ).toBe(true);
   });
 
+  // 11b. 400 for greeting.cancel_hint without *cancel* — command token must be preserved
+  it('returns 400 for greeting.cancel_hint without *cancel* command token', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [
+          {
+            lang: 'en',
+            key: 'greeting.cancel_hint',
+            value: 'Type exit anytime to leave.',  // missing *cancel*
+          },
+        ],
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(
+      body.errors.some((e: string) => e.includes('must preserve command token') && e.includes('*cancel*')),
+    ).toBe(true);
+  });
+
   // 12. 400 for >200 overrides
   it('returns 400 when more than 200 overrides are submitted', async () => {
     const overrides = Array.from({ length: 201 }, (_, i) => ({

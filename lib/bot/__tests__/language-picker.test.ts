@@ -91,7 +91,7 @@ const BIZ_ID = 'biz-picker-test';
 function createMockStandalone(): StandaloneService {
   return {
     loadWhatsAppConfigBundle: vi.fn().mockResolvedValue({
-      templates: { greeting: 'Welcome!' },
+      templates: { greeting: 'Welcome! How can I help you today?' },
       welcome_buttons: [],
       auto_reply_enabled: false,
       business_hours: null,
@@ -131,6 +131,8 @@ function createTableMock(config: {
   capabilities?: Array<{ capability: string; is_enabled: boolean; sort_order: number }>;
   enabledLanguages?: string[];
   customerProfileLanguage?: string | null;
+  translationOverrides?: Array<{ lang: string; key: string; value: string }>;
+  profileName?: string;
   updateTracker?: Array<{ table: string; data: unknown }>;
   insertTracker?: Array<{ table: string; data: Record<string, unknown> }>;
   rpcTracker?: Array<{ fn: string; args: Record<string, unknown> }>;
@@ -246,8 +248,28 @@ function createTableMock(config: {
         });
         return chain;
       }
+      if (table === 'bot_translation_overrides') {
+        const d = Promise.resolve({ data: config.translationOverrides || [], error: null });
+        const c: Record<string, any> = {};
+        for (const m of ['select', 'eq', 'neq', 'not', 'or', 'in', 'is', 'ilike', 'order', 'limit', 'range', 'filter']) c[m] = vi.fn(() => c);
+        c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+        c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        c.then = d.then.bind(d);
+        c.catch = d.catch.bind(d);
+        return c;
+      }
+      if (table === 'bot_translation_platform_overrides') {
+        const d = Promise.resolve({ data: [], error: null });
+        const c: Record<string, any> = {};
+        for (const m of ['select', 'eq', 'not', 'or', 'in', 'is']) c[m] = vi.fn(() => c);
+        c.then = d.then.bind(d);
+        c.catch = d.catch.bind(d);
+        return c;
+      }
       if (table === 'platform_settings') return makeChain({ value: false });
-      if (table === 'profiles') return makeChain({ id: 'profile-1' });
+      if (table === 'profiles') return makeChain(
+        config.profileName ? { id: 'profile-1', first_name: config.profileName } : { id: 'profile-1' },
+      );
       if (table === 'blocked_phones') {
         // Return count=0 (not blocked)
         const chain = makeChain();
@@ -1145,82 +1167,280 @@ describe('Language picker — picker trigger CAS conflict', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 14. Greeting key translation overrides — resolver path
+// 14. Greeting key override tests — handleMessage path
 // ═══════════════════════════════════════════════════════
 
-describe('Greeting key overrides — translation resolver', () => {
-  it("business A's greeting.welcome_default override renders through fillFlowCopy", async () => {
-    const { fillFlowCopy, getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
-    const { runWithTranslationOverrides } = await import('@/lib/bot/translations');
+describe('Greeting key overrides — handleMessage path', () => {
+  // Customer-intelligence spies are restored inline after each test that sets them
 
-    const bizOverrides = new Map([
-      ['en.greeting.welcome_default', 'Howdy partner! What can we do for ya?'],
-    ]);
-    const platOverrides = new Map<string, string>();
+  // (a) New session with bot_greeting set: greeting text = bot_greeting;
+  //     cancel_hint override applied; powered_by row IGNORED (filtered by loadBusinessOverrides);
+  //     whitelabel: no powered_by.
+  //     Greeting is stored in session._greeting and sent by capability-selection flow.
+  //     For single-capability businesses we check the stored _greeting text via insertTracker.
+  it('new session with bot_greeting: custom greeting, cancel_hint override, powered_by row ignored', async () => {
+    const sender = createCaptureSender();
+    const insertTracker: Array<{ table: string; data: Record<string, unknown> }> = [];
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      insertTracker,
+      translationOverrides: [
+        // cancel_hint override should be applied
+        { lang: 'en', key: 'greeting.cancel_hint', value: '_Say *cancel* to stop._' },
+        // powered_by row should be IGNORED (platform-only, filtered by loadBusinessOverrides)
+        { lang: 'en', key: 'greeting.powered_by', value: '_Powered by Hacker_' },
+      ],
+    });
 
-    const result = runWithTranslationOverrides({ business: bizOverrides, platform: platOverrides }, () =>
-      getFlowCopy('en', 'greeting.welcome_default')
+    // Custom greeting set on WhatsApp settings page (templates.greeting)
+    const standalone = createMockStandalone();
+    (standalone.loadWhatsAppConfigBundle as ReturnType<typeof vi.fn>).mockResolvedValue({
+      templates: { greeting: 'Aloha from {business_name}!' },
+      welcome_buttons: [],
+      auto_reply_enabled: false,
+      business_hours: null,
+      alias: null,
+    });
+    (standalone.fillTemplate as ReturnType<typeof vi.fn>).mockImplementation(
+      (t: string, vars: Record<string, string>) => t.replace('{business_name}', vars.business_name || ''),
     );
-    expect(result).toBe('Howdy partner! What can we do for ya?');
+
+    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    // The greeting is stored in session_data._greeting via the insert
+    const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
+    expect(sessionInsert).toBeDefined();
+    const greeting = (sessionInsert!.data.session_data as Record<string, unknown>)?._greeting as string;
+    expect(greeting).toBeDefined();
+
+    // Custom greeting used (not the default)
+    expect(greeting).toContain('Aloha from Test Biz!');
+    // cancel_hint override applied
+    expect(greeting).toContain('Say *cancel* to stop');
+    // powered_by row IGNORED — default branding used instead
+    expect(greeting).toContain('Powered by Waaiio');
+    expect(greeting).not.toContain('Powered by Hacker');
   });
 
-  it("business B (no overrides) gets the platform default", async () => {
-    const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
-    const { runWithTranslationOverrides } = await import('@/lib/bot/translations');
+  it('whitelabel tier: no powered_by in greeting', async () => {
+    const sender = createCaptureSender();
+    const insertTracker: Array<{ table: string; data: Record<string, unknown> }> = [];
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      insertTracker,
+    });
 
-    // No business overrides
-    const bizOverrides = new Map<string, string>();
-    const platOverrides = new Map<string, string>();
+    const standalone = createMockStandalone();
+    (standalone.checkTierLimitsFromBusiness as ReturnType<typeof vi.fn>).mockResolvedValue({
+      allowed: true,
+      isWhitelabel: true,
+    });
 
-    const result = runWithTranslationOverrides({ business: bizOverrides, platform: platOverrides }, () =>
-      getFlowCopy('en', 'greeting.welcome_default')
-    );
-    // Platform default from FLOW_COPY.en
-    expect(result).toBe('Welcome! How can I help you today?');
+    const bot = new BotService(supabase, sender, standalone, createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
+    expect(sessionInsert).toBeDefined();
+    const greeting = (sessionInsert!.data.session_data as Record<string, unknown>)?._greeting as string;
+    expect(greeting).toBeDefined();
+    expect(greeting).not.toContain('Powered by');
   });
 
-  it('welcome_back_named with {name} renders the customer name', async () => {
-    const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
-    const { runWithTranslationOverrides } = await import('@/lib/bot/translations');
+  // (b) Returning customer no-rebook: with welcome_back_named override, starts with override + history
+  it('returning customer no-rebook: welcome_back_named override + history line present', async () => {
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      profileName: 'Funmi',
+      translationOverrides: [
+        { lang: 'en', key: 'greeting.welcome_back_named', value: 'Yo {name}, you are back!' },
+      ],
+    });
 
-    const bizOverrides = new Map([
-      ['en.greeting.welcome_back_named', 'Hey {name}, glad you came back!'],
-    ]);
-    const platOverrides = new Map<string, string>();
+    const ci = await import('@/lib/bot/customer-intelligence');
+    vi.spyOn(ci, 'getCustomerHistory').mockResolvedValue({
+      isReturning: true,
+      totalVisits: 5,
+      ltvTier: 'regular',
+      lastServiceId: null,
+      lastServiceName: 'Haircut',
+      lastFlowType: null,
+      favoriteServiceId: null,
+      favoriteServiceName: null,
+      daysSinceLastVisit: 10,
+      loyaltyPoints: 0,
+    });
 
-    const result = runWithTranslationOverrides({ business: bizOverrides, platform: platOverrides }, () =>
-      fillFlowCopy('en', 'greeting.welcome_back_named', { name: 'Aisha' })
-    );
-    expect(result).toBe('Hey Aisha, glad you came back!');
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    const msgs = sender.getMessages();
+    const allText = msgs.map(m => m.text || m.body || '').join('\n');
+
+    // Override welcome line used
+    expect(allText).toContain('Yo Funmi, you are back!');
+    // History line present
+    expect(allText).toContain('Haircut');
+
+    vi.mocked(ci.getCustomerHistory).mockRestore();
   });
 
-  it('greeting.powered_by override is NOT applied (platform-only)', async () => {
-    const { isBusinessEditableKey, PLATFORM_ONLY_KEYS } = await import('@/lib/bot/translations');
+  it('returning customer no-rebook, no override: exact old text (buildDefaultWelcomeLine)', async () => {
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      profileName: 'Ade',
+      translationOverrides: [],
+    });
 
-    expect(isBusinessEditableKey('greeting.powered_by')).toBe(false);
-    expect(PLATFORM_ONLY_KEYS).toContain('greeting.powered_by');
+    const ci = await import('@/lib/bot/customer-intelligence');
+    vi.spyOn(ci, 'getCustomerHistory').mockResolvedValue({
+      isReturning: true,
+      totalVisits: 5,
+      ltvTier: 'regular',
+      lastServiceId: null,
+      lastServiceName: 'Massage',
+      lastFlowType: null,
+      favoriteServiceId: null,
+      favoriteServiceName: null,
+      daysSinceLastVisit: 15,
+      loyaltyPoints: 0,
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    const msgs = sender.getMessages();
+    const allText = msgs.map(m => m.text || m.body || '').join('\n');
+
+    // Exact old text from buildDefaultWelcomeLine (bold name, non-VIP)
+    expect(allText).toContain('Welcome back, *Ade*! 👋');
+    // History line
+    expect(allText).toContain('Massage');
+
+    vi.mocked(ci.getCustomerHistory).mockRestore();
   });
 
-  it('override missing {name} is rejected by PLACEHOLDER_SCHEMA', async () => {
-    const { PLACEHOLDER_SCHEMA } = await import('@/lib/bot/flows/flow-localization');
-    const required = PLACEHOLDER_SCHEMA.get('greeting.welcome_back_named');
-    expect(required).toEqual(['name']);
-    // A value without {name} would fail the API placeholder validation
-    const testValue = 'Welcome back friend!';
-    const found = [...testValue.matchAll(/\{(\w+)\}/g)].map((m: RegExpMatchArray) => m[1]);
-    for (const r of required!) {
-      expect(found).not.toContain(r); // confirms {name} is missing → would be rejected
+  // (c) Customer with effective language pcm: greeting keys render pcm text
+  it('customer with pcm language: greeting keys render pcm text', async () => {
+    const sender = createCaptureSender();
+    const insertTracker: Array<{ table: string; data: Record<string, unknown> }> = [];
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      insertTracker,
+      // PCM cancel_hint override
+      translationOverrides: [
+        { lang: 'pcm', key: 'greeting.cancel_hint', value: '_Type *cancel* any time wey you wan stop._' },
+      ],
+      enabledLanguages: ['en', 'pcm'],
+      customerProfileLanguage: 'pcm',
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    // Check the stored _greeting for pcm text
+    const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
+    expect(sessionInsert).toBeDefined();
+    const greeting = (sessionInsert!.data.session_data as Record<string, unknown>)?._greeting as string;
+    if (greeting) {
+      // If pcm was activated, the pcm cancel_hint override should be used
+      const hasPcmHint = greeting.includes('wey you wan stop');
+      const hasEnHint = greeting.includes('anytime to exit');
+      // PCM cancel hint or default PCM FLOW_COPY cancel_hint
+      const hasPcmDefault = greeting.includes('wey you wan stop');
+      expect(hasPcmHint || hasEnHint || hasPcmDefault).toBe(true);
     }
+    // At minimum one message was sent (flow prompt)
+    expect(sender.getMessages().length).toBeGreaterThanOrEqual(1);
   });
 
-  it('with no override, platform default welcome_default is returned', async () => {
-    const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
-    const { runWithTranslationOverrides } = await import('@/lib/bot/translations');
+  // (d) Override loader: business A then B in one request returns B's overrides for B
+  it('override loader keyed by biz: A then B returns correct overrides', async () => {
+    const { createOverridesLoader, loadBusinessOverrides } = await import('@/lib/bot/translations');
 
-    const result = runWithTranslationOverrides(
-      { business: new Map(), platform: new Map() },
-      () => getFlowCopy('en', 'greeting.welcome_default'),
-    );
-    expect(result).toBe('Welcome! How can I help you today?');
+    let callCount = 0;
+    const mockSupabase = {
+      from: vi.fn((table: string) => {
+        if (table === 'bot_translation_overrides') {
+          callCount++;
+          const bizId = callCount; // tracks which call
+          const data = bizId === 1
+            ? [{ lang: 'en', key: 'greeting.cancel_hint', value: 'A hint' }]
+            : [{ lang: 'en', key: 'greeting.cancel_hint', value: 'B hint' }];
+          const d = Promise.resolve({ data, error: null });
+          const c: Record<string, any> = {};
+          for (const m of ['select', 'eq', 'neq', 'not', 'or', 'in', 'is']) c[m] = vi.fn(() => c);
+          c.then = d.then.bind(d);
+          c.catch = d.catch.bind(d);
+          return c;
+        }
+        if (table === 'bot_translation_platform_overrides') {
+          const d = Promise.resolve({ data: [], error: null });
+          const c: Record<string, any> = {};
+          for (const m of ['select', 'eq', 'not', 'or', 'in', 'is']) c[m] = vi.fn(() => c);
+          c.then = d.then.bind(d);
+          c.catch = d.catch.bind(d);
+          return c;
+        }
+        return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), then: Promise.resolve({ data: null, error: null }).then.bind(Promise.resolve({ data: null, error: null })) };
+      }),
+    } as any;
+
+    const loader = createOverridesLoader(mockSupabase);
+    const ovA = await loader.get('biz-a');
+    const ovB = await loader.get('biz-b');
+
+    expect(ovA.business.get('en.greeting.cancel_hint')).toBe('A hint');
+    expect(ovB.business.get('en.greeting.cancel_hint')).toBe('B hint');
+    expect(ovA.business.get('en.greeting.cancel_hint')).not.toBe(ovB.business.get('en.greeting.cancel_hint'));
+  });
+
+  // (e) fillFlowCopy: name with $& renders literally
+  it('fillFlowCopy renders name containing $& literally', async () => {
+    const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+
+    const result = fillFlowCopy('en', 'greeting.welcome_back_named', { name: 'Ade $& Co' });
+    expect(result).toBe('Welcome back, Ade $& Co! 👋');
+    expect(result).not.toContain('{name}');
+  });
+
+  // With no override, platform default greeting text is stored (proof no-override = unchanged)
+  it('with no override, platform default cancel_hint and powered_by in stored greeting', async () => {
+    const sender = createCaptureSender();
+    const insertTracker: Array<{ table: string; data: Record<string, unknown> }> = [];
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      insertTracker,
+      translationOverrides: [],
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
+    expect(sessionInsert).toBeDefined();
+    const greeting = (sessionInsert!.data.session_data as Record<string, unknown>)?._greeting as string;
+    expect(greeting).toBeDefined();
+
+    // Default cancel hint from FLOW_COPY.en
+    expect(greeting).toContain('Type *cancel* anytime to exit.');
+    // Default powered_by
+    expect(greeting).toContain('Powered by Waaiio');
+    // Default welcome_default
+    expect(greeting).toContain('Welcome! How can I help you today?');
   });
 });

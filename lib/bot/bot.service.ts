@@ -20,7 +20,7 @@ import { translateBotResponse, detectLanguage, getLanguageName, type Translation
 import { getEffectiveLanguages, loadBusinessLanguages } from './language-policy';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
-import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
+import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
@@ -52,7 +52,7 @@ import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
-import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides } from '@/lib/bot/translations';
+import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -88,18 +88,10 @@ export class BotService {
     const _bmark = (l: string) => { _btimings[l] = Date.now() - _bt0; };
     logger.debug('[BOT] handleMessage from: ...', from.slice(-4), 'type:', messageType, 'textLen:', text.length);
 
-    // Translation overrides — loaded once per request when business is known
-    let _overridesPromise: Promise<{ business: Map<string, string>; platform: Map<string, string> }> | null = null;
-    const getOverrides = (bizId: string) => {
-      if (!_overridesPromise) {
-        _overridesPromise = Promise.all([
-          loadBusinessOverrides(this.supabase, bizId),
-          loadPlatformOverrides(this.supabase),
-        ]).then(([biz, plat]) => ({ business: biz, platform: plat }));
-      }
-      return _overridesPromise;
-    };
-    const emptyOverrides = { business: new Map<string, string>(), platform: new Map<string, string>() };
+    // Translation overrides — keyed by business id, loaded once per distinct biz per request
+    const _overridesLoader = createOverridesLoader(this.supabase);
+    const getOverrides = (bizId: string) => _overridesLoader.get(bizId);
+    const emptyOverrides = _overridesLoader.empty;
 
     // Pre-check: Input length cap (prevents regex timeout, LLM token burn, DoS)
     if (text.length > 5000) {
@@ -1786,6 +1778,9 @@ export class BotService {
       }
 
       if (business && waConfig && tierInfo) {
+        // Effective language — same authority as flows (session_data._detected_language)
+        const greetLang = (session.session_data._detected_language as string) || 'en';
+
         // Standalone bot greeting — use pre-fetched config (no extra queries)
         // All greeting keys render through the translation resolver (ALS overrides)
         const _greetOv = await getOverrides(business.id);
@@ -1804,12 +1799,12 @@ export class BotService {
             g = this.intelligence.getPersonaGreeting(waConfig!.alias, business!.name, catLabels.confirmationEmoji);
           } else {
             // Default greeting — resolve through translation overrides
-            g = getFlowCopy('en', 'greeting.welcome_default');
+            g = getFlowCopy(greetLang, 'greeting.welcome_default');
           }
 
           // Powered by and cancel hint — always from resolver
-          if (!tierInfo!.isWhitelabel) g += '\n\n' + getFlowCopy('en', 'greeting.powered_by');
-          g += '\n\n' + getFlowCopy('en', 'greeting.cancel_hint');
+          if (!tierInfo!.isWhitelabel) g += '\n\n' + getFlowCopy(greetLang, 'greeting.powered_by');
+          g += '\n\n' + getFlowCopy(greetLang, 'greeting.cancel_hint');
           return g;
         });
 
@@ -1822,7 +1817,7 @@ export class BotService {
             to: from,
             body: `Thank you for contacting ${business.name}! We're currently unavailable on WhatsApp. Please try again later.`,
             buttons: [
-              { id: 'cap_chat', title: runWithTranslationOverrides(_greetOv, () => getFlowCopyTier('en', 'greeting.chat_with_us')) },
+              { id: 'cap_chat', title: runWithTranslationOverrides(_greetOv, () => getFlowCopyTier(greetLang, 'greeting.chat_with_us')) },
             ],
           });
           await this.deactivateSession(session.id);
@@ -1862,13 +1857,14 @@ export class BotService {
             const rebookServiceId = custHistory.lastServiceId || custHistory.favoriteServiceId;
 
             if (rebookServiceName && rebookServiceId) {
+              const rebookLang = (session.session_data._detected_language as string) || 'en';
               const { getFlowCopy: getFlowCopyRebook, fillFlowCopy: fillFlowCopyRebook } = await import('@/lib/bot/flows/flow-localization');
               const _rebookGreetOv = await getOverrides(business.id);
               const isVip = custHistory.ltvTier === 'vip';
               const rebookMsg = runWithTranslationOverrides(_rebookGreetOv, () => {
                 const base = customerName
-                  ? fillFlowCopyRebook('en', 'greeting.welcome_back_named', { name: customerName })
-                  : getFlowCopyRebook('en', 'greeting.welcome_back');
+                  ? fillFlowCopyRebook(rebookLang, 'greeting.welcome_back_named', { name: customerName })
+                  : getFlowCopyRebook(rebookLang, 'greeting.welcome_back');
                 return isVip ? base.replace('👋', 'Great to see you again. 👋') : base;
               });
 
@@ -1925,25 +1921,33 @@ export class BotService {
               // Stop here — don't show the full greeting/menu on top of the rebook prompt
               return;
             } else {
-              // No rebookable service — send translated return greeting
-              if (custHistory.isReturning && custHistory.totalVisits >= 2) {
-                const { getFlowCopy: getFlowCopyReturn, fillFlowCopy: fillFlowCopyReturn } = await import('@/lib/bot/flows/flow-localization');
-                const _returnOv = await getOverrides(business.id);
-                const returnBase = runWithTranslationOverrides(_returnOv, () =>
-                  customerName
-                    ? fillFlowCopyReturn('en', 'greeting.welcome_back_named', { name: customerName })
-                    : getFlowCopyReturn('en', 'greeting.welcome_back')
-                );
-                // Append contextual info from history (not translatable — they contain data)
-                const returnMsg = buildReturnGreeting(customerName, custHistory, business.name);
-                const msgToSend = returnMsg || returnBase;
+              // No rebookable service — send return greeting with override-aware welcome line
+              const effectiveLang = (session.session_data._detected_language as string) || 'en';
+              const { getFlowCopy: getFlowCopyReturn, fillFlowCopy: fillFlowCopyReturn } = await import('@/lib/bot/flows/flow-localization');
+              const _returnOv = await getOverrides(business.id);
+              const welcomeLine = runWithTranslationOverrides(_returnOv, () =>
+                customerName
+                  ? fillFlowCopyReturn(effectiveLang, 'greeting.welcome_back_named', { name: customerName })
+                  : getFlowCopyReturn(effectiveLang, 'greeting.welcome_back')
+              );
+              // If the resolver returned the default EN text, use buildDefaultWelcomeLine
+              // to get the bold/VIP exact text; otherwise use the override
+              const defaultEn = customerName
+                ? fillFlowCopyReturn('en', 'greeting.welcome_back_named', { name: customerName })
+                : getFlowCopyReturn('en', 'greeting.welcome_back');
+              const isOverridden = welcomeLine !== defaultEn;
+              const returnMsg = buildReturnGreeting(
+                customerName, custHistory, business.name,
+                isOverridden ? welcomeLine : undefined, // undefined → buildDefaultWelcomeLine (exact old text)
+              );
+              if (returnMsg) {
                 const lang = session.session_data._detected_language as string | undefined;
                 const returnTCtx: TranslationContext = {
                   entitlement: canonicalResult?.languageEntitlement || getEffectiveLanguages(business!.subscription_tier),
                   businessId: businessId!,
                   supabase: this.supabase,
                 };
-                await this.sendText(from, lang ? await translateBotResponse(msgToSend, lang, returnTCtx) : msgToSend);
+                await this.sendText(from, lang && lang !== 'en' ? await translateBotResponse(returnMsg, lang, returnTCtx) : returnMsg);
               }
             }
           }

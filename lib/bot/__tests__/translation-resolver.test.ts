@@ -319,14 +319,18 @@ describe('platform overrides cache', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('loadBusinessOverrides', () => {
-  it('returns a Map keyed by lang.key', async () => {
+  it('returns a Map keyed by lang.key (only editable keys)', async () => {
     const client = mockSupabase([
-      { lang: 'en', key: 'invalidSelection', value: 'Custom invalid' },
-      { lang: 'pcm', key: 'nav.back', value: 'Go back o' },
+      { lang: 'en', key: 'greeting.cancel_hint', value: 'Custom cancel' },
+      { lang: 'pcm', key: 'menu.title', value: 'Menu o' },
+      // Non-editable key — should be filtered out
+      { lang: 'en', key: 'greeting.powered_by', value: 'Hacked branding' },
     ]);
     const map = await loadBusinessOverrides(client, 'biz-123');
-    expect(map.get('en.invalidSelection')).toBe('Custom invalid');
-    expect(map.get('pcm.nav.back')).toBe('Go back o');
+    expect(map.get('en.greeting.cancel_hint')).toBe('Custom cancel');
+    expect(map.get('pcm.menu.title')).toBe('Menu o');
+    // greeting.powered_by is platform-only — filtered out
+    expect(map.has('en.greeting.powered_by')).toBe(false);
     expect(map.size).toBe(2);
   });
 
@@ -364,11 +368,17 @@ describe('isBusinessEditableKey', () => {
   });
 
   describe('greeting.* keys: editable except platform-only', () => {
-    it('greeting.welcome_default is editable', () => {
-      expect(isBusinessEditableKey('greeting.welcome_default')).toBe(true);
+    it('greeting.welcome_default is platform-only (edited on WhatsApp page)', () => {
+      expect(isBusinessEditableKey('greeting.welcome_default')).toBe(false);
+      expect(PLATFORM_ONLY_KEYS).toContain('greeting.welcome_default');
     });
     it('greeting.powered_by is platform-only (branding)', () => {
       expect(isBusinessEditableKey('greeting.powered_by')).toBe(false);
+      expect(PLATFORM_ONLY_KEYS).toContain('greeting.powered_by');
+    });
+    it('greeting.away is platform-only (edited in Settings > Features)', () => {
+      expect(isBusinessEditableKey('greeting.away')).toBe(false);
+      expect(PLATFORM_ONLY_KEYS).toContain('greeting.away');
     });
     it('greeting.cancel_hint is editable', () => {
       expect(isBusinessEditableKey('greeting.cancel_hint')).toBe(true);
@@ -378,9 +388,6 @@ describe('isBusinessEditableKey', () => {
     });
     it('greeting.welcome_back_named is editable', () => {
       expect(isBusinessEditableKey('greeting.welcome_back_named')).toBe(true);
-    });
-    it('greeting.away is editable', () => {
-      expect(isBusinessEditableKey('greeting.away')).toBe(true);
     });
     it('greeting.chat_with_us is editable', () => {
       expect(isBusinessEditableKey('greeting.chat_with_us')).toBe(true);

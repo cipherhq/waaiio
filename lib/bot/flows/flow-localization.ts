@@ -5970,6 +5970,7 @@ export const FOOTER_KEYS: readonly string[] = ['nav.footer'];
 /** Keys that embed bot command keywords that must be preserved across locales. */
 export const KEYS_WITH_COMMANDS: readonly string[] = [
   'cancelHint',
+  'greeting.cancel_hint',
   'nav.footer', 'nav.cancelled', 'nav.no_problem', 'nav.at_beginning',
   'nav.cancel_hint', 'nav.no_business_guide',
   'error.generic', 'error.escalation_failed',
@@ -6053,7 +6054,8 @@ export function fillFlowCopy(
 ): string {
   let text = getFlowCopy(effectiveLang, key);
   for (const [k, v] of Object.entries(values)) {
-    text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+    // Function replacer so names with $& or $1 render literally
+    text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), () => String(v));
   }
   return text;
 }

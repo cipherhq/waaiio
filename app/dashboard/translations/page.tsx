@@ -425,6 +425,11 @@ export default function TranslationsPage() {
                     <p className="text-xs text-gray-400 dark:text-gray-500">
                       {keysInCategory.length} key{keysInCategory.length !== 1 ? 's' : ''}
                     </p>
+                    {cat.id === 'greeting' && (
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Main greeting: edit on the WhatsApp page. Away message: edit in Settings &gt; Features.
+                      </p>
+                    )}
                   </div>
                   <div className="divide-y divide-gray-100 dark:divide-gray-700">
                     {keysInCategory.map(key => {

@@ -3,6 +3,29 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — feat(bot): business-editable greeting keys with platform-only deny list (#633)
+
+### Owner decision
+- Main greeting (welcome_default) is edited ONLY on the WhatsApp settings page (bot_greeting).
+- Away message (greeting.away) is edited ONLY in Settings > Features (away_message).
+- Both are platform-overridable by admins as fallbacks but NOT business-editable.
+- greeting.powered_by stays platform-only (branding).
+- Business-editable greeting keys: welcome_back, welcome_back_named, cancel_hint, chat_with_us.
+
+### What changed
+- `lib/bot/translations.ts`: Added PLATFORM_ONLY_KEYS deny list (powered_by, welcome_default, away). Exported createOverridesLoader factory keyed by business id (replaces single-promise memo). loadBusinessOverrides filters out non-editable keys.
+- `lib/bot/bot.service.ts`: All greeting send paths (new session, away, returning customer rebook/no-rebook, tier not allowed) render through getFlowCopy/fillFlowCopy inside runWithTranslationOverrides. Uses effective customer language (session._detected_language), not hardcoded 'en'. Override loader keyed by business id.
+- `lib/bot/customer-intelligence.ts`: buildReturnGreeting accepts optional welcomeLine parameter. New buildDefaultWelcomeLine function for exact-text fallback.
+- `lib/bot/flows/flow-localization.ts`: fillFlowCopy uses function replacer `() => String(v)` so names with $& render literally. Added greeting.cancel_hint to KEYS_WITH_COMMANDS.
+- `app/api/translations/route.ts`: Explicit PLATFORM_ONLY_KEYS check with "platform-only" error message.
+- `app/dashboard/translations/page.tsx`: Added "Greeting" category with note about where to edit main greeting and away message.
+
+### What it affects / could break
+- Businesses can now override welcome_back, welcome_back_named, cancel_hint, chat_with_us via dashboard translations page.
+- cancel_hint overrides must preserve *cancel* command token (API enforced).
+- Bot greeting text is unchanged with no overrides (byte-identical to main).
+- No DB schema changes.
+
 ## 2026-10-13 — fix(security): move bank account writes server-side (M448)
 
 ### What changed
