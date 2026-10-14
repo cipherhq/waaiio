@@ -30,7 +30,7 @@
     "next": "15.5.27",
     "openai": "^6.35.0",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^5.6.205",
+    "pdfjs-dist": "^6.2.108",
     "pdfkit": "^0.15.0",
     "posthog-js": "^1.370.1",
     "posthog-node": "^5.29.5",
@@ -39,7 +39,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "resend": "^6.10.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@antiwork/shortest": "^0.4.9",
@@ -59,5 +59,23 @@
     "tsx": "4.23.15",
     "typescript": "^5",
     "vitest": "^4.1.4"
+  },
+  "overrides": {
+    "@antiwork/shortest": {
+      "simple-git": "4.0.1"
+    },
+    "ai": {
+      "jsondiffpatch": "0.7.6"
+    },
+    "source-map-js": "1.2.2",
+    "fast-uri": "3.1.8",
+    "js-yaml": "4.3.2",
+    "dompurify": "3.4.16",
+    "next": {
+      "postcss": "$postcss"
+    },
+    "@next/eslint-plugin-next": {
+      "glob": "10.5.0"
+    }
   }
 }
