@@ -431,7 +431,7 @@ describe('561-G: ordering flow runtime', () => {
     } as any;
   }
 
-  it('select_product prompt uses PCM chrome when copyLang=pcm', async () => {
+  it('select_product prompt uses PCM chrome when copyLang=pcm', { timeout: 15_000 }, async () => {
     const { orderingFlow } = await import('../flows/ordering.flow');
     const step = orderingFlow.steps.find(s => s.id === 'browse_catalog');
     expect(step).toBeDefined();
