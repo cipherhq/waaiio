@@ -57,6 +57,17 @@ async function resolvePaymentCustomerPhone(
   return null;
 }
 
+/**
+ * Public wrapper for payment customer phone verification.
+ * Used by bot.service.ts to verify button-tap ownership before acting.
+ */
+export async function verifyPaymentCustomerPhone(
+  supabase: SupabaseClient,
+  payment: { id: string; booking_id?: string | null; reservation_id?: string | null; invoice_id?: string | null; order_id?: string | null; campaign_id?: string | null; user_id?: string | null },
+): Promise<string | null> {
+  return resolvePaymentCustomerPhone(supabase, payment);
+}
+
 // ─── Eligibility (K7: fail-closed on all reads) ───
 
 interface OfferEligibility {
@@ -272,8 +283,8 @@ async function sendDeclineConfirmation(
   const businessId = payment?.business_id || session?.business_id;
   if (businessId) bindBusiness?.(businessId);
 
-  // Resolve language: session → default 'en'
-  const lang = (session?.session_data as Record<string, unknown> | undefined)?.language as string || 'en';
+  // Resolve language: session._detected_language → default 'en' (same source as bot flows)
+  const lang = (session?.session_data as Record<string, unknown> | undefined)?._detected_language as string || 'en';
 
   // Load translation overrides for business context (#633)
   let businessOverrides = new Map<string, string>();

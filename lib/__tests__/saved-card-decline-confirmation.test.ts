@@ -252,7 +252,7 @@ describe('Saved-card decline confirmation', () => {
   // ═══════════════════════════════════════════════════════════════
   it('uses session language for localized copy', async () => {
     const supabase = buildMockSupabase();
-    const session = { id: 'sess-1', business_id: BIZ_ID, session_data: { language: 'pcm' }, version: 1 };
+    const session = { id: 'sess-1', business_id: BIZ_ID, session_data: { _detected_language: 'pcm' }, version: 1 };
     const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
     await handleSavedCardOfferAction(
       supabase as any, sendText, PHONE, session as any, 'save_decline', PAY_ID, vi.fn(), sendButtons,

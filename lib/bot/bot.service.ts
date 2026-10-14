@@ -1069,35 +1069,85 @@ export class BotService {
     if (_scNavMatch) {
       const navAction = _scNavMatch[1];
       const navPaymentId = _scNavMatch[2];
-      if (navAction === 'savedcard_done') {
+
+      // SECURITY: Verify payment belongs to THIS customer before any action.
+      // Uses the same phone normalisation as saved-card-offer.ts.
+      const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+      const _scNavCanonPhone = canonicalSavedCardPhone(from);
+      let _scNavVerified = false;
+      let _scNavBizId: string | null = null;
+
+      if (_scNavCanonPhone) {
+        const { data: _scNavPayment } = await this.supabase.from('payments')
+          .select('id, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id, user_id')
+          .eq('id', navPaymentId).single();
+        if (_scNavPayment) {
+          // Resolve customer phone from payment entity chain
+          const { verifyPaymentCustomerPhone } = await import('@/lib/payments/saved-card-offer');
+          const paymentPhone = await verifyPaymentCustomerPhone(this.supabase, _scNavPayment);
+          if (paymentPhone === _scNavCanonPhone) {
+            // Phone matches — also verify business consistency with session
+            _scNavBizId = _scNavPayment.business_id;
+            if (session?.business_id && _scNavBizId && session.business_id !== _scNavBizId) {
+              // Payment is from a different business than the bound session — reject
+              logger.warn('[SAVED-CARD-NAV] Payment business mismatch with session', { paymentId: navPaymentId });
+            } else {
+              _scNavVerified = true;
+            }
+          } else {
+            logger.warn('[SAVED-CARD-NAV] Payment customer phone mismatch', { paymentId: navPaymentId });
+          }
+        }
+      }
+
+      // If verification failed, ignore the tap entirely (fall through to normal handling)
+      if (!_scNavVerified) {
+        // Do not bind, do not change session — treat as unknown text
+      } else if (navAction === 'savedcard_done') {
         // Deactivate session and send goodbye
         if (session) await this.deactivateSession(session.id);
-        const lang = (session?.session_data as Record<string, unknown> | undefined)?.language as string || 'en';
+        const lang = (session?.session_data as Record<string, unknown> | undefined)?._detected_language as string || 'en';
         const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
-        await this.sendText(from, getFlowCopy(lang, 'savedcard.session_done'));
+        // Session was bound to a business — use business-scoped send
+        if (this.messageSender.boundBusinessId) {
+          try {
+            await this.sendText(from, getFlowCopy(lang, 'savedcard.session_done'));
+          } catch {
+            // S-1 guard may throw if business was unbound during deactivation
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, getFlowCopy(lang, 'savedcard.session_done'));
+          }
+        } else {
+          if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+          await this.sendPlatformText(from, getFlowCopy(lang, 'savedcard.session_done'));
+        }
         return;
-      }
-      if (navAction === 'savedcard_menu') {
+      } else if (navAction === 'savedcard_menu') {
         // Show the business's capability menu
-        const { data: navPayment } = await this.supabase.from('payments')
-          .select('business_id').eq('id', navPaymentId).single();
-        const bizId = navPayment?.business_id || session?.business_id;
+        const bizId = _scNavBizId || session?.business_id;
         if (bizId) {
-          this.messageSender.bindBusiness?.(bizId);
+          // Only bind if not already bound to this business
+          if (this.messageSender.boundBusinessId !== bizId) {
+            this.messageSender.bindBusiness?.(bizId);
+          }
           const { data: biz } = await this.supabase.from('businesses')
             .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code, is_whitelabel, payment_gateway')
             .eq('id', bizId).single();
           if (biz) {
-            // Reset session to capability selection
+            // Reset session to capability selection — no p_business_id change if already bound
             if (session) {
               const newData = { ...session.session_data, active_capability: undefined };
-              const { data: casResult } = await this.supabase.rpc('update_session_cas', {
+              const casParams: Record<string, unknown> = {
                 p_session_id: session.id,
                 p_expected_version: session.version ?? 0,
                 p_current_step: 'select_capability',
                 p_session_data: newData,
-                p_business_id: bizId,
-              });
+              };
+              // Only send p_business_id if session needs rebinding
+              if (session.business_id !== bizId) {
+                casParams.p_business_id = bizId;
+              }
+              const { data: casResult } = await this.supabase.rpc('update_session_cas', casParams);
               if (casResult?.success) {
                 session.current_step = 'select_capability';
                 session.session_data = newData;
@@ -1111,8 +1161,9 @@ export class BotService {
             return;
           }
         }
-        // Fallback: show greeting
-        await this.sendText(from, 'Send *Hi* to start over.');
+        // Fallback: no business resolvable — platform-scoped guidance
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        await this.sendPlatformText(from, 'Send *Hi* to start over.');
         return;
       }
     }
