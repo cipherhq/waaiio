@@ -62,22 +62,38 @@ describeDb('Migration 447: search_businesses_fuzzy', () => {
     // pg_trgm is required for similarity()
     sql(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
 
-    // Minimal businesses table with columns needed by the RPC
+    // Minimal businesses table — CREATE TABLE IF NOT EXISTS for fresh DBs
     sql(`
       CREATE TABLE IF NOT EXISTS public.businesses (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         owner_id UUID,
-        name TEXT NOT NULL DEFAULT 'Test',
-        slug TEXT,
+        name VARCHAR(200) NOT NULL DEFAULT 'Test',
+        slug VARCHAR(200),
         category VARCHAR(50) DEFAULT 'restaurant',
-        city VARCHAR(100),
+        city VARCHAR(50),
         state VARCHAR(100),
-        country_code VARCHAR(10) DEFAULT 'NG',
+        country_code VARCHAR(2) DEFAULT 'NG',
         status VARCHAR(20) DEFAULT 'active',
-        bot_code VARCHAR(20),
+        bot_code VARCHAR(30),
         discovery_enabled BOOLEAN DEFAULT true,
         messaging_suspended BOOLEAN NOT NULL DEFAULT false
       );
+    `);
+
+    // If the table already existed (CI template), ensure every column is present.
+    // Types match the real production schema from migrations 001/002/003/079/239/363.
+    sql(`
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS owner_id UUID;
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS name VARCHAR(200) NOT NULL DEFAULT 'Test';
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS slug VARCHAR(200);
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'restaurant';
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS city VARCHAR(50);
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS state VARCHAR(100);
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS country_code VARCHAR(2) DEFAULT 'NG';
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active';
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS bot_code VARCHAR(30);
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS discovery_enabled BOOLEAN DEFAULT true;
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS messaging_suspended BOOLEAN NOT NULL DEFAULT false;
     `);
 
     sql(`
@@ -116,32 +132,32 @@ describeDb('Migration 447: search_businesses_fuzzy', () => {
     // Active, eligible business in Lagos
     sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, state, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_ACTIVE}', '${OWNER_ID}', 'Fuzzy Salon Lagos', 'fuzzy-salon-447', 'salon', 'Lagos', 'Lagos', 'NG', 'active', 'FZSL', true, false)
-         ON CONFLICT (id) DO UPDATE SET status = 'active', bot_code = 'FZSL', discovery_enabled = true, messaging_suspended = false;`);
+         ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy Salon Lagos', status = 'active', bot_code = 'FZSL', discovery_enabled = true, messaging_suspended = false;`);
 
     // Inactive
     sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_INACTIVE}', '${OWNER_ID}', 'Fuzzy Barber Inactive', 'fuzzy-barber-447', 'barber', 'Lagos', 'NG', 'pending', 'FZBI', true, false)
-         ON CONFLICT (id) DO UPDATE SET status = 'pending';`);
+         ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy Barber Inactive', status = 'pending';`);
 
     // No bot_code
     sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_NO_BOT}', '${OWNER_ID}', 'Fuzzy NoBotCode', 'fuzzy-nobot-447', 'salon', 'Lagos', 'NG', 'active', NULL, true, false)
-         ON CONFLICT (id) DO UPDATE SET bot_code = NULL;`);
+         ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy NoBotCode', bot_code = NULL;`);
 
     // Opted out
     sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_OPT_OUT}', '${OWNER_ID}', 'Fuzzy OptOut Salon', 'fuzzy-optout-447', 'salon', 'Lagos', 'NG', 'active', 'FZOO', false, false)
-         ON CONFLICT (id) DO UPDATE SET discovery_enabled = false;`);
+         ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy OptOut Salon', discovery_enabled = false;`);
 
     // Hidden (passed via p_hidden_ids)
     sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_HIDDEN}', '${OWNER_ID}', 'Fuzzy Hidden Biz', 'fuzzy-hidden-447', 'salon', 'Lagos', 'NG', 'active', 'FZHD', true, false)
-         ON CONFLICT (id) DO UPDATE SET status = 'active', discovery_enabled = true;`);
+         ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy Hidden Biz', status = 'active', discovery_enabled = true;`);
 
     // Active business in Abuja (different city for location scoping test)
     sql(`INSERT INTO businesses (id, owner_id, name, slug, category, city, state, country_code, status, bot_code, discovery_enabled, messaging_suspended)
          VALUES ('${BIZ_ABUJA}', '${OWNER_ID}', 'Fuzzy Salon Abuja', 'fuzzy-salon-abuja-447', 'salon', 'Abuja', 'FCT', 'NG', 'active', 'FZSA', true, false)
-         ON CONFLICT (id) DO UPDATE SET city = 'Abuja', status = 'active', bot_code = 'FZSA', discovery_enabled = true;`);
+         ON CONFLICT (id) DO UPDATE SET name = 'Fuzzy Salon Abuja', city = 'Abuja', status = 'active', bot_code = 'FZSA', discovery_enabled = true;`);
   });
 
   afterAll(() => {
@@ -183,31 +199,50 @@ describeDb('Migration 447: search_businesses_fuzzy', () => {
 
   it('returns eligible business by name similarity', () => {
     const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy Salon Lagos', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
+    expect(result).not.toContain('ERROR');
     expect(result).toContain('Fuzzy Salon Lagos');
   });
 
   it('excludes inactive businesses', () => {
-    const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy Barber', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
+    const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
+    expect(result).not.toContain('ERROR');
+    // Positive control: an eligible business IS returned
+    expect(result).toContain('Fuzzy Salon Lagos');
+    // Negative: inactive business excluded
     expect(result).not.toContain('Fuzzy Barber Inactive');
   });
 
   it('excludes businesses with no bot_code', () => {
-    const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy NoBotCode', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
+    const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
+    expect(result).not.toContain('ERROR');
+    // Positive control: an eligible business IS returned
+    expect(result).toContain('Fuzzy Salon Lagos');
+    // Negative: no-bot-code business excluded
     expect(result).not.toContain('NoBotCode');
   });
 
   it('excludes discovery_enabled=false businesses', () => {
-    const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy OptOut', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
+    const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy', NULL, 10, ARRAY[]::uuid[], NULL, NULL);`);
+    expect(result).not.toContain('ERROR');
+    // Positive control: an eligible business IS returned
+    expect(result).toContain('Fuzzy Salon Lagos');
+    // Negative: opted-out business excluded
     expect(result).not.toContain('OptOut');
   });
 
   it('excludes hidden businesses via p_hidden_ids', () => {
     const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy', NULL, 10, ARRAY['${BIZ_HIDDEN}']::uuid[], NULL, NULL);`);
+    expect(result).not.toContain('ERROR');
+    // Positive control: an eligible business IS returned
+    expect(result).toContain('Fuzzy Salon Lagos');
+    // Negative: hidden business excluded
     expect(result).not.toContain('Fuzzy Hidden');
   });
 
   it('respects country filter', () => {
     const result = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy Salon Lagos', 'GH', 10, ARRAY[]::uuid[], NULL, NULL);`);
+    expect(result).not.toContain('ERROR');
+    // Wrong country returns nothing — no NG business in GH
     expect(result).not.toContain('Fuzzy Salon');
   });
 
@@ -216,8 +251,8 @@ describeDb('Migration 447: search_businesses_fuzzy', () => {
   // ════════════════════════════════════════════════════════
 
   it('p_city filters to matching city only', () => {
-    // With p_city='Lagos' — should return Lagos but not Abuja
     const lagosResult = sql(`SELECT name FROM search_businesses_fuzzy('Fuzzy Salon', NULL, 10, ARRAY[]::uuid[], 'Lagos', NULL);`);
+    expect(lagosResult).not.toContain('ERROR');
     expect(lagosResult).toContain('Fuzzy Salon Lagos');
     expect(lagosResult).not.toContain('Fuzzy Salon Abuja');
   });
