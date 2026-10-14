@@ -17,6 +17,15 @@ If something breaks, check this log to find what changed and when.
 - Done button deactivates the session with a goodbye message.
 - No change to accept paths (save_accept/replace_accept already confirm + enter PIN flow).
 
+## 2026-10-14 — fix(security): harden image source URL validation
+
+### What changed
+- `app/api/images/convert/route.ts`: Replaced string-prefix URL validation with parsed URL validation. Non-image input now returns 400 instead of 500. Fetch uses `redirect: 'error'` to reject redirects.
+
+### What it affects / could break
+- URLs that previously passed the prefix check but fail strict parsing will now be rejected (400). This is correct behavior.
+- Non-image bodies now return 400 (was 500).
+
 ## 2026-10-14 — test(security): real route-handler test for images/convert + pdfjs-dist v6 smoke
 
 ### What changed

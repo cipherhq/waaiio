@@ -165,14 +165,18 @@ describe('sanitizeImage', () => {
 });
 
 // ---------------------------------------------------------------------------
-// images/convert route handler — real Request / real sharp
+// images/convert route handler — URL validation and conversion
 // ---------------------------------------------------------------------------
 
 describe('images/convert route handler', () => {
   const SUPABASE_URL = 'https://test.supabase.co';
+  const VALID_STORAGE_URL = `${SUPABASE_URL}/storage/v1/object/public/images/test.webp`;
+
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL;
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
   });
 
   afterEach(() => {
@@ -180,84 +184,121 @@ describe('images/convert route handler', () => {
     delete process.env.NEXT_PUBLIC_SUPABASE_URL;
   });
 
-  it('converts a Supabase PNG to JPEG with correct headers and magic bytes', async () => {
-    const png = await makeImage('png', { width: 30, height: 30 });
-
-    // Mock global fetch to return the real PNG buffer
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(png, { status: 200 }),
-    );
-
+  async function callRoute(inputUrl: string) {
     const { GET } = await import('@/app/api/images/convert/route');
-    const req = new Request(
-      `http://localhost/api/images/convert?url=${SUPABASE_URL}/storage/v1/object/public/test.webp`,
-    );
-
-    // NextRequest wraps Request — the route uses request.nextUrl.searchParams
     const { NextRequest } = await import('next/server');
-    const nextReq = new NextRequest(req);
-    const res = await GET(nextReq);
+    const req = new NextRequest(
+      new Request(`http://localhost/api/images/convert?url=${encodeURIComponent(inputUrl)}`),
+    );
+    return GET(req);
+  }
+
+  // --- positive case ---------------------------------------------------------
+
+  it('converts a valid Supabase storage PNG to JPEG (200, magic bytes)', async () => {
+    const png = await makeImage('png', { width: 30, height: 30 });
+    fetchSpy.mockResolvedValue(new Response(png, { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
 
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/jpeg');
 
     const body = await res.arrayBuffer();
     const bytes = new Uint8Array(body);
-    // JPEG magic bytes: FF D8 FF
     expect(bytes[0]).toBe(0xff);
     expect(bytes[1]).toBe(0xd8);
     expect(bytes[2]).toBe(0xff);
 
-    // Verify dimensions via sharp
     const meta = await sharp(Buffer.from(body)).metadata();
     expect(meta.format).toBe('jpeg');
     expect(meta.width).toBe(30);
     expect(meta.height).toBe(30);
-
-    fetchSpy.mockRestore();
   });
+
+  // --- missing/empty param ---------------------------------------------------
 
   it('returns 400 for missing url parameter', async () => {
     const { GET } = await import('@/app/api/images/convert/route');
     const { NextRequest } = await import('next/server');
-
     const req = new NextRequest(new Request('http://localhost/api/images/convert'));
     const res = await GET(req);
-    expect(res.status).toBe(400);
 
-    const json = await res.json();
-    expect(json.error).toBe('Missing url parameter');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('returns 400 for non-Supabase URL', async () => {
-    const { GET } = await import('@/app/api/images/convert/route');
-    const { NextRequest } = await import('next/server');
+  // --- non-image body --------------------------------------------------------
 
-    const req = new NextRequest(
-      new Request('http://localhost/api/images/convert?url=https://evil.com/image.png'),
-    );
-    const res = await GET(req);
+  it('returns 400 for non-image body from a valid URL', async () => {
+    fetchSpy.mockResolvedValue(new Response(randomBytes(256), { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(400);
-
-    const json = await res.json();
-    expect(json.error).toBe('Invalid URL');
   });
 
-  it('returns 500 for non-image input', async () => {
-    const garbage = randomBytes(256);
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(garbage, { status: 200 }),
-    );
+  // --- redirect rejection ----------------------------------------------------
 
-    const { GET } = await import('@/app/api/images/convert/route');
-    const { NextRequest } = await import('next/server');
-    const req = new NextRequest(
-      new Request(`http://localhost/api/images/convert?url=${SUPABASE_URL}/storage/v1/object/public/bad.bin`),
-    );
-    const res = await GET(req);
-    expect(res.status).toBe(500);
+  it('rejects upstream redirect (302 to another host)', async () => {
+    fetchSpy.mockRejectedValue(new TypeError('fetch failed (redirect mode is error)'));
 
-    const json = await res.json();
-    expect(json.error).toBe('Conversion failed');
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(400);
+  });
+
+  // --- URL validation: fetch must NOT be called for invalid URLs -------------
+
+  it('rejects a lookalike host sharing the prefix', async () => {
+    const res = await callRoute('https://test.supabase.co.evil.com/storage/v1/object/public/img.png');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a URL with userinfo (credentials in URL)', async () => {
+    const res = await callRoute('https://admin:secret@test.supabase.co/storage/v1/object/public/img.png');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-default port', async () => {
+    const res = await callRoute('https://test.supabase.co:8443/storage/v1/object/public/img.png');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects http instead of https', async () => {
+    const res = await callRoute('http://test.supabase.co/storage/v1/object/public/img.png');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a different subdomain of the same parent domain', async () => {
+    const res = await callRoute('https://other.supabase.co/storage/v1/object/public/img.png');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a URL with encoded host characters', async () => {
+    const res = await callRoute('https://test.supabase.co%2f@evil.com/storage/v1/object/public/img.png');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unparseable URL', async () => {
+    const res = await callRoute('not-a-url-at-all');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a URL with the right host but wrong path (not storage)', async () => {
+    const res = await callRoute('https://test.supabase.co/rest/v1/some-table');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-Supabase URL entirely', async () => {
+    const res = await callRoute('https://evil.com/image.png');
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
