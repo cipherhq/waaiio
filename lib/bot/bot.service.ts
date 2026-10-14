@@ -1757,6 +1757,13 @@ export class BotService {
             });
             if (savedLangCas.data?.success) {
               session.version = savedLangCas.data.version;
+            } else {
+              // CAS failed — keep in-memory language for this message but warn
+              logger.warn(`[BOT] CAS conflict persisting saved language — session ${session.id}`);
+              Sentry.captureMessage('Saved-language CAS conflict', {
+                level: 'warning',
+                extra: { sessionId: session.id, savedLang },
+              });
             }
           }
           // If not allowed: fall through to picker (hasRememberedLanguage stays false)

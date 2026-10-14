@@ -98,7 +98,8 @@ export async function PUT(request: NextRequest) {
   const configuredLangs = await loadBusinessLanguages(serviceClient, businessId);
   const entitlement = getEffectiveLanguages(business.subscription_tier || 'free', configuredLangs);
 
-  // Validate each override
+  // Validate ALL overrides (including deletes) before any DB mutation.
+  // Any error → 400, no deletes and no upserts run (all-or-nothing).
   const errors: string[] = [];
   const upserts: Array<{ lang: string; key: string; value: string }> = [];
   const deletes: Array<{ lang: string; key: string }> = [];
@@ -107,46 +108,51 @@ export async function PUT(request: NextRequest) {
   const commandTokenPattern = /\*[A-Za-z][A-Za-z ]*\*/g;
 
   for (const override of overrides) {
-    // Delete if value is null or empty
-    if (!override.value || override.value.trim() === '') {
-      deletes.push({ lang: override.lang, key: override.key });
-      continue;
-    }
+    const isDelete = !override.value || override.value.trim() === '';
 
-    const trimmedValue = override.value.trim();
+    // ── Key validation (runs for both deletes and upserts) ──
 
-    // Reject platform-only keys with 403-grade message (deny list wins)
+    // 1. Platform-only deny list
     if (PLATFORM_ONLY_KEYS.includes(override.key)) {
       errors.push(`${override.key}: platform-only (not editable by businesses)`);
       continue;
     }
 
-    // Validate key is business-editable
+    // 2. Business-editable check
     if (!isBusinessEditableKey(override.key)) {
       errors.push(`${override.key}: not editable by businesses`);
       continue;
     }
 
-    // Reject values containing URLs, phone numbers, or 8+ digit runs
-    const UNSAFE_VALUE_PATTERN = /https?:\/\/|www\.|[a-z0-9-]+\.[a-z]{2,}\/|(\+?\d[\d\s-]{7,}\d)|\d{8,}|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.(com|net|org|ng|gh|uk|ca|us|io|co|app|me|xyz|link|ly|info|biz)\b/i;
-    if (UNSAFE_VALUE_PATTERN.test(trimmedValue)) {
-      errors.push(`${override.key}: value must not contain URLs, phone numbers, or long digit sequences`);
-      continue;
-    }
-
-    // Validate key exists
+    // 3. Key exists in flow-copy
     if (!ALL_FLOW_COPY_KEYS.includes(override.key)) {
       errors.push(`Unknown key: ${override.key}`);
       continue;
     }
 
-    // Validate lang is supported and allowed for this business
+    // 4. Language validation
     if (!isSupportedLanguage(override.lang)) {
       errors.push(`Unsupported language: ${override.lang}`);
       continue;
     }
     if (!entitlement.allowedLanguages.includes(override.lang)) {
       errors.push(`Language ${override.lang} not enabled for this business`);
+      continue;
+    }
+
+    // ── Delete branch: key + lang valid → queue for deletion ──
+    if (isDelete) {
+      deletes.push({ lang: override.lang, key: override.key });
+      continue;
+    }
+
+    // ── Value validation (upserts only) ──
+    const trimmedValue = override.value!.trim();
+
+    // Reject values containing URLs, phone numbers, or 8+ digit runs
+    const UNSAFE_VALUE_PATTERN = /https?:\/\/|www\.|[a-z0-9-]+\.[a-z]{2,}\/|(\+?\d[\d\s-]{7,}\d)|\d{8,}|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.(com|net|org|ng|gh|uk|ca|us|io|co|app|me|xyz|link|ly|info|biz)\b/i;
+    if (UNSAFE_VALUE_PATTERN.test(trimmedValue)) {
+      errors.push(`${override.key}: value must not contain URLs, phone numbers, or long digit sequences`);
       continue;
     }
 

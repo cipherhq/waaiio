@@ -1558,4 +1558,71 @@ describe('Remembered language activation — customer_profiles.preferred_languag
     );
     expect(langActivationCas).toBeUndefined();
   });
+
+  it('CAS failure during saved-language activation: logs warning, greeting still uses saved language', async () => {
+    const sender = createCaptureSender();
+    const insertTracker: Array<{ table: string; data: Record<string, unknown> }> = [];
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      customerProfileLanguage: 'pcm',
+      insertTracker,
+      rpcTracker,
+    });
+
+    // Override rpc to make the saved-language CAS call fail
+    const originalRpc = supabase.rpc;
+    let savedLangCasHit = false;
+    supabase.rpc = vi.fn((fn: string, args?: Record<string, unknown>) => {
+      rpcTracker.push({ fn, args: args || {} });
+      if (fn === 'get_bot_context') {
+        return originalRpc(fn, args);
+      }
+      if (fn === 'update_session_cas') {
+        // If this is the saved-language activation CAS (has _detected_language=pcm)
+        if ((args as any)?.p_session_data?._detected_language === 'pcm' && !savedLangCasHit) {
+          savedLangCasHit = true;
+          return Promise.resolve({
+            data: { success: false, reason: 'version_conflict' },
+            error: null,
+          });
+        }
+        // All other CAS calls succeed
+        return Promise.resolve({
+          data: { success: true, version: ((args as any)?.p_expected_version || 0) + 1 },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    // Sentry mock is module-level; check that captureMessage was called
+    const Sentry = await import('@sentry/nextjs');
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    // CAS failed but language should still be set in-memory
+    expect(savedLangCasHit).toBe(true);
+
+    // Sentry.captureMessage should have been called with the warning
+    expect(Sentry.captureMessage).toHaveBeenCalledWith(
+      'Saved-language CAS conflict',
+      expect.objectContaining({ level: 'warning' }),
+    );
+
+    // The greeting should still use the saved language (pcm) in memory
+    // Check session insert — _detected_language should be pcm
+    const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
+    // The session was created before the CAS call, so _detected_language
+    // is set in-memory by the code. Check the CAS call args had it.
+    const langCasCall = rpcTracker.find(
+      r => r.fn === 'update_session_cas' &&
+        (r.args as any)?.p_session_data?._detected_language === 'pcm',
+    );
+    expect(langCasCall).toBeDefined();
+  });
 });

@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(api): validate deletes before executing, CAS failure logging (#633)
+
+### What changed
+- `app/api/translations/route.ts` PUT: validation now runs BEFORE the delete/upsert branch. Deletes are validated for platform-only keys, non-editable keys, unknown keys, and disallowed languages — same checks as upserts. Any error → 400, no deletes and no upserts run (all-or-nothing).
+- `lib/bot/bot.service.ts` (~L1758): CAS failure during saved-language activation now logs `logger.warn` (with session id, no phone number) and `Sentry.captureMessage`. In-memory language is kept for the current message.
+
+### What it affects / could break
+- API consumers that relied on deletes bypassing key validation will now get 400 errors for invalid keys. This is the correct behavior.
+- No behavior change for valid delete/upsert requests.
+
 ## 2026-10-14 — fix(bot): activate remembered language from customer_profiles (#633)
 
 ### What changed

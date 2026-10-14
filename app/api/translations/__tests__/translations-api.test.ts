@@ -473,6 +473,139 @@ describe('PUT /api/translations', () => {
     }
   });
 
+  // ── Delete validation: deletes must pass key/lang checks before executing ──
+
+  it('delete (value null) for greeting.powered_by → 400 platform-only; no serviceClient delete', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [{ lang: 'en', key: 'greeting.powered_by', value: null }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errors.some((e: string) => e.includes('platform-only'))).toBe(true);
+    // No delete call made to serviceClient
+    const deleteCalls = mockServiceFrom.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'bot_translation_overrides',
+    );
+    expect(deleteCalls.length).toBe(0);
+  });
+
+  it('delete (value "") for greeting.welcome_default → 400; no delete called', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [{ lang: 'en', key: 'greeting.welcome_default', value: '' }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errors.some((e: string) => e.includes('platform-only'))).toBe(true);
+    const deleteCalls = mockServiceFrom.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'bot_translation_overrides',
+    );
+    expect(deleteCalls.length).toBe(0);
+  });
+
+  it('delete for an unknown key → 400 "Unknown key"; no delete called', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [{ lang: 'en', key: 'greeting.nonexistent_key_xyz', value: null }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errors.some((e: string) => e.includes('Unknown key'))).toBe(true);
+    const deleteCalls = mockServiceFrom.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'bot_translation_overrides',
+    );
+    expect(deleteCalls.length).toBe(0);
+  });
+
+  it('delete for a non-editable key (payment.ive_paid) → 400; no delete called', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [{ lang: 'en', key: 'payment.ive_paid', value: null }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errors.some((e: string) => e.includes('not editable'))).toBe(true);
+    const deleteCalls = mockServiceFrom.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'bot_translation_overrides',
+    );
+    expect(deleteCalls.length).toBe(0);
+  });
+
+  it('delete for a disallowed language → 400; no delete called', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        // 'yo' is a valid key but the mock only allows ['en', 'pcm']
+        overrides: [{ lang: 'yo', key: 'greeting.cancel_hint', value: null }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errors.some((e: string) => e.includes('not enabled'))).toBe(true);
+    const deleteCalls = mockServiceFrom.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'bot_translation_overrides',
+    );
+    expect(deleteCalls.length).toBe(0);
+  });
+
+  it('mixed batch: one valid upsert + one invalid delete → 400, neither runs', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({});
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [
+          // Valid upsert
+          { lang: 'en', key: 'menu.title', value: 'My Menu' },
+          // Invalid delete (platform-only)
+          { lang: 'en', key: 'greeting.powered_by', value: null },
+        ],
+      }),
+    );
+    expect(res.status).toBe(400);
+    // Neither delete nor upsert should have been called
+    const serviceCalls = mockServiceFrom.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'bot_translation_overrides',
+    );
+    expect(serviceCalls.length).toBe(0);
+  });
+
+  it('valid delete for an editable key returns 200 with deleted: 1', async () => {
+    setupMockFrom({ businesses: { data: BIZ, error: null } });
+    setupServiceFrom({
+      bot_translation_overrides: [{ data: null, error: null }],
+    });
+    const res = await PUT(
+      makeRequest('PUT', '/api/translations', {
+        businessId: 'biz-1',
+        overrides: [{ lang: 'en', key: 'greeting.cancel_hint', value: null }],
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deleted).toBe(1);
+    expect(body.upserted).toBe(0);
+  });
+
   // 14. Successful upsert returns 200 with counts
   it('returns 200 with upsert/delete counts on success', async () => {
     setupMockFrom({ businesses: { data: BIZ, error: null } });
