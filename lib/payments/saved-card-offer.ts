@@ -250,6 +250,74 @@ export async function retryPendingSavedCardOffer(
   }
 }
 
+// ─── Decline confirmation helper ───
+
+async function sendDeclineConfirmation(
+  supabase: SupabaseClient,
+  sendText: (to: string, text: string) => Promise<void>,
+  sendButtons: ((msg: { to: string; body: string; buttons: Array<{ id: string; title: string }> }) => Promise<unknown>) | undefined,
+  from: string,
+  session: import('@/lib/bot/bot-types').BotSession | null,
+  action: 'save_decline' | 'replace_decline',
+  paymentId: string,
+  canonPhone: string,
+  bindBusiness?: (businessId: string) => void,
+): Promise<void> {
+  const { getFlowCopy, fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+  const { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides } = await import('@/lib/bot/translations');
+
+  // Resolve business from payment for S-1 binding and override context
+  const { data: payment } = await supabase.from('payments')
+    .select('business_id').eq('id', paymentId).single();
+  const businessId = payment?.business_id || session?.business_id;
+  if (businessId) bindBusiness?.(businessId);
+
+  // Resolve language: session → default 'en'
+  const lang = (session?.session_data as Record<string, unknown> | undefined)?.language as string || 'en';
+
+  // Load translation overrides for business context (#633)
+  let businessOverrides = new Map<string, string>();
+  let platformOverrides = new Map<string, string>();
+  try {
+    [businessOverrides, platformOverrides] = await Promise.all([
+      businessId ? loadBusinessOverrides(supabase, businessId) : Promise.resolve(new Map<string, string>()),
+      loadPlatformOverrides(supabase),
+    ]);
+  } catch { /* fail closed to English defaults */ }
+
+  const to = from.replace(/^\+/, '');
+
+  await runWithTranslationOverrides({ business: businessOverrides, platform: platformOverrides }, async () => {
+    let body: string;
+    if (action === 'replace_decline') {
+      // Look up the saved card's last4 for the customer + business
+      const phoneN = canonPhone.slice(1);
+      const { data: savedCard } = await supabase.from('saved_payment_methods')
+        .select('card_last4').in('customer_phone', [canonPhone, phoneN])
+        .eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+      if (savedCard?.card_last4) {
+        body = fillFlowCopy(lang, 'savedcard.decline_keep_last4', { last4: savedCard.card_last4 });
+      } else {
+        body = getFlowCopy(lang, 'savedcard.decline_keep_generic');
+      }
+    } else {
+      body = getFlowCopy(lang, 'savedcard.decline_not_saved');
+    }
+
+    const buttons = [
+      { id: `savedcard_menu:${paymentId}`, title: getFlowCopy(lang, 'savedcard.btn_main_menu') },
+      { id: `savedcard_done:${paymentId}`, title: getFlowCopy(lang, 'savedcard.btn_done') },
+    ];
+
+    if (sendButtons) {
+      await sendButtons({ to, body, buttons });
+    } else {
+      // Fallback: plain text when sendButtons unavailable
+      await sendText(from, body);
+    }
+  });
+}
+
 // ─── Button action handler (K5: atomic accept/decline via RPCs) ───
 
 export async function handleSavedCardOfferAction(
@@ -260,6 +328,7 @@ export async function handleSavedCardOfferAction(
   action: 'save_accept' | 'save_decline' | 'replace_accept' | 'replace_decline',
   paymentId: string,
   bindBusiness?: (businessId: string) => void,
+  sendButtons?: (msg: { to: string; body: string; buttons: Array<{ id: string; title: string }> }) => Promise<unknown>,
 ): Promise<void> {
   const canonPhone = canonicalSavedCardPhone(from);
   if (!canonPhone) { await sendText(from, 'Invalid phone number.'); return; }
@@ -277,10 +346,9 @@ export async function handleSavedCardOfferAction(
     }
     switch (result.result) {
       case 'transitioned':
-        // Silent success — offer declined, no further action needed
-        return;
       case 'already_declined':
-        // Idempotent — already declined, no mutation needed
+        // Send decline confirmation with navigation buttons
+        await sendDeclineConfirmation(supabase, sendText, sendButtons, from, session, action, paymentId, canonPhone, bindBusiness);
         return;
       case 'wrong_customer':
         await sendText(from, 'This offer is not for your account.');

@@ -1058,7 +1058,61 @@ export class BotService {
           action,
           paymentId,
           (businessId) => this.messageSender.bindBusiness?.(businessId),
+          async (msg) => { await this.messageSender.sendButtons(msg); },
         );
+        return;
+      }
+    }
+
+    // ── Post-decline saved-card navigation buttons ──
+    const _scNavMatch = _scTrimmed.match(/^(savedcard_menu|savedcard_done):(.+)$/);
+    if (_scNavMatch) {
+      const navAction = _scNavMatch[1];
+      const navPaymentId = _scNavMatch[2];
+      if (navAction === 'savedcard_done') {
+        // Deactivate session and send goodbye
+        if (session) await this.deactivateSession(session.id);
+        const lang = (session?.session_data as Record<string, unknown> | undefined)?.language as string || 'en';
+        const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+        await this.sendText(from, getFlowCopy(lang, 'savedcard.session_done'));
+        return;
+      }
+      if (navAction === 'savedcard_menu') {
+        // Show the business's capability menu
+        const { data: navPayment } = await this.supabase.from('payments')
+          .select('business_id').eq('id', navPaymentId).single();
+        const bizId = navPayment?.business_id || session?.business_id;
+        if (bizId) {
+          this.messageSender.bindBusiness?.(bizId);
+          const { data: biz } = await this.supabase.from('businesses')
+            .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code, is_whitelabel, payment_gateway')
+            .eq('id', bizId).single();
+          if (biz) {
+            // Reset session to capability selection
+            if (session) {
+              const newData = { ...session.session_data, active_capability: undefined };
+              const { data: casResult } = await this.supabase.rpc('update_session_cas', {
+                p_session_id: session.id,
+                p_expected_version: session.version ?? 0,
+                p_current_step: 'select_capability',
+                p_session_data: newData,
+                p_business_id: bizId,
+              });
+              if (casResult?.success) {
+                session.current_step = 'select_capability';
+                session.session_data = newData;
+                session.version = casResult.version;
+              }
+            }
+            const _menuOv = await getOverrides(bizId);
+            await runWithTranslationOverrides(_menuOv, () =>
+              this.flowExecutor.execute(from, '', session as unknown as BotSession, biz)
+            );
+            return;
+          }
+        }
+        // Fallback: show greeting
+        await this.sendText(from, 'Send *Hi* to start over.');
         return;
       }
     }
