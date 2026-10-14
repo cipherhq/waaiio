@@ -1626,3 +1626,96 @@ describe('Remembered language activation — customer_profiles.preferred_languag
     expect(langCasCall).toBeDefined();
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// 16. Language picker override rendering via handleMessage
+// ═══════════════════════════════════════════════════════
+
+describe('Language picker — business overrides applied', () => {
+  it('picker body + button use business overrides on first contact', async () => {
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      // No saved language preference → picker will show
+      customerProfileLanguage: null,
+      translationOverrides: [
+        { lang: 'en', key: 'lang.picker_body', value: 'Abeg pick your language:' },
+        { lang: 'en', key: 'lang.picker_button', value: 'Pick Now' },
+      ],
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    const msgs = sender.getMessages();
+    const pickerList = msgs.find(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    expect(pickerList).toBeDefined();
+    // Overridden body
+    expect(pickerList!.body).toContain('Abeg pick your language:');
+    // Overridden button label
+    expect(pickerList!.buttonLabel).toBe('Pick Now');
+  });
+
+  it('picker_confirmed override appears with {langName} filled', async () => {
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: {
+        id: 'session-pick-confirm',
+        user_id: 'user-1',
+        phone: PHONE,
+        business_id: BIZ_ID,
+        current_step: 'idle',
+        session_data: { _pending_first_message: 'hi' },
+        status: 'active',
+        version: 1,
+      },
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      translationOverrides: [
+        { lang: 'pcm', key: 'lang.picker_confirmed', value: 'Oya! We go dey yarn {langName} from now. ✅' },
+      ],
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    // User taps Pidgin in the picker
+    await bot.handleMessage(PHONE, 'lang_pick_pcm', 'interactive', undefined, BIZ_ID);
+
+    const msgs = sender.getMessages();
+    // Confirmation message should use the override with {langName} filled
+    const confirmMsg = msgs.find(m => m.type === 'text' && m.text?.includes('✅'));
+    expect(confirmMsg).toBeDefined();
+    expect(confirmMsg!.text).toContain('Oya! We go dey yarn Nigerian Pidgin from now.');
+  });
+
+  it('business B without overrides gets default picker text (isolation)', async () => {
+    const sender = createCaptureSender();
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ id: 'biz-no-override', subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      customerProfileLanguage: null,
+      // No overrides
+      translationOverrides: [],
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, 'biz-no-override');
+
+    const msgs = sender.getMessages();
+    const pickerList = msgs.find(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    expect(pickerList).toBeDefined();
+    // Default body — contains the platform default English line, NOT a business override
+    expect(pickerList!.body).toContain('Please choose your preferred language:');
+    // Default button label
+    expect(pickerList!.buttonLabel).toBe('Choose Language');
+  });
+});

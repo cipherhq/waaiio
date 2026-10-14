@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(bot): apply business overrides to language picker (#633)
+
+### What changed
+- `lib/bot/bot.service.ts`: Wrapped `sendLanguagePicker()` call (~L1806) and `lang.picker_confirmed` rendering (~L2388) inside `runWithTranslationOverrides` with the business's overrides. Previously these ran outside override context, so business overrides for `lang.picker_body`, `lang.picker_button`, and `lang.picker_confirmed` were silently ignored.
+
+### What it affects / could break
+- Businesses that set custom translations for picker keys will now see them applied.
+- No change for businesses without overrides (default text unchanged).
+
 ## 2026-10-14 — fix(api): validate deletes before executing, CAS failure logging (#633)
 
 ### What changed

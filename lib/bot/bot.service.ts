@@ -1803,7 +1803,10 @@ export class BotService {
               // Fall through to normal greeting/flow handling below
             } else {
               session.version = pickerCas.data.version;
-              await this.sendLanguagePicker(from, business, pickerAllowed, this.messageSender);
+              const _pickerOv = await getOverrides(business.id);
+              await runWithTranslationOverrides(_pickerOv, () =>
+                this.sendLanguagePicker(from, business!, pickerAllowed, this.messageSender)
+              );
               return; // Wait for picker selection before proceeding
             }
           }
@@ -2379,9 +2382,12 @@ export class BotService {
         }
       }
 
-      // Send confirmation in the chosen language
+      // Send confirmation in the chosen language (inside override context)
       const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
-      const confirmMsg = fillFlowCopy(langCode, 'lang.picker_confirmed', { langName });
+      const _confirmOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+      const confirmMsg = runWithTranslationOverrides(_confirmOv, () =>
+        fillFlowCopy(langCode, 'lang.picker_confirmed', { langName })
+      );
       await this.sendText(from, confirmMsg);
 
       // Process any pending first message stored before the picker was shown
