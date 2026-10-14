@@ -6,10 +6,10 @@ If something breaks, check this log to find what changed and when.
 ## 2026-10-14 — fix(admin): move tier change server-side
 
 ### What changed
-- `app/api/admin/businesses/[id]/tier/route.ts`: New POST route that changes a business's subscription tier. Requires `requirePlatformAdmin({ requiredRole: 'admin' })` (full-admin only, Bearer auth). Validates UUID and tier against the DB enum (`free`, `growth`, `business`). Updates `businesses.subscription_tier` and `subscriptions.tier` via service client. If the subscriptions update fails, rolls back the businesses update. Writes audit log server-side with action `change_subscription_tier`.
+- `app/api/admin/businesses/[id]/tier/route.ts`: New POST route that changes a business's subscription tier. Requires `requirePlatformAdmin({ requiredRole: 'admin' })` (full-admin only, Bearer auth). Validates UUID and tier against the DB enum (`free`, `growth`, `business`). Updates `businesses.subscription_tier` and `subscriptions.tier` via service client. If the subscriptions update fails, rolls back the businesses update; if the rollback itself fails, reports via `Sentry.captureException` and `logger.error` with business ID, previous tier, and attempted tier. Writes audit log server-side with action `change_subscription_tier`.
 - `admin/src/pages/Businesses.tsx`: `handleTierChange()` now calls the new API route via fetch with Bearer auth instead of writing directly to `adminDb`. Error messages from the server are shown to the admin.
 - `admin/src/pages/Subscriptions.tsx`: `handleChangeTier()` now calls the new API route via fetch with Bearer auth instead of writing directly to `adminDb`. Error messages from the server are shown to the admin.
-- `lib/__tests__/admin-tier-change.test.ts`: 8 tests covering auth (non-admin 403, non-full-admin 403), validation (invalid tier 400, invalid UUID 400), business not found (404), happy path (updates both records + audit), rollback on second-write failure, and same-tier no-op.
+- `lib/__tests__/admin-tier-change.test.ts`: 9 tests covering auth (non-admin 403, non-full-admin 403), validation (invalid tier 400, invalid UUID 400), business not found (404), happy path (updates both records + audit), rollback on second-write failure, rollback-also-fails (Sentry + logger capture), and same-tier no-op.
 
 ### What it affects / could break
 - Admin tier changes now go through the server-side route, bypassing the tier trigger and #635 guard that blocked direct browser writes. This is the same pattern used for capability mutations.

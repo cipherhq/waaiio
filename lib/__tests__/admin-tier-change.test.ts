@@ -10,6 +10,7 @@
  * 6. Subscriptions update failure rolls back businesses update
  * 7. Invalid UUID gets 400
  * 8. Same-tier no-op returns the tier without writes
+ * 9. Rollback also fails → 500, Sentry.captureException and logger.error called
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -24,6 +25,16 @@ vi.mock('@/lib/admin-auth', () => ({
 const mockLogAdminAudit = vi.fn().mockResolvedValue({});
 vi.mock('@/lib/admin-audit', () => ({
   logAdminAudit: (...args: unknown[]) => mockLogAdminAudit(...args),
+}));
+
+const mockSentryCaptureException = vi.fn();
+vi.mock('@sentry/nextjs', () => ({
+  captureException: (...args: unknown[]) => mockSentryCaptureException(...args),
+}));
+
+const mockLoggerError = vi.fn();
+vi.mock('@/lib/logger', () => ({
+  logger: { error: (...args: unknown[]) => mockLoggerError(...args) },
 }));
 
 // Track per-table update calls and their responses
@@ -267,6 +278,46 @@ describe('Admin tier-change route', () => {
     const json = await res.json();
     expect(json.tier).toBe('free');
     expect(updateCalls).toHaveLength(0);
+    expect(mockLogAdminAudit).not.toHaveBeenCalled();
+  });
+
+  it('9. rollback also fails → 500, Sentry and logger capture the error', async () => {
+    mockRequirePlatformAdmin.mockResolvedValue({
+      id: 'admin-1', userId: 'admin-1', email: 'admin@test.com',
+      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
+    });
+    subUpdateResponse.error = { message: 'constraint violation' };
+    bizRollbackResponse.error = { message: 'connection lost' };
+
+    const { POST } = await import('@/app/api/admin/businesses/[id]/tier/route');
+    const res = await POST(
+      makeRequest(VALID_BIZ_ID, { tier: 'growth' }),
+      { params: Promise.resolve({ id: VALID_BIZ_ID }) },
+    );
+
+    expect(res.status).toBe(500);
+
+    // Sentry captured the rollback failure
+    expect(mockSentryCaptureException).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('Tier rollback failed') }),
+      expect.objectContaining({
+        tags: { component: 'admin-tier-change', operation: 'rollback' },
+        extra: { businessId: VALID_BIZ_ID, previousTier: 'free', attemptedTier: 'growth' },
+      }),
+    );
+
+    // logger.error was called with business context
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      '[ADMIN-TIER] Rollback failed:',
+      expect.objectContaining({
+        businessId: VALID_BIZ_ID,
+        previousTier: 'free',
+        attemptedTier: 'growth',
+        rollbackError: 'connection lost',
+      }),
+    );
+
+    // No audit logged on failure
     expect(mockLogAdminAudit).not.toHaveBeenCalled();
   });
 });

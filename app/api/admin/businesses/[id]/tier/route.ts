@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logAdminAudit } from '@/lib/admin-audit';
+import { logger } from '@/lib/logger';
 
 /** DB enum: subscription_tier AS ENUM ('free', 'growth', 'business') */
 const VALID_TIERS = new Set(['free', 'growth', 'business']);
@@ -74,10 +76,26 @@ export async function POST(
 
   if (subUpdateError) {
     // Rollback the businesses update
-    await supabase
+    const { error: rollbackError } = await supabase
       .from('businesses')
       .update({ subscription_tier: previousTier })
       .eq('id', id);
+
+    if (rollbackError) {
+      const err = new Error(
+        `Tier rollback failed: business ${id} stuck at tier "${tier}" but subscriptions has "${previousTier}"`,
+      );
+      logger.error('[ADMIN-TIER] Rollback failed:', {
+        businessId: id,
+        previousTier,
+        attemptedTier: tier,
+        rollbackError: rollbackError.message,
+      });
+      Sentry.captureException(err, {
+        tags: { component: 'admin-tier-change', operation: 'rollback' },
+        extra: { businessId: id, previousTier, attemptedTier: tier },
+      });
+    }
 
     return NextResponse.json({ error: 'Failed to update subscription tier' }, { status: 500 });
   }
