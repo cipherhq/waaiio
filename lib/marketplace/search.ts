@@ -148,15 +148,17 @@ export function applyDirectoryEligibility(query: any): any {
 /**
  * Load admin-hidden business IDs from platform_settings.
  * Used by both the API route and bot directory paths.
+ * Returns null on DB error so callers can fail closed.
  */
 export async function loadDirectoryHiddenIds(
   supabase: SupabaseClient,
-): Promise<string[]> {
-  const { data } = await supabase
+): Promise<string[] | null> {
+  const { data, error } = await supabase
     .from('platform_settings')
     .select('value')
     .eq('key', 'directory_hidden')
     .maybeSingle();
+  if (error) return null;
   return Array.isArray(data?.value) ? data.value : [];
 }
 
@@ -173,6 +175,7 @@ export async function isBusinessDirectoryEligible(
   ).maybeSingle();
   if (!data) return false;
   const hidden = await loadDirectoryHiddenIds(supabase);
+  if (hidden === null) return false; // fail closed on DB error
   return !hidden.includes(businessId);
 }
 

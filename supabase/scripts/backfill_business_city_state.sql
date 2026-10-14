@@ -47,6 +47,7 @@ SELECT
 FROM businesses b
 JOIN known_cities kc
   ON b.address ILIKE '%' || kc.city_name || '%'
+  AND b.country_code = kc.country_code
 WHERE b.city IS NULL
   AND b.address IS NOT NULL
   AND b.status = 'active'
@@ -94,6 +95,7 @@ ranked_matches AS (
   FROM businesses b
   JOIN known_cities kc
     ON b.address ILIKE '%' || kc.city_name || '%'
+    AND b.country_code = kc.country_code
   WHERE b.city IS NULL
     AND b.address IS NOT NULL
     AND b.status = 'active'

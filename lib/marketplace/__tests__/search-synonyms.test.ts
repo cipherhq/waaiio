@@ -62,6 +62,23 @@ describe('loadDirectoryHiddenIds', () => {
     const result = await loadDirectoryHiddenIds(supabase);
     expect(result).toEqual([]);
   });
+
+  it('returns null on database error (fail closed)', async () => {
+    const supabase = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: null,
+              error: { message: 'connection refused' },
+            }),
+          })),
+        })),
+      })),
+    } as any;
+    const result = await loadDirectoryHiddenIds(supabase);
+    expect(result).toBeNull();
+  });
 });
 
 describe('isBusinessDirectoryEligible', () => {

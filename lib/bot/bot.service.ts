@@ -3064,6 +3064,10 @@ export class BotService {
           // Handle marketplace search (no business context needed)
           if (understanding.recommendedAction === 'search_marketplace') {
             const hiddenIds = await loadDirectoryHiddenIds(this.supabase);
+            if (hiddenIds === null) {
+              await this.sendText(from, 'Business search is temporarily unavailable. Please try again shortly.');
+              return;
+            }
             const searchResult = await searchMarketplace(this.supabase, {
               category: understanding.entities.category,
               query:
