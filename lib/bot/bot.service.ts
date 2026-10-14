@@ -1733,7 +1733,33 @@ export class BotService {
           .eq('phone', phoneWithPlusRead)
           .maybeSingle();
         if (custProfile?.preferred_language) {
-          hasRememberedLanguage = true; // Skip picker, use their saved preference
+          // Verify the saved language is still allowed by the business
+          const savedLang = custProfile.preferred_language;
+          const savedLangConfigured = await loadBusinessLanguages(this.supabase, business.id);
+          const savedLangEntitlement = getEffectiveLanguages(
+            business.subscription_tier,
+            savedLangConfigured,
+          );
+          const { CERTIFIED_LANGUAGES: savedLangCert } = await import('./language-policy');
+          const savedLangAllowed = savedLangEntitlement.allowedLanguages.filter(
+            (code: string) => savedLangCert.includes(code),
+          );
+          if (savedLangAllowed.includes(savedLang)) {
+            // Language still allowed — activate it on the session
+            hasRememberedLanguage = true;
+            session.session_data._detected_language = savedLang;
+            // Persist the activation so greeting and flows use it
+            const savedLangCas = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version,
+              p_current_step: session.current_step,
+              p_session_data: session.session_data,
+            });
+            if (savedLangCas.data?.success) {
+              session.version = savedLangCas.data.version;
+            }
+          }
+          // If not allowed: fall through to picker (hasRememberedLanguage stays false)
         }
 
         if (!hasRememberedLanguage && !_internalProvenance) {

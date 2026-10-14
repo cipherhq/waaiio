@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(bot): activate remembered language from customer_profiles (#633)
+
+### What changed
+- `lib/bot/bot.service.ts` (~L1735): When `customer_profiles.preferred_language` is set, verify it against the business's current allowed + certified languages before skipping the picker. If allowed, set `session_data._detected_language` and persist via CAS — greeting and flows now render in the saved language. If not allowed (business removed it or tier dropped), fall through to the picker instead of silently defaulting to English.
+
+### What it affects / could break
+- Returning customers who previously picked a language now get responses in that language immediately (no picker). Previously they got English despite having a saved preference.
+- If a business removes a language from its config, returning customers with that preference will see the picker again (correct behavior).
+
 ## 2026-10-14 — feat(bot): business-editable greeting keys with platform-only deny list (#633)
 
 ### Owner decision

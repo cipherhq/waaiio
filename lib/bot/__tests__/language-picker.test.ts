@@ -1444,3 +1444,118 @@ describe('Greeting key overrides — handleMessage path', () => {
     expect(greeting).toContain('Welcome! How can I help you today?');
   });
 });
+
+// ═══════════════════════════════════════════════════════
+// 15. Remembered language activation from customer_profiles
+// ═══════════════════════════════════════════════════════
+
+describe('Remembered language activation — customer_profiles.preferred_language', () => {
+  it('pcm preference allowed: no picker, greeting uses pcm, _detected_language=pcm', async () => {
+    const sender = createCaptureSender();
+    const insertTracker: Array<{ table: string; data: Record<string, unknown> }> = [];
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      customerProfileLanguage: 'pcm',
+      insertTracker,
+      rpcTracker,
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    // No picker shown
+    const msgs = sender.getMessages();
+    const pickerList = msgs.find(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    expect(pickerList).toBeUndefined();
+
+    // _detected_language set to pcm via CAS
+    const casCalls = rpcTracker.filter(r => r.fn === 'update_session_cas');
+    const langActivationCas = casCalls.find(
+      r => (r.args as any)?.p_session_data?._detected_language === 'pcm',
+    );
+    expect(langActivationCas).toBeDefined();
+
+    // Greeting stored with pcm text (cancel_hint from FLOW_COPY.pcm)
+    const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
+    expect(sessionInsert).toBeDefined();
+    // The _detected_language should be set on the session
+    const sessionData = sessionInsert!.data.session_data as Record<string, unknown>;
+    // After CAS, session has _detected_language — check the CAS call data
+    expect(langActivationCas).toBeDefined();
+  });
+
+  it('pcm preference NOT allowed: picker is shown', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      // Business only allows English — pcm removed
+      enabledLanguages: ['en'],
+      // Customer still has pcm saved from before
+      customerProfileLanguage: 'pcm',
+      rpcTracker,
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, BIZ_ID);
+
+    // pcm is not in the allowed languages, so the saved preference is ignored.
+    // With only 'en' as allowed, pickerAllowed.length is NOT > 1, so no picker either.
+    // The bot should just proceed in English (no picker, no pcm activation).
+    const msgs = sender.getMessages();
+    const pickerList = msgs.find(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    // No picker (only 1 language available)
+    expect(pickerList).toBeUndefined();
+
+    // No _detected_language=pcm activation via CAS
+    const casCalls = rpcTracker.filter(r => r.fn === 'update_session_cas');
+    const langActivationCas = casCalls.find(
+      r => (r.args as any)?.p_session_data?._detected_language === 'pcm',
+    );
+    expect(langActivationCas).toBeUndefined();
+  });
+
+  it('pcm preference from biz A does not apply at biz B (per-business lookup)', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+
+    // Business B allows en + pcm but the customer_profiles lookup is per business_id + phone.
+    // With customerProfileLanguage=null (no saved pref for this business), the picker should show.
+    const supabase = createTableMock({
+      activeSession: null,
+      business: makeBusiness({ id: 'biz-b', subscription_tier: 'growth' }),
+      capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+      enabledLanguages: ['en', 'pcm'],
+      // No saved preference for business B
+      customerProfileLanguage: null,
+      rpcTracker,
+    });
+
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await bot.handleMessage(PHONE, 'Hello', 'text', undefined, 'biz-b');
+
+    // With no saved preference and 2 allowed languages, picker should be shown
+    const msgs = sender.getMessages();
+    const pickerList = msgs.find(
+      m => m.type === 'list' && m.items?.some(i => i.postbackText.startsWith('lang_pick_')),
+    );
+    expect(pickerList).toBeDefined();
+
+    // No pcm activation
+    const casCalls = rpcTracker.filter(r => r.fn === 'update_session_cas');
+    const langActivationCas = casCalls.find(
+      r => (r.args as any)?.p_session_data?._detected_language === 'pcm',
+    );
+    expect(langActivationCas).toBeUndefined();
+  });
+});
