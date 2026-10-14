@@ -212,6 +212,13 @@ describeDb('Migration 443: payment credentials column-level access hardening', (
     expect(r).toMatch(/permission denied|42501/i);
   });
 
+  it('post-migration: authenticated cannot SELECT public_key (M426 treats as sensitive)', () => {
+    const r = sql(`
+      SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'public_key', 'SELECT');
+    `);
+    expect(r).toBe('f');
+  });
+
   // ═══════════════════════════════════════════════════════════════
   // D. Post-migration: anon cannot SELECT any column
   // ═══════════════════════════════════════════════════════════════

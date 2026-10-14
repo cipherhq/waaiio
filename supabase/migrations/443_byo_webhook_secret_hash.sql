@@ -33,11 +33,13 @@ ADD COLUMN IF NOT EXISTS webhook_secret_hash TEXT;
 REVOKE SELECT ON TABLE public.business_payment_credentials FROM anon;
 REVOKE SELECT ON TABLE public.business_payment_credentials FROM authenticated;
 
--- Grant column-level SELECT on every column EXCEPT secret_key and
--- webhook_secret_hash to authenticated. These are the columns the
--- GET route and RLS bpc_owner_select policy need.
+-- Grant column-level SELECT on safe columns to authenticated.
+-- Excluded: secret_key, webhook_secret_hash (secrets), public_key
+-- (M426 negative contract treats it as sensitive alongside secret_key).
+-- The GET route uses only: id, gateway, platform_subaccount_code,
+-- is_active, verified_at, created_at, connection_type, connect_account_id.
 GRANT SELECT (
-  id, business_id, gateway, public_key, platform_subaccount_code,
+  id, business_id, gateway, platform_subaccount_code,
   connect_account_id, connection_type, is_active, verified_at,
   created_at, updated_at
 ) ON TABLE public.business_payment_credentials TO authenticated;
