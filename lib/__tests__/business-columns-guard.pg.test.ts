@@ -6,7 +6,8 @@
  *
  * Builds its own minimal schema, creates the OLD tier trigger (181),
  * runs a negative control (verification_level update succeeds before 442),
- * applies migration 442 from disk, then tests all 9 guarded columns.
+ * applies migrations 441, 446, and 442 from disk, then tests all 9 guarded
+ * columns plus RPC compatibility (swap_payout_account, disconnect_payout_account).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -87,8 +88,14 @@ describeDb('Migration 442: server-managed business columns guard', () => {
       );
     `);
 
-    // Add columns if they don't exist (for re-runs on shared DB)
+    // Add columns if they don't exist (CI template has a minimal businesses table)
     for (const col of [
+      "owner_id UUID REFERENCES auth.users(id)",
+      "name TEXT NOT NULL DEFAULT 'Test'",
+      'slug TEXT',
+      "category VARCHAR(50) DEFAULT 'shop'",
+      "country_code VARCHAR(10) DEFAULT 'NG'",
+      "status VARCHAR(20) DEFAULT 'active'",
       "verification_level VARCHAR(20) DEFAULT 'unverified'",
       "verification_status VARCHAR(20) DEFAULT 'unverified'",
       'payout_limit_monthly BIGINT DEFAULT 0',
@@ -100,6 +107,64 @@ describeDb('Migration 442: server-managed business columns guard', () => {
     ]) {
       sql(`ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS ${col};`);
     }
+
+    // ── payout_accounts table (needed by migrations 441 + 446) ──
+    sql(`
+      CREATE TABLE IF NOT EXISTS public.payout_accounts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+        gateway VARCHAR(20) NOT NULL,
+        subaccount_code VARCHAR(100),
+        stripe_account_id VARCHAR(100),
+        bank_code VARCHAR(10),
+        bank_name VARCHAR(100),
+        account_number VARCHAR(20),
+        account_name VARCHAR(200),
+        square_merchant_id VARCHAR(100),
+        square_access_token TEXT,
+        platform_percentage DECIMAL(5,2) NOT NULL DEFAULT 2.5,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        verified_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    // Add Square OAuth columns if missing (from migration 080)
+    sql(`ALTER TABLE public.payout_accounts ADD COLUMN IF NOT EXISTS square_merchant_id VARCHAR(100);`);
+    sql(`ALTER TABLE public.payout_accounts ADD COLUMN IF NOT EXISTS square_access_token TEXT;`);
+
+    // Unique partial index required by 441's assertion
+    sql(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_accounts_business_active
+        ON public.payout_accounts(business_id) WHERE is_active = true;
+    `);
+    sql(`ALTER TABLE public.payout_accounts ENABLE ROW LEVEL SECURITY;`);
+
+    // Owner policies (needed so 446 can DROP them)
+    sql(`
+      DROP POLICY IF EXISTS "Business owners can view own payout accounts" ON public.payout_accounts;
+      CREATE POLICY "Business owners can view own payout accounts"
+        ON public.payout_accounts FOR SELECT
+        USING (business_id IN (SELECT id FROM public.businesses WHERE owner_id = current_setting('request.jwt.claim.sub', true)::uuid));
+    `);
+    sql(`
+      DROP POLICY IF EXISTS "Business owners can insert own payout accounts" ON public.payout_accounts;
+      CREATE POLICY "Business owners can insert own payout accounts"
+        ON public.payout_accounts FOR INSERT
+        WITH CHECK (business_id IN (SELECT id FROM public.businesses WHERE owner_id = current_setting('request.jwt.claim.sub', true)::uuid));
+    `);
+    sql(`
+      DROP POLICY IF EXISTS "Business owners can update own payout accounts" ON public.payout_accounts;
+      CREATE POLICY "Business owners can update own payout accounts"
+        ON public.payout_accounts FOR UPDATE
+        USING (business_id IN (SELECT id FROM public.businesses WHERE owner_id = current_setting('request.jwt.claim.sub', true)::uuid));
+    `);
+
+    // Grants for payout_accounts (pre-446 state)
+    sql(`
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.payout_accounts TO service_role;
+      GRANT SELECT, INSERT, UPDATE ON public.payout_accounts TO authenticated;
+    `);
 
     // RLS + owner UPDATE policy (production state)
     sql(`ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;`);
@@ -143,21 +208,34 @@ describeDb('Migration 442: server-managed business columns guard', () => {
     `);
 
     // ── Seed test data ──
-    sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
-    sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID2}') ON CONFLICT DO NOTHING;`);
-    sql(`
+    const seedUser1 = sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING RETURNING id;`);
+    const seedUser2 = sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID2}') ON CONFLICT DO NOTHING RETURNING id;`);
+    const seedBiz = sql(`
       INSERT INTO public.businesses (id, owner_id, name, slug, verification_level, verification_status, payout_limit_monthly, payout_mode, subscription_tier)
       VALUES ('${BIZ_ID}', '${OWNER_ID}', 'Guard Test', 'guard-test-442', 'basic', 'verified', 500000, 'platform_managed', 'free')
-      ON CONFLICT (id) DO NOTHING;
+      ON CONFLICT (id) DO NOTHING RETURNING id;
     `);
+
+    // Verify seeds inserted (RETURNING id gives the UUID, ON CONFLICT DO NOTHING gives empty string)
+    // Either the id was returned (insert) or no error occurred (conflict = already present)
+    expect(seedUser1).not.toContain('ERROR');
+    expect(seedUser2).not.toContain('ERROR');
+    expect(seedBiz).not.toContain('ERROR');
+
+    // Verify the business row actually exists
+    const bizExists = sql(`SELECT count(*) FROM public.businesses WHERE id = '${BIZ_ID}';`);
+    expect(bizExists).toBe('1');
   });
 
   afterAll(() => {
+    sql(`DELETE FROM public.payout_accounts WHERE business_id = '${BIZ_ID}';`);
     sql(`DELETE FROM public.businesses WHERE id = '${BIZ_ID}';`);
     sql(`DELETE FROM auth.users WHERE id IN ('${OWNER_ID}', '${OWNER_ID2}');`);
-    // Clean up triggers/functions but leave the table for other tests
+    // Clean up triggers/functions but leave the tables for other tests
     sql(`DROP TRIGGER IF EXISTS trg_guard_server_managed_columns ON public.businesses;`);
     sql(`DROP FUNCTION IF EXISTS public.guard_server_managed_columns();`);
+    sql(`DROP FUNCTION IF EXISTS public.swap_payout_account(uuid,text,text,text,text,text,text,timestamptz,text,text,text);`);
+    sql(`DROP FUNCTION IF EXISTS public.disconnect_payout_account(uuid);`);
   });
 
   // ════════════════════════════════════════════════════
@@ -180,8 +258,49 @@ describeDb('Migration 442: server-managed business columns guard', () => {
   });
 
   // ════════════════════════════════════════════════════
-  // APPLY migration 442
+  // APPLY migrations 441, 446, then 442
   // ════════════════════════════════════════════════════
+
+  it('applying migration 441 (payout account RPCs) from disk succeeds', () => {
+    const migrationSql = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/441_payout_account_atomic_swap.sql'),
+      'utf-8',
+    );
+    execSync(
+      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`,
+      { encoding: 'utf-8', timeout: 15000, input: migrationSql },
+    );
+    // Verify the 8-arg swap_payout_account was created
+    const fnCount = sql(`
+      SELECT count(*) FROM pg_proc
+      WHERE proname = 'swap_payout_account' AND pronamespace = 'public'::regnamespace;
+    `);
+    expect(fnCount).toBe('1');
+  });
+
+  it('applying migration 446 (payout accounts server-only) from disk succeeds', () => {
+    const migrationSql = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/446_payout_accounts_server_only.sql'),
+      'utf-8',
+    );
+    execSync(
+      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A`,
+      { encoding: 'utf-8', timeout: 15000, input: migrationSql },
+    );
+    // 446 drops the 8-arg overload and creates the 11-arg version — still exactly 1
+    const fnCount = sql(`
+      SELECT count(*) FROM pg_proc
+      WHERE proname = 'swap_payout_account' AND pronamespace = 'public'::regnamespace;
+    `);
+    expect(fnCount).toBe('1');
+
+    // Verify the new 11-arg signature (pronargs = 11)
+    const argCount = sql(`
+      SELECT pronargs FROM pg_proc
+      WHERE proname = 'swap_payout_account' AND pronamespace = 'public'::regnamespace;
+    `);
+    expect(argCount).toBe('11');
+  });
 
   it('applying migration 442 from disk succeeds', () => {
     const migrationSql = readFileSync(
@@ -335,6 +454,116 @@ describeDb('Migration 442: server-managed business columns guard', () => {
       SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
       SET LOCAL request.jwt.claims = '{"sub":"${OWNER_ID}","role":"authenticated"}';
       UPDATE public.businesses SET subscription_tier = 'business' WHERE id = '${BIZ_ID}';
+      COMMIT;
+    `);
+    expect(threw).toBe(true);
+  });
+
+  // ════════════════════════════════════════════════════
+  // RPC compatibility: 441/446 RPCs + 442 guard
+  // ════════════════════════════════════════════════════
+
+  it('COMPAT: swap_payout_account as service_role succeeds with guard active', () => {
+    const result = sql(`
+      SET ROLE service_role;
+      SELECT swap_payout_account(
+        '${BIZ_ID}'::uuid,
+        'paystack',
+        '058',
+        'Test Bank',
+        '0123456789',
+        'Guard Test Account'
+      );
+      RESET ROLE;
+    `);
+    expect(result).not.toContain('ERROR');
+    // The result should be a UUID (the new payout account id)
+    expect(result).toMatch(/^[0-9a-f-]{36}$/);
+
+    // Clean up the payout account for subsequent tests
+    sql(`DELETE FROM public.payout_accounts WHERE business_id = '${BIZ_ID}';`);
+  });
+
+  it('COMPAT: swap_payout_account + payout_mode update as service_role → payout_mode changes', () => {
+    // This mirrors the real app flow: call swap_payout_account, then update payout_mode
+    const rpcResult = sql(`
+      SET ROLE service_role;
+      SELECT swap_payout_account(
+        '${BIZ_ID}'::uuid,
+        'square',
+        NULL, NULL, NULL, NULL, NULL, NULL,
+        NULL,
+        'sq_merchant_test',
+        'encrypted_token_test'
+      );
+      RESET ROLE;
+    `);
+    expect(rpcResult).not.toContain('ERROR');
+    expect(rpcResult).toMatch(/^[0-9a-f-]{36}$/);
+
+    // Update payout_mode as service_role (what square-callback route does)
+    const modeUpdate = sql(`
+      SET ROLE service_role;
+      UPDATE public.businesses SET payout_mode = 'direct_split' WHERE id = '${BIZ_ID}';
+      RESET ROLE;
+    `);
+    expect(modeUpdate).not.toContain('ERROR');
+
+    // Verify payout_mode actually changed
+    const mode = sql(`SELECT payout_mode FROM public.businesses WHERE id = '${BIZ_ID}';`);
+    expect(mode).toBe('direct_split');
+
+    // Clean up
+    sql(`DELETE FROM public.payout_accounts WHERE business_id = '${BIZ_ID}';`);
+    sql(`UPDATE public.businesses SET payout_mode = 'platform_managed' WHERE id = '${BIZ_ID}';`);
+  });
+
+  it('COMPAT: disconnect_payout_account as service_role resets payout_mode with guard active', () => {
+    // First create an active payout account so disconnect has something to deactivate
+    sql(`
+      SET ROLE service_role;
+      SELECT swap_payout_account(
+        '${BIZ_ID}'::uuid, 'paystack', '058', 'Test Bank', '0123456789', 'Test Account'
+      );
+      RESET ROLE;
+    `);
+    // Set payout_mode to direct_split first
+    sql(`
+      SET ROLE service_role;
+      UPDATE public.businesses SET payout_mode = 'direct_split' WHERE id = '${BIZ_ID}';
+      RESET ROLE;
+    `);
+
+    // Call disconnect_payout_account — this updates payout_mode inside the RPC
+    const result = sql(`
+      SET ROLE service_role;
+      SELECT disconnect_payout_account('${BIZ_ID}'::uuid);
+      RESET ROLE;
+    `);
+    expect(result).not.toContain('ERROR');
+
+    // Verify payout_mode was reset to platform_managed by the RPC
+    const mode = sql(`SELECT payout_mode FROM public.businesses WHERE id = '${BIZ_ID}';`);
+    expect(mode).toBe('platform_managed');
+
+    // Verify no active payout accounts remain
+    const activeCount = sql(`
+      SELECT count(*) FROM public.payout_accounts
+      WHERE business_id = '${BIZ_ID}' AND is_active = true;
+    `);
+    expect(activeCount).toBe('0');
+
+    // Clean up
+    sql(`DELETE FROM public.payout_accounts WHERE business_id = '${BIZ_ID}';`);
+  });
+
+  it('COMPAT: authenticated cannot directly update payout_mode with guard active', () => {
+    const threw = sqlThrows(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      SET LOCAL request.jwt.claims = '{"sub":"${OWNER_ID}","role":"authenticated"}';
+      UPDATE public.businesses SET payout_mode = 'direct_split' WHERE id = '${BIZ_ID}';
       COMMIT;
     `);
     expect(threw).toBe(true);
