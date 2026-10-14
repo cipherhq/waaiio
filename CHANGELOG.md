@@ -10,7 +10,7 @@ If something breaks, check this log to find what changed and when.
 - `admin/src/pages/Businesses.tsx:263-268`: If the GET pre-check fails (network error, non-OK status, or bad JSON), shows alert "Could not check whether this business has a paid plan. Tier not changed." and aborts without sending POST.
 - `admin/src/pages/Subscriptions.tsx:317-322`: Same pre-check failure handling.
 - `lib/__tests__/admin-tier-change.test.ts`: Added tests 14 (GET 500 on subscription read error) and 15 (POST 500 on subscription read error — no write, no audit). Total: 15 tests, 0 skips.
-- `admin/src/__tests__/tier-change-precheck.test.tsx`: 8 tests — GET non-OK and network error abort with alert (no POST) for both Businesses and Subscriptions pages; paying business confirm(false) blocks POST, confirm(true) proceeds; source code structure assertions for both pages.
+- `admin/src/__tests__/tier-change-precheck.test.tsx`: 6 tests — renders real Businesses and Subscriptions pages with @testing-library/react; drives tier-change UI (select tier, click Save); asserts GET non-OK and network error abort with alert (no POST) for both pages; paying business confirm(false) blocks POST, confirm(true) proceeds with exactly one POST.
 
 ### What it affects / could break
 - If the subscriptions table is unreachable, admin tier changes are blocked until it recovers. This is intentional — the route needs subscription status to populate the response and audit log.
@@ -27,6 +27,25 @@ If something breaks, check this log to find what changed and when.
 - Previous head (96279b15) had a P0 bug: the route wrote `subscriptions.tier` which does not exist — PostgREST rejected it and every tier change returned 500. Unit tests passed because Supabase was mocked. This is now fixed.
 - Admin tier change is a business-only override. Non-paying businesses: permanent. Paying businesses: temporary until next renewal.
 - No changes to billing, payments, renewal logic, cron, or capabilities.
+
+## 2026-10-14 — fix(admin): replace JSON input with country-amount form for per-country settings
+
+### What changed
+- `shared/country-amounts.ts` (new): Shared validator for `minimum_bank_transfer` (NG, GH) and `minimum_payout` (NG, US, GB, CA, GH). All allowed countries are required — omitting one is a validation error. Validates: plain object, all allowed country codes present, no unknown countries, finite non-negative integers. Also exports country names, currency symbols, and help text.
+- `admin/src/pages/PlatformSettings.tsx`: Added `CountryAmountEditor` component showing one row per country with currency symbol (₦, GH₵, $, £, CA$) and number input. Replaces raw JSON text input for both the "Configure" (unconfigured) path and the existing editor path. Inline validation: blocks decimal, comma, letter-e keystrokes; shows "Required" for empty boxes; disables Save when invalid. Updated `KEY_DESCRIPTIONS` to plain-language help text, removed JSON placeholder/wording.
+- `app/api/admin/platform-settings/commercial/route.ts`: Server-side validation for `minimum_bank_transfer` and `minimum_payout` — rejects with 400 if value is not a plain object with all required country keys and non-negative integer values.
+- `admin/src/__tests__/platform-settings-discoverability.test.tsx`: Updated tests 3 and 5 for country-amount form (no JSON textbox). Added tests 6-8: existing minimum_payout renders number inputs; editing produces numeric values not strings; Save disabled when a country box is empty.
+- `lib/platformSettings.ts`: Fixed incorrect docstring on `minimum_payout` — was "minor units", corrected to "whole (major) currency units".
+- `lib/__tests__/country-amounts-validation.test.ts` (new): 29 unit tests for the shared validator (valid, missing countries, null, string "1000", -1, 1.5, NaN, Infinity, unknown country, nested objects, empty object, multiple errors).
+- `lib/__tests__/commercial-route-country-amounts.test.ts` (new): 15 route-level tests proving bad values get 400 (including missing countries) and valid values reach the RPC as numbers.
+
+### Units finding
+- `minimum_bank_transfer`: **whole (major) currency units** — naira, cedis. Evidence: `bank-transfer.ts:48` compares `amount >= minBankTransfer` where `amount` is in major units (line 93: `Math.round(params.amount * 100)` converts to minor for DB storage). `platformSettings.ts:67` docstring confirms "major currency units".
+- `minimum_payout`: **whole (major) currency units** — naira, dollars, pounds, cedis. Evidence: `auto-payout/route.ts:165-181` compares `netAmount < minPayout` where `netAmount` = sum of `platform_fees.transaction_amount` which = `payment.amount` (major units, proven by `paystack.ts:218`: `payment.amount * 100` = kobo). The docstring at `platformSettings.ts:44` says "minor units" but this is incorrect per the actual comparison chain.
+
+### What it affects / could break
+- Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
+- If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
 
 ## 2026-10-13 — fix(security): move bank account writes server-side (M448)
 
