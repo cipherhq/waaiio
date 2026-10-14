@@ -56,13 +56,20 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
   beforeAll(() => {
     if (!dbUrl) return;
 
+    // 0. Ensure columns used by the test and migration 445 exist on the
+    //    minimal CI template tables. These are idempotent ADD COLUMN IF NOT EXISTS.
+    psql(`
+      ALTER TABLE businesses ADD COLUMN IF NOT EXISTS category TEXT;
+      ALTER TABLE businesses ADD COLUMN IF NOT EXISTS country_code TEXT;
+    `);
+
     // 1. Apply migration 445 from disk (idempotent — IF NOT EXISTS / ON CONFLICT)
     const migrationPath = join(__dirname, '../../supabase/migrations/445_bot_translation_overrides.sql');
     const migrationSql = readFileSync(migrationPath, 'utf-8');
     psql(migrationSql);
 
-    // 2. Seed fixture users and businesses (CI has full schema; ON CONFLICT keeps it safe)
-    psql(`
+    // 2. Seed fixture users and businesses — assert each insert succeeds.
+    const seedResult = psqlMayFail(`
       INSERT INTO auth.users (id) VALUES ('${OWNER_A}') ON CONFLICT DO NOTHING;
       INSERT INTO auth.users (id) VALUES ('${OWNER_B}') ON CONFLICT DO NOTHING;
 
@@ -73,7 +80,6 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
         VALUES ('${BIZ_B}', '${OWNER_B}', 'RLS Test B', 'rls-test-b', 'shop', 'NG', 'active')
         ON CONFLICT (id) DO NOTHING;
 
-      -- Seed translation rows (service_role is the session default in CI psql)
       INSERT INTO bot_translation_platform_overrides (lang, key, value)
         VALUES ('en', 'rls_test_plat', 'Hello!')
         ON CONFLICT (lang, key) DO NOTHING;
@@ -84,7 +90,12 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       INSERT INTO bot_translation_overrides (business_id, lang, key, value)
         VALUES ('${BIZ_B}', 'en', 'rls_test_biz', 'Welcome to B!')
         ON CONFLICT (business_id, lang, key) DO NOTHING;
+
+      SELECT 'seed_ok';
     `);
+    // Assert no ERROR in seed output
+    expect(seedResult).not.toMatch(/ERROR/i);
+    expect(seedResult).toContain('seed_ok');
   });
 
   afterAll(() => {
@@ -104,11 +115,10 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
     const result = psqlMayFail(`
       BEGIN;
       SET LOCAL ROLE anon;
-      SELECT current_user;
       SELECT COUNT(*) FROM bot_translation_platform_overrides;
       ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied/i);
+    expect(result).toMatch(/permission denied for table bot_translation_platform_overrides/i);
   });
 
   it('1b. anon cannot SELECT from bot_translation_overrides', () => {
@@ -118,7 +128,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       SELECT COUNT(*) FROM bot_translation_overrides;
       ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied/i);
+    expect(result).toMatch(/permission denied for table bot_translation_overrides/i);
   });
 
   // ── 2. authenticated cannot INSERT ────────────────────────────
@@ -132,7 +142,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
         VALUES ('en', 'rls_hack', 'nope');
       ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied/i);
+    expect(result).toMatch(/permission denied for table bot_translation_platform_overrides/i);
   });
 
   it('2b. authenticated cannot INSERT into bot_translation_overrides', () => {
@@ -144,7 +154,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
         VALUES ('${BIZ_A}', 'en', 'rls_hack', 'nope');
       ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied/i);
+    expect(result).toMatch(/permission denied for table bot_translation_overrides/i);
   });
 
   // ── 3. authenticated cannot UPDATE ────────────────────────────
@@ -157,7 +167,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       UPDATE bot_translation_platform_overrides SET value = 'hacked' WHERE key = 'rls_test_plat';
       ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied/i);
+    expect(result).toMatch(/permission denied for table bot_translation_platform_overrides/i);
   });
 
   it('3b. authenticated cannot UPDATE bot_translation_overrides', () => {
@@ -168,7 +178,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       UPDATE bot_translation_overrides SET value = 'hacked' WHERE business_id = '${BIZ_A}';
       ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied/i);
+    expect(result).toMatch(/permission denied for table bot_translation_overrides/i);
   });
 
   // ── 4. authenticated cannot DELETE ────────────────────────────
@@ -181,7 +191,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       DELETE FROM bot_translation_platform_overrides WHERE key = 'rls_test_plat';
       ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied/i);
+    expect(result).toMatch(/permission denied for table bot_translation_platform_overrides/i);
   });
 
   it('4b. authenticated cannot DELETE from bot_translation_overrides', () => {
@@ -192,7 +202,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       DELETE FROM bot_translation_overrides WHERE business_id = '${BIZ_A}';
       ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied/i);
+    expect(result).toMatch(/permission denied for table bot_translation_overrides/i);
   });
 
   // ── 5. Owner can SELECT own rows ──────────────────────────────
@@ -243,6 +253,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       SELECT 'ok';
       COMMIT;
     `);
+    expect(result).not.toMatch(/ERROR/i);
     expect(result).toContain('ok');
   });
 
@@ -254,6 +265,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       SELECT 'ok';
       COMMIT;
     `);
+    expect(result).not.toMatch(/ERROR/i);
     expect(result).toContain('ok');
   });
 
@@ -265,6 +277,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       SELECT 'ok';
       COMMIT;
     `);
+    expect(result).not.toMatch(/ERROR/i);
     expect(result).toContain('ok');
   });
 
@@ -288,6 +301,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       SELECT 'ok';
       COMMIT;
     `);
+    expect(result).not.toMatch(/ERROR/i);
     expect(result).toContain('ok');
     // Clean up
     psql(`DELETE FROM bot_translation_overrides WHERE key = 'rls_sr_test';`);
@@ -307,6 +321,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       SELECT 'ok';
       COMMIT;
     `);
+    expect(result).not.toMatch(/ERROR/i);
     expect(result).toContain('ok');
     psql(`DELETE FROM bot_translation_overrides WHERE key = 'rls_sr_upd';`);
   });
@@ -324,6 +339,7 @@ describe.skipIf(!dbUrl)('M445: bot_translation_overrides RLS boundaries', () => 
       SELECT 'ok';
       COMMIT;
     `);
+    expect(result).not.toMatch(/ERROR/i);
     expect(result).toContain('ok');
   });
 
