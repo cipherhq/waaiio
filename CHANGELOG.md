@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1618-1680` (23505 recovery): When the existing null-biz session is expired (`expires_at < now`), deactivate it (`is_active=false`, scoped by `id AND business_id IS NULL`) and retry the insert once. Only resume non-expired sessions. If the retry also fails, log + Sentry and send the fallback via the platform path (`sendPlatformText`).
+- `lib/bot/bot.service.ts:1634,1640,1655,1663` (23505 fallbacks): Changed `this.sendText` to `this.sendPlatformText` with `enterPlatformDiscovery()` for all error fallbacks in the 23505 branch and the non-23505 session-insert-failed branch when no business is bound.
+- `lib/bot/bot.service.ts:2055` (returning user "Welcome back"): Changed from `this.sendText` to `this.sendPlatformText` with `enterPlatformDiscovery()`. Also changed `this.messageSender.sendButtons` to `this.sendPlatformButtons` for the business picker.
+- `lib/bot/bot.service.ts:2100` (registration fallback): Changed `this.sendText` to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2114` (first-time greeting "Welcome to Waaiio"): Changed `this.sendText` to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering: stale expired null-biz 23505 recovery (deactivate + retry), "Hi" platform-scoped reply, brand-new phone platform reply, returning customer picker via platform path.
+
+### What it affects / could break
+- The "I couldn't find a business" message (else branch, non-greeting text) remains `this.sendText` — the S-1 guard still blocks this send when no business is bound (silent failure). This is unchanged from prior behavior; PR #642 rewrites this section.
+- Returning user quick-pick buttons now use `sendPlatformButtons` instead of business-scoped `sendButtons`. The buttons are platform-scoped (no tenant), which is correct since no business is selected yet.
+- 23505 null-biz session recovery now deactivates expired sessions before retrying, preventing perpetual 23505 loops.
+
 ## 2026-10-14 — fix(admin): handle subscription read errors in tier change route
 
 ### What changed
