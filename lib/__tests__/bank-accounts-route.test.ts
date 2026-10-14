@@ -2,7 +2,7 @@
  * Bank account API route handler tests
  *
  * Verifies:
- *  - Non-owner gets 403
+ *  - Non-owner gets 403 on POST, PUT, and DELETE
  *  - Owner write goes through the service client
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -46,6 +46,7 @@ const mockServiceInsert = vi.fn();
 const mockServiceSelect = vi.fn();
 const mockServiceUpdate = vi.fn();
 const mockServiceFrom = vi.fn();
+const mockServiceMaybeSingle = vi.fn();
 
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: vi.fn(() => ({
@@ -56,7 +57,7 @@ vi.mock('@/lib/supabase/service', () => ({
           eq: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               order: vi.fn().mockResolvedValue({ data: [], error: null }),
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              maybeSingle: () => mockServiceMaybeSingle(),
             }),
           }),
           count: 'exact',
@@ -103,6 +104,8 @@ vi.mock('@/lib/logger', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: service client select chain returns no row
+  mockServiceMaybeSingle.mockResolvedValue({ data: null, error: null });
 });
 
 // Dynamically import the route handler after mocks are set
@@ -169,5 +172,53 @@ describe('Bank account route: ownership verification', () => {
         account_name: 'Owner Account',
       }),
     );
+  });
+
+  it('non-owner gets 403 on PUT', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'other-user-id' } } });
+    // Service client finds the account (it exists)
+    mockServiceMaybeSingle.mockResolvedValue({
+      data: { id: 'acct-id', business_id: BIZ_ID },
+    });
+    // Session client ownership check returns null (not owner)
+    mockMaybeSingle.mockResolvedValue({ data: null });
+
+    const { PUT } = await importRoute();
+    const req = new NextRequest('http://localhost/api/dashboard/bank-account', {
+      method: 'PUT',
+      body: JSON.stringify({
+        id: 'acct-id',
+        bank_name: 'Hacked Bank',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const res = await PUT(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toMatch(/access denied/i);
+
+    // Service client should NOT have been called for update
+    expect(mockServiceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('non-owner gets 403 on DELETE', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'other-user-id' } } });
+    // Session client ownership check returns null (not owner)
+    mockMaybeSingle.mockResolvedValue({ data: null });
+
+    const { DELETE: deleteFn } = await importRoute();
+    const req = new NextRequest(
+      `http://localhost/api/dashboard/bank-account?id=acct-id&business_id=${BIZ_ID}`,
+      { method: 'DELETE' },
+    );
+
+    const res = await deleteFn(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toMatch(/not found|access denied/i);
+
+    // Service client should NOT have been called for update (soft-delete)
+    expect(mockServiceUpdate).not.toHaveBeenCalled();
   });
 });

@@ -135,10 +135,15 @@ describeDb('Migration 448: business_bank_accounts server-only', () => {
       SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
       SELECT current_user;
       INSERT INTO business_bank_accounts (business_id, bank_name, account_number, account_name)
-        VALUES ('${BIZ_ID}', 'Pre Bank', '1234567890', 'Pre Account');
+        VALUES ('${BIZ_ID}', 'Pre Bank', '1234567890', 'Pre Account')
+        RETURNING id;
       COMMIT;
     `);
     expect(r).not.toMatch(/permission denied|42501/i);
+    // Prove the role switch took effect
+    expect(r).toContain('authenticated');
+    // Prove a row was actually inserted (UUID returned)
+    expect(r).toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
     // Clean up
     sql(`DELETE FROM business_bank_accounts WHERE business_id = '${BIZ_ID}' AND bank_name = 'Pre Bank';`);
   });
