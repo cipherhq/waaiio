@@ -14,6 +14,17 @@ If something breaks, check this log to find what changed and when.
 - Existing Flutterwave BYO setups without a webhook_secret_hash will continue to work (credentials already saved). New setups require the hash. The BYO webhook handler already rejects Flutterwave webhooks without a configured hash (added in earlier commit).
 - If a merchant tries to set up Flutterwave BYO without configuring a webhook secret in their Flutterwave dashboard first, the setup will be rejected with a clear error message.
 
+## 2026-10-13 — fix(security): move bank account writes server-side (M448)
+
+### What changed
+- `supabase/migrations/448_business_bank_accounts_server_only.sql`: Revokes INSERT/UPDATE/DELETE from `anon` and `authenticated` on `business_bank_accounts`. Revokes SELECT from `anon`. Authenticated keeps SELECT — required by the "Admin reads bank accounts" RLS policy (M439) used by the admin panel's browser client (`adminDb`). Drops the "Owners manage bank accounts" and "Resellers manage sub-account bank accounts" FOR ALL RLS policies. Adds a self-check DO block that fails if any write grant remains.
+- `lib/__tests__/bank-accounts-server-only.pg.test.ts`: Real-PG test that verifies authenticated CAN write before M448 (negative control), applies M448 from disk, then confirms authenticated gets 42501 on INSERT/UPDATE/DELETE, service_role still writes, and authenticated retains SELECT (admin panel compatibility).
+- `lib/__tests__/bank-accounts-route.test.ts`: Route handler test confirming non-owner gets 403 and owner write goes through the service client.
+
+### What it affects / could break
+- No behavior change for users — the dashboard already uses the API route (`/api/dashboard/bank-account`) which uses the service client for all reads and writes. The bot reads via service client. The admin panel reads via authenticated browser client + RLS.
+- If any future code tries to write `business_bank_accounts` through a browser-side Supabase client, it will fail with permission denied. Writes must go through API routes using the service client. Reads are only allowed for admin roles via the "Admin reads bank accounts" RLS policy.
+
 ## 2026-10-13 — #620 fix(admin): make held payouts reviewable; date-only rendering
 
 ### What changed

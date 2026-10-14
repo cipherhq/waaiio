@@ -17,11 +17,10 @@ interface Bank {
 interface PayoutAccount {
   id: string;
   gateway: string;
-  subaccount_code: string | null;
-  stripe_account_id: string | null;
   bank_name: string | null;
   account_number: string | null;
   account_name: string | null;
+  square_merchant_id: string | null;
   verified_at: string | null;
 }
 
@@ -122,7 +121,7 @@ export default function PayoutsPage() {
       // Check for existing payout account
       const { data: payoutAccount } = await supabase
         .from('payout_accounts')
-        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at')
+        .select('id, gateway, bank_name, account_number, account_name, square_merchant_id, verified_at')
         .eq('business_id', business.id)
         .eq('is_active', true)
         .maybeSingle();
@@ -189,7 +188,7 @@ export default function PayoutsPage() {
       const supabase = createClient();
       supabase
         .from('payout_accounts')
-        .select('id, gateway, subaccount_code, stripe_account_id, bank_name, account_number, account_name, verified_at')
+        .select('id, gateway, bank_name, account_number, account_name, square_merchant_id, verified_at')
         .eq('business_id', business.id)
         .eq('is_active', true)
         .maybeSingle()
@@ -287,11 +286,10 @@ export default function PayoutsPage() {
       setExisting({
         id: data.payout_account_id,
         gateway,
-        subaccount_code: data.subaccount_code || null,
-        stripe_account_id: null,
         bank_name: selectedBank?.name || '',
         account_number: accountNumber,
         account_name: data.account_name || resolvedName,
+        square_merchant_id: null,
         verified_at: data.verified ? new Date().toISOString() : null,
       });
       setPageView('connected');
@@ -632,10 +630,10 @@ export default function PayoutsPage() {
                 <span className="font-medium text-green-900">{existing.account_name}</span>
               </div>
             )}
-            {existing.stripe_account_id && (
+            {existing.square_merchant_id && (
               <div className="flex justify-between">
-                <span className="text-green-700">Stripe Account</span>
-                <span className="font-medium text-green-900">{existing.stripe_account_id}</span>
+                <span className="text-green-700">Square Merchant</span>
+                <span className="font-medium text-green-900">{existing.square_merchant_id}</span>
               </div>
             )}
             <div className="flex justify-between">
