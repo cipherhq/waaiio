@@ -9,13 +9,14 @@ import { CAPABILITY_TIER_REQUIREMENTS, tierMeetsRequirement, type CapabilityId, 
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
 
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: request.headers.get('authorization') ? 'Forbidden' : 'Unauthorized' }, { status: request.headers.get('authorization') ? 403 : 401 });
   const service = createServiceClient({ noStore: true });
   const body = await request.json();
   const action = String(body.action || '');
-  const { data: onboarding, error } = await service.from('admin_onboarding_invites').select('*').eq('id', params.id).maybeSingle();
+  const { id } = await params;
+  const { data: onboarding, error } = await service.from('admin_onboarding_invites').select('*').eq('id', id).maybeSingle();
   if (error || !onboarding) return NextResponse.json({ error: 'Onboarding not found' }, { status: 404 });
 
   if (action === 'resend') {
