@@ -304,35 +304,30 @@ export default function Subscriptions() {
     if (!selected || actionTier === selected.tier) return;
     setActionSaving(true);
     try {
-      const { error: subErr } = await adminDb
-        .from('subscriptions')
-        .update({ tier: actionTier })
-        .eq('id', selected.id);
-      if (subErr) throw subErr;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) { alert('Session expired. Please log in again.'); return; }
 
-      const { error: bizErr } = await adminDb
-        .from('businesses')
-        .update({ subscription_tier: actionTier })
-        .eq('id', selected.business_id);
-      if (bizErr) throw bizErr;
-
-      await logAudit({
-        action: 'change_subscription_tier',
-        entity_type: 'subscription',
-        entity_id: selected.id,
-        details: {
-          previous_tier: selected.tier,
-          new_tier: actionTier,
-          business_id: selected.business_id,
-          business_name: selected.business_name,
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/businesses/${selected.business_id}/tier`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
         },
+        body: JSON.stringify({ tier: actionTier }),
       });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || 'Failed to change tier');
+      }
 
       setSubscriptions(prev => prev.map(s => s.id === selected.id ? { ...s, tier: actionTier } : s));
       setSelected(prev => prev ? { ...prev, tier: actionTier } : prev);
     } catch (err) {
       console.error('Tier change error:', err);
-      alert('Failed to change tier');
+      alert(err instanceof Error ? err.message : 'Failed to change tier');
     } finally {
       setActionSaving(false);
     }
