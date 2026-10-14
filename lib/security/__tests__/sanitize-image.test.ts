@@ -7,10 +7,16 @@
  * - Oversized images are resized to the configured limit
  * - Random bytes and truncated files are rejected (throw, no crash)
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import sharp from 'sharp';
 import { sanitizeImage } from '../sanitize-image';
 import { randomBytes } from 'crypto';
+
+// Hoisted mock for the convert route's rate-limit dependency
+vi.mock('@/lib/rate-limit', () => ({
+  rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
+  getRateLimitKey: vi.fn().mockReturnValue('test-key'),
+}));
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -159,20 +165,99 @@ describe('sanitizeImage', () => {
 });
 
 // ---------------------------------------------------------------------------
-// images/convert route — success case (PNG → JPEG)
+// images/convert route handler — real Request / real sharp
 // ---------------------------------------------------------------------------
 
 describe('images/convert route handler', () => {
-  it('converts a PNG buffer to JPEG', async () => {
-    // We test the sharp pipeline directly since the route handler wraps
-    // fetch + sharp.  The route's sharp call is:
-    //   sharp(Buffer.from(arrayBuf)).jpeg({ quality: 85 }).toBuffer()
-    const png = await makeImage('png', { width: 30, height: 30 });
-    const jpeg = await sharp(png).jpeg({ quality: 85 }).toBuffer();
+  const SUPABASE_URL = 'https://test.supabase.co';
 
-    const meta = await sharp(jpeg).metadata();
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+  });
+
+  it('converts a Supabase PNG to JPEG with correct headers and magic bytes', async () => {
+    const png = await makeImage('png', { width: 30, height: 30 });
+
+    // Mock global fetch to return the real PNG buffer
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(png, { status: 200 }),
+    );
+
+    const { GET } = await import('@/app/api/images/convert/route');
+    const req = new Request(
+      `http://localhost/api/images/convert?url=${SUPABASE_URL}/storage/v1/object/public/test.webp`,
+    );
+
+    // NextRequest wraps Request — the route uses request.nextUrl.searchParams
+    const { NextRequest } = await import('next/server');
+    const nextReq = new NextRequest(req);
+    const res = await GET(nextReq);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/jpeg');
+
+    const body = await res.arrayBuffer();
+    const bytes = new Uint8Array(body);
+    // JPEG magic bytes: FF D8 FF
+    expect(bytes[0]).toBe(0xff);
+    expect(bytes[1]).toBe(0xd8);
+    expect(bytes[2]).toBe(0xff);
+
+    // Verify dimensions via sharp
+    const meta = await sharp(Buffer.from(body)).metadata();
     expect(meta.format).toBe('jpeg');
     expect(meta.width).toBe(30);
     expect(meta.height).toBe(30);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('returns 400 for missing url parameter', async () => {
+    const { GET } = await import('@/app/api/images/convert/route');
+    const { NextRequest } = await import('next/server');
+
+    const req = new NextRequest(new Request('http://localhost/api/images/convert'));
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+
+    const json = await res.json();
+    expect(json.error).toBe('Missing url parameter');
+  });
+
+  it('returns 400 for non-Supabase URL', async () => {
+    const { GET } = await import('@/app/api/images/convert/route');
+    const { NextRequest } = await import('next/server');
+
+    const req = new NextRequest(
+      new Request('http://localhost/api/images/convert?url=https://evil.com/image.png'),
+    );
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+
+    const json = await res.json();
+    expect(json.error).toBe('Invalid URL');
+  });
+
+  it('returns 500 for non-image input', async () => {
+    const garbage = randomBytes(256);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(garbage, { status: 200 }),
+    );
+
+    const { GET } = await import('@/app/api/images/convert/route');
+    const { NextRequest } = await import('next/server');
+    const req = new NextRequest(
+      new Request(`http://localhost/api/images/convert?url=${SUPABASE_URL}/storage/v1/object/public/bad.bin`),
+    );
+    const res = await GET(req);
+    expect(res.status).toBe(500);
+
+    const json = await res.json();
+    expect(json.error).toBe('Conversion failed');
   });
 });

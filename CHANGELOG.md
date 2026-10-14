@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — test(security): real route-handler test for images/convert + pdfjs-dist v6 smoke
+
+### What changed
+- `lib/security/__tests__/sanitize-image.test.ts`: Replaced test #10 ("images/convert route handler → converts a PNG buffer to JPEG") which tested sharp directly, with 4 tests that import the real GET handler from `app/api/images/convert/route.ts`, call it with a real `NextRequest`, mock only the outbound `fetch` (returns a real PNG buffer) and `@/lib/rate-limit`. Asserts: status 200, content-type image/jpeg, JPEG magic bytes (FF D8 FF), dimensions via sharp metadata. Added cases for missing URL (400), non-Supabase URL (400), and non-image input (500).
+- `lib/security/__tests__/pdfjs-dist-smoke.test.ts` (new): Smoke test for pdfjs-dist v6. Creates a real PDF via pdf-lib, parses with pdfjs-dist legacy build, verifies numPages, viewport dimensions, and text extraction.
+
+### What it affects / could break
+- Test-only changes. No production code modified.
+- pdfjs-dist smoke uses the `legacy` build for Node.js compatibility (the app uses the default browser build via dynamic import in `app/sign/[token]/page.tsx`).
+
 ## 2026-10-14 — chore: upgrade Next.js 14.2.35 → 15.5.27 + React 18 → 19
 
 ### What changed
