@@ -530,13 +530,14 @@ describe('WhatsApp Setup — 3 Options for Paid Plans', () => {
 });
 
 describe('Admin COMMERCIAL_KEYS includes all M376 keys', () => {
-  it('D11: all 19 canonical commercial keys present in PlatformSettings COMMERCIAL_KEYS', () => {
+  it('D11: all 18 canonical commercial keys present in PlatformSettings COMMERCIAL_KEYS', () => {
     const source = readFileSync(join(process.cwd(), 'admin/src/pages/PlatformSettings.tsx'), 'utf-8');
-    // Full M416 canonical 19-key contract — all must be classified as commercial
+    // Full canonical commercial key contract — all must be classified as commercial
+    // payout_verification_limits removed: limits now live in countries.verification_tiers
     for (const key of [
       'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
       'default_platform_fee_percent', 'annual_discount_percentage',
-      'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+      'payout_cooling_period_days', 'minimum_payout',
       'transfer_expiry_hours', 'minimum_bank_transfer',
       'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
       'fee_policy_enabled', 'category_fee_rates',

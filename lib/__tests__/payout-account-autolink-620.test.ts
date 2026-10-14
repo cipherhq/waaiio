@@ -12,6 +12,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
+// Mock verification limit helper — always allow in these auto-link tests
+vi.mock('@/lib/payouts/verification-limit', () => ({
+  checkVerificationLimit: vi.fn().mockResolvedValue({ allowed: true, limit: 999_999_999, used: 0, remaining: 999_999_999 }),
+}));
+
 function makePostRequest(url: string, body: Record<string, unknown>) {
   return new NextRequest(new URL(url, 'http://localhost:3000'), {
     method: 'POST',
