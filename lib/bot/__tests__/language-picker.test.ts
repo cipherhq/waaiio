@@ -919,6 +919,60 @@ describe('Language picker — pending message re-dispatch routing', () => {
 
     handleMessageSpy.mockRestore();
   });
+
+  it('"book a table" pending message re-dispatches and booking intent fires', async () => {
+    const sender = createCaptureSender();
+    const rpcTracker: Array<{ fn: string; args: Record<string, unknown> }> = [];
+
+    const session = {
+      id: 'session-book-table',
+      user_id: 'user-book-table',
+      phone: PHONE,
+      business_id: BIZ_ID,
+      current_step: 'idle',
+      session_data: { _pending_first_message: 'book a table' },
+      status: 'active',
+      version: 1,
+    };
+
+    const supabase = createTableMock({
+      activeSession: session,
+      business: makeBusiness({ subscription_tier: 'growth' }),
+      capabilities: [
+        { capability: 'reservation', is_enabled: true, sort_order: 0 },
+        { capability: 'scheduling', is_enabled: true, sort_order: 1 },
+      ],
+      enabledLanguages: ['en', 'pcm'],
+      rpcTracker,
+    });
+
+    const bot = new BotService(
+      supabase,
+      sender,
+      createMockStandalone(),
+      createMockIntelligence(),
+    );
+
+    const handleMessageSpy = vi.spyOn(bot, 'handleMessage');
+
+    // User picks English after seeing the picker
+    await bot.handleMessage(PHONE, 'lang_pick_en', 'interactive', undefined, BIZ_ID);
+
+    // handleMessage re-dispatches "book a table" with lang_pick_redispatch provenance
+    const redispatchCall = handleMessageSpy.mock.calls.find(
+      (args) => args[1] === 'book a table' && args[7] === 'lang_pick_redispatch',
+    );
+    expect(redispatchCall).toBeDefined();
+
+    // "book a table" is NOT a greeting word, so it must NOT be treated as empty input
+    const pendingCas = rpcTracker.filter(r => r.fn === 'update_session_cas');
+    const clearCas = pendingCas.find(
+      r => !(r.args as any).p_session_data?._pending_first_message,
+    );
+    expect(clearCas).toBeDefined();
+
+    handleMessageSpy.mockRestore();
+  });
 });
 
 // ═══════════════════════════════════════════════════════
