@@ -3,6 +3,31 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-14 — fix(admin): handle subscription read errors in tier change route
+
+### What changed
+- `app/api/admin/businesses/[id]/tier/route.ts:18-19`: `getSubscriptionInfo` now checks the Supabase query error. On error, GET and POST return 500 `{"error":"Could not check subscription status"}`. POST makes no write and no audit entry when the subscription read fails.
+- `admin/src/pages/Businesses.tsx:263-268`: If the GET pre-check fails (network error, non-OK status, or bad JSON), shows alert "Could not check whether this business has a paid plan. Tier not changed." and aborts without sending POST.
+- `admin/src/pages/Subscriptions.tsx:317-322`: Same pre-check failure handling.
+- `lib/__tests__/admin-tier-change.test.ts`: Added tests 14 (GET 500 on subscription read error) and 15 (POST 500 on subscription read error — no write, no audit). Total: 15 tests, 0 skips.
+- `admin/src/__tests__/tier-change-precheck.test.tsx`: 6 tests — renders real Businesses and Subscriptions pages with @testing-library/react; drives tier-change UI (select tier, click Save); asserts GET non-OK and network error abort with alert (no POST) for both pages; paying business confirm(false) blocks POST, confirm(true) proceeds with exactly one POST.
+
+### What it affects / could break
+- If the subscriptions table is unreachable, admin tier changes are blocked until it recovers. This is intentional — the route needs subscription status to populate the response and audit log.
+
+## 2026-10-14 — fix(admin): move tier change server-side (business-only override)
+
+### What changed
+- `app/api/admin/businesses/[id]/tier/route.ts`: New POST+GET route for admin tier changes. POST changes only `businesses.subscription_tier` (never writes subscriptions). GET returns `{ tier, paidPlan, revertsOn }` so the UI can warn before saving. For paying businesses (active subscription with plan growth/business), the response includes `paidPlan` and `revertsOn` (current_period_end). At next renewal, `activate_paid_subscription` (M418) resets the tier to the subscription's plan. Auth: `requirePlatformAdmin({ requiredRole: 'admin' })`.
+- `admin/src/pages/Businesses.tsx`: `handleTierChange()` calls GET before POST; if the business has a paid plan, shows a confirm dialog explaining the override is temporary and billing is unchanged.
+- `admin/src/pages/Subscriptions.tsx`: Same confirm dialog. Fixed `SubscriptionRecord` interface: `tier` (nonexistent column) → use `businesses.subscription_tier` joined as `business_tier`; `plan_name` (nonexistent) → `plan` (actual DB column, M001:272); `interval` → `billing_interval` (M172:4); `auto_renew`/`gateway_subscription_id` remain in interface but are not tier-related. Detail panel shows "Paid Plan" (subscriptions.plan) and "Current Tier" (businesses.subscription_tier). Table row shows override badge when business_tier differs from plan.
+- `lib/__tests__/admin-tier-change.test.ts`: 13 tests — POST: auth (2), validation (2), 404, business-only write (never subscriptions), paying biz response, non-paying biz response, no-op; GET: auth, validation, 404, response shape. 0 skips.
+
+### What it affects / could break
+- Previous head (96279b15) had a P0 bug: the route wrote `subscriptions.tier` which does not exist — PostgREST rejected it and every tier change returned 500. Unit tests passed because Supabase was mocked. This is now fixed.
+- Admin tier change is a business-only override. Non-paying businesses: permanent. Paying businesses: temporary until next renewal.
+- No changes to billing, payments, renewal logic, cron, or capabilities.
+
 ## 2026-10-14 — fix(admin): replace JSON input with country-amount form for per-country settings
 
 ### What changed
