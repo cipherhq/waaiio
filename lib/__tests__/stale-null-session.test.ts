@@ -396,4 +396,161 @@ describe('Stale null-business session fix', () => {
     );
     expect(fallbackCalls.length).toBe(0);
   });
+
+  it('5. business resolved + session insert fails (non-23505) + suspended: no platform send, sender stays bound, no crash', async () => {
+    suspendedBizIds.add('biz-S');
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
+
+    // Detection resolves biz-S
+    mockDetectionResult = { businessId: 'biz-S', suggestions: [] };
+
+    const bizS = { id: 'biz-S', name: 'Suspended Biz', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, bot_code: 'SUSBIZ', is_whitelabel: false };
+
+    // Session insert returns a generic (non-23505) error
+    const insertFn = vi.fn().mockImplementation(() => {
+      const errChain = makeChain(null, true);
+      errChain.select = vi.fn().mockImplementation(() => {
+        const sc = makeChain(null, false);
+        sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '42P01', message: 'relation does not exist' } });
+        return sc;
+      });
+      return errChain;
+    });
+
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          const chain = makeChain(null);
+          chain.insert = insertFn;
+          return chain;
+        }
+        if (table === 'businesses') return makeChain(bizS);
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    // Should NOT crash — guard blocks the business-scoped send, caught internally
+    await expect(bot.handleMessage('+234800', 'SUSBIZ', 'text', 'pnid-1')).resolves.toBeUndefined();
+
+    // Sender stayed bound to biz-S (NOT switched to platform discovery)
+    expect(sender.boundBusinessId).toBe('biz-S');
+    // sendPlatformText was NOT called — fallback went business-scoped, guard blocked it
+    expect(spyPlatformText).not.toHaveBeenCalled();
+    // Zero cloud calls — guard blocked the business-scoped send
+    const totalCalls = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length;
+    expect(totalCalls).toBe(0);
+  });
+
+  it('6. business resolved + session insert fails (non-23505) + NOT suspended: fallback sent business-scoped', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
+    const spyPlatformButtons = vi.spyOn(sender, 'sendPlatformButtons');
+
+    // Detection resolves biz-A (not suspended)
+    mockDetectionResult = { businessId: 'biz-A', suggestions: [] };
+
+    const bizA = { id: 'biz-A', name: 'Active Biz', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, bot_code: 'ACTBIZ', is_whitelabel: false };
+
+    const insertFn = vi.fn().mockImplementation(() => {
+      const errChain = makeChain(null, true);
+      errChain.select = vi.fn().mockImplementation(() => {
+        const sc = makeChain(null, false);
+        sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '42P01', message: 'relation does not exist' } });
+        return sc;
+      });
+      return errChain;
+    });
+
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          const chain = makeChain(null);
+          chain.insert = insertFn;
+          return chain;
+        }
+        if (table === 'businesses') return makeChain(bizA);
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', 'ACTBIZ', 'text', 'pnid-1');
+
+    // Sender stayed bound to biz-A
+    expect(sender.boundBusinessId).toBe('biz-A');
+    // Fallback sent business-scoped (cloud.sendText called with "Something went wrong")
+    const totalBusinessCalls = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length
+      + cloud.sendList.mock.calls.length + cloud.sendTemplate.mock.calls.length;
+    const platformCalls = spyPlatformText.mock.calls.length + spyPlatformButtons.mock.calls.length;
+    expect(totalBusinessCalls - platformCalls).toBe(1);
+    expect(platformCalls).toBe(0);
+    // The send contains the fallback text
+    const sentText = cloud.sendText.mock.calls[0]?.[0]?.text || '';
+    expect(sentText).toContain('Something went wrong');
+  });
+
+  it('7. no business + session insert fails (non-23505): platform-scoped fallback', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
+
+    // No business detected
+    mockDetectionResult = { businessId: null, suggestions: [] };
+
+    const insertFn = vi.fn().mockImplementation(() => {
+      const errChain = makeChain(null, true);
+      errChain.select = vi.fn().mockImplementation(() => {
+        const sc = makeChain(null, false);
+        sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '42P01', message: 'relation does not exist' } });
+        return sc;
+      });
+      return errChain;
+    });
+
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          const chain = makeChain(null);
+          chain.insert = insertFn;
+          return chain;
+        }
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', 'random text', 'text', 'pnid-1');
+
+    // Sender is tenantless (platform discovery)
+    expect(sender.boundBusinessId).toBe('');
+    // sendPlatformText was called with fallback
+    expect(spyPlatformText).toHaveBeenCalled();
+    const platformTextArg = spyPlatformText.mock.calls[0]?.[0] as { text?: string } | undefined;
+    expect(platformTextArg?.text ?? '').toContain('Something went wrong');
+  });
 });

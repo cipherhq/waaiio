@@ -1687,8 +1687,18 @@ export class BotService {
           }
         } else {
           logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
-          if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          if (businessId) {
+            // Business is resolved — send fallback business-scoped (S-1 guard applies).
+            // If the business is suspended the guard blocks the send; catch so it doesn't crash.
+            try {
+              await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            } catch (sendErr) {
+              logger.error('[BOT] Session insert fallback send failed (business-scoped, guard may have blocked):', sendErr);
+            }
+          } else {
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          }
           return;
         }
       }
