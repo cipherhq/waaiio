@@ -284,9 +284,11 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-A');
-    mockDetectionResult = { businessId: null, suggestions: [{ id: 'biz-B', name: 'Spa B', bot_code: 'SPAB' }, { id: 'biz-C', name: 'Spa C', bot_code: 'SPAC' }] };
+    const SPA_SUGG = [{ id: 'biz-B', name: 'Spa B', bot_code: 'SPAB' }, { id: 'biz-C', name: 'Spa C', bot_code: 'SPAC' }];
+    mockDetectionResult = { businessId: null, suggestions: SPA_SUGG };
     const supabase = createTableAwareSupabase({
-      insertedSession: { id: 'sess-sug', business_id: null, current_step: 'select_business_suggestion', is_active: true, session_data: {}, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 },
+      // session_data.suggestions must be persisted so FINDING 2 fix reads correct buttons from session
+      insertedSession: { id: 'sess-sug', business_id: null, current_step: 'select_business_suggestion', is_active: true, session_data: { suggestions: SPA_SUGG }, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 },
     });
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
     await bot.handleMessage('+234800', 'switch spa', 'text', 'pnid-1');

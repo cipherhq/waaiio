@@ -963,8 +963,9 @@ describe('Null-biz session CAS deactivation — P2 concurrency fix', () => {
       expect(botServiceSrc).toContain("CAS deactivation got 0 rows (concurrent renewal?) — re-reading:");
       expect(botServiceSrc).toContain("Resumed renewed session after CAS race:");
       // Must NOT contain a session INSERT inside this branch:
-      // We verify by checking the CAS-success path (which DOES come after) has the "not retrying" log
-      expect(botServiceSrc).toContain("CAS deactivation succeeded; not retrying insert:");
+      // We verify by checking the CAS-success path (which comes after) has the "retrying" log.
+      // In the new design, CAS success → retry insert once (rather than fail-closed immediately).
+      expect(botServiceSrc).toContain("CAS deactivation succeeded, retrying insert once:");
     });
 
     it('CAS-success path does NOT retry the insert (no duplicate insert)', () => {
@@ -975,13 +976,15 @@ describe('Null-biz session CAS deactivation — P2 concurrency fix', () => {
       expect(botServiceSrc).not.toContain('CAS won — retry the insert once');
     });
 
-    it('CAS-success path sends exactly one error reply (no double-send)', () => {
-      // Find the CAS-success branch by its unique log line (site 1 is the first occurrence)
-      const anchor = "CAS deactivation succeeded; not retrying insert:";
+    it('CAS-success path retries insert once; retry failure sends exactly one error reply', () => {
+      // Find the CAS-success branch by its unique log line (site 1 is the first occurrence).
+      // New design: CAS success → retry insert once.  If retry also fails → exactly one sendPlatformText + return.
+      const anchor = "CAS deactivation succeeded, retrying insert once:";
       const anchorIdx = botServiceSrc.indexOf(anchor);
       expect(anchorIdx).toBeGreaterThan(-1);
-      // Extend the window to cover the full else-branch body (~450 chars from anchor)
-      const branch = botServiceSrc.slice(anchorIdx, anchorIdx + 500);
+      // Use 1400-char window: covers the full retry block but stops before the separate
+      // "Unsafe: cannot recover" branch that has its own sendPlatformText.
+      const branch = botServiceSrc.slice(anchorIdx, anchorIdx + 1400);
       const sendCount = (branch.match(/sendPlatformText\(/g) ?? []).length;
       expect(sendCount).toBe(1);
       expect(branch).toContain('return;');
@@ -1010,11 +1013,11 @@ describe('Null-biz session CAS deactivation — P2 concurrency fix', () => {
       expect(block).toContain('version: (existing.version ?? 0) + 1');
     });
 
-    it('CAS-success path does NOT retry the insert', () => {
-      // The removed block had "CAS won — retry insert once" — must be gone
+    it('CAS-success path retries the insert exactly once', () => {
+      // The removed fail-closed block had "CAS won — retry insert once" — must be gone
       expect(botServiceSrc).not.toContain('CAS won — retry insert once');
-      // The new log line must be present
-      expect(botServiceSrc).toContain('CAS deactivation succeeded, not retrying insert:');
+      // New design: CAS success → retry once; the log line must be present
+      expect(botServiceSrc).toContain('CAS deactivation succeeded, retrying insert once:');
     });
 
     it('zero-rows path re-reads session by id and resumes if valid', () => {

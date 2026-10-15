@@ -204,8 +204,13 @@ export class BotService {
         const quickPick = recentBiz.slice(0, 3);
         const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
         if (sugSess) {
-          await this.sendPlatformButtons(from, 'Which business would you like to visit?',
-            quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
         } else {
           await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         }
@@ -227,8 +232,13 @@ export class BotService {
         const quickPick = recentBiz.slice(0, 3);
         const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
         if (sugSess) {
-          await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
-            quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
         } else {
           await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         }
@@ -898,11 +908,14 @@ export class BotService {
       if (detection.suggestions && detection.suggestions.length > 0) {
         const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: detection.suggestions });
         if (sugSess) {
-          if (detection.suggestions.length <= 3) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else if (persisted.length <= 3) {
             await this.sendPlatformButtons(from, 'Which business did you mean?',
-              detection.suggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
           } else {
-            const list = detection.suggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
             await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
           }
         } else {
@@ -1341,26 +1354,37 @@ export class BotService {
         );
 
         if (sugSession) {
-          // Choose wording based on match type
-          const headerText = isCategoryMatch
+          // Always use the session's persisted suggestions for button payloads.
+          // The helper may return a recovered/renewed session whose persisted
+          // session_data.suggestions differs from the locally-generated array;
+          // using persisted data ensures biz_0 resolves to the button the user saw.
+          const persisted = (sugSession.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          const persistedIsCategory = sugSession.session_data?.isCategory as boolean | undefined;
+          if (persisted.length === 0) {
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            return;
+          }
+          // Choose wording based on persisted match type
+          const headerText = persistedIsCategory
             ? `Here are some businesses that might help:`
-            : pendingSuggestions.length === 1
-              ? `Did you mean *${pendingSuggestions[0].name}*?`
+            : persisted.length === 1
+              ? `Did you mean *${persisted[0].name}*?`
               : `Did you mean one of these businesses?`;
 
-          if (pendingSuggestions.length === 1 && !isCategoryMatch) {
+          if (persisted.length === 1 && !persistedIsCategory) {
             // Single fuzzy match — confirmation buttons (platform-scoped: pre-business discovery)
             await this.sendPlatformButtons(from, headerText, [
               { id: 'biz_0', title: 'Yes' },
               { id: 'biz_no', title: 'No' },
             ]);
-          } else if (pendingSuggestions.length <= 3) {
+          } else if (persisted.length <= 3) {
             // Use buttons (platform-scoped: pre-business discovery)
             await this.sendPlatformButtons(from, headerText,
-              pendingSuggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
           } else {
             // Fallback to numbered list as text (platform-scoped: pre-business discovery)
-            const list = pendingSuggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
             await this.sendPlatformText(from, `${headerText}\n\n${list}\n\nReply with the number to select.`);
           }
           return;
@@ -1771,12 +1795,32 @@ export class BotService {
                   return;
                 }
               } else {
-                // CAS succeeded — expired session cleared. Do NOT retry the insert to prevent
-                // a further race. Fail closed; the user can restart cleanly on the next message.
-                logger.info('[BOT] #266 R4: CAS deactivation succeeded; not retrying insert:', existingNullSession.id);
-                if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-                await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-                return;
+                // CAS succeeded — stale session cleared. Retry the insert exactly once.
+                // If the retry also fails for any reason (incl. another 23505) fail closed.
+                // No loop, no second retry.
+                logger.info('[BOT] #266 R4: CAS deactivation succeeded, retrying insert once:', existingNullSession.id);
+                const { data: retriedSession, error: retryInsertErr } = await this.supabase
+                  .from('bot_sessions')
+                  .insert({
+                    whatsapp_number: from,
+                    user_id: profile?.id || null,
+                    business_id: businessId,
+                    current_step: firstStep,
+                    session_data: sessionData,
+                    is_active: true,
+                    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                  })
+                  .select()
+                  .single();
+                if (!retryInsertErr && retriedSession) {
+                  session = retriedSession as BotSession;
+                  logger.info('[BOT] #266 R4: Retry insert succeeded after CAS deactivation:', (retriedSession as BotSession).id);
+                } else {
+                  logger.error('[BOT] #266 R4: Retry insert failed after CAS deactivation:', retryInsertErr?.message, retryInsertErr?.code);
+                  if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+                  await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  return;
+                }
               }
             } else {
               // Safe: non-expired platform/disambiguation session with no business authority
@@ -2316,14 +2360,19 @@ export class BotService {
         const quickPick = recentBusinesses.slice(0, 3);
         const sugSess = await this.createNullBizSuggestionSession(from, profile?.id || null, { suggestions: quickPick });
         if (sugSess) {
-          await this.sendPlatformText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
-          await this.sendPlatformButtons(from,
-            'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
-            quickPick.map((s, i) => ({
-              id: `biz_${i}`,
-              title: truncTitle(s.name),
-            })),
-          );
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
+            await this.sendPlatformButtons(from,
+              'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
+              persisted.map((s, i) => ({
+                id: `biz_${i}`,
+                title: truncTitle(s.name),
+              })),
+            );
+          }
         } else {
           await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         }
@@ -2630,8 +2679,13 @@ export class BotService {
         const quickPick = recentBiz.slice(0, 3);
         const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
         if (sugSess) {
-          await this.sendPlatformButtons(from, 'Which business would you like to visit?',
-            quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
         } else {
           await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         }
@@ -3815,15 +3869,27 @@ export class BotService {
             logger.error('[BOT] createNullBizSuggestionSession: CAS race — session not renewable, failing closed:', existing.id);
             return null;
           }
-          // CAS succeeded — stale session cleared. Do NOT retry the insert to prevent a
-          // further race; callers handle the null return with a recoverable error message.
-          logger.info('[BOT] createNullBizSuggestionSession: CAS deactivation succeeded, not retrying insert:', existing.id);
+          // CAS succeeded — stale session cleared. Retry the insert exactly once.
+          // If the retry also fails for any reason (incl. another 23505) return null;
+          // callers handle null with a recoverable error message. No loop, no second retry.
+          logger.info('[BOT] createNullBizSuggestionSession: CAS deactivation succeeded, retrying insert once:', existing.id);
+          const { data: retried, error: retryErr } = await this.supabase.from('bot_sessions').insert({
+            whatsapp_number: from, user_id: userId, business_id: null,
+            current_step: 'select_business_suggestion', session_data: sessionData,
+            is_active: true, expires_at: new Date(Date.now() + ttlMs).toISOString(),
+          }).select().single();
+          if (!retryErr && retried) {
+            logger.info('[BOT] createNullBizSuggestionSession: retry insert succeeded:', (retried as unknown as BotSession).id);
+            return retried as unknown as BotSession;
+          }
+          logger.error('[BOT] createNullBizSuggestionSession: retry insert failed:', retryErr?.message, retryErr?.code);
           return null;
         }
-        // Not expired — update in place (CAS: version must match to prevent concurrent overwrites)
+        // Not expired — update in place (CAS: version must match to prevent concurrent overwrites;
+        // advance version so a stale second worker holding the old version cannot overwrite this write)
         const { data: updated, error: updateErr } = await this.supabase.from('bot_sessions')
           .update({ current_step: 'select_business_suggestion', session_data: sessionData,
-            expires_at: new Date(Date.now() + ttlMs).toISOString() })
+            expires_at: new Date(Date.now() + ttlMs).toISOString(), version: (existing.version ?? 0) + 1 })
           .eq('id', existing.id).eq('whatsapp_number', from).is('business_id', null)
           .eq('is_active', true).eq('version', existing.version ?? 0).select().single();
         if (!updateErr && updated) {

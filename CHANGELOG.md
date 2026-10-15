@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
+
+### What changed
+- **Finding 1 (P2) — version advance in in-place update (`bot.service.ts` ~L3890):** The non-expired 23505 in-place update inside `createNullBizSuggestionSession` now sets `version: (existing.version ?? 0) + 1` in the UPDATE payload alongside the existing `.eq('version', ...)` predicate. Without the payload advance, a second concurrent worker holding the same stale version could overwrite the newly written session data.
+- **Finding 2 (P2) — persisted suggestions for button construction:** All 6 callers of `createNullBizSuggestionSession` (covering `switch_biz`, no-session, returning-customer, 23505 recovery, and inline `handleMessage` recovery paths) now read `session.session_data.suggestions` from the returned session rather than their locally-generated `quickPick` arrays. If the persisted array is empty, each caller fails closed with a single platform-scoped "Something went wrong" reply. This prevents a race window where `biz_0` and `biz_1` resolve to different businesses than the picker labels show.
+- **Design Ruling — retry once after CAS success:** Previously, a successful CAS deactivation (non-zero rows) returned `null` immediately (fail-closed). Now both sites retry the insert exactly once after winning the CAS race. If the retry succeeds → continue normally. If the retry fails for any reason (including another 23505) → fail closed with exactly one "Something went wrong" reply, no loop. Zero-row deactivation is unchanged: re-read, resume if active+unexpired, never insert. Applied at BOTH sites: `createNullBizSuggestionSession` (~L3872) and the inline `handleMessage` 23505 recovery (~L1795).
+- **Tests updated:** Tests 1, 2, 10 (`stale-null-session.test.ts`) updated from `insertCount=1` (no retry) to `insertCount=2` (original + retry). New tests 20–23 added covering: (a) in-place version advance assertion, (b) persisted-suggestions button content assertion, (c) CAS success + retry succeeds → normal flow, (d) CAS success + retry fails → exactly one error reply, no buttons. `s1-botservice-real-handleMessage.test.ts` updated so `insertedSession.session_data.suggestions` is populated (Finding 2 fix). `session-resilience.test.ts` source-string tests updated to match new retry-once log messages.
+- **Note:** Corrects the prior CHANGELOG entry for commit 4ab7d8b5, which stated "CAS success → return null (fail closed). No retry insert." — the error reply now happens only when the single retry also fails.
+
+### What it affects / could break
+- Concurrent null-biz session creation: the winning worker now retries insert once instead of dropping the customer immediately; a customer who won the CAS race will usually get a working picker session instead of an error reply.
+- Button content during CAS recovery: if persisted suggestions are empty (edge case: very short-lived recovered session), user now sees "Something went wrong" instead of buttons built from a potentially stale local array.
+- No schema changes. No DB writes.
+
 ## 2026-10-15 — fix(bot): CAS conditional deactivation for stale null-biz sessions (#645)
 
 ### What changed
