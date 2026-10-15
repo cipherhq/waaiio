@@ -337,22 +337,28 @@ BEGIN
       'from contract_signers — OTP value exposed';
   END IF;
 
-  -- ── 7.6 authenticated CAN SELECT/INSERT/UPDATE on contracts ──────────────
+  -- ── 7.6 authenticated CAN SELECT/INSERT on contracts ─────────────────────
+  --
+  -- Note: use has_any_column_privilege, not has_table_privilege, because these
+  -- are column-level grants. has_table_privilege only reflects table-level ACL
+  -- entries and does not aggregate column-level grants in all PG versions.
 
-  -- has_table_privilege returns TRUE when column-level SELECT exists on any column.
-  IF NOT has_table_privilege('authenticated', 'public.contracts', 'SELECT') THEN
+  IF NOT has_any_column_privilege('authenticated', 'public.contracts', 'SELECT') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated cannot SELECT from contracts';
   END IF;
 
-  IF NOT has_table_privilege('authenticated', 'public.contracts', 'INSERT') THEN
+  IF NOT has_any_column_privilege('authenticated', 'public.contracts', 'INSERT') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated cannot INSERT into contracts';
   END IF;
 
-  -- ── 7.7 authenticated CAN SELECT/INSERT/UPDATE/DELETE on contract_templates ─
+  -- ── 7.7 authenticated CAN SELECT/DELETE on contract_templates ────────────
+  --
+  -- SELECT: column-level → use has_any_column_privilege.
+  -- DELETE: table-level (GRANT DELETE ON ... TO authenticated) → use has_table_privilege.
 
-  IF NOT has_table_privilege('authenticated', 'public.contract_templates', 'SELECT') THEN
+  IF NOT has_any_column_privilege('authenticated', 'public.contract_templates', 'SELECT') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated cannot SELECT from contract_templates';
   END IF;
@@ -362,21 +368,21 @@ BEGIN
       '449 SELF-CHECK FAILED: authenticated cannot DELETE from contract_templates';
   END IF;
 
-  -- ── 7.8 authenticated CAN SELECT/INSERT/UPDATE on waiver_templates ─────────
+  -- ── 7.8 authenticated CAN SELECT/INSERT on waiver_templates ──────────────
 
-  IF NOT has_table_privilege('authenticated', 'public.waiver_templates', 'SELECT') THEN
+  IF NOT has_any_column_privilege('authenticated', 'public.waiver_templates', 'SELECT') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated cannot SELECT from waiver_templates';
   END IF;
 
-  IF NOT has_table_privilege('authenticated', 'public.waiver_templates', 'INSERT') THEN
+  IF NOT has_any_column_privilege('authenticated', 'public.waiver_templates', 'INSERT') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated cannot INSERT into waiver_templates';
   END IF;
 
   -- ── 7.9 authenticated CAN SELECT from signed_waivers ─────────────────────
 
-  IF NOT has_table_privilege('authenticated', 'public.signed_waivers', 'SELECT') THEN
+  IF NOT has_any_column_privilege('authenticated', 'public.signed_waivers', 'SELECT') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated cannot SELECT from signed_waivers';
   END IF;

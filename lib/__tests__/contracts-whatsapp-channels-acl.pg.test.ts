@@ -509,7 +509,8 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   // ══════════════════════════════════════════════════════════════════════════
 
   it('post-migration: authenticated CAN SELECT from contracts', () => {
-    expect(sql(`SELECT has_table_privilege('authenticated', 'public.contracts', 'SELECT');`)).toBe('t');
+    // Column-level SELECT grant — use has_any_column_privilege, not has_table_privilege.
+    expect(sql(`SELECT has_any_column_privilege('authenticated', 'public.contracts', 'SELECT');`)).toBe('t');
   });
 
   it('post-migration: authenticated has NO table-level DELETE on contracts', () => {
@@ -551,7 +552,8 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   // ══════════════════════════════════════════════════════════════════════════
 
   it('post-migration: authenticated CAN SELECT from contract_signers', () => {
-    expect(sql(`SELECT has_table_privilege('authenticated', 'public.contract_signers', 'SELECT');`)).toBe('t');
+    // Column-level SELECT grant — use has_any_column_privilege, not has_table_privilege.
+    expect(sql(`SELECT has_any_column_privilege('authenticated', 'public.contract_signers', 'SELECT');`)).toBe('t');
   });
 
   it('post-migration: authenticated CANNOT SELECT otp_code from contract_signers', () => {
@@ -588,11 +590,13 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   // ══════════════════════════════════════════════════════════════════════════
 
   it('post-migration: authenticated CAN SELECT from contract_templates', () => {
-    expect(sql(`SELECT has_table_privilege('authenticated', 'public.contract_templates', 'SELECT');`)).toBe('t');
+    // Column-level SELECT grant — use has_any_column_privilege, not has_table_privilege.
+    expect(sql(`SELECT has_any_column_privilege('authenticated', 'public.contract_templates', 'SELECT');`)).toBe('t');
   });
 
   it('post-migration: authenticated CAN INSERT into contract_templates', () => {
-    expect(sql(`SELECT has_table_privilege('authenticated', 'public.contract_templates', 'INSERT');`)).toBe('t');
+    // Column-level INSERT grant — use has_any_column_privilege, not has_table_privilege.
+    expect(sql(`SELECT has_any_column_privilege('authenticated', 'public.contract_templates', 'INSERT');`)).toBe('t');
   });
 
   it('post-migration: authenticated CAN DELETE from contract_templates', () => {
@@ -604,15 +608,18 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   // ══════════════════════════════════════════════════════════════════════════
 
   it('post-migration: authenticated CAN SELECT from waiver_templates', () => {
-    expect(sql(`SELECT has_table_privilege('authenticated', 'public.waiver_templates', 'SELECT');`)).toBe('t');
+    // Column-level SELECT grant — use has_any_column_privilege, not has_table_privilege.
+    expect(sql(`SELECT has_any_column_privilege('authenticated', 'public.waiver_templates', 'SELECT');`)).toBe('t');
   });
 
   it('post-migration: authenticated CAN INSERT into waiver_templates', () => {
-    expect(sql(`SELECT has_table_privilege('authenticated', 'public.waiver_templates', 'INSERT');`)).toBe('t');
+    // Column-level INSERT grant — use has_any_column_privilege, not has_table_privilege.
+    expect(sql(`SELECT has_any_column_privilege('authenticated', 'public.waiver_templates', 'INSERT');`)).toBe('t');
   });
 
   it('post-migration: authenticated CAN UPDATE waiver_templates', () => {
-    expect(sql(`SELECT has_table_privilege('authenticated', 'public.waiver_templates', 'UPDATE');`)).toBe('t');
+    // Column-level UPDATE grant — use has_any_column_privilege, not has_table_privilege.
+    expect(sql(`SELECT has_any_column_privilege('authenticated', 'public.waiver_templates', 'UPDATE');`)).toBe('t');
   });
 
   it('post-migration: authenticated CAN SELECT token from waiver_templates (signing URL token)', () => {
@@ -644,7 +651,8 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   // ══════════════════════════════════════════════════════════════════════════
 
   it('post-migration: authenticated CAN SELECT from signed_waivers', () => {
-    expect(sql(`SELECT has_table_privilege('authenticated', 'public.signed_waivers', 'SELECT');`)).toBe('t');
+    // Column-level SELECT grant — use has_any_column_privilege, not has_table_privilege.
+    expect(sql(`SELECT has_any_column_privilege('authenticated', 'public.signed_waivers', 'SELECT');`)).toBe('t');
   });
 
   it('post-migration: authenticated CANNOT INSERT into signed_waivers (signing is service_role)', () => {
