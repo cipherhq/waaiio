@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — feat(admin): structured editor for top-up packages
+
+### What changed
+- **New file `shared/topup-packages.ts`:** Framework-neutral validator for `messaging_topup_packages`. Exports `validateTopupPackages`, `isTopupPackagesKey`, currency constants (`TOPUP_ALLOWED_CURRENCIES`, `TOPUP_CURRENCY_SYMBOLS`, `TOPUP_CURRENCY_NAMES`, `TOPUP_MINOR_PER_MAJOR`). Allowed currencies: NGN, GHS, USD, GBP, CAD. Mirrors M416 write-time validation at the HTTP layer.
+- **`app/api/admin/platform-settings/commercial/route.ts`:** Added server-side HTTP-layer validation for `messaging_topup_packages` (alongside existing country-amount validation). The DB RPC already validated; this adds defense-in-depth at the route boundary, matching the existing pattern for `isCountryAmountKey`.
+- **`admin/src/pages/PlatformSettings.tsx`:** Added new "Messaging" group to GROUPS array containing `messaging_topup_packages`. Built `TopupPackagesEditor` component (per-currency rows with major-unit amount input → stored as minor units × 100, label, optional description). Added `hasTopupPackagesErrors` for Save button disabling. Updated unconfigured-key configure flow to show the structured editor. Imports `@shared/topup-packages`.
+- **Tests added:** `admin/src/__tests__/topup-packages-validator.test.ts` (25 tests: valid shapes, null/type errors, unknown currency, empty currency, negative, zero, decimal minor, duplicate amounts, missing/empty label, all allowed currencies) and `admin/src/__tests__/topup-packages-editor.test.tsx` (10 tests: Messaging tab visible, Not-configured placeholder, seeded value loads, valid save shape, negative/zero/decimal/empty-label/duplicate-amount client-side validation, source-code assertion).
+
+### What it affects / could break
+- PlatformSettings Messaging tab now shows `messaging_topup_packages`. If not yet seeded in DB, shows as "Not configured" placeholder with a structured Configure UI.
+- Saving `messaging_topup_packages` via the admin still routes through `saveCommercialViaStepUp` → `/api/admin/platform-settings/commercial` → `svc_save_commercial_config` RPC. Auth and step-up behavior unchanged.
+- Server validation added at the HTTP layer for `messaging_topup_packages`: invalid currency codes, negative/zero/decimal/duplicate amounts, missing labels now return 400 from the route before reaching the DB. Previously only the DB RPC rejected these. Existing valid payloads are unaffected.
+- No DB changes. No migrations. No user-facing changes outside the admin panel.
+
 ## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
 
 ### What changed

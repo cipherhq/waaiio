@@ -4,6 +4,7 @@ import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
 import { isCountryAmountKey, validateCountryAmounts } from '@/shared/country-amounts';
+import { isTopupPackagesKey, validateTopupPackages } from '@/shared/topup-packages';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,17 @@ export async function POST(request: NextRequest) {
     // Validate country-amount keys (minimum_bank_transfer, minimum_payout)
     if (isCountryAmountKey(key)) {
       const errors = validateCountryAmounts(key, value);
+      if (errors) {
+        return NextResponse.json(
+          { error: errors.map(e => e.message).join('; '), code: 'validation_error', details: errors },
+          { status: 400, headers: cors },
+        );
+      }
+    }
+
+    // Validate messaging_topup_packages shape
+    if (isTopupPackagesKey(key)) {
+      const errors = validateTopupPackages(value);
       if (errors) {
         return NextResponse.json(
           { error: errors.map(e => e.message).join('; '), code: 'validation_error', details: errors },
