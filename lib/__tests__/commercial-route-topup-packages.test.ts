@@ -321,6 +321,61 @@ describe('POST /api/admin/platform-settings/commercial — topup-packages valida
     expect(JSON.stringify(json)).not.toContain(realMessage);
   });
 
+  // ── Negative-control tests for SQLSTATE + prefix classifier ─────────────────
+  // Proves the classifier is fail-closed: unrecognized messages and wrong
+  // SQLSTATE codes fall through to generic 500, never leaking the raw text.
+
+  it('returns 500 with generic body for unrecognized P0001 message (fail-closed)', async () => {
+    const craftedMessage = 'Something unexpected happened in svc_save_commercial_config';
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: craftedMessage, code: 'P0001' },
+    });
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(500);
+    expect(json.code).toBe('internal_error');
+    expect(json.error).toBe('Internal server error');
+    expect(JSON.stringify(json)).not.toContain(craftedMessage);
+  });
+
+  it('returns 500 when a recognized prefix arrives with a non-P0001 SQLSTATE', async () => {
+    // A message starting with a known validation prefix but with wrong SQLSTATE
+    // must NOT be treated as a safe authored error
+    const spoofedMessage = 'Key "trial_days" is invalid — injected via non-P0001 path';
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: spoofedMessage, code: '42000' },
+    });
+    const { status, json } = await callRoute({
+      key: 'trial_days',
+      value: -1,
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(500);
+    expect(json.code).toBe('internal_error');
+    expect(json.error).toBe('Internal server error');
+    expect(JSON.stringify(json)).not.toContain(spoofedMessage);
+  });
+
+  it('returns 400 validation_error for an authored P0001 messaging_topup_packages message', async () => {
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: 'messaging_topup_packages must contain at least one currency', code: 'P0001' },
+    });
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.code).toBe('validation_error');
+    expect(json.error).toContain('messaging_topup_packages');
+  });
+
   it('passes a valid multi-currency payload', async () => {
     const { status } = await callRoute({
       key: 'messaging_topup_packages',
