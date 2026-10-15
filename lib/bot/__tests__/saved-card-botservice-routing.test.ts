@@ -162,7 +162,31 @@ function createSupabase(activeBusiness = false) {
       }
       return makeChain(null);
     }),
-    rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    rpc: vi.fn().mockImplementation((name: string, params?: Record<string, unknown>) => {
+      // #266: bot service calls get_bot_context(phone, NULL) for unresolved sessions
+      if (name === 'get_bot_context') {
+        if (mockSessionResult && params?.p_business_id === null) {
+          return Promise.resolve({
+            data: {
+              has_session: true,
+              ambiguous: false,
+              session: mockSessionResult,
+              business: {
+                id: BIZ_ID, name: 'Citadel of Grace', slug: 'citadel', category: 'church',
+                flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: null,
+                metadata: {}, country_code: 'NG',
+                ...(activeBusiness ? { payment_gateway: null, operating_hours: null, status: 'active', is_whitelabel: false } : {}),
+              },
+              capabilities: [],
+              capability_overrides: [],
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: { has_session: false, session: null, business: null, capabilities: [], capability_overrides: [] }, error: null });
+      }
+      return Promise.resolve({ data: { success: true, version: 1 }, error: null });
+    }),
   };
 }
 

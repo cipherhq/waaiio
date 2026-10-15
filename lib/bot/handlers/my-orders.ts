@@ -4,29 +4,32 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { truncTitle } from '../utils/truncate';
 import type { BotSession } from '../bot-types';
 import { logger } from '@/lib/logger';
+import { getFlowCopy } from '../flows/flow-localization';
 
 // ── Pure helpers ─────────────────────────────────────────
 
-export function formatOrderStatus(status: string): { emoji: string; label: string } {
+export function formatOrderStatus(status: string, lang?: string): { emoji: string; label: string } {
+  const l = lang || 'en';
   const map: Record<string, { emoji: string; label: string }> = {
-    pending: { emoji: '🕐', label: 'Pending' },
-    confirmed: { emoji: '✅', label: 'Confirmed' },
-    processing: { emoji: '🔄', label: 'Processing' },
-    ready: { emoji: '📦', label: 'Ready for pickup' },
-    shipped: { emoji: '🚚', label: 'Shipped' },
-    delivered: { emoji: '✅', label: 'Delivered' },
-    cancelled: { emoji: '❌', label: 'Cancelled' },
+    pending: { emoji: '🕐', label: getFlowCopy(l, 'order_status.pending') },
+    confirmed: { emoji: '✅', label: getFlowCopy(l, 'order_status.confirmed') },
+    processing: { emoji: '🔄', label: getFlowCopy(l, 'order_status.processing') },
+    ready: { emoji: '📦', label: getFlowCopy(l, 'order_status.ready') },
+    shipped: { emoji: '🚚', label: getFlowCopy(l, 'order_status.shipped') },
+    delivered: { emoji: '✅', label: getFlowCopy(l, 'order_status.delivered') },
+    cancelled: { emoji: '❌', label: getFlowCopy(l, 'order_status.cancelled') },
   };
   return map[status] || { emoji: '📋', label: status };
 }
 
-export function buildOrderProgressBar(status: string): string {
+export function buildOrderProgressBar(status: string, lang?: string): string {
+  const l = lang || 'en';
   const stages = ['confirmed', 'processing', 'ready', 'delivered'];
   const stageLabels: Record<string, string> = {
-    confirmed: 'Confirmed',
-    processing: 'Processing',
-    ready: 'Ready for pickup',
-    delivered: 'Delivered',
+    confirmed: getFlowCopy(l, 'order_status.confirmed'),
+    processing: getFlowCopy(l, 'order_status.processing'),
+    ready: getFlowCopy(l, 'order_status.ready'),
+    delivered: getFlowCopy(l, 'order_status.delivered'),
   };
   const stageEmojis: Record<string, { done: string; current: string; pending: string }> = {
     confirmed: { done: '✅', current: '✅', pending: '⬜' },
@@ -52,7 +55,7 @@ export function buildOrderProgressBar(status: string): string {
       icon = emojis.done;
     } else if (i === currentIndex) {
       icon = emojis.current;
-      marker = '  ← You are here';
+      marker = getFlowCopy(l, 'orders.you_are_here');
     } else {
       icon = emojis.pending;
     }
@@ -71,7 +74,9 @@ export async function handleMyOrders(
   session: BotSession,
   from: string,
   input: string,
+  lang?: string,
 ): Promise<void> {
+  const l = lang || 'en';
   if (!input) {
     const { data: orders } = await supabase
       .from('orders')
@@ -84,8 +89,8 @@ export async function handleMyOrders(
     if (!orders || orders.length === 0) {
       await messageSender.sendButtons({
         to: from,
-        body: "You don't have any active orders.",
-        buttons: [{ id: 'back_to_account', title: '← Back' }],
+        body: getFlowCopy(l, 'account.no_orders'),
+        buttons: [{ id: 'back_to_account', title: getFlowCopy(l, 'nav.back') }],
       });
       return;
     }
@@ -95,22 +100,22 @@ export async function handleMyOrders(
       const lines = orders.map((o) => {
         const b = o.businesses as unknown as { name: string; country_code?: CountryCode } | null;
         const occ = (b?.country_code as CountryCode) || 'NG';
-        const { emoji: e, label } = formatOrderStatus(o.status);
+        const { emoji: e, label } = formatOrderStatus(o.status, l);
         const dateLabel = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
         return `${e} *${o.reference_code}* — ${label}\n   ${b?.name || 'Order'} • ${dateLabel} • ${formatCurrency(o.total_amount || 0, occ)}`;
       });
 
-      await sendText(from, `📦 *Your Orders*\n\n${lines.join('\n\n')}`);
+      await sendText(from, `📦 *${getFlowCopy(l, 'orders.your_orders_title')}*\n\n${lines.join('\n\n')}`);
 
       const buttons = orders.map((o) => ({
         id: `order_${o.id}`,
         title: truncTitle(`${o.reference_code}`),
       }));
-      buttons.push({ id: 'back_to_account', title: '← Back' });
+      buttons.push({ id: 'back_to_account', title: getFlowCopy(l, 'nav.back') });
 
       await messageSender.sendButtons({
         to: from,
-        body: 'Select an order to view details:',
+        body: getFlowCopy(l, 'orders.select_prompt'),
         buttons,
       });
     } else {
@@ -118,7 +123,7 @@ export async function handleMyOrders(
       const items = orders.map((o) => {
         const b = o.businesses as unknown as { name: string; country_code?: CountryCode } | null;
         const occ = (b?.country_code as CountryCode) || 'NG';
-        const { label } = formatOrderStatus(o.status);
+        const { label } = formatOrderStatus(o.status, l);
         const dateLabel = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
         return {
           title: truncTitle(`${o.reference_code}`, 24),
@@ -126,13 +131,13 @@ export async function handleMyOrders(
           postbackText: `order_${o.id}`,
         };
       });
-      items.push({ title: '← Back to My Account', description: 'Return to account menu', postbackText: 'back_to_account' });
+      items.push({ title: getFlowCopy(l, 'nav.back_to_account'), description: getFlowCopy(l, 'nav.return_to_account'), postbackText: 'back_to_account' });
 
       await messageSender.sendList({
         to: from,
-        title: 'Your Orders',
-        body: '📦 Select an order to view details:',
-        buttonLabel: 'View Orders',
+        title: getFlowCopy(l, 'orders.your_orders_title'),
+        body: `📦 ${getFlowCopy(l, 'orders.select_prompt')}`,
+        buttonLabel: getFlowCopy(l, 'orders.view_orders'),
         items,
       });
     }
@@ -150,7 +155,7 @@ export async function handleMyOrders(
       .eq('user_id', session.user_id!)
       .maybeSingle();
     if (!ownedOrder) {
-      await sendText(from, 'Order not found. Type *my orders* to see your orders.');
+      await sendText(from, getFlowCopy(l, 'orders.not_found'));
       return;
     }
     session.session_data.selected_order_id = orderId;
@@ -171,13 +176,13 @@ export async function handleMyOrders(
       throw new Error(`CAS failure: ${casOrderResult?.reason || 'unknown'}`);
     }
     session.version = casOrderResult.version;
-    await handleOrderDetail(supabase, messageSender, sendText, session, from, orderId);
+    await handleOrderDetail(supabase, messageSender, sendText, session, from, orderId, l);
     return;
   }
 
   // Handle "track_my_order" postback from ordering flow
   if (input === 'track_my_order') {
-    await handleMyOrders(supabase, messageSender, sendText, routeToMyAccountMenu, session, from, '');
+    await handleMyOrders(supabase, messageSender, sendText, routeToMyAccountMenu, session, from, '', l);
     return;
   }
 
@@ -188,7 +193,7 @@ export async function handleMyOrders(
   }
 
   // Unrecognized input — re-show the orders list
-  await handleMyOrders(supabase, messageSender, sendText, routeToMyAccountMenu, session, from, '');
+  await handleMyOrders(supabase, messageSender, sendText, routeToMyAccountMenu, session, from, '', l);
 }
 
 export async function handleOrderDetail(
@@ -198,7 +203,9 @@ export async function handleOrderDetail(
   session: BotSession,
   from: string,
   orderId: string,
+  lang?: string,
 ): Promise<void> {
+  const l = lang || 'en';
   const { data: order } = await supabase
     .from('orders')
     .select('id, reference_code, status, total_amount, created_at, shipping_cost, delivery_address, tracking_number, shipping_carrier, updated_at, businesses (name, country_code)')
@@ -207,19 +214,19 @@ export async function handleOrderDetail(
     .single();
 
   if (!order) {
-    await sendText(from, 'Order not found. Type *my orders* to see your orders.');
+    await sendText(from, getFlowCopy(l, 'orders.not_found'));
     await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
 
   const biz = order.businesses as unknown as { name: string; country_code?: CountryCode } | null;
   const cc = (biz?.country_code as CountryCode) || 'NG';
-  const { emoji, label } = formatOrderStatus(order.status);
+  const { emoji, label } = formatOrderStatus(order.status, l);
   const dateLabel = new Date(order.created_at).toLocaleDateString('en-US', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
-  const progressBar = buildOrderProgressBar(order.status);
+  const progressBar = buildOrderProgressBar(order.status, l);
 
   const lines: string[] = [
     `📦 *Order #${order.reference_code}*`,
@@ -240,7 +247,7 @@ export async function handleOrderDetail(
   // Show tracking info if available
   if (order.tracking_number || order.shipping_carrier) {
     lines.push('');
-    lines.push('🚚 *Tracking Info*');
+    lines.push(getFlowCopy(l, 'orders.tracking_header'));
     if (order.shipping_carrier) lines.push(`Carrier: ${order.shipping_carrier}`);
     if (order.tracking_number) lines.push(`Tracking #: ${order.tracking_number}`);
   }
@@ -256,14 +263,14 @@ export async function handleOrderDetail(
 
   const buttons: Array<{ id: string; title: string }> = [];
   if (['pending', 'confirmed', 'processing', 'ready', 'shipped'].includes(order.status)) {
-    buttons.push({ id: 'refresh_order', title: 'Refresh Status' });
+    buttons.push({ id: 'refresh_order', title: getFlowCopy(l, 'orders.refresh_status') });
   }
-  buttons.push({ id: 'back_orders', title: 'Back to Orders' });
-  buttons.push({ id: 'back_to_account', title: 'My Account' });
+  buttons.push({ id: 'back_orders', title: getFlowCopy(l, 'orders.back_to_orders') });
+  buttons.push({ id: 'back_to_account', title: getFlowCopy(l, 'account.title') });
 
   await messageSender.sendButtons({
     to: from,
-    body: 'What would you like to do?',
+    body: getFlowCopy(l, 'orders.what_to_do'),
     buttons,
   });
 }
@@ -276,11 +283,13 @@ export async function handleOrderDetailAction(
   session: BotSession,
   from: string,
   input: string,
+  lang?: string,
 ): Promise<void> {
+  const l = lang || 'en';
   const orderId = session.session_data.selected_order_id as string;
 
   if (!orderId) {
-    await sendText(from, 'Something went wrong. Type *my orders* to try again.');
+    await sendText(from, getFlowCopy(l, 'orders.action_error'));
     await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
@@ -288,7 +297,7 @@ export async function handleOrderDetailAction(
   const response = input.toLowerCase();
 
   if (response === 'cancel' || response === 'exit' || response === 'quit') {
-    await sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
+    await sendText(from, getFlowCopy(l, 'orders.action_cancelled'));
     await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
@@ -297,7 +306,7 @@ export async function handleOrderDetailAction(
     // Update both DB and in-memory session before calling handleMyOrders
     session.current_step = 'my_orders';
     await supabase.from('bot_sessions').update({ current_step: 'my_orders' }).eq('id', session.id);
-    await handleMyOrders(supabase, messageSender, sendText, routeToMyAccountMenu, session, from, '');
+    await handleMyOrders(supabase, messageSender, sendText, routeToMyAccountMenu, session, from, '', l);
     return;
   }
 
@@ -307,9 +316,9 @@ export async function handleOrderDetailAction(
   }
 
   if (response === 'refresh_order') {
-    await handleOrderDetail(supabase, messageSender, sendText, session, from, orderId);
+    await handleOrderDetail(supabase, messageSender, sendText, session, from, orderId, l);
     return;
   }
 
-  await sendText(from, 'Please tap one of the options above.');
+  await sendText(from, getFlowCopy(l, 'error.tap_option'));
 }

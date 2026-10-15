@@ -1,11 +1,84 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
+import {
+  EMPTY_SITE_ANNOUNCEMENT,
+  validateSiteAnnouncementConfig,
+  type SiteAnnouncementConfig,
+  type SiteAnnouncementStyle,
+  type SiteAnnouncementType,
+} from '@/shared/site-announcement';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
-const VALID_TYPES = ['launch_countdown', 'maintenance_notice', 'general'] as const;
-const VALID_STYLES = ['brand', 'warning', 'info'] as const;
+const STALE_WRITE_MESSAGE = 'This announcement was updated elsewhere. Reload the latest version before saving.';
+
+function optionalString(value: unknown, field: string): { value: string | null; error?: string } {
+  if (value === null || value === undefined || value === '') return { value: null };
+  if (typeof value !== 'string') return { value: null, error: `${field} must be a string` };
+  return { value };
+}
+
+function requiredString(value: unknown, field: string): { value: string; error?: string } {
+  if (value === undefined || value === null) return { value: '' };
+  if (typeof value !== 'string') return { value: '', error: `${field} must be a string` };
+  return { value };
+}
+
+function parseConfig(body: Record<string, unknown>): { config?: SiteAnnouncementConfig; error?: string } {
+  if (typeof body.enabled !== 'boolean') {
+    return { error: 'enabled must be a boolean' };
+  }
+
+  const headline = requiredString(body.headline, 'headline');
+  if (headline.error) return { error: headline.error };
+
+  const message = requiredString(body.message, 'message');
+  if (message.error) return { error: message.error };
+
+  const target = optionalString(body.target_date, 'target_date');
+  if (target.error) return { error: target.error };
+
+  const ctaText = optionalString(body.cta_text, 'cta_text');
+  if (ctaText.error) return { error: ctaText.error };
+
+  const ctaLink = optionalString(body.cta_link, 'cta_link');
+  if (ctaLink.error) return { error: ctaLink.error };
+
+  const config: SiteAnnouncementConfig = {
+    ...EMPTY_SITE_ANNOUNCEMENT,
+    enabled: body.enabled,
+    type: (body.type || 'general') as SiteAnnouncementType,
+    headline: headline.value,
+    message: message.value,
+    target_date: target.value,
+    cta_text: ctaText.value,
+    cta_link: ctaLink.value,
+    style: (body.style || 'brand') as SiteAnnouncementStyle,
+  };
+
+  const errors = validateSiteAnnouncementConfig(config);
+  if (errors.length > 0) {
+    return { error: errors[0] };
+  }
+
+  return { config };
+}
+
+function parseExpectedUpdatedAt(body: Record<string, unknown>): { value?: string; error?: string } {
+  if (typeof body.expected_updated_at !== 'string' || !body.expected_updated_at.trim()) {
+    return { error: 'expected_updated_at is required. Reload the latest announcement before saving.' };
+  }
+
+  const value = body.expected_updated_at.trim();
+  if (!Number.isFinite(new Date(value).getTime())) {
+    return { error: 'expected_updated_at must be a valid timestamp' };
+  }
+
+  return { value };
+}
 
 /**
  * GET /api/admin/site-announcement
@@ -15,7 +88,9 @@ export async function GET(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
-  const supabase = createServiceClient();
+  // #512: the version token must come from a live DB read. A cached version
+  // makes every otherwise-fresh Admin save look stale and correctly return 409.
+  const supabase = createServiceClient({ noStore: true });
   const { data, error } = await supabase
     .from('platform_settings')
     .select('value, updated_at')
@@ -36,60 +111,56 @@ export async function GET(request: NextRequest) {
  * This is purely informational — it does NOT disable WhatsApp,
  * payments, bookings, or any runtime capability. That is the
  * exclusive domain of the existing maintenance_mode setting.
+ *
+ * Updates are optimistic-concurrency guarded by expected_updated_at so
+ * a stale Admin form cannot silently overwrite a newer announcement.
  */
 export async function PUT(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
-  const body = await request.json();
-
-  // Validate required fields
-  if (typeof body.enabled !== 'boolean') {
-    return NextResponse.json({ error: 'enabled must be a boolean' }, { status: 400 });
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  if (body.type && !VALID_TYPES.includes(body.type)) {
-    return NextResponse.json({ error: `type must be one of: ${VALID_TYPES.join(', ')}` }, { status: 400 });
+  const parsed = parseConfig(body);
+  if (!parsed.config) {
+    return NextResponse.json({ error: parsed.error || 'Invalid announcement config' }, { status: 400 });
   }
 
-  if (body.style && !VALID_STYLES.includes(body.style)) {
-    return NextResponse.json({ error: `style must be one of: ${VALID_STYLES.join(', ')}` }, { status: 400 });
+  const expected = parseExpectedUpdatedAt(body);
+  if (!expected.value) {
+    return NextResponse.json({ error: expected.error || 'Invalid announcement version' }, { status: 400 });
   }
 
-  // Validate CTA link if provided (must be relative or https)
-  if (body.cta_link && typeof body.cta_link === 'string') {
-    if (!body.cta_link.startsWith('/') && !body.cta_link.startsWith('https://')) {
-      return NextResponse.json({ error: 'cta_link must start with / or https://' }, { status: 400 });
-    }
-    if (body.cta_link.startsWith('//')) {
-      return NextResponse.json({ error: 'Invalid cta_link' }, { status: 400 });
-    }
-  }
-
-  const config = {
-    enabled: body.enabled,
-    type: body.type || 'general',
-    headline: (body.headline || '').slice(0, 200),
-    message: (body.message || '').slice(0, 500),
-    target_date: body.target_date || null,
-    cta_text: body.cta_text ? String(body.cta_text).slice(0, 50) : null,
-    cta_link: body.cta_link || null,
-    style: body.style || 'brand',
-  };
-
+  const nextUpdatedAt = new Date().toISOString();
   const supabase = createServiceClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('platform_settings')
     .update({
-      value: config,
+      value: parsed.config,
       updated_by: admin.userId,
-      updated_at: new Date().toISOString(),
+      updated_at: nextUpdatedAt,
     })
-    .eq('key', 'site_announcement');
+    .eq('key', 'site_announcement')
+    .eq('updated_at', expected.value)
+    .select('value, updated_at')
+    .maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: 'Failed to update announcement' }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, config });
+  if (!data) {
+    return NextResponse.json({ error: STALE_WRITE_MESSAGE, code: 'STALE_WRITE' }, { status: 409 });
+  }
+
+  return NextResponse.json({
+    success: true,
+    config: data.value as SiteAnnouncementConfig,
+    updated_at: data.updated_at,
+  });
 }

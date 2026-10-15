@@ -346,29 +346,34 @@ describe('ACC-180 Runtime: untrusted resolution blocked', () => {
   });
 
   it('business resolved via fuzzy detection → promo NOT authorized (runtime)', async () => {
-    // Configure detector mock to return a business through fuzzy matching
-    mockDetectionResult = { businessId: 'biz-fuzzy' };
+    // Configure detector mock to return a business through exact authority detection
+    // (authority:'exact' binds businessId, but bizResolution remains 'fuzzy' — not promo-trusted)
+    mockDetectionResult = { businessId: 'biz-fuzzy', authority: 'exact' };
     const sb = buildSupabase({ businessId: 'biz-fuzzy' });
     // No RPC call without preResolvedBusinessId — legacy path
     const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
     // No preResolvedBusinessId, no destinationPhone → detectBotCodeWithSuggestions resolves business
     await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text', undefined, undefined, undefined, 'wamid.FUZZY');
 
-    // Business WAS resolved (fuzzy), but first-message promo NOT called
+    // Business WAS resolved (fuzzy/exact detection), but first-message promo NOT called
     expect(promoHandlerCalls.length).toBe(0);
     // Normal flow should continue
     expect(flowExecutorExecuteCalls).toBe(1);
   });
 
   it('business resolved via returning-customer inference → promo NOT authorized (runtime)', async () => {
-    mockReturningCustomerResult = 'biz-returning';
+    // #266 R1: returning-customer history feeds suggestions, never directly binds a business.
+    // Set up returning businesses in the plural mock used by bot service.
+    mockReturningCustomerBusinesses = [{ id: 'biz-returning', name: 'Returning Biz', bot_code: 'RB01' }];
     const sb = buildSupabase({ businessId: 'biz-returning' });
     const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
     await bot.handleMessage('+2341234567890', 'TROPHY K7PM4XQ9', 'text', undefined, undefined, undefined, 'wamid.RETURN');
 
-    // Business resolved via returning-customer (untrusted)
+    // Business NOT directly resolved via returning-customer (untrusted — suggestions only)
     expect(promoHandlerCalls.length).toBe(0);
-    expect(flowExecutorExecuteCalls).toBe(1);
+    // #266: returning-customer now feeds suggestion picker, not direct flow execution
+    // Flow executor does NOT run because business was never directly bound
+    expect(flowExecutorExecuteCalls).toBe(0);
   });
 });
 

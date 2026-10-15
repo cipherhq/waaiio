@@ -17,6 +17,8 @@ import { NextRequest } from 'next/server';
 let rateLimitCalls: Array<{ key: string; max: number; windowMs: number }> = [];
 let rateLimitBlocked = new Set<string>();
 
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
+
 vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponseAsync: vi.fn(async (key: string, max: number, windowMs: number) => {
     rateLimitCalls.push({ key, max, windowMs });

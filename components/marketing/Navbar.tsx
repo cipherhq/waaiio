@@ -40,11 +40,12 @@ export default function Navbar() {
   return (
     <>
       <header
-        className={`fixed left-0 right-0 top-0 z-40 transition-all duration-300 ${
+        className={`fixed left-0 right-0 z-40 transition-all duration-300 ${
           scrolled || !isHeroPage
             ? 'border-b border-gray-200/60 bg-white/85 shadow-sm backdrop-blur-lg'
             : 'bg-transparent'
         }`}
+        style={{ top: 'var(--announcement-h, 0px)' }}
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <Link href="/" className="flex items-center gap-2">
@@ -113,16 +114,18 @@ export default function Navbar() {
                 >
                   Log In
                 </Link>
+                {/* Pre-launch: route to /launch. When Admin-controlled signup gate
+                    opens (#453), this CTA must switch to /get-started for onboarding. */}
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Link
-                    href="/get-started"
+                    href="/launch"
                     className={`hidden rounded-xl px-5 py-2 text-sm font-bold shadow-lg transition sm:inline-flex ${
                       scrolled || !isHeroPage
                         ? 'bg-accent text-gray-900 shadow-accent/20 hover:bg-accent-400'
                         : 'bg-white text-gray-900 shadow-white/10 hover:bg-gray-100'
                     }`}
                   >
-                    Get Started
+                    Get Updates
                   </Link>
                 </motion.div>
               </>
@@ -143,6 +146,17 @@ export default function Navbar() {
           </div>
         </div>
       </header>
+
+      {/* The announcement is fixed and therefore does not reserve document flow.
+          On the homepage, reserve exactly its measured height so the existing
+          hero pt-16 can continue to account for the fixed navbar itself. */}
+      {isHeroPage && (
+        <div
+          aria-hidden="true"
+          className="w-full shrink-0"
+          style={{ height: 'var(--announcement-h, 0px)' }}
+        />
+      )}
 
       <MobileMenu
         isOpen={menuOpen}

@@ -119,6 +119,15 @@ async function resolveCampaign(
 }
 
 /**
+ * Append a code format hint to a message when the campaign has a defined format.
+ * Helps customers re-enter with the correct pattern after an invalid attempt.
+ */
+function appendFormatHint(message: string, codeFormat: string | null | undefined): string {
+  if (!codeFormat) return message;
+  return `${message}\n\n📝 Expected format: *${codeFormat}*`;
+}
+
+/**
  * Format response message using campaign templates.
  */
 function formatResponseMessage(
@@ -140,7 +149,7 @@ function formatResponseMessage(
       return campaign.already_used_message;
 
     case 'invalid':
-      return campaign.invalid_message;
+      return appendFormatHint(campaign.invalid_message, campaign.code_format);
 
     case 'campaign_inactive':
       return campaign.expired_message;
@@ -152,7 +161,7 @@ function formatResponseMessage(
       return 'You have exceeded the maximum number of attempts for this promotion.';
 
     default:
-      return campaign.invalid_message;
+      return appendFormatHint(campaign.invalid_message, campaign.code_format);
   }
 }
 
@@ -191,7 +200,7 @@ export async function verifyPromoCode(input: VerificationInput): Promise<Verific
     // RPC error is non-critical — returns invalid message to user
     return {
       result: 'invalid',
-      message: campaign.invalid_message,
+      message: appendFormatHint(campaign.invalid_message, campaign.code_format),
     };
   }
 

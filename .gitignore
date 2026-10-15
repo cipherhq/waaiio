@@ -52,3 +52,8 @@ next-env.d.ts
 playwright-report/
 test-results/
 graphify-out/
+
+# AI agent tooling
+.codex/
+.mcp.json
+.playwright-mcp/

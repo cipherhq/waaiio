@@ -24,7 +24,14 @@ const selectAppointmentStep: FlowStepConfig = {
       .order('sort_order');
 
     if (!appointments || appointments.length === 0) {
-      return [{ type: 'text', text: 'No appointments are available right now. Please check back later!' }];
+      return [{
+        type: 'buttons',
+        body: 'No appointments are available right now.',
+        buttons: [
+          { id: 'recovery_other_options', title: 'Other Options' },
+          { id: 'recovery_exit', title: 'Exit' },
+        ],
+      }];
     }
 
     // Auto-select if only one appointment type
@@ -70,6 +77,14 @@ const selectAppointmentStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    // Recovery buttons from no-appointments prompt
+    if (input === 'recovery_other_options') {
+      return { valid: true, data: { _recovery_action: 'other_options' } };
+    }
+    if (input === 'recovery_exit') {
+      return { valid: true, data: { _action: 'cancel' } };
+    }
+
     // Try exact ID match first
     const { data: appointment } = await ctx.supabase
       .from('appointments')
@@ -141,7 +156,14 @@ const selectAppointmentStep: FlowStepConfig = {
     return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
   },
 
-  async next() {
+  async next(ctx: FlowContext) {
+    if (ctx.session.session_data._recovery_action === 'other_options') {
+      delete ctx.session.session_data._recovery_action;
+      return 'select_capability';
+    }
+    if (ctx.session.session_data._action === 'cancel') {
+      return null;
+    }
     // Route into the scheduling flow's shared steps
     // Order: date → staff → time → confirm → payment
     return 'select_date';

@@ -8,6 +8,34 @@ type CookieEntry = { name: string; value: string; options: CookieOptions };
 let maintenanceCache: { value: boolean; expiresAt: number } | null = null;
 const MAINTENANCE_CACHE_TTL = 30_000; // 30 seconds
 
+// ── Signup Gate Cache ──
+let signupGateCache: { value: boolean; expiresAt: number } | null = null;
+const SIGNUP_GATE_CACHE_TTL = 30_000; // 30 seconds
+
+async function isSignupOpenMiddleware(supabase: ReturnType<typeof createServerClient>): Promise<boolean> {
+  // Staging bypass — explicit trusted environment check, not hostname
+  const { isStagingTestMode } = await import('@/lib/staging-test-mode');
+  if (isStagingTestMode()) return true;
+
+  if (signupGateCache && Date.now() < signupGateCache.expiresAt) {
+    return signupGateCache.value;
+  }
+  try {
+    const { data } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'signup_open')
+      .single();
+    const isOpen = data?.value === true;
+    signupGateCache = { value: isOpen, expiresAt: Date.now() + SIGNUP_GATE_CACHE_TTL };
+    return isOpen;
+  } catch {
+    // Missing/error → fail closed
+    signupGateCache = { value: false, expiresAt: Date.now() + SIGNUP_GATE_CACHE_TTL };
+    return false;
+  }
+}
+
 async function isMaintenanceMode(supabase: ReturnType<typeof createServerClient>): Promise<boolean> {
   if (maintenanceCache && Date.now() < maintenanceCache.expiresAt) {
     return maintenanceCache.value;
@@ -274,6 +302,19 @@ export async function middleware(request: NextRequest) {
         url.pathname = '/maintenance';
         return applySecurityHeaders(NextResponse.redirect(url));
       }
+    }
+  }
+
+  // ── Signup Gate ──
+  // Block /get-started and /signup when signup_open is false
+  const signupPaths = ['/get-started', '/signup'];
+  const isSignupPath = signupPaths.some(p => request.nextUrl.pathname === p || request.nextUrl.pathname.startsWith(p + '/'));
+  if (isSignupPath && !user) {
+    const signupOpen = await isSignupOpenMiddleware(supabase);
+    if (!signupOpen) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/launch';
+      return applySecurityHeaders(NextResponse.redirect(url));
     }
   }
 

@@ -85,9 +85,10 @@ describe('#346 Part A — Structural assertions', () => {
   describe('Registration route — server-enforced shared', () => {
     it('C1: route hardcodes wa_method to shared, ignoring caller value', () => {
       // The insert payload must use 'shared', not the caller-supplied wa_method
-      const insertBlock = registerRouteSource.slice(
-        registerRouteSource.indexOf('.insert({'),
-        registerRouteSource.indexOf('status: \'pending\'') + 20
+      const provisioningSource = readFileSync(join(process.cwd(), 'lib/onboarding/provision-business.ts'), 'utf-8');
+      const insertBlock = provisioningSource.slice(
+        provisioningSource.indexOf('.insert({'),
+        provisioningSource.indexOf('status: \'pending\'') + 20
       );
       expect(insertBlock).toContain("wa_method: 'shared'");
       expect(insertBlock).not.toMatch(/wa_method:\s*wa_method/);
@@ -128,6 +129,8 @@ describe('#346 Part A — Structural assertions', () => {
 
 // ── Mock infrastructure ──
 
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
+
 const mockGetUser = vi.fn();
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve({
@@ -150,7 +153,24 @@ let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
 const mockServiceFrom = vi.fn((table: string) => {
   if (table === 'countries') {
     return {
-      select: () => ({ eq: () => Promise.resolve(mockCountriesResponse) }),
+      select: () => ({
+        eq: (_col: string, _val?: unknown) => {
+          // Support both chain patterns:
+          // 1. select().eq('is_active', true) -> Promise (country list)
+          // 2. select().eq('code', x).eq('is_active', true).single() -> Promise (single country for gateway resolver)
+          const chainable = {
+            ...Promise.resolve(mockCountriesResponse),
+            then: (onfulfilled: (v: unknown) => unknown) => Promise.resolve(mockCountriesResponse).then(onfulfilled),
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { payment_gateway: 'paystack', currency_code: 'NGN' },
+                error: null,
+              }),
+            }),
+          };
+          return chainable;
+        },
+      }),
     };
   }
   if (table === 'businesses') {
@@ -259,6 +279,7 @@ vi.mock('@/lib/constants', () => ({
   generateSlug: () => 'test-slug',
   generateBotCode: () => 'TESTCODE',
   CATEGORY_FLOW_MAP: {},
+  getPayoutLimit: () => 500_000,
 }));
 
 vi.mock('@/lib/email/client', () => ({

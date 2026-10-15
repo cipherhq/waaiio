@@ -1,9 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
-import { logAudit } from '@/lib/auditLog';
+import { adminApiPut, adminApiFetch, adminApiDelete } from '@/lib/adminApi';
 import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
+import {
+  isCountryAmountKey,
+  validateCountryAmounts,
+  COUNTRY_AMOUNT_COUNTRIES,
+  COUNTRY_CURRENCY_SYMBOLS,
+  COUNTRY_NAMES,
+  COUNTRY_AMOUNT_HELP,
+} from '@shared/country-amounts';
 
 interface PlatformSetting {
   key: string;
@@ -67,6 +77,109 @@ function formatValue(val: unknown): string {
   return JSON.stringify(val, null, 2);
 }
 
+/**
+ * Structured editor for country-amount settings (minimum_bank_transfer, minimum_payout).
+ * Shows one row per allowed country with currency symbol and number input.
+ */
+function CountryAmountEditor({
+  settingKey,
+  value,
+  changed,
+  onChange,
+}: {
+  settingKey: string;
+  value: Record<string, number>;
+  changed: boolean;
+  onChange: (val: string) => void;
+}) {
+  const countries = COUNTRY_AMOUNT_COUNTRIES[settingKey] || [];
+  const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+
+  function handleChange(cc: string, raw: string) {
+    // Allow empty while typing, but mark as required
+    const updated = { ...value };
+    if (raw === '') {
+      delete updated[cc];
+    } else {
+      const num = Number(raw);
+      updated[cc] = num;
+    }
+
+    // Validate — every allowed country must have a value
+    const errors: Record<string, string> = {};
+    for (const country of countries) {
+      if (!(country in updated)) {
+        errors[country] = 'Required';
+      }
+    }
+    for (const [country, val] of Object.entries(updated)) {
+      if (typeof val !== 'number' || !Number.isFinite(val)) {
+        errors[country] = 'Must be a number';
+      } else if (val < 0) {
+        errors[country] = 'Must be 0 or greater';
+      } else if (!Number.isInteger(val)) {
+        errors[country] = 'Must be a whole number';
+      }
+    }
+    setLocalErrors(errors);
+
+    onChange(JSON.stringify(updated, null, 2));
+  }
+
+  return (
+    <div className={`rounded-lg border p-3 space-y-2 ${borderClass}`}>
+      {countries.map(cc => {
+        const symbol = COUNTRY_CURRENCY_SYMBOLS[cc] || cc;
+        const name = COUNTRY_NAMES[cc] || cc;
+        const currentVal = value[cc];
+        const error = localErrors[cc];
+        return (
+          <div key={cc}>
+            <div className="flex items-center gap-2">
+              <label className="w-36 text-xs font-medium text-gray-500 shrink-0">
+                {name} ({symbol})
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={currentVal !== undefined ? currentVal : ''}
+                onChange={e => handleChange(cc, e.target.value)}
+                onKeyDown={e => {
+                  // Block decimal point, comma, letter e
+                  if (e.key === '.' || e.key === ',' || e.key === 'e' || e.key === 'E') {
+                    e.preventDefault();
+                  }
+                }}
+                placeholder="0"
+                className={`flex-1 rounded border px-2 py-1.5 text-sm outline-none focus:border-brand ${
+                  error ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                }`}
+              />
+            </div>
+            {error && <p className="ml-36 pl-2 text-[10px] text-red-500 mt-0.5">{error}</p>}
+          </div>
+        );
+      })}
+      {Object.keys(localErrors).length > 0 && (
+        <p className="text-[10px] text-red-500 font-medium">Fix errors above before saving.</p>
+      )}
+    </div>
+  );
+}
+
+/** Check if a country-amount value has validation errors (for disabling Save) */
+function hasCountryAmountErrors(key: string, jsonStr: string): boolean {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const errors = validateCountryAmounts(key, parsed);
+    return errors !== null;
+  } catch {
+    return true;
+  }
+}
+
 /** Render a friendly editor based on the setting's value type */
 function renderSettingEditor(
   setting: PlatformSetting,
@@ -75,6 +188,19 @@ function renderSettingEditor(
   onChange: (val: string) => void,
 ) {
   const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+
+  // Country-amount editor (minimum_bank_transfer, minimum_payout)
+  if (isCountryAmountKey(setting.key)) {
+    const parsed = (() => { try { return JSON.parse(currentVal); } catch { return {}; } })();
+    return (
+      <CountryAmountEditor
+        settingKey={setting.key}
+        value={typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {}}
+        changed={changed}
+        onChange={onChange}
+      />
+    );
+  }
 
   // Boolean toggle (maintenance_mode, etc.)
   if (setting.value === true || setting.value === false) {
@@ -322,7 +448,6 @@ export default function PlatformSettings() {
   const isFullAdmin = session?.role === 'admin';
   const [settings, setSettings] = useState<PlatformSetting[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string | null>(null);
 
   if (!isFullAdmin) {
     return (
@@ -343,6 +468,8 @@ export default function PlatformSettings() {
   const [newValue, setNewValue] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [adding, setAdding] = useState(false);
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // Delete state
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -351,9 +478,6 @@ export default function PlatformSettings() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      setUserId(sessionData?.session?.user?.id ?? null);
-
       const { data } = await adminDb
         .from('platform_settings')
         .select('*')
@@ -393,7 +517,8 @@ export default function PlatformSettings() {
 
   // Human-readable descriptions for known unconfigured keys
   const KEY_DESCRIPTIONS: Record<string, string> = {
-    minimum_bank_transfer: 'Minimum amount (per country) for direct bank transfer payment option. JSON object keyed by country code, e.g. {"NG": 5000, "GH": 5000}.',
+    minimum_bank_transfer: COUNTRY_AMOUNT_HELP.minimum_bank_transfer,
+    minimum_payout: COUNTRY_AMOUNT_HELP.minimum_payout,
     fraud_velocity_threshold: 'Maximum number of payment attempts per time window before flagging.',
     invoice_expiry_days: 'Number of days before an unpaid invoice expires.',
   };
@@ -415,16 +540,60 @@ export default function PlatformSettings() {
 
   // Commercial config keys — routed through save_commercial_config() RPC
   // Note: messaging_pricing, trial_credit_minor_by_currency, and
-  // subscription_included_minor_by_tier_currency are bundle-only keys
-  // managed via save_messaging_config() through the Countries page.
+  // 16 individually writable commercial keys → save_commercial_config() RPC
   const COMMERCIAL_KEYS = new Set([
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
-    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'payout_cooling_period_days', 'minimum_payout',
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
+    'messaging_topup_packages',
   ]);
+
+  // 3 bundle-only messaging keys → managed atomically via save_messaging_config()
+  // through the Countries/Messaging configuration page. Read-only here.
+  const MESSAGING_BUNDLE_KEYS = new Set([
+    'messaging_pricing',
+    'trial_credit_minor_by_currency',
+    'subscription_included_minor_by_tier_currency',
+  ]);
+
+  // Combined 19-key protected set (for display classification / badges)
+  const ALL_PROTECTED_KEYS = new Set([...COMMERCIAL_KEYS, ...MESSAGING_BUNDLE_KEYS]);
+
+  // C6: Save commercial config via step-up-protected server route
+  async function saveCommercialViaStepUp(key: string, value: unknown, description?: string | null): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) { reject(new Error('Session expired')); return; }
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/platform-settings/commercial`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ key, value, description: description ?? null, stepUpId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') { reject(new Error('Step-up authorization failed')); return; }
+          if (data.code === 'version_conflict') { reject(new Error(data.error)); return; }
+          reject(new Error(data.error || 'Failed to save'));
+          return;
+        }
+        resolve();
+      };
+      stepUpCallbackRef.current = onAuthorized;
+      stepUp.execute({
+        actionType: 'commercial_config',
+        targetId: key,
+        params: { key, value, description: description ?? null, expected_version_id: null },
+        description: `Update commercial setting: ${key}`,
+        onAuthorized,
+      }).catch(reject);
+    });
+  }
 
   // Save a single setting
   async function handleSave(key: string) {
@@ -440,32 +609,20 @@ export default function PlatformSettings() {
         parsedValue = raw;
       }
 
-      if (COMMERCIAL_KEYS.has(key)) {
-        // Commercial keys: use the atomic versioned save RPC
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: key,
-          p_value: parsedValue,
-        });
-        if (error) throw error;
+      if (MESSAGING_BUNDLE_KEYS.has(key)) {
+        alert('This key is managed through the Countries/Messaging configuration page. It cannot be edited individually here.');
+        return;
+      } else if (COMMERCIAL_KEYS.has(key)) {
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(key, parsedValue);
       } else {
-        // Non-commercial keys: direct update (unchanged)
-        const { error } = await adminDb
-          .from('platform_settings')
-          .update({
-            value: parsedValue,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('key', key);
-        if (error) throw error;
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiPut('/api/admin/platform-settings', { key, value: parsedValue });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to update setting');
+        }
       }
-
-      await logAudit({
-        action: 'update_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key, new_value: parsedValue },
-      });
 
       // Clear edit and reload
       setEdits(prev => { const next = { ...prev }; delete next[key]; return next; });
@@ -495,38 +652,24 @@ export default function PlatformSettings() {
       }
 
       const trimmedKey = newKey.trim();
-      if (COMMERCIAL_KEYS.has(trimmedKey)) {
-        // Commercial keys: use the atomic versioned save RPC
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: trimmedKey,
-          p_value: parsedValue,
-          p_description: newDescription.trim() || null,
-        });
-        if (error) throw error;
+      if (MESSAGING_BUNDLE_KEYS.has(trimmedKey)) {
+        alert('This key is managed through the Countries/Messaging configuration page.');
+        return;
+      } else if (COMMERCIAL_KEYS.has(trimmedKey)) {
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(trimmedKey, parsedValue, newDescription.trim() || null);
       } else {
-        // Non-commercial keys: direct insert (unchanged)
-        const { error } = await adminDb
-          .from('platform_settings')
-          .insert({
-            key: trimmedKey,
-            value: parsedValue,
-            description: newDescription.trim() || null,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          });
-        if (error) throw error;
-      }
-
-      await logAudit({
-        action: 'create_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: newKey.trim(),
-        details: {
-          key: newKey.trim(),
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiFetch('/api/admin/platform-settings', {
+          key: trimmedKey,
           value: parsedValue,
           description: newDescription.trim() || null,
-        },
-      });
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to add setting');
+        }
+      }
 
       setShowAdd(false);
       setNewKey('');
@@ -556,31 +699,24 @@ export default function PlatformSettings() {
         parsedValue = configValue;
       }
 
-      if (COMMERCIAL_KEYS.has(key)) {
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: key,
-          p_value: parsedValue,
-        });
-        if (error) throw error;
+      if (MESSAGING_BUNDLE_KEYS.has(key)) {
+        alert('This key is managed through the Countries/Messaging configuration page.');
+        return;
+      } else if (COMMERCIAL_KEYS.has(key)) {
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(key, parsedValue);
       } else {
-        const { error } = await adminDb
-          .from('platform_settings')
-          .insert({
-            key,
-            value: parsedValue,
-            description: configDescription.trim() || null,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          });
-        if (error) throw error;
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiFetch('/api/admin/platform-settings', {
+          key,
+          value: parsedValue,
+          description: configDescription.trim() || null,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to configure setting');
+        }
       }
-
-      await logAudit({
-        action: 'create_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key, value: parsedValue },
-      });
 
       setConfiguringKey(null);
       setConfigValue('');
@@ -596,27 +732,21 @@ export default function PlatformSettings() {
 
   // Delete setting
   async function handleDelete(key: string) {
-    if (COMMERCIAL_KEYS.has(key)) {
-      alert('Commercial config keys cannot be deleted. They are protected by the config versioning system.');
+    if (COMMERCIAL_KEYS.has(key) || MESSAGING_BUNDLE_KEYS.has(key)) {
+      alert('Protected config keys cannot be deleted. They are managed through the config versioning system.');
       return;
     }
     if (!confirm(`Are you sure you want to delete the setting "${key}"? This action cannot be undone.`)) return;
 
     setDeleting(key);
     try {
-      const { error } = await adminDb
-        .from('platform_settings')
-        .delete()
-        .eq('key', key);
+      const res = await adminApiDelete('/api/admin/platform-settings', { key });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to delete setting');
+      }
 
-      if (error) throw error;
-
-      await logAudit({
-        action: 'delete_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key },
-      });
+      // Server route handles audit.
 
       await loadData();
     } catch (error) {
@@ -761,38 +891,53 @@ export default function PlatformSettings() {
                           <span className="ml-2 font-mono text-xs text-gray-400">{setting.key}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          {changed && (
+                          {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
+                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                              Managed in Countries config
+                            </span>
+                          ) : (
                             <>
+                              {changed && (
+                                <>
+                                  <button
+                                    onClick={() => handleSave(setting.key)}
+                                    disabled={isSaving || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val))}
+                                    className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                                  >
+                                    {isSaving ? 'Saving...' : 'Save'}
+                                  </button>
+                                  <button
+                                    onClick={() => setEdits(prev => { const next = { ...prev }; delete next[setting.key]; return next; })}
+                                    className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:bg-gray-50"
+                                  >
+                                    Undo
+                                  </button>
+                                </>
+                              )}
                               <button
-                                onClick={() => handleSave(setting.key)}
-                                disabled={isSaving}
-                                className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                                onClick={() => handleDelete(setting.key)}
+                                disabled={deleting === setting.key}
+                                className="rounded-lg p-1.5 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
+                                title="Delete"
                               >
-                                {isSaving ? 'Saving...' : 'Save'}
-                              </button>
-                              <button
-                                onClick={() => setEdits(prev => { const next = { ...prev }; delete next[setting.key]; return next; })}
-                                className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:bg-gray-50"
-                              >
-                                Undo
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             </>
                           )}
-                          <button
-                            onClick={() => handleDelete(setting.key)}
-                            disabled={deleting === setting.key}
-                            className="rounded-lg p-1.5 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
                         </div>
                       </div>
                       {setting.description && (
                         <p className="mb-2 text-xs text-gray-500">{setting.description}</p>
                       )}
-                      {/* Smart editor based on value type */}
-                      {renderSettingEditor(setting, val, changed, (newVal) => setEdits(prev => ({ ...prev, [setting.key]: newVal })))}
+                      {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
+                        /* Bundle-only keys: read-only value display, no editable controls */
+                        <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-600 font-mono whitespace-pre-wrap break-all" data-testid={`readonly-value-${setting.key}`}>
+                          {formatValue(setting.value)}
+                        </div>
+                      ) : (
+                        /* All other keys: interactive editor */
+                        renderSettingEditor(setting, val, changed, (newVal) => setEdits(prev => ({ ...prev, [setting.key]: newVal })))
+                      )}
                       {setting.updated_at && (
                         <p className="mt-1 text-xs text-gray-400">Updated {fmtDateTime(setting.updated_at)}</p>
                       )}
@@ -803,11 +948,12 @@ export default function PlatformSettings() {
                 {/* Unconfigured keys — visible placeholders for absent settings */}
                 {unconfiguredKeys.map(key => {
                   const friendlyName = key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
-                  const isConfiguring = configuringKey === key;
+                  const isBundleOnly = MESSAGING_BUNDLE_KEYS.has(key);
+                  const isConfiguring = !isBundleOnly && configuringKey === key;
                   const isSaving = savingKey === key;
 
                   return (
-                    <div key={key} className="px-5 py-4 bg-amber-50/50">
+                    <div key={key} className="px-5 py-4 bg-amber-50/50" data-testid={`unconfigured-${key}`}>
                       <div className="flex items-baseline justify-between gap-3 mb-1.5">
                         <div className="flex items-center gap-2">
                           <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
@@ -815,9 +961,15 @@ export default function PlatformSettings() {
                             {friendlyName}
                           </span>
                           <span className="ml-1 font-mono text-xs text-gray-400">{key}</span>
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Not configured</span>
+                          {isBundleOnly ? (
+                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                              Managed in Countries config
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Not configured</span>
+                          )}
                         </div>
-                        {!isConfiguring && (
+                        {!isBundleOnly && !isConfiguring && (
                           <button
                             onClick={() => {
                               setConfiguringKey(key);
@@ -830,38 +982,61 @@ export default function PlatformSettings() {
                           </button>
                         )}
                       </div>
-                      {KEY_DESCRIPTIONS[key] && !isConfiguring && (
+                      {isBundleOnly && (
+                        <p className="ml-6 text-xs text-gray-500">
+                          This setting is managed atomically through the Countries/Messaging configuration page via <code className="text-[10px]">save_messaging_config()</code>.
+                        </p>
+                      )}
+                      {!isBundleOnly && KEY_DESCRIPTIONS[key] && !isConfiguring && (
                         <p className="ml-6 text-xs text-gray-500">{KEY_DESCRIPTIONS[key]}</p>
                       )}
                       {isConfiguring && (
                         <div className="mt-2 ml-6 rounded-lg border border-amber-200 bg-white p-4 space-y-3">
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Value</label>
-                            <input
-                              type="text"
-                              value={configValue}
-                              onChange={e => setConfigValue(e.target.value)}
-                              placeholder={KEY_DESCRIPTIONS[key] ? 'e.g. {"NG": 5000, "GH": 5000}' : 'Enter value (JSON or plain text)'}
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
-                            <input
-                              type="text"
-                              value={configDescription}
-                              onChange={e => setConfigDescription(e.target.value)}
-                              placeholder="Human-readable description"
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-                            />
-                          </div>
+                          {isCountryAmountKey(key) ? (
+                            <>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                  {COUNTRY_AMOUNT_HELP[key] || 'Amount per country'}
+                                </label>
+                                <CountryAmountEditor
+                                  settingKey={key}
+                                  value={(() => { try { const p = JSON.parse(configValue); return typeof p === 'object' && p !== null && !Array.isArray(p) ? p : {}; } catch { return {}; } })()}
+                                  changed={false}
+                                  onChange={v => setConfigValue(v)}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Value</label>
+                              <input
+                                type="text"
+                                value={configValue}
+                                onChange={e => setConfigValue(e.target.value)}
+                                placeholder="Enter value (JSON or plain text)"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                              />
+                            </div>
+                          )}
+                          {!isCountryAmountKey(key) && (
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
+                              <input
+                                type="text"
+                                value={configDescription}
+                                onChange={e => setConfigDescription(e.target.value)}
+                                placeholder="Human-readable description"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                              />
+                            </div>
+                          )}
                           {COMMERCIAL_KEYS.has(key) && (
                             <p className="text-[10px] text-gray-400">This is a commercial config key. It will be saved via the versioned save_commercial_config RPC.</p>
                           )}
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleConfigure(key)}
-                              disabled={isSaving || !configValue.trim()}
+                              disabled={isSaving || !configValue.trim() || (isCountryAmountKey(key) && hasCountryAmountErrors(key, configValue))}
                               className="rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                             >
                               {isSaving ? 'Saving...' : 'Create Setting'}
@@ -891,6 +1066,14 @@ export default function PlatformSettings() {
           </div>
         )}
       </div>
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => { if (stepUpCallbackRef.current) stepUp.submitCode(code, stepUpCallbackRef.current); }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }

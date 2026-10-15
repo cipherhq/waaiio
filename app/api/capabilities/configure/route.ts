@@ -63,8 +63,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, reason: 'business_suspended' }, { status: 403 });
   }
 
-  // Load overrides — fail closed
-  const { data: overrideRows, error: overrideError } = await supabase
+  // Service client for server-controlled operations.
+  // capability_overrides is a service-role-only table (M419/M422 design);
+  // authenticated role has no table-level SELECT.
+  const service = createServiceClient();
+
+  // Load overrides via service client — fail closed.
+  // Authorization: business ownership already verified above (lines 52-57).
+  const { data: overrideRows, error: overrideError } = await service
     .from('capability_overrides')
     .select('capability')
     .eq('business_id', businessId);
@@ -74,9 +80,6 @@ export async function POST(request: NextRequest) {
   }
 
   const overrides = (overrideRows || []).map(r => r.capability as string);
-
-  // Service client for server-controlled operations
-  const service = createServiceClient();
 
   // Load current selected capabilities to distinguish newly enabled from unchanged
   const { data: currentRows, error: currentError } = await service

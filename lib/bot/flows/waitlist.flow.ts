@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 
@@ -6,18 +7,18 @@ const waitlistJoinStep: FlowStepConfig = {
   id: 'waitlist_join',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+    if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
     return [{
       type: 'buttons',
-      body: `We're currently fully booked at ${ctx.business.name}. Would you like to join the waitlist? We'll notify you when a spot opens up.`,
+      body: fillFlowCopy(ctx.copyLang, 'waitlist.fully_booked', { businessName: ctx.business.name }),
       buttons: [
-        { id: 'wl_yes', title: 'Join Waitlist' },
-        { id: 'wl_no', title: 'No Thanks' },
+        { id: 'wl_yes', title: getFlowCopy(ctx.copyLang, 'booking.join_waitlist') },
+        { id: 'wl_no', title: getFlowCopy(ctx.copyLang, 'nav.no_thanks') },
       ],
     }];
   },
 
-  async validate(input: string): Promise<ValidationResult> {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     const text = input.toLowerCase();
     if (text === 'wl_yes' || text === 'yes' || text === 'join') {
       return { valid: true, data: { waitlist_action: 'join' } };
@@ -25,7 +26,7 @@ const waitlistJoinStep: FlowStepConfig = {
     if (text === 'wl_no' || text === 'no') {
       return { valid: true, data: { waitlist_action: 'decline' } };
     }
-    return { valid: false, errorMessage: 'Please tap *Join Waitlist* or *No Thanks*.' };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'waitlist.tap_hint') };
   },
 
   async next(ctx: FlowContext) {
@@ -52,14 +53,14 @@ const waitlistCollectNameStep: FlowStepConfig = {
     return false;
   },
 
-  async prompt(): Promise<PromptMessage[]> {
-    return [{ type: 'text', text: 'What name should we use for the waitlist?' }];
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'waitlist.name_ask') }];
   },
 
-  async validate(input: string): Promise<ValidationResult> {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     const name = input.trim();
     if (name.length < 2 || name.length > 50) {
-      return { valid: false, errorMessage: 'Please enter a valid name (2-50 characters).' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'waitlist.name_invalid') };
     }
     return { valid: true, data: { waitlist_name: name } };
   },
@@ -73,7 +74,7 @@ const waitlistConfirmStep: FlowStepConfig = {
   id: 'waitlist_confirm',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+    if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
     const d = ctx.session.session_data;
     const customerName = d.waitlist_name as string;
@@ -124,7 +125,7 @@ const waitlistConfirmStep: FlowStepConfig = {
 
     if (error) {
       logger.withContext({ op: 'waitlist.insert', ...safeLogErrorContext(error) }).error('[WAITLIST] Insert error');
-      return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+      return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
     }
 
     return [{

@@ -2,22 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import {
+  type LaunchRegion,
+  type TimeLeft,
+  computeTimeLeft,
+  buildWhatsAppLink,
+  formatPhone,
+  formatLaunchDate,
+  detectCountryFromTimezone,
+} from '@/lib/launch/shared';
 
 // ── Types ──
-
-interface Region {
-  phone: string;
-  code: string;
-  name: string;
-  flag: string;
-}
-
-interface TimeLeft {
-  days: number;
-  hours: number;
-  minutes: number;
-  seconds: number;
-}
 
 interface AnnouncementConfig {
   enabled: boolean;
@@ -29,94 +24,19 @@ interface AnnouncementConfig {
 
 // ── Constants ──
 
-const OPT_IN_MESSAGE = 'Notify me when Waaiio launches';
-
 const WAAIIO_101 = [
   { emoji: '\u{1F4C5}', text: 'Book appointments & reservations' },
   { emoji: '\u{1F4B3}', text: 'Accept payments on WhatsApp' },
   { emoji: '\u{1F6D2}', text: 'Take orders & sell products' },
   { emoji: '\u{1F3AB}', text: 'Sell event tickets' },
   { emoji: '\u{1F49D}', text: 'Receive donations & giving' },
-  { emoji: '\u{1F916}', text: 'AI-powered automation for 89+ business types' },
+  { emoji: '\u{1F916}', text: 'AI-powered setup and automation' },
 ];
-
-// ── Helpers ──
-
-function computeTimeLeft(target: string): TimeLeft | null {
-  const diff = new Date(target).getTime() - Date.now();
-  if (diff <= 0) return null;
-  return {
-    days: Math.floor(diff / (1000 * 60 * 60 * 24)),
-    hours: Math.floor((diff / (1000 * 60 * 60)) % 24),
-    minutes: Math.floor((diff / (1000 * 60)) % 60),
-    seconds: Math.floor((diff / 1000) % 60),
-  };
-}
-
-function buildWhatsAppLink(phone: string, source: 'button' | 'qr') {
-  const msg = encodeURIComponent(`${OPT_IN_MESSAGE} (${source})`);
-  return `https://wa.me/${phone.replace(/\D/g, '')}?text=${msg}`;
-}
-
-/** Format an international phone number for display. Handles variable-length numbers. */
-function formatPhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
-  // Group: country code (1-3 digits) then remaining in chunks of 3-4
-  if (digits.length <= 4) return digits;
-  // Try common patterns
-  if (digits.startsWith('1') && digits.length === 11) {
-    // NANP: 1-XXX-XXX-XXXX
-    return `${digits.slice(0, 1)} ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
-  }
-  if (digits.startsWith('44') && digits.length >= 12) {
-    // UK: 44 XXXX XXXXXX
-    return `${digits.slice(0, 2)} ${digits.slice(2, 6)} ${digits.slice(6)}`;
-  }
-  if (digits.startsWith('234') && digits.length >= 13) {
-    // Nigeria: 234 XXX XXX XXXX
-    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9)}`;
-  }
-  if (digits.startsWith('233') && digits.length >= 12) {
-    // Ghana: 233 XX XXX XXXX
-    return `${digits.slice(0, 3)} ${digits.slice(3, 5)} ${digits.slice(5, 8)} ${digits.slice(8)}`;
-  }
-  // Generic fallback: country code (1-3 digits) + groups of 3
-  const cc = digits.length > 10 ? digits.slice(0, digits.length - 10) : digits.slice(0, 1);
-  const rest = digits.slice(cc.length);
-  const groups = rest.match(/.{1,3}/g) || [];
-  return `${cc} ${groups.join(' ')}`;
-}
-
-/** Format a target date for display in the hero heading */
-function formatLaunchDate(isoDate: string): string {
-  try {
-    const d = new Date(isoDate);
-    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
-  } catch {
-    return '';
-  }
-}
-
-// ── Geo detection (best-effort from timezone) ──
-
-function detectCountryFromTimezone(): string | null {
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz.startsWith('Africa/Lagos') || tz.startsWith('Africa/Abuja')) return 'NG';
-    if (tz.startsWith('Africa/Accra')) return 'GH';
-    if (tz.startsWith('America/New_York') || tz.startsWith('America/Chicago') || tz.startsWith('America/Denver') || tz.startsWith('America/Los_Angeles')) return 'US';
-    if (tz.startsWith('Europe/London')) return 'GB';
-    if (tz.startsWith('America/Toronto') || tz.startsWith('America/Vancouver')) return 'CA';
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 // ── Component ──
 
 export default function LaunchClient() {
-  const [regions, setRegions] = useState<Region[]>([]);
+  const [regions, setRegions] = useState<LaunchRegion[]>([]);
   const [selectedCode, setSelectedCode] = useState<string>('');
   const [announcement, setAnnouncement] = useState<AnnouncementConfig | null>(null);
   const [timeLeft, setTimeLeft] = useState<TimeLeft | null>(null);
@@ -125,14 +45,14 @@ export default function LaunchClient() {
   // Fetch regions + announcement config in parallel
   useEffect(() => {
     Promise.all([
-      fetch('/api/launch/regions').then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/site-announcement').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/launch/regions').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch('/api/site-announcement', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]).then(([regionsData, announcementData]) => {
       // Regions
-      const list: Region[] = regionsData?.regions || [];
+      const list: LaunchRegion[] = regionsData?.regions || [];
       setRegions(list);
       const detected = detectCountryFromTimezone();
-      const match = list.find(r => r.code === detected);
+      const match = list.find((r) => r.code === detected);
       setSelectedCode(match?.code || list[0]?.code || '');
 
       // Announcement (authoritative source for launch date)
@@ -153,9 +73,8 @@ export default function LaunchClient() {
     return () => clearInterval(id);
   }, [announcement?.target_date]);
 
-  const selectedRegion = regions.find(r => r.code === selectedCode);
-  const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'button') : '#';
-  const qrLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'qr') : '';
+  const selectedRegion = regions.find((r) => r.code === selectedCode);
+  const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone) : '#';
 
   // Derive display date from announcement
   const launchDateDisplay = announcement?.target_date
@@ -163,25 +82,20 @@ export default function LaunchClient() {
     : null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-brand-900 via-brand-800 to-brand-900 text-white">
-      <div className="mx-auto max-w-4xl px-4 pt-24 pb-16">
-
-        {/* Hero */}
-        <div className="text-center">
+    <div className="min-h-screen bg-white">
+      {/* Hero header */}
+      <div className="bg-brand-900 text-white">
+        <div className="mx-auto max-w-4xl px-4 pt-24 pb-12 text-center">
           <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
             {launchDateDisplay ? (
               <>
                 Waaiio launches{' '}
-                <span className="bg-gradient-to-r from-accent to-orange-300 bg-clip-text text-transparent">
-                  {launchDateDisplay}
-                </span>
+                <span className="text-accent">{launchDateDisplay}</span>
               </>
             ) : (
               <>
                 Waaiio is{' '}
-                <span className="bg-gradient-to-r from-accent to-orange-300 bg-clip-text text-transparent">
-                  coming soon
-                </span>
+                <span className="text-accent">coming soon</span>
               </>
             )}
           </h1>
@@ -191,46 +105,49 @@ export default function LaunchClient() {
           {announcement?.message && (
             <p className="mx-auto mt-2 max-w-lg text-sm text-brand-300">{announcement.message}</p>
           )}
+
+          {/* Countdown */}
+          {timeLeft && (
+            <div className="mt-8 flex justify-center gap-3 sm:gap-4">
+              {[
+                { value: timeLeft.days, label: 'Days' },
+                { value: timeLeft.hours, label: 'Hours' },
+                { value: timeLeft.minutes, label: 'Min' },
+                { value: timeLeft.seconds, label: 'Sec' },
+              ].map(({ value, label }) => (
+                <div key={label} className="flex flex-col items-center rounded-2xl bg-white/10 backdrop-blur-sm px-4 py-3 min-w-[60px] sm:min-w-[80px]">
+                  <span className="text-3xl font-bold tabular-nums sm:text-4xl">{String(value).padStart(2, '0')}</span>
+                  <span className="mt-1 text-xs uppercase tracking-wide text-brand-300">{label}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+      </div>
 
-        {/* Countdown — only shown when announcement has a target_date */}
-        {timeLeft && (
-          <div className="mt-10 flex justify-center gap-3 sm:gap-4">
-            {[
-              { value: timeLeft.days, label: 'Days' },
-              { value: timeLeft.hours, label: 'Hours' },
-              { value: timeLeft.minutes, label: 'Min' },
-              { value: timeLeft.seconds, label: 'Sec' },
-            ].map(({ value, label }) => (
-              <div key={label} className="flex flex-col items-center rounded-2xl bg-white/10 backdrop-blur-sm px-4 py-3 min-w-[60px] sm:min-w-[80px]">
-                <span className="text-3xl font-bold tabular-nums sm:text-4xl">{String(value).padStart(2, '0')}</span>
-                <span className="mt-1 text-xs uppercase tracking-wide text-brand-300">{label}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Waaiio 101 */}
-        <div className="mt-12 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10 p-6 sm:p-8">
-          <h2 className="text-center text-xl font-bold">What is Waaiio?</h2>
-          <p className="mt-2 text-center text-sm text-brand-300">
-            WhatsApp automation for any business, any industry, any country.
+      {/* Content */}
+      <div className="mx-auto max-w-4xl px-4 py-12">
+        {/* What is Waaiio */}
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-6 sm:p-8">
+          <h2 className="text-center text-xl font-bold text-gray-900">What is Waaiio?</h2>
+          <p className="mt-2 text-center text-sm text-gray-500">
+            WhatsApp automation that handles bookings, payments, orders, and more.
           </p>
           <div className="mt-6 grid gap-3 sm:grid-cols-2">
-            {WAAIIO_101.map(item => (
-              <div key={item.text} className="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3">
+            {WAAIIO_101.map((item) => (
+              <div key={item.text} className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 border border-gray-100">
                 <span className="text-2xl">{item.emoji}</span>
-                <span className="text-sm">{item.text}</span>
+                <span className="text-sm text-gray-700">{item.text}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* WhatsApp CTA Section */}
-        <div className="mt-12 rounded-2xl bg-white p-6 text-gray-900 sm:p-8">
-          <h2 className="text-center text-xl font-bold">Get Notified on WhatsApp</h2>
+        <div className="mt-10 rounded-2xl border border-gray-100 bg-white p-6 sm:p-8">
+          <h2 className="text-center text-xl font-bold text-gray-900">Get Notified on WhatsApp</h2>
           <p className="mt-1 text-center text-sm text-gray-500">
-            Scan the QR code or tap the button — same action, your choice.
+            Scan the QR code or tap the button — we&apos;ll message you when we launch.
           </p>
 
           {/* Region selector */}
@@ -242,7 +159,7 @@ export default function LaunchClient() {
                 onChange={(e) => setSelectedCode(e.target.value)}
                 className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm focus:border-brand focus:ring-2 focus:ring-brand-100"
               >
-                {regions.map(r => (
+                {regions.map((r) => (
                   <option key={r.code} value={r.code}>{r.flag} {r.name}</option>
                 ))}
               </select>
@@ -256,16 +173,10 @@ export default function LaunchClient() {
             </div>
           ) : selectedRegion ? (
             <div className="mt-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
-              {/* QR Code — locally generated, no external dependency */}
+              {/* QR Code */}
               <div className="flex flex-col items-center gap-2">
                 <div className="rounded-2xl border-2 border-gray-100 bg-white p-3">
-                  <QRCodeSVG
-                    value={qrLink}
-                    size={160}
-                    level="M"
-                    bgColor="#ffffff"
-                    fgColor="#1a1a2e"
-                  />
+                  <QRCodeSVG value={waLink} size={160} level="M" bgColor="#ffffff" fgColor="#1a1a2e" />
                 </div>
                 <span className="text-[10px] text-gray-400">Scan with phone camera</span>
               </div>
@@ -302,7 +213,7 @@ export default function LaunchClient() {
           )}
 
           <p className="mt-6 text-center text-[11px] text-gray-400">
-            You&apos;ll receive a single WhatsApp message when Waaiio launches. No spam, unsubscribe anytime.
+            One message when we launch. No spam, unsubscribe anytime.
           </p>
         </div>
       </div>

@@ -11,6 +11,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { formatDistance } from '@/lib/constants';
+import { detectCategoryIntent } from '@/lib/bot/fuzzy-match';
+import { resolveCompoundLocation, resolveLocation } from './location-resolver';
 
 // ── Public types ───────────────────────────────────────
 
@@ -29,6 +32,10 @@ export interface MarketplaceSearchCriteria {
   query?: string; // Free text search
   country?: string;
   limit?: number;
+  /** Business UUIDs to exclude before scoring (e.g. admin-hidden). */
+  excludeIds?: string[];
+  /** Neighbourhood / street hint — AND-combined with locationText. */
+  _addressHint?: string;
 }
 
 export interface MarketplaceResult {
@@ -61,6 +68,7 @@ interface BusinessRow {
   phone: string | null;
   bot_code: string | null;
   city: string | null;
+  state: string | null;
   slug: string | null;
   country_code: string | null;
   latitude: number | null;
@@ -89,24 +97,100 @@ interface BusinessRow {
 /** Maximum results the directory will return in a single request. */
 const DIRECTORY_MAX_RESULTS = 50;
 
+/** UUID v4 format regex for excludeIds validation. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Constrain values interpolated into raw PostgREST OR filters to safe tokens. */
+const SAFE_LOCATION_TOKEN = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} -]*$/u;
+function validateLocationToken(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 100) return null;
+  const normalized = value.trim().replace(/ +/g, ' ');
+  return normalized.length > 0 && normalized.length <= 80 && SAFE_LOCATION_TOKEN.test(normalized)
+    ? normalized
+    : null;
+}
+
+
+/**
+ * Fields safe for WhatsApp discovery output.
+ * Actual filtering happens in the formatter (Phase C / bot.service.ts) —
+ * this constant is the contract between search and presentation layers.
+ */
+export const DISCOVERY_PUBLIC_FIELDS = [
+  'name',
+  'category',
+  'city',
+  'isOpenNow',
+  'shortDescription',
+  'botCode',
+] as const;
+
 /**
  * Apply canonical directory eligibility filters to a Supabase query on the
  * businesses table. Used by both SSR pre-rendering and API/search paths
  * to ensure identical eligibility semantics.
  *
- * Eligible: status='active', bot_code IS NOT NULL, discovery_enabled is NOT false.
- * Uses .or() to include both NULL (never configured) and true (opted in).
- * Only explicit opt-out (discovery_enabled=false) hides a business.
+ * Eligible when ALL of:
+ *   1. status = 'active'
+ *   2. bot_code IS NOT NULL
+ *   3. discovery_enabled IS NOT false (null or true both pass)
+ *   4. messaging_suspended = false
  */
 // eslint-disable-next-line
 export function applyDirectoryEligibility(query: any): any {
   return query
     .eq('status', 'active')
     .not('bot_code', 'is', null)
-    .or('discovery_enabled.is.null,discovery_enabled.eq.true');
+    .or('discovery_enabled.is.null,discovery_enabled.eq.true')
+    .eq('messaging_suspended', false);
+}
+
+/**
+ * Load admin-hidden business IDs from platform_settings.
+ * Used by both the API route and bot directory paths.
+ * Returns null on DB error so callers can fail closed.
+ */
+export async function loadDirectoryHiddenIds(
+  supabase: SupabaseClient,
+): Promise<string[] | null> {
+  const { data, error } = await supabase
+    .from('platform_settings')
+    .select('value')
+    .eq('key', 'directory_hidden')
+    .maybeSingle();
+  if (error) return null;
+  return Array.isArray(data?.value) ? data.value : [];
+}
+
+/**
+ * Check whether a single business is directory-eligible.
+ * Used to re-validate a selection (e.g., when a user taps a search result).
+ */
+export async function isBusinessDirectoryEligible(
+  supabase: SupabaseClient,
+  businessId: string,
+): Promise<boolean> {
+  const { data } = await applyDirectoryEligibility(
+    supabase.from('businesses').select('id').eq('id', businessId),
+  ).maybeSingle();
+  if (!data) return false;
+  const hidden = await loadDirectoryHiddenIds(supabase);
+  if (hidden === null) return false; // fail closed on DB error
+  return !hidden.includes(businessId);
 }
 
 // ── Search result type with error distinction ─────────
+
+export interface FuzzySuggestion {
+  id: string;
+  name: string;
+  botCode: string | null;
+  category: string;
+  city: string | null;
+  state: string | null;
+  countryCode: string | null;
+  matchScore: number;
+}
 
 export interface MarketplaceSearchResult {
   results: MarketplaceResult[];
@@ -114,6 +198,12 @@ export interface MarketplaceSearchResult {
   ok: boolean;
   /** Error message when ok=false (not exposed to users). */
   error?: string;
+  /** True when an explicit location constraint is invalid or ambiguous. */
+  locationFailed?: boolean;
+  /** "Did you mean?" suggestions when main search returns 0 results. */
+  suggestions?: FuzzySuggestion[];
+  /** True when there are more results beyond the returned page. */
+  hasMore?: boolean;
 }
 
 // ── Main search function ───────────────────────────────
@@ -124,6 +214,65 @@ export async function searchMarketplace(
 ): Promise<MarketplaceSearchResult> {
   const limit = Math.min(criteria.limit || 20, DIRECTORY_MAX_RESULTS);
 
+  // Validate discovery constraints before constructing a database query.
+  const invalidLocation = (): MarketplaceSearchResult => ({
+    results: [], ok: false, locationFailed: true, error: 'Invalid or ambiguous location',
+  });
+
+  if (criteria.excludeIds !== undefined && (
+    !Array.isArray(criteria.excludeIds) ||
+    criteria.excludeIds.length > 500 ||
+    criteria.excludeIds.some((id) => typeof id !== 'string' || !UUID_RE.test(id))
+  )) {
+    return { results: [], ok: false, error: 'Invalid hidden-business exclusion list' };
+  }
+
+  let resolvedCity: string | null = null;
+  let addressHint: string | null = null;
+  let locationCountry: string | null = null;
+
+  if (criteria.locationText !== undefined) {
+    if (typeof criteria.locationText !== 'string' || criteria.locationText.length > 160) {
+      return invalidLocation();
+    }
+    const rawParts = criteria.locationText.split(',');
+    if (rawParts.length > 3 || rawParts.some((part) => validateLocationToken(part) === null)) {
+      return invalidLocation();
+    }
+    const resolution = rawParts.length > 1
+      ? resolveCompoundLocation(criteria.locationText)
+      : resolveLocation(rawParts[0].trim());
+    if (resolution.tier === 3) return invalidLocation();
+    resolvedCity = resolution.city;
+    addressHint = resolution.addressHint;
+    locationCountry = resolution.countryCode;
+  }
+
+  if (criteria._addressHint !== undefined) {
+    const validatedHint = validateLocationToken(criteria._addressHint);
+    if (!resolvedCity || !validatedHint ||
+        (addressHint && addressHint.toLowerCase() !== validatedHint.toLowerCase())) {
+      return invalidLocation();
+    }
+    addressHint = validatedHint;
+  }
+
+  if (locationCountry && criteria.country && criteria.country !== locationCountry) {
+    return invalidLocation();
+  }
+  const effectiveCountry = locationCountry || criteria.country;
+
+  // Free text also participates in raw OR filters. Never drop an unusable
+  // supplied query and accidentally return the entire public directory.
+  let safeQuery: string | null = null;
+  if (criteria.query !== undefined) {
+    if (typeof criteria.query !== 'string' || criteria.query.length > 160) {
+      return { results: [], ok: false, error: 'Invalid search query' };
+    }
+    safeQuery = criteria.query.replace(/[^\p{L}\p{M}\p{N} -]/gu, ' ').trim().slice(0, 100);
+    if (!safeQuery) return { results: [], ok: false, error: 'Invalid search query' };
+  }
+
   try {
     let query = applyDirectoryEligibility(
       supabase
@@ -131,7 +280,7 @@ export async function searchMarketplace(
         .select(
           'id, name, category, description, address, phone, bot_code, city, slug, country_code, ' +
           'latitude, longitude, discovery_enabled, discovery_description, price_band, ' +
-          'supports_delivery, max_group_size, is_verified, metadata, operating_hours',
+          'supports_delivery, max_group_size, is_verified, metadata, operating_hours, state',
         ),
     );
 
@@ -140,9 +289,25 @@ export async function searchMarketplace(
       query = query.ilike('category', `%${criteria.category}%`);
     }
 
-    // Country filter
-    if (criteria.country) {
-      query = query.eq('country_code', criteria.country);
+    if (effectiveCountry) {
+      query = query.eq('country_code', effectiveCountry);
+    }
+
+    // Admin-hidden IDs are excluded in SQL before pagination and scoring.
+    if (criteria.excludeIds?.length) {
+      query = query.not('id', 'in', '(' + criteria.excludeIds.join(',') + ')');
+    }
+
+    // Parent-city AND address-hint, never same-state OR for neighborhoods.
+    if (resolvedCity) {
+      if (addressHint) {
+        query = query.ilike('city', '%' + resolvedCity + '%');
+      } else {
+        query = query.or('city.ilike.%' + resolvedCity + '%,state.ilike.%' + resolvedCity + '%');
+      }
+    }
+    if (addressHint) {
+      query = query.ilike('address', '%' + addressHint + '%');
     }
 
     // Delivery filter
@@ -155,15 +320,18 @@ export async function searchMarketplace(
       query = query.gte('max_group_size', criteria.partySize);
     }
 
-    // Text search — name / description / category ILIKE
-    if (criteria.query) {
-      // Sanitize the query to prevent PostgREST injection
-      const safeQ = criteria.query.replace(/[%_'"\\]/g, '');
-      if (safeQ.length > 0) {
-        query = query.or(
-          `name.ilike.%${safeQ}%,description.ilike.%${safeQ}%,category.ilike.%${safeQ}%`,
-        );
-      }
+    // Text search with bounded, grammar-safe PostgREST values.
+    // Also expand synonyms: "massage" → search for category=spa.
+    if (safeQuery) {
+      const synonymCategories = detectCategoryIntent(safeQuery);
+      const categoryOrClauses = synonymCategories.map(c => `category.ilike.%${c}%`);
+      const textClauses = [
+        `name.ilike.%${safeQuery}%`,
+        `description.ilike.%${safeQuery}%`,
+        `category.ilike.%${safeQuery}%`,
+        ...categoryOrClauses,
+      ];
+      query = query.or(textClauses.join(','));
     }
 
     // Fetch extra rows for scoring / filtering
@@ -177,7 +345,16 @@ export async function searchMarketplace(
       return { results: [], ok: false, error: error.message };
     }
 
-    if (!businesses || businesses.length === 0) return { results: [], ok: true };
+    if (!businesses || businesses.length === 0) {
+      // Zero DB rows — try fuzzy "did you mean?" before returning empty
+      if (safeQuery) {
+        const suggestions = await searchFuzzy(supabase, safeQuery, effectiveCountry || null, criteria.excludeIds || [], resolvedCity, null);
+        if (suggestions.length > 0) {
+          return { results: [], ok: true, suggestions, hasMore: false };
+        }
+      }
+      return { results: [], ok: true };
+    }
 
     // Score and rank results
     const scored = businesses.map((biz) => {
@@ -221,7 +398,8 @@ export async function searchMarketplace(
         if (distanceKm < 2) score += 25;
         else if (distanceKm < 5) score += 15;
         else if (distanceKm < 10) score += 10;
-        reasons.push(`${distanceKm.toFixed(1)} km away`);
+        const countryCode = (biz.country_code as string) || 'NG';
+        reasons.push(`${formatDistance(distanceKm, countryCode)} away`);
       }
 
       // Open now
@@ -278,11 +456,64 @@ export async function searchMarketplace(
     // Sort by score descending
     scored.sort((a, b) => b._score - a._score);
 
+    const paged = scored.slice(0, limit);
+    const hasMore = scored.length > limit;
+
+    // If zero results and a free-text query was provided, try fuzzy suggestions
+    if (paged.length === 0 && safeQuery) {
+      const suggestions = await searchFuzzy(supabase, safeQuery, effectiveCountry || null, criteria.excludeIds || [], resolvedCity, null);
+      if (suggestions.length > 0) {
+        return { results: [], ok: true, suggestions, hasMore: false };
+      }
+    }
+
     // Return top results without internal score
-    return { results: scored.slice(0, limit).map(({ _score: _, ...rest }) => rest), ok: true };
+    return {
+      results: paged.map(({ _score: _, ...rest }) => rest),
+      ok: true,
+      hasMore,
+    };
   } catch (err) {
     logger.error('[MARKETPLACE] Search failed:', err);
     return { results: [], ok: false, error: err instanceof Error ? err.message : 'unknown' };
+  }
+}
+
+/**
+ * Fuzzy "did you mean?" suggestions using pg_trgm similarity() via RPC.
+ * Called when the main search returns zero results.
+ */
+export async function searchFuzzy(
+  supabase: SupabaseClient,
+  query: string,
+  country: string | null,
+  hiddenIds: string[] = [],
+  city?: string | null,
+  state?: string | null,
+): Promise<FuzzySuggestion[]> {
+  try {
+    const { data, error } = await supabase.rpc('search_businesses_fuzzy', {
+      p_query: query.slice(0, 100),
+      p_country: country,
+      p_limit: 5,
+      p_hidden_ids: hiddenIds,
+      p_city: city || null,
+      p_state: state || null,
+    });
+    if (error || !data) return [];
+    return (data as Array<Record<string, unknown>>).map(row => ({
+      id: row.id as string,
+      name: row.name as string,
+      botCode: (row.bot_code as string) || null,
+      category: row.category as string,
+      city: (row.city as string) || null,
+      state: (row.state as string) || null,
+      countryCode: (row.country_code as string) || null,
+      matchScore: row.match_score as number,
+    }));
+  } catch (err) {
+    logger.error('[MARKETPLACE] Fuzzy search failed:', err);
+    return [];
   }
 }
 
@@ -303,7 +534,9 @@ export function formatMarketplaceResults(
   results.forEach((r, i) => {
     lines.push(`${i + 1}. *${r.name}*`);
     const details: string[] = [];
-    if (r.distanceKm !== undefined) details.push(`${r.distanceKm.toFixed(1)} km away`);
+    if (r.distanceKm !== undefined) {
+      details.push(`${formatDistance(r.distanceKm, r.countryCode || 'NG')} away`);
+    }
     if (r.isOpenNow) details.push('Open now');
     if (r.supportsDelivery) details.push('Delivery available');
     if (details.length) lines.push(details.join(' · '));

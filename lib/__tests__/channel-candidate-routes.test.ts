@@ -81,7 +81,26 @@ const mockServiceFrom = vi.fn((table: string) => {
     };
   }
   if (table === 'whatsapp_channels') return { select: () => dc(null) };
-  if (table === 'countries') return { select: () => ({ eq: () => Promise.resolve({ data: [{ code: 'NG', dialing_code: '+234' }], error: null }) }) };
+  if (table === 'countries') {
+    const countriesListResponse = { data: [{ code: 'NG', dialing_code: '+234' }], error: null };
+    return {
+      select: () => ({
+        eq: (_col: string, _val?: unknown) => {
+          const chainable = {
+            ...Promise.resolve(countriesListResponse),
+            then: (onfulfilled: (v: unknown) => unknown) => Promise.resolve(countriesListResponse).then(onfulfilled),
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { payment_gateway: 'paystack', currency_code: 'NGN' },
+                error: null,
+              }),
+            }),
+          };
+          return chainable;
+        },
+      }),
+    };
+  }
   if (table === 'business_capabilities') return { select: () => ({ eq: () => Promise.resolve({ data: [{ capability: 'chat', is_enabled: true }], error: null }) }) };
   if (table === 'subscriptions') return { select: () => dc(null), upsert: () => ({ select: () => ({ single: () => Promise.resolve({ data: { id: 'sub-1' }, error: null }) }) }), update: () => dc(null) };
   if (table === 'whatsapp_config') return { insert: () => Promise.resolve({ error: null }) };
@@ -111,13 +130,21 @@ vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), info: vi.fn(), debug:
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: vi.fn(() => Promise.resolve(null)), getRateLimitKey: (_r: Request, p: string) => `${p}:127.0.0.1` }));
 vi.mock('@/lib/categoryConfig', () => ({ loadCategories: () => Promise.resolve(), getAllCategoryKeys: () => ['salon'] }));
 vi.mock('@/lib/capabilities/service', () => ({ initCapabilities: vi.fn(() => Promise.resolve()) }));
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
 vi.mock('@/lib/onboarding/finalize', () => ({ finalizeOnboarding: vi.fn(() => Promise.resolve()) }));
 vi.mock('@/lib/constants', () => ({
   generateSlug: () => 'ts', generateBotCode: () => 'TC', CATEGORY_FLOW_MAP: {},
   PRICING_TIERS: { free: { name: 'Free', price: 0 }, growth: { name: 'Pro', price: 5000 }, business: { name: 'Premium', price: 15000 } },
+  getPayoutLimit: () => 500_000,
 }));
 vi.mock('@/lib/email/client', () => ({ sendEmail: vi.fn(() => Promise.resolve()) }));
 vi.mock('@/lib/email/templates', () => ({ welcomeEmail: () => ({ subject: 'x', html: 'x' }), businessRegisteredEmail: () => ({ subject: 'x', html: 'x' }) }));
+const mockResolveBusinessGw = vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
+const mockResolveCountryGw = vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: (...args: any[]) => mockResolveBusinessGw(...args),
+  resolveCountryGateway: (...args: any[]) => mockResolveCountryGw(...args),
+}));
 vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: () => Promise.resolve({ max_businesses_per_user: 5 }) }));
 vi.mock('@/lib/observability/server-events', () => ({ emitServerEvent: vi.fn() }));
 
@@ -135,6 +162,8 @@ function resetAll() {
   vi.resetAllMocks();
   candidateInserts = []; candidateUpdates = []; rpcCalls = []; lastBusinessInsert = null; eventLog = [];
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 't@t.com' } } });
+  mockResolveBusinessGw.mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
+  mockResolveCountryGw.mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
   mockAuthClientFrom.mockImplementation(() => ({ select: () => dc(defaultBiz) }));
   process.env.META_CLOUD_WABA_ID = 'waba-test';
   process.env.META_CLOUD_ACCESS_TOKEN = 'token-test';

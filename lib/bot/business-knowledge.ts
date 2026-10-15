@@ -27,7 +27,7 @@ interface BusinessKnowledge {
   products: Array<{ name: string; price: number; inStock?: boolean }>;
   paymentMethods: string[];
   supportsDelivery: boolean;
-  deliveryArea: string | null;
+  deliveryRadius: number | null;
   depositRequired: boolean;
   depositAmount: number | null;
   cancellationPolicy: string | null;
@@ -116,7 +116,7 @@ export async function loadBusinessKnowledge(
     const [bizResult, servicesResult, productsResult, faqResult] = await Promise.all([
       supabase
         .from('businesses')
-        .select('name, description, category, address, phone, website, operating_hours, metadata, country_code')
+        .select('name, description, category, address, phone, website, operating_hours, metadata, country_code, supports_delivery, delivery_radius_km')
         .eq('id', businessId)
         .maybeSingle(),
       supabase
@@ -198,8 +198,8 @@ export async function loadBusinessKnowledge(
         inStock: p.track_inventory ? (p.stock_quantity || 0) > 0 : true,
       })),
       paymentMethods: (metadata.payment_methods as string[]) || ['card', 'transfer'],
-      supportsDelivery: !!(metadata.supports_delivery),
-      deliveryArea: (metadata.delivery_area as string) || null,
+      supportsDelivery: !!(biz.supports_delivery),
+      deliveryRadius: biz.delivery_radius_km ? Number(biz.delivery_radius_km) : null,
       depositRequired: !!(metadata.deposit_required),
       depositAmount: (metadata.deposit_amount as number) || null,
       cancellationPolicy: (metadata.cancellation_policy as string) || null,
@@ -266,8 +266,8 @@ export async function answerTemporaryQuestion(
 
     case 'delivery': {
       if (knowledge.supportsDelivery) {
-        return knowledge.deliveryArea
-          ? `Yes, ${businessName} delivers to ${knowledge.deliveryArea}.`
+        return knowledge.deliveryRadius
+          ? `Yes, ${businessName} offers delivery within ${knowledge.deliveryRadius} km.`
           : `Yes, ${businessName} offers delivery.`;
       }
       return `${businessName} does not currently offer delivery.`;

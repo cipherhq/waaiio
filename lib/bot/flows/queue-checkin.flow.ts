@@ -153,13 +153,13 @@ const queueStartStep: FlowStepConfig = {
     }
 
     const normalized = input.toLowerCase().trim();
-    if (normalized === 'queue_checkin' || normalized === 'check in') {
+    if (normalized === 'queue_checkin' || normalized === 'check in' || normalized === 'join' || normalized === 'join queue') {
       return { valid: true, data: { queue_action: 'checkin' } };
     }
-    if (normalized === 'queue_status' || normalized === 'queue status') {
+    if (normalized === 'queue_status' || normalized === 'queue status' || normalized === 'status' || normalized === 'my position') {
       return { valid: true, data: { queue_action: 'status' } };
     }
-    return { valid: false, errorMessage: 'Please tap *Join Queue* or *My Position*.' };
+    return { valid: false, errorMessage: 'Type *join* or *status*, or tap a button.' };
   },
 
   async next(ctx: FlowContext) {
@@ -420,13 +420,14 @@ const queueCheckStatusStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext) {
-    // If they tap check in from the "no entry" prompt
-    if (input.toLowerCase() === 'queue_checkin') {
+    const lower = input.toLowerCase().trim();
+    // If they tap or type check in from the "no entry" prompt
+    if (lower === 'queue_checkin' || lower === 'join' || lower === 'join queue') {
       return { valid: true, data: { queue_action: 'checkin' } };
     }
 
     // Leave Queue escape hatch
-    if (input.toLowerCase() === 'leave_queue' || input.toLowerCase() === 'leave') {
+    if (lower === 'leave_queue' || lower === 'leave') {
       if (ctx.business) {
         const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
         const today = new Date().toISOString().split('T')[0];
@@ -446,7 +447,7 @@ const queueCheckStatusStep: FlowStepConfig = {
       return { valid: true, data: { _queue_left: true } };
     }
 
-    return { valid: true };
+    return { valid: false, errorMessage: 'Type *join* to join the queue, or *leave* to leave.' };
   },
 
   async next(ctx: FlowContext) {

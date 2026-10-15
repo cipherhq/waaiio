@@ -31,6 +31,19 @@ export interface SmartParseResult {
 
 // ── Intent patterns ──────────────────────────────────────
 
+
+// Normalize accents/diacritics for deterministic command/intent matching.
+// Keep the original message for entity/product matching and LLM fallback.
+function normalizeIntentText(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[ƙƘ]/g, 'k')
+    .replace(/[ɛƐ]/g, 'e')
+    .replace(/[ɔƆ]/g, 'o')
+    .toLowerCase();
+}
+
 const BOOKING_PATTERNS = [
   // English
   /\b(book|reserve|appointment|schedule|check[\s-]*in|register)\b/i,
@@ -50,6 +63,15 @@ const BOOKING_PATTERNS = [
   /\b(abeg|pls|please|biko|jowo)\b.*\b(book|barb|cut|help|fix|reserve|lodge|register|wash)\b/i,
   /\b(make\s*i|lemme|let\s*me)\b.*\b(book|come|see|barb|cut|lodge|register|check[\s-]*in)\b/i,
   /\bi\s+wan\b/i,
+  // Yoruba / Yoruba-English code-switching
+  /\bmo\s+(?:fe|nilo)\s+(?:book|reserve|gba\s+ipade|se\s+ipade)\b/i,
+  /\bjowo\b.*\b(?:book|reserve|ipade)\b/i,
+  // Other supported languages — common transactional phrasing
+  /\bina\s+(?:son|so)(?:\s+in)?\s+(?:yi\s+)?(?:booking|book|reserve|appointment|ajiya)\b/i, // Hausa
+  /\bachoro\s+m\s+(?:i?book|booking|reserve|appointment)\b/i, // Igbo
+  /\bmepe\s+se\s+me(?:book|reserve)\b/i, // Twi
+  /\bje\s+veux\s+(?:reserver|prendre\s+(?:un\s+)?rendez[-\s]?vous)\b/i, // French
+  /\bquiero\s+(?:reservar|hacer\s+una\s+cita)\b/i, // Spanish
   // Pidgin — industry-specific
   /\b(i\s*wan|abeg)\b.*\b(lodge|sleep|stay|rest)\b/i,        // hotel
   /\b(i\s*wan|abeg)\b.*\b(wash|clean|iron)\b.*\b(cloth|car)\b/i, // laundry / car wash
@@ -64,6 +86,16 @@ const ORDERING_PATTERNS = [
   /\b(order|buy|purchase|deliver|delivery|send|ship)\b/i,
   /\b(chop|eat|food|hungry|menu)\b/i,
   /\b(drug|medicine|refill|prescription)\b/i,                   // pharmacy
+  // Yoruba / Yoruba-English code-switching
+  /\bmo\s+(?:fe|nilo)\s+(?:ra|pase|order|buy)\b/i,
+  /\bjowo\b.*\b(?:ra|pase|order|buy)\b/i,
+  /\b(?:ra|pase)\b.*\b(?:fun\s+mi|wa)\b/i,
+  // Other supported languages — common purchase phrasing
+  /\bina\s+(?:son|so)(?:\s+in)?\s+(?:saya|oda|order|buy)\b/i, // Hausa
+  /\bachoro\s+m\s+(?:izuta|zuta|order|buy)\b/i, // Igbo
+  /\bmepe\s+se\s+me(?:to|order|buy)\b/i, // Twi
+  /\bje\s+veux\s+(?:acheter|commander)\b/i, // French
+  /\bquiero\s+(?:comprar|pedir)\b/i, // Spanish
   // Pidgin — food
   /\b(wan|want)\b.*\b(chop|eat|order|buy|food)\b/i,
   /\b(abeg|pls|biko)\b.*\b(order|buy|bring|send|deliver)\b/i,
@@ -88,6 +120,15 @@ const PAYMENT_PATTERNS = [
   /\b(school\s*fee|tuition|pta\s*levy|exam\s*fee|registration\s*fee)\b/i,
   // Government / utility
   /\b(tax|fine|license|permit|renewal|utility)\b/i,
+  // Yoruba / Yoruba-English code-switching
+  /\bmo\s+(?:fe|nilo)\s+(?:sanwo|san\s+owo|pay|donate|give)\b/i,
+  /\bjowo\b.*\b(?:sanwo|san\s+owo|pay|donate)\b/i,
+  // Other supported languages — common payment phrasing
+  /\bina\s+(?:son|so)(?:\s+in)?\s+(?:biya|biyan|pay)\b/i, // Hausa
+  /\bachoro\s+m\s+(?:ikwu\s+ugwo|kwu\s+ugwo|pay)\b/i, // Igbo
+  /\bmepe\s+se\s+me(?:tua|pay)\b/i, // Twi
+  /\bje\s+veux\s+(?:payer|regler)\b/i, // French
+  /\bquiero\s+(?:pagar|abonar)\b/i, // Spanish
   // Pidgin — universal payment
   /\b(wan|want)\b.*\b(pay|give|donate|sow|settle|clear)\b/i,
   /\b(abeg|pls|biko|jowo)\b.*\b(pay|tithe|offering|seed|donate|give|settle)\b/i,
@@ -101,6 +142,15 @@ const TICKETING_PATTERNS = [
   // English
   /\b(ticket|event|show|concert|movie|film|cinema|gig|festival)\b/i,
   /\b(bus|train|flight|ride|transport)\b.*\b(ticket|book)\b/i,
+  // Yoruba / Yoruba-English code-switching
+  /\bmo\s+(?:fe|nilo)\s+(?:ra\s+)?(?:tiketi|ticket)\b/i,
+  /\bjowo\b.*\b(?:tiketi|ticket)\b/i,
+  // Other supported languages — common ticket phrasing
+  /\bina\s+(?:son|so)(?:\s+in)?\s+(?:saya\s+)?(?:tikiti|ticket)\b/i, // Hausa
+  /\bachoro\s+m\s+(?:izuta\s+)?(?:tikiti|ticket)\b/i, // Igbo
+  /\bmepe\s+se\s+me(?:to\s+)?(?:tikiti|ticket)\b/i, // Twi
+  /\bje\s+veux\s+(?:un\s+)?(?:billet|ticket)\b/i, // French
+  /\bquiero\s+(?:una?\s+)?(?:entrada|boleto|ticket)\b/i, // Spanish
   // Pidgin
   /\b(wan|want)\b.*\b(ticket|attend|go\s*to|see\s*show|watch)\b/i,
   /\b(i\s*wan|abeg|make\s*i)\b.*\b(ticket|go|attend|watch|see\s*movie)\b/i,
@@ -564,6 +614,7 @@ function detectRequestedAction(text: string): import('./semantic-types').Request
 // ── Main parser ──────────────────────────────────────────
 
 export function parseSmartIntent(text: string, timezone?: string): SmartParseResult {
+  const intentText = normalizeIntentText(text);
   const result: SmartParseResult = {
     understood: false,
     intent: null,
@@ -576,15 +627,17 @@ export function parseSmartIntent(text: string, timezone?: string): SmartParseRes
     variantKeywords: [],
   };
 
-  // Detect intent
-  if (BOOKING_PATTERNS.some(p => p.test(text))) result.intent = 'booking';
-  else if (ORDERING_PATTERNS.some(p => p.test(text))) result.intent = 'ordering';
-  else if (PAYMENT_PATTERNS.some(p => p.test(text))) result.intent = 'payment';
-  else if (TICKETING_PATTERNS.some(p => p.test(text))) result.intent = 'ticketing';
+  // Detect intent. Check specific commerce intents before booking because
+  // Pidgin phrases like "I wan buy/pay/ticket" also contain the generic
+  // booking marker "I wan". Specific intent must win deterministically.
+  if (TICKETING_PATTERNS.some(p => p.test(intentText))) result.intent = 'ticketing';
+  else if (PAYMENT_PATTERNS.some(p => p.test(intentText))) result.intent = 'payment';
+  else if (ORDERING_PATTERNS.some(p => p.test(intentText))) result.intent = 'ordering';
+  else if (BOOKING_PATTERNS.some(p => p.test(intentText))) result.intent = 'booking';
 
-  // CAS-004: Determine fine-grained semantic family from sub-patterns
-  result.semanticFamily = detectSemanticFamily(text, result.intent);
-  result.requestedAction = detectRequestedAction(text);
+  // CAS-004: Determine fine-grained semantic family from normalized text.
+  result.semanticFamily = detectSemanticFamily(intentText, result.intent);
+  result.requestedAction = detectRequestedAction(intentText);
 
   // Extract entities
   result.serviceKeywords = extractServiceKeywords(text);

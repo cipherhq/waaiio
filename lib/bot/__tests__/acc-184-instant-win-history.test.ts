@@ -299,19 +299,20 @@ describe('ACC-184: Existing My Account regression', () => {
   it('My Bookings still exists', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/capability-selection.flow.ts', 'utf-8');
-    expect(src).toContain("title: 'My Bookings'");
+    // 561-B: titles now use getFlowCopy — check for corpus key reference instead of literal
+    expect(src).toContain("'account.my_bookings'");
     expect(src).toContain("postbackText: 'acct_bookings'");
   });
 
   it('My Orders still exists', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/capability-selection.flow.ts', 'utf-8');
-    expect(src).toContain("title: 'My Orders'");
+    expect(src).toContain("'account.my_orders'");
   });
 
   it('Get Receipt still exists', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/capability-selection.flow.ts', 'utf-8');
-    expect(src).toContain("title: 'Get Receipt'");
+    expect(src).toContain("'account.get_receipt'");
   });
 });

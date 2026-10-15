@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     .order('created_at', { ascending: false });
 
   const response = NextResponse.json({ polls: polls || [] });
-  response.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
+  response.headers.set('Cache-Control', 'private, no-store, max-age=0');
   return response;
 }
 

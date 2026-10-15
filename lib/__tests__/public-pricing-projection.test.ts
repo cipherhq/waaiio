@@ -109,6 +109,11 @@ vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => activeMock,
 }));
 
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+}));
+
 describe('Public Pricing Projection — runtime proofs', () => {
   beforeEach(() => {
     activeMock = buildSupabaseMock();
@@ -525,22 +530,24 @@ describe('WhatsApp Setup — 3 Options for Paid Plans', () => {
 });
 
 describe('Admin COMMERCIAL_KEYS includes all M376 keys', () => {
-  it('D11: scalar commercial keys present in PlatformSettings, bundle keys excluded', () => {
+  it('D11: all 18 canonical commercial keys present in PlatformSettings COMMERCIAL_KEYS', () => {
     const source = readFileSync(join(process.cwd(), 'admin/src/pages/PlatformSettings.tsx'), 'utf-8');
-    // 14 scalar commercial keys routed through save_commercial_config
+    // Full canonical commercial key contract — all must be classified as commercial
+    // payout_verification_limits removed: limits now live in countries.verification_tiers
     for (const key of [
       'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
       'default_platform_fee_percent', 'annual_discount_percentage',
-      'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+      'payout_cooling_period_days', 'minimum_payout',
       'transfer_expiry_hours', 'minimum_bank_transfer',
       'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
       'fee_policy_enabled', 'category_fee_rates',
+      'messaging_topup_packages',
+      'messaging_pricing',
+      'trial_credit_minor_by_currency',
+      'subscription_included_minor_by_tier_currency',
     ]) {
       expect(source).toContain(`'${key}'`);
     }
-    // Bundle-only keys managed via save_messaging_config / Countries page
-    expect(source).not.toMatch(/COMMERCIAL_KEYS.*trial_credit_minor_by_currency/s);
-    expect(source).not.toMatch(/COMMERCIAL_KEYS.*subscription_included_minor_by_tier_currency/s);
   });
 
   it('D11: Fee Policy group exists', () => {
@@ -588,8 +595,10 @@ describe('JSON-LD fail-closed', () => {
     expect(source).not.toContain("price: '39.99'");
     // No ?? fallback on prices
     expect(source).not.toMatch(/price.*\?\?\s*\d+/);
-    // Offers are null when DB unavailable
-    expect(source).toContain('jsonLdOffers: Array<Record<string, string>> | null = null');
+    // Offers must be either null-initialized (DB-driven) or absent entirely (no price claims without DB)
+    const hasNullOffers = source.includes('jsonLdOffers: Array<Record<string, string>> | null = null');
+    const hasNoOffers = !source.includes('offers');
+    expect(hasNullOffers || hasNoOffers).toBe(true);
   });
 });
 

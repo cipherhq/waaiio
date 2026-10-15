@@ -204,7 +204,7 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
     try {
       // Store toggle in business metadata since bank_accounts table uses is_active for soft-delete
       const supabase = createClient();
-      await supabase
+      const { error } = await supabase
         .from('businesses')
         .update({
           metadata: {
@@ -213,6 +213,7 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
           },
         })
         .eq('id', business.id);
+      if (error) throw error;
     } catch {
       setBankEnabled(!newVal); // revert on failure
     }
@@ -532,6 +533,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
 
   async function handleSaveZones() {
     setZonesSaving(true);
+    try {
     const supabase = createClient();
 
     // Get existing zone IDs
@@ -577,6 +579,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
     setZonesSaving(false);
     setZonesSaved(true);
     setTimeout(() => setZonesSaved(false), 2000);
+    } catch { setZonesSaving(false); }
   }
 
   async function handleByoVerify() {
@@ -612,9 +615,10 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
   async function handleByoDisconnect() {
     setByoDisconnecting(true);
     try {
-      await fetch(`/api/settings/payment-credentials?business_id=${business.id}&gateway=${byoGateway}`, {
+      const res = await fetch(`/api/settings/payment-credentials?business_id=${business.id}&gateway=${byoGateway}`, {
         method: 'DELETE',
       });
+      if (!res.ok) throw new Error('Disconnect failed');
       setByoCredential(null);
       setByoEnabled(false);
       setByoWebhookUrl('');
@@ -780,11 +784,12 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
 
     setChannelsSaving(true);
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from('businesses')
       .update({ payment_channels: channelsToSave })
       .eq('id', business.id);
     setChannelsSaving(false);
+    if (error) return;
   }
 
   return (
@@ -903,11 +908,12 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
               onClick={async () => {
                 setSaving(true);
                 const supabase = createClient();
-                await supabase
+                const { error } = await supabase
                   .from('businesses')
                   .update({ payment_gateway: selectedGateway === 'auto' ? null : selectedGateway })
                   .eq('id', business.id);
                 setSaving(false);
+                if (error) return;
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}
@@ -1234,7 +1240,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
               onClick={async () => {
                 setSaving(true);
                 const supabase = createClient();
-                await supabase
+                const { error } = await supabase
                   .from('businesses')
                   .update({
                     metadata: {
@@ -1246,6 +1252,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                   })
                   .eq('id', business.id);
                 setSaving(false);
+                if (error) return;
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}
@@ -1309,11 +1316,12 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
               onClick={async () => {
                 setSaving(true);
                 const supabase = createClient();
-                await supabase
+                const { error } = await supabase
                   .from('businesses')
                   .update({ recurring_enabled: recurringEnabled })
                   .eq('id', business.id);
                 setSaving(false);
+                if (error) return;
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}
@@ -1446,7 +1454,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
               onClick={async () => {
                 setSaving(true);
                 const supabase = createClient();
-                await supabase
+                const { error } = await supabase
                   .from('businesses')
                   .update({
                     metadata: {
@@ -1458,6 +1466,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                   })
                   .eq('id', business.id);
                 setSaving(false);
+                if (error) return;
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}

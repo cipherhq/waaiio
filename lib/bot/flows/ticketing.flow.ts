@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -26,7 +27,7 @@ export const ticketingFlow: FlowDefinition = {
     {
       id: 'select_event',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+        if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
         const { data: events } = await ctx.supabase
           .from('events')
@@ -53,7 +54,7 @@ export const ticketingFlow: FlowDefinition = {
         const availableEvents = timeFilteredEvents.filter(e => e.total_tickets - e.tickets_sold > 0);
 
         if (availableEvents.length === 0) {
-          return [{ type: 'text', text: 'No upcoming events right now. Check back soon! 🎟️' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ticketing.no_events') }];
         }
 
         const items = availableEvents.map(e => {
@@ -71,13 +72,13 @@ export const ticketingFlow: FlowDefinition = {
             postbackText: e.id,
           };
         });
-        items.push({ title: '← Back', description: 'Return to menu', postbackText: 'go_back' });
+        items.push({ title: getFlowCopy(ctx.copyLang, 'nav.back'), description: getFlowCopy(ctx.copyLang, 'nav.back_desc'), postbackText: 'go_back' });
 
         return [{
           type: 'list',
-          title: 'Upcoming Events',
+          title: getFlowCopy(ctx.copyLang, 'ticketing.events_title'),
           body: `🎟️ Events at ${ctx.business.name}:\n\nType *cancel* to exit.`,
-          buttonLabel: 'View Events',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'ticketing.view_events'),
           items,
         }];
       },
@@ -121,7 +122,7 @@ export const ticketingFlow: FlowDefinition = {
           }
         }
 
-        if (!matched) return { valid: false, errorMessage: 'I didn\'t find that event. Try typing the event name or tap an option from the list.' };
+        if (!matched) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ticketing.event_not_found') };
 
         const available = matched.total_tickets - matched.tickets_sold;
         if (available <= 0) {
@@ -178,19 +179,19 @@ export const ticketingFlow: FlowDefinition = {
         if (availableTypes.length === 0) {
           return [{
             type: 'buttons',
-            body: 'All tickets are sold out for this event.',
+            body: getFlowCopy(ctx.copyLang, 'ticketing.all_sold_out'),
             buttons: [
-              { id: 'back_to_events', title: 'Other Events' },
-              { id: 'cancel_tickets', title: 'Cancel' },
+              { id: 'back_to_events', title: getFlowCopy(ctx.copyLang, 'ticketing.other_events') },
+              { id: 'cancel_tickets', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
 
         return [{
           type: 'list',
-          title: 'Ticket Types',
-          body: 'Select your ticket type:',
-          buttonLabel: 'View Options',
+          title: getFlowCopy(ctx.copyLang, 'ticketing.types_title'),
+          body: getFlowCopy(ctx.copyLang, 'ticketing.select_type'),
+          buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
           items: availableTypes.map(t => {
             const available = t.total_tickets - t.tickets_sold;
             return {
@@ -287,9 +288,9 @@ export const ticketingFlow: FlowDefinition = {
             type: 'buttons',
             body: buttonBody,
             buttons: [
-              { id: '1', title: '1 ticket' },
-              ...(maxShow >= 2 ? [{ id: '2', title: '2 tickets' }] : []),
-              ...(maxShow >= 4 ? [{ id: '4', title: '4 tickets' }] : []),
+              { id: '1', title: getFlowCopy(ctx.copyLang, 'ticketing.one_ticket') },
+              ...(maxShow >= 2 ? [{ id: '2', title: getFlowCopy(ctx.copyLang, 'ticketing.two_tickets') }] : []),
+              ...(maxShow >= 4 ? [{ id: '4', title: getFlowCopy(ctx.copyLang, 'ticketing.four_tickets') }] : []),
             ].slice(0, 3),
           }];
         }
@@ -318,9 +319,9 @@ export const ticketingFlow: FlowDefinition = {
           type: 'buttons',
           body: `How many tickets? (max ${maxShow})`,
           buttons: [
-            { id: '1', title: '1 ticket' },
-            ...(maxShow >= 2 ? [{ id: '2', title: '2 tickets' }] : []),
-            ...(maxShow >= 4 ? [{ id: '4', title: '4 tickets' }] : []),
+            { id: '1', title: getFlowCopy(ctx.copyLang, 'ticketing.one_ticket') },
+            ...(maxShow >= 2 ? [{ id: '2', title: getFlowCopy(ctx.copyLang, 'ticketing.two_tickets') }] : []),
+            ...(maxShow >= 4 ? [{ id: '4', title: getFlowCopy(ctx.copyLang, 'ticketing.four_tickets') }] : []),
           ].slice(0, 3),
         }];
       },
@@ -400,7 +401,7 @@ export const ticketingFlow: FlowDefinition = {
         const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
 
         const lines = [
-          `📋 *Ticket Summary*`,
+          getFlowCopy(ctx.copyLang, 'ticketing.ticket_summary'),
           '',
           `🎪 ${d.event_name}`,
           `📅 ${dateLabel}`,
@@ -417,15 +418,15 @@ export const ticketingFlow: FlowDefinition = {
           type: 'buttons',
           body: lines.join('\n'),
           buttons: [
-            { id: 'confirm', title: requireTerms ? 'I Accept & Confirm' : 'Confirm ✓' },
-            { id: 'go_back', title: 'Cancel' },
+            { id: 'confirm', title: requireTerms ? getFlowCopy(ctx.copyLang, 'payment.accept_confirm') : getFlowCopy(ctx.copyLang, 'booking.confirm_btn') },
+            { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
           ],
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if ((input.toLowerCase() === 'cancel' || input.toLowerCase() === 'go_back')) return { valid: true, data: { _action: 'cancel' } };
         if (input.toLowerCase() === 'confirm') return { valid: true, data: { _action: 'confirm', _terms_accepted: true } };
-        return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.confirm_hint') };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') {
@@ -439,13 +440,13 @@ export const ticketingFlow: FlowDefinition = {
     // ── Collect Name ──
     {
       id: 'collect_name',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: 'Please type your *full name* for the ticket:' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'payment.enter_name') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const parts = input.trim().split(/\s+/);
         if (!parts[0] || parts[0].length < 2) {
-          return { valid: false, errorMessage: 'Please enter a valid name.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.invalid_name') };
         }
         return { valid: true, data: { first_name: parts[0], last_name: parts.slice(1).join(' ') || '' } };
       },
@@ -500,7 +501,7 @@ export const ticketingFlow: FlowDefinition = {
             await ctx.supabase.from('bot_sessions').update({ user_id: userId }).eq('id', ctx.session.id);
           }
         }
-        if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+        if (!userId) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
         // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW ticket
         if (ctx.business) {
@@ -582,7 +583,7 @@ export const ticketingFlow: FlowDefinition = {
             if (existing) {
               booking = existing;
             } else {
-              return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+              return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
             }
           } else {
             booking = bookingData;
@@ -664,7 +665,7 @@ export const ticketingFlow: FlowDefinition = {
               return [{
                 type: 'buttons',
                 body: [
-                  `🎫 *Tickets Reserved!*`,
+                  getFlowCopy(ctx.copyLang, 'ticketing.tickets_reserved'),
                   '',
                   `🎟️ ${d.event_name}`,
                   `📅 ${dateLabel}`,
@@ -672,16 +673,16 @@ export const ticketingFlow: FlowDefinition = {
                   `💰 ${formatCurrency(total, cc)}`,
                   `🔑 Ref: *${booking.reference_code}*`,
                   '',
-                  `*Option 1 — Pay Online* 👇`,
+                  getFlowCopy(ctx.copyLang, 'payment.pay_online'),
                   paymentResult.url,
                   '',
-                  `*Option 2 — Bank Transfer* 🏦`,
+                  getFlowCopy(ctx.copyLang, 'payment.bank_transfer_title'),
                   formatBankTransferBlock(bankAccount, formatCurrency(total, cc), transferRef),
                 ].join('\n'),
                 buttons: [
-                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-                  { id: 'sent_transfer', title: "I've Sent Transfer" },
-                  { id: 'go_back', title: 'Cancel' },
+                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+                  { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+                  { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
                 ],
               }];
             }
@@ -695,11 +696,11 @@ export const ticketingFlow: FlowDefinition = {
             // #268: Consolidated into 1 message
             return [{
               type: 'buttons',
-              body: `🎫 *Tickets Reserved!*\n\n🎟️ ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, cc)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Confirmation arrives automatically after payment.`,
+              body: `${getFlowCopy(ctx.copyLang, 'ticketing.tickets_reserved')}\n\n🎟️ ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, cc)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 ${getFlowCopy(ctx.copyLang, 'payment.pay_here')}\n${paymentResult.url}\n\n${getFlowCopy(ctx.copyLang, 'payment.auto_confirm')}`,
               buttons: [
-                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-                { id: 'retry_payment', title: 'Get New Link' },
-                { id: 'go_back', title: 'Cancel' },
+                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
+                { id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.get_new_link') },
+                { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
               ],
             }];
           }
@@ -728,7 +729,7 @@ export const ticketingFlow: FlowDefinition = {
               {
                 type: 'text',
                 text: [
-                  `🏦 *Bank Transfer Payment*`,
+                  getFlowCopy(ctx.copyLang, 'payment.bank_transfer_header'),
                   '',
                   `🎟️ ${d.event_name}`,
                   `📅 ${dateLabel}`,
@@ -736,13 +737,13 @@ export const ticketingFlow: FlowDefinition = {
                   `💰 ${formatCurrency(total, cc)}`,
                   `🔑 Ref: *${booking.reference_code}*`,
                   '',
-                  `Transfer to:`,
+                  getFlowCopy(ctx.copyLang, 'payment.transfer_to'),
                   formatBankTransferBlock(bankAccount, formatCurrency(total, cc), transferRef),
                 ].join('\n'),
               },
               {
                 type: 'buttons',
-                body: 'Tap below after transferring:',
+                body: getFlowCopy(ctx.copyLang, 'payment.tap_after_transfer'),
                 buttons: [...BANK_ONLY_BUTTONS],
               },
             ];
@@ -952,24 +953,24 @@ export const ticketingFlow: FlowDefinition = {
         if (d.bank_transfer_offered) {
           return [{
             type: 'buttons',
-            body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
+            body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
             buttons: [
-              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: "I've Paid Online" },
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
+              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
         const buttons: Array<{ id: string; title: string }> = [
-          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: "I've Paid" },
+          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
         ];
         if (!d._payment_retry_blocked) {
-          buttons.push({ id: 'retry_payment', title: 'Get New Link' });
+          buttons.push({ id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.get_new_link') });
         }
-        buttons.push({ id: 'go_back', title: 'Cancel' });
+        buttons.push({ id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') });
         return [{
           type: 'buttons',
-          body: "Complete payment using the link above.\n\nYour confirmation will arrive automatically after payment. If it doesn't, tap below:",
+          body: getFlowCopy(ctx.copyLang, 'payment.confirm_payment_link'),
           buttons,
         }];
       },
@@ -989,7 +990,7 @@ export const ticketingFlow: FlowDefinition = {
           }
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) {
-            return { valid: false, errorMessage: "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start over." };
+            return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.already_paid_hint') };
           }
           const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
           const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
@@ -1002,7 +1003,7 @@ export const ticketingFlow: FlowDefinition = {
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
           ctx.session.session_data._payment_retry_blocked = true;
-          return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We're still verifying your previous payment. Tap *I've Paid* to check again." };
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: getFlowCopy(ctx.copyLang, 'payment.still_verifying') };
         }
 
         if ((text === 'cancel' || text === 'go_back')) {
@@ -1101,7 +1102,7 @@ export const ticketingFlow: FlowDefinition = {
         // ── "I've Sent Transfer" button ──
         if (text === 'sent_transfer' || text === "i've sent transfer" || text === 'i_sent_transfer') {
           if (!d.bank_transfer_reference) {
-            return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
+            return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.no_bank_ref') };
           }
           d._awaiting_transfer_proof = true;
           await ctx.supabase.from('bot_sessions').update({ session_data: d }).eq('id', ctx.session.id);
@@ -1181,19 +1182,19 @@ export const ticketingFlow: FlowDefinition = {
 
           if (recovery.outcome === 'not_paid') {
             d._payment_retry_blocked = undefined;
-            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: getFlowCopy(ctx.copyLang, 'payment.not_received') };
           }
 
           if (recovery.outcome === 'provider_error') {
             d._payment_retry_blocked = true;
-            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment." };
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: getFlowCopy(ctx.copyLang, 'payment.verify_failed') };
           }
 
           d._payment_retry_blocked = true;
-          return { valid: false, persistSessionDataOnFailure: true, errorMessage: 'Something went wrong. Please try again.' };
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
         }
 
-        return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.ive_paid_hint') };
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;

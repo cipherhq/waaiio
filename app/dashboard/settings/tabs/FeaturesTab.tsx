@@ -126,7 +126,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
     for (const d of DAYS) {
       businessHours[d] = arHours[d];
     }
-    await supabase
+    const { error } = await supabase
       .from('whatsapp_config')
       .upsert({
         business_id: business.id,
@@ -137,6 +137,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
         instant_reply_message: arInstantMessage,
       }, { onConflict: 'business_id' });
     setArSaving(false);
+    if (error) return;
     setArSaved(true);
     setTimeout(() => setArSaved(false), 2000);
   }
@@ -222,7 +223,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
               onClick={async () => {
                 setSaving(true);
                 const supabase = createClient();
-                await supabase
+                const { error } = await supabase
                   .from('businesses')
                   .update({
                     metadata: {
@@ -234,6 +235,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
                   })
                   .eq('id', business.id);
                 setSaving(false);
+                if (error) return;
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}
@@ -384,7 +386,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
                     .split('\n')
                     .map(f => f.trim())
                     .filter(f => f.length > 0);
-                  await supabase
+                  const { error } = await supabase
                     .from('businesses')
                     .update({
                       metadata: {
@@ -404,6 +406,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
                     })
                     .eq('id', business.id);
                   setSaving(false);
+                  if (error) return;
                   setSaved(true);
                   setTimeout(() => setSaved(false), 2000);
                 }}
@@ -811,7 +814,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
                 onClick={async () => {
                   setNotifSaving(true);
                   const supabase = createClient();
-                  await supabase.from('whatsapp_config').upsert({
+                  const { error } = await supabase.from('whatsapp_config').upsert({
                     business_id: business.id,
                     notify_email_enabled: notifEmailEnabled,
                     notify_sound_enabled: notifSoundEnabled,
@@ -821,6 +824,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
                     include_payment_links: includePayLinks,
                   }, { onConflict: 'business_id' });
                   setNotifSaving(false);
+                  if (error) return;
                   setNotifSaved(true);
                   setTimeout(() => setNotifSaved(false), 3000);
                 }}

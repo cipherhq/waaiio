@@ -36,6 +36,21 @@ export async function PATCH(
       );
     }
 
+    // ── Input length validation ──
+    const MAX_TRACKING_FIELD_LENGTH = 200;
+    if (carrier && typeof carrier === 'string' && carrier.length > MAX_TRACKING_FIELD_LENGTH) {
+      return NextResponse.json(
+        { error: 'carrier exceeds maximum length of 200 characters' },
+        { status: 400 },
+      );
+    }
+    if (trackingNumber && typeof trackingNumber === 'string' && trackingNumber.length > MAX_TRACKING_FIELD_LENGTH) {
+      return NextResponse.json(
+        { error: 'trackingNumber exceeds maximum length of 200 characters' },
+        { status: 400 },
+      );
+    }
+
     // ── Auth: verify user owns the business ──
     const authSupabase = await createClient();
     const {

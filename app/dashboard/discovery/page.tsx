@@ -5,6 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import AddressAutocomplete from '@/components/ui/AddressAutocomplete';
+import { getDistanceUnit, kmToDisplayUnit, displayUnitToKm } from '@/lib/constants';
 
 interface DiscoveryConfig {
   discovery_enabled: boolean;
@@ -64,6 +65,7 @@ export default function DiscoveryPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [addressVerified, setAddressVerified] = useState(false);
   const [verifiedAddress, setVerifiedAddress] = useState('');
 
@@ -139,9 +141,14 @@ export default function DiscoveryPage() {
       city: config.city || null,
     };
 
-    await supabase.from('businesses').update(payload).eq('id', business.id);
+    const { error } = await supabase.from('businesses').update(payload).eq('id', business.id);
 
     setSaving(false);
+    if (error) {
+      setSaveError('Failed to save profile. Please try again.');
+      return;
+    }
+    setSaveError('');
     setSaved(true);
     setConfig(prev => ({ ...prev, discovery_keywords: keywords }));
     setTimeout(() => setSaved(false), 3000);
@@ -250,17 +257,23 @@ export default function DiscoveryPage() {
           <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Profile Details</h2>
           <div className="space-y-4">
             <div>
-              <label className={labelClass}>Discovery Description</label>
+              <label className={labelClass}>Short Listing Summary</label>
               <textarea
                 value={config.discovery_description}
                 onChange={e => update('discovery_description', e.target.value.slice(0, 200))}
-                placeholder="A short description of what you offer (max 200 characters)"
+                onFocus={() => {
+                  // One-time prefill from business description when discovery_description is blank
+                  if (!config.discovery_description && config.description) {
+                    update('discovery_description', config.description.slice(0, 200));
+                  }
+                }}
+                placeholder="A short summary shown in search results (max 200 characters)"
                 rows={3}
                 maxLength={200}
                 className={inputClass}
               />
               <p className="mt-1 text-xs text-gray-400">
-                {config.discovery_description.length}/200 characters
+                {config.discovery_description.length}/200 characters — shown in search and listing results
               </p>
             </div>
 
@@ -328,20 +341,28 @@ export default function DiscoveryPage() {
                 <p className="text-xs text-gray-500 dark:text-gray-400">Show a delivery badge on your listing</p>
               </div>
             </label>
-            {config.supports_delivery && (
-              <div>
-                <label className={labelClass}>Delivery Radius (km)</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.5}
-                  value={config.delivery_radius_km ?? ''}
-                  onChange={e => update('delivery_radius_km', e.target.value ? parseFloat(e.target.value) : null)}
-                  placeholder="e.g. 15"
-                  className={inputClass}
-                />
-              </div>
-            )}
+            {config.supports_delivery && (() => {
+              const countryCode = business.country_code || 'NG';
+              const unit = getDistanceUnit(countryCode);
+              const displayValue = config.delivery_radius_km != null ? kmToDisplayUnit(config.delivery_radius_km, countryCode) : null;
+              return (
+                <div>
+                  <label className={labelClass}>Delivery Radius ({unit})</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={displayValue ?? ''}
+                    onChange={e => {
+                      const val = e.target.value ? parseFloat(e.target.value) : null;
+                      update('delivery_radius_km', val != null ? displayUnitToKm(val, countryCode) : null);
+                    }}
+                    placeholder="e.g. 15"
+                    className={inputClass}
+                  />
+                </div>
+              );
+            })()}
           </div>
         </div>
 
@@ -369,7 +390,7 @@ export default function DiscoveryPage() {
                   }
                 }}
                 onManualChange={(value) => {
-                  setConfig(prev => ({ ...prev, address: value }));
+                  setConfig(prev => ({ ...prev, address: value, latitude: null, longitude: null }));
                   // Invalidate verification if address is manually changed
                   setAddressVerified(false);
                   setVerifiedAddress('');
@@ -461,6 +482,9 @@ export default function DiscoveryPage() {
           </button>
           {saved && (
             <span className="text-sm text-green-600 dark:text-green-400">Profile saved</span>
+          )}
+          {saveError && (
+            <span className="text-sm text-red-600">{saveError}</span>
           )}
         </div>
       </form>

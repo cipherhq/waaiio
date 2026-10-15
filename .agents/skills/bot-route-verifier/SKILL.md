@@ -1,3 +1,8 @@
+---
+name: bot-route-verifier
+description: "Verify that every WhatsApp bot button, postback ID, and text command routes to the correct handler. Run after any change to bot flows, button handlers, escape hatches, or navigation."
+---
+
 # Bot Route Verifier
 
 > **MANDATORY: Run this AFTER any change to bot flows, button handlers, escape hatches, or navigation.** Catches dead ends and broken routes before deploy.

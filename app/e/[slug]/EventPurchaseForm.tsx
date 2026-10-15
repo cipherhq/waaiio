@@ -67,6 +67,7 @@ export default function EventPurchaseForm({
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
   const [otpToken, setOtpToken] = useState('');
+  const [otpChallengeId, setOtpChallengeId] = useState('');
 
   // Success state
   const [referenceCode, setReferenceCode] = useState('');
@@ -126,10 +127,11 @@ export default function EventPurchaseForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: guestEmail.trim() }),
       });
+      const data = await res.json();
       if (!res.ok) {
-        const data = await res.json();
         setOtpError(data.error || 'Failed to send code');
       } else {
+        setOtpChallengeId(data.challengeId || '');
         setOtpSent(true);
       }
     } catch {
@@ -149,7 +151,7 @@ export default function EventPurchaseForm({
       const res = await fetch('/api/auth/email-otp?action=verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: guestEmail.trim(), code: otpCode }),
+        body: JSON.stringify({ email: guestEmail.trim(), code: otpCode, challengeId: otpChallengeId }),
       });
       const data = await res.json();
       if (data.verified) {

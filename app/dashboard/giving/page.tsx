@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useDashboard } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
@@ -24,6 +24,7 @@ type View = 'list' | 'add' | 'edit';
 
 export default function GivingPage() {
   const business = useBusiness();
+  const { isImpersonating } = useDashboard();
   const [categories, setCategories] = useState<GivingCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>('list');
@@ -138,6 +139,12 @@ export default function GivingPage() {
       <div className="space-y-6">
         <PageHeader title={view === 'add' ? 'Add Giving Category' : 'Edit Giving Category'} />
 
+        {isImpersonating && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+            You are viewing this business via admin impersonation. Changes cannot be saved. Sign in as the business owner to make edits.
+          </div>
+        )}
+
         <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-5 space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Category Name *</label>
@@ -185,7 +192,7 @@ export default function GivingPage() {
 
         <div className="flex gap-3">
           <button onClick={() => { resetForm(); setView('list'); }} className="px-4 py-2 border border-gray-300 rounded-lg text-sm">Cancel</button>
-          <button onClick={handleSave} disabled={saving || !name.trim()} className="px-6 py-2 bg-black text-white rounded-lg text-sm font-medium disabled:opacity-50">
+          <button onClick={handleSave} disabled={saving || !name.trim() || isImpersonating} className="px-6 py-2 bg-black text-white rounded-lg text-sm font-medium disabled:opacity-50">
             {saving ? 'Saving...' : view === 'add' ? 'Add Category' : 'Save Changes'}
           </button>
         </div>
@@ -196,12 +203,20 @@ export default function GivingPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Giving Categories" tooltip={PAGE_TOOLTIPS.giving} description="Manage tithes, offerings, and donations">
-        <button onClick={() => { resetForm(); setView('add'); }}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">
-          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-          Add Giving Category
-        </button>
+        {!isImpersonating && (
+          <button onClick={() => { resetForm(); setView('add'); }}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+            Add Giving Category
+          </button>
+        )}
       </PageHeader>
+
+      {isImpersonating && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+          You are viewing this business via admin impersonation. Changes cannot be made in this mode. Sign in as the business owner to create or edit giving categories.
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-12 text-gray-500">Loading...</div>
@@ -210,8 +225,10 @@ export default function GivingPage() {
           <div className="text-4xl mb-4">🙏</div>
           <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-1">No giving categories yet</h3>
           <p className="text-sm text-gray-500 mb-4">Add categories like Tithe, Offering, or Building Fund so members can give via WhatsApp.</p>
-          <button onClick={() => { resetForm(); setView('add'); }}
-            className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium">Add Category</button>
+          {!isImpersonating && (
+            <button onClick={() => { resetForm(); setView('add'); }}
+              className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium">Add Category</button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -234,15 +251,19 @@ export default function GivingPage() {
                 {cat.description && <p className="text-xs text-gray-400 mt-0.5">{cat.description}</p>}
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => handleToggleActive(cat.id, cat.is_active)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${cat.is_active ? 'bg-green-500' : 'bg-gray-300'}`}
-                  title={cat.is_active ? 'Active — tap to disable' : 'Inactive — tap to enable'}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${cat.is_active ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'}`} />
-                </button>
-                <button onClick={() => handleEdit(cat)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
-                <button onClick={() => handleDelete(cat.id)} className="text-xs text-red-500 hover:text-red-700">Delete</button>
+                {!isImpersonating && (
+                  <>
+                    <button
+                      onClick={() => handleToggleActive(cat.id, cat.is_active)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${cat.is_active ? 'bg-green-500' : 'bg-gray-300'}`}
+                      title={cat.is_active ? 'Active — tap to disable' : 'Inactive — tap to enable'}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${cat.is_active ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'}`} />
+                    </button>
+                    <button onClick={() => handleEdit(cat)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
+                    <button onClick={() => handleDelete(cat.id)} className="text-xs text-red-500 hover:text-red-700">Delete</button>
+                  </>
+                )}
               </div>
             </div>
           ))}

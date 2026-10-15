@@ -88,12 +88,14 @@ export async function generatePhoneOtp(phone: string): Promise<{ code: string; c
   // Opportunistic cleanup of expired challenges (non-blocking)
   supabase.rpc('cleanup_expired_otp_challenges').then(() => {}, () => {});
 
-  // Insert the challenge record
+  // Insert the challenge record — explicitly set channel='phone' (do not rely
+  // on DB default alone, per M423 channel isolation contract)
   const { error } = await supabase.from('phone_otp_challenges').insert({
     challenge_id: challengeId,
     phone_hash: phoneHash,
     otp_hash: otpHash,
     expires_at: expiresAt,
+    channel: 'phone',
   });
 
   if (error) {
@@ -130,11 +132,13 @@ export async function verifyPhoneOtp(phone: string, code: string, challengeId: s
 
   const supabase = createServiceClient();
 
-  // Fetch the challenge
+  // Fetch the challenge — scoped to channel='phone' to prevent cross-channel
+  // verification (M423: a recurring/email challenge must not satisfy phone verify)
   const { data: challenge, error: fetchErr } = await supabase
     .from('phone_otp_challenges')
     .select('id, phone_hash, otp_hash, expires_at, consumed_at, failed_attempts')
     .eq('challenge_id', challengeId)
+    .eq('channel', 'phone')
     .maybeSingle();
 
   if (fetchErr || !challenge) {

@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import type { VerifiedPaymentResult, PaymentProviderName } from './authority';
+import { normalizePaystackCardAuthorization } from './paystack-card-authorization';
 
 /** Outcome from attempting provider verification. */
 export type ProviderVerificationOutcome =
@@ -146,19 +147,21 @@ async function resolveSquareCredential(
   if (origin === 'connect' || (origin === null && businessId)) {
     // Merchant OAuth — load exact connection by ID if available, else by business
     const query = connectionId
-      ? supabase.from('payout_accounts').select('id, business_id, access_token').eq('id', connectionId).maybeSingle()
+      ? supabase.from('payout_accounts').select('id, business_id, square_access_token').eq('id', connectionId).maybeSingle()
       : businessId
-        ? supabase.from('payout_accounts').select('id, business_id, access_token').eq('business_id', businessId).eq('provider', 'square').eq('is_active', true).maybeSingle()
+        ? supabase.from('payout_accounts').select('id, business_id, square_access_token').eq('business_id', businessId).eq('gateway', 'square').eq('is_active', true).maybeSingle()
         : null;
 
     if (query) {
       const { data: payoutAccount, error } = await query;
-      if (!error && payoutAccount?.access_token) {
+      if (!error && payoutAccount?.square_access_token) {
         if (businessId && payoutAccount.business_id !== businessId) return null;
         try {
           const { decryptToken } = await import('@/lib/encryption');
-          return { secretKey: decryptToken(payoutAccount.access_token), isByo: false };
-        } catch {
+          return { secretKey: decryptToken(payoutAccount.square_access_token), isByo: false };
+        } catch (decryptErr) {
+          const Sentry = await import('@sentry/nextjs');
+          Sentry.captureException(decryptErr, { tags: { component: 'provider-adapters', operation: 'decrypt-square-token' } });
           return null;
         }
       }
@@ -294,7 +297,8 @@ async function verifyPaystack(
     if (txStatus === 'success') {
       const providerAmountKobo = data.data.amount as number;
       const providerCurrency = (data.data.currency as string || '').toUpperCase();
-      const authorization = data.data.authorization as Record<string, string> | undefined;
+      const authorization = data.data.authorization as Record<string, unknown> | undefined;
+      const cardAuthorization = normalizePaystackCardAuthorization(authorization, data.data.customer);
 
       return {
         status: 'verified',
@@ -305,8 +309,9 @@ async function verifyPaystack(
           amount: providerAmountKobo / 100, // kobo → naira
           currency: providerCurrency,
           paymentMethod: (data.data.channel as string) || 'card',
-          cardLast4: authorization?.last4,
-          cardBrand: authorization?.brand,
+          cardLast4: typeof authorization?.last4 === 'string' ? authorization.last4 : undefined,
+          cardBrand: typeof authorization?.brand === 'string' ? authorization.brand : undefined,
+          cardAuthorization,
           gatewayFee: data.data.fees ? (data.data.fees as number) / 100 : undefined,
           providerStatus: 'success',
           verifiedAt: new Date().toISOString(),

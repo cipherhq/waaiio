@@ -52,6 +52,11 @@ describe('Launch opt-in handler', () => {
 
   it('QR and button produce the same opt-in action (both handled)', async () => {
     const mockUpsert = vi.fn().mockResolvedValue({ error: null });
+    const subscriberSelect = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      }),
+    });
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
@@ -59,6 +64,11 @@ describe('Launch opt-in handler', () => {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    limit: vi.fn().mockReturnValue({
+                      maybeSingle: vi.fn().mockResolvedValue({ data: { country_code: 'NG' }, error: null }),
+                    }),
+                  }),
                   limit: vi.fn().mockReturnValue({
                     maybeSingle: vi.fn().mockResolvedValue({ data: { country_code: 'NG' }, error: null }),
                   }),
@@ -67,7 +77,7 @@ describe('Launch opt-in handler', () => {
             }),
           };
         }
-        return { upsert: mockUpsert };
+        return { upsert: mockUpsert, select: subscriberSelect };
       }),
     // eslint-disable-next-line
     } as any;
@@ -86,58 +96,17 @@ describe('Launch opt-in handler', () => {
     expect(sendReply).toHaveBeenCalledTimes(2);
   });
 
-  // ── Signup source attribution ──
+  // ── Signup source attribution (#460: always 'direct' — no customer-visible suffixes) ──
 
-  it('detects "button" source from message suffix', async () => {
+  it('always records source as "direct" (#460 — clean customer message)', async () => {
     const upsertArgs: unknown[] = [];
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
         return {
-          upsert: vi.fn((data: unknown) => {
-            upsertArgs.push(data);
-            return Promise.resolve({ error: null });
-          }),
-        };
-      }),
-    // eslint-disable-next-line
-    } as any;
-
-    await handleLaunchOptIn(mockSupabase, '+1234', 'Notify me when Waaiio launches (button)', undefined, vi.fn());
-    expect(upsertArgs[0]).toMatchObject({ signup_source: 'button' });
-  });
-
-  it('detects "qr" source from message suffix', async () => {
-    const upsertArgs: unknown[] = [];
-    const mockSupabase = {
-      from: vi.fn((table: string) => {
-        if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
-        }
-        return {
-          upsert: vi.fn((data: unknown) => {
-            upsertArgs.push(data);
-            return Promise.resolve({ error: null });
-          }),
-        };
-      }),
-    // eslint-disable-next-line
-    } as any;
-
-    await handleLaunchOptIn(mockSupabase, '+1234', 'Notify me when Waaiio launches (qr)', undefined, vi.fn());
-    expect(upsertArgs[0]).toMatchObject({ signup_source: 'qr' });
-  });
-
-  it('defaults to "direct" source when no suffix', async () => {
-    const upsertArgs: unknown[] = [];
-    const mockSupabase = {
-      from: vi.fn((table: string) => {
-        if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
-        }
-        return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
           upsert: vi.fn((data: unknown) => {
             upsertArgs.push(data);
             return Promise.resolve({ error: null });
@@ -151,6 +120,34 @@ describe('Launch opt-in handler', () => {
     expect(upsertArgs[0]).toMatchObject({ signup_source: 'direct' });
   });
 
+  it('still handles legacy messages with (button)/(qr) suffix', async () => {
+    const upsertArgs: unknown[] = [];
+    const mockSupabase = {
+      from: vi.fn((table: string) => {
+        if (table === 'whatsapp_channels') {
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+        }
+        return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+          upsert: vi.fn((data: unknown) => {
+            upsertArgs.push(data);
+            return Promise.resolve({ error: null });
+          }),
+        };
+      }),
+    // eslint-disable-next-line
+    } as any;
+
+    // Legacy messages still match and are recorded as 'direct'
+    const r1 = await handleLaunchOptIn(mockSupabase, '+1234', 'Notify me when Waaiio launches (button)', undefined, vi.fn());
+    expect(r1).toBe(true);
+    expect(upsertArgs[0]).toMatchObject({ signup_source: 'direct' });
+
+    const r2 = await handleLaunchOptIn(mockSupabase, '+5678', 'Notify me when Waaiio launches (qr)', undefined, vi.fn());
+    expect(r2).toBe(true);
+    expect(upsertArgs[1]).toMatchObject({ signup_source: 'direct' });
+  });
+
   // ── Idempotency ──
 
   it('uses upsert with onConflict wa_number for idempotent replays', async () => {
@@ -158,9 +155,10 @@ describe('Launch opt-in handler', () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
         return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
           upsert: vi.fn((_data: unknown, opts: unknown) => {
             upsertOptions = opts;
             return Promise.resolve({ error: null });
@@ -199,9 +197,12 @@ describe('Launch opt-in handler', () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
-        return { upsert: vi.fn().mockResolvedValue({ error: null }) };
+        return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+          upsert: vi.fn().mockResolvedValue({ error: null }),
+        };
       }),
     // eslint-disable-next-line
     } as any;
@@ -210,7 +211,7 @@ describe('Launch opt-in handler', () => {
 
     expect(sendReply).toHaveBeenCalledOnce();
     const msg = sendReply.mock.calls[0][1];
-    expect(msg).toContain('list');
+    expect(msg).toContain("You're in!");
     expect(msg).toContain('STOP');
   });
 
@@ -221,9 +222,12 @@ describe('Launch opt-in handler', () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
-        return { upsert: vi.fn().mockResolvedValue({ error: { message: 'DB down' } }) };
+        return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+          upsert: vi.fn().mockResolvedValue({ error: { message: 'DB down' } }),
+        };
       }),
     // eslint-disable-next-line
     } as any;
@@ -245,12 +249,14 @@ describe('Regional WhatsApp routing', () => {
     expect(src).not.toMatch(/12029226251/); // shared number should not be hard-coded
   });
 
-  it('QR code and button use the same WhatsApp number', () => {
+  it('QR code and button use the same clean WhatsApp link (#460)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
-    // Both use buildWhatsAppLink with selectedRegion.phone
-    expect(src).toContain("buildWhatsAppLink(selectedRegion.phone, 'button')");
-    expect(src).toContain("buildWhatsAppLink(selectedRegion.phone, 'qr')");
+    // Both use the same buildWhatsAppLink — no source suffix
+    expect(src).toContain('buildWhatsAppLink(selectedRegion.phone)');
+    // Must NOT contain customer-visible source attribution
+    expect(src).not.toContain("'button')");
+    expect(src).not.toContain("'qr')");
   });
 
   it('region selector allows manual override', () => {

@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useDashboard, useCapabilities, useIsReseller } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
+import { WORDMARK_PATH, WORDMARK_ALT, WORDMARK_DISPLAY } from '@/lib/brand';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { ThemeToggle } from './ThemeToggle';
@@ -457,6 +458,12 @@ const navItems: NavItem[] = [
     section: 'settings',
   },
   {
+    href: '/dashboard/translations',
+    label: 'Bot Text',
+    icon: 'M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129',
+    section: 'settings',
+  },
+  {
     href: '/dashboard/ai-activity',
     label: 'AI Activity',
     icon: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z',
@@ -708,6 +715,8 @@ export function Sidebar() {
         const renamed = catLabels.serviceNamePlural;
         // Don't rename to "Appointments" if there's already an Appointments item
         if (renamed === 'Appointments' && capabilities.includes('appointment')) return 'Services';
+        // Don't rename to "Products" if the separate Products nav item is also active (#493)
+        if (renamed === 'Products' && capabilities.includes('ordering')) return 'Services';
         return renamed;
       }
     }
@@ -722,7 +731,7 @@ export function Sidebar() {
     <>
       {/* Logo */}
       <div className="flex items-center gap-2 px-4 py-5">
-        <Image src="/logo.png" alt="Waaiio" width={120} height={32} className="h-8 w-auto" />
+        <Image src={WORDMARK_PATH} alt={WORDMARK_ALT} width={WORDMARK_DISPLAY.standard.width} height={WORDMARK_DISPLAY.standard.height} className="h-8 w-auto" />
       </div>
 
       {/* Business switcher */}

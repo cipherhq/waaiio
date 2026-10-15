@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
@@ -43,13 +44,13 @@ const surveyIntroStep: FlowStepConfig = {
       type: 'buttons',
       body,
       buttons: [
-        { id: 'survey_start', title: 'Start' },
-        { id: 'survey_skip', title: 'Not now' },
+        { id: 'survey_start', title: getFlowCopy(ctx.copyLang, 'survey.start') },
+        { id: 'survey_skip', title: getFlowCopy(ctx.copyLang, 'survey.not_now') },
       ],
     }];
   },
 
-  async validate(input: string): Promise<ValidationResult> {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     const lower = input.toLowerCase().trim();
     if (lower === 'survey_start' || lower === 'start' || lower === 'yes') {
       return { valid: true, data: { survey_accepted: true, survey_q_index: 0, survey_answers: {} } };
@@ -57,7 +58,7 @@ const surveyIntroStep: FlowStepConfig = {
     if (lower === 'survey_skip' || lower === 'not now' || lower === 'no' || lower === 'skip') {
       return { valid: true, data: { survey_accepted: false } };
     }
-    return { valid: false, errorMessage: 'Please tap *Start* or *Not now*.' };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'survey.start_hint') };
   },
 
   async next(ctx: FlowContext) {
@@ -86,8 +87,8 @@ const surveyQuestionStep: FlowStepConfig = {
         type: 'buttons',
         body: prefix + q.text,
         buttons: [
-          { id: 'survey_yes', title: 'Yes' },
-          { id: 'survey_no', title: 'No' },
+          { id: 'survey_yes', title: getFlowCopy(ctx.copyLang, 'survey.yes') },
+          { id: 'survey_no', title: getFlowCopy(ctx.copyLang, 'survey.no') },
         ],
       }];
     }
@@ -97,16 +98,16 @@ const surveyQuestionStep: FlowStepConfig = {
         type: 'buttons',
         body: prefix + q.text,
         buttons: [
-          { id: 'survey_rate_5', title: '5 - Excellent' },
-          { id: 'survey_rate_4', title: '4 - Good' },
-          { id: 'survey_rate_3', title: '3 - Average' },
+          { id: 'survey_rate_5', title: getFlowCopy(ctx.copyLang, 'rating.excellent') },
+          { id: 'survey_rate_4', title: getFlowCopy(ctx.copyLang, 'rating.good') },
+          { id: 'survey_rate_3', title: getFlowCopy(ctx.copyLang, 'rating.average') },
         ],
       }, {
         type: 'buttons',
-        body: 'Or:',
+        body: getFlowCopy(ctx.copyLang, 'rating.or'),
         buttons: [
-          { id: 'survey_rate_2', title: '2 - Poor' },
-          { id: 'survey_rate_1', title: '1 - Terrible' },
+          { id: 'survey_rate_2', title: getFlowCopy(ctx.copyLang, 'rating.poor') },
+          { id: 'survey_rate_1', title: getFlowCopy(ctx.copyLang, 'rating.terrible') },
         ],
       }];
     }
@@ -125,9 +126,9 @@ const surveyQuestionStep: FlowStepConfig = {
       // 4+ options → list message
       return [{
         type: 'list',
-        title: 'Survey',
+        title: getFlowCopy(ctx.copyLang, 'survey.title'),
         body: prefix + q.text,
-        buttonLabel: 'Choose',
+        buttonLabel: getFlowCopy(ctx.copyLang, 'nav.choose'),
         items: q.options.map((opt, i) => ({
           title: truncTitle(opt, 24),
           postbackText: `survey_opt_${i}`,
@@ -170,7 +171,7 @@ const surveyQuestionStep: FlowStepConfig = {
         answers[q.id] = 'No';
         return { valid: true, data: { survey_answers: answers, survey_q_index: index + 1 } };
       }
-      return { valid: false, errorMessage: 'Please tap *Yes* or *No*.' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'survey.yes_no_hint') };
     }
 
     if (q.type === 'rating') {
@@ -180,7 +181,7 @@ const surveyQuestionStep: FlowStepConfig = {
         answers[q.id] = num;
         return { valid: true, data: { survey_answers: answers, survey_q_index: index + 1 } };
       }
-      return { valid: false, errorMessage: 'Please select a rating from 1 to 5.' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'survey.select_rating') };
     }
 
     if (q.type === 'choice' && q.options) {
@@ -199,12 +200,12 @@ const surveyQuestionStep: FlowStepConfig = {
         answers[q.id] = found;
         return { valid: true, data: { survey_answers: answers, survey_q_index: index + 1 } };
       }
-      return { valid: false, errorMessage: 'Please select one of the options.' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'survey.select_option') };
     }
 
     // Text
     if (q.required !== false && !trimmed) {
-      return { valid: false, errorMessage: 'Please type your answer.' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'survey.type_answer') };
     }
     if (trimmed.toLowerCase() === 'skip' && q.required === false) {
       answers[q.id] = null;
@@ -237,11 +238,11 @@ const surveyCompleteStep: FlowStepConfig = {
     const accepted = d.survey_accepted as boolean;
 
     if (d._survey_cancelled) {
-      return [{ type: 'text', text: 'No problem! Survey cancelled. Type *Hi* to explore more.' }];
+      return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'survey.cancelled') }];
     }
 
     if (!accepted) {
-      return [{ type: 'text', text: 'No problem! You can take the survey another time.' }];
+      return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'survey.skip_later') }];
     }
 
     const surveyId = d.survey_id as string;
@@ -298,7 +299,7 @@ const surveyCompleteStep: FlowStepConfig = {
     }
 
     const messages: PromptMessage[] = [
-      { type: 'text', text: '✅ Thank you for completing the survey! Your feedback helps us improve.' },
+      { type: 'text', text: getFlowCopy(ctx.copyLang, 'survey.complete') },
     ];
 
     // Show capability buttons so user can continue
@@ -326,7 +327,7 @@ const surveyCompleteStep: FlowStepConfig = {
 
           messages.push({
             type: 'buttons',
-            body: 'Is there anything else I can help with?',
+            body: getFlowCopy(ctx.copyLang, 'feedback.anything_else'),
             buttons,
           });
           return messages;

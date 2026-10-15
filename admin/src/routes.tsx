@@ -31,6 +31,7 @@ import Payments from './pages/Payments';
 import Subscriptions from './pages/Subscriptions';
 import Support from './pages/Support';
 import BotManagement from './pages/BotManagement';
+import BotDropoffs from './pages/BotDropoffs';
 import WhatsAppChannels from './pages/WhatsAppChannels';
 import WhatsAppTemplates from './pages/WhatsAppTemplates';
 import Notifications from './pages/Notifications';
@@ -56,6 +57,7 @@ import LLMClassifications from './pages/LLMClassifications';
 import Alerts from './pages/Alerts';
 import AIUsage from './pages/AIUsage';
 import ConversationUsage from './pages/ConversationUsage';
+import MessagingCredits from './pages/MessagingCredits';
 import Surveys from './pages/Surveys';
 import AISetupLog from './pages/AISetupLog';
 import SystemHealth from './pages/SystemHealth';
@@ -72,6 +74,8 @@ import Promotions from './pages/Promotions';
 import ClassSessions from './pages/ClassSessions';
 import SiteAnnouncementPage from './pages/SiteAnnouncement';
 import LaunchSubscribers from './pages/LaunchSubscribers';
+import PlatformCampaigns from './pages/PlatformCampaigns';
+import CustomerOnboarding from './pages/CustomerOnboarding';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -87,6 +91,7 @@ export const router = createBrowserRouter([
       { path: 'admin-team', element: <RoleGuard roles={ADMIN_PERMISSIONS['admin-team']}><AdminTeam /></RoleGuard> },
       // Businesses
       { path: 'businesses', element: <RoleGuard roles={ADMIN_PERMISSIONS['businesses']}><Businesses /></RoleGuard> },
+      { path: 'customer-onboarding', element: <RoleGuard roles={ADMIN_PERMISSIONS['customer-onboarding']}><CustomerOnboarding /></RoleGuard> },
       { path: 'verification', element: <RoleGuard roles={ADMIN_PERMISSIONS['verification']}><Verification /></RoleGuard> },
       { path: 'category-templates', element: <RoleGuard roles={ADMIN_PERMISSIONS['category-templates']}><CategoryTemplates /></RoleGuard> },
       { path: 'impersonation', element: <RoleGuard roles={ADMIN_PERMISSIONS['impersonation']}><ImpersonationMode /></RoleGuard> },
@@ -113,6 +118,7 @@ export const router = createBrowserRouter([
       { path: 'giving', element: <RoleGuard roles={ADMIN_PERMISSIONS['giving']}><Giving /></RoleGuard> },
       // Communication
       { path: 'bot-management', element: <RoleGuard roles={ADMIN_PERMISSIONS['bot-management']}><BotManagement /></RoleGuard> },
+      { path: 'bot-dropoffs', element: <RoleGuard roles={ADMIN_PERMISSIONS['bot-management']}><BotDropoffs /></RoleGuard> },
       { path: 'bot-keywords', element: <RoleGuard roles={ADMIN_PERMISSIONS['bot-keywords']}><BotKeywords /></RoleGuard> },
       { path: 'llm-logs', element: <RoleGuard roles={ADMIN_PERMISSIONS['llm-logs']}><LLMClassifications /></RoleGuard> },
       { path: 'whatsapp-channels', element: <RoleGuard roles={ADMIN_PERMISSIONS['whatsapp-channels']}><WhatsAppChannels /></RoleGuard> },
@@ -134,6 +140,7 @@ export const router = createBrowserRouter([
       { path: 'ai-setup-log', element: <RoleGuard roles={ADMIN_PERMISSIONS['ai-setup-log']}><AISetupLog /></RoleGuard> },
       { path: 'ai-usage', element: <RoleGuard roles={ADMIN_PERMISSIONS['ai-usage']}><AIUsage /></RoleGuard> },
       { path: 'conversation-usage', element: <RoleGuard roles={ADMIN_PERMISSIONS['conversation-usage']}><ConversationUsage /></RoleGuard> },
+      { path: 'messaging-credits', element: <RoleGuard roles={ADMIN_PERMISSIONS['messaging-credits']}><MessagingCredits /></RoleGuard> },
       { path: 'platform-settings', element: <RoleGuard roles={ADMIN_PERMISSIONS['platform-settings']}><PlatformSettings /></RoleGuard> },
       { path: 'audit-log', element: <RoleGuard roles={ADMIN_PERMISSIONS['audit-log']}><AuditLog /></RoleGuard> },
       { path: 'system-health', element: <RoleGuard roles={ADMIN_PERMISSIONS['system-health']}><SystemHealth /></RoleGuard> },
@@ -141,6 +148,7 @@ export const router = createBrowserRouter([
       { path: 'ai-marketplace', element: <RoleGuard roles={ADMIN_PERMISSIONS['ai-marketplace'] || ['admin']}><AIMarketplace /></RoleGuard> },
       { path: 'site-announcement', element: <RoleGuard roles={ADMIN_PERMISSIONS['platform-settings']}><SiteAnnouncementPage /></RoleGuard> },
       { path: 'launch-subscribers', element: <RoleGuard roles={ADMIN_PERMISSIONS['platform-settings']}><LaunchSubscribers /></RoleGuard> },
+      { path: 'platform-campaigns', element: <RoleGuard roles={ADMIN_PERMISSIONS['platform-settings']}><PlatformCampaigns /></RoleGuard> },
     ],
   },
   { path: '*', element: <Navigate to="/dashboard" replace /> },

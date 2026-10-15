@@ -9,6 +9,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { getFlowCopy, fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { createWhatsAppUser } from '@/lib/bot/flows/shared/user';
 import { getCurrencyForCountry } from '@/lib/channels/catalog';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
@@ -42,7 +44,7 @@ export async function handleCatalogOrder(
     try {
       // Platform-scoped: no known business, send neutral guidance
       if (outbound.sendPlatformText) {
-        await outbound.sendPlatformText({ to: source, text: 'Sorry, this catalog is currently unavailable. Please try again later.' });
+        await outbound.sendPlatformText({ to: source, text: getFlowCopy('en', 'notification.catalog_unavailable') });
       }
     } catch { /* ignore */ }
     return;
@@ -57,7 +59,7 @@ export async function handleCatalogOrder(
   if (!userId) {
     msgLog.error('[META-WEBHOOK] Failed to create/find user for catalog order');
     try {
-      await outbound.sendText({ to: source, text: 'Something went wrong on our end. Please try again.' });
+      await outbound.sendText({ to: source, text: getFlowCopy('en', 'notification.catalog_error') });
     } catch { /* ignore */ }
     return;
   }
@@ -75,7 +77,7 @@ export async function handleCatalogOrder(
   if (rpcError) {
     msgLog.error('[META-ORDER] Atomic order failed:', rpcError.message);
     try {
-      await outbound.sendText({ to: source, text: 'Something went wrong on our end creating your order. Please try again.' });
+      await outbound.sendText({ to: source, text: getFlowCopy('en', 'notification.catalog_order_error') });
     } catch { /* ignore */ }
     return;
   }
@@ -84,7 +86,7 @@ export async function handleCatalogOrder(
     if (result.reason === 'duplicate') { msgLog.info('[META-ORDER] Duplicate order skipped:', msg.id); return; }
     if (result.reason === 'no_valid_items') {
       const outOfStock: string[] = result.out_of_stock || [];
-      const noItemsMsg = outOfStock.length > 0 ? `Sorry, the following items are out of stock: ${outOfStock.join(', ')}` : 'Sorry, none of the selected products are available right now.';
+      const noItemsMsg = outOfStock.length > 0 ? fillFlowCopy('en', 'notification.catalog_out_of_stock', { items: outOfStock.join(', ') }) : getFlowCopy('en', 'notification.catalog_none_available');
       try { await outbound.sendText({ to: source, text: noItemsMsg }); } catch { /* ignore */ }
       return;
     }
@@ -121,18 +123,20 @@ export async function handleCatalogOrder(
       }
     } catch (payErr) {
       msgLog.error('[META-WEBHOOK] Payment init failed for catalog order:', payErr);
-      paymentLine = '\nPlease contact the business to arrange payment.';
+      paymentLine = '\n' + getFlowCopy('en', 'notification.catalog_contact_business');
     }
   }
 
   const outOfStockNote = outOfStock.length > 0
     ? `\n\n_Note: ${outOfStock.join(', ')} ${outOfStock.length === 1 ? 'was' : 'were'} out of stock and removed from your order._`
     : '';
+  const l10n = await resolveProactiveLocalization(supabase, source, biz.id);
+  const copyLang = l10n.language;
   const confirmationMsg = [
-    `*Order Received!*`, '', `*${biz.name}*`, '', itemLines, '',
+    getFlowCopy(copyLang, 'notification.catalog_order_received'), '', `*${biz.name}*`, '', itemLines, '',
     `*Total: ${currency} ${totalAmount}*`, `Ref: *${referenceCode}*`,
     customerNote ? `Note: ${customerNote}` : '', paymentLine, outOfStockNote, '',
-    totalAmount > 0 ? 'Your confirmation will arrive automatically after payment.' : 'Your order has been confirmed!',
+    totalAmount > 0 ? getFlowCopy(copyLang, 'notification.catalog_payment_pending') : getFlowCopy(copyLang, 'notification.catalog_order_confirmed'),
   ].filter(Boolean).join('\n');
 
   try { await outbound.sendText({ to: source, text: confirmationMsg }); }

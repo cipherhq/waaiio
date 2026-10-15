@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -6,8 +7,9 @@ import { getPoweredByFooter } from '@/lib/whitelabel';
 
 function generateRedemptionCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
   let code = 'RW-';
-  for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (const byte of bytes) code += chars[byte % chars.length];
   return code;
 }
 
@@ -72,21 +74,22 @@ const loyaltyMenuStep: FlowStepConfig = {
         type: 'buttons',
         body: await ctx.t('What would you like to do?'),
         buttons: [
-          { id: 'view_history', title: 'View History' },
-          { id: 'redeem', title: 'Redeem Reward' },
-          { id: 'back_to_account', title: '← Back' },
+          { id: 'view_history', title: getFlowCopy(ctx.copyLang, 'loyalty.view_history') },
+          { id: 'redeem', title: getFlowCopy(ctx.copyLang, 'loyalty.redeem_reward') },
+          { id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') },
         ],
       },
     ];
   },
 
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
-    if (input === 'back_to_account') return { valid: true, data: { _loyalty_action: 'back_to_account' } };
-    if (input === 'view_history') return { valid: true, data: { _loyalty_action: 'history' } };
-    if (input === 'redeem') return { valid: true, data: { _loyalty_action: 'redeem' } };
+    const lower = input.toLowerCase().trim();
+    if (lower === 'back_to_account' || lower === 'back') return { valid: true, data: { _loyalty_action: 'back_to_account' } };
+    if (lower === 'view_history' || lower === 'history' || lower === 'points') return { valid: true, data: { _loyalty_action: 'history' } };
+    if (lower === 'redeem' || lower === 'redeem reward') return { valid: true, data: { _loyalty_action: 'redeem' } };
     // If no loyalty record, any input routes back to my account
     if (ctx.session.session_data._loyalty_empty) return { valid: true, data: { _loyalty_action: 'back_to_account' } };
-    return { valid: false, errorMessage: 'Please select an option.' };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'loyalty.loyalty_hint') };
   },
 
   async next(ctx: FlowContext) {
@@ -122,8 +125,8 @@ const loyaltyHistoryStep: FlowStepConfig = {
         { type: 'text', text: await ctx.t('No points activity yet. You\'ll see your points history here as you earn and redeem!') },
         {
           type: 'buttons',
-          body: 'Anything else?',
-          buttons: [{ id: 'back_menu', title: 'Back to Menu' }, { id: 'back_to_account', title: '← Back' }],
+          body: getFlowCopy(ctx.copyLang, 'loyalty.anything_else'),
+          buttons: [{ id: 'back_menu', title: getFlowCopy(ctx.copyLang, 'nav.back_to_menu') }, { id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
         },
       ];
     }
@@ -143,8 +146,8 @@ const loyaltyHistoryStep: FlowStepConfig = {
       },
       {
         type: 'buttons',
-        body: 'Anything else?',
-        buttons: [{ id: 'back_menu', title: 'Back to Menu' }],
+        body: getFlowCopy(ctx.copyLang, 'loyalty.anything_else'),
+        buttons: [{ id: 'back_menu', title: getFlowCopy(ctx.copyLang, 'nav.back_to_menu') }],
       },
     ];
   },
@@ -181,8 +184,8 @@ const loyaltyRedeemStep: FlowStepConfig = {
         },
         {
           type: 'buttons',
-          body: 'Anything else?',
-          buttons: [{ id: 'go_back', title: 'Back to Menu' }],
+          body: getFlowCopy(ctx.copyLang, 'loyalty.anything_else'),
+          buttons: [{ id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.back_to_menu') }],
         },
       ];
     }
@@ -191,16 +194,18 @@ const loyaltyRedeemStep: FlowStepConfig = {
       type: 'buttons',
       body: await ctx.t(`You have enough points to redeem: *${rewardDesc}*\n\nThis will use ${threshold} points from your balance of ${balance}.`),
       buttons: [
-        { id: 'confirm_redeem', title: 'Redeem Now' },
-        { id: 'skip_redeem', title: 'Not Now' },
+        { id: 'confirm_redeem', title: getFlowCopy(ctx.copyLang, 'loyalty.redeem_now') },
+        { id: 'skip_redeem', title: getFlowCopy(ctx.copyLang, 'loyalty.not_now') },
       ],
     }];
   },
 
-  async validate(input: string): Promise<ValidationResult> {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     if (input === 'confirm_redeem') return { valid: true, data: { _redeem_action: 'confirm' } };
     if (input === 'skip_redeem') return { valid: true, data: { _redeem_action: 'skip' } };
-    return { valid: false, errorMessage: 'Tap one of the buttons above to continue.' };
+    // Bug fix: handle go_back button from low-balance path
+    if (input === 'go_back') return { valid: true, data: { _redeem_action: 'skip' } };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'loyalty.redeem_hint') };
   },
 
   async next(ctx: FlowContext) {
@@ -216,34 +221,26 @@ const loyaltyRedeemStep: FlowStepConfig = {
     try {
       const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
 
-      // Atomically update balance and total_redeemed via RPC FIRST
-      const { error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_points', {
+      // M434: deduction and durable receipt/code are ONE database transaction.
+      // Replaying the same bot session returns the original receipt without new debit.
+      const proposedCode = generateRedemptionCode();
+      const { data: redeemed, error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_reward_once', {
         p_loyalty_id: loyaltyId,
+        p_business_id: businessId,
+        p_customer_phone: phone,
         p_points: threshold,
+        p_redemption_key: `bot:${ctx.session.id}`,
+        p_redemption_code: proposedCode,
       });
-      if (redeemErr) {
-        logger.error('[LOYALTY] redeem_loyalty_points RPC failed:', redeemErr);
-        throw new Error('Redemption failed');
+      if (redeemErr || redeemed?.success !== true
+        || typeof redeemed.code !== 'string' || !/^RW-[A-Z2-9]{6}$/.test(redeemed.code)
+        || !Number.isSafeInteger(redeemed.points_balance)) {
+        logger.error('[LOYALTY] Atomic reward receipt denied or failed:', redeemErr || redeemed?.reason || 'bad_receipt');
+        throw new Error('Redemption was not confirmed');
       }
-
-      const balance = (ctx.session.session_data.loyalty_balance as number) || 0;
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';
-      const redemptionCode = generateRedemptionCode();
-
-      // Insert redemption transaction with code atomically (no separate UPDATE needed)
-      const { error: txnError } = await ctx.supabase.from('loyalty_transactions').insert({
-        business_id: businessId,
-        customer_phone: phone,
-        points_change: -threshold,
-        reason: 'redemption',
-        reference_id: loyaltyId,
-        reference_type: `code:${redemptionCode}`,
-      });
-
-      if (txnError) {
-        logger.error('[LOYALTY] Failed to persist redemption transaction', { op: 'loyalty.redeem-txn', error: txnError.message });
-        throw new Error('Redemption transaction failed');
-      }
+      const redemptionCode = redeemed.code as string;
+      const newBalance = redeemed.points_balance as number;
 
       await ctx.sender.sendText({
         to: ctx.from,
@@ -254,7 +251,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
           '',
           `Redemption code: *${redemptionCode}*`,
           `Points used: ${threshold}`,
-          `New balance: *${balance - threshold}* points`,
+          `New balance: *${newBalance}* points`,
           '',
           `Show this code to staff to claim your reward.`,
           '',

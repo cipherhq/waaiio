@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
-import type { PaymentGatewayName } from '@/lib/constants';
+
 
 /**
  * POST /api/pay-link/pay — Public endpoint (CSRF-exempt).
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
   const { data: link } = await supabase
     .from('payment_links')
     .select(
-      'id, title, amount, currency, uses_count, expires_at, max_uses, business_id, is_active, businesses!inner(name, country_code, payment_gateway)',
+      'id, title, amount, currency, uses_count, expires_at, max_uses, business_id, is_active, businesses!inner(name, country_code, payment_gateway, status)',
     )
     .eq('token', token)
     .eq('is_active', true)
@@ -74,18 +74,34 @@ export async function POST(request: NextRequest) {
     name: string;
     country_code: string;
     payment_gateway: string;
+    status: string;
   };
 
-  // Determine currency from country
-  const currencyMap: Record<string, string> = {
-    NG: 'NGN',
-    GH: 'GHS',
-    GB: 'GBP',
-    CA: 'CAD',
-    US: 'USD',
-  };
-  const currency = link.currency || currencyMap[biz.country_code] || 'USD';
-  const gatewayName = (biz.payment_gateway || 'paystack') as PaymentGatewayName;
+  // Business must be active to accept payments (#493 B3)
+  if (biz.status !== 'active') {
+    return NextResponse.json(
+      { error: 'This business is not yet set up to accept payments. Please contact the business owner.' },
+      { status: 503 },
+    );
+  }
+
+  // Resolve canonical gateway — no silent fallback to any provider (#493)
+  const { resolveBusinessGateway } = await import('@/lib/payments/gateway-resolver');
+  const gatewayResult = await resolveBusinessGateway(supabase, link.business_id);
+  if (!gatewayResult.gateway) {
+    logger.error('[PAY-LINK] No canonical gateway for business:', {
+      business_id: link.business_id,
+      country_code: biz.country_code,
+      reason: gatewayResult.reason,
+    });
+    return NextResponse.json(
+      { error: 'Payment is not available for this business. Please contact the business owner.' },
+      { status: 503 },
+    );
+  }
+
+  const currency = link.currency || gatewayResult.currency;
+  const gatewayName = gatewayResult.gateway;
 
   const refCode = `PL-${Date.now().toString(36).toUpperCase()}`;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';

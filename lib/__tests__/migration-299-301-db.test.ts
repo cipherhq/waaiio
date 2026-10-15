@@ -128,7 +128,7 @@ beforeAll(() => {
     INSERT INTO profiles (id) VALUES ('${TEST_USER_ID}') ON CONFLICT DO NOTHING;
     INSERT INTO profiles (id) VALUES ('${OTHER_USER_ID}') ON CONFLICT DO NOTHING;
     INSERT INTO businesses (id, name, slug, owner_id, bot_code, city, address, phone, status, wa_method, country_code, category)
-    VALUES ('${TEST_BIZ_ID}', 'Cap Test', 'cap-test-299', '${TEST_USER_ID}', 'CAPTEST', 'Lagos', '1 Test', '+2340000', 'active', 'shared', 'NG', 'salon')
+    VALUES ('${TEST_BIZ_ID}', 'Cap Test', 'cap-test-299', '${TEST_USER_ID}', 'CAPTEST', 'Lagos', '1 Test', '+2340000', 'active', 'transfer', 'NG', 'salon')
     ON CONFLICT DO NOTHING;
   `);
   // Clear test capability rows

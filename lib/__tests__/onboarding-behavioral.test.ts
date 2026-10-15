@@ -30,6 +30,8 @@ const mockServiceFrom = vi.fn();
 const mockInitCapabilities = vi.fn();
 const mockFinalize = vi.fn();
 
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve({
     auth: { getUser: mockGetUser },
@@ -39,6 +41,7 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: mockServiceFrom,
+    rpc: () => Promise.resolve({ data: { allocated: true, channel_id: 'test-channel', idempotent: false }, error: null }),
   }),
 }));
 
@@ -71,6 +74,7 @@ vi.mock('@/lib/constants', () => ({
   generateBotCode: (name: string) => name.toUpperCase().replace(/\s+/g, '-').slice(0, 10),
   CATEGORY_FLOW_MAP: { salon: 'appointment', restaurant: 'ordering', shop: 'ordering' },
   TRIAL_DAYS: 30,
+  getPayoutLimit: () => 500_000,
 }));
 
 vi.mock('@/lib/email/client', () => ({
@@ -169,18 +173,34 @@ function setupDefaultServiceMock(overrides?: {
       };
     }
     if (table === 'countries') {
+      const countriesListResponse = {
+        data: [
+          { code: 'NG', dialing_code: '+234' },
+          { code: 'GH', dialing_code: '+233' },
+          { code: 'US', dialing_code: '+1' },
+          { code: 'CA', dialing_code: '+1' },
+          { code: 'GB', dialing_code: '+44' },
+        ],
+        error: null,
+      };
       return {
         select: () => ({
-          eq: () => Promise.resolve({
-            data: [
-              { code: 'NG', dialing_code: '+234' },
-              { code: 'GH', dialing_code: '+233' },
-              { code: 'US', dialing_code: '+1' },
-              { code: 'CA', dialing_code: '+1' },
-              { code: 'GB', dialing_code: '+44' },
-            ],
-            error: null,
-          }),
+          eq: (_col: string, _val?: unknown) => {
+            // Support both chain patterns:
+            // 1. select().eq('is_active', true) -> Promise (country list)
+            // 2. select().eq('code', x).eq('is_active', true).single() -> Promise (gateway resolver)
+            const chainable = {
+              ...Promise.resolve(countriesListResponse),
+              then: (onfulfilled: (v: unknown) => unknown) => Promise.resolve(countriesListResponse).then(onfulfilled),
+              eq: () => ({
+                single: () => Promise.resolve({
+                  data: { payment_gateway: 'paystack', currency_code: 'NGN' },
+                  error: null,
+                }),
+              }),
+            };
+            return chainable;
+          },
         }),
       };
     }

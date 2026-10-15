@@ -24,6 +24,25 @@ export interface ResolvedChannel {
   cloud?: MetaCloudService;
 }
 
+/**
+ * #522 / #266: A shared channel is transport infrastructure, not tenant authority.
+ *
+ * Historical/stale shared-channel rows can carry a non-null business_id. That value
+ * must never be promoted into inbound business context or sender authorization.
+ * Dedicated channels remain business-authoritative.
+ *
+ * Explicit shared-business authority is applied later by stampBusinessId() only when
+ * a caller already has an authoritative business id (resolveByBusinessId / the
+ * business-authorized channel resolver).
+ */
+function stripSharedChannelBusinessAuthority(channel: ChannelRecord): ChannelRecord {
+  if (channel.channel_type !== 'shared' || channel.business_id === null) {
+    return channel;
+  }
+
+  return { ...channel, business_id: null };
+}
+
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export class ChannelResolver {
@@ -33,7 +52,9 @@ export class ChannelResolver {
   constructor(private readonly supabase: SupabaseClient) {}
 
   private cacheSet(key: string, data: ChannelRecord | null) {
-    this.cache.set(key, { data, ts: Date.now() });
+    // #522: Never cache a shared transport row with tenant authority attached.
+    const safeData = data ? stripSharedChannelBusinessAuthority(data) : null;
+    this.cache.set(key, { data: safeData, ts: Date.now() });
     // Evict oldest entries if cache exceeds max size
     if (this.cache.size > ChannelResolver.MAX_CACHE_SIZE) {
       const oldest = Array.from(this.cache.entries()).sort((a, b) => a[1].ts - b[1].ts);
@@ -46,7 +67,9 @@ export class ChannelResolver {
   /**
    * Build the correct MessageSender for a channel based on its provider.
    */
-  private buildResolved(channel: ChannelRecord): ResolvedChannel {
+  private buildResolved(inputChannel: ChannelRecord): ResolvedChannel {
+    const channel = stripSharedChannelBusinessAuthority(inputChannel);
+
     // Warn if dedicated channel token is expired or expiring soon
     if (channel.channel_type === 'dedicated' && channel.meta_token_expires_at) {
       const expiresAt = new Date(channel.meta_token_expires_at).getTime();
@@ -70,13 +93,17 @@ export class ChannelResolver {
         wabaId: channel.waba_id || undefined,
       });
       const sender = new MetaCloudSender(cloud, this.supabase);
-      if (channel.business_id) sender.bindBusiness(channel.business_id);
+      if (channel.channel_type === 'dedicated' && channel.business_id) {
+        sender.bindBusiness(channel.business_id);
+      }
       return { channel, sender, cloud };
     }
     return { channel, sender: this.buildSender(channel) };
   }
 
-  private buildSender(channel: ChannelRecord): MessageSender {
+  private buildSender(inputChannel: ChannelRecord): MessageSender {
+    const channel = stripSharedChannelBusinessAuthority(inputChannel);
+
     if (!channel.phone_number_id) {
       throw new Error(`[CHANNEL] Channel ${channel.id} has no phone_number_id — only meta_cloud channels are supported`);
     }
@@ -93,7 +120,9 @@ export class ChannelResolver {
       wabaId: channel.waba_id || undefined,
     });
     const sender = new MetaCloudSender(cloud, this.supabase);
-    if (channel.business_id) sender.bindBusiness(channel.business_id);
+    if (channel.channel_type === 'dedicated' && channel.business_id) {
+      sender.bindBusiness(channel.business_id);
+    }
     return sender;
   }
 
@@ -196,7 +225,7 @@ export class ChannelResolver {
     // 1. Check admin-assigned channel first (assigned_channel_id takes priority)
     const { data: bizData } = await this.supabase
       .from('businesses')
-      .select('country_code, assigned_channel_id, whatsapp_channel_id')
+      .select('country_code, assigned_channel_id, whatsapp_channel_id, wa_method')
       .eq('id', businessId)
       .single();
 
@@ -235,7 +264,16 @@ export class ChannelResolver {
       return resolved;
     }
 
-    // 3. Shared channel for the business's country
+    // R8: fail closed — shared business without a dedicated/assigned channel cannot route
+    if (bizData?.wa_method === 'shared') {
+      // Shared businesses MUST have an assigned channel from allocate_shared_channel.
+      // If no channelId was found above, the business has no allocation yet.
+      this.cacheSet(cacheKey, null);
+      return null;
+    }
+
+    // 3. Shared channel for the business's country (non-shared wa_method fallback,
+    //    e.g. 'transfer' businesses that haven't been fully set up yet)
     if (bizData?.country_code) {
       const shared = await this.getSharedChannelForCountry(bizData.country_code as CountryCode);
       if (shared) {
@@ -245,7 +283,7 @@ export class ChannelResolver {
       }
     }
 
-    // Final fallback: any active shared channel (for countries without their own)
+    // Final fallback: any active shared channel (for non-shared wa_method only)
     const { data: anyShared } = await this.supabase
       .from('whatsapp_channels')
       .select('*')

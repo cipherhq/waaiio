@@ -3,18 +3,12 @@ name: CI
 # ── Trigger semantics (#304) ──
 #
 # 1. push to main: full CI runs automatically (post-merge regression check)
-# 2. pull_request opened/ready_for_review: full CI on PR creation and on
-#    draft → ready-for-review transition. Does NOT run on every push
-#    (synchronize) — intermediate commits are validated locally.
+# 2. pull_request opened/reopened/synchronize/ready_for_review: full CI on
+#    PR creation, new commits, and draft → ready-for-review transition.
 # 3. workflow_dispatch: supplemental full CI for any branch/ref
 #    (evidence only — does NOT satisfy the protected merge gate)
 #
-# Release gate: to trigger merge-gate-compatible CI on the exact current
-# head without a code change, convert the PR to draft then back to
-# ready-for-review. This fires a `ready_for_review` event that GitHub
-# branch protection recognizes for the required status checks.
-#
-# The full 7-job suite is NEVER weakened, skipped, or path-filtered.
+# The full job suite is NEVER weakened, skipped, or path-filtered.
 # All jobs run identically regardless of trigger.
 
 on:
@@ -22,13 +16,19 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-    types: [opened, reopened, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
     inputs:
       ref:
         description: 'Branch or SHA to run CI against (supplemental evidence, not merge-gate)'
         required: false
         type: string
+
+# Cancel in-progress runs for the same PR/branch when a new commit arrives.
+# push-to-main runs are never cancelled (each merge must be validated).
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ── Main Application ──
@@ -104,6 +104,8 @@ jobs:
           # For PRs: check out the exact PR head, not the synthetic merge commit.
           # For push/dispatch: uses the default (github.sha).
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+          # Full history needed for blast-radius merge-base analysis
+          fetch-depth: 0
 
       - name: Record execution provenance
         run: |
@@ -143,13 +145,16 @@ jobs:
             BASE_SHA="$BEFORE_SHA"
           fi
 
-          echo "Fetching base ref $BASE_SHA..."
-          git fetch --depth=1 origin "$BASE_SHA"
+          # Use three-dot merge-base diff so files added to main after the
+          # branch point are not reported as deleted on the PR branch.
+          # fetch-depth: 0 in the checkout step provides full history.
+          MERGE_BASE=$(git merge-base "$BASE_SHA" HEAD)
+          echo "Merge base: $MERGE_BASE (BASE_SHA: $BASE_SHA, HEAD: $(git rev-parse HEAD))"
 
-          echo "Running migration diff + lint (NUL-safe pipe, base: $BASE_SHA)..."
+          echo "Running migration diff + lint (NUL-safe pipe, base: $MERGE_BASE)..."
           # Pipe NUL-delimited git diff directly to checked-in CLI.
           # No shell variable intermediary — preserves NUL bytes end-to-end.
-          git diff --name-status -z "$BASE_SHA" -- 'supabase/migrations/*.sql' \
+          git diff --name-status -z "$MERGE_BASE" -- 'supabase/migrations/*.sql' \
             | npx tsx lib/release-gate/migration-diff-cli.ts
 
       - name: Run release gate tests
@@ -203,6 +208,11 @@ jobs:
           fi
           echo "✅ Certificate provenance verified: release_sha=$CERT_SHA tested_commit_sha=$CERT_TESTED"
 
+      - name: Blast-radius analysis (advisory)
+        if: github.event_name == 'pull_request'
+        run: |
+          npx tsx lib/release-gate/blast-radius-cli.ts "${{ env.BASE_SHA }}" "${{ env.SOURCE_HEAD_SHA }}"
+
       - name: Upload release certificate artifact
         uses: actions/upload-artifact@v4
         with:
@@ -248,6 +258,10 @@ jobs:
     name: "Migration validation (shard a)"
     runs-on: ubuntu-24.04
 
+    env:
+      SOURCE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before || github.sha) }}
+
     services:
       postgres:
         image: postgres:15
@@ -267,6 +281,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -282,128 +298,14 @@ jobs:
           command -v psql
           psql --version
 
-      - name: Create Supabase schema prerequisites
+      - name: Bootstrap Supabase prerequisites + apply all migrations
         env:
           PGHOST: localhost
           PGPORT: 5432
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: waaiio_test
-        run: |
-          # Create the auth schema and functions that Supabase provides
-          psql -q -v ON_ERROR_STOP=1 <<'EOSQL'
-          CREATE SCHEMA IF NOT EXISTS auth;
-          CREATE SCHEMA IF NOT EXISTS extensions;
-          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-
-          -- Minimal auth.uid() stub for RLS policies
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-            SELECT '00000000-0000-0000-0000-000000000000'::UUID;
-          $$ LANGUAGE SQL STABLE;
-
-          -- Minimal auth.role() stub
-          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
-            SELECT 'authenticated'::TEXT;
-          $$ LANGUAGE SQL STABLE;
-
-          -- Create a minimal auth.users table (referenced by some FKs and triggers)
-          -- Must include phone column: handle_new_user() trigger references NEW.phone
-          CREATE TABLE IF NOT EXISTS auth.users (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            email TEXT,
-            phone TEXT,
-            raw_app_meta_data JSONB DEFAULT '{}'
-          );
-
-          -- Supabase roles: required by GRANT/REVOKE in migrations
-          -- 137, 176, 181, 233, 244 (GRANT EXECUTE ... TO service_role)
-          -- 003, 017, 018, 023 (RLS policies using auth.role() = 'service_role')
-          DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          -- Match production Supabase: service_role has BYPASSRLS
-          ALTER ROLE service_role BYPASSRLS;
-          DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-          -- Realtime publication: required by ALTER PUBLICATION in migrations
-          -- 001 (reservations), 020 (chat_messages), 025 (chat_conversations), 110 (queue_entries)
-          -- Note: CREATE PUBLICATION IF NOT EXISTS requires PG16+; CI uses PG15
-          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-          -- Storage schema: required by bucket/object policies in migrations
-          -- 018 (customer-reports bucket), 033 (business-documents bucket)
-          CREATE SCHEMA IF NOT EXISTS storage;
-          CREATE TABLE IF NOT EXISTS storage.buckets (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            public BOOLEAN DEFAULT false,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-          );
-          CREATE TABLE IF NOT EXISTS storage.objects (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            bucket_id TEXT REFERENCES storage.buckets(id),
-            name TEXT,
-            owner UUID,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-          );
-          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-
-          -- Supabase storage helper function used in bucket policies (migration 133)
-          CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
-          RETURNS TEXT[] AS $$
-            SELECT string_to_array(name, '/');
-          $$ LANGUAGE SQL IMMUTABLE;
-
-          -- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
-          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
-          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
-          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
-
-          -- Seed common test user (many test suites reference this UUID)
-          INSERT INTO auth.users (id, email) VALUES
-            ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
-            ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
-          ON CONFLICT (id) DO NOTHING;
-          EOSQL
-          echo "✅ Supabase schema stubs created"
-
-      - name: Apply all migrations
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          FAILED=0
-          APPLIED=0
-          for f in supabase/migrations/*.sql; do
-            echo "Applying $(basename $f)..."
-            # M383 requires atomic (single-transaction) application for snapshot_version cutover
-            if [[ "$(basename $f)" == "383_"* ]]; then
-              if ! psql -1 -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
-                echo "❌ FAILED (atomic): $(basename $f)"
-                FAILED=1
-              else
-                APPLIED=$((APPLIED + 1))
-              fi
-            elif ! psql -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
-              echo "❌ FAILED: $(basename $f)"
-              FAILED=1
-              # Continue to catch multiple failures
-            else
-              APPLIED=$((APPLIED + 1))
-            fi
-          done
-          echo ""
-          echo "Applied: $APPLIED migrations"
-          if [ "$FAILED" -eq 1 ]; then
-            echo "❌ Some migrations failed. See errors above."
-            exit 1
-          fi
-          echo "✅ All migrations applied successfully."
+        run: bash scripts/ci-bootstrap-test-db.sh
 
       - name: Verify key tables exist
         env:
@@ -455,6 +357,38 @@ jobs:
           fi
           echo "✅ RLS check complete."
 
+
+      - name: "M409 platform_campaigns constraint + ACL tests (early — before mutation-heavy suites)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M409 platform_campaigns constraint + ACL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/platform-campaigns-migration-439.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M409 platform_campaigns tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M409 platform_campaigns tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M409 platform_campaigns tests passed."
+            exit 1
+          fi
+          echo "✅ M409 platform_campaigns constraint + ACL tests complete — zero skips, zero failures."
 
       - name: P0 table exposure authorization tests
         env:
@@ -1502,6 +1436,165 @@ jobs:
           fi
           echo "✅ M400 cross-flow convergence DB tests complete — zero skips, zero failures."
 
+      - name: "M408 platform_settings ACL tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M408 platform_settings ACL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/migration-408-platform-settings-acl.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M408 platform_settings ACL tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M408 platform_settings ACL tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "6 passed"; then
+            echo "❌ Expected exactly 6 M408 tests to pass (2 DB + 4 static)."
+            exit 1
+          fi
+          echo "✅ M408 platform_settings ACL tests complete — 6/6 passed, zero skips."
+
+      - name: "Issue #496 staging-blockers DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Issue #496 staging-blockers DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-496-staging-blockers.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Issue #496 tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Issue #496 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Issue #496 tests passed."
+            exit 1
+          fi
+          echo "✅ Issue #496 staging-blockers DB tests complete — zero skips, zero failures."
+
+      - name: "M419 capability_overrides ACL DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M419 capability_overrides ACL DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-496-capability-overrides-acl.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M419 ACL tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M419 ACL tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          echo "✅ M419 capability_overrides ACL tests complete — zero skips, zero failures."
+
+      - name: "M420 platform_settings UPDATE ACL DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M420 platform_settings UPDATE ACL DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-502-platform-settings-acl.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M420 ACL tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          echo "✅ M420 platform_settings UPDATE ACL tests complete."
+
+      - name: "DB delta analysis (advisory)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          BASE="${{ env.BASE_SHA }}"
+          HEAD="${{ env.SOURCE_HEAD_SHA }}"
+
+          # For push-to-main: use before..after
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            BEFORE="${{ github.event.before }}"
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "Initial push — skipping DB delta."
+              exit 0
+            fi
+            BASE="$BEFORE"
+          fi
+
+          echo "Fetching base ref $BASE..."
+          git fetch --depth=1 origin "$BASE" 2>/dev/null || true
+
+          # Create isolated delta database (does not touch waaiio_test)
+          psql -q -c "CREATE DATABASE waaiio_delta_test;"
+
+          echo "Running DB delta: ${BASE:0:8}..${HEAD:0:8}"
+          npx tsx lib/release-gate/db-delta-cli.ts \
+            --base-sha "$BASE" \
+            --head-sha "$HEAD" \
+            --db-url "postgresql://postgres:postgres@localhost:5432/waaiio_delta_test"
+
+          # Cleanup delta database
+          psql -q -c "DROP DATABASE IF EXISTS waaiio_delta_test;"
+
+      - name: Upload DB delta artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-delta-artifacts
+          path: |
+            db-delta-base-baseline.json
+            db-delta-candidate-baseline.json
+            db-delta-result.json
+          if-no-files-found: ignore
+
   migration-shard-b:
     name: "Migration validation (shard b)"
     runs-on: ubuntu-24.04
@@ -1540,128 +1633,56 @@ jobs:
           command -v psql
           psql --version
 
-      - name: Create Supabase schema prerequisites
+      - name: Bootstrap Supabase prerequisites + apply all migrations
         env:
           PGHOST: localhost
           PGPORT: 5432
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: waaiio_test
-        run: |
-          # Create the auth schema and functions that Supabase provides
-          psql -q -v ON_ERROR_STOP=1 <<'EOSQL'
-          CREATE SCHEMA IF NOT EXISTS auth;
-          CREATE SCHEMA IF NOT EXISTS extensions;
-          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+        run: bash scripts/ci-bootstrap-test-db.sh
 
-          -- Minimal auth.uid() stub for RLS policies
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-            SELECT '00000000-0000-0000-0000-000000000000'::UUID;
-          $$ LANGUAGE SQL STABLE;
-
-          -- Minimal auth.role() stub
-          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
-            SELECT 'authenticated'::TEXT;
-          $$ LANGUAGE SQL STABLE;
-
-          -- Create a minimal auth.users table (referenced by some FKs and triggers)
-          -- Must include phone column: handle_new_user() trigger references NEW.phone
-          CREATE TABLE IF NOT EXISTS auth.users (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            email TEXT,
-            phone TEXT,
-            raw_app_meta_data JSONB DEFAULT '{}'
-          );
-
-          -- Supabase roles: required by GRANT/REVOKE in migrations
-          -- 137, 176, 181, 233, 244 (GRANT EXECUTE ... TO service_role)
-          -- 003, 017, 018, 023 (RLS policies using auth.role() = 'service_role')
-          DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          -- Match production Supabase: service_role has BYPASSRLS
-          ALTER ROLE service_role BYPASSRLS;
-          DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-          -- Realtime publication: required by ALTER PUBLICATION in migrations
-          -- 001 (reservations), 020 (chat_messages), 025 (chat_conversations), 110 (queue_entries)
-          -- Note: CREATE PUBLICATION IF NOT EXISTS requires PG16+; CI uses PG15
-          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-          -- Storage schema: required by bucket/object policies in migrations
-          -- 018 (customer-reports bucket), 033 (business-documents bucket)
-          CREATE SCHEMA IF NOT EXISTS storage;
-          CREATE TABLE IF NOT EXISTS storage.buckets (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            public BOOLEAN DEFAULT false,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-          );
-          CREATE TABLE IF NOT EXISTS storage.objects (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            bucket_id TEXT REFERENCES storage.buckets(id),
-            name TEXT,
-            owner UUID,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-          );
-          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-
-          -- Supabase storage helper function used in bucket policies (migration 133)
-          CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
-          RETURNS TEXT[] AS $$
-            SELECT string_to_array(name, '/');
-          $$ LANGUAGE SQL IMMUTABLE;
-
-          -- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
-          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
-          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
-          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
-
-          -- Seed common test user (many test suites reference this UUID)
-          INSERT INTO auth.users (id, email) VALUES
-            ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
-            ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
-          ON CONFLICT (id) DO NOTHING;
-          EOSQL
-          echo "✅ Supabase schema stubs created"
-
-      - name: Apply all migrations
+      # ── M435: Ordering price authority (#602) ──
+      # Disposable PG: promo/volume discount DB authority in create_order_atomic
+      - name: M435 ordering price authority DB tests
         env:
           PGHOST: localhost
-          PGPORT: 5432
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: waaiio_test
         run: |
-          FAILED=0
-          APPLIED=0
-          for f in supabase/migrations/*.sql; do
-            echo "Applying $(basename $f)..."
-            # M383 requires atomic (single-transaction) application for snapshot_version cutover
-            if [[ "$(basename $f)" == "383_"* ]]; then
-              if ! psql -1 -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
-                echo "❌ FAILED (atomic): $(basename $f)"
-                FAILED=1
-              else
-                APPLIED=$((APPLIED + 1))
-              fi
-            elif ! psql -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
-              echo "❌ FAILED: $(basename $f)"
-              FAILED=1
-              # Continue to catch multiple failures
-            else
-              APPLIED=$((APPLIED + 1))
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m435_test
+          createdb --maintenance-db=waaiio_test waaiio_m435_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m435_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m435_test
+
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+
+          echo "Running M435 ordering price authority DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/ordering-price-authority-602.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M435 ordering price authority tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M435 tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
             fi
-          done
-          echo ""
-          echo "Applied: $APPLIED migrations"
-          if [ "$FAILED" -eq 1 ]; then
-            echo "❌ Some migrations failed. See errors above."
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M435 ordering price authority tests passed. Something is wrong."
             exit 1
           fi
-          echo "✅ All migrations applied successfully."
+          echo "✅ M435 ordering price authority DB tests complete — zero skips, zero failures."
+
 
       - name: Verify key tables exist
         env:
@@ -2257,7 +2278,7 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS auth;
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT gen_random_uuid(); $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.sub', true), ''), NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
           CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -2476,35 +2497,8 @@ jobs:
           trap cleanup EXIT
           export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_stripe_fin_test
 
-          # Pre-apply Supabase stubs + all migrations (same as beforeAll but faster in bash)
-          psql "$TEST_DATABASE_URL" -q -v ON_ERROR_STOP=1 <<'STUBS'
-          CREATE SCHEMA IF NOT EXISTS auth;
-          CREATE SCHEMA IF NOT EXISTS extensions;
-          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
-          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
-          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
-          DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          ALTER ROLE service_role BYPASSRLS;
-          DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
-          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          CREATE SCHEMA IF NOT EXISTS storage;
-          CREATE TABLE IF NOT EXISTS storage.buckets (id TEXT PRIMARY KEY, name TEXT NOT NULL, public BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
-          CREATE TABLE IF NOT EXISTS storage.objects (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id TEXT REFERENCES storage.buckets(id), name TEXT, owner UUID, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
-          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-          CREATE OR REPLACE FUNCTION storage.foldername(name TEXT) RETURNS TEXT[] AS $$ SELECT string_to_array(name, '/'); $$ LANGUAGE SQL IMMUTABLE;
-          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
-          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
-          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
-          STUBS
-
-          for f in supabase/migrations/*.sql; do
-            psql "$TEST_DATABASE_URL" -q -v ON_ERROR_STOP=1 -f "$f" || { echo "❌ FAILED: $(basename $f)"; exit 1; }
-          done
-          echo "✅ All migrations applied to waaiio_stripe_fin_test"
+          # Bootstrap + apply all migrations using canonical helper
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
 
           # Set flag so the test skips its own migration application
           export MIGRATIONS_PRE_APPLIED=1
@@ -3076,6 +3070,47 @@ jobs:
           fi
           echo "✅ Migration 371 runtime financial integration tests complete — zero skips, zero failures."
 
+      - name: "M430 populated-database migration replay + atomic rollback (#266)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: bash scripts/test-m430-populated-migration.sh
+
+      - name: "Migration 430 shared-number tenant isolation tests (#266)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 430 shared-number tenant isolation tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/shared-number-tenant-isolation-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 430 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 430 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 430 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 430 shared-number tenant isolation tests complete — zero skips, zero failures."
+
       - name: "Migration 372 trial lifecycle tests"
         env:
           PGHOST: localhost
@@ -3150,7 +3185,7 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.sub', true), ''), NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
           CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -3594,6 +3629,289 @@ jobs:
           fi
           echo "✅ Phase 2D direct order Payment Authority tests complete — zero skips, zero failures."
 
+      # ── M416: Messaging top-up refund RPC (#491) ──
+      # Uses canonical CI bootstrap helper for Supabase prerequisites + migration application
+      - name: M416 messaging top-up refund DB tests
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m416_test
+          createdb --maintenance-db=waaiio_test waaiio_m416_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m416_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m416_test
+
+          # Bootstrap + apply migrations using canonical helper
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+
+          echo "Running M416 messaging top-up refund DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/messaging-topup-refund-db-491.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M416 refund DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M416 refund DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M416 refund DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M416 messaging top-up refund DB tests complete — zero skips, zero failures."
+
+      # ── M426/M427: Payment and saved-card ACL parity (#527/#530) ──
+      # Role-faithful (SET ROLE service_role / authenticated / anon) ACL + RLS tests.
+      # Uses canonical CI bootstrap helper for Supabase prerequisites + migration application
+      - name: M426/M427 payment and saved-card DB tests
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m427_test
+          createdb --maintenance-db=waaiio_test waaiio_m427_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m427_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m427_test
+
+          # Bootstrap + apply migrations using canonical helper
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+
+          echo "Running M426/M427 payment and saved-card DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/staging-payment-parity-527-db.test.ts lib/__tests__/saved-card-530-acl-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M426/M427 payment and saved-card DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M426/M427 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M426/M427 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M426/M427 payment and saved-card DB tests complete — zero skips, zero failures."
+
+      # ── M428: Customer response-language preference (#524) ──
+      # Role-faithful ACL, RLS, constraint, and replay-safety tests.
+      - name: M428 customer response-language preference DB tests
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m428_test
+          createdb --maintenance-db=waaiio_test waaiio_m428_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m428_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m428_test
+          export RUN_DEPENDENCY_TESTS=1
+
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+
+          echo "Running M428 customer response-language preference DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/migration-428-customer-language-preference-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M428 response-language DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M428 response-language DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M428 response-language DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M428 customer response-language preference DB tests complete — zero skips, zero failures."
+
+
+      # #598 M434: execute the actual installed RPC with role denial,
+      # transaction rollback, replay, and two-session row-lock contention.
+      - name: M434 atomic loyalty reward PostgreSQL acceptance
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          bash scripts/test-m434-loyalty-receipt-db.sh
+
+      # SEC-005 M439: admin MFA enforcement DB tests
+      # Step-up concurrency (exactly-once consumption) + RLS policy inventory
+      - name: M439 SEC-005 admin MFA enforcement DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+
+          echo "Running SEC-005 step-up concurrency + RLS policy inventory DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/admin-step-up-concurrency-db.test.ts lib/__tests__/admin-rls-policy-inventory-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ SEC-005 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ SEC-005 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No SEC-005 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ SEC-005 admin MFA enforcement DB tests complete — zero skips, zero failures."
+
+      # Admin Bearer RLS proof: proves anon/authenticated cannot access admin-gated
+      # tables but service_role can. Validates the cookie→service-client fix.
+      - name: Admin Bearer RLS proof DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+
+          echo "Running admin Bearer RLS proof DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/admin-bearer-rls-proof.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Admin Bearer RLS proof tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Admin Bearer RLS proof tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Admin Bearer RLS proof tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Admin Bearer RLS proof DB tests complete — zero skips, zero failures."
+
+      # M440: Payout linkage guard trigger tests (real PostgreSQL)
+      - name: M440 payout linkage guard DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+
+          echo "Running M440 payout linkage guard DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/payout-linkage-guard-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M440 payout linkage guard DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M440 payout linkage guard DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M440 payout linkage guard DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M440 payout linkage guard DB tests complete — zero skips, zero failures."
+
+      # M444: reject_payout_and_release_adjustments RPC tests (real PostgreSQL)
+      - name: M444 reject payout RPC DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+
+          echo "Running M444 reject payout RPC DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/reject-payout-rpc-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M444 reject payout RPC DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M444 reject payout RPC DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M444 reject payout RPC DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M444 reject payout RPC DB tests complete — zero skips, zero failures."
+
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
@@ -3675,6 +3993,20 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
+      - name: Guard — no dangerous secrets in Playwright environment
+        run: |
+          FAILED=0
+          for VAR in SUPABASE_SERVICE_ROLE_KEY META_CLOUD_ACCESS_TOKEN META_CLOUD_PHONE_NUMBER_ID STRIPE_SECRET_KEY PAYSTACK_SECRET_KEY INTERNAL_API_TOKEN; do
+            if [ -n "${!VAR}" ]; then
+              echo "::error::FAIL-CLOSED: $VAR is unexpectedly present in the Playwright job environment"
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            exit 1
+          fi
+          echo "Guard passed: no dangerous secrets present"
+
       - name: Start server and run tests
         run: |
           npx next start &
@@ -3687,8 +4019,8 @@ jobs:
             fi
             sleep 2
           done
-          # Run only chromium (faster CI, mobile is supplementary)
-          npx playwright test e2e/smoke.spec.ts --project=chromium --reporter=list
+          # Run smoke + auth + marketing + responsive specs, chromium only
+          npx playwright test e2e/smoke.spec.ts e2e/auth.spec.ts e2e/marketing.spec.ts e2e/responsive.spec.ts --project=chromium --reporter=list
           TEST_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
           exit $TEST_EXIT
@@ -3768,3 +4100,210 @@ jobs:
             exit 1
           fi
           echo "✅ No wildcard dependencies."
+
+  security-acl-tests:
+    name: P0 security ACL tests (disposable PG)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test_runner
+          POSTGRES_PASSWORD: test_only_ephemeral
+          POSTGRES_DB: security_acl_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_runner -d security_acl_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pg driver
+        run: npm install --save-dev pg
+
+      - name: Provision Supabase-compatible roles and schemas
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+          PGDATABASE: security_acl_test
+        run: |
+          psql <<'SETUP_SQL'
+            CREATE ROLE service_role NOLOGIN BYPASSRLS;
+            CREATE ROLE anon NOLOGIN;
+            CREATE ROLE authenticated NOLOGIN;
+            CREATE EXTENSION IF NOT EXISTS pgcrypto;
+            CREATE SCHEMA IF NOT EXISTS auth;
+            CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+              SELECT COALESCE(
+                current_setting('request.jwt.claim.sub', true)::uuid,
+                '00000000-0000-0000-0000-000000000000'::uuid
+              );
+            $$ LANGUAGE sql STABLE;
+            CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
+              SELECT current_user::text;
+            $$ LANGUAGE sql STABLE;
+            CREATE TABLE auth.users (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              instance_id UUID, aud VARCHAR(255), role VARCHAR(255),
+              email VARCHAR(255), encrypted_password VARCHAR(255),
+              created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE TABLE public.businesses (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              owner_id UUID REFERENCES auth.users(id),
+              name TEXT NOT NULL, slug TEXT UNIQUE,
+              category VARCHAR(50) DEFAULT 'shop', flow_type VARCHAR(50) DEFAULT 'ordering',
+              country_code VARCHAR(10) DEFAULT 'US', status VARCHAR(20) DEFAULT 'pending'
+            );
+            GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+            GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
+            GRANT SELECT ON public.businesses TO service_role, authenticated;
+            GRANT SELECT ON auth.users TO service_role;
+            GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
+            GRANT EXECUTE ON FUNCTION auth.role() TO anon, authenticated, service_role;
+          SETUP_SQL
+          echo "✅ Disposable PG roles and schemas provisioned"
+
+      - name: Create clean template database for .pg.test.ts isolation
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+        run: |
+          # Snapshot security_acl_test BEFORE any test step can mutate it.
+          # Each .pg.test.ts file gets its own clone of this template.
+          psql -d postgres -c "CREATE DATABASE pg_template_clean TEMPLATE security_acl_test;"
+          psql -d postgres -c "ALTER DATABASE pg_template_clean WITH is_template = true;"
+          echo "✅ pg_template_clean created from security_acl_test and marked as template"
+
+      - name: Run security ACL tests against disposable PG
+        env:
+          TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/security_acl_test
+        shell: bash
+        run: |
+          set -o pipefail
+          npx vitest run lib/__tests__/p0-business-members-acl.test.ts --reporter=verbose 2>&1 | tee /tmp/security-acl-output.txt
+
+      - name: Verify zero skipped DB tests
+        run: |
+          if grep -qE "[1-9][0-9]* skipped" /tmp/security-acl-output.txt; then
+            echo "❌ DB tests were skipped — disposable PG connection failed"
+            exit 1
+          fi
+          echo "✅ All tests executed (zero skipped)"
+
+      - name: Run .pg.test.ts files in parallel with isolated databases
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+          REQUIRE_PG_TESTS: 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          # Discover files
+          mapfile -t PG_FILES < <(find lib -name '*.pg.test.ts' -type f | sort)
+          PG_COUNT=${#PG_FILES[@]}
+          echo "Found $PG_COUNT .pg.test.ts file(s):"
+          printf '  %s\n' "${PG_FILES[@]}"
+
+          if [ "$PG_COUNT" -eq 0 ]; then
+            echo "❌ No .pg.test.ts files found — guard tripped"
+            exit 1
+          fi
+
+          # Create one database per file (cloned from pg_template_clean).
+          # Done sequentially because CREATE DATABASE ... TEMPLATE requires
+          # no other connections to the template.
+          declare -A DB_MAP
+          for i in "${!PG_FILES[@]}"; do
+            DB_NAME="pg_test_${i}"
+            psql -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME};"
+            psql -d postgres -c "CREATE DATABASE ${DB_NAME} TEMPLATE pg_template_clean;"
+            DB_MAP["${PG_FILES[$i]}"]="$DB_NAME"
+            echo "  ✅ ${DB_NAME} (from pg_template_clean) ← ${PG_FILES[$i]}"
+          done
+
+          # Run each file in parallel, capped at 4 concurrent jobs
+          mkdir -p /tmp/pg-test-logs
+          PIDS=()
+          FAILED=0
+          for file in "${PG_FILES[@]}"; do
+            db="${DB_MAP[$file]}"
+            slug=$(echo "$file" | sed 's|[/.]|_|g')
+            log="/tmp/pg-test-logs/${slug}.txt"
+            (
+              TEST_DATABASE_URL="postgresql://test_runner:test_only_ephemeral@localhost:5432/${db}" \
+                npx vitest run "$file" --reporter=verbose 2>&1 | tee "$log"
+            ) &
+            PIDS+=($!)
+            # Cap at 4 concurrent
+            if [ "${#PIDS[@]}" -ge 4 ]; then
+              wait "${PIDS[0]}" || FAILED=1
+              PIDS=("${PIDS[@]:1}")
+            fi
+          done
+
+          # Wait for all remaining
+          for pid in "${PIDS[@]}"; do
+            wait "$pid" || FAILED=1
+          done
+
+          # Always print all logs before deciding to exit
+          echo ""
+          echo "═══════════════════════════════════════════════════"
+          echo "Combined .pg.test.ts results"
+          echo "═══════════════════════════════════════════════════"
+          for file in "${PG_FILES[@]}"; do
+            slug=$(echo "$file" | sed 's|[/.]|_|g')
+            log="/tmp/pg-test-logs/${slug}.txt"
+            echo ""
+            echo "── ${file} (database: ${DB_MAP[$file]}) ──"
+            tail -20 "$log"
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo ""
+            echo "❌ One or more .pg.test.ts files failed"
+            exit 1
+          fi
+
+      - name: Verify zero skipped .pg.test.ts tests (per-file)
+        run: |
+          OVERALL=0
+          for log in /tmp/pg-test-logs/*.txt; do
+            file=$(basename "$log" .txt)
+            if grep -qE "[1-9][0-9]* skipped" "$log"; then
+              echo "❌ $file: tests were skipped"
+              OVERALL=1
+            fi
+            if ! grep -q "passed" "$log"; then
+              echo "❌ $file: no tests passed"
+              OVERALL=1
+            fi
+            # Print per-file summary
+            summary=$(grep -E "Tests |Test Files" "$log" | tail -2 | tr '\n' ' ' || true)
+            echo "  ✔ $file: $summary"
+          done
+          if [ "$OVERALL" -ne 0 ]; then
+            exit 1
+          fi
+          echo "✅ All .pg.test.ts tests executed (zero skipped, per-database isolation)"

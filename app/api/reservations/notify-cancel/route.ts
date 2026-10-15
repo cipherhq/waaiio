@@ -2,7 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 
 /**
@@ -27,7 +30,7 @@ export async function POST(request: NextRequest) {
     // Verify business ownership
     const { data: biz } = await supabase
       .from('businesses')
-      .select('id, name')
+      .select('id, name, country_code')
       .eq('id', businessId)
       .eq('owner_id', user.id)
       .single();
@@ -67,20 +70,11 @@ export async function POST(request: NextRequest) {
       ? reservation.guest_phone.slice(1)
       : reservation.guest_phone;
 
-    const checkInLabel = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', {
-      weekday: 'short', day: 'numeric', month: 'short',
-    });
-
+    const l10n = await resolveProactiveLocalization(serviceClient, reservation.guest_phone, businessId);
+    const checkInLabel = formatDisplayDate(reservation.check_in, 'short', l10n.language, biz.country_code || 'NG');
     await resolved.sender.sendText({
       to: toPhone,
-      text: [
-        `Your reservation at *${biz.name}* has been cancelled.`,
-        '',
-        `🔑 Ref: *${reservation.reference_code}*`,
-        `📅 Check-in: ${checkInLabel}`,
-        '',
-        `Contact us if you have questions.`,
-      ].join('\n'),
+      text: fillFlowCopy(l10n.language, 'notification.reservation_cancelled', { businessName: biz.name, referenceCode: reservation.reference_code, checkInDate: checkInLabel }),
     });
 
     return NextResponse.json({ success: true, notified: true });

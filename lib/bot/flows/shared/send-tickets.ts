@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { generateTicketsPdf } from '@/lib/pdf/ticket-generator';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { logger } from '@/lib/logger';
 import { sendEmail } from '@/lib/email/client';
 import { ticketConfirmationEmail } from '@/lib/email/templates';
@@ -207,6 +209,13 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
   const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/tickets`;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
 
+  // Resolve customer language for localized captions
+  let ticketCopyLang = 'en';
+  try {
+    const ticketL10n = await resolveProactiveLocalization(supabase, guestPhone, businessId);
+    ticketCopyLang = ticketL10n.language;
+  } catch { /* fall back to English */ }
+
   // Fetch subscription tier for white-label branding
   let subscriptionTier: string | undefined;
   try {
@@ -216,6 +225,12 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
 
   // 3. Try to generate and send PDF (optional — may fail on serverless due to PDFKit fonts)
   try {
+    // Slice 5B: Resolve deterministic ticket PDF labels
+    let ticketPdfLabels: import('@/lib/pdf/localize-pdf').TicketPdfLabels | undefined;
+    if (opts.translate) {
+      const { resolvePdfLabels } = await import('@/lib/pdf/localize-pdf');
+      ticketPdfLabels = await resolvePdfLabels(opts.supabase, guestPhone, businessId, 'ticket', 'proactive');
+    }
     const pdfBuffer = await generateTicketsPdf({
       eventName, eventDate, eventTime, venue, guestName, referenceCode, tickets, verifyBaseUrl, subscriptionTier,
       flyerUrl: opts.flyerUrl,
@@ -223,6 +238,7 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
       price: opts.ticketPrice,
       countryCode: opts.countryCode,
       currencyCode: opts.currencyCode,
+      labels: ticketPdfLabels,
     });
 
     const storagePath = `tickets/${businessId}/${bookingId}.pdf`;
@@ -242,7 +258,7 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
           to: phone,
           documentUrl: signedUrlData.signedUrl,
           filename: `${eventName.replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 40)} - Tickets.pdf`,
-          caption: `Your ${quantity} ${ticketLabel} for ${eventName}`,
+          caption: fillFlowCopy(ticketCopyLang, 'notification.ticket_pdf_caption', { quantity: String(quantity), ticketLabel, eventName }),
         });
         logger.info('[TICKETS] PDF sent to', phone);
       }
@@ -302,6 +318,21 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
   if (bizError) throw new Error(`ticket_email_business_lookup_failed:${bizError.message}`);
 
   const { isWhiteLabel: isWl } = await import('@/lib/whitelabel');
+  // Slice 5B: Translate ticket email labels if non-English customer
+  let ticketEmailLabels: import('@/lib/email/localize-email').TicketEmailLabels | undefined;
+  let ticketWrapperLabels: import('@/lib/email/localize-email').EmailWrapperLabels | undefined;
+  if (opts.translate) {
+    try {
+      const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+      const { translateLabels, DEFAULT_TICKET_LABELS, DEFAULT_WRAPPER_LABELS } = await import('@/lib/email/localize-email');
+      const l10n = await resolveProactiveLocalization(opts.supabase, guestPhone, businessId);
+      if (l10n.language !== 'en') {
+        ticketEmailLabels = await translateLabels(DEFAULT_TICKET_LABELS, l10n, [eventName, venue, referenceCode]) as unknown as typeof DEFAULT_TICKET_LABELS;
+        const { localizeWrapperLabels } = await import('@/lib/email/localize-email');
+        ticketWrapperLabels = await localizeWrapperLabels(l10n);
+      }
+    } catch { /* fail closed to English */ }
+  }
   const emailContent = ticketConfirmationEmail({
     firstName: guestName.split(' ')[0] || 'there',
     businessName: biz?.name || 'Event',
@@ -314,6 +345,8 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
     formattedAmount: opts.amount ? formatCurrency(opts.amount, opts.countryCode || 'US') : 'Paid',
     ticketCodes: tickets.map(t => t.ticketCode),
     whitelabel: isWl(biz?.subscription_tier),
+    labels: ticketEmailLabels,
+    wrapperLabels: ticketWrapperLabels,
   });
   const result = await sendEmail({ to: email, ...emailContent });
   if (!result.success) throw new Error('ticket_email_send_failed');

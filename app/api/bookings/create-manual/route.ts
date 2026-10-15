@@ -8,6 +8,7 @@ import { findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 import { sendEmail } from '@/lib/email/client';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -220,9 +221,7 @@ export async function POST(request: NextRequest) {
     let notificationOutcome: 'sent' | 'failed' | 'indeterminate' | 'preflight_failed' | 'skipped' = 'skipped';
     let whatsappSent = false;
 
-    const dateLabel = new Date(date + 'T00:00').toLocaleDateString('en-GB', {
-      weekday: 'long', day: 'numeric', month: 'long',
-    });
+    const dateLabel = formatDisplayDate(date, 'long', 'en', biz.country_code || 'NG');
 
     if (sendConfirmation && customerPhone) {
       try {

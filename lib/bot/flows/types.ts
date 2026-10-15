@@ -47,7 +47,25 @@ export interface PromptDocument {
   caption?: string;
 }
 
-export type PromptMessage = PromptText | PromptList | PromptButtons | PromptImage | PromptDocument;
+/**
+ * Optional localization metadata — attached by flows to declare ownership
+ * and protected dynamic values for the outbound localization boundary.
+ *
+ * - protectedValues: strings that must survive translation byte-for-byte
+ *   (merchant names, URLs, transaction references, etc.)
+ * - waaiioOwnedItemTitles: when true, list item titles are Waaiio-owned
+ *   UI labels (capability menus, navigation) and should be translated.
+ *   Default false — merchant-entered product/service names pass through.
+ */
+export interface LocalizationMeta {
+  protectedValues?: string[];
+  waaiioOwnedItemTitles?: boolean;
+}
+
+export type PromptMessage = (PromptText | PromptList | PromptButtons | PromptImage | PromptDocument) & {
+  /** Optional localization metadata for the outbound translation boundary */
+  _localization?: LocalizationMeta;
+};
 
 // ── Validation result ──
 
@@ -100,6 +118,9 @@ export interface FlowContext {
   mediaType?: string;
   /** Translate text using session language. No-op if English or no language set. */
   t(text: string): Promise<string>;
+  /** Deterministic copy language — resolved via canonical effective/certified/entitled
+   *  policy. Use with getFlowCopy(ctx.copyLang, key). Added by #561-B. */
+  copyLang: string;
   /** CAS-004: Ephemeral current-message canonical understanding. NOT persisted.
    *  Used by capability-selection to avoid re-classifying the same message. */
   currentCanonical?: import('@/lib/bot/canonical-understanding').CanonicalUnderstanding;

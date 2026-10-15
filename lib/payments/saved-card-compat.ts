@@ -48,6 +48,41 @@ export interface CompatibilityResult {
 }
 
 /**
+ * Fail closed unless the target business's canonical country-based payment route
+ * resolves to the same provider as the saved method.
+ *
+ * Country is the processor authority for normal checkout, so saved-card reuse must
+ * never infer processor compatibility from credential/account classification alone.
+ */
+async function isCanonicalBusinessGateway(
+  supabase: SupabaseClient,
+  businessId: string,
+  gateway: string,
+): Promise<CompatibilityResult> {
+  try {
+    const { resolveBusinessGateway } = await import('./gateway-resolver');
+    const resolved = await resolveBusinessGateway(supabase, businessId);
+
+    if (!resolved.gateway || !resolved.currency) {
+      return { compatible: false, reason: 'gateway_resolution_failed' };
+    }
+
+    if (resolved.gateway !== gateway) {
+      return { compatible: false, reason: 'gateway_mismatch' };
+    }
+
+    return { compatible: true };
+  } catch (err) {
+    logger.error('[SAVED-CARD-COMPAT] canonical gateway resolution threw — fail closed', {
+      businessId,
+      gateway,
+      err,
+    });
+    return { compatible: false, reason: 'gateway_resolution_error' };
+  }
+}
+
+/**
  * Classify a business's payment credential state using the SAME logic
  * as the canonical payment pipeline (lib/bot/flows/shared/payment.ts:298-390).
  *
@@ -99,14 +134,20 @@ export async function classifyBusinessPaymentCredential(
 }
 
 /**
- * Returns true ONLY when the business is proven to use the shared platform
- * Paystack secret-key context (normal platform or subaccount split).
- * Uses classifyBusinessPaymentCredential for consistency with payment routing.
+ * Returns true ONLY when the target business is canonically routed to Paystack
+ * AND is proven to use the shared platform Paystack secret-key context
+ * (normal platform or subaccount split).
+ *
+ * Uses classifyBusinessPaymentCredential for credential/account consistency and
+ * resolveBusinessGateway for processor authority. Both must agree.
  */
 export async function isSharedPlatformPaystackCompatible(
   supabase: SupabaseClient,
   businessId: string,
 ): Promise<CompatibilityResult> {
+  const routeCompat = await isCanonicalBusinessGateway(supabase, businessId, 'paystack');
+  if (!routeCompat.compatible) return routeCompat;
+
   const { classification } = await classifyBusinessPaymentCredential(supabase, businessId);
   switch (classification) {
     case 'platform':
@@ -129,8 +170,12 @@ export async function isSharedPlatformPaystackCompatible(
  * Provider-neutral saved-card compatibility check.
  * Determines whether a business + gateway combination supports saved-card reuse.
  *
- * - Paystack: platform/platform_subaccount → compatible (same as isSharedPlatformPaystackCompatible)
- * - Stripe: platform/platform_subaccount → compatible (PM lives on platform Stripe account)
+ * Processor authority is checked first against the canonical country route.
+ * A global saved method is never eligible when its provider differs from the
+ * target business's canonical provider.
+ *
+ * - Paystack: canonical Paystack + platform/platform_subaccount → compatible
+ * - Stripe: canonical Stripe + platform/platform_subaccount → compatible
  *           connect/byo → fail closed (PM not reusable under different account)
  * - Other gateways → not implemented, fail closed
  */
@@ -144,6 +189,9 @@ export async function isCompatibleForSavedCard(
   }
 
   if (gateway === 'stripe') {
+    const routeCompat = await isCanonicalBusinessGateway(supabase, businessId, 'stripe');
+    if (!routeCompat.compatible) return routeCompat;
+
     const { classification } = await classifyBusinessPaymentCredential(supabase, businessId);
     switch (classification) {
       case 'platform':

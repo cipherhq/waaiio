@@ -4,6 +4,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
@@ -126,18 +128,10 @@ export async function POST(request: NextRequest) {
 
     if (resolved) {
       const toPhone = phone.startsWith('+') ? phone.slice(1) : phone;
+      const l10n = await resolveProactiveLocalization(serviceClient, phone, businessId);
       await resolved.sender.sendText({
         to: toPhone,
-        text: [
-          `💰 *Balance Payment Due*`,
-          '',
-          `from *${biz.name}*`,
-          `🔑 Ref: *${booking.reference_code}*`,
-          `💵 Balance: *${formatCurrency(balance, cc)}*`,
-          '',
-          `Pay here 👇`,
-          paymentUrl,
-        ].join('\n'),
+        text: fillFlowCopy(l10n.language, 'notification.balance_due', { businessName: biz.name, referenceCode: booking.reference_code, balance: formatCurrency(balance, cc), paymentUrl }),
       });
     }
 

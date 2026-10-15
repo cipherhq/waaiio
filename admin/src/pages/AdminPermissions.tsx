@@ -1,288 +1,185 @@
-import { useEffect, useState } from 'react';
-import { adminDb } from '@/lib/supabase';
+import { Shield, ShieldCheck, LockKeyhole, Info } from 'lucide-react';
 import { useAdminSession } from '@/components/AdminLayout';
-import { logAudit } from '@/lib/auditLog';
-import { Shield, Save, Loader2 } from 'lucide-react';
+import { ADMIN_PERMISSIONS, hasAccess } from '@/lib/permissions';
+import type { AdminRole } from '@/lib/adminAuth';
 
-const ROLES = ['admin', 'support', 'finance', 'operations'] as const;
-const RESOURCES: { key: string; label: string }[] = [
-  { key: 'businesses', label: 'Businesses' },
-  { key: 'bookings', label: 'Bookings' },
-  { key: 'payments', label: 'Payments' },
-  { key: 'payouts', label: 'Payouts' },
-  { key: 'events', label: 'Events' },
-  { key: 'tickets', label: 'Tickets' },
-  { key: 'orders', label: 'Orders' },
-  { key: 'invoices', label: 'Invoices' },
-  { key: 'subscriptions', label: 'Subscriptions' },
-  { key: 'whatsapp_channels', label: 'WhatsApp Channels' },
-  { key: 'team', label: 'Team' },
-  { key: 'settings', label: 'Settings' },
-  { key: 'resellers', label: 'Resellers' },
-  { key: 'transfers', label: 'Bank Transfers' },
-  { key: 'campaigns', label: 'Campaigns' },
-  { key: 'bot', label: 'Bot Management' },
-  { key: 'verification', label: 'Verification' },
-];
+const ROLES: AdminRole[] = ['admin', 'support', 'finance', 'operations'];
 
-interface PermissionRow {
-  id?: string;
-  role: string;
-  resource: string;
-  can_read: boolean;
-  can_write: boolean;
-  can_delete: boolean;
+const PAGE_LABELS: Record<string, string> = {
+  dashboard: 'Dashboard',
+  users: 'Users',
+  customers: 'Customers',
+  'admin-team': 'Admin Team',
+  businesses: 'Accounts',
+  verification: 'Verification',
+  'category-templates': 'Category Templates',
+  impersonation: 'Impersonation',
+  'impersonation-audit': 'Impersonation Audit',
+  resellers: 'Resellers',
+  'demo-requests': 'Demo Requests',
+  'reseller-financials': 'Reseller Financials',
+  'reseller-payouts': 'Reseller Payouts',
+  promotions: 'Instant Win',
+  bookings: 'Bookings / Class Sessions',
+  orders: 'Orders',
+  payments: 'Payments',
+  subscriptions: 'Subscriptions',
+  recurring: 'Recurring',
+  'pending-transfers': 'Bank Transfers',
+  tickets: 'Tickets',
+  alerts: 'Alerts',
+  surveys: 'Surveys',
+  reports: 'Reports',
+  'queue-management': 'Queue Management',
+  engagement: 'Engagement',
+  giving: 'Giving',
+  'bot-management': 'Bot Management',
+  'bot-keywords': 'Bot Keywords',
+  'llm-logs': 'LLM Logs',
+  'whatsapp-channels': 'WhatsApp Channels',
+  'whatsapp-templates': 'WhatsApp Templates',
+  notifications: 'Notifications',
+  broadcasts: 'Broadcasts',
+  support: 'Support',
+  'chat-history': 'Chat History',
+  payouts: 'Payouts',
+  finance: 'Finance',
+  'fee-invoices': 'Fee Invoices',
+  content: 'Content Management',
+  events: 'Events',
+  campaigns: 'Campaigns',
+  countries: 'Countries',
+  'ai-setup-log': 'AI Setup Log',
+  'ai-usage': 'AI Usage',
+  'conversation-usage': 'Conversation Usage',
+  'platform-settings': 'Platform Settings / Site Announcement / Launch Subscribers',
+  'audit-log': 'Audit Log',
+  'system-health': 'System Health',
+  permissions: 'Permissions',
+  'ai-marketplace': 'AI Marketplace',
+};
+
+function labelFor(page: string): string {
+  return PAGE_LABELS[page] || page;
 }
-
-type PermAction = 'can_read' | 'can_write' | 'can_delete';
 
 export default function AdminPermissions() {
   const session = useAdminSession();
   const isFullAdmin = session?.role === 'admin';
 
-  const [permissions, setPermissions] = useState<PermissionRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
-
-  async function loadData() {
-    setLoading(true);
-    try {
-      const { data, error } = await adminDb
-        .from('admin_role_permissions')
-        .select('id, role, resource, can_read, can_write, can_delete')
-        .order('role')
-        .order('resource');
-      if (error) throw error;
-      setPermissions(data || []);
-    } catch (err) {
-      console.warn('Failed to load permissions:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { loadData(); }, []);
-
-  // Auto-dismiss toast
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  function getPerm(role: string, resource: string): PermissionRow {
-    const existing = permissions.find(p => p.role === role && p.resource === resource);
-    return existing || { role, resource, can_read: false, can_write: false, can_delete: false };
-  }
-
-  function toggle(role: string, resource: string, action: PermAction) {
-    // Admin permissions cannot be reduced
-    if (role === 'admin') return;
-
-    setDirty(true);
-    setPermissions(prev => {
-      const idx = prev.findIndex(p => p.role === role && p.resource === resource);
-      if (idx >= 0) {
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], [action]: !updated[idx][action] };
-        // If disabling read, also disable write and delete
-        if (action === 'can_read' && !updated[idx].can_read) {
-          updated[idx].can_write = false;
-          updated[idx].can_delete = false;
-        }
-        // If enabling write or delete, also enable read
-        if ((action === 'can_write' || action === 'can_delete') && updated[idx][action]) {
-          updated[idx].can_read = true;
-        }
-        return updated;
-      }
-      // New entry
-      const newRow: PermissionRow = {
-        role,
-        resource,
-        can_read: action === 'can_read',
-        can_write: action === 'can_write',
-        can_delete: action === 'can_delete',
-      };
-      // Auto-enable read when enabling write/delete
-      if (action === 'can_write' || action === 'can_delete') {
-        newRow.can_read = true;
-      }
-      return [...prev, newRow];
-    });
-  }
-
-  async function handleSave() {
-    if (!isFullAdmin) return;
-    setSaving(true);
-    try {
-      // Upsert all non-admin permissions
-      const rows = permissions
-        .filter(p => p.role !== 'admin')
-        .map(({ role, resource, can_read, can_write, can_delete }) => ({
-          role,
-          resource,
-          can_read,
-          can_write,
-          can_delete,
-          updated_at: new Date().toISOString(),
-        }));
-
-      const { error } = await adminDb
-        .from('admin_role_permissions')
-        .upsert(rows, { onConflict: 'role,resource' });
-
-      if (error) throw error;
-
-      await logAudit({
-        action: 'permissions_updated',
-        entity_type: 'admin_role_permissions',
-        entity_id: session?.userId || '',
-        details: {
-          changed_by: session?.email,
-          count: rows.length,
-        },
-      });
-
-      setDirty(false);
-      setToast({ type: 'success', msg: 'Permissions saved successfully.' });
-      await loadData();
-    } catch (err) {
-      console.error('Failed to save permissions:', err);
-      setToast({ type: 'error', msg: 'Failed to save permissions. Please try again.' });
-    } finally {
-      setSaving(false);
-    }
-  }
-
   if (!isFullAdmin) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Access Restricted</h2>
-          <p className="text-gray-500">Only full admins can manage permissions.</p>
+          <h2 className="mb-2 text-xl font-semibold text-gray-900">Access Restricted</h2>
+          <p className="text-gray-500">Only full admins can view the platform access reference.</p>
         </div>
       </div>
     );
   }
 
+  const pages = Object.keys(ADMIN_PERMISSIONS).sort((a, b) =>
+    labelFor(a).localeCompare(labelFor(b)),
+  );
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 text-purple-600">
-            <Shield className="h-5 w-5" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Role Permissions</h1>
-            <p className="text-sm text-gray-500">Manage granular read, write, and delete permissions per role</p>
-          </div>
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-100 text-purple-600">
+          <Shield className="h-5 w-5" />
         </div>
-        <button
-          onClick={handleSave}
-          disabled={!dirty || saving}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
-            dirty
-              ? 'bg-brand text-white hover:bg-brand/90 cursor-pointer'
-              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-          }`}
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          Save Changes
-        </button>
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Platform Access Reference</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Read-only view of the code-defined Admin navigation and route-access matrix.
+          </p>
+        </div>
       </div>
 
-      {/* Toast */}
-      {toast && (
-        <div className={`rounded-lg px-4 py-3 text-sm font-medium ${
-          toast.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
-        }`}>
-          {toast.msg}
-        </div>
-      )}
-
-      {/* Permissions matrix */}
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-        </div>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="text-left py-3 px-4 font-semibold text-gray-700 w-48">Resource</th>
-                  {ROLES.map(role => (
-                    <th key={role} className="text-center py-3 px-2 font-semibold text-gray-700" colSpan={3}>
-                      <span className="capitalize">{role}</span>
-                    </th>
-                  ))}
-                </tr>
-                <tr className="border-b border-gray-100 bg-gray-50/50">
-                  <th />
-                  {ROLES.map(role => (
-                    <Fragment key={role}>
-                      <th className="text-center py-1.5 px-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider">R</th>
-                      <th className="text-center py-1.5 px-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider">W</th>
-                      <th className="text-center py-1.5 px-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider border-r border-gray-100 last:border-r-0">D</th>
-                    </Fragment>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {RESOURCES.map((res, idx) => (
-                  <tr key={res.key} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}>
-                    <td className="py-2.5 px-4 font-medium text-gray-700">{res.label}</td>
-                    {ROLES.map(role => {
-                      const perm = getPerm(role, res.key);
-                      const isAdmin = role === 'admin';
-                      return (
-                        <Fragment key={role}>
-                          {(['can_read', 'can_write', 'can_delete'] as PermAction[]).map((action, actionIdx) => (
-                            <td
-                              key={action}
-                              className={`text-center py-2.5 px-1 ${actionIdx === 2 ? 'border-r border-gray-100 last:border-r-0' : ''}`}
-                            >
-                              <label className="inline-flex items-center justify-center">
-                                <input
-                                  type="checkbox"
-                                  checked={perm[action]}
-                                  onChange={() => toggle(role, res.key, action)}
-                                  disabled={isAdmin}
-                                  className={`h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand/50 ${
-                                    isAdmin ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                                  }`}
-                                />
-                              </label>
-                            </td>
-                          ))}
-                        </Fragment>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="flex items-start gap-3">
+          <LockKeyhole className="mt-0.5 h-5 w-5 shrink-0" />
+          <div className="space-y-1">
+            <p className="font-semibold">Dynamic permission editing is intentionally disabled.</p>
+            <p>
+              This screen previously edited a database matrix that did not control the Admin route/sidebar
+              authority and was not a universal API/RLS authorization source. To avoid misleading grants or
+              revocations, this page now shows the effective code-defined navigation access only.
+            </p>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Legend */}
-      <div className="flex items-center gap-6 text-xs text-gray-400">
-        <span><strong className="text-gray-600">R</strong> = Read</span>
-        <span><strong className="text-gray-600">W</strong> = Write (create/update)</span>
-        <span><strong className="text-gray-600">D</strong> = Delete</span>
-        <span className="ml-auto">Admin permissions are locked to full access.</span>
+      <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+        <div className="flex items-start gap-3">
+          <Info className="mt-0.5 h-5 w-5 shrink-0" />
+          <div className="space-y-1">
+            <p className="font-semibold">Authorization has multiple enforcement layers.</p>
+            <p>
+              Server Admin APIs and Supabase RLS/RPCs enforce their own trusted role checks. A checkmark here
+              means the role may navigate to that Admin page; it does not weaken or replace server/database
+              authorization. Unknown page keys fail closed.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="px-4 py-3 text-left font-semibold text-gray-700">Admin page</th>
+                {ROLES.map((role) => (
+                  <th key={role} className="px-4 py-3 text-center font-semibold capitalize text-gray-700">
+                    {role}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pages.map((page, index) => (
+                <tr key={page} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-gray-800">{labelFor(page)}</div>
+                    <div className="mt-0.5 font-mono text-[11px] text-gray-400">{page}</div>
+                  </td>
+                  {ROLES.map((role) => {
+                    const allowed = hasAccess(page, role);
+                    return (
+                      <td key={role} className="px-4 py-3 text-center">
+                        {allowed ? (
+                          <span
+                            aria-label={`${role} can access ${page}`}
+                            title="Navigation access allowed"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-100 text-green-700"
+                          >
+                            <ShieldCheck className="h-4 w-4" />
+                          </span>
+                        ) : (
+                          <span
+                            aria-label={`${role} cannot access ${page}`}
+                            title="Navigation access denied"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 text-gray-400"
+                          >
+                            <LockKeyhole className="h-4 w-4" />
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-4 text-xs text-gray-500">
+        Source of this reference: <code className="font-mono">admin/src/lib/permissions.ts</code>.
+        Changes to platform authorization should be made through reviewed code and the relevant server/database
+        authority—not by editing a partial client-side matrix.
       </div>
     </div>
   );
-}
-
-// Fragment helper — React.Fragment with key support
-function Fragment({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
 }

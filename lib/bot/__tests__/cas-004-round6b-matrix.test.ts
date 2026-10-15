@@ -300,8 +300,8 @@ describe('Round 6B: #33 forced-menu entity isolation', () => {
 // 35. Language authority
 // ═══════════════════════════════════════════════════════
 describe('Round 6B: #35 language authority', () => {
-  it('only English is production-certified', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en']);
+  it('English and Pidgin are production-certified', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
   });
 
   it('uncertified language detected → entitled check rejects', () => {

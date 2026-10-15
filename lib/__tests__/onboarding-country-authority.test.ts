@@ -26,6 +26,8 @@ let mockCountriesResponse: { data: Array<{ code: string; dialing_code: string }>
   error: null,
 };
 
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
+
 // ── Mock state ──
 const mockGetUser = vi.fn();
 vi.mock('@/lib/supabase/server', () => ({
@@ -43,7 +45,22 @@ const mockServiceFrom = vi.fn((table: string) => {
   if (table === 'countries') {
     return {
       select: () => ({
-        eq: () => Promise.resolve(mockCountriesResponse),
+        eq: (_col: string, _val?: unknown) => {
+          // Support both chain patterns:
+          // 1. select().eq('is_active', true) -> Promise (country list)
+          // 2. select().eq('code', x).eq('is_active', true).single() -> Promise (gateway resolver)
+          const chainable = {
+            ...Promise.resolve(mockCountriesResponse),
+            then: (onfulfilled: (v: unknown) => unknown) => Promise.resolve(mockCountriesResponse).then(onfulfilled),
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { payment_gateway: 'paystack', currency_code: 'NGN' },
+                error: null,
+              }),
+            }),
+          };
+          return chainable;
+        },
       }),
     };
   }
@@ -124,6 +141,7 @@ const mockServiceFrom = vi.fn((table: string) => {
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: mockServiceFrom,
+    rpc: () => Promise.resolve({ data: { allocated: true, channel_id: 'test-channel', idempotent: false }, error: null }),
   }),
 }));
 
@@ -149,6 +167,7 @@ vi.mock('@/lib/constants', () => ({
   generateSlug: () => 'test-slug',
   generateBotCode: () => 'TESTCODE',
   CATEGORY_FLOW_MAP: {},
+  getPayoutLimit: () => 500_000,
 }));
 
 vi.mock('@/lib/email/client', () => ({

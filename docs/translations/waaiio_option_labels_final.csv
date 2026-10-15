@@ -1,0 +1,209 @@
+key,lang,final,chars,source,original
+scheduling,en,Our Services,12,original (owner kept),Our Services
+scheduling,pcm,Our Services,12,original (owner kept),Our Services
+scheduling,yo,Àwọn Iṣẹ́ Wa,12,original (owner kept),Àwọn Iṣẹ́ Wa
+scheduling,ig,Ọrụ Anyị,8,original (owner kept),Ọrụ Anyị
+scheduling,ha,Ayyukanmu,9,accepted suggestion,Ayyukanmu / aikokim mu
+scheduling,tw,Yɛn Nnwuma,10,original,Yɛn Nnwuma
+scheduling,fr,Nos services,12,original (owner kept),Nos services
+scheduling,es,Nuestros servicios,18,original,Nuestros servicios
+appointment,en,Book Appointment,16,original (owner kept),Book Appointment
+appointment,pcm,Book Appointment,16,original (owner kept),Book Appointment
+appointment,yo,Ṣe Ìpinnu Àkókò,15,original (owner kept),Ṣe Ìpinnu Àkókò
+appointment,ig,Debe Oge,8,original (owner kept),Debe Oge / achurum ogi nga bia
+appointment,ha,Yi Alƙawari,11,original,Yi Alƙawari
+appointment,tw,Gye Bere,8,original,Gye Bere
+appointment,fr,Prendre rendez-vous,19,original (owner kept),Prendre rendez-vous
+appointment,es,Reservar cita,13,original,Reservar cita
+appointment.restaurant,en,Book a Table,12,original (owner kept),Book a Table
+appointment.restaurant,pcm,Book Table,10,original (owner kept),Book Table
+appointment.restaurant,yo,Fi Tábìlì Pamọ́,15,original (owner kept),Fi Tábìlì Pamọ́
+appointment.restaurant,ig,Debe Tebụl,10,original (owner kept),Debe Tebụl
+appointment.restaurant,ha,Ajiye Tebur,11,original,Ajiye Tebur
+appointment.restaurant,tw,Gye Pon,7,original,Gye Pon
+appointment.restaurant,fr,Réserver une table,18,original (owner kept),Réserver une table
+appointment.restaurant,es,Reservar mesa,13,original,Reservar mesa
+appointment.event_services,en,Book a Service,14,original (owner kept),Book a Service
+appointment.event_services,pcm,Book Service,12,original (owner kept),Book Service
+appointment.event_services,yo,Yan Iṣẹ́,8,original (owner kept),Yan Iṣẹ́
+appointment.event_services,ig,Debe Ọrụ,8,original (owner kept),Debe Ọrụ
+appointment.event_services,ha,Yi Ajiyar Sabis,15,original,Yi Ajiyar Sabis / hidima
+appointment.event_services,tw,Gye Adwuma,10,accepted suggestion,Gye Ɔsom
+appointment.event_services,fr,Réserver un service,19,original (owner kept),Réserver un service
+appointment.event_services,es,Reservar servicio,17,original,Reservar servicio
+appointment.photographer,en,Book a Session,14,original (owner kept),Book a Session
+appointment.photographer,pcm,Book Session,12,original (owner kept),Book Session
+appointment.photographer,yo,Ṣe Ìpàdé,8,original (owner kept),Ṣe Ìpàdé
+appointment.photographer,ig,Debe Oge,8,original (owner kept),Debe Oge
+appointment.photographer,ha,Yi Ajiyar Zama,14,original,Yi Ajiyar Zama
+appointment.photographer,tw,Gye Bere,8,original,Gye Bere
+appointment.photographer,fr,Réserver une séance,19,original (owner kept),Réserver une séance
+appointment.photographer,es,Reservar sesión,15,original,Reservar sesión
+appointment.gym,en,Book a Session,14,original (owner kept),Book a Session
+appointment.gym,pcm,Book Session,12,original (owner kept),Book Session
+appointment.gym,yo,Ṣe Ìpàdé,8,original (owner kept),Ṣe Ìpàdé
+appointment.gym,ig,Debe Oge,8,original (owner kept),Debe Oge
+appointment.gym,ha,Yi Ajiyar Zama,14,original,Yi Ajiyar Zama
+appointment.gym,tw,Gye Bere,8,original,Gye Bere
+appointment.gym,fr,Réserver une séance,19,original (owner kept),Réserver une séance
+appointment.gym,es,Reservar sesión,15,original,Reservar sesión
+appointment.tutor,en,Book a Session,14,original (owner kept),Book a Session
+appointment.tutor,pcm,Book Session,12,original (owner kept),Book Session
+appointment.tutor,yo,Ṣe Ìpàdé,8,original (owner kept),Ṣe Ìpàdé
+appointment.tutor,ig,Debe Oge,8,original (owner kept),Debe Oge
+appointment.tutor,ha,Yi Ajiyar Zama,14,original,Yi Ajiyar Zama
+appointment.tutor,tw,Gye Bere,8,original,Gye Bere
+appointment.tutor,fr,Réserver une séance,19,original (owner kept),Réserver une séance
+appointment.tutor,es,Reservar sesión,15,original,Reservar sesión
+appointment.coworking,en,Book a Space,12,original (owner kept),Book a Space
+appointment.coworking,pcm,Book Space,10,original (owner kept),Book Space
+appointment.coworking,yo,Fi Àyè Pamọ́,12,original (owner kept),Fi Àyè Pamọ́
+appointment.coworking,ig,Debe Ebe,8,original (owner kept),Debe Ebe
+appointment.coworking,ha,Ajiye Wuri,10,original,Ajiye Wuri
+appointment.coworking,tw,Gye Beae,8,original,Gye Beae
+appointment.coworking,fr,Réserver un espace,18,original (owner kept),Réserver un espace
+appointment.coworking,es,Reservar espacio,16,original,Reservar espacio
+appointment.car_wash,en,Book a Wash,11,original (owner kept),Book a Wash
+appointment.car_wash,pcm,Book Car Wash,13,original (owner kept),Book Car Wash
+appointment.car_wash,yo,Ṣe Ìpinnu Fífọ Ọkọ̀,19,original (owner kept),Ṣe Ìpinnu Fífọ Ọkọ̀
+appointment.car_wash,ig,Debe Ịsa Ụgbọala,16,original (owner kept),Debe Ịsa Ụgbọala
+appointment.car_wash,ha,Yi Ajiyar Wankin Mota,21,original,Yi Ajiyar Wankin Mota
+appointment.car_wash,tw,Hyɛ Kaa Hohoro,14,accepted suggestion,Gye Bere Ma Wɔnhoro Kaa
+appointment.car_wash,fr,Réserver un lavage,18,original (owner kept),Réserver un lavage
+appointment.car_wash,es,Reservar lavado,15,original,Reservar lavado
+giving,en,Give,4,original (owner kept),Give
+giving,pcm,Give money,10,original (owner kept),Give money
+giving,yo,Ṣa n owo,8,original (owner kept),Ṣa n owo
+giving,ig,Nye Onyinye,11,original (owner kept),Nye Onyinye / achurum Nye Onyinye
+giving,ha,Ba da Gudummawa,15,accepted suggestion,Sadaka / bayar da baiko
+giving,tw,Yi Ntoboa,9,original,Yi Ntoboa
+giving,fr,Faire un don,12,original (owner kept),Faire un don
+giving,es,Donar,5,original,Donar
+payment,en,Make Payment,12,original (owner kept),Make Payment
+payment,pcm,Make Payment,12,original (owner kept),Make Payment
+payment,yo,San Owó,7,original (owner kept),San Owó
+payment,ig,Kwụọ Ụgwọ,9,original (owner kept),Kwụọ Ụgwọ
+payment,ha,Biya,4,original,Biya
+payment,tw,Tua Ka,6,original,Tua Ka
+payment,fr,Payer,5,original (owner kept),Payer
+payment,es,Pagar,5,original,Pagar
+ordering,en,Place an Order,14,original (owner kept),Place an Order
+ordering,pcm,Place Order,11,original (owner kept),Place Order
+ordering,yo,Paṣẹ,4,original (owner kept),Paṣẹ
+ordering,ig,Nye Oda,7,original (owner kept),Nye Oda / Tinye oda gi ebe a
+ordering,ha,Yi Oda,6,original,Yi Oda
+ordering,tw,Ma Wo Order,11,original,Ma Wo Order
+ordering,fr,Commander,9,original (owner kept),Commander
+ordering,es,Hacer pedido,12,original,Hacer pedido
+ticketing,en,Buy Tickets,11,original (owner kept),Buy Tickets
+ticketing,pcm,Buy Ticket,10,original (owner kept),Buy Ticket
+ticketing,yo,Ra Tikẹ́ẹ̀tì,12,original (owner kept),Ra Tikẹ́ẹ̀tì
+ticketing,ig,Zụta Tiketi,11,original (owner kept),Zụta Tiketi / Akwukwo Nmenme
+ticketing,ha,Sayi Tikiti,11,original,Sayi Tikiti
+ticketing,tw,Tɔ Tikiti,9,original,Tɔ Tikiti
+ticketing,fr,Acheter des billets,19,original (owner kept),Acheter des billets
+ticketing,es,Comprar entradas,16,original,Comprar entradas
+reservation,en,Book a Stay,11,original (owner kept),Book a Stay
+reservation,pcm,Book Stay,9,original (owner kept),Book Stay
+reservation,yo,Fi Ibùgbé Pamọ́,15,original (owner kept),Fi Ibùgbé Pamọ́
+reservation,ig,Debe Ebe Ịnọ,12,original (owner kept),Debe Ebe Ịnọ
+reservation,ha,Kama daki,9,original,Kama daki
+reservation,tw,Gye Baabi Tra,13,original,Gye Baabi Tra
+reservation,fr,Réserver un séjour,18,original (owner kept),Réserver un séjour
+reservation,es,Reservar alojamiento,20,accepted suggestion,Reservar estancia
+table_reservation,en,Make a Reservation,18,original (owner kept),Make a Reservation
+table_reservation,pcm,Make Reservation,16,original (owner kept),Make Reservation
+table_reservation,yo,Ṣe Ìfipamọ́,11,original (owner kept),Ṣe Ìfipamọ́
+table_reservation,ig,Mee Ndoputa,11,original (owner kept),Mee Ndoputa
+table_reservation,ha,Yi Ajiyar Wuri,14,original,Yi Ajiyar Wuri
+table_reservation,tw,Yɛ Reservation,14,original,Yɛ Reservation
+table_reservation,fr,Faire une réservation,21,original (owner kept),Faire une réservation
+table_reservation,es,Hacer una reserva,17,original,Hacer una reserva
+crowdfunding,en,Support a Campaign,18,original (owner kept),Support a Campaign
+crowdfunding,pcm,Support Campaign,16,original (owner kept),Support Campaign
+crowdfunding,yo,Ṣe Àtìlẹ́yìn fún Ìpolongo,25,original (owner kept),Ṣe Àtìlẹ́yìn fún Ìpolongo
+crowdfunding,ig,Kwado Mgbasa,12,original (owner kept),Kwado Mgbasa / enyemaka
+crowdfunding,ha,Tallafa wa Kamfen,17,accepted suggestion,Tallafa wa Kamfen / goyi bayan zabe
+crowdfunding,tw,Boa Campaign No,15,original,Boa Campaign No
+crowdfunding,fr,Soutenir une campagne,21,original (owner kept),Soutenir une campagne
+crowdfunding,es,Apoyar campaña,14,original,Apoyar campaña
+reminders,en,My Reminders,12,original (owner kept),My Reminders
+reminders,pcm,My Reminders,12,original (owner kept),My Reminders
+reminders,yo,Àwọn Ìránnilétí Mi,18,original (owner kept),Àwọn Ìránnilétí Mi
+reminders,ig,Ihe Ncheta M,12,original (owner kept),Ihe Ncheta M
+reminders,ha,Tunatarwata,11,accepted suggestion,Tunatarwa Ta / tuna min kayan nan
+reminders,tw,Me Nkaebɔ,9,original,Me Nkaebɔ
+reminders,fr,Mes rappels,11,original (owner kept),Mes rappels
+reminders,es,Mis recordatorios,17,original,Mis recordatorios
+chat,en,Chat with Us,12,original (owner kept),Chat with Us
+chat,pcm,Follow us talk,14,original (owner kept),Follow us talk
+chat,yo,Bá Wa Sọ̀rọ̀,12,original (owner kept),Bá Wa Sọ̀rọ̀
+chat,ig,Gwa Anyị Okwu,13,original (owner kept),Gwa Anyị Okwu / gwa m oku
+chat,ha,Yi Magana da Mu,15,original,Yi Magana da Mu
+chat,tw,Ne Yɛn Nkɔmmɔ,13,accepted suggestion,Ne Yɛn Nkasakasa
+chat,fr,Nous contacter,14,original (owner kept),Nous contacter
+chat,es,Habla con nosotros,18,original,Habla con nosotros
+waitlist,en,Join Waitlist,13,original (owner kept),Join Waitlist
+waitlist,pcm,Join Waitlist,13,original (owner kept),Join Waitlist
+waitlist,yo,Darapọ̀ mọ́ Àtòjọ Ìdúró,23,original (owner kept),Darapọ̀ mọ́ Àtòjọ Ìdúró
+waitlist,ig,Soro na Ndepụta Ichere,22,original (owner kept),Soro na Ndepụta Ichere
+waitlist,ha,Shiga Jerin Jira,16,original,Shiga Jerin Jira
+waitlist,tw,Kɔ Twɛn-List Mu,15,original,Kɔ Twɛn-List Mu
+waitlist,fr,Rejoindre la liste d’attente,28,original (owner kept),Rejoindre la liste d’attente
+waitlist,es,Unirse a lista de espera,24,original,Unirse a lista de espera
+queue,en,Join Queue,10,original (owner kept),Join Queue
+queue,pcm,Join Queue,10,original (owner kept),Join Queue
+queue,yo,Wọ Ìlà,6,original (owner kept),Wọ Ìlà
+queue,ig,Banye n'Ahịrị,13,original (owner kept),Banye n'Ahịrị / ugwo prom
+queue,ha,Shiga Layi,10,original,Shiga Layi
+queue,tw,Kɔ Queue Mu,11,original,Kɔ Queue Mu
+queue,fr,Rejoindre la file,17,original (owner kept),Rejoindre la file
+queue,es,Unirse a la fila,16,original,Unirse a la fila
+loyalty,en,My Rewards,10,original (owner kept),My Rewards
+loyalty,pcm,My Rewards,10,original (owner kept),My Rewards
+loyalty,yo,Ẹ̀bùn Mi,8,original (owner kept),Ẹ̀bùn Mi
+loyalty,ig,Ụgwọ Ọrụ M,10,original (owner kept),Ụgwọ Ọrụ M
+loyalty,ha,Ladana,6,original,Ladana
+loyalty,tw,Me Akyɛde,9,accepted suggestion,M’Akatua
+loyalty,fr,Mes récompenses,15,original (owner kept),Mes récompenses
+loyalty,es,Mis recompensas,15,original,Mis recompensas
+invoice,en,My Invoices,11,original (owner kept),My Invoices
+invoice,pcm,My Invoices,11,original (owner kept),My Invoices
+invoice,yo,Àwọn Invoice Mi,15,original (owner kept),Àwọn Invoice Mi
+invoice,ig,Invoice M,9,original (owner kept),Invoice M / akuko n
+invoice,ha,Takardun Biyana,15,accepted suggestion,Takardar biyana / kaya da na ci
+invoice,tw,Me Invoice,10,original,Me Invoice
+invoice,fr,Mes factures,12,original (owner kept),Mes factures
+invoice,es,Mis facturas,12,original,Mis facturas
+waiver,en,Sign Waiver,11,original (owner kept),Sign Waiver
+waiver,pcm,Sign Waiver,11,original (owner kept),Sign Waiver
+waiver,yo,Fọwọ́ Sí Ìwé Ìfọwọ́sí,21,original (owner kept),Fọwọ́ Sí Ìwé Ìfọwọ́sí
+waiver,ig,Bịanye Aka na Waiver,20,original (owner kept),Bịanye Aka na Waiver
+waiver,ha,Sa Hannu kan Waiver,19,original,Sa Hannu kan Waiver
+waiver,tw,Hyɛ Waiver No Ase,17,original,Hyɛ Waiver No Ase
+waiver,fr,Signer la décharge,18,original (owner kept),Signer la décharge
+waiver,es,Firmar exoneración,18,accepted suggestion,Firmar exención
+class_booking,en,Book a Class,12,original (owner kept),Book a Class
+class_booking,pcm,Book Class,10,original (owner kept),Book Class
+class_booking,yo,Forúkọ Sílẹ̀ fún Kíláàsì,24,original (owner kept),Forúkọ Sílẹ̀ fún Kíláàsì
+class_booking,ig,Debe Klas,9,original (owner kept),Debe Klas
+class_booking,ha,Yi Ajiyar Aji,13,original,Yi Ajiyar Aji / kama aji
+class_booking,tw,Gye Klas,8,original,Gye Klas
+class_booking,fr,Réserver un cours,17,original (owner kept),Réserver un cours
+class_booking,es,Reservar clase,14,original,Reservar clase
+promo_verification,en,Instant Win,11,original (owner kept),Instant Win
+promo_verification,pcm,Instant Win,11,original (owner kept),Instant Win
+promo_verification,yo,Ẹ̀bùn Lẹ́sẹ̀kẹsẹ̀,17,original (owner kept),Ẹ̀bùn Lẹ́sẹ̀kẹsẹ̀
+promo_verification,ig,Mmeri Ozugbo,12,original (owner kept),Mmeri Ozugbo
+promo_verification,ha,Nasara Nan Take,15,original,Nasara Nan Take / ci nasara a take
+promo_verification,tw,Nkonimdi Ntɛm Ara,17,original,Nkonimdi Ntɛm Ara
+promo_verification,fr,Gain instantané,15,original (owner kept),Gain instantané
+promo_verification,es,Premio instantáneo,18,original,Premio instantáneo
+my_account,en,My Account,10,original (owner kept),My Account
+my_account,pcm,My Account,10,original (owner kept),My Account
+my_account,yo,Àkọọ́lẹ̀ Mi,11,original (owner kept),Àkọọ́lẹ̀ Mi
+my_account,ig,Akaụntụ M,9,original (owner kept),Akaụntụ M
+my_account,ha,Asusuna,7,accepted suggestion,Asusuna Ta / akaundi dina
+my_account,tw,Me Account,10,original,Me Account
+my_account,fr,Mon compte,10,original (owner kept),Mon compte
+my_account,es,Mi cuenta,9,original,Mi cuenta

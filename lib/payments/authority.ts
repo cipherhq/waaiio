@@ -28,6 +28,20 @@ import type { ConfirmationResult } from './send-confirmation';
 export type PaymentProviderName = 'paystack' | 'stripe' | 'flutterwave' | 'square' | 'paypal';
 const SUPPORTED_PROVIDERS = new Set<string>(['paystack', 'stripe', 'flutterwave', 'square', 'paypal']);
 
+/** Allowlisted, reusable Paystack authorization metadata (never PAN/CVV). */
+export interface PaystackCardAuthorization {
+  authorization_code: string;
+  customer_code: string | null;
+  email: string;
+  last4: string | null;
+  brand: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+  card_type: string | null;
+  bank: string | null;
+  reusable: true;
+}
+
 /** Provider-agnostic verification result. Amount/currency from PROVIDER truth. */
 export interface VerifiedPaymentResult {
   provider: PaymentProviderName;
@@ -41,6 +55,7 @@ export interface VerifiedPaymentResult {
   gatewayFee?: number;
   verifiedAt: string;
   providerStatus?: string;
+  cardAuthorization?: PaystackCardAuthorization;
 }
 
 /** Result from processSuccessfulPayment indicating critical effect outcome. */

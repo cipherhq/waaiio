@@ -227,9 +227,21 @@ export default function PartiesPage() {
     };
 
     if (view === 'add') {
-      await supabase.from('parties').insert(payload);
+      const { createParty } = await import('@/lib/actions/party-persistence');
+      const result = await createParty(supabase, payload);
+      if (!result.success) {
+        setSaving(false);
+        setStatusMessage(result.error || 'Failed to create party');
+        return;
+      }
     } else {
-      await supabase.from('parties').update(payload).eq('id', form.id);
+      const { updateParty } = await import('@/lib/actions/party-persistence');
+      const result = await updateParty(supabase, form.id, payload);
+      if (!result.success) {
+        setSaving(false);
+        setStatusMessage(result.error || 'Failed to update party');
+        return;
+      }
     }
 
     setSaving(false);

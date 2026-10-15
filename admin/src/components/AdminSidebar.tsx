@@ -34,6 +34,7 @@ import {
   ListOrdered,
   Ticket,
   BrainCircuit,
+  TrendingDown,
   AlertTriangle,
   Sun,
   Moon,
@@ -46,6 +47,7 @@ import {
   ScanLine,
   Sparkles,
   Gift,
+  QrCode,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from './AdminLayout';
@@ -81,6 +83,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     label: 'Accounts',
     items: [
       { icon: Building2, label: 'Accounts', path: '/businesses', roles: ADMIN_PERMISSIONS['businesses'] },
+      { icon: UserCog, label: 'Onboard Customer', path: '/customer-onboarding', roles: ADMIN_PERMISSIONS['customer-onboarding'] },
       { icon: BadgeCheck, label: 'Verification', path: '/verification', roles: ADMIN_PERMISSIONS['verification'] },
       { icon: Layers, label: 'Category Templates', path: '/category-templates', roles: ADMIN_PERMISSIONS['category-templates'] },
       { icon: UserCog, label: 'Impersonation', path: '/impersonation', roles: ADMIN_PERMISSIONS['impersonation'] },
@@ -119,6 +122,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     label: 'Communication',
     items: [
       { icon: Bot, label: 'Bot Management', path: '/bot-management', roles: ADMIN_PERMISSIONS['bot-management'] },
+      { icon: TrendingDown, label: 'Bot Dropoffs', path: '/bot-dropoffs', roles: ADMIN_PERMISSIONS['bot-management'] },
       { icon: Hash, label: 'Bot Keywords', path: '/bot-keywords', roles: ADMIN_PERMISSIONS['bot-keywords'] },
       { icon: BrainCircuit, label: 'LLM Logs', path: '/llm-logs', roles: ADMIN_PERMISSIONS['llm-logs'] },
       { icon: MessageCircle, label: 'WhatsApp Channels', path: '/whatsapp-channels', roles: ADMIN_PERMISSIONS['whatsapp-channels'] },
@@ -153,8 +157,10 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Zap, label: 'AI Setup Log', path: '/ai-setup-log', roles: ADMIN_PERMISSIONS['ai-setup-log'] },
       { icon: BrainCircuit, label: 'AI Usage', path: '/ai-usage', roles: ADMIN_PERMISSIONS['ai-usage'] },
       { icon: MessageCircle, label: 'Conversation Usage', path: '/conversation-usage', roles: ADMIN_PERMISSIONS['conversation-usage'] },
+      { icon: CreditCard, label: 'Messaging Credits', path: '/messaging-credits', roles: ADMIN_PERMISSIONS['messaging-credits'] },
       { icon: Sparkles, label: 'Site Announcement', path: '/site-announcement', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: Gift, label: 'Launch Subscribers', path: '/launch-subscribers', roles: ADMIN_PERMISSIONS['platform-settings'] },
+      { icon: QrCode, label: 'Platform Campaigns', path: '/platform-campaigns', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: Settings, label: 'Platform Settings', path: '/platform-settings', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: ScrollText, label: 'Audit Log', path: '/audit-log', roles: ADMIN_PERMISSIONS['audit-log'] },
       { icon: Activity, label: 'System Health', path: '/system-health', roles: ADMIN_PERMISSIONS['system-health'] },

@@ -62,6 +62,7 @@ export async function detectBotCodeWithSuggestions(
   suggestions?: { id: string; name: string; bot_code: string }[];
   isCategory?: boolean;
   deepLinkCapability?: CapabilityId;
+  authority: 'exact' | 'suggestion';
 }> {
   // Parse deep-link suffix (e.g. "SALON-LOLA:payment" → botCode + capability)
   const { botCode: strippedText, capability: deepLinkCapability } = parseDeepLink(text.trim());
@@ -114,12 +115,12 @@ export async function detectBotCodeWithSuggestions(
       .eq('status', 'active')
       .or(orFilter)
       .maybeSingle();
-    if (data) return { businessId: data.id, deepLinkCapability };
+    if (data) return { businessId: data.id, deepLinkCapability, authority: 'exact' };
   }
 
   // Skip advanced matching if the input is just common greetings/filler
   const allFiller = tokens.every(t => FILLER_WORDS.has(t));
-  if (allFiller) return { businessId: null };
+  if (allFiller) return { businessId: null, authority: 'suggestion' };
 
   // -- Fetch candidate businesses for advanced matching (5-8) --
   // Grab a broader set of active businesses for local matching algorithms
@@ -155,20 +156,22 @@ export async function detectBotCodeWithSuggestions(
       );
 
       if (wideAcronyms.length === 1) {
-        return { businessId: wideAcronyms[0].id, deepLinkCapability };
+        return { businessId: null, suggestions: [wideAcronyms[0]], authority: 'suggestion' };
       }
       if (wideAcronyms.length > 1) {
         return {
           businessId: null,
           suggestions: rankSuggestions(wideAcronyms, callerPhone).slice(0, 3),
+          authority: 'suggestion',
         };
       }
     } else if (acronymMatches.length === 1) {
-      return { businessId: acronymMatches[0].id, deepLinkCapability };
+      return { businessId: null, suggestions: [acronymMatches[0]], authority: 'suggestion' };
     } else {
       return {
         businessId: null,
         suggestions: rankSuggestions(acronymMatches, callerPhone).slice(0, 3),
+        authority: 'suggestion',
       };
     }
   }
@@ -213,13 +216,14 @@ export async function detectBotCodeWithSuggestions(
       scored.sort((a, b) => a.score - b.score);
       // If the best match has score 0, it's a direct partial match -- auto-route
       if (scored.length === 1 || (scored[0].score <= 1 && scored.length > 1 && scored[1].score > scored[0].score + 1)) {
-        // Very confident single best match
-        return { businessId: scored[0].id, deepLinkCapability };
+        // Very confident single best match — still a suggestion, not exact
+        return { businessId: null, suggestions: [scored[0]], authority: 'suggestion' };
       }
       // Return top matches as suggestions
       return {
         businessId: null,
         suggestions: rankSuggestions(scored, callerPhone).slice(0, 3),
+        authority: 'suggestion',
       };
     }
   }
@@ -239,11 +243,12 @@ export async function detectBotCodeWithSuggestions(
 
       if (singleWordMatches && singleWordMatches.length > 0) {
         if (singleWordMatches.length === 1) {
-          return { businessId: singleWordMatches[0].id, deepLinkCapability };
+          return { businessId: null, suggestions: [singleWordMatches[0]], authority: 'suggestion' };
         }
         return {
           businessId: null,
           suggestions: rankSuggestions(singleWordMatches, callerPhone).slice(0, 3),
+          authority: 'suggestion',
         };
       }
     }
@@ -281,6 +286,7 @@ export async function detectBotCodeWithSuggestions(
           return {
             businessId: null,
             suggestions: rankSuggestions(fuzzyHits, callerPhone).slice(0, 3),
+            authority: 'suggestion',
           };
         }
       }
@@ -305,11 +311,12 @@ export async function detectBotCodeWithSuggestions(
         businessId: null,
         suggestions: rankSuggestions(catMatches, callerPhone).slice(0, 3),
         isCategory: true,
+        authority: 'suggestion',
       };
     }
   }
 
-  return { businessId: null };
+  return { businessId: null, authority: 'suggestion' };
 }
 
 /**
@@ -345,8 +352,10 @@ export function rankSuggestions(
 /**
  * Look up a returning customer's most recent business from past sessions, bookings, and orders.
  * If they've only interacted with one business, auto-route there.
+ * @deprecated Use findReturningCustomerBusinesses (plural) which returns ALL businesses.
+ * Kept as a private helper — callers should use the plural variant instead.
  */
-export async function findReturningCustomerBusiness(
+async function findReturningCustomerBusiness(
   supabase: SupabaseClient,
   phone: string,
   userId: string | null,

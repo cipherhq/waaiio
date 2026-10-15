@@ -1295,6 +1295,46 @@ export function getLocale(countryCode: CountryCode = 'NG'): string {
   return _getCountryConfigDisplay(countryCode).currencyLocale;
 }
 
+// ── Distance Unit Configuration ──
+
+/** Countries where miles are the conventional distance unit for road/delivery distances */
+const IMPERIAL_DISTANCE_COUNTRIES: ReadonlySet<string> = new Set(['US', 'GB']);
+
+const KM_PER_MILE = 1.609344;
+const MILE_PER_KM = 1 / KM_PER_MILE;
+
+/** Returns 'mi' for US/UK, 'km' for all other countries */
+export function getDistanceUnit(countryCode: string): 'mi' | 'km' {
+  return IMPERIAL_DISTANCE_COUNTRIES.has(countryCode) ? 'mi' : 'km';
+}
+
+/** Convert kilometers to miles */
+export function kmToMiles(km: number): number {
+  return Math.round(km * MILE_PER_KM * 10) / 10;
+}
+
+/** Convert miles to kilometers */
+export function milesToKm(miles: number): number {
+  return Math.round(miles * KM_PER_MILE * 10) / 10;
+}
+
+/** Convert a canonical km value to the display unit for a given country */
+export function kmToDisplayUnit(km: number, countryCode: string): number {
+  return getDistanceUnit(countryCode) === 'mi' ? kmToMiles(km) : km;
+}
+
+/** Convert a display-unit value back to canonical km */
+export function displayUnitToKm(value: number, countryCode: string): number {
+  return getDistanceUnit(countryCode) === 'mi' ? milesToKm(value) : value;
+}
+
+/** Format a distance with the appropriate unit label */
+export function formatDistance(km: number, countryCode: string): string {
+  const unit = getDistanceUnit(countryCode);
+  const display = unit === 'mi' ? kmToMiles(km) : km;
+  return `${display.toFixed(1)} ${unit}`;
+}
+
 /** Get cities — display-only, fallback OK */
 export function getCitiesForCountry(countryCode: CountryCode = 'NG') {
   const dbCountry = _getCountryFromDb(countryCode);

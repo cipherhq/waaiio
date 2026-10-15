@@ -317,7 +317,7 @@ export default function DashboardOverview() {
               <p className="text-sm font-semibold text-red-900">
                 Your account is scheduled for deletion on {new Date(deletionScheduled).toLocaleDateString()}.
               </p>
-              <p className="text-xs text-red-700">All your data will be permanently removed after this date.</p>
+              <p className="text-xs text-red-700">Your businesses are currently deactivated. Use Cancel Deletion to withdraw this request.</p>
             </div>
           </div>
           <button
@@ -390,6 +390,10 @@ export default function DashboardOverview() {
 
       {/* Onboarding checklist (dismissible) */}
       <OnboardingChecklist />
+
+      {/* Payment readiness: canonical country configuration is the authority.
+           Dashboard does not use raw business.payment_gateway for readiness (#493).
+           Onboarding surfaces payment_ready from the register response. */}
 
       {/* Compact banners — inline, not full-width blocks */}
       <div className="space-y-2 mb-6">

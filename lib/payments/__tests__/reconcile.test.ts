@@ -143,4 +143,24 @@ describe('reconcilePayment', () => {
     const r = await reconcilePayment(buildSupabase(), 'pay-1', 'webhook', { status: 'retryable_error', reason: 'timeout' });
     expect(r.acknowledgeSuccess).toBe(false);
   });
+
+  it('persists verified Paystack authorization before authority finalization', async () => {
+    mockAuthorize.mockResolvedValue({ status: 'completed', retryable: false, stages: { providerPaid: true, businessFinalized: true, customerConfirmed: true } });
+    const supabase = buildSupabase();
+    const { reconcilePayment } = await import('../reconcile');
+    await reconcilePayment(supabase, 'pay-1', 'webhook', {
+      status: 'verified',
+      result: {
+        provider: 'paystack', waaiioReference: 'REF-1', amount: 5000, currency: 'NGN',
+        verifiedAt: '', providerStatus: 'success',
+        cardAuthorization: {
+          authorization_code: 'AUTH-1', customer_code: 'CUS-1', email: 'payer@example.test',
+          last4: '1234', brand: 'visa', exp_month: 12, exp_year: 2030,
+          card_type: 'debit', bank: 'Bank', reusable: true,
+        },
+      },
+    });
+    expect(supabase.rpc).toHaveBeenCalledWith('persist_verified_paystack_card_authorization', expect.any(Object));
+    expect(supabase.rpc.mock.invocationCallOrder[0]).toBeLessThan(mockAuthorize.mock.invocationCallOrder[0]);
+  });
 });

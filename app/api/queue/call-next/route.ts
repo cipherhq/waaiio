@@ -5,6 +5,8 @@ import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { handlePostCompletion } from '@/lib/bot/flows/shared/post-completion';
 import { authenticateRequest } from '@/lib/api-auth';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
@@ -136,9 +138,10 @@ export async function POST(request: NextRequest) {
         const { data: bizInfo } = await supabase.from('businesses').select('name').eq('id', businessId).single();
         const bizName = bizInfo?.name || 'the business';
         const name = nextEntry.customer_name || 'there';
+        const l10n = await resolveProactiveLocalization(supabase, nextEntry.customer_phone, businessId);
         await resolved.sender.sendText({
           to: phone,
-          text: `🔔 Hi ${name}, it's your turn at *${bizName}*! Please proceed to the counter. 🙏`,
+          text: fillFlowCopy(l10n.language, 'notification.queue_your_turn', { name, businessName: bizName }),
         });
         notified = true;
       } else {

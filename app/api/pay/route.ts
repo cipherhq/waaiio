@@ -7,11 +7,14 @@ import { createServiceClient } from '@/lib/supabase/service';
  * Short payment URL redirect. Looks up the payment by reference code,
  * finds the gateway checkout URL, and redirects the customer.
  * Used to shorten long Stripe/Paystack checkout URLs in WhatsApp messages.
+ *
+ * All redirects use explicit HTTP 302 (Found) for maximum browser/webview
+ * compatibility, especially WhatsApp in-app browser and Nigerian mobile networks.
  */
 export async function GET(request: NextRequest) {
   const ref = request.nextUrl.searchParams.get('ref');
   if (!ref || ref.length < 6) {
-    return NextResponse.redirect(new URL('/', request.url));
+    return NextResponse.redirect(new URL('/', request.url), 302);
   }
 
   const supabase = createServiceClient();
@@ -42,7 +45,7 @@ export async function GET(request: NextRequest) {
       } catch {
         return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
       }
-      return NextResponse.redirect(storedUrl);
+      return NextResponse.redirect(storedUrl, 302);
     }
 
     // Fallback: reconstruct gateway URL
@@ -56,14 +59,22 @@ export async function GET(request: NextRequest) {
           });
           const session = await res.json();
           if (session.url) {
-            return NextResponse.redirect(session.url);
+            return NextResponse.redirect(session.url, 302);
           }
         }
       }
     }
 
+    // Paystack fallback: use stored access_code (the correct checkout identifier).
+    // Never fabricate checkout.paystack.com/<gateway_reference> — gateway_reference
+    // is the transaction reference, not the access code.
     if (payment.gateway === 'paystack') {
-      return NextResponse.redirect(`https://checkout.paystack.com/${payment.gateway_reference}`);
+      const accessCode = meta.access_code as string;
+      if (accessCode) {
+        return NextResponse.redirect(`https://checkout.paystack.com/${accessCode}`, 302);
+      }
+      // No stored checkout URL and no access code — cannot safely redirect to provider
+      return NextResponse.redirect(new URL('/payment-success?error=link-expired', request.url), 302);
     }
   }
 
@@ -91,10 +102,10 @@ export async function GET(request: NextRequest) {
           headers: { Authorization: `Bearer ${key}` },
         });
         const session = await res.json();
-        if (session.url) return NextResponse.redirect(session.url);
+        if (session.url) return NextResponse.redirect(session.url, 302);
       }
     }
   }
 
-  return NextResponse.redirect(new URL('/payment-success', request.url));
+  return NextResponse.redirect(new URL('/payment-success', request.url), 302);
 }

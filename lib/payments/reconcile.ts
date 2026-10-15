@@ -14,6 +14,7 @@ import { verifyWithProvider, type ProviderVerificationOutcome } from './provider
 import { authorizeAndFinalize, type PaymentLifecycleResult, type FinalizationResult } from './authority';
 import { processSuccessfulPayment } from './process-success';
 import { sendProactiveConfirmation, type ConfirmationResult } from './send-confirmation';
+import { persistPaystackCardAuthorization } from './paystack-card-authorization';
 
 export type ReconciliationSource = 'webhook' | 'payment_success' | 'ive_paid' | 'saved_card' | 'cron';
 
@@ -94,6 +95,19 @@ export async function reconcilePayment(
 
   // 4. Provider verified → canonical Payment Authority
   const verified = providerResult.result;
+
+  // Persist reusable Paystack authorization before Payment Authority can run
+  // Stage 3 confirmation and its Save Card offer. The RPC independently checks
+  // this result against the canonical payment row and platform origin.
+  if (verified.provider === 'paystack' && verified.cardAuthorization) {
+    await persistPaystackCardAuthorization(
+      supabase,
+      payment.id,
+      verified.amount,
+      verified.currency,
+      verified.cardAuthorization,
+    );
+  }
 
   const processPayment = async (
     sb: SupabaseClient,

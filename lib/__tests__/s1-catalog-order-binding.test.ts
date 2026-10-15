@@ -6,6 +6,7 @@
  * used by the webhook route via import.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTestSupabase } from './helpers/mock-supabase';
 
 vi.mock('@/lib/circuit-breaker', () => ({ isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(), CircuitBreakerOpenError: class extends Error {} }));
 
@@ -46,7 +47,7 @@ describe('S-1 Catalog-Order — production handleCatalogOrder (#256)', () => {
 
   it('shared channel NULL → active A → expected Meta call', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     expect(sender.boundBusinessId).toBe('');
     const supabase = {
       from: vi.fn().mockImplementation((t: string) => t === 'businesses' ? makeChain({ id: 'biz-A', name: 'Cat Biz', country_code: 'NG', payment_gateway: 'paystack', status: 'active' }) : makeChain(null)),
@@ -60,7 +61,7 @@ describe('S-1 Catalog-Order — production handleCatalogOrder (#256)', () => {
   it('shared channel NULL → suspended A → zero Meta calls', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const supabase = {
       from: vi.fn().mockImplementation((t: string) => t === 'businesses' ? makeChain({ id: 'biz-A', name: 'Cat Biz', country_code: 'NG', payment_gateway: 'paystack', status: 'active' }) : makeChain(null)),
       rpc: vi.fn().mockResolvedValue({ data: { success: true, order_id: 'ord-1', reference_code: 'R1', total_amount: 5000, items: [], out_of_stock: [] }, error: null }),
@@ -72,7 +73,7 @@ describe('S-1 Catalog-Order — production handleCatalogOrder (#256)', () => {
 
   it('unavailable catalog → sendPlatformText neutral guidance', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const supabase = { from: vi.fn().mockReturnValue(makeChain(null)), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) };
     await handleCatalogOrder(supabase as any, { channel: sharedChannel, sender } as any, catalogMsg, '+234800', msgLog, sender);
     expect(sender.boundBusinessId).toBe('');
@@ -82,7 +83,7 @@ describe('S-1 Catalog-Order — production handleCatalogOrder (#256)', () => {
 
   it('shared-channel ownership remains NULL', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const channelCopy = { ...sharedChannel };
     const supabase = {
       from: vi.fn().mockImplementation((t: string) => t === 'businesses' ? makeChain({ id: 'biz-A', name: 'C', country_code: 'NG', payment_gateway: 'paystack', status: 'active' }) : makeChain(null)),

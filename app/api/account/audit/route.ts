@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 /**
  * POST /api/account/audit
@@ -30,12 +30,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Use service client to bypass RLS (admin_audit_logs insert requires admin role via RLS)
-    const service = createServiceClient();
-    await service.from('admin_audit_logs').insert({
-      actor_id: user.id,
+    await logAdminAudit({
+      actorId: user.id,
       action,
-      entity_type: 'profile',
-      entity_id: user.id,
+      entityType: 'profile',
+      entityId: user.id,
       details: details || {},
     });
 

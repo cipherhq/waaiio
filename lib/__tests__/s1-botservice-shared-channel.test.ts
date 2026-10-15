@@ -9,6 +9,7 @@
  * with realistic shared-channel scenarios.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTestSupabase } from './helpers/mock-supabase';
 
 // ── Mocks ──
 
@@ -133,7 +134,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   // 1. Tenantless shared-number: platform send works
   it('1. tenantless shared-number: sendPlatformText reaches Meta', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     // No business bound — shared channel with business_id=NULL
     expect(sender.boundBusinessId).toBe('');
     await sender.sendPlatformText({ to: '+234800', text: 'Welcome to Waaiio!' });
@@ -143,7 +144,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   // 2. Business A resolution binds A
   it('2. business A resolution: bindBusiness(A) → send evaluates A', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const { assertMessagingAllowed } = await import('@/lib/channels/send-guard');
     sender.bindBusiness('biz-A');
     expect(sender.boundBusinessId).toBe('biz-A');
@@ -155,7 +156,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   // 4. Resumed A session: bindBusiness ensures A is bound
   it('4. resumed session binds A before sends', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const { assertMessagingAllowed } = await import('@/lib/channels/send-guard');
     expect(sender.boundBusinessId).toBe('');
     // Simulate session resume: BotService calls bindBusiness
@@ -169,7 +170,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   it('3. suspended A: business-scoped send produces zero Meta calls', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-A');
 
     // Direct business-scoped send
@@ -181,7 +182,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   it('5. switch from suspended A: platform discovery after enterPlatformDiscovery works', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
 
     // Business A is bound and suspended
     sender.bindBusiness('biz-A');
@@ -203,7 +204,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   it('6. resolve B after discovery: B is evaluated independently and allowed', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
 
     // Start with A suspended
     sender.bindBusiness('biz-A');
@@ -222,7 +223,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   it('7. dedicated suspended A cannot use platform helper to bypass', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
 
     // Dedicated channel: preResolved business
     sender.bindBusiness('biz-A');
@@ -235,7 +236,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   // 8. Missing/ambiguous tenant → zero provider calls
   it('8. missing tenant on business send → zero Meta calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     await expect(sender.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('missing_business_id');
     expect(cloud.sendText).not.toHaveBeenCalled();
   });
@@ -243,7 +244,7 @@ describe('S-1 BotService Shared-Channel Behavioral (#256)', () => {
   // 9. No direct authorization-state mutation
   it('9. no public businessId property — only authoritative APIs', () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     // Runtime check: no public 'businessId' own property
     expect(Object.getOwnPropertyDescriptor(sender, 'businessId')).toBeUndefined();
     // Read-only getter works

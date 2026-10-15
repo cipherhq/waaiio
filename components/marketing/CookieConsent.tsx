@@ -107,11 +107,11 @@ export default function CookieConsent() {
       role="banner"
       aria-label="Cookie consent"
     >
-      <div className="border-t border-gray-700 bg-gray-900 px-4 py-4 shadow-lg sm:px-6">
+      <div className="border-t border-gray-700 bg-gray-900 px-3 py-3 shadow-lg sm:px-6 sm:py-4">
         <div className="mx-auto max-w-6xl">
-          <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <div className="flex-1">
-              <p className="text-sm leading-relaxed text-gray-300">
+              <p className="text-xs leading-relaxed text-gray-300 sm:text-sm">
                 We use cookies to keep you signed in and improve your experience.
                 You can choose which optional cookies to allow.{' '}
                 <Link href="/cookies" className="underline hover:text-white">
@@ -119,22 +119,22 @@ export default function CookieConsent() {
                 </Link>
               </p>
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-3">
+            <div className="flex shrink-0 flex-wrap items-center gap-2 sm:gap-3">
               <button
                 onClick={() => setShowDetails(!showDetails)}
-                className="rounded-lg border border-gray-600 px-4 py-2 text-sm font-medium text-gray-300 transition hover:border-gray-400 hover:text-white"
+                className="rounded-lg border border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white sm:px-4 sm:py-2 sm:text-sm"
               >
                 Customize
               </button>
               <button
                 onClick={rejectNonEssential}
-                className="rounded-lg border border-gray-600 px-4 py-2 text-sm font-medium text-gray-300 transition hover:border-gray-400 hover:text-white"
+                className="rounded-lg border border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white sm:px-4 sm:py-2 sm:text-sm"
               >
                 Reject Non-Essential
               </button>
               <button
                 onClick={acceptAll}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500"
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-500 sm:px-4 sm:py-2 sm:text-sm"
               >
                 Accept All
               </button>
@@ -191,7 +191,7 @@ export default function CookieConsent() {
 
               <button
                 onClick={saveCustom}
-                className="mt-2 rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-emerald-500"
+                className="mt-2 rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-500 sm:px-6 sm:py-2 sm:text-sm"
               >
                 Save Preferences
               </button>

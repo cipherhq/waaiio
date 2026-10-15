@@ -3,6 +3,1015 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
+
+### What changed
+- **Finding 1 (P2) — version advance in in-place update (`bot.service.ts` ~L3890):** The non-expired 23505 in-place update inside `createNullBizSuggestionSession` now sets `version: (existing.version ?? 0) + 1` in the UPDATE payload alongside the existing `.eq('version', ...)` predicate. Without the payload advance, a second concurrent worker holding the same stale version could overwrite the newly written session data.
+- **Finding 2 (P2) — persisted suggestions for button construction:** All 6 callers of `createNullBizSuggestionSession` (covering `switch_biz`, no-session, returning-customer, 23505 recovery, and inline `handleMessage` recovery paths) now read `session.session_data.suggestions` from the returned session rather than their locally-generated `quickPick` arrays. If the persisted array is empty, each caller fails closed with a single platform-scoped "Something went wrong" reply. This prevents a race window where `biz_0` and `biz_1` resolve to different businesses than the picker labels show.
+- **Design Ruling — retry once after CAS success:** Previously, a successful CAS deactivation (non-zero rows) returned `null` immediately (fail-closed). Now both sites retry the insert exactly once after winning the CAS race. If the retry succeeds → continue normally. If the retry fails for any reason (including another 23505) → fail closed with exactly one "Something went wrong" reply, no loop. Zero-row deactivation is unchanged: re-read, resume if active+unexpired, never insert. Applied at BOTH sites: `createNullBizSuggestionSession` (~L3872) and the inline `handleMessage` 23505 recovery (~L1795).
+- **Tests updated:** Tests 1, 2, 10 (`stale-null-session.test.ts`) updated from `insertCount=1` (no retry) to `insertCount=2` (original + retry). New tests 20–23 added covering: (a) in-place version advance assertion, (b) persisted-suggestions button content assertion, (c) CAS success + retry succeeds → normal flow, (d) CAS success + retry fails → exactly one error reply, no buttons. `s1-botservice-real-handleMessage.test.ts` updated so `insertedSession.session_data.suggestions` is populated (Finding 2 fix). `session-resilience.test.ts` source-string tests updated to match new retry-once log messages.
+- **Note:** Corrects the prior CHANGELOG entry for commit 4ab7d8b5, which stated "CAS success → return null (fail closed). No retry insert." — the error reply now happens only when the single retry also fails.
+
+### What it affects / could break
+- Concurrent null-biz session creation: the winning worker now retries insert once instead of dropping the customer immediately; a customer who won the CAS race will usually get a working picker session instead of an error reply.
+- Button content during CAS recovery: if persisted suggestions are empty (edge case: very short-lived recovered session), user now sees "Something went wrong" instead of buttons built from a potentially stale local array.
+- No schema changes. No DB writes.
+
+## 2026-10-15 — fix(bot): CAS conditional deactivation for stale null-biz sessions (#645)
+
+### What changed
+- `bot.service.ts` site (a) — inline 23505 recovery in `handleMessage`: stale expired null-biz session deactivation now uses a CAS update guarded by `.eq('is_active', true).lt('expires_at', now).eq('version', existing.version)` plus `.select('id')`. If 0 rows updated (concurrent renewal by another worker), re-reads the session; resumes if now active+unexpired, fails closed otherwise. Does NOT retry insert on CAS success.
+- `bot.service.ts` site (b) — expiry deactivation in `createNullBizSuggestionSession`: same CAS pattern. 0 rows → re-read → return renewed session; CAS success → return null (fail closed). No retry insert.
+- Both sites explicitly bump `version: (existing.version ?? 0) + 1` in the update payload. No trigger auto-increments version on `bot_sessions`; it must be set explicitly. The `update_bot_sessions_updated_at` trigger only sets `updated_at`; `trg_bot_session_deactivate` only sets `last_active_at`.
+- `lib/__tests__/stale-null-session.test.ts`: updated tests 1, 2, 10 to assert fail-closed behavior (no retry insert; "Something went wrong" reply sent). Added tests 18 (site A CAS 0-rows race → resumed session) and 19 (site B CAS 0-rows race → resumed session returned, business-picker sent). 19/19 pass.
+- `lib/bot/__tests__/session-resilience.test.ts`: added 15 new tests covering version-trigger absence, CAS guards on both sites, 0-rows resume path, explicit version bump, and behavioral mock tests.
+
+### What it affects / could break
+- Concurrent WhatsApp messages to an expired null-biz session: second concurrent request that loses the CAS race now gets "Something went wrong; send Hi to start over" instead of potentially creating a duplicate session or crashing. Active, unexpired sessions are never incorrectly deactivated.
+- No schema changes. `bot_sessions.version` column was added in migration 236.
+
+## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
+
+### What changed
+- The public `/pay/[token]` page now explains that hosted payment providers process cards, Waaiio does not retain full card numbers or CVV, and merchants cannot see full card credentials.
+- The notice correctly discloses merchant visibility of transaction amount, status and customer-provided purchase information; it does not make absolute "no payment data" promises.
+- Shared copy is shown before redirect to the business's configured gateway; added copy regression tests.
+
+### What it affects / could break
+- Checkout disclosure text/visuals change; no payment initiation logic, gateway routing, database schema or settlement behavior is modified.
+
+## 2026-10-15 — fix(admin): guided admin onboarding and authoritative country options (#651)
+
+### What changed
+- Admin Customer Onboarding is now a guided owner → business/country → plan/capabilities/WhatsApp → review/invite workflow, matching the supported Get Started setup rules.
+- Active countries and categories are loaded from the canonical authenticated admin API. Errors/empty responses show a retry state and block submission instead of silently offering only Nigeria.
+- Post-invitation guidance preserves customer-owned activation, agreement to terms, plan payment, and Meta authorization. Coexistence is not selectable without eligibility.
+- Added regression coverage for supported selections, API failure and the guided owner/business review journey.
+
+### What it affects / could break
+- Admins must progress through separate guided steps instead of a single form.
+- Countries absent from the environment's active configuration cannot be submitted. No migration or entitlement change.
+
+## 2026-10-15 — fix(bot): 7-finding hardening (ChatGPT review on bd042ae9 + 6bbd280b)
+
+### What changed
+- **(1)** `bot.service.ts:3003-3058`: All sends in `select_business_suggestion` step handler → platform-scoped (`enterPlatformDiscovery` + `sendPlatformText`). No business is bound in this step.
+- **(2)** `bot.service.ts:1726-1734`: `session = (newSession || session)` with null guard — 23505 recovery path no longer overwrites with null. `newSession.id` ref at L1692 → `effectiveId` with null check.
+- **(3)** `bot.service.ts:3665`: In-place update adds `.eq('whatsapp_number', from).eq('version', existing.version)` — CAS concurrency protection. 0 rows → return null.
+- **(4)** `bot.service.ts:1246-1251`: Did-you-mean helper returns null → explicit `sendPlatformText` error + `return` — never falls through to generic session creation.
+- **(5)** `bot.service.ts:3633-3634`: Removed delete of inactive null-biz rows — no unique index makes them collide (only `idx_bot_sessions_unique_active_null_biz` is partial on `is_active=true`). Deactivate only.
+- **(6)** `lib/__tests__/stale-null-session.test.ts:813-853`: Real two-message test: msg1 "Hi" returning → picker stored, msg2 "biz_0" → step handler deactivates, recursive call binds business.
+- **(7)** `bot.service.ts:2477-2494`: In-session `switch_biz` now calls `enterPlatformDiscovery` before sends. All replies platform-scoped (`sendPlatformButtons`, `sendPlatformText`). Suspended previous business cannot block switching.
+
+## 2026-10-14 — fix(bot): confirm saved-card decline choices with navigation buttons
+
+### What changed
+- `lib/payments/saved-card-offer.ts` (~L253-319): `handleSavedCardOfferAction` decline paths (`save_decline`, `replace_decline`, `already_declined`) now send a confirmation message with [Main menu] [Done] buttons instead of silently returning. Added `sendButtons` parameter and `sendDeclineConfirmation` helper. replace_decline looks up saved card last4 for personalized copy; falls back to generic if unavailable.
+- `lib/bot/bot.service.ts` (~L1065-1118): Passes `sendButtons` to `handleSavedCardOfferAction`. Added routing for `savedcard_menu:{paymentId}` (resets session to capability selection, shows business menu) and `savedcard_done:{paymentId}` (deactivates session, sends goodbye).
+- `lib/bot/flows/flow-localization.ts`: Added 7 new `savedcard.*` keys across all 8 locales (en, pcm, yo, ig, ha, tw, fr, es): `decline_keep_last4`, `decline_keep_generic`, `decline_not_saved`, `btn_main_menu`, `btn_done`, `session_done`. Added `decline_keep_last4` to PLACEHOLDER_SCHEMA. Added `btn_main_menu` and `btn_done` to BUTTON_TITLE_KEYS.
+
+### What it affects / could break
+- Customers who tap "Not now" or "Keep current" on saved-card offers will now see a confirmation message instead of silence.
+- Duplicate taps send the same confirmation (idempotent — no second mutation).
+- Main menu button routes to the business's capability selection menu.
+- Done button deactivates the session with a goodbye message.
+- No change to accept paths (save_accept/replace_accept already confirm + enter PIN flow).
+
+## 2026-10-14 — fix(bot): DRY suggestion session creation via createNullBizSuggestionSession helper
+
+### What changed
+- `lib/bot/bot.service.ts:3664-3720`: New `createNullBizSuggestionSession(from, userId, sessionData, ttlMs)` helper. Deactivates expired active null-biz sessions, cleans up inactive rows, inserts new session. On 23505: if existing is expired, deactivates + retries once; if not expired, updates in place. Returns null on unrecoverable failure (log + Sentry).
+- All 6 call sites that created null-biz `select_business_suggestion` sessions now use the helper: `switch_biz` (L204), `home` (L228), switch-keyword suggestions (L852), did-you-mean (L1216), "Welcome back" quick-pick (L2170), in-session `switch_biz` (L2482). Buttons/suggestions only sent if helper returns a session; otherwise platform-scoped "Something went wrong" fallback.
+- Generic session-insert failure branch (L1688): only calls `enterPlatformDiscovery + sendPlatformText` when `!businessId`; when businessId is set, sends fallback business-scoped with guard (MessagingSuspendedError caught).
+- `lib/__tests__/stale-null-session.test.ts`: Added tests 8-11: returning customer picker via helper, did-you-mean via helper, 23505 in-place update, hard insert failure → fallback.
+
+### What it affects / could break
+- Session creation is now atomic per helper call — stale sessions cleaned up before insert. Prevents 23505 from silently dropping the session.
+- Buttons are only sent after session is confirmed stored — prevents orphaned buttons with no backing session.
+
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1627-1666`: 23505 null-biz recovery now checks if the recovered session is expired (`expires_at < now`). If expired: deactivates the stale row (`is_active=false`, scoped by id + `business_id IS NULL`), retries the insert once. If retry fails: logs, Sentry, sends fallback via platform path. Only resumes non-expired sessions.
+- `lib/bot/bot.service.ts:1659-1669`: 23505 fallback "Something went wrong" messages changed from `this.sendText` (business-scoped, crashes with MessagingSuspendedError when no business) to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2039-2041`: Added `enterPlatformDiscovery()` call at the start of the marketplace greeting section (no business bound).
+- `lib/bot/bot.service.ts:2053,2070-2076,2095,2110,2126`: Changed all no-business sends from `this.sendText` / `this.messageSender.sendButtons` to `this.sendPlatformText` / `this.sendPlatformButtons` — "Welcome back", quick-pick buttons, registration fallback, first-time greeting, "couldn't find a business".
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering stale session deactivation + retry, Hi with stale session, brand-new phone greeting, returning customer picker.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts:360-388`: Updated test 6 — no longer expects guard to block (sends are now platform-scoped), instead verifies "couldn't find" message is delivered.
+
+### What it affects / could break
+- The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
+- PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
+- The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
+## 2026-10-14 — fix(security): harden image source URL validation
+
+### What changed
+- `app/api/images/convert/route.ts`: Replaced string-prefix URL validation with parsed URL validation. Non-image input now returns 400 instead of 500. Fetch uses `redirect: 'error'` to reject redirects.
+
+### What it affects / could break
+- URLs that previously passed the prefix check but fail strict parsing will now be rejected (400). This is correct behavior.
+- Non-image bodies now return 400 (was 500).
+
+## 2026-10-14 — test(security): real route-handler test for images/convert + pdfjs-dist v6 smoke
+
+### What changed
+- `lib/security/__tests__/sanitize-image.test.ts`: Replaced test #10 ("images/convert route handler → converts a PNG buffer to JPEG") which tested sharp directly, with 4 tests that import the real GET handler from `app/api/images/convert/route.ts`, call it with a real `NextRequest`, mock only the outbound `fetch` (returns a real PNG buffer) and `@/lib/rate-limit`. Asserts: status 200, content-type image/jpeg, JPEG magic bytes (FF D8 FF), dimensions via sharp metadata. Added cases for missing URL (400), non-Supabase URL (400), and non-image input (500).
+- `lib/security/__tests__/pdfjs-dist-smoke.test.ts` (new): Smoke test for pdfjs-dist v6. Creates a real PDF via pdf-lib, parses with pdfjs-dist legacy build, verifies numPages, viewport dimensions, and text extraction.
+
+### What it affects / could break
+- Test-only changes. No production code modified.
+- pdfjs-dist smoke uses the `legacy` build for Node.js compatibility (the app uses the default browser build via dynamic import in `app/sign/[token]/page.tsx`).
+
+## 2026-10-14 — chore: upgrade Next.js 14.2.35 → 15.5.27 + React 18 → 19
+
+### What changed
+- `package.json`: next 14.2.35→15.5.27, react/react-dom ^18→^19, @types/react/react-dom ^18→^19, eslint-config-next ^14→^15.
+- `next.config.mjs`: removed `experimental.instrumentationHook` (built-in in Next 15), moved `experimental.serverComponentsExternalPackages` → top-level `serverExternalPackages`, added `experimental.staleTimes` to preserve Next 14 client router cache behaviour.
+- `app/api/payments/byo-webhook/[businessId]/route.ts`: params type → `Promise<…>` + `await` (Next 15 async request API).
+- `app/api/admin/onboarding/[id]/route.ts`: params type → `Promise<…>` + `await`, extracted `id` before use.
+- `app/checkin/[businessId]/page.tsx`: client component params → `Promise<…>` + `use()` (React 19).
+- `app/dashboard/products/components/ProductForm.tsx`: `RefObject<HTMLInputElement>` → `RefObject<HTMLInputElement | null>` (React 19 stricter ref types).
+- `app/dashboard/products/components/BulkUpload.tsx`: same RefObject fix.
+- `app/maintenance/page.tsx`: `<a href="/">` → `<Link href="/">` (eslint-config-next 15 now errors on internal `<a>` links).
+- `app/(marketing)/reseller-setup/SetupWizard.tsx`: same `<a>` → `<Link>` fix.
+- `lib/pdf/__tests__/pdfkit-packaging-config.test.ts`: updated assertion from `serverComponentsExternalPackages` → `serverExternalPackages` to match the config rename.
+- `instrumentation.ts`: added `onRequestError = Sentry.captureRequestError` (Next 15 hook for nested RSC errors), updated comment to reflect Next 15 built-in instrumentation.
+- `package.json`: pinned exact versions (no `^`) for next, react, react-dom, @types/react, @types/react-dom, eslint-config-next.
+
+### What it affects / could break
+- Client router cache now uses staleTimes {dynamic:30, static:180} matching Next 14 defaults. Remove after launch if we want Next 15's more aggressive invalidation.
+- All other dependencies (Sentry, framer-motion, Supabase SSR, PostHog, etc.) verified React 19 compatible at current versions — no upgrades needed.
+- Admin app (Vite, separate repo section) stays on React 18 — unaffected.
+
+## 2026-10-14 — chore(deps): upgrade sharp 0.34→0.35.5 and pdfjs-dist 5→6.4
+
+### What changed
+- `package.json`: `sharp` ^0.34.5 → ^0.35.5, `pdfjs-dist` ^5.6.205 → ^6.2.108.
+- `package-lock.json`: sharp 0.35.5 (fixes GHSA-wq5f/rgj7/f88m), pdfjs-dist 6.4.299 (fixes GHSA-hq66).
+
+### Why it's safe
+- **sharp 0.35**: All API calls used in `lib/security/sanitize-image.ts:22-78` (`sharp()`, `.rotate()`, `.resize()`, `.jpeg()`, `.png()`, `.webp()`, `.toBuffer()`, `.metadata()`) and `app/api/images/convert/route.ts:31` (`.jpeg()`, `.toBuffer()`) are unchanged in v0.35. Requires Node ≥20.9 (CI runs 24.11). Build verified.
+- **pdfjs-dist 6.x**: `app/sign/[token]/page.tsx:158-182` uses dynamic import, `GlobalWorkerOptions.workerSrc`, `getDocument({data})`, `page.getViewport()`, `page.render()` — all unchanged in v6. Worker CDN URL template (`pdf.js/${version}/pdf.worker.min.mjs`) resolves correctly for 6.4.299. `isEvalSupported` removed in v6 but was not used. Build verified.
+
+### What it affects / could break
+- **sharp**: Native binary rebuild. If Vercel build fails on sharp install, check platform compatibility (should auto-detect).
+- **pdfjs-dist**: Client-side only (contract signing page). No server-side rendering of PDFs. CDN worker URL changes with version.
+
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1627-1666`: 23505 null-biz recovery now checks if the recovered session is expired (`expires_at < now`). If expired: deactivates the stale row (`is_active=false`, scoped by id + `business_id IS NULL`), retries the insert once. If retry fails: logs, Sentry, sends fallback via platform path. Only resumes non-expired sessions.
+- `lib/bot/bot.service.ts:1659-1669`: 23505 fallback "Something went wrong" messages changed from `this.sendText` (business-scoped, crashes with MessagingSuspendedError when no business) to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2039-2041`: Added `enterPlatformDiscovery()` call at the start of the marketplace greeting section (no business bound).
+- `lib/bot/bot.service.ts:2053,2070-2076,2095,2110,2126`: Changed all no-business sends from `this.sendText` / `this.messageSender.sendButtons` to `this.sendPlatformText` / `this.sendPlatformButtons` — "Welcome back", quick-pick buttons, registration fallback, first-time greeting, "couldn't find a business".
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering stale session deactivation + retry, Hi with stale session, brand-new phone greeting, returning customer picker.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts:360-388`: Updated test 6 — no longer expects guard to block (sends are now platform-scoped), instead verifies "couldn't find" message is delivered.
+
+### What it affects / could break
+- The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
+- PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
+- The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
+## 2026-10-14 — chore(deps): patch critical and high dependency advisories
+
+### What changed
+- `package.json`: Added scoped `overrides` to patch vulnerable transitive dependencies: `simple-git` 3.36.0→4.0.1 scoped to `@antiwork/shortest` (CRITICAL), `jsondiffpatch` 0.6.0→0.7.6 scoped to `ai` (HIGH), `source-map-js` 1.2.1→1.2.2 (HIGH), `fast-uri` 3.1.4→3.1.8 (HIGH), `js-yaml` 4.3.0→4.3.2 (HIGH), `dompurify` 3.4.12→3.4.16 (medium), `postcss` deduped to root 8.5.28 scoped to `next` (HIGH, fixes next@14 nested 8.4.31), `glob` 10.3.10→10.5.0 scoped to `@next/eslint-plugin-next` (HIGH).
+- `package-lock.json`: Updated transitive `brace-expansion` 5.0.7→5.0.12 and 2.1.2→2.1.7 (HIGH, within semver range of parents).
+- `admin/package.json`: Bumped `react-router` ^7.6.1→^7.18.2 (HIGH, 6 CVEs), `postcss` ^8.4.38→^8.5.23 (HIGH), `vite` 6.3.5→6.4.3 (HIGH). Added overrides for transitive deps: `ws` 8.21.0 (HIGH), `fast-uri` 3.1.8, `browserslist` 4.28.7, `source-map-js` 1.2.2, `undici` 7.29.1 (HIGH), `simple-git` 4.0.1 scoped to `@antiwork/shortest` (CRITICAL), `brace-expansion` 2.1.7, `baseline-browser-mapping` 2.11.0.
+- `admin/package-lock.json`: Regenerated with all bumps and overrides.
+
+### What it affects / could break
+- **simple-git 3→4** (scoped to @antiwork/shortest): Major version override, dev-only E2E tool. Compatibility verified: shortest calls `simpleGit()`, `.branch()`, `.revparse()` only (bin.js:5503-5519) — all stable in v4. If shortest E2E tests break, pin simple-git back to 3.x in overrides.
+- **react-router 7.14→7.18**: Minor bump but touches routing internals. Admin panel routing verified via vite build.
+- **jsondiffpatch 0.6→0.7** (scoped to ai): 0.x semver major, dev-only via shortest→ai. Compatibility verified: ai uses `patch()`, `clone()`, `diff()` only (rsc-shared.mjs:138,165,192,218; rsc-server.mjs:2,136) — all stable in v0.7.
+- **postcss override in next@14** (scoped to next): Forces next's nested postcss from 8.4.31 to root 8.5.28. Same major version, API-compatible. Verified via next build.
+- **nanoid override removed from admin**: postcss@8.5.30 declares ^3.3.20 which already satisfies the alert (>=3.3.12). The previous override to 3.3.12 was actively downgrading.
+- **Remaining unfixed** (need major bumps — decision cards pending): `next` 14→15 (2 CRITICAL + 16 HIGH).
+
+## 2026-10-14 — fix(bot): apply business overrides to language picker (#633)
+
+### What changed
+- `lib/bot/bot.service.ts`: Wrapped `sendLanguagePicker()` call (~L1806) and `lang.picker_confirmed` rendering (~L2388) inside `runWithTranslationOverrides` with the business's overrides. Previously these ran outside override context, so business overrides for `lang.picker_body`, `lang.picker_button`, and `lang.picker_confirmed` were silently ignored.
+
+### What it affects / could break
+- Businesses that set custom translations for picker keys will now see them applied.
+- No change for businesses without overrides (default text unchanged).
+
+## 2026-10-14 — fix(api): validate deletes before executing, CAS failure logging (#633)
+
+### What changed
+- `app/api/translations/route.ts` PUT: validation now runs BEFORE the delete/upsert branch. Deletes are validated for platform-only keys, non-editable keys, unknown keys, and disallowed languages — same checks as upserts. Any error → 400, no deletes and no upserts run (all-or-nothing).
+- `lib/bot/bot.service.ts` (~L1758): CAS failure during saved-language activation now logs `logger.warn` (with session id, no phone number) and `Sentry.captureMessage`. In-memory language is kept for the current message.
+
+### What it affects / could break
+- API consumers that relied on deletes bypassing key validation will now get 400 errors for invalid keys. This is the correct behavior.
+- No behavior change for valid delete/upsert requests.
+
+## 2026-10-14 — fix(bot): activate remembered language from customer_profiles (#633)
+
+### What changed
+- `lib/bot/bot.service.ts` (~L1735): When `customer_profiles.preferred_language` is set, verify it against the business's current allowed + certified languages before skipping the picker. If allowed, set `session_data._detected_language` and persist via CAS — greeting and flows now render in the saved language. If not allowed (business removed it or tier dropped), fall through to the picker instead of silently defaulting to English.
+
+### What it affects / could break
+- Returning customers who previously picked a language now get responses in that language immediately (no picker). Previously they got English despite having a saved preference.
+- If a business removes a language from its config, returning customers with that preference will see the picker again (correct behavior).
+
+## 2026-10-14 — feat(bot): business-editable greeting keys with platform-only deny list (#633)
+
+### Owner decision
+- Main greeting (welcome_default) is edited ONLY on the WhatsApp settings page (bot_greeting).
+- Away message (greeting.away) is edited ONLY in Settings > Features (away_message).
+- Both are platform-overridable by admins as fallbacks but NOT business-editable.
+- greeting.powered_by stays platform-only (branding).
+- Business-editable greeting keys: welcome_back, welcome_back_named, cancel_hint, chat_with_us.
+
+### What changed
+- `lib/bot/translations.ts`: Added PLATFORM_ONLY_KEYS deny list (powered_by, welcome_default, away). Exported createOverridesLoader factory keyed by business id (replaces single-promise memo). loadBusinessOverrides filters out non-editable keys.
+- `lib/bot/bot.service.ts`: All greeting send paths (new session, away, returning customer rebook/no-rebook, tier not allowed) render through getFlowCopy/fillFlowCopy inside runWithTranslationOverrides. Uses effective customer language (session._detected_language), not hardcoded 'en'. Override loader keyed by business id.
+- `lib/bot/customer-intelligence.ts`: buildReturnGreeting accepts optional welcomeLine parameter. New buildDefaultWelcomeLine function for exact-text fallback.
+- `lib/bot/flows/flow-localization.ts`: fillFlowCopy uses function replacer `() => String(v)` so names with $& render literally. Added greeting.cancel_hint to KEYS_WITH_COMMANDS.
+- `app/api/translations/route.ts`: Explicit PLATFORM_ONLY_KEYS check with "platform-only" error message.
+- `app/dashboard/translations/page.tsx`: Added "Greeting" category with note about where to edit main greeting and away message.
+
+### What it affects / could break
+- Businesses can now override welcome_back, welcome_back_named, cancel_hint, chat_with_us via dashboard translations page.
+- cancel_hint overrides must preserve *cancel* command token (API enforced).
+- Bot greeting text is unchanged with no overrides (byte-identical to main).
+- No DB schema changes.
+
+## 2026-10-14 — fix(admin): handle subscription read errors in tier change route
+
+### What changed
+- `app/api/admin/businesses/[id]/tier/route.ts:18-19`: `getSubscriptionInfo` now checks the Supabase query error. On error, GET and POST return 500 `{"error":"Could not check subscription status"}`. POST makes no write and no audit entry when the subscription read fails.
+- `admin/src/pages/Businesses.tsx:263-268`: If the GET pre-check fails (network error, non-OK status, or bad JSON), shows alert "Could not check whether this business has a paid plan. Tier not changed." and aborts without sending POST.
+- `admin/src/pages/Subscriptions.tsx:317-322`: Same pre-check failure handling.
+- `lib/__tests__/admin-tier-change.test.ts`: Added tests 14 (GET 500 on subscription read error) and 15 (POST 500 on subscription read error — no write, no audit). Total: 15 tests, 0 skips.
+- `admin/src/__tests__/tier-change-precheck.test.tsx`: 6 tests — renders real Businesses and Subscriptions pages with @testing-library/react; drives tier-change UI (select tier, click Save); asserts GET non-OK and network error abort with alert (no POST) for both pages; paying business confirm(false) blocks POST, confirm(true) proceeds with exactly one POST.
+
+### What it affects / could break
+- If the subscriptions table is unreachable, admin tier changes are blocked until it recovers. This is intentional — the route needs subscription status to populate the response and audit log.
+
+## 2026-10-14 — fix(admin): move tier change server-side (business-only override)
+
+### What changed
+- `app/api/admin/businesses/[id]/tier/route.ts`: New POST+GET route for admin tier changes. POST changes only `businesses.subscription_tier` (never writes subscriptions). GET returns `{ tier, paidPlan, revertsOn }` so the UI can warn before saving. For paying businesses (active subscription with plan growth/business), the response includes `paidPlan` and `revertsOn` (current_period_end). At next renewal, `activate_paid_subscription` (M418) resets the tier to the subscription's plan. Auth: `requirePlatformAdmin({ requiredRole: 'admin' })`.
+- `admin/src/pages/Businesses.tsx`: `handleTierChange()` calls GET before POST; if the business has a paid plan, shows a confirm dialog explaining the override is temporary and billing is unchanged.
+- `admin/src/pages/Subscriptions.tsx`: Same confirm dialog. Fixed `SubscriptionRecord` interface: `tier` (nonexistent column) → use `businesses.subscription_tier` joined as `business_tier`; `plan_name` (nonexistent) → `plan` (actual DB column, M001:272); `interval` → `billing_interval` (M172:4); `auto_renew`/`gateway_subscription_id` remain in interface but are not tier-related. Detail panel shows "Paid Plan" (subscriptions.plan) and "Current Tier" (businesses.subscription_tier). Table row shows override badge when business_tier differs from plan.
+- `lib/__tests__/admin-tier-change.test.ts`: 13 tests — POST: auth (2), validation (2), 404, business-only write (never subscriptions), paying biz response, non-paying biz response, no-op; GET: auth, validation, 404, response shape. 0 skips.
+
+### What it affects / could break
+- Previous head (96279b15) had a P0 bug: the route wrote `subscriptions.tier` which does not exist — PostgREST rejected it and every tier change returned 500. Unit tests passed because Supabase was mocked. This is now fixed.
+- Admin tier change is a business-only override. Non-paying businesses: permanent. Paying businesses: temporary until next renewal.
+- No changes to billing, payments, renewal logic, cron, or capabilities.
+
+## 2026-10-14 — fix(admin): replace JSON input with country-amount form for per-country settings
+
+### What changed
+- `shared/country-amounts.ts` (new): Shared validator for `minimum_bank_transfer` (NG, GH) and `minimum_payout` (NG, US, GB, CA, GH). All allowed countries are required — omitting one is a validation error. Validates: plain object, all allowed country codes present, no unknown countries, finite non-negative integers. Also exports country names, currency symbols, and help text.
+- `admin/src/pages/PlatformSettings.tsx`: Added `CountryAmountEditor` component showing one row per country with currency symbol (₦, GH₵, $, £, CA$) and number input. Replaces raw JSON text input for both the "Configure" (unconfigured) path and the existing editor path. Inline validation: blocks decimal, comma, letter-e keystrokes; shows "Required" for empty boxes; disables Save when invalid. Updated `KEY_DESCRIPTIONS` to plain-language help text, removed JSON placeholder/wording.
+- `app/api/admin/platform-settings/commercial/route.ts`: Server-side validation for `minimum_bank_transfer` and `minimum_payout` — rejects with 400 if value is not a plain object with all required country keys and non-negative integer values.
+- `admin/src/__tests__/platform-settings-discoverability.test.tsx`: Updated tests 3 and 5 for country-amount form (no JSON textbox). Added tests 6-8: existing minimum_payout renders number inputs; editing produces numeric values not strings; Save disabled when a country box is empty.
+- `lib/platformSettings.ts`: Fixed incorrect docstring on `minimum_payout` — was "minor units", corrected to "whole (major) currency units".
+- `lib/__tests__/country-amounts-validation.test.ts` (new): 29 unit tests for the shared validator (valid, missing countries, null, string "1000", -1, 1.5, NaN, Infinity, unknown country, nested objects, empty object, multiple errors).
+- `lib/__tests__/commercial-route-country-amounts.test.ts` (new): 15 route-level tests proving bad values get 400 (including missing countries) and valid values reach the RPC as numbers.
+
+### Units finding
+- `minimum_bank_transfer`: **whole (major) currency units** — naira, cedis. Evidence: `bank-transfer.ts:48` compares `amount >= minBankTransfer` where `amount` is in major units (line 93: `Math.round(params.amount * 100)` converts to minor for DB storage). `platformSettings.ts:67` docstring confirms "major currency units".
+- `minimum_payout`: **whole (major) currency units** — naira, dollars, pounds, cedis. Evidence: `auto-payout/route.ts:165-181` compares `netAmount < minPayout` where `netAmount` = sum of `platform_fees.transaction_amount` which = `payment.amount` (major units, proven by `paystack.ts:218`: `payment.amount * 100` = kobo). The docstring at `platformSettings.ts:44` says "minor units" but this is incorrect per the actual comparison chain.
+
+### What it affects / could break
+- Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
+- If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
+
+## 2026-10-13 — fix(security): move bank account writes server-side (M448)
+
+### What changed
+- `supabase/migrations/448_business_bank_accounts_server_only.sql`: Revokes INSERT/UPDATE/DELETE from `anon` and `authenticated` on `business_bank_accounts`. Revokes SELECT from `anon`. Authenticated keeps SELECT — required by the "Admin reads bank accounts" RLS policy (M439) used by the admin panel's browser client (`adminDb`). Drops the "Owners manage bank accounts" and "Resellers manage sub-account bank accounts" FOR ALL RLS policies. Adds a self-check DO block that fails if any write grant remains.
+- `lib/__tests__/bank-accounts-server-only.pg.test.ts`: Real-PG test that verifies authenticated CAN write before M448 (negative control), applies M448 from disk, then confirms authenticated gets 42501 on INSERT/UPDATE/DELETE, service_role still writes, and authenticated retains SELECT (admin panel compatibility).
+- `lib/__tests__/bank-accounts-route.test.ts`: Route handler test confirming non-owner gets 403 and owner write goes through the service client.
+
+### What it affects / could break
+- No behavior change for users — the dashboard already uses the API route (`/api/dashboard/bank-account`) which uses the service client for all reads and writes. The bot reads via service client. The admin panel reads via authenticated browser client + RLS.
+- If any future code tries to write `business_bank_accounts` through a browser-side Supabase client, it will fail with permission denied. Writes must go through API routes using the service client. Reads are only allowed for admin roles via the "Admin reads bank accounts" RLS policy.
+
+## 2026-10-13 — #620 fix(admin): make held payouts reviewable; date-only rendering
+
+### What changed
+- `admin/src/pages/Payouts.tsx`: Added "Needs Review" tab showing `status='held'` payouts with count badge. Each held payout displays its flags (type, message, severity). Approve/Reject actions available on review tab with same step-up flow as pending tab.
+- `admin/src/pages/Payouts.tsx`: `formatDate()` rewritten to parse YYYY-MM-DD strings directly without `new Date()` constructor, preventing timezone-induced day shifts. "2026-10-05" renders as "5 Oct 2026" in every browser timezone.
+- `admin/src/pages/Payouts.tsx`: Added error banner with retry button when `/api/admin/payouts` returns non-OK, instead of silently showing "No payouts found".
+- `app/api/admin/payouts/[id]/approve/route.ts`: When `payout_account_id` is null, resolves the business's single active+verified payout account read-only before step-up. All existing account checks (ownership, active, verified, gateway) run against the candidate. After step-up succeeds, writes the link with conditional update (`WHERE payout_account_id IS NULL`) and `.select('id')` requiring exactly 1 row. If 0 rows, re-reads: proceeds if same candidate was linked concurrently, returns 409 if a different account was linked. No DB writes occur when step-up fails.
+
+### What it affects / could break
+- Admin payouts page only — pending tab unchanged.
+- Approve route behavior for payouts that already have an account is unchanged.
+- Date display change affects all date-only fields on the payouts page (period_start, period_end).
+
+## 2026-10-11 — docs/claude-safety-rules: Standing safety rules, product decision protocol, .gitignore
+
+### What changed
+- `CLAUDE.md`: Replaced "Always commit and push" convention with scoped authorization rule: commit/push to feature branches within approved tasks, explicit Owner authorization required per action, stop on permission errors regardless of prior authorization.
+- `CLAUDE.md`: Added "Standing safety rules" section — main protection, permission-error stop behavior, worktree restrictions, public-repo security advisory rule, pre-push Codex review gate (sanitized branch-specific output file with `tr '/' '-'`, non-empty file check), invalid-finding disclosure rule, Codex-unavailable fallback to ChatGPT reviewer, two-reviewer gate for high-risk changes, per-test CI evidence rule (test file + job + step + counts + SHA), no-substitution rule, security-test fail-not-skip policy.
+- `CLAUDE.md`: Added "Product decisions" section — decision card protocol for business rules, edge cases, user-facing behavior, money handling, security tradeoffs, and deviations from Owner/CTO/reviewer instructions.
+- `AGENTS.md`: Added PRODUCT DECISION NEEDED label guidance, deviation-flagging rule, finding disclosure rule, and per-test CI evidence rule under review sections.
+- `.gitignore`: Added `.codex/`, `.mcp.json`, `.playwright-mcp/`.
+
+### What it affects / could break
+- Documentation and .gitignore only. No runtime, migration, or code behavior changes.
+
+## 2026-10-10 — #609 SEC-005: Admin native MFA enforcement (pre-merge)
+
+### What changed
+- `lib/admin-auth.ts`: `requirePlatformAdmin` now requires `aal2` from verified JWT claims. Bearer-to-cookie fallback is prohibited after an invalid explicit Bearer token. Denied auth events logged to `admin_audit_logs`.
+- `lib/admin-step-up.ts` (new): Operation-bound, single-use, concurrency-safe step-up authorization system. Uses Supabase GoTrue API for server-side MFA challenge/verify. Atomic consumption via `UPDATE ... WHERE consumed_at IS NULL`.
+- `app/api/admin/step-up/prepare/route.ts` (new): Prepare step-up with MFA challenge.
+- `app/api/admin/step-up/verify/route.ts` (new): Verify step-up with TOTP code.
+- `app/api/admin/otp/route.ts` **DELETED**: Custom HMAC-based OTP system removed.
+- `admin/src/pages/Login.tsx`: Replaced custom email/WhatsApp OTP with Supabase native TOTP MFA. Three steps: credentials → enrollment (if needed) → TOTP verify.
+- `admin/src/lib/stagingAuth.ts`: `shouldSkipAdminOtp()` now always returns false. Staging MFA skip removed per SEC-005.
+- `supabase/migrations/439_admin_mfa_enforcement.sql`: Creates `admin_step_up_authorizations` table, updates `is_admin()`/`is_support()` to require aal2, replaces 28 inline `profiles.role` RLS policies with canonical `has_admin_role()` checks.
+- `RELEASE_GATE_V2.md`: Added SEC-005 invariant with expected-deny/expected-allow evidence requirements.
+- Step-up added to: payouts/approve, payouts/generate, provider-config mutations, team grant/revoke, impersonate, refund.
+
+### What could break
+- Admin users without enrolled TOTP factor cannot sign in (by design — enrollment screen shown).
+- Any admin frontend page that makes direct Supabase queries will now require aal2 at the RLS level.
+- Staging admin accounts now also require TOTP (staging MFA skip removed).
+- Routes expecting body without `stepUpId` for sensitive operations will get 403.
+
+### Dependencies
+- Supabase project must have TOTP MFA enabled (`enroll_enabled = true`, `verify_enabled = true`).
+- Migration 436 must be applied before enforcement takes effect at the RLS layer.
+- Admin user(s) must enroll TOTP before enforcement deployment.
+
+## 2026-10-09 — #598 Promo product/service and loyalty redemption fail-closed guards (pre-staging)
+
+- Added a shared eligibility check for WhatsApp order/booking entered promo codes: enforce owner business, active status, valid-from/until dates, allowed ordering/scheduling flows, exact product/service restrictions, capacity, minimum subtotal and bounded fixed/percentage discount. A restricted code is refused for a mixed cart rather than reducing unrelated merchandise.
+- Promo-code dashboard now offers all items, specific products or specific services and persists intended flow type on create/edit; owner API supports updating flow type and start date.
+- Bot loyalty rejects null/false/error from existing atomic points-deduction RPC before issuing any reward code; route rejects noninteger points and RPC transport errors. Replaced prior source-string redemption tests with live FlowStep behavioral cases.
+- **M434 proposed migration (not deployed):** restricted `redeem_loyalty_reward_once` locks the account, verifies business/customer ownership, atomically deducts points and saves the actual reward code/receipt with replay keys and uniqueness. Bot and owner API now consume the returned durable receipt; API requires a caller-stable UUID `Idempotency-Key`. Tests cover denial, replay, returned code and displayed balance. Existing legacy RPC remains for unconverted callers.
+- **Status after #603 merge:** Ordering checkout DB promo and volume amount authority is implemented in M435 on main. Scheduling and booking checkout pricing authority, reward fulfillment, and staged end-to-end certification remain open before #598 can close.
+- One new **unapplied** migration is included; no provider calls or staging/production deployment. No payment, refund or payout math altered.
+
+## 2026-10-09 — #602 M435: Ordering price authority at atomic DB boundary
+
+### What changed
+- `supabase/migrations/435_ordering_price_authority.sql`: Extends `create_order_atomic` to derive promo and volume discounts from locked DB values instead of trusting caller-supplied amounts.
+  - Promo authority: re-reads discount_type/value, business_id, is_active, dates, flow types, product scope, min amount from the locked promo_codes row. Computes server discount. Refuses discount without eligible promo.
+  - Volume discount authority: computes per-item volume discounts using locked product/variant unit prices (not caller-supplied p_unit_price). Matches calculate_volume_discount logic.
+  - Stores server-computed discount_amount and volume_discount_amount in orders table.
+  - Refuses p_discount_amount > 0 when p_promo_code_id IS NULL.
+  - Compares server-computed values against caller quote — rejects mismatches.
+  - Positive quantity enforcement: items and addons must have quantity >= 1 (prevents stock inflation via negative quantities).
+  - Idempotent replay validates monetary contract: refuses changed promo/discount/amount on same-cart retry.
+  - Per-customer promo reuse check via existing bookings/orders.
+  - Volume discount rule locking (FOR UPDATE) prevents concurrent tier edits.
+- `lib/__tests__/ordering-price-authority-602.test.ts`: Disposable PostgreSQL RPC tests covering fabricated discount, cross-tenant/inactive/expired/future/wrong-flow/wrong-product promos, valid percentage/fixed promos, fixed cap at subtotal, inflated discount rejection, no side effects on rejection, concurrent capacity exhaustion, volume discount rules, variant pricing, negative quantity rejection, idempotent replay, and no-promo baseline.
+
+### What it affects / could break
+- Ordering checkout: existing callers pass correct discount values → no behavior change. If any caller passes fabricated/stale discount amounts, they will now be rejected with descriptive exceptions.
+- Negative quantities now rejected with exception (previously accepted silently).
+- Non-validated path (p_validate_products=false) is UNCHANGED — continues to trust caller values (documented as known debt).
+- Same 24-parameter function signature preserved. ACL unchanged.
+
+## 2026-10-09 — #597 PR-A1: Transfer webhook financial integrity repair
+
+### What changed
+- `app/api/webhooks/paystack-transfer/route.ts`: Complete rewrite to fix P0 financial defects
+- `app/api/webhooks/stripe-transfer/route.ts`: Identical structural fixes for Stripe transfer events
+- `lib/__tests__/transfer-webhook-integrity-597.test.ts`: Behavioral + executable tests
+
+### What it affects / could break
+- Transfer webhook processing now correctly transitions payout status
+- Catch blocks return 500 instead of 200 — provider will retry on transient errors
+- `transfer.reversed` events now transition `paid` payouts to `failed`
+
+## 2026-10-09 — #591 OptIn 120-character fix and #594 main reconciliation
+
+### What changed
+- `lib/whatsapp-forms/native-flow.ts`: Enforce conservative 120-character OptIn label ceiling instead of 256; overlong configured consent now returns native preview validation 422. Meta provider asset validation remains unverified.
+- `lib/__tests__/waaiio-native-forms-591.test.ts`: Cover exactly 120 accepted and 121 rejected; preserve separate 256-character *description* boundary.
+- `lib/__tests__/waaiio-native-form-preview-route-591.test.ts`: Verify real owner-scoped GET returns 200 for OptIn 120 and 422 for 121 with no asset publication.
+- Integrate #594 merged main and preserve both #592/#591 changelog histories without changing #594 code.
+
+### What it affects / could break
+- Native preview of consent labels 121–256 characters now rejects with 422 rather than emitting invalid draft OptIn. Existing web-form sending/submission and all provider paths remain unchanged.
+- No DB migration, Meta asset creation or publication, provider call, native send or native response capture. Offline structural checks are not Meta certification.
+
+## 2026-10-09 — #592 CTO review corrections: executable tests, auth predicates, Meta eligibility
+
+### What changed
+- `lib/__tests__/business-app-coexistence-592.test.ts`: Replaced source-text string-matching tests with 28 executable route tests. Invokes real POST/GET handlers with mocked Supabase + Meta provider. Proves: zero provider calls (mockFetch not called) on coexist denial, zero candidate INSERTs on denied paths, zero service client calls on denied paths. Transfer non-regression tests prove standard flow proceeds with candidate insert and provider calls. Gap 5: asserts canConnect never returned by config evaluator.
+- `lib/__tests__/business-app-connect-readiness-route-592.test.ts`: Mock eq() now records column/value pairs. 11 tests assert exact eq('owner_id', userId) and eq('id', businessId) predicates. Cross-tenant denial (403), DB error (503), canConnect always false (Gap 5).
+- `lib/whatsapp/business-app-coexistence.ts`: Added comprehensive comment documenting that evaluateBusinessAppCoexistenceConfig checks local config readiness ONLY. Lists all 6 provider-level gates required for future enablement (partner entitlement, phone check, country/market, signed FINISH, signup nonces).
+- `app/api/whatsapp/business-app-connect/readiness/route.ts`: Added comment explaining canConnect: false is hardcoded and references the provider-level gates.
+
+### Previous changelog entry for #592 (original implementation)
+
+## 2026-10-09 — #592 Business App Connect: coexistence safety and readiness
+
+### What changed
+- `lib/whatsapp/business-app-coexistence.ts`: Fail-closed config validator — requires explicit env-var enable, dedicated Meta-assigned config ID distinct from standard transfer config, and never infers eligibility from country alone.
+- `app/api/whatsapp/business-app-connect/readiness/route.ts`: Tenant-bound read-only readiness API (auth + UUID validation + business ownership before any response). Always returns `canConnect: false` in first slice; sets `no-store` cache.
+- `app/api/auth/facebook/callback/route.ts`: Fence blocks `connection_method=coexist|coexistence` BEFORE token exchange, candidate insert, or `registerPhoneNumber()`. Also rejects unknown connection_method values.
+- `app/get-started/OnboardingWizard.tsx`: Guards in `launchWhatsAppSignup()` and `handleFbConnectAndRegister()` prevent coexist from entering standard Embedded Signup. Updated coexist option description to disclose Meta-controlled pilot status.
+- `app/dashboard/whatsapp/connect/page.tsx`: Honest disabled Business App Connect pilot card; fetches readiness API; never promises coexistence availability.
+- `lib/__tests__/business-app-coexistence-592.test.ts`: 28 executable tests — config isolation, callback fence with mocked route execution, transfer non-regression, readiness API eq() predicates, canConnect always false.
+- `lib/__tests__/business-app-connect-readiness-route-592.test.ts`: 11 tests — tenant isolation with eq() predicate recording, cross-tenant denial, DB error handling, canConnect always false.
+
+### What it affects / could break
+- Previously advertised but unverified coexistence requests now fail closed (409) rather than proceeding as standard transfer. Dedicated number transfer remains unchanged.
+- Unknown `connection_method` values also rejected (400). Standard `transfer` and undefined/omitted values continue working.
+- Real coexistence onboarding remains gated on Meta partner entitlement, eligible regions/phone, signed FINISH session, and device/provider verification; no provider mutation, migration, or deployment in this slice.
+
+## 2026-10-09 — #591 Final CTO corrections: SELECT assertion, meta claim, sync render guard, consent validation
+
+### What changed
+- **`lib/__tests__/waaiio-native-form-preview-route-591.test.ts`**: (A) Mock `select()` now records requested columns string. New test asserts that form SELECT projection includes `settings` — if route omits `settings` from select, the test fails. (B) Added route-level tests for non-string and overlong consent_label returning 422.
+- **`lib/__tests__/waaiio-native-forms-591.test.ts`**: (B) Renamed "Meta Flow JSON conformance fixture" describe block to "offline structural checks against documented Meta Flow constraints" — the tests use local constants, not a vendor-provided fixture. (D) Added 6 new tests: non-string consent_label (number, object, array, boolean), overlong consent_label (>256 chars), and exactly-256-char acceptance.
+- **`app/dashboard/forms/page.tsx`**: (C) JSX guard now checks `nativePreview.businessId === business.id` synchronously on render, not just via useEffect cleanup. Prevents old-business preview from briefly flashing during context switch.
+- **`lib/whatsapp-forms/native-flow.ts`**: (D) consent_label now validated: non-string throws NativeFlowValidationError (422), overlong (>256 chars) throws, control characters throw. Empty-after-trim is silently skipped (no consent). Changed `WaaiioFormDefinition.settings.consent_label` type from `string` to `unknown` to reflect schema-less jsonb origin.
+- **`CHANGELOG.md`**: Updated prior entry to replace "canonical Meta Flow JSON conformance fixture" with "offline structural checks" language.
+
+### What it affects / could break
+- Forms with non-string `consent_label` in jsonb settings (number, object, array) will now return 422 instead of 500. This is intentional fail-closed behavior.
+- Forms with `consent_label` longer than 256 characters will now be rejected.
+- No behavior change for valid consent labels or forms without consent.
+
+## 2026-10-09 — #591 CTO review corrections: consent query, validation, auth predicates, conformance, stale state
+
+### What changed
+- **`app/api/forms/native-flow/preview/route.ts`**: Added `settings` to the SELECT query so the compiler can access `consent_label` for OptIn component generation. Previously the route omitted `settings`, making consent impossible in real preview responses.
+- **`lib/whatsapp-forms/native-flow.ts`**: (a) Strict boolean validation for `required` — rejects non-boolean truthy values like `"yes"`, `1`, `"true"` instead of silently treating them as `false`. (b) Options are trimmed before uniqueness check — `['Sales', ' Sales']` now correctly detected as duplicates.
+- **`lib/__tests__/waaiio-native-form-preview-route-591.test.ts`**: Mock `.eq()` now records column/value pairs. Tests assert exact predicates: business query filters by `owner_id = user.id`, form query filters by `business_id = businessId`. Added cross-tenant denial tests and consent presence/absence tests against the real route handler.
+- **`lib/__tests__/waaiio-native-forms-591.test.ts`**: Added regression tests for non-boolean `required` rejection, whitespace-duplicate option rejection, and offline structural checks against documented Meta Flow constraints (version pin, valid component types, input-type values, data-source structure, label length limits per component, Footer action structure, terminal/success flags). Note: these are offline structural checks only; Meta Flow asset validation not verified — requires separate provider gate.
+- **`app/dashboard/forms/page.tsx`**: Preview state now includes `businessId`. Added generation counter (`previewGenerationRef`) to discard late async responses after business context switch. `useEffect` clears stale preview on `business.id` change.
+
+### What it affects / could break
+- Forms with `required: "yes"` or `required: 1` will now be rejected by the compiler instead of silently treating them as not required. This is intentional fail-closed behavior.
+- Options with leading/trailing whitespace that match other options after trimming will now be rejected. Previously they passed uniqueness check but compiled to visually duplicate titles.
+
+## 2026-10-09 — #590 CTO correction: mounted Contact Winner UI + synchronous send lock
+
+### What changed
+- Extracted the **actual** Contact Winner React hook and rendered button to `contact-winner-controls.tsx`; the promo detail page now consumes both.
+- The hook fail-closes readiness by business/campaign identity, cancels stale requests and late send results, and uses a synchronous in-flight ref before POST (while preserving server claim-before-send authority).
+- Added mounted React/jsdom integration tests for ready/pending/failed template, cross-business request ordering, 401/503, rapid multi-winner clicks, exact POST, spinner, error/result UI, retry and stale send outcome. All provider fetches are mocked.
+- Pure helper tests are preserved. No database migration, API backend, channel routing, provider configuration or live send behavior changed.
+
+### Verification
+- Await exact-head GitHub Actions CI and independent CTO review; no deploy/merge authorized.
+
+## 2026-10-09 — #591 Waaiio Forms: scope reduction to safe compiler/preview only
+
+### What changed
+- **Removed** (`lib/whatsapp-forms/submission-handler.ts`): Entire submission handler deleted. CTO review determined sending/submission handling needs stronger security design (per-recipient tokens, signed one-time tokens, atomic duplicate protection, auditable consent recording, provider failure recovery).
+- **Removed** (`app/api/forms/native-flow/send/route.ts`): Entire send API route deleted.
+- **Removed** (`lib/__tests__/waaiio-native-form-submission-591.test.ts`): Submission handler tests deleted.
+- **Reverted** (`app/api/webhook/meta-cloud/route.ts`): Restored to main — removed nfm_reply interception block.
+- **Trimmed** (`lib/whatsapp-forms/native-flow.ts`): Removed `validateFlowResponse()`, `resolveOptionLabels()`, and `FlowResponseValidation` interface. Compiler and its types remain.
+- **Trimmed** (`lib/__tests__/waaiio-native-forms-591.test.ts`): Removed response validation and option label resolution test blocks. Compiler tests remain.
+
+### What remains (safe compiler/preview)
+- `lib/whatsapp-forms/native-flow.ts` — pure Flow JSON compiler (no side effects, no provider calls)
+- `app/api/forms/native-flow/preview/route.ts` — owner-scoped read-only preview API
+- `app/dashboard/forms/page.tsx` — dashboard preview integration
+- Tests: compiler tests + preview route tests
+
+### What it affects / could break
+- Nothing. This is a scope reduction removing code that was not yet in production. The remaining compiler/preview is read-only and has no side effects.
+- Sending and submission handling will be designed and implemented in a separate follow-up PR with proper security architecture.
+
+## 2026-10-09 — #591 Waaiio Forms: native Flow JSON draft preview
+
+### What changed
+- Compile existing business forms to a bounded, single-screen WhatsApp Flow v7.3 JSON draft; unsupported and ambiguous field definitions fail closed.
+- Added owner-scoped read-only `/api/forms/native-flow/preview` route and dashboard preview/copy action; executable compiler tests.
+### What it affects / could break
+- Forms dashboard list adds a draft-only preview; existing web-link submission and send paths remain unchanged.
+- This slice does **not** create/publish Meta Flow assets, send native Flows, accept native replies, or confirm bookings. No migration, provider call or live messaging is enabled.
+
+## 2026-10-09 — #211/#248 CTO review corrections: extract logic, fix stale state, multi-winner guard
+
+### What changed
+- **`app/dashboard/promotions/[id]/contact-winner-logic.ts`** (new): Extracted `checkWinnerTemplateReadiness`, `getButtonState`, and `handleContactWinner` into a shared module. Both page.tsx and tests import the same production logic — CTO review finding: tests were reimplementing copies that could drift from production code.
+- **`app/dashboard/promotions/[id]/page.tsx`**: (a) Imports shared logic from `contact-winner-logic.ts`. (b) Fixed fail-open bug: `useEffect` now resets `winnerTemplateReady` to `false` immediately on `business.id` change — previously a fast business switch could leave stale `true` from the old business. (c) Fixed multi-winner button: `disabled={!!contactingWinner}` disables ALL contact buttons during any in-flight send, not just the specific row. Spinner still shows on the active row.
+- **`app/dashboard/promotions/__tests__/contact-winner.test.ts`**: Rewritten to import from `contact-winner-logic.ts` instead of reimplemented copies. 43 tests (was 31): added business transition tests (sequential calls, 401 on switch, fetch failure), multi-winner rapid click serialization (second click rejected while first in-flight, button state reflects in-flight guard for all winners, next click proceeds after clear), unexpected response shapes (null templates, empty object), and 503 template service down.
+
+### What it affects / could break
+- `getButtonState` now accepts optional `contactingWinner` param — returns `disabled` when any send is in-flight, regardless of which winner. UI buttons will ALL disable during a send. Server claim-before-send remains final authority.
+- `winnerTemplateReady` flashes to `false` on every business.id change before the new template-status fetch completes. This is intentional fail-closed behavior per CTO review.
+
+## 2026-10-08 — #211/#248 Wire Contact Winner button to template readiness + API
+
+### What changed
+- **`app/dashboard/promotions/[id]/page.tsx`**: Replaced static `disabled` Contact button with dynamic state machine. Added `winnerTemplateReady`, `contactingWinner`, and `contactResult` state variables. Added `useEffect` to fetch winner template status from `GET /api/promotions/template-status` on page load, checking the **nested** `templates.promo_winner_status_v1.status` field (NOT top-level status, which is for pickup v1). Contact button is now: hidden when `!can_contact_winner`, disabled with "Template pending" when template not ready, enabled with click handler when ready, and shows a loading spinner during in-flight. Click handler POSTs `{businessId, campaignId, redemptionId}` to `/api/promotions/winners/contact` with full error handling (401/403, 404, 429 cooldown, 503 template unavailable, 5xx, network errors). Double-click guard prevents concurrent sends.
+- **`app/dashboard/promotions/__tests__/contact-winner.test.ts`** (new): 31 behavioral unit tests covering button states, template readiness fetch (nested vs top-level status distinction), exact POST payload, all error codes, double-click guard, click-to-result transitions, and phone number leak prevention.
+
+### What it affects / could break
+- Only the promotions detail page Contact button behavior changes. No API routes, migrations, or other files modified. Button remains disabled (fail-closed) if template-status endpoint is unreachable or returns unexpected shape. Server-side authority for rate limiting, role checks, and template verification remains unchanged.
+
+## 2026-10-08 — #584 Discovery search fail-closed correction (PR #589)
+
+### What changed
+- `lib/marketplace/search.ts`: Reject invalid/ambiguous location and address constraints, malformed admin-hidden UUID exclusions and unusable free-text before querying. Constrain geographic filters to safe PostgREST tokens; neighborhood results require parent-city AND address narrowing, and city/country requests remain independently scoped.
+- `lib/marketplace/location-resolver.ts`: Compound locations now require compatibility across city, neighborhood and country; contradictory or unknown comma-separated tokens return clarification tier instead of silently choosing the first match.
+- `lib/marketplace/__tests__/discovery-search.test.ts`, `discovery-search-query.test.ts`: Cover conflicting locations and execute the real search function with simulated Supabase query application, including hidden exclusion before result limits, business opt-out, malformed input and DB failure.
+
+### What it affects / could break
+- Searches that previously ignored invalid locations, invalid admin hidden-ID lists or contradictory places now return a typed failure. Callers must explicitly handle `ok:false` / `locationFailed:true` and request clarification; do not fall back to an unfiltered directory listing. Phase B remains draft-only with no bot routing or production deployment.
+
+## 2026-10-08 — P0 SECURITY: business_members authorization containment (M433)
+
+### What changed
+- **Migration 433** (`supabase/migrations/433_p0_business_members_acl_containment.sql`): Revokes INSERT/UPDATE/DELETE on `business_members` from `authenticated` and `anon` roles. Drops overly permissive `business_members_manage` FOR ALL policy (created in M099). Replaces with `business_members_select` SELECT-only policy for authenticated users. Includes 14 fail-closed verification assertions. Service role retains full access via existing `business_members_service` policy.
+- **Regression tests** (`lib/__tests__/p0-business-members-acl.test.ts`): Static migration structure (8), vulnerability characterization (3), code-path authority audit (2), downstream policy dependency (3), migration ordering/compatibility (2), plus executable PostgreSQL authorization tests (20 — self-insertion denied, privilege escalation denied, self-delete denied, downstream chat cascade denied, legitimate service_role operations succeed, catalog verification).
+- **CI job** (`.github/workflows/ci.yml` `security-acl-tests`): Dedicated job provisioning a disposable `postgres:15-alpine` service container with Supabase-compatible roles. Runs all tests with zero skips.
+
+### Root cause
+Migration 099 created `business_members_manage` with `FOR ALL USING (... OR user_id = auth.uid())`. The USING clause doubles as WITH CHECK on INSERT, meaning any authenticated user could insert themselves as an active member of any business. Production default privileges (`authenticated=arwdDxtm`) granted full DML.
+
+### Downstream impact (if exploited)
+Cascades via `team_members_view_conversations` (chat_conversations SELECT), `team_members_view_messages` (chat_messages SELECT), `team_members_send_messages` (chat_messages INSERT outbound), plus 5 promo table SELECT policies.
+
+### Historical impact assessment — INCONCLUSIVE
+A read-only count of `business_members` returned 0 rows at inspection time. This **does not prove no prior exploitation**: the reported attack vector includes self-deletion of inserted membership rows after access, which would leave no rows. A privacy/security incident investigation using authorized metadata, Postgres audit logs, Supabase auth logs, and backup timelines is recommended before concluding no exploitation occurred. Do not post customer data to GitHub.
+
+### What could break
+Nothing. All legitimate writes to `business_members` go through `createServiceClient()` in `/api/team` and `/api/team/accept`. No browser or SSR authenticated client writes to this table.
+
+## 2026-10-08 — Editable shipping/tracking with audit trail (#247)
+
+### What changed
+- **Dashboard UI** (`app/dashboard/orders/page.tsx`): Removed write-once tracking ternary. After `shipped_at` is set, tracking info now shows an "Edit Tracking" button that opens the edit form pre-filled with current values. Added "Notify customer via WhatsApp" checkbox (default: true on first save, false on subsequent edits). Switched from legacy `/api/orders/tracking` POST to the atomic `/api/orders/[id]/tracking` PATCH endpoint. Added `maxLength={200}` on carrier and tracking number inputs. Cancel button to exit edit mode. Error handling surfaces API and network failures with retry guidance.
+- **API validation** (`app/api/orders/[id]/tracking/route.ts`): Added max-length validation (200 chars) for `carrier` and `trackingNumber` fields, returns 400 with descriptive error.
+- **Tests**: 6 API tests (tracking-edit.test.ts) + 9 UI error handling tests (tracking-ui-error-handling.test.ts) covering API error surfacing, network errors, form value preservation, retry, and stale error cleanup.
+
+### What could break
+- Dashboard now calls PATCH `/api/orders/[id]/tracking` instead of POST `/api/orders/tracking`. The old POST endpoint still exists and is unchanged. If any other code calls the old endpoint, it remains functional.
+- The `notifyCustomer` checkbox defaults to `false` when editing existing tracking (previously always notified). This is intentional to prevent accidental re-notification.
+
+## 2026-10-08 — Messaging top-up completion — dashboard UX, admin visibility, tests, ops docs (#491)
+
+### What changed
+- **Billing dashboard:** Added top-up purchase history section showing last 20 purchases with status badges (completed/pending/failed/refunded/disputed/review). Fetches from existing `/api/messaging/topup-history` endpoint.
+- **Low/zero-balance CTA:** Red "Messaging credit exhausted" banner when available balance is 0 with prior activity. Amber "Low messaging credit" banner when balance drops below 10% of total allocation. Both link to Top Up modal.
+- **Admin Messaging Credits page:** New `/messaging-credits` admin page with Balances view (per-business credit inspection with type, remaining/total, expiry, suspension status) and Purchases view (all top-up purchases with status, gateway, refund amount, consumed shortfall). Admin-role restricted.
+- **28 new tests:** Financial gate absent-setting default behavior, purchase history API contract, low/zero-balance CTA logic, FIFO purchased-credit consumption order, grant result contract, country/gateway routing, redirect state handling.
+- **Operational runbook:** `docs/ops/messaging-topup-runbook.md` — reconciliation procedures for pending purchases, review/shortfall cases, amount mismatches, monitoring checklist, financial gate documentation.
+- **Package pricing proposal:** `docs/ops/messaging-topup-packages-proposal.md` — Small/Medium/Large packages for USD/GBP/CAD/NGN/GHS in integer minor units. PENDING CTO approval.
+- **Staging E2E test plan:** `docs/ops/messaging-topup-staging-e2e-plan.md` — comprehensive scenario matrix for Stripe, Paystack, refunds, disputes, edge cases, race conditions. HOLD pending authorization.
+
+### Financial gate finding
+`messaging_financial_gate` is absent from both staging and production `platform_settings`. Per M371 `check_or_authorize_send()`, absent key means gate OFF (`enforcement_required: false, reason: 'gate_key_absent'`). Messages send without financial authorization. The billing system is display-only until the gate is explicitly enabled.
+
+### What could break
+- Nothing. All changes are additive: new UI sections, new admin page, new tests, new documentation. No existing files modified except billing page (additive sections) and admin sidebar/routes/permissions (new entries). No migrations, no RPC changes, no settlement contract changes.
+
+## 2026-10-05 — Slice 3 CTO correction — protected values and ownership metadata (#524 / PR #541)
+
+### What changed
+- **Blocker 1 fix:** `sendSessionLocalizedText` now accepts optional `TranslateOptions`. Payment auth URL (`scRecovery.authUrl`), provider decline messages, and business names are now passed as explicit `protectedValues` at each BotService call site that interpolates dynamic values.
+- **Blocker 2 fix:** Session-expiry path now protects `biz.name` as a protected value. Capability-selection flow attaches `_localization` metadata with `protectedValues: [bizName, ...customLabels]` so merchant names and custom labels survive translation byte-for-byte.
+- **Blocker 3 fix:** Added `LocalizationMeta` interface and optional `_localization` field on `PromptMessage` (types.ts). `localizeMessage` now reads and merges message-level metadata with caller-supplied opts. Capability-selection sets `waaiioOwnedItemTitles: true` so Waaiio UI labels ("My Account", default cap labels) translate while merchant custom labels are protected.
+- **Cache invariant test:** Proves same template with two different businesses' protected values returns each business's own value — no cross-tenant leakage.
+- **12 new correction tests** covering all CTO-required executable proofs.
+
+### What could break
+- Any flow that constructs a PromptMessage with fields that should NOT be translated must now consider whether to attach `_localization` metadata. Without it, the existing default-passthrough behavior for item titles continues (safe).
+
+## 2026-10-04 — Outbound localization boundary — Slice 3 (#524)
+
+### What changed
+- **outbound-localizer.ts** — New canonical localization boundary (`localizeMessage`, `localizeText`) that translates all Waaiio-owned presentation fields (body, title, buttonLabel, section titles, footers, captions) while preserving merchant-entered item titles and action/postback IDs byte-for-byte.
+- **translate.ts** — Added `protectedValues` option to `translateBotResponse`. Explicit strings (merchant names, URLs, product names) are placeholdered longest-first before the LLM call and restored after, on top of existing regex-based protection for dates/times/amounts/references.
+- **executor.ts** — `translateMessage` now delegates to the shared outbound localizer instead of maintaining its own inline translation logic. Footers now localize (previously skipped). Document captions now localize.
+- **bot.service.ts** — 20+ raw `sendText` calls in customer-facing paths (session expiry, help menu, payment recovery, recurring decline, disambiguation) replaced with `sendSessionLocalizedText` which resolves translation context from the session's business tier and detected language.
+- **20 regression tests** — ID stability across languages, protected value preservation, merchant title passthrough, entitlement fail-closed (zero LLM calls for free tier), English baseline, document/image/footer localization, routing invariant (button/list IDs identical across fr/pcm).
+
+### What could break
+- Footer text in button and list messages now gets translated (previously hardcoded English). If any footer contains machine-parseable commands that the bot matches on, those commands would be translated and no longer match. Current codebase footers are display-only hints.
+- `sendSessionLocalizedText` adds a DB query for business subscription_tier on each non-English send. This is acceptable for the session-active path but would be a concern if called in a tight loop (it isn't).
+
+## 2026-10-03 — Paystack saved-card persistence (#530)
+
+### What changed
+- Paystack verify results and signed `charge.success` webhooks now normalize reusable authorization metadata. The shared persistence RPC atomically enriches the canonical platform payment before Save Card confirmation; completed webhook replays can add authorization metadata without replaying payment effects.
+- Migration 427 repairs missing `service_role` CRUD grants on `saved_payment_methods` while retaining RLS and denying client-role access on the repair path. It adds a service-only RPC that validates provider, amount, currency, status, and platform origin, and allows only card metadata fields. A production-shaped table ACL with existing service-role SELECT is left unchanged; production client grants remain a separate hardening task.
+- CI now runs M427 PostgreSQL ACL and persistence checks with the M426 database tests.
+
+### What could break
+- BYO/Connect Paystack payments remain ineligible for saved-card persistence under the accepted platform-origin policy. Persistence failures do not block successful payment confirmation.
+
+## 2026-10-03 — M426 staging payment setup parity (#527)
+
+### What changed
+- **M426: `business_payment_credentials` restore + least-privilege ACLs** (`supabase/migrations/426_staging_payment_setup_parity.sql`) — Creates the table only if missing (staging), with the complete column contract, the gateway / connection_type / `chk_credentials_mode` CHECKs, and the `idx_bpc_active` partial unique index. RLS on; a single owner policy `bpc_owner_select` (SELECT only, `owner_id = auth.uid()`). Grants: service_role SELECT/INSERT/UPDATE (no DELETE); authenticated column-level SELECT on 9 non-secret metadata columns (never `secret_key` / `public_key`, no writes); anon nothing.
+- **M426: bot sequence access matrix** — service_role SELECT on `bot_sequences` + `bot_sequence_steps`, SELECT/INSERT/UPDATE on `bot_sequence_enrollments`; authenticated SELECT/INSERT/UPDATE/DELETE on `bot_sequences` + `bot_sequence_steps`, SELECT on enrollments. Existing M040 RLS policies unchanged.
+- **M426: golden payment journey grants** — service_role SELECT/INSERT on `platform_fees` (fee insert + verify-read in `process-success.ts` / `shared/payment.ts`); service_role SELECT on `payment_confirmation_deliveries` (status read in `send-confirmation.ts`; writes stay behind the M342 SECURITY DEFINER RPCs).
+- No blanket or default-privilege grants. Every grant is additive; on a production-shaped database the migration is a no-op (proved by test). Self-verification block fails the migration if any positive or negative privilege is wrong.
+- **Tests** (`lib/__tests__/staging-payment-parity-527-db.test.ts`) — 57 role-faithful PostgreSQL tests (`SET ROLE` service_role / authenticated / anon with JWT claims) driving the real classifier, routing authority, and `triggerSequences` code: privilege matrix, schema constraints, credential classification (empty/platform, subaccount, Connect, BYO, ambiguous, inactive), owner positive and cross-tenant negative paths, anon denial, sequence runtime + dashboard, fee + confirmation reads, idempotency, and RED baselines.
+- **CI** (`.github/workflows/ci.yml`) — New migration-shard-b step "M426 staging payment setup parity DB tests" on a dedicated database; zero skips enforced.
+
+### What could break
+- Any authenticated client that selects `*`, `secret_key`, or `public_key` from `business_payment_credentials` now gets 42501. No current caller does (the settings GET route selects explicit metadata columns; all secret reads use the service client).
+- Any service-role code path that DELETEs credentials, sequences, steps, enrollments, or platform_fees, or writes `payment_confirmation_deliveries` directly, gets 42501. No current golden-journey caller does; admin/cron/reseller platform_fees paths are out of scope (systemic ACL reconciliation follow-up).
+- Not included: `fee_policy_enabled` staging config (separate canonical commercial-config gate), `saved_payment_methods`, production ACL hardening.
+
+## 2026-10-02 — M425 export_rate_limits ACL normalization (#313)
+
+### What changed
+- **M425: `export_rate_limits` service_role ACL normalization** — Revokes all table privileges from service_role then re-grants exactly SELECT/INSERT/UPDATE. Closes residual DELETE/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN inherited from production's ALTER Default Privileges. 12-check migration verification (PG17-gated MAINTAIN check). No application code, RLS policy, or data changes.
+- **Tests** (`lib/__tests__/issue-509-security-reconciliation.test.ts`) — 12 DB contract tests: proves service_role has exactly SELECT/INSERT/UPDATE, no DELETE/TRUNCATE/REFERENCES/TRIGGER, PG17-gated MAINTAIN = false, anon/authenticated retain no access, RLS enabled, service-only policy intact.
+
+### What could break
+- Nothing — service_role retains SELECT/INSERT/UPDATE (the only operations the export route uses). No application code references DELETE on this table.
+
+## 2026-10-02 — M422 capability_overrides client correction (#313)
+
+### What changed
+- **`app/api/capabilities/configure/route.ts`** — Override read moved from authenticated client to service client. Business ownership still verified via authenticated client before the override read. Required because M422 revokes authenticated table-level SELECT on `capability_overrides`.
+- **`app/dashboard/layout.tsx`** — Both impersonation and normal-flow override reads moved from authenticated client to service client. Admin impersonation and business ownership authorization unchanged.
+- **Regression tests** (`lib/__tests__/m422-override-client-regression.test.ts`) — 4 tests: verifies service client used for overrides, authenticated client used for ownership, ownership denial short-circuits override read, and override data flows correctly to RPC snapshot.
+
+### What could break
+- If `createServiceClient()` is misconfigured or unavailable, override reads fail (fail-closed: returns 500 or empty overrides). Previously this would degrade to authenticated-client read; now it's an explicit failure.
+- No other callers affected — all other override reads already use service client (api-guard.ts, bot.service.ts, capability-guard.ts).
+
+## 2026-10-02 — Admin security reconciliation (#509)
+
+### What changed
+- **M421: platform_settings security reconciliation** — Grants anon+authenticated SELECT (for RLS reads), revokes INSERT/UPDATE/DELETE from both. Rewrites `admin_all_platform_settings` to target authenticated-only (fixes anon is_admin() execution error). Expands `public_read_config_settings` to 6 keys: adds `signup_open` + `maintenance_mode` (launch blocker fix). Grants service_role INSERT+DELETE for server routes.
+- **M422: capability_overrides security reconciliation** — Revokes ALL from anon+authenticated. Replaces production's `capability_overrides_service_all USING(true)` with `USING(auth.role() = 'service_role')`. Retains service_role SELECT only per M419 contract.
+- **M423: OTP challenges channel support** — Adds `channel varchar(16)` column (default 'phone') to `phone_otp_challenges`. Enables email and recurring OTP to reuse the secure challenge pattern.
+- **M424: export_rate_limits table** — Moves `export:{userId}` ephemeral state out of `platform_settings` into a dedicated table with service_role-only access.
+- **Admin platform-settings server API** (`app/api/admin/platform-settings/route.ts`) — Server-authorized CRUD for non-commercial settings. Uses `requirePlatformAdmin` + `createServiceClient`. Commercial keys rejected (must use `save_commercial_config` RPC).
+- **PlatformSettings.tsx refactor** — Non-commercial key writes now route through the server API instead of direct browser `adminDb` writes. Commercial keys unchanged (still use RPC).
+- **OTP migration** (`lib/otp-challenge.ts`) — Email and recurring OTP now use `phone_otp_challenges` table with HMAC-hashed storage, atomic consume via SECURITY DEFINER RPC, and 5-attempt lockout. Replaces plaintext `platform_settings` storage.
+- **Email-otp + recurring/verify route updates** — Both routes now return `challengeId` on send and require it on verify. Client callers (BookingForm, EventPurchaseForm, recurring/manage) updated to pass challengeId.
+- **Export route update** (`app/api/account/export/route.ts`) — Rate limit check/record uses `export_rate_limits` table instead of `platform_settings`.
+- **Tests** (`lib/__tests__/issue-509-security-reconciliation.test.ts`) — 46 tests: DB ACL contract tests for all 4 migrations + route-level mock tests for admin settings API + middleware readability contract.
+
+### What could break
+- Admin panel PlatformSettings non-commercial key writes now go through the server API — if the API route is unreachable, saves will fail (previously went direct to DB).
+- Email OTP and recurring verify now require `challengeId` in the verify request — any client not passing challengeId will get a 400 error.
+- Export rate limit data in `platform_settings` (old `export:{userId}` keys) is orphaned — existing rate limits are effectively reset.
+
+## 2026-10-01 — platform_settings service_role UPDATE grant (#502)
+
+### What changed
+- **M420: GRANT UPDATE** (`supabase/migrations/420_platform_settings_service_role_update.sql`) — Grants service_role UPDATE on `platform_settings`. Root cause: `PUT /api/admin/site-announcement` uses `createServiceClient()` to update the `site_announcement` row, but service_role only had SELECT (from M408), not UPDATE. No INSERT/DELETE granted. No authenticated/anon grants. RLS preserved. Includes verification block.
+- **Tests** (`lib/__tests__/issue-502-platform-settings-acl.test.ts`) — 7 assertions: 5 DB ACL checks (service_role SELECT/UPDATE, anon no UPDATE, authenticated no UPDATE, RLS enabled) + 2 route-level mock tests (admin PUT succeeds, non-admin PUT denied).
+- **CI wiring** (`.github/workflows/ci.yml`) — Added M420 DB test step in shard a, after M419 step.
+
+### What could break
+- Nothing. This is a strictly additive privilege grant. The row already exists (seeded in M414). No existing behavior is changed.
+
+## 2026-09-30 — P0 staging post-deploy blockers (#496)
+
+### What changed
+- **M417: ACL reconciliation** (`supabase/migrations/417_staging_acl_authenticated_reconciliation.sql`) — Grants authenticated role table-level privileges on 5 tables missing them (parties S/I/U/D, category_templates S, event_tickets S, payment_links S, promo_codes S). Root cause: staging Supabase lacks ALTER DEFAULT PRIVILEGES.
+- **M418: Pricing authority fix** (`supabase/migrations/418_fix_activation_pricing_authority.sql`) — `activate_paid_subscription` step 6b now validates payment amount against `subscription.amount` (the checkout-bound immutable quote set when the customer was charged) instead of `config_snapshot.pricing_tiers` which only stores entitlement/fee fields. This eliminates a price-change race between checkout and activation. Preserves SECURITY DEFINER + search_path + grant semantics.
+- **QR routing code hardening** (`app/dashboard/qr-code/page.tsx`) — Bot code (routing token) is now read-only on QR page for shared-number businesses. "Pre-filled message" renamed to "WhatsApp routing code". Deep-link suffix auto-set by template selection. Routing token cannot be accidentally removed.
+- **Tests** (`lib/__tests__/issue-496-staging-blockers.test.ts`) — 34 assertions for ACL grants, pricing activation, security attributes, country→processor authority, QR routing code, pending-business guards, directory eligibility, category config fallback.
+- **Subscribe-now-db test update** (`lib/__tests__/subscribe-now-db.test.ts`) — Test helper aligns NG country pricing with test payment amounts to match M418's pricing source change.
+
+### What could break
+- If staging `countries.pricing` for a given country is missing or has NULL `price` for a tier, `activate_paid_subscription` will fail closed with `pricing_config_missing` (this is intentional — the old behavior also failed, just for a different reason).
+- QR page no longer allows editing the routing code. Users who were manually customizing the pre-filled message to something other than their bot code will now see the read-only routing code instead. This is a safety improvement.
+- Any code that expected `config_snapshot.pricing_tiers` to contain subscription prices should use `countries.pricing` instead.
+
+## 2026-09-30 — Staging launch-readiness (#493)
+
+### What changed
+- **S1: Canonical payment gateway resolver** (`lib/payments/gateway-resolver.ts`) — New `resolveBusinessGateway()` and `resolveCountryGateway()` functions. Country is sole processor authority (NG→Paystack, US→Stripe, etc.). BYO/merchant credentials affect account selection only, never processor. Fails closed for unconfigured countries.
+- **S1: Register route** (`app/api/onboarding/register/route.ts`) — New businesses now inherit `payment_gateway` from `countries.payment_gateway` at registration time. No hardcoded country/provider mappings.
+- **S1: Scan to Pay** (`app/api/pay-link/pay/route.ts`) — Removed silent `|| 'paystack'` fallback. Uses canonical resolver. Returns 503 when no gateway is configured instead of misrouting.
+- **S2: Paystack activation recovery** (`app/api/cron/subscription-renewal-recovery/route.ts`) — Added `processPaystackActivationRecovery` inside the renewal-recovery cron. Finds stuck `subscription_payments` with `status='success'` for `pending` subscriptions and replays `activate_paid_subscription` RPC + business status CAS transition.
+- **S3: Admin launch-subscriber** (`admin/src/pages/LaunchSubscribers.tsx`, `app/api/admin/query/route.ts`) — Switched from direct `adminDb` query to server-side `adminApiFetch('/api/admin/query')`. Added `launch_subscribers` to ADMIN_TABLES whitelist. No broad `authenticated` grant.
+- **S4: Party create** (`app/dashboard/parties/page.tsx`) — Insert/update errors now destructured and surfaced via `statusMessage`. Success only shown after confirmed persistence.
+- **S5: Services label** (`components/dashboard/Sidebar.tsx`, `app/dashboard/services/page.tsx`) — Sidebar no longer renames "Services" to "Products" when `ordering` capability is active. PageHelp and EmptyState use dynamic `labels.serviceNamePlural`/`labels.serviceName`.
+- **Tests** (`lib/__tests__/issue-493-staging-readiness.test.ts`) — Production-path handler tests: gateway country matrix (NG/GH/US/GB/CA), BYO does not change processor, Paystack recovery via extracted module, Poll/Giving/Admin/Scan-to-Pay actual route invocations, pending business guard, reconciliation endpoint.
+
+### What could break
+- Businesses registered before this change still have `payment_gateway = NULL`. Use the bounded admin endpoint `POST /api/admin/reconcile-gateways` to backfill from country config (dry-run by default, admin-only).
+- Scan to Pay now returns 503 for businesses with NULL gateway (previously silently routed to Paystack). This is intentional — the prior behavior was a bug for non-NG countries.
+- Admin launch-subscriber page now goes through `/api/admin/query` server-side. Requires VITE_API_URL configured in admin env.
+
+## 2026-09-30 — Discovery + Settings wiring consistency (#485)
+
+### What changed
+- **Fix A: `BusinessTab.tsx`** — PlacesAutocomplete now captures `placeData` (lat/lng) from the second callback arg and persists `latitude`, `longitude`, `city` alongside `address` in handleSave. Manual text edits set lat/lng to null, invalidating stale coordinates.
+- **Fix B: `discovery/page.tsx`** — `onManualChange` now sets `latitude: null, longitude: null` in state, preventing stale coordinates from being saved when the address is manually edited.
+- **Fix C: All Settings tabs** — 20 save handlers across 7 files now destructure `{ error }` from Supabase/API responses. Success indicators (Saved!/toast) are only shown when there is no error. Handlers that reload immediately (time format) only reload after confirmed success.
+- **Fix D: `lib/constants.ts` + discovery/page + marketplace/search** — Added `getDistanceUnit`, `kmToMiles`, `milesToKm`, `kmToDisplayUnit`, `displayUnitToKm`, `formatDistance` helpers. US/UK businesses see miles in the delivery radius UI and search results while retaining canonical km in the database.
+- **Fix E: `discovery/page.tsx`** — Discovery description field relabeled to "Short Listing Summary" with helper text. One-time prefill from `businesses.description` on first focus when `discovery_description` is blank.
+- **Fix F: `lib/bot/business-knowledge.ts`** — `supportsDelivery` now reads from top-level `biz.supports_delivery` column instead of `metadata.supports_delivery`. `deliveryArea` replaced with `deliveryRadius` reading from `biz.delivery_radius_km`.
+- **`lib/__tests__/discovery-settings-wiring-485.test.ts`** — 40 regression tests covering all 6 fixes.
+
+### Files changed
+`BusinessTab.tsx`, `discovery/page.tsx`, `FeaturesTab.tsx`, `PaymentsTab.tsx`, `NotificationsTab.tsx`, `AccountTab.tsx`, `IntegrationsTab.tsx`, `lib/constants.ts`, `lib/marketplace/search.ts`, `lib/bot/business-knowledge.ts`
+
+### What could break
+- **Businesses with US/UK country_code** will see delivery radius in miles. The underlying DB value (`delivery_radius_km`) is unchanged — only the UI conversion is new. A round-trip precision loss of ~0.1 is possible due to float rounding.
+- **Bot delivery responses** now show radius in km instead of the old free-form `deliveryArea` text. If a business had `metadata.delivery_area` set, that string is no longer surfaced (the field was rarely populated).
+- **Settings address save** now writes lat/lng/city. If a business edits their address via Settings, coordinates will be set/cleared — this is the intended fix, not a regression.
+
+## 2026-09-29 — Staging launch ACL repair (#478)
+
+### What changed
+- **`supabase/migrations/415_staging_launch_acl_repair.sql`:** Least-privilege grants for 34 postgres-only table operations confirmed missing on staging. 25 service_role grants + 9 authenticated grants. Includes route dependency closure — transitive deps (loyalty_transactions, waiver_templates, bookings, bot_sessions, audit_log) are covered. Does NOT grant ALL, anon, PUBLIC, TRUNCATE, TRIGGER, or REFERENCES. Does NOT change RLS or policies. Does NOT duplicate M410/M412/M413/M414 scopes. Does NOT re-grant already-sufficient tables (services, products, product_variants, orders, order_items, appointments, business_capabilities) or tables already owned by other migrations (businesses, whatsapp_channels, profiles, messaging_allowances, platform_settings, refunds).
+- **`lib/__tests__/staging-acl-launch-478.test.ts`:** 55 regression tests proving safety invariants, dependency closure completeness, no scope duplication, already-sufficient/owned-elsewhere tables excluded, and every grant maps to an identified code path.
+
+### What could break
+- Nothing — GRANT is a no-op if privilege already exists. No existing privileges are modified or revoked.
+
+## 2026-09-29 — Giving page read-only guard during admin impersonation (#472)
+
+### What changed
+- **`components/dashboard/DashboardProvider.tsx`:** Added `isImpersonating` boolean to dashboard context. Defaults to `false`. Passed through `DashboardContext.Provider` value.
+- **`app/dashboard/layout.tsx`:** Impersonation path now passes `isImpersonating` prop to `DashboardProvider`. Normal (non-impersonation) path omits it (defaults to `false`).
+- **`app/dashboard/giving/page.tsx`:** When `isImpersonating` is true: shows amber read-only banner explaining impersonation is view-only; hides Add/Edit/Toggle/Delete controls; disables save button in add/edit form. Normal owner flow unchanged.
+- **`app/api/giving/save/route.ts`:** 403 response now includes `message: 'You do not have write access to this business.'` so the UI shows a meaningful error instead of generic "Failed to save."
+- **`lib/__tests__/giving-impersonation-472.test.ts`:** 21 tests covering owner create, unauth 401, non-owner 403 with message, recurring/tier guards, isImpersonating context plumbing, UI guard assertions.
+
+### What could break
+- Nothing — `isImpersonating` defaults to `false`, so all non-impersonation flows are unchanged. The API ownership check is preserved. The 403 response adds a `message` field but retains the same `reason` and status code.
+
+## 2026-09-29 — Fix promo code staging 500 + API corrections (#473)
+
+### What changed
+- **`supabase/migrations/413_promo_codes_service_role_grants.sql`:** Grants SELECT, INSERT, UPDATE, DELETE on `public.promo_codes` to `service_role`. Root cause of staging HTTP 500 — the table (created in migration 021) had RLS policies but zero table-level privileges for `service_role`. Same pattern as events #461/migration 412. Does NOT grant to anon, authenticated, or PUBLIC. Does NOT grant TRUNCATE, TRIGGER, or REFERENCES.
+- **`app/api/promo-codes/route.ts`:** Four corrections: (1) All DB error paths now log sanitized error code/message via `console.error` for Vercel observability. (2) PUT handler now accepts both `isActive` (camelCase from list toggle) and `is_active` (snake_case from edit form) — previously the edit form's active toggle was silently ignored. (3) DELETE now checks the Supabase response and returns 500 on failure instead of unconditional success. (4) All bare `catch` blocks replaced with `catch (err)` + logging.
+- **`app/dashboard/promo-codes/page.tsx`:** GET/list API errors now set `error=true` and show a retryable error banner instead of silently rendering "No promo codes yet" empty state.
+- **`lib/__tests__/promo-codes-api-473.test.ts`:** 41 tests covering migration grants, all CRUD operations, auth/ownership gates, error surfacing, PUT isActive fix, DELETE error handling, and business scoping.
+- **`lib/__tests__/console-error-cleanup.test.ts`:** Added `app/api/promo-codes/route.ts` (8 calls) to the server-side console.error allowlist.
+
+### What could break
+- Nothing — the GRANT is additive (idempotent no-op if privilege already exists). The API corrections are all backwards-compatible (PUT accepts both key names, error responses use existing status codes). Dashboard change only affects the failure path (success path unchanged).
+
+## 2026-09-29 — Exact-origin Return to WhatsApp (#230/#231)
+
+### What changed
+- **`app/payment-success/page.tsx`:** WhatsApp-origin payments now resolve the Return to WhatsApp phone number from `payments.metadata._inbound_channel_id` (the exact channel that originated the transaction) instead of the business-level channel fallback chain. If the exact-origin channel is missing, inactive, or fails cross-tenant validation, the page shows "Please return to your WhatsApp conversation manually" instead of falling back to a potentially wrong number. Non-WhatsApp-origin payments (web, legacy) continue using the existing fallback chain unchanged.
+- **`lib/__tests__/return-to-whatsapp-origin-230.test.ts`:** 10 source-analysis tests proving exact-origin resolution, fail-closed behavior, cross-tenant guard, manual return message, no hardcoded phone numbers, and ReturnToWhatsApp component unchanged.
+
+### What could break
+- Nothing for non-WhatsApp-origin payments (fallback chain unchanged). WhatsApp-origin payments where `_inbound_channel_id` was not persisted (pre-#219 payments) will now show a manual return message instead of the ReturnToWhatsApp button — this is the correct fail-closed behavior (better than sending to a wrong country's number).
+
+## 2026-09-29 — Event creation ACL + error handling + ticket tier UX (#461)
+
+### What changed
+- **`supabase/migrations/412_events_authenticated_grants.sql`:** Grants SELECT, INSERT, UPDATE, DELETE on `events` and `event_ticket_types` to the `authenticated` role. Existing RLS policies enforce authorization. Fixes silent CRUD failures on staging where table-level privileges were missing.
+- **`app/dashboard/events/page.tsx`:** All Supabase mutations (insert, update, delete on events and event_ticket_types) now check for errors and surface them via `alert()`. Previously, failures were silently swallowed.
+- **`app/dashboard/events/page.tsx`:** Ticket types section now visible during initial event creation (add mode), not just edit mode. Uses a client-side buffer (`pendingTicketTypes`) that flushes after the event is created. Partial tier failure transitions to edit mode with the new event ID for retry.
+- **`app/dashboard/events/page.tsx`:** `duplicateEvent` is now async and copies active ticket type definitions (name, price, total_tickets, sort_order, is_active) from the source event. `tickets_sold` always starts at 0. Source-tier load failure is surfaced.
+- **`lib/__tests__/events-acl-assertions.test.ts`:** 6 tests verifying migration 412 grants correct privileges and does not over-grant (no anon, no TRUNCATE/TRIGGER/REFERENCES).
+- **`lib/__tests__/events-error-handling-tiers.test.ts`:** Tests verifying error handling, pending tier buffer, duplication with complete field copy, partial-failure recovery, and cancel-event API preservation.
+
+### What could break
+- If RLS policies on `events` or `event_ticket_types` are missing or misconfigured, the new GRANT would allow authenticated users broader access than intended. Verified: existing RLS policies enforce `business_id = owner_id` isolation.
+- `duplicateEvent` is now async; the `onClick` handlers calling it already handle async functions correctly (React event handlers support async).
+
+## 2026-09-29 — Homepage simplification (#452)
+
+### What changed
+- **`app/(marketing)/HomeClient.tsx`:** Major rewrite — 17 sections reduced to ~10. Removed: unsourced statistics, fabricated testimonials, quantity-led clutter (89+/30/thousands), 10-card capability wall, problem/fear section, Why Waaiio cards, comparison table, industry showcase, repeated NL examples. Added: dashboard proof grid, compact 5-capability summary. Hero changed to "Your business, running on WhatsApp." with launch CTAs.
+- **`app/(marketing)/page.tsx`:** FAQ reduced from 10 to 4 questions. JSON-LD cleaned (removed unverified Meta partnership claims, award, memberOf). Metadata updated. No server-side `platform_settings` read — preserves existing API/component boundary.
+- **`components/marketing/Navbar.tsx` + `MobileMenu.tsx`:** CTA changed from "Get Started" → "Get Updates" linking to /launch.
+- **Provider truth:** Homepage shows only Stripe + Paystack. Square/Flutterwave/PayPal removed from homepage.
+- **Meta wording:** Changed to "Built on WhatsApp Business Platform" — removed "Meta Business Partner", "Official Technology Partner", "Meta Verified Technology Provider".
+- **Pricing:** CTAs link to /pricing (Learn More) not /get-started. No new trial duration claims.
+
+### What could break
+- SEO: fewer FAQ entries means less indexed Q&A content (but removing low-quality content typically helps)
+- Any external links pointing to homepage sections with anchor IDs (comparison, industry showcase) will no longer find those sections
+
+## 2026-09-28 — Launch banner with country selector + WhatsApp QR (#446)
+
+### What changed
+- **`components/marketing/SiteAnnouncement.tsx`:** Upgraded `launch_countdown` announcements from a thin header strip to a prominent responsive launch banner with live countdown, country selector, WhatsApp button, and QR code. Non-launch announcements preserve compact behavior.
+- **`lib/launch/shared.ts`:** New shared helpers extracted from LaunchClient — `buildWhatsAppLink`, `formatPhone`, `formatLaunchDate`, `detectCountryFromTimezone`, `computeTimeLeft`, `LaunchRegion` type. Used by both SiteAnnouncement and /launch page.
+- **`app/(marketing)/launch/LaunchClient.tsx`:** Refactored to import from shared helpers instead of duplicating logic.
+- **Country selector:** Uses `/api/launch/regions` (shared channels only). Best-effort timezone detection preselects; if no match, selector is unselected and CTA/QR disabled until user chooses. Changing country regenerates both button (button) and QR (qr) URLs.
+- **`lib/__tests__/launch-banner-446.test.ts`:** 38 tests covering shared helpers, component contract, source/QR tagging, disabled states, no dedicated fallback, responsive layout, and /launch integrity.
+
+### What could break
+- Nothing — compact announcements unchanged. /launch page uses shared helpers with identical behavior.
+
+## 2026-09-28 — Restore idempotent promote step + idempotent rollback (#406)
+
+### What changed
+- **`.github/workflows/deploy-staging.yml`:** Restored explicit `vercel promote` step after deployment capture. `vercel deploy --prod` does not always reliably activate the deployment as the production target (observed in deploy #10). Promote accepts normal success or the exact 409 "already the current production deployment" — all other errors fail hard.
+- **Idempotent rollback:** Before invoking `vercel rollback`, the workflow now checks whether the previous deployment is already the active production target. If it is, rollback is a no-op (avoids Vercel 422 rejection). Post-rollback verification still proves the correct deployment is active.
+- **`lib/__tests__/deploy-staging-workflow-contract.test.ts`:** Updated contract tests to prove promote exists with idempotent 409 handling, rollback checks active target before invoking rollback command, and step ordering is correct.
+
+### What could break
+- Nothing — this adds resilience to edge cases where `vercel deploy --prod` creates a READY production deployment without making it the active target, and where rollback targets a deployment that is already active.
+
+## 2026-09-28 — Fix staging deploy false failure from redundant promotion (#439)
+
+### What changed
+- **`.github/workflows/deploy-staging.yml`:** Removed the separate `vercel promote` step (step 7). `vercel deploy --prod` already promotes the deployment to the staging production target, making the separate promote redundant. Vercel returned 409 ("already the current production deployment"), which the workflow treated as a hard failure, triggering unnecessary rollback.
+- **Fix:** `DEPLOY_MUTATED=true` is now set before `vercel deploy --prod` (was previously set in the removed promote step). Rollback behavior preserved.
+- **`lib/__tests__/deploy-staging-workflow-contract.test.ts`:** Updated contract tests to assert no separate promote step exists, and that `DEPLOY_MUTATED` is set before the deploy command.
+
+### What could break
+- Nothing — this removes a redundant step that caused false failures. The deploy command (`vercel deploy --prod`) is the sole promotion authority now.
+
+## 2026-09-28 — CTO re-review blockers corrected (#439 Slice 1)
+
+### What changed
+- **BLOCKER 1:** Migration 409 PostgreSQL tests now create deterministic fixtures (profile + shared channel) instead of relying on pre-existing data. All early-return `if (!fixture) return` patterns removed — missing fixtures now fail setup explicitly. CI step added to `.github/workflows/ci.yml` with `TEST_DATABASE_URL`, zero-skip enforcement, and nonzero exit propagation.
+- **BLOCKER 2:** 26 new executable route handler tests in `platform-campaigns-routes-439.test.ts` covering Campaign POST/PUT and Asset POST/PUT. Tests invoke real handlers with mocked Supabase: auth rejection, consent enforcement, malformed date rejection, date ordering with existing values, market_scope validation (non-array, non-string, normalization), channel authority (dedicated/inactive/out-of-scope), token collision retry, and no wa.me exposure.
+- **BLOCKER 3:** Real QR generation in Admin `PlatformCampaigns.tsx` using Canvas 2D renderer. QR encodes canonical `<VITE_API_URL>/go/<token>` URL (authoritative config, not string surgery). Download as PNG. `copyTrackedLink` also uses authoritative config.
+- **BLOCKER 4:** Canonical validation module `lib/platform-campaigns/validation.ts` with `validateISODate`, `validateDateOrdering`, `validateMarketScope`, `validateSourceLabel`. Campaign POST/PUT now reject unparseable dates (no `Invalid Date` fallthrough to Postgres), validate ordering against existing stored values on partial updates, normalize market codes to uppercase, reject non-string/non-array/empty entries. All produce 400 errors.
+- **BLOCKER 5:** Click reporting in campaign detail GET and `/clicks` endpoint replaced unbounded `select('asset_id').in(assetIds)` with bounded `select('id', { count: 'exact', head: true }).eq('asset_id', ...)` per asset. Errors surfaced as 500 instead of silently returning zero.
+- **Cleanup 1:** Removed `DEFAULT 'opt_in'` from `consent_type` in migration 409. DB contract now agrees with application contract (explicit consent required).
+- **Cleanup 2:** Asset PUT `source_label` validation uses `validateSourceLabel` — rejects non-string/non-null values with 400 instead of passing through to Postgres.
+- **Cleanup 3:** Admin campaign edit UI added — edit form for name, consent_type, starts_at, ends_at, market_scope. Edit button in detail view alongside status controls.
+
+### Files changed
+- `lib/platform-campaigns/validation.ts` (new) — canonical validators
+- `lib/__tests__/platform-campaigns-routes-439.test.ts` (new) — 26 executable route tests
+- `lib/__tests__/platform-campaigns-migration-439.test.ts` — deterministic fixtures, no early returns
+- `app/api/admin/platform-campaigns/route.ts` — date/market validation
+- `app/api/admin/platform-campaigns/[id]/route.ts` — date validation with existing values, bounded click counts
+- `app/api/admin/platform-campaigns/[id]/clicks/route.ts` — bounded click counts
+- `app/api/admin/platform-campaigns/[id]/assets/[assetId]/route.ts` — source_label validation
+- `admin/src/pages/PlatformCampaigns.tsx` — QR generation, edit form, authoritative URL config
+- `supabase/migrations/409_platform_campaigns.sql` — removed consent_type DEFAULT
+- `.github/workflows/ci.yml` — M409 CI step
+- `CHANGELOG.md`
+
+## 2026-09-28 — Platform Communications foundation (#439 Slice 1)
+
+### What changed
+- **Migration 409:** 5 new tables: `platform_campaigns`, `platform_campaign_assets`, `platform_campaign_participants`, `platform_campaign_events`, `platform_campaign_clicks`. Two-level attribution model (canonical participant state + immutable interaction events). Cross-campaign referential integrity via composite FKs. Inbound-event idempotency via `source_event_id`. Append-only events/clicks (SELECT/INSERT only). Consent defaults to `unknown` (not `opted_in`).
+- **Token utility:** `lib/platform-campaigns/token.ts` — cryptographically secure 6-char attribution tokens from 32-char unambiguous alphabet, collision retry, tracked message construction, ref extraction.
+- **Admin API routes:** Campaign CRUD (`GET/POST/PUT /api/admin/platform-campaigns`), asset creation with shared-channel authority + server-derived market (`POST /api/admin/platform-campaigns/[id]/assets`).
+- **Public tracked redirect:** `GET /go/[token]` — validates asset/campaign/channel authority, derives wa.me URL server-side, records bounded click metadata, 302 redirect. Fail-closed on any authority failure.
+- **Admin UI:** Basic Platform Campaigns page in admin panel with create/list.
+- 58 regression tests.
+
+### What did NOT change
+- launch_subscribers, launch delivery, admin broadcasts, keyword campaigns, business broadcasts, notifications, messaging_opt_outs, WhatsApp routing, payments, bot flows, Meta config.
+
+## 2026-09-28 — Admin Broadcasts: disable misleading WhatsApp/SMS channels (#439 Slice 0C)
+
+### What changed
+- WhatsApp and SMS channel options in Admin Broadcasts are now disabled with "Coming soon" labels. They were previously selectable but only recorded to DB with no actual delivery.
+- Email remains enabled and functional.
+- No delivery backend changes. Existing broadcast history untouched.
+
+### Files changed
+- `admin/src/pages/Broadcasts.tsx` — disabled WhatsApp/SMS options
+- `admin/src/__tests__/broadcasts-channel-cleanup-439.test.tsx` (new) — 9 tests
+- `CHANGELOG.md`
+
+## 2026-09-28 — Launch integrity: shared-sender authority + truthful opt-in (#439 Slice 0A/0B)
+
+### What changed
+- **Slice 0A:** `resolveChannelCredentials()` in `lib/launch/delivery.ts` now requires `channel_type = 'shared'` when resolving launch delivery sender credentials. Dedicated or inactive channels cannot be used as platform senders.
+- **Slice 0B:** `handleLaunchOptIn()` in `lib/bot/launch-optin.ts` no longer claims "You're on the list!" when the durable subscription write fails. On failure, sends truthful retry-safe message without STOP instruction (user is not subscribed). Success path unchanged.
+- 9 executable tests added.
+
+### Files changed
+- `lib/launch/delivery.ts` — added `channel_type = 'shared'` filter
+- `lib/bot/launch-optin.ts` — truthful error path
+- `lib/__tests__/launch-integrity-439.test.ts` (new)
+- `CHANGELOG.md`
+
+### What did NOT change
+- Launch subscribers schema, delivery RPCs, admin page, confirmation tokens, keyword campaigns, business broadcasts, payments, WhatsApp routing, Meta config.
+
+## 2026-09-28 — Certify signup email confirmation callback and redirect safety (#437)
+
+### What changed
+- **Callback route** (`app/auth/callback/route.ts`): Now checks `exchangeCodeForSession` and `verifyOtp` errors. On failure, redirects to `/login?error=<user-friendly message>` instead of silently proceeding to `next`. Missing code/token_hash also fails visibly. Does not leak raw Supabase errors.
+- **Login page** (`app/(auth)/login/page.tsx`): Reads `error` query param from URL and displays it on load — surfaces callback failure messages.
+- **Resend confirmation** (`app/get-started/steps/StepAuth.tsx`): Now checks `supabase.auth.resend()` result, surfaces rate-limit and generic errors, shows success feedback. No longer silently swallows failures.
+- **Open-redirect protection preserved**: `next` param must be relative path starting with `/` and not `//`.
+- Added 31 regression tests covering all 12 required scenarios.
+
+### Files changed
+- `app/auth/callback/route.ts` — error handling + fail-visible redirects
+- `app/(auth)/login/page.tsx` — reads error query param
+- `app/get-started/steps/StepAuth.tsx` — resend error handling + feedback
+- `lib/__tests__/auth-callback-437.test.ts` (new) — 31 regression tests
+- `CHANGELOG.md` — entry added
+
+### What could break
+- Users with genuinely expired/invalid confirmation links will now see an error on the login page instead of being silently redirected to onboarding without a session.
+
+### What did NOT change
+- Signup flow, email delivery, confirmation email content, WhatsApp, payments, providers, migrations, Admin panel, bot flows, middleware, RLS.
+
+## 2026-09-28 — Fix staging Admin CORS, Site Announcement API path, environment identity (#435)
+
+### What changed
+- **CORS (Slice 1):** Created shared `lib/admin-cors.ts` with canonical admin-origin allowlist matching middleware.ts. Replaced 6 route-local `corsHeaders()` implementations in `otp`, `query`, `customers`, `class-sessions`, `impersonate`, `provider-config`. Staging origin (`admin-staging.waaiio.com`) is now allowed across all routes. Unknown origins fail closed (empty string) instead of falling back to production origin.
+- **Site Announcement (Slice 2):** Migrated `admin/src/pages/SiteAnnouncement.tsx` from direct `adminDb.from('platform_settings')` browser access to the existing authenticated server API (`GET/PUT /api/admin/site-announcement`). Added `adminApiGet()` and `adminApiPut()` to `admin/src/lib/adminApi.ts`. UI now surfaces server errors instead of `permission denied for table platform_settings`. Audit logging semantics preserved.
+- **Environment identity (Slice 3):** Documented that the admin-staging Vercel project requires `WAAIIO_ENVIRONMENT=staging` (or `VITE_WAAIIO_ENVIRONMENT=staging`) as an environment variable. No code change needed — existing `vite.config.js` design (#424) is correct; it just needs the config value injected at the deployment level.
+- Added 50 regression tests (CORS policy, route consistency, API migration proof, UI safety).
+
+### Files changed
+- `lib/admin-cors.ts` (new) — shared CORS helper
+- `app/api/admin/otp/route.ts` — uses shared CORS
+- `app/api/admin/query/route.ts` — uses shared CORS
+- `app/api/admin/customers/route.ts` — uses shared CORS
+- `app/api/admin/class-sessions/route.ts` — uses shared CORS
+- `app/api/admin/impersonate/route.ts` — uses shared CORS
+- `app/api/admin/provider-config/route.ts` — uses shared CORS
+- `admin/src/pages/SiteAnnouncement.tsx` — API-based read/write
+- `admin/src/lib/adminApi.ts` — added GET/PUT helpers
+- `admin/src/__tests__/site-announcement-safety-420.test.tsx` — updated mocks for API
+- `lib/__tests__/admin-cors.test.ts` (new) — CORS policy tests
+- `lib/__tests__/admin-cors-routes.test.ts` (new) — route consistency + API migration proof
+
+### What could break
+- If `ADMIN_ORIGIN` env var is set to a value not in the allowlist, it will still work as long as it matches — but explicit ADMIN_ORIGIN now coexists with the hardcoded staging/production origins rather than replacing them.
+- Admin Site Announcement page now requires the main app API to be reachable; direct DB access is no longer attempted.
+
+### What did NOT change
+- Production Admin origin behavior, local Admin development, OTP HMAC/rate-limit/brute-force, platform-admin authorization, generic Admin query table/column protections, Site Announcement validation/CTA/timezone, WhatsApp, payments, providers, migrations, customer flows, middleware CORS.
+
+## 2026-09-27 — Reusable Admin WhatsApp CTA link generator (#426)
+
+### What changed
+- Added a reusable Admin helper for canonical WhatsApp click-to-chat links using `https://wa.me/<international-number>`.
+- Destination numbers must be explicitly entered in international format beginning with `+` or `00`; common presentation characters are normalized while URLs, letters, extensions, malformed prefixes, unsupported characters, leading-zero country codes, and invalid lengths are rejected.
+- Optional prefilled messages are trimmed, URL-encoded, and capped at 1000 characters.
+- Added a reusable **Generate WhatsApp Link** UI with preview, **Open Preview**, and explicit **Use This Link** actions.
+- Wired the generator into Site Announcement CTA Link as the first bounded consumer.
+- **Use This Link** only updates the unsaved CTA draft; it does not persist, enable the announcement, send a WhatsApp message, or call Meta.
+- Existing Site Announcement CTA validation and **Test CTA** remain authoritative; generated HTTPS `wa.me` links flow through them unchanged.
+- No Waaiio production/staging phone number is hardcoded or stored by the generator.
+- Added executable helper, component, and Site Announcement integration regression coverage.
+- No DB schema/migration, Meta/WhatsApp provider action, payment, Vercel workflow, Release Gate, or deployment behavior changed.
+
+## 2026-09-27 — Persistent Admin environment/build identity (#424)
+
+### What changed
+- Added a persistent Admin shell identity bar visible across Admin pages on desktop and mobile.
+- Logical Waaiio environment is sourced from explicit trusted build configuration (`WAAIIO_ENVIRONMENT` / `VITE_WAAIIO_ENVIRONMENT`) and is never inferred from browser hostname or Vercel target alone.
+- Missing/invalid logical environment fails visibly to **UNVERIFIED** instead of guessing.
+- Added non-secret Vercel build metadata where available: Admin Git SHA, deployment ID, project ID, and Vercel target environment.
+- Added configured Admin API origin to the banner to make wrong-target mistakes easier to spot.
+- Added `VITE_WAAIIO_ENVIRONMENT` to the Admin environment example.
+- Added executable tests for staging-vs-Vercel-production separation, production/development/unverified normalization, malformed API targets, build-ID formatting, hostname non-inference, and identity-bar rendering.
+- No Vercel environment values were mutated, no deployment was performed, and no CI/deploy workflow, Supabase, migration, Release Gate, payment, WhatsApp, or provider behavior changed.
+- Deployment prerequisite: the intended Admin Vercel projects must explicitly configure the logical Waaiio environment before this feature is relied on operationally.
+
+## 2026-09-27 — Admin Role Permissions authority truthfulness (#422)
+
+### What changed
+- Replaced the misleading editable Role Permissions matrix with a read-only **Platform Access Reference** derived from the same `ADMIN_PERMISSIONS` map used by Admin navigation/route guards.
+- Removed direct `admin_role_permissions` reads/writes from the Permissions page so the UI no longer implies that a partial legacy matrix dynamically grants/revokes platform access.
+- Added explicit guidance that server Admin APIs and Supabase RLS/RPCs remain separate authorization layers and are not weakened by this reference.
+- Preserved full-admin-only access to the Permissions page and fail-closed behavior for unknown page keys.
+- Added executable Admin regressions proving the reference matches route authority, exposes no mutation controls, remains admin-only, and fails closed for unknown pages.
+- No database migration, role grant/revocation, API/RLS/RPC authorization change, payment, WhatsApp, or provider behavior changed.
+- A future dynamic RBAC system, if desired, must be separately designed to unify routes, APIs, RLS/RPCs, canonical role authority, resource taxonomy, audit, and failure behavior.
+
+## 2026-09-27 — Site Announcement pre-launch safety hardening (#420)
+
+### What changed
+- Added a real Admin preview of the public announcement banner, countdown, and CTA before activation.
+- Made the browser timezone explicit and fixed UTC ↔ `datetime-local` round-tripping so editing a launch time does not silently shift the stored instant.
+- Added a shared announcement validation contract used by both the Admin UI and the main-app Admin API.
+- Going live now requires a non-empty headline; launch countdowns additionally require a valid future target date/time.
+- CTA text/link must be provided together; CTA links remain restricted to safe relative paths or HTTPS.
+- Added **Test CTA** using the configured public app base so relative links do not accidentally open on the Admin host.
+- Failed toggle persistence no longer leaves the Admin UI falsely claiming the announcement is live.
+- Explicitly documented the existing expiry behavior: countdown disappears at zero, but the announcement remains visible until manually disabled/changed. No automatic-expiry product decision was introduced.
+- Added executable shared/API/Admin-component regression coverage.
+- No WhatsApp, payment, provider, database schema/migration, or runtime capability behavior changed.
+
+## 2026-09-27 — WhatsApp list-row material detail preservation (#227)
+
+### What changed
+- Added a shared `buildListItem()` formatter for WhatsApp list rows with the 24-character title / 72-character description contract.
+- Material detail such as price, recurring frequency, crowdfunding progress, and donor counts is given description priority before optional long-name context.
+- Payment/Giving recurring categories now keep the configured amount + interval visible instead of truncating it inside the row title.
+- Scheduling add-ons keep configured price visible without changing the add-on postback ID.
+- Crowdfunding campaign titles are safely compacted while progress/donor detail remains visible.
+- Title/description truncation now avoids splitting UTF-16 surrogate pairs.
+- Added executable regressions against the actual flow prompt functions, including the Biazo Conference case, long names, currency formatting, Unicode/emoji boundaries, and unchanged postback identities.
+- No sender, executor, database, payment authority, webhook, or provider behavior changed.
+
+## 2026-09-27 — Bot optimization: multilingual understanding, safe repeat, known-email reuse (#268)
+
+### What changed
+- **Inbound multilingual understanding:** Yoruba/Pidgin (and LLM-supported language) comprehension is now separated from outbound translation entitlement. A supported-language customer message can be understood/routed without automatically enabling translated replies.
+- **Yoruba commerce parsing:** deterministic diacritic-normalized patterns recognize common Yoruba purchase/payment/ticket/booking phrasing such as `Mo fẹ́ ra...`.
+- **Pidgin intent precedence:** specific ordering/payment/ticket intents now win over the generic `I wan` booking marker.
+- **Safe repeat behavior:** natural reorder phrases plus Pidgin/Yoruba-style commands reuse the existing last-order cart path. Ambiguous `redo last transaction` is disambiguated into order/bookings/payment history and never silently charges or places a transaction.
+- **Known email reuse:** ordering now aligns profile `email` with downstream `customer_email` and skips the email prompt only for a real reusable address (not generated WhatsApp fallback addresses).
+- **Regression coverage:** added focused tests for Yoruba/Pidgin understanding, Free-tier comprehension without translation entitlement, repeat/reorder safety, and email prompt suppression.
+- **Safety:** no payment/provider authority, database schema, legal/T&C, OTP/PIN, receipt, or confirmation logic changed.
+
 ## 2026-09-25 — Feature: Launch alert delivery pipeline (#397)
 
 ### What changed

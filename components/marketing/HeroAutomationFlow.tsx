@@ -1,45 +1,45 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 
 const FLOW_STEPS = [
   {
-    icon: '💬',
+    icon: '\u{1F4AC}',
     label: 'Customer Messages',
     detail: '"I wan barb tomorrow 3pm"',
     color: 'bg-whatsapp',
     ring: 'ring-whatsapp/20',
   },
   {
-    icon: '🤖',
+    icon: '\u{1F916}',
     label: 'AI Understands',
     detail: 'Parses intent & finds slots',
     color: 'bg-brand',
     ring: 'ring-brand/20',
   },
   {
-    icon: '📅',
+    icon: '\u{1F4C5}',
     label: 'Booking Confirmed',
     detail: 'Tomorrow, 3:00 PM locked in',
     color: 'bg-blue-500',
     ring: 'ring-blue-500/20',
   },
   {
-    icon: '💳',
+    icon: '\u{1F4B3}',
     label: 'Payment Link Sent',
     detail: 'Secure Paystack / Stripe link',
     color: 'bg-emerald-500',
     ring: 'ring-emerald-500/20',
   },
   {
-    icon: '🧾',
+    icon: '\u{1F9FE}',
     label: 'Receipt Generated',
     detail: 'Ref: BW-7291 sent to chat',
     color: 'bg-amber-500',
     ring: 'ring-amber-500/20',
   },
   {
-    icon: '🔔',
+    icon: '\u{1F514}',
     label: 'Auto-Reminder',
     detail: 'Reminder sent next morning',
     color: 'bg-brand-600',
@@ -48,11 +48,14 @@ const FLOW_STEPS = [
 ];
 
 export default function HeroAutomationFlow() {
+  const prefersReducedMotion = useReducedMotion();
+  const noMotion = !!prefersReducedMotion;
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.5, duration: 0.8 }}
+      initial={noMotion ? undefined : { opacity: 0, y: 30 }}
+      animate={noMotion ? undefined : { opacity: 1, y: 0 }}
+      transition={noMotion ? undefined : { delay: 0.5, duration: 0.8 }}
       className="relative mx-auto w-full max-w-sm lg:mx-0 lg:max-w-md"
     >
       {/* Glass card container */}
@@ -67,7 +70,7 @@ export default function HeroAutomationFlow() {
           <span className="text-sm font-semibold text-white/90">Automation Flow</span>
           <div className="ml-auto flex items-center gap-1.5">
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+              {!noMotion && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />}
               <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
             </span>
             <span className="text-xs text-green-300">Live</span>
@@ -79,17 +82,17 @@ export default function HeroAutomationFlow() {
           {FLOW_STEPS.map((step, i) => (
             <motion.div
               key={step.label}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.8 + i * 0.25, duration: 0.5 }}
+              initial={noMotion ? undefined : { opacity: 0, x: -20 }}
+              animate={noMotion ? undefined : { opacity: 1, x: 0 }}
+              transition={noMotion ? undefined : { delay: 0.8 + i * 0.25, duration: 0.5 }}
             >
               {/* Connector line */}
               {i > 0 && (
                 <div className="ml-6 flex h-5 items-center">
                   <motion.div
-                    initial={{ scaleY: 0 }}
-                    animate={{ scaleY: 1 }}
-                    transition={{ delay: 0.7 + i * 0.25, duration: 0.3 }}
+                    initial={noMotion ? undefined : { scaleY: 0 }}
+                    animate={noMotion ? undefined : { scaleY: 1 }}
+                    transition={noMotion ? undefined : { delay: 0.7 + i * 0.25, duration: 0.3 }}
                     className="h-full w-0.5 origin-top bg-gradient-to-b from-white/30 to-white/10"
                   />
                 </div>
@@ -98,20 +101,28 @@ export default function HeroAutomationFlow() {
               {/* Step card */}
               <div className="group flex items-start gap-3">
                 <motion.div
-                  animate={{
-                    scale: [1, 1.08, 1],
-                    boxShadow: [
-                      '0 0 0 0 rgba(255,255,255,0)',
-                      '0 0 0 6px rgba(255,255,255,0.1)',
-                      '0 0 0 0 rgba(255,255,255,0)',
-                    ],
-                  }}
-                  transition={{
-                    repeat: Infinity,
-                    duration: 3,
-                    delay: i * 0.5,
-                    repeatDelay: FLOW_STEPS.length * 0.5,
-                  }}
+                  animate={
+                    noMotion
+                      ? undefined
+                      : {
+                          scale: [1, 1.08, 1],
+                          boxShadow: [
+                            '0 0 0 0 rgba(255,255,255,0)',
+                            '0 0 0 6px rgba(255,255,255,0.1)',
+                            '0 0 0 0 rgba(255,255,255,0)',
+                          ],
+                        }
+                  }
+                  transition={
+                    noMotion
+                      ? undefined
+                      : {
+                          repeat: Infinity,
+                          duration: 3,
+                          delay: i * 0.5,
+                          repeatDelay: FLOW_STEPS.length * 0.5,
+                        }
+                  }
                   className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${step.color} text-lg shadow-lg ring-4 ${step.ring}`}
                 >
                   {step.icon}
@@ -125,24 +136,24 @@ export default function HeroAutomationFlow() {
           ))}
         </div>
 
-        {/* Bottom stats */}
+        {/* Bottom stats — non-quantified truthful language only */}
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 2.5, duration: 0.6 }}
+          initial={noMotion ? undefined : { opacity: 0 }}
+          animate={noMotion ? undefined : { opacity: 1 }}
+          transition={noMotion ? undefined : { delay: 2.5, duration: 0.6 }}
           className="mt-6 grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-white/5 p-3"
         >
           <div className="text-center">
-            <p className="text-lg font-bold text-accent">0s</p>
-            <p className="text-[10px] text-white/50">Response Time</p>
+            <p className="text-lg font-bold text-accent">{'\u{1F4AC}'}</p>
+            <p className="text-[10px] text-white/50">Automated Replies</p>
           </div>
           <div className="text-center">
-            <p className="text-lg font-bold text-accent">24/7</p>
-            <p className="text-[10px] text-white/50">Always On</p>
+            <p className="text-lg font-bold text-accent">{'\u{1F4F1}'}</p>
+            <p className="text-[10px] text-white/50">Works in WhatsApp</p>
           </div>
           <div className="text-center">
-            <p className="text-lg font-bold text-accent">100%</p>
-            <p className="text-[10px] text-white/50">Automated</p>
+            <p className="text-lg font-bold text-accent">{'\u{1F512}'}</p>
+            <p className="text-[10px] text-white/50">Secure Payments</p>
           </div>
         </motion.div>
       </div>

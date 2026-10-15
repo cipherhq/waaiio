@@ -281,6 +281,135 @@ When Owner says **`Continue Waaiio`** in a new chat, ChatGPT must:
 - Merge requires ChatGPT exact-SHA review plus explicit Owner authorization.
 - All existing safety rules remain unchanged: repository/runtime evidence wins; corrections stay on the same PR; merge requires exact-head CTO approval plus separate owner authorization; production mutation/deployment remains separately authorized.
 
+## MCP, Security, Access, and Non-Regression Operating Protocol
+
+This protocol applies to Claude, ChatGPT/CTO, and any connected tool or agent used for Waaiio work.
+
+### Security objective: least privilege without functional lockout
+
+Security changes must protect Waaiio without unnecessarily preventing legitimate users, businesses, services, operators, or application paths from doing the work they are intended to do.
+
+The required standard is **least privilege with verified functional access**, not maximum restriction.
+
+For every authorization, ACL, RLS, grant, RPC, service-role, browser-client, webhook, provider, or identity change:
+
+1. identify the intended execution identity (`anon`, `authenticated`, `service_role`, server/SSR, browser, admin, webhook/provider, or other privileged principal);
+2. identify the exact operations that identity requires (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `EXECUTE`, storage access, provider action, etc.);
+3. grant only those operations;
+4. preserve tenant/owner boundaries through RLS, ownership predicates, RPC validation, and lifecycle checks as applicable;
+5. prove both expected-allow and expected-deny paths with executable/runtime evidence;
+6. verify the user-visible feature still works after the security change.
+
+Do not fix access failures by broad grants, disabling RLS, weakening ownership checks, or promoting browser/user code to `service_role` unless the architecture explicitly requires it and CTO/Owner approve the security boundary.
+
+Do not over-correct security by revoking access needed by the intended runtime path. A secure change that makes the legitimate product path unusable is not complete.
+
+### Access-contract matrix for security-sensitive changes
+
+Before implementation or approval of a grant/RLS/authorization change, record the smallest useful access matrix covering:
+
+- object/function/resource;
+- execution identity/role;
+- operation;
+- expected allow/deny;
+- applicable RLS/ownership/lifecycle rule;
+- caller(s) that depend on the access;
+- evidence used to prove the contract.
+
+When a shared guard/helper fails, audit the **entire shared dependency path** before patching the first failing object. The objective is to avoid one-table-at-a-time ACL fixes that reveal the next missing dependency only after deployment.
+
+### MCP-first source-of-truth rule
+
+Use configured MCP integrations whenever they are the appropriate authoritative source for the task.
+
+Examples include:
+
+- **GitHub MCP** for repo state, issues, PRs, exact SHAs, CI, review evidence, and release-control records;
+- **Supabase MCP** for live database schema, migrations, grants, RLS, function definitions, persisted state, and authorized DB operations;
+- **Vercel MCP** for deployment identity, runtime state, environment/deployment evidence, and logs;
+- other approved MCPs for the system they authoritatively represent.
+
+MCP evidence supplements repository tests and review; it does not replace the release process.
+
+#### MCP safety boundaries
+
+- Read-only inspection is the default when authorization scope is not explicit.
+- Before any mutation, verify the exact environment/project/account/resource and the Owner-authorized scope.
+- Staging authorization never implies production authorization.
+- Test-data authorization never implies schema, migration, deploy, provider, or financial authorization.
+- MCP availability never authorizes bypassing branch/PR/exact-head review or Owner gates.
+- Never expose access tokens, secret keys, service credentials, private signing material, raw sensitive customer data, or unnecessary PII in GitHub comments, logs, prompts, screenshots, or chat.
+- Prefer identifiers and redacted evidence sufficient to prove the invariant.
+- If an MCP result conflicts with PR prose, documentation, local assumptions, or green CI, treat the live authoritative evidence as a blocker until reconciled.
+- Never assume an MCP write succeeded; read back the authoritative state after the operation and record the result.
+
+### Dependency and regression discipline
+
+Before fixing a defect, map the affected dependency chain far enough to answer:
+
+- who calls this code/resource;
+- what it calls next;
+- which tables/functions/policies/grants/providers/state machines it shares;
+- which already-working capabilities depend on the same path;
+- whether staging and production differ in configuration, schema, auth, email, provider, or environment behavior.
+
+For shared infrastructure changes, run targeted regression checks across the dependent capabilities, not only the symptom that triggered the fix.
+
+A fix is not accepted merely because the original error disappears. It must also show that relevant already-working paths remain functional and security boundaries remain intact.
+
+If a correction creates a new failure in a neighboring dependency, stop under the Failure Escalation Gate rather than silently broadening the change.
+
+### Secure but engineered-enough rule
+
+Prefer the smallest change that satisfies the verified security and product contract.
+
+Do not add speculative restrictions, abstractions, middleware, policy layers, role systems, or defensive complexity without a demonstrated threat/invariant/dependency need.
+
+Conversely, do not choose a simpler implementation when it weakens tenant isolation, payment integrity, authorization, replay/idempotency, provider verification, secret handling, or other established safety invariants.
+
+The target is **secure, understandable, testable, and sufficient** — neither under-protected nor over-engineered.
+
+### Claude/CTO collaboration requirement
+
+Claude and ChatGPT/CTO must actively challenge each other's assumptions on security-sensitive and cross-cutting work.
+
+- Claude performs repo/runtime/MCP investigation and posts evidence plus explicit **AGREE** or **PUSHBACK** when architecture is under review.
+- ChatGPT/CTO independently checks the exact evidence, dependency scope, and security/access contract before approving implementation or release.
+- Neither agent treats the other's summary as proof.
+- Disagreement is resolved with repository/database/runtime evidence where possible.
+- Genuine business tradeoffs are escalated to Owner rather than being silently decided by an agent.
+
+### Mutation and release separation
+
+The following remain separate gates unless Owner explicitly combines them:
+
+1. investigation/read-only MCP access;
+2. implementation on branch/PR;
+3. merge;
+4. staging migration/schema mutation;
+5. staging deployment;
+6. staging UAT/test-data mutation;
+7. production preflight/read-only inspection;
+8. production migration/schema mutation;
+9. production deployment;
+10. live provider/financial/Meta actions.
+
+Authorization for one gate does not imply authorization for the next.
+
+### Required closure evidence
+
+For security-sensitive or shared-infrastructure work, closure evidence should include as applicable:
+
+- exact base/head/release SHA;
+- dependency/blast-radius summary;
+- access-contract matrix;
+- before/after grants/RLS/function/runtime state;
+- expected-allow and expected-deny proofs;
+- neighboring regression checks;
+- MCP/runtime evidence from the authoritative environment;
+- confirmation of what was **not** mutated;
+- residual risk or unresolved dependency, if any.
+
 ### Release Gate V2
 
 The detailed release-safety contract — invariant registry, migration checks, golden journeys, provider acceptance, exact-SHA certification, canary rules, and escaped defect policy — lives in [`RELEASE_GATE_V2.md`](./RELEASE_GATE_V2.md). That document supplements this Operating Order and must be read before migrations, payments, authorization, provider integrations, or cross-cutting changes.

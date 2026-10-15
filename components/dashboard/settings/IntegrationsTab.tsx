@@ -52,7 +52,8 @@ export function IntegrationsTab({ businessId, subscriptionTier }: { businessId: 
 
   async function handleRevoke(id: string) {
     if (!confirm('Revoke this API key? Any systems using it will stop working.')) return;
-    await fetch(`/api/integrations/api-keys/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/integrations/api-keys/${id}`, { method: 'DELETE' });
+    if (!res.ok) return;
     fetchKeys();
   }
 

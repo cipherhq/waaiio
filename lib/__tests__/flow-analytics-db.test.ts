@@ -285,6 +285,7 @@ describe.skipIf(!canRun)('M382: effective-role RLS enforcement (V2-T12)', () => 
     return `
       SELECT set_config('request.jwt.claims', '{"sub":"${userId}","role":"${role}","aud":"authenticated"}', true);
       SELECT set_config('request.jwt.claim.sub', '${userId}', true);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET LOCAL ROLE authenticated;
     `;
   }
@@ -428,6 +429,21 @@ describe.skipIf(!canRun)('M382: effective-role RLS enforcement (V2-T12)', () => 
     const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
     const count = parseInt(lines[lines.length - 1] || '0');
     expect(count).toBe(2);
+  });
+
+  it('admin with aal1 JWT sees 0 summaries (aal2 required for admin read)', () => {
+    const result = psql(`
+      BEGIN;
+      SELECT set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', true);
+      SELECT set_config('request.jwt.claim.sub', '${adminId}', true);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+      SET LOCAL ROLE authenticated;
+      SELECT count(*) FROM flow_execution_summaries WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(0);
   });
 
   // --- Finance role via is_admin_or_finance() ---

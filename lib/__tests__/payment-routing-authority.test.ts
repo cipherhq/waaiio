@@ -69,6 +69,12 @@ vi.mock('@/lib/countries', () => ({
   getCountry: vi.fn(() => ({ currency_code: 'NGN' })),
 }));
 
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  reconcileNullGateways: vi.fn().mockResolvedValue({ updated: 0, errors: [] }),
+}));
+
 // ── Test helpers ──
 
 function makeChain(result: { data: unknown; error: unknown }) {
@@ -539,9 +545,14 @@ describe('(7) V1 dispatched-row + idempotency', () => {
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
   });
 
-  it('(7d) Country payment config throw → fail closed with stage log, no provider call', async () => {
+  it('(7d) Gateway resolver throw → fail closed with stage log, no provider call', async () => {
+    // #493: initializePayment now uses the canonical resolver.
+    // Mock the resolver to throw to simulate transport error.
+    const { resolveBusinessGateway } = await import('@/lib/payments/gateway-resolver');
+    (resolveBusinessGateway as any).mockRejectedValueOnce(new Error('resolver transport error'));
+
     const supabase = buildSupabase({
-      countries: { throw: new Error('Supabase transport error') },
+      countries: { data: { payment_gateway: 'paystack', currency_code: 'NGN' } },
       payments: { data: null },
     });
 
@@ -549,7 +560,7 @@ describe('(7) V1 dispatched-row + idempotency', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   // ═══════════════════════════════════════════════════════════════

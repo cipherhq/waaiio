@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { CERTIFIED_LANGUAGE_OPTIONS } from '@/lib/bot/languages';
 
 interface AIConfig {
   id?: string;
@@ -33,13 +34,6 @@ const DEFAULTS: AIConfig = {
   fallback_behavior: 'menu',
   enabled_languages: ['en'],
 };
-
-// Only production-certified languages are selectable.
-// Must match CERTIFIED_LANGUAGES in lib/bot/language-policy.ts.
-// Expand after controlled language-quality acceptance testing.
-const CERTIFIED_LANGUAGE_OPTIONS: Array<{ code: string; name: string }> = [
-  { code: 'en', name: 'English' },
-];
 
 export default function AISettingsPage() {
   const business = useBusiness();
@@ -332,7 +326,7 @@ export default function AISettingsPage() {
                     }}
                     className="rounded border-gray-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
                   />
-                  {lang.name}
+                  {lang.displayName}
                 </label>
               );
             })}

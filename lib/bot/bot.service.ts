@@ -16,11 +16,11 @@ import { resolveTrialCredit } from '@/lib/trial-status';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
-import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext } from './translate';
+import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext, type TranslateOptions } from './translate';
 import { getEffectiveLanguages, loadBusinessLanguages } from './language-policy';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
-import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
+import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
@@ -37,7 +37,7 @@ import { handleTransactionDocument as _handleTransactionDocument } from './handl
 import { handleMyOrders as _handleMyOrders, handleOrderDetail as _handleOrderDetail, handleOrderDetailAction as _handleOrderDetailAction } from './handlers/my-orders';
 import { routeToMyAccountMenu as _routeToMyAccountMenu } from './handlers/my-account-menu';
 import { handleMyBookings as _handleMyBookings, handleViewTicket as _handleViewTicket, handleViewReservation as _handleViewReservation, handleModifyBooking as _handleModifyBooking } from './handlers/my-bookings';
-import { detectBotCode as _detectBotCode, detectBotCodeWithSuggestions as _detectBotCodeWithSuggestions, rankSuggestions as _rankSuggestions, findReturningCustomerBusiness as _findReturningCustomerBusiness, findReturningCustomerBusinesses as _findReturningCustomerBusinesses } from './handlers/bot-code-detection';
+import { detectBotCode as _detectBotCode, detectBotCodeWithSuggestions as _detectBotCodeWithSuggestions, rankSuggestions as _rankSuggestions, findReturningCustomerBusinesses as _findReturningCustomerBusinesses } from './handlers/bot-code-detection';
 import { executeKeywordAction as _executeKeywordAction } from './handlers/keyword-actions';
 import { handleChatHandoff as _handleChatHandoff, handleChatStart as _handleChatStart } from './handlers/chat-handoff';
 import { handleCardPinStep as _handleCardPinStep } from './handlers/saved-cards';
@@ -51,7 +51,8 @@ import { ConversationOrchestrator } from './conversation-orchestrator';
 import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
-import { searchMarketplace, formatMarketplaceResults } from '@/lib/marketplace/search';
+import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
+import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -86,6 +87,11 @@ export class BotService {
     const _btimings: Record<string, number> = {};
     const _bmark = (l: string) => { _btimings[l] = Date.now() - _bt0; };
     logger.debug('[BOT] handleMessage from: ...', from.slice(-4), 'type:', messageType, 'textLen:', text.length);
+
+    // Translation overrides — keyed by business id, loaded once per distinct biz per request
+    const _overridesLoader = createOverridesLoader(this.supabase);
+    const getOverrides = (bizId: string) => _overridesLoader.get(bizId);
+    const emptyOverrides = _overridesLoader.empty;
 
     // Pre-check: Input length cap (prevents regex timeout, LLM token burn, DoS)
     if (text.length > 5000) {
@@ -196,19 +202,18 @@ export class BotService {
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 1) {
         const quickPick = recentBiz.slice(0, 3);
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: quickPick },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        await this.sendPlatformButtons(from, 'Which business would you like to visit?',
-          quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
+        } else {
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        }
       } else {
         await this.sendPlatformText(from, 'Type the name or code of the business you\'d like to visit.');
       }
@@ -225,19 +230,18 @@ export class BotService {
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 0) {
         const quickPick = recentBiz.slice(0, 3);
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: quickPick },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
-          quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
+        } else {
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        }
       } else {
         await this.sendPlatformText(from, 'Welcome to Waaiio! Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
       }
@@ -460,28 +464,31 @@ export class BotService {
 
         if (newSession) {
           // Build the business context and execute the rsvp flow prompt
-          await this.flowExecutor.execute(
-            from,
-            '', // empty input = send prompt
-            {
-              id: newSession.id,
-              user_id: null,
-              business_id: biz.id as string,
-              current_step: 'rsvp_welcome',
-              session_data: newSession.session_data as Record<string, unknown>,
-              version: (newSession as Record<string, unknown>).version as number ?? 0,
-            },
-            {
-              id: biz.id as string,
-              name: biz.name as string,
-              slug: biz.slug as string,
-              category: biz.category as BusinessCategoryKey,
-              flow_type: biz.flow_type as FlowType,
-              subscription_tier: biz.subscription_tier as string,
-              trial_ends_at: biz.trial_ends_at as string,
-              metadata: (biz.metadata || {}) as Record<string, unknown>,
-              country_code: biz.country_code as CountryCode | undefined,
-            },
+          const _rsvpOv = await getOverrides(biz.id as string);
+          await runWithTranslationOverrides(_rsvpOv, () =>
+            this.flowExecutor.execute(
+              from,
+              '', // empty input = send prompt
+              {
+                id: newSession.id,
+                user_id: null,
+                business_id: biz.id as string,
+                current_step: 'rsvp_welcome',
+                session_data: newSession.session_data as Record<string, unknown>,
+                version: (newSession as Record<string, unknown>).version as number ?? 0,
+              },
+              {
+                id: biz.id as string,
+                name: biz.name as string,
+                slug: biz.slug as string,
+                category: biz.category as BusinessCategoryKey,
+                flow_type: biz.flow_type as FlowType,
+                subscription_tier: biz.subscription_tier as string,
+                trial_ends_at: biz.trial_ends_at as string,
+                metadata: (biz.metadata || {}) as Record<string, unknown>,
+                country_code: biz.country_code as CountryCode | undefined,
+              },
+            )
           );
           return;
         }
@@ -615,9 +622,73 @@ export class BotService {
       }
       // If no session found for this business, session remains null — normal new-session flow
     } else {
-      // Legacy / marketplace fallback: phone-only session lookup
-      session = await this.getActiveSession(from);
-      _bmark('legacy_getActiveSession');
+      // #266 R3: Use get_bot_context(phone, NULL) for ambiguity detection
+      // instead of the legacy phone-only getActiveSession which newest-wins.
+      const { data: unresolvedCtx } = await this.supabase.rpc('get_bot_context', {
+        p_phone: from, p_business_id: null,
+      });
+      if (unresolvedCtx && (unresolvedCtx as any).ambiguous) {
+        // Multiple businesses have active sessions — force disambiguation
+        // Session stays null → new-session flow → picker
+        session = null;
+      } else if (unresolvedCtx && (unresolvedCtx as any).has_session && (unresolvedCtx as any).session) {
+        // Single session or null-business session — safe to resume
+        const s = (unresolvedCtx as any).session;
+        session = { ...s, session_data: s.session_data || {} } as BotSession;
+        if (s.business_id && (unresolvedCtx as any).business) {
+          _cachedBusiness = (unresolvedCtx as any).business as BusinessRecord;
+          _rpcCapabilities = (unresolvedCtx as any).capabilities;
+          _rpcOverrides = (unresolvedCtx as any).capability_overrides;
+        }
+      }
+      _bmark('unresolved_get_bot_context');
+    }
+
+    // ── Read-only pre-verification for ALL saved-card button payloads ──
+    // Runs BEFORE CAP-001 revalidation. All 6 payload types carry a
+    // user-controllable paymentId. Verify ownership with SELECTs only
+    // before any session mutation (CAS, deactivation, send, RPC).
+    // Unverified → return immediately with zero side effects.
+    const _scPreMatch = text.trim().match(
+      /^(savedcard_menu|savedcard_done|save_card_accept|save_card_decline|replace_card_accept|replace_card_decline):(.+)$/
+    );
+    let _scVerifiedBizId: string | null = null;
+    if (_scPreMatch) {
+      const _scPayloadId = _scPreMatch[2];
+      const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+      const _scCanonPhone = canonicalSavedCardPhone(from);
+      let _scPreVerified = false;
+
+      if (_scCanonPhone) {
+        // (a) Payment row loads without error
+        const { data: _scPayment, error: _scPayErr } = await this.supabase.from('payments')
+          .select('id, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id, user_id')
+          .eq('id', _scPayloadId).single();
+        if (!_scPayErr && _scPayment) {
+          // (b) payment.business_id is non-null
+          if (_scPayment.business_id) {
+            // (c) Payment customer phone matches sender
+            const { verifyPaymentCustomerPhone } = await import('@/lib/payments/saved-card-offer');
+            const paymentPhone = await verifyPaymentCustomerPhone(this.supabase, _scPayment);
+            if (paymentPhone === _scCanonPhone) {
+              // (d) Authoritative business check: preResolvedBusinessId (dedicated channel)
+              //     if present, else session.business_id. Must equal payment.business_id.
+              const authBiz = preResolvedBusinessId || session?.business_id || null;
+              if (!authBiz || authBiz === _scPayment.business_id) {
+                _scVerifiedBizId = _scPayment.business_id;
+                _scPreVerified = true;
+              } else {
+                logger.warn('[SAVED-CARD-PRE] Business mismatch', { paymentId: _scPayloadId });
+              }
+            } else {
+              logger.warn('[SAVED-CARD-PRE] Customer phone mismatch', { paymentId: _scPayloadId });
+            }
+          } else {
+            logger.warn('[SAVED-CARD-PRE] Payment has null business_id', { paymentId: _scPayloadId });
+          }
+        }
+      }
+      if (!_scPreVerified) return;
     }
 
     // ── CAP-001 Point A: Session resume capability revalidation ──
@@ -737,7 +808,7 @@ export class BotService {
             }
             session.version = casCapResult.version;
 
-            await this.sendText(from, recoveryMsg);
+            await this.sendSessionLocalizedText(from, recoveryMsg, session);
             return;
           }
 
@@ -767,7 +838,7 @@ export class BotService {
             'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
           ]);
           if (!MANAGE_EXISTING_STEPS.has(session.current_step)) {
-            await this.sendText(from, "We're having trouble verifying what's available right now. Please try again in a moment.");
+            await this.sendSessionLocalizedText(from, "We're having trouble verifying what's available right now. Please try again in a moment.", session);
             return;
           }
         }
@@ -780,7 +851,7 @@ export class BotService {
           'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
         ]);
         if (!MANAGE_EXISTING_STEPS.has(session.current_step)) {
-          await this.sendText(from, "We're having trouble verifying what's available right now. Please try again in a moment.");
+          await this.sendSessionLocalizedText(from, "We're having trouble verifying what's available right now. Please try again in a moment.", session);
           return;
         }
       }
@@ -835,27 +906,21 @@ export class BotService {
       }
 
       if (detection.suggestions && detection.suggestions.length > 0) {
-        // Show suggestions as buttons (platform-scoped: pre-business discovery)
-        if (detection.suggestions.length <= 3) {
-          await this.sendPlatformButtons(from, 'Which business did you mean?',
-            detection.suggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: detection.suggestions });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else if (persisted.length <= 3) {
+            await this.sendPlatformButtons(from, 'Which business did you mean?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          } else {
+            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+            await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
+          }
         } else {
-          const list = detection.suggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
-          await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         }
-
-        // Create suggestion session so the reply gets handled
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: detection.suggestions },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
         return;
       }
 
@@ -949,7 +1014,10 @@ export class BotService {
             .eq('id', session.business_id).single();
           biz = data;
         }
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz, mediaUrl, messageType);
+        const _restartNoOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+        await runWithTranslationOverrides(_restartNoOv, () =>
+          this.flowExecutor.execute(from, '', session as unknown as BotSession, biz, mediaUrl, messageType)
+        );
         return;
       }
       if (text === 'restart_yes') {
@@ -986,7 +1054,10 @@ export class BotService {
             .eq('id', session.business_id).single();
           biz = data;
         }
-        await this.flowExecutor.execute(from, text, session as unknown as BotSession, biz, mediaUrl, messageType);
+        const _restartElseOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+        await runWithTranslationOverrides(_restartElseOv, () =>
+          this.flowExecutor.execute(from, text, session as unknown as BotSession, biz, mediaUrl, messageType)
+        );
         return;
       }
     }
@@ -1026,6 +1097,81 @@ export class BotService {
           action,
           paymentId,
           (businessId) => this.messageSender.bindBusiness?.(businessId),
+          async (msg) => { await this.messageSender.sendButtons(msg); },
+        );
+        return;
+      }
+    }
+
+    // ── Post-decline saved-card navigation buttons ──
+    // Pre-verification already passed if we reach here with a nav match.
+    const _scNavMatch = text.trim().match(/^(savedcard_menu|savedcard_done):(.+)$/);
+    if (_scNavMatch) {
+      const navAction = _scNavMatch[1];
+      const navPaymentId = _scNavMatch[2];
+      const _scNavBizId = _scVerifiedBizId!;
+
+      if (navAction === 'savedcard_done') {
+        // Bind the verified business before sending — required for S-1 guard
+        if (!_scNavBizId) return; // No business known — cannot send business-scoped message
+        if (this.messageSender.boundBusinessId !== _scNavBizId) {
+          this.messageSender.bindBusiness?.(_scNavBizId);
+        }
+        if (session) await this.deactivateSession(session.id);
+        const lang = (session?.session_data as Record<string, unknown> | undefined)?._detected_language as string || 'en';
+        const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+        try {
+          await this.sendText(from, getFlowCopy(lang, 'savedcard.session_done'));
+        } catch {
+          // Business send failed (suspended, ambiguous, etc.) — log and stop. Never retry or switch scope.
+          logger.warn('[SAVED-CARD-NAV] Done goodbye send failed', { paymentId: navPaymentId });
+        }
+        return;
+      }
+
+      if (navAction === 'savedcard_menu') {
+        // FIX #3: Show the business's capability menu
+        const bizId = _scNavBizId || session?.business_id;
+        if (!bizId) return; // No business — silently consume
+        // Only bind if not already bound to this business
+        if (this.messageSender.boundBusinessId !== bizId) {
+          this.messageSender.bindBusiness?.(bizId);
+        }
+        const { data: biz } = await this.supabase.from('businesses')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code, is_whitelabel, payment_gateway')
+          .eq('id', bizId).single();
+        if (!biz) return; // Business not found — silently consume
+
+        // FIX #3: Only execute if session exists AND CAS succeeds. No null→BotSession cast.
+        if (!session) {
+          // No session — redirect to normal session-creation path via handleMessage('Hi').
+          // Pass 'returning_customer' provenance: the customer verified payment ownership for
+          // this business but has no active session. 'returning_customer' is NOT in
+          // TRUSTED_PROVENANCES so promo-only branches are correctly denied.
+          return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, 'returning_customer');
+        }
+        const newData = { ...session.session_data, active_capability: undefined };
+        const casParams: Record<string, unknown> = {
+          p_session_id: session.id,
+          p_expected_version: session.version ?? 0,
+          p_current_step: 'select_capability',
+          p_session_data: newData,
+        };
+        if (session.business_id !== bizId) {
+          casParams.p_business_id = bizId;
+        }
+        const { data: casResult } = await this.supabase.rpc('update_session_cas', casParams);
+        if (!casResult?.success) {
+          logger.warn('[SAVED-CARD-NAV] Menu CAS failed', { paymentId: navPaymentId, reason: casResult?.reason });
+          return;
+        }
+        session.current_step = 'select_capability';
+        session.session_data = newData;
+        session.version = casResult.version;
+
+        const _menuOv = await getOverrides(bizId);
+        await runWithTranslationOverrides(_menuOv, () =>
+          this.flowExecutor.execute(from, '', session as BotSession, biz)
         );
         return;
       }
@@ -1169,62 +1315,83 @@ export class BotService {
 
       let deepLinkCapability: string | undefined;
       if (detection) {
-        businessId = detection.businessId;
+        // #266 R1/R2: Only exact bot_code match may bind directly
+        if (detection.authority === 'exact' && detection.businessId) {
+          businessId = detection.businessId;
+          if (!bizResolution) bizResolution = 'fuzzy'; // ACC-180: still not trusted for first-message promo
+        } else {
+          // Suggestion-only: do NOT bind businessId — feed to picker instead
+          businessId = null;
+        }
         pendingSuggestions = detection.suggestions;
         isCategoryMatch = detection.isCategory || false;
         deepLinkCapability = detection.deepLinkCapability;
-        // ACC-180: Detection results are fuzzy/inferred — NOT trusted for first-message promo
-        if (businessId && !bizResolution) bizResolution = 'fuzzy';
-        logger.debug('[BOT] detectBotCode("' + text + '") →', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch, 'deepLink:', deepLinkCapability || 'none');
+        logger.debug('[BOT] detectBotCode("' + text + '") → authority:', detection.authority, 'biz:', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch);
       }
 
-      // Returning customer: check past history if no business resolved yet
-      // Scope to the shared number's country to prevent cross-country routing
+      // #266 R1: Returning customer history is suggestion/ranking evidence, NOT tenant authority.
+      // Show ALL past businesses as picker candidates; never auto-bind from history alone.
       if (!businessId) {
-        businessId = await this.findReturningCustomerBusiness(from, profile?.id || null, sharedNumberCountry);
-        if (businessId) { bizResolution = 'returning_customer'; logger.debug('[BOT] returning customer → business:', businessId); }
+        const returningBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
+        if (returningBusinesses.length > 0) {
+          // Merge returning-customer businesses into suggestions for the picker
+          // Preserve any bot-code-detected suggestions at the front
+          const existing = new Set((pendingSuggestions || []).map(s => s.id));
+          const merged = [...(pendingSuggestions || [])];
+          for (const rb of returningBusinesses) {
+            if (!existing.has(rb.id)) merged.push(rb);
+          }
+          pendingSuggestions = merged;
+          logger.debug('[BOT] returning customer businesses added to suggestions:', returningBusinesses.length);
+        }
       }
 
       // "Did you mean?" — fuzzy suggestions / category matches / auto-correct confirmation
       if (!businessId && pendingSuggestions && pendingSuggestions.length > 0) {
-        // Clean up old sessions
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-
-        // Create a session at the select_business_suggestion step
-        const { data: sugSession } = await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: profile?.id || null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: pendingSuggestions, isCategory: isCategoryMatch },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 min expiry
-        }).select().single();
+        const sugSession = await this.createNullBizSuggestionSession(
+          from, profile?.id || null,
+          { suggestions: pendingSuggestions, isCategory: isCategoryMatch },
+        );
 
         if (sugSession) {
-          // Choose wording based on match type
-          const headerText = isCategoryMatch
+          // Always use the session's persisted suggestions for button payloads.
+          // The helper may return a recovered/renewed session whose persisted
+          // session_data.suggestions differs from the locally-generated array;
+          // using persisted data ensures biz_0 resolves to the button the user saw.
+          const persisted = (sugSession.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          const persistedIsCategory = sugSession.session_data?.isCategory as boolean | undefined;
+          if (persisted.length === 0) {
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            return;
+          }
+          // Choose wording based on persisted match type
+          const headerText = persistedIsCategory
             ? `Here are some businesses that might help:`
-            : pendingSuggestions.length === 1
-              ? `Did you mean *${pendingSuggestions[0].name}*?`
+            : persisted.length === 1
+              ? `Did you mean *${persisted[0].name}*?`
               : `Did you mean one of these businesses?`;
 
-          if (pendingSuggestions.length === 1 && !isCategoryMatch) {
+          if (persisted.length === 1 && !persistedIsCategory) {
             // Single fuzzy match — confirmation buttons (platform-scoped: pre-business discovery)
             await this.sendPlatformButtons(from, headerText, [
               { id: 'biz_0', title: 'Yes' },
               { id: 'biz_no', title: 'No' },
             ]);
-          } else if (pendingSuggestions.length <= 3) {
+          } else if (persisted.length <= 3) {
             // Use buttons (platform-scoped: pre-business discovery)
             await this.sendPlatformButtons(from, headerText,
-              pendingSuggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
           } else {
             // Fallback to numbered list as text (platform-scoped: pre-business discovery)
-            const list = pendingSuggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
             await this.sendPlatformText(from, `${headerText}\n\n${list}\n\nReply with the number to select.`);
           }
+          return;
+        } else {
+          // Helper failed — send platform error and stop; never fall through to generic session creation
+          if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
           return;
         }
       }
@@ -1322,6 +1489,42 @@ export class BotService {
         tierInfo = tier;
       }
 
+      // #524: A customer-wide response preference is presentation state only.
+      // Read it after #266 has authoritatively bound the business, then re-check it
+      // against this business's live entitlement and the production certification
+      // boundary. It must never participate in tenant resolution above.
+      let rememberedLanguageOffer: string | null = null;
+      let hasRememberedLanguage = false;
+      if (business && profile?.id) {
+        const {
+          readPreferredResponseLanguage,
+          resolveEffectiveResponseLanguage,
+        } = await import('./language-preference');
+        // The preference helper accepts only its narrow profiles-query surface;
+        // the runtime Supabase client implements that surface.
+        const rememberedLanguage = await readPreferredResponseLanguage(this.supabase as never, profile.id);
+        if (rememberedLanguage) {
+          hasRememberedLanguage = true;
+          const configuredLanguages = await loadBusinessLanguages(this.supabase, business.id);
+          const rememberedEntitlement = getEffectiveLanguages(
+            business.subscription_tier,
+            configuredLanguages,
+          );
+          const { CERTIFIED_LANGUAGES } = await import('./language-policy');
+          const rememberedResolution = resolveEffectiveResponseLanguage({
+            rememberedLanguage,
+            entitlement: rememberedEntitlement,
+            certifiedLanguages: CERTIFIED_LANGUAGES,
+          });
+          // English is already the fail-closed response language and needs no offer.
+          // A non-English remembered value is offered once; it is not activated here.
+          if (rememberedResolution.shouldOfferRemembered
+              && rememberedResolution.language !== 'en') {
+            rememberedLanguageOffer = rememberedResolution.language;
+          }
+        }
+      }
+
       // ACC-180: First-message promo verification for trusted business context.
       // Evaluated AFTER business/block/capability/tier checks, BEFORE canonical semantic routing.
       // Only trusted resolution sources (pre_resolved, dedicated_number, restart) may claim.
@@ -1357,10 +1560,10 @@ export class BotService {
         );
         if (!isOpen && !session) {
           // Outside business hours: send away message once, then continue the flow
-          await this.sendText(
-            from,
-            waConfig.away_message || 'We\'re currently outside business hours, but you can still browse, book, and order! 🕐',
-          );
+          const _awayOv = business ? await getOverrides(business.id) : emptyOverrides;
+          const { getFlowCopy: getFlowCopyAway } = await import('@/lib/bot/flows/flow-localization');
+          const awayText = waConfig.away_message || runWithTranslationOverrides(_awayOv, () => getFlowCopyAway('en', 'greeting.away'));
+          await this.sendText(from, awayText);
         } else if (isOpen && !session && waConfig.instant_reply_enabled && waConfig.instant_reply_message) {
           // P1-AUTO-1: During business hours, send instant acknowledgment on first contact
           await this.sendText(from, waConfig.instant_reply_message);
@@ -1508,6 +1711,11 @@ export class BotService {
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
+            ...(!canonicalActivatedLanguage && rememberedLanguageOffer ? {
+              _pending_language: rememberedLanguageOffer,
+              _pending_language_source: 'remembered',
+              _remembered_language_offered: true,
+            } : {}),
             // ACC-204 Blocker 1: Persist authoritative provenance so active-session path
             // can read it back instead of trusting a hardcoded literal.
             ...(bizResolution ? { biz_resolution: bizResolution } : {}),
@@ -1543,9 +1751,106 @@ export class BotService {
         .single();
 
       if (sessionError || !newSession) {
-        logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
-        await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        return;
+        // #266 R4: 23505 NULL-session collision — provenance-safe recovery
+        if (sessionError?.code === '23505' && !businessId) {
+          // Unique constraint on null-biz session. Try to resume the existing disambiguation session.
+          const { data: existingNullSession } = await this.supabase
+            .from('bot_sessions')
+            .select('*')
+            .eq('whatsapp_number', from)
+            .is('business_id', null)
+            .eq('is_active', true)
+            .single();
+          if (existingNullSession && !existingNullSession.business_id) {
+            // Check if the recovered session is expired — CAS-conditional deactivation, no retry insert
+            if (existingNullSession.expires_at && new Date(existingNullSession.expires_at) < new Date()) {
+              logger.info('[BOT] #266 R4: Stale expired null-biz session detected, deactivating:', existingNullSession.id);
+              // CAS deactivation — conditional on version + is_active + expires_at to prevent
+              // deactivating a session that was concurrently renewed between our read and this update.
+              const casNowIso = new Date().toISOString();
+              const { data: casDeactivated } = await this.supabase.from('bot_sessions')
+                .update({ is_active: false, version: (existingNullSession.version ?? 0) + 1 })
+                .eq('id', existingNullSession.id)
+                .is('business_id', null)
+                .eq('is_active', true)
+                .lt('expires_at', casNowIso)
+                .eq('version', existingNullSession.version ?? 0)
+                .select('id');
+              if (!casDeactivated || (casDeactivated as unknown[]).length === 0) {
+                // CAS got 0 rows — session was renewed concurrently between our read and update.
+                // Re-read to check its current state: do NOT retry the insert.
+                logger.info('[BOT] #266 R4: CAS deactivation got 0 rows (concurrent renewal?) — re-reading:', existingNullSession.id);
+                const { data: reReadSession } = await this.supabase.from('bot_sessions')
+                  .select('*').eq('id', existingNullSession.id).single();
+                const reRead = reReadSession as unknown as BotSession | null;
+                if (reRead && reRead.is_active && reRead.expires_at && new Date(reRead.expires_at) > new Date()) {
+                  // Session is now active and not expired — resume it instead of retrying insert
+                  session = reRead;
+                  logger.info('[BOT] #266 R4: Resumed renewed session after CAS race:', reRead.id);
+                } else {
+                  // Not recoverable — fail closed
+                  logger.error('[BOT] #266 R4: CAS race: session not renewable, failing closed:', existingNullSession.id);
+                  if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+                  await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  return;
+                }
+              } else {
+                // CAS succeeded — stale session cleared. Retry the insert exactly once.
+                // If the retry also fails for any reason (incl. another 23505) fail closed.
+                // No loop, no second retry.
+                logger.info('[BOT] #266 R4: CAS deactivation succeeded, retrying insert once:', existingNullSession.id);
+                const { data: retriedSession, error: retryInsertErr } = await this.supabase
+                  .from('bot_sessions')
+                  .insert({
+                    whatsapp_number: from,
+                    user_id: profile?.id || null,
+                    business_id: businessId,
+                    current_step: firstStep,
+                    session_data: sessionData,
+                    is_active: true,
+                    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                  })
+                  .select()
+                  .single();
+                if (!retryInsertErr && retriedSession) {
+                  session = retriedSession as BotSession;
+                  logger.info('[BOT] #266 R4: Retry insert succeeded after CAS deactivation:', (retriedSession as BotSession).id);
+                } else {
+                  logger.error('[BOT] #266 R4: Retry insert failed after CAS deactivation:', retryInsertErr?.message, retryInsertErr?.code);
+                  if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+                  await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  return;
+                }
+              }
+            } else {
+              // Safe: non-expired platform/disambiguation session with no business authority
+              session = existingNullSession as BotSession;
+              logger.info('[BOT] #266 R4: Recovered existing null-biz disambiguation session:', existingNullSession.id);
+              // Continue with the recovered session — do NOT auto-bind any business
+            }
+          } else {
+            // Unsafe: cannot recover a business-scoped session. Fail closed.
+            logger.error('[BOT] #266 R4: 23505 recovery failed — no safe null-biz session to resume');
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            return;
+          }
+        } else {
+          logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
+          if (businessId) {
+            // Business is resolved — send fallback business-scoped (S-1 guard applies).
+            // If the business is suspended the guard blocks the send; catch so it doesn't crash.
+            try {
+              await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            } catch (sendErr) {
+              logger.error('[BOT] Session insert fallback send failed (business-scoped, guard may have blocked):', sendErr);
+            }
+          } else {
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          }
+          return;
+        }
       }
 
       // CAS-004: Language activation uses canonical policy only.
@@ -1555,6 +1860,7 @@ export class BotService {
       // only prompt confirmation if canonical language policy allows it AND
       // the language is production-certified.
       if (text.length >= 3 && !canonicalActivatedLanguage && canonicalResult?.language
+          && !rememberedLanguageOffer
           && canonicalResult.language !== 'en'
           && canonicalResult.languageEntitlement.allowedLanguages.includes(canonicalResult.language)) {
         // Language was detected but not high-confidence-activated.
@@ -1562,9 +1868,12 @@ export class BotService {
         const { CERTIFIED_LANGUAGES: certLangs } = await import('./language-policy');
         if (certLangs.includes(canonicalResult.language)) {
           const updatedSd = { ...sessionData, _pending_language: canonicalResult.language };
-          await this.supabase.from('bot_sessions')
-            .update({ session_data: updatedSd })
-            .eq('id', newSession.id);
+          const effectiveId = newSession?.id || session?.id;
+          if (effectiveId) {
+            await this.supabase.from('bot_sessions')
+              .update({ session_data: updatedSd })
+              .eq('id', effectiveId);
+          }
 
           const langName = getLanguageName(canonicalResult.language);
           try {
@@ -1582,7 +1891,30 @@ export class BotService {
         }
       }
 
-      session = newSession as BotSession;
+      if (!canonicalActivatedLanguage && rememberedLanguageOffer) {
+        const langName = getLanguageName(rememberedLanguageOffer);
+        try {
+          await this.messageSender.sendButtons({
+            to: from,
+            body: `You previously chose ${langName}. Would you like me to respond in ${langName} here?`,
+            buttons: [
+              { id: 'lang_yes', title: `Yes, ${langName}` },
+              { id: 'lang_no', title: 'English is fine' },
+            ],
+          });
+        } catch (err) {
+          logger.error('[BOT] Remembered language offer send error:', err);
+        }
+      }
+
+      // Use the effective session: newSession from insert, or recovered/retried from 23505 path
+      session = (newSession || session) as BotSession;
+      if (!session) {
+        logger.error('[BOT] No session obtained after insert/recovery — cannot continue');
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        return;
+      }
 
       // ACC-180: If promo was handled on first message, the canonical session has been created
       // through the normal path above. Promo response was already sent. Return without
@@ -1592,38 +1924,140 @@ export class BotService {
         return;
       }
 
-      if (business && waConfig && tierInfo) {
-        // Standalone bot greeting — use pre-fetched config (no extra queries)
-        let greeting: string;
-        const isCustomGreeting = waConfig.templates.greeting !== 'Welcome! How can I help you today?';
-        if (isCustomGreeting) {
-          // Custom greeting set by business owner — always use it
-          greeting = this.standaloneService.fillTemplate(waConfig.templates.greeting, {
-            restaurant_name: business.name,
-            business_name: business.name,
-          });
-        } else if (waConfig.alias) {
-          const catLabels = getCategoryLabels(business.category);
-          greeting = this.intelligence.getPersonaGreeting(waConfig.alias, business.name, catLabels.confirmationEmoji);
-        } else {
-          greeting = this.standaloneService.fillTemplate(waConfig.templates.greeting, {
-            restaurant_name: business.name,
-            business_name: business.name,
-          });
+      // First-contact language picker: if no saved language preference and
+      // business offers multiple certified languages, show a picker instead
+      // of proceeding with the default English greeting.
+      if (business && !hasRememberedLanguage && !canonicalActivatedLanguage) {
+        // Check if this contact already picked a language for this business
+        const phoneWithPlusRead = from.startsWith('+') ? from : '+' + from;
+        const { data: custProfile } = await this.supabase
+          .from('customer_profiles')
+          .select('preferred_language')
+          .eq('business_id', business.id)
+          .eq('phone', phoneWithPlusRead)
+          .maybeSingle();
+        if (custProfile?.preferred_language) {
+          // Verify the saved language is still allowed by the business
+          const savedLang = custProfile.preferred_language;
+          const savedLangConfigured = await loadBusinessLanguages(this.supabase, business.id);
+          const savedLangEntitlement = getEffectiveLanguages(
+            business.subscription_tier,
+            savedLangConfigured,
+          );
+          const { CERTIFIED_LANGUAGES: savedLangCert } = await import('./language-policy');
+          const savedLangAllowed = savedLangEntitlement.allowedLanguages.filter(
+            (code: string) => savedLangCert.includes(code),
+          );
+          if (savedLangAllowed.includes(savedLang)) {
+            // Language still allowed — activate it on the session
+            hasRememberedLanguage = true;
+            session.session_data._detected_language = savedLang;
+            // Persist the activation so greeting and flows use it
+            const savedLangCas = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version,
+              p_current_step: session.current_step,
+              p_session_data: session.session_data,
+            });
+            if (savedLangCas.data?.success) {
+              session.version = savedLangCas.data.version;
+            } else {
+              // CAS failed — keep in-memory language for this message but warn
+              logger.warn(`[BOT] CAS conflict persisting saved language — session ${session.id}`);
+              Sentry.captureMessage('Saved-language CAS conflict', {
+                level: 'warning',
+                extra: { sessionId: session.id, savedLang },
+              });
+            }
+          }
+          // If not allowed: fall through to picker (hasRememberedLanguage stays false)
         }
 
-        if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by Waaiio_';
-        greeting += '\n\n_Type *cancel* anytime to exit._';
+        if (!hasRememberedLanguage && !_internalProvenance) {
+          const pickerConfiguredLangs = await loadBusinessLanguages(this.supabase, business.id);
+          const pickerEntitlement = getEffectiveLanguages(
+            business.subscription_tier,
+            pickerConfiguredLangs,
+          );
+          const { CERTIFIED_LANGUAGES: pickerCertLangs } = await import('./language-policy');
+          const pickerAllowed = pickerEntitlement.allowedLanguages.filter(
+            (code: string) => pickerCertLangs.includes(code),
+          );
+          if (pickerAllowed.length > 1) {
+            // Store the original message for processing after picker selection (CAS)
+            session.session_data._pending_first_message = text;
+            const pickerCas = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version,
+              p_current_step: session.current_step,
+              p_session_data: session.session_data,
+            });
+            if (!pickerCas.data?.success) {
+              // CAS conflict — session changed concurrently. Reload and continue
+              // with normal handling (don't show the picker, don't lose the message).
+              logger.warn('[BOT] CAS conflict storing _pending_first_message — skipping picker');
+              const { data: reloaded } = await this.supabase
+                .from('bot_sessions')
+                .select('*')
+                .eq('id', session.id)
+                .single();
+              if (reloaded) {
+                Object.assign(session, reloaded);
+              }
+              // Fall through to normal greeting/flow handling below
+            } else {
+              session.version = pickerCas.data.version;
+              const _pickerOv = await getOverrides(business.id);
+              await runWithTranslationOverrides(_pickerOv, () =>
+                this.sendLanguagePicker(from, business!, pickerAllowed, this.messageSender)
+              );
+              return; // Wait for picker selection before proceeding
+            }
+          }
+        }
+      }
+
+      if (business && waConfig && tierInfo) {
+        // Effective language — same authority as flows (session_data._detected_language)
+        const greetLang = (session.session_data._detected_language as string) || 'en';
+
+        // Standalone bot greeting — use pre-fetched config (no extra queries)
+        // All greeting keys render through the translation resolver (ALS overrides)
+        const _greetOv = await getOverrides(business.id);
+        const greeting: string = await runWithTranslationOverrides(_greetOv, async () => {
+          const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+          let g: string;
+          const isCustomGreeting = waConfig!.templates.greeting !== 'Welcome! How can I help you today?';
+          if (isCustomGreeting) {
+            // Custom greeting set by business owner — always use it
+            g = this.standaloneService.fillTemplate(waConfig!.templates.greeting, {
+              restaurant_name: business!.name,
+              business_name: business!.name,
+            });
+          } else if (waConfig!.alias) {
+            const catLabels = getCategoryLabels(business!.category);
+            g = this.intelligence.getPersonaGreeting(waConfig!.alias, business!.name, catLabels.confirmationEmoji);
+          } else {
+            // Default greeting — resolve through translation overrides
+            g = getFlowCopy(greetLang, 'greeting.welcome_default');
+          }
+
+          // Powered by and cancel hint — always from resolver
+          if (!tierInfo!.isWhitelabel) g += '\n\n' + getFlowCopy(greetLang, 'greeting.powered_by');
+          g += '\n\n' + getFlowCopy(greetLang, 'greeting.cancel_hint');
+          return g;
+        });
 
         // Store greeting in session for capability selection to merge into one message
         session.session_data._greeting = greeting;
 
         if (!tierInfo.allowed) {
+          const { getFlowCopy: getFlowCopyTier } = await import('@/lib/bot/flows/flow-localization');
           await this.messageSender.sendButtons({
             to: from,
             body: `Thank you for contacting ${business.name}! We're currently unavailable on WhatsApp. Please try again later.`,
             buttons: [
-              { id: 'cap_chat', title: 'Chat with Us' },
+              { id: 'cap_chat', title: runWithTranslationOverrides(_greetOv, () => getFlowCopyTier(greetLang, 'greeting.chat_with_us')) },
             ],
           });
           await this.deactivateSession(session.id);
@@ -1663,14 +2097,16 @@ export class BotService {
             const rebookServiceId = custHistory.lastServiceId || custHistory.favoriteServiceId;
 
             if (rebookServiceName && rebookServiceId) {
+              const rebookLang = (session.session_data._detected_language as string) || 'en';
+              const { getFlowCopy: getFlowCopyRebook, fillFlowCopy: fillFlowCopyRebook } = await import('@/lib/bot/flows/flow-localization');
+              const _rebookGreetOv = await getOverrides(business.id);
               const isVip = custHistory.ltvTier === 'vip';
-              const rebookMsg = customerName
-                ? isVip
-                  ? `Welcome back, ${customerName}! Great to see you again. 👋`
-                  : `Welcome back, ${customerName}! 👋`
-                : isVip
-                  ? 'Welcome back! Great to see you again. 👋'
-                  : 'Welcome back! 👋';
+              const rebookMsg = runWithTranslationOverrides(_rebookGreetOv, () => {
+                const base = customerName
+                  ? fillFlowCopyRebook(rebookLang, 'greeting.welcome_back_named', { name: customerName })
+                  : getFlowCopyRebook(rebookLang, 'greeting.welcome_back');
+                return isVip ? base.replace('👋', 'Great to see you again. 👋') : base;
+              });
 
               // Determine giving vs booking by checking service_type on the actual service
               // This is more reliable than lastFlowType which can be wrong for giving categories
@@ -1725,11 +2161,24 @@ export class BotService {
               // Stop here — don't show the full greeting/menu on top of the rebook prompt
               return;
             } else {
-              // No rebookable service — send text greeting as before
+              // No rebookable service — send return greeting with override-aware welcome line
+              const effectiveLang = (session.session_data._detected_language as string) || 'en';
+              const { getFlowCopy: getFlowCopyReturn, fillFlowCopy: fillFlowCopyReturn } = await import('@/lib/bot/flows/flow-localization');
+              const _returnOv = await getOverrides(business.id);
+              const welcomeLine = runWithTranslationOverrides(_returnOv, () =>
+                customerName
+                  ? fillFlowCopyReturn(effectiveLang, 'greeting.welcome_back_named', { name: customerName })
+                  : getFlowCopyReturn(effectiveLang, 'greeting.welcome_back')
+              );
+              // If the resolver returned the default EN text, use buildDefaultWelcomeLine
+              // to get the bold/VIP exact text; otherwise use the override
+              const defaultEn = customerName
+                ? fillFlowCopyReturn('en', 'greeting.welcome_back_named', { name: customerName })
+                : getFlowCopyReturn('en', 'greeting.welcome_back');
+              const isOverridden = welcomeLine !== defaultEn;
               const returnMsg = buildReturnGreeting(
-                customerName,
-                custHistory,
-                business.name,
+                customerName, custHistory, business.name,
+                isOverridden ? welcomeLine : undefined, // undefined → buildDefaultWelcomeLine (exact old text)
               );
               if (returnMsg) {
                 const lang = session.session_data._detected_language as string | undefined;
@@ -1738,7 +2187,7 @@ export class BotService {
                   businessId: businessId!,
                   supabase: this.supabase,
                 };
-                await this.sendText(from, lang ? await translateBotResponse(returnMsg, lang, returnTCtx) : returnMsg);
+                await this.sendText(from, lang && lang !== 'en' ? await translateBotResponse(returnMsg, lang, returnTCtx) : returnMsg);
               }
             }
           }
@@ -1887,11 +2336,17 @@ export class BotService {
 
         // Delegate to flow executor for the first step prompt
         // CAS-004: pass canonical result ephemerally — NOT persisted to session
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined);
+        const _newSessionOv = business ? await getOverrides(business.id) : emptyOverrides;
+        await runWithTranslationOverrides(_newSessionOv, () =>
+          this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined)
+        );
         return;
       }
 
-      // Marketplace greeting — no business found from bot code or past history
+      // Fall through to marketplace greeting — no business found from bot code or past history
+      // S-1: No business bound — all sends below must be platform-scoped
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+
       // Check if this is a returning user with past businesses for quick-pick
       const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
@@ -1902,31 +2357,25 @@ export class BotService {
           : { data: null };
 
         const name = (returningProfile as { first_name?: string } | null)?.first_name;
-        await this.sendText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
-
-        // Clean up old sessions
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-
         const quickPick = recentBusinesses.slice(0, 3);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: profile?.id || null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: quickPick },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
-          buttons: quickPick.map((s, i) => ({
-            id: `biz_${i}`,
-            title: truncTitle(s.name),
-          })),
-        });
+        const sugSess = await this.createNullBizSuggestionSession(from, profile?.id || null, { suggestions: quickPick });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
+            await this.sendPlatformButtons(from,
+              'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
+              persisted.map((s, i) => ({
+                id: `biz_${i}`,
+                title: truncTitle(s.name),
+              })),
+            );
+          }
+        } else {
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        }
         return;
       }
 
@@ -1944,8 +2393,8 @@ export class BotService {
             flowToken: `onboarding:${from}`,
           });
         } else {
-          // Fallback: direct to web registration
-          await this.sendText(from, [
+          // Fallback: direct to web registration (platform-scoped: no business bound)
+          await this.sendPlatformText(from, [
             '*Register your business on Waaiio!*',
             '',
             'Set up your business in under 2 minutes:',
@@ -1957,10 +2406,10 @@ export class BotService {
         return;
       }
 
-      // ── First-time user — onboarding message ──
+      // ── First-time user — onboarding message (platform-scoped: no business bound) ──
       const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {
-        await this.sendText(from, [
+        await this.sendPlatformText(from, [
           '*Welcome to Waaiio!* 👋',
           '',
           'I help you book appointments, buy tickets, place orders, and make payments — all through WhatsApp.',
@@ -1976,7 +2425,7 @@ export class BotService {
           '• *receipt* — get your last receipt',
         ].join('\n'));
       } else {
-        await this.sendText(from, [
+        await this.sendPlatformText(from, [
           `I couldn't find a business matching "${text.trim().slice(0, 30)}". 🤔`,
           '',
           'Try sending the exact *business code*, or type *switch* followed by a business name.',
@@ -1996,11 +2445,16 @@ export class BotService {
       await this.deactivateSession(session.id);
       // Personalize the expired message with business name if available
       let expiredMsg = 'Your session has expired.';
+      const protectedVals: string[] = [];
       if (session.business_id) {
         const { data: biz } = await this.supabase.from('businesses').select('name').eq('id', session.business_id).single();
-        if (biz?.name) expiredMsg = `Your session with *${biz.name}* has expired.`;
+        if (biz?.name) {
+          expiredMsg = `Your session with *${biz.name}* has expired.`;
+          protectedVals.push(biz.name);
+        }
       }
-      await this.sendText(from, `${expiredMsg} Send *Hi* to start over. 🙏`);
+      await this.sendSessionLocalizedText(from, `${expiredMsg} Send *Hi* to start over. 🙏`, session,
+        protectedVals.length ? { protectedValues: protectedVals } : undefined);
       return;
     }
 
@@ -2009,6 +2463,7 @@ export class BotService {
     if (pendingLang && (text === 'lang_yes' || text === 'lang_no')) {
       const updatedData = { ...session.session_data };
       delete updatedData._pending_language;
+      delete updatedData._pending_language_source;
 
       if (text === 'lang_yes') {
         // Re-validate entitlement + certification before persisting — policy may have
@@ -2041,10 +2496,145 @@ export class BotService {
         const confirmMsg = await translateBotResponse(`Great! I'll respond in ${langName} from now on.`, pendingLang, confirmEntitlement);
         await this.sendText(from, confirmMsg);
       } else {
+        // User explicitly chose English — persist as session response language
+        // so the canonical resolver sees sessionLanguage='en' and does not
+        // fall through to the remembered preference (#561-C).
+        updatedData._detected_language = 'en';
         await this.supabase.from('bot_sessions')
           .update({ session_data: updatedData })
           .eq('id', session.id);
         await this.sendText(from, 'No problem! I\'ll keep responding in English.');
+      }
+      return;
+    }
+
+    // ── Language picker selection (first-contact picker) ──
+    if (text.startsWith('lang_pick_')) {
+      const langCode = text.replace('lang_pick_', '');
+      const { isSupportedLanguage, CERTIFIED_LANGUAGES: pickCertLangs } = await import('@/lib/bot/languages');
+      const langName = getLanguageName(langCode);
+
+      if (!isSupportedLanguage(langCode)) {
+        await this.sendText(from, 'Invalid selection. Send *Hi* to start over.');
+        return;
+      }
+
+      if (!pickCertLangs.includes(langCode)) {
+        await this.sendText(from, 'This language is not yet available. Send *Hi* to start over.');
+        return;
+      }
+
+      // Re-check entitlement against live business tier + language config
+      const pickTier = session.business_id
+        ? (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free'
+        : 'free';
+      const pickEntitlement = await this.buildTranslationContext(session.business_id, pickTier);
+      const mayActivate = pickCertLangs.includes(langCode)
+        && pickEntitlement.entitlement.allowedLanguages.includes(langCode)
+        && (langCode === 'en' || (pickEntitlement.entitlement.translationAllowed && pickEntitlement.entitlement.llmAllowed));
+      if (!mayActivate) {
+        const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+        await this.sendText(from, fillFlowCopy('en', 'lang.not_available', { langName }));
+        return;
+      }
+
+      // Guard: no session (should not happen — picker is shown after session creation)
+      if (!session) {
+        await this.sendText(from, `Send *Hi* to continue in ${langName}.`);
+        return;
+      }
+
+      // CAS update session language
+      session.session_data._detected_language = langCode;
+      const langCasResult = await this.supabase.rpc('update_session_cas', {
+        p_session_id: session.id,
+        p_expected_version: session.version,
+        p_current_step: session.current_step,
+        p_session_data: session.session_data,
+      });
+      if (!langCasResult.data?.success) {
+        logger.warn('[BOT] CAS conflict in lang_pick handler (language set)');
+        return; // Don't send duplicate messages
+      }
+      session.version = langCasResult.data.version;
+
+      // Save to profile for future sessions
+      if (session.user_id) {
+        const { writePreferredResponseLanguage } = await import('@/lib/bot/language-preference');
+        await writePreferredResponseLanguage(this.supabase as never, session.user_id, langCode);
+      }
+
+      // Save to customer_profiles for per-business preference
+      // (preferred_language column added by migration 445 — graceful if not yet applied)
+      if (session.business_id) {
+        try {
+          const phoneWithPlus = from.startsWith('+') ? from : '+' + from;
+          const { error: cpError } = await this.supabase.from('customer_profiles').upsert({
+            business_id: session.business_id,
+            phone: phoneWithPlus,
+            preferred_language: langCode,
+          }, { onConflict: 'business_id,phone' });
+          if (cpError) {
+            logger.warn('[BOT] customer_profiles preferred_language upsert failed:', cpError.message);
+            Sentry.captureMessage(`customer_profiles preferred_language upsert failed: ${cpError.message}`, 'error');
+          }
+        } catch {
+          // Column may not exist yet — non-fatal
+        }
+      }
+
+      // Send confirmation in the chosen language (inside override context)
+      const { fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+      const _confirmOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+      const confirmMsg = runWithTranslationOverrides(_confirmOv, () =>
+        fillFlowCopy(langCode, 'lang.picker_confirmed', { langName })
+      );
+      await this.sendText(from, confirmMsg);
+
+      // Process any pending first message stored before the picker was shown
+      const pendingFirstMsg = session.session_data._pending_first_message as string | undefined;
+      delete session.session_data._pending_first_message; // Clear it (saved in CAS write below)
+
+      // Is the pending message a greeting? If so, treat as empty input (show menu).
+      const greetingPattern = /^(hi|hello|hey|menu|start|eku|bawo|sannu|kedu|maakye|bonjour|hola|abeg|wetin)$/i;
+      const pendingTrimmed = pendingFirstMsg?.trim() ?? '';
+      const isPickerGreeting = !pendingFirstMsg || greetingPattern.test(pendingTrimmed);
+      const executeInput = isPickerGreeting ? '' : pendingFirstMsg!.trim();
+
+      // CAS write to clear _pending_first_message
+      const pendingCasResult = await this.supabase.rpc('update_session_cas', {
+        p_session_id: session.id,
+        p_expected_version: session.version,
+        p_current_step: session.current_step,
+        p_session_data: session.session_data,
+      });
+      if (!pendingCasResult.data?.success) {
+        logger.warn('[BOT] CAS conflict clearing _pending_first_message');
+        return; // Don't send duplicate messages
+      }
+      session.version = pendingCasResult.data.version;
+
+      // Now proceed in the chosen language
+      if (session.business_id) {
+        if (!isPickerGreeting && executeInput) {
+          // Non-greeting pending message → re-dispatch through full routing
+          // (intent detection, canonical understanding, flow start).
+          // _internalProvenance prevents the picker from re-triggering.
+          await this.handleMessage(from, executeInput, 'text', destinationPhone, session.business_id, undefined, undefined, 'lang_pick_redispatch');
+        } else {
+          // Greeting or no pending message → show the menu
+          const { data: pickBiz } = await this.supabase
+            .from('businesses')
+            .select('*')
+            .eq('id', session.business_id)
+            .single();
+          if (pickBiz) {
+            const _pickOv = await getOverrides(session.business_id);
+            await runWithTranslationOverrides(_pickOv, () =>
+              this.flowExecutor.execute(from, '', session!, pickBiz)
+            );
+          }
+        }
       }
       return;
     }
@@ -2071,7 +2661,7 @@ export class BotService {
         '_Need human help? Type *chat* to reach the business owner._',
       ].filter(Boolean);
 
-      await this.sendText(from, helpLines.join('\n'));
+      await this.sendSessionLocalizedText(from, helpLines.join('\n'), session);
       return;
     }
 
@@ -2081,26 +2671,26 @@ export class BotService {
     // Handle "Switch Business" button — deactivate and show business picker
     if (text === 'switch_biz') {
       await this.deactivateSession(session.id);
+      // S-1: Transition to platform discovery — previous business must not block picker
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       // Force business picker by clearing business association and showing suggestions
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 1) {
         const quickPick = recentBiz.slice(0, 3);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: quickPick },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'Which business would you like to visit?',
-          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
-        });
+        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
+        } else {
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        }
       } else {
-        await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');
+        await this.sendPlatformLocalizedText(from, 'Type the name or code of the business you\'d like to visit.', session);
       }
       return;
     }
@@ -2217,7 +2807,10 @@ export class BotService {
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
         : null;
       if (business) {
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business);
+        const _rebookOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+        await runWithTranslationOverrides(_rebookOv, () =>
+          this.flowExecutor.execute(from, '', session as unknown as BotSession, business)
+        );
       }
       return;
     }
@@ -2255,7 +2848,10 @@ export class BotService {
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
         : null;
       if (bizForMenu) {
-        await this.flowExecutor.execute(from, '', session as unknown as BotSession, bizForMenu);
+        const _menuOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+        await runWithTranslationOverrides(_menuOv, () =>
+          this.flowExecutor.execute(from, '', session as unknown as BotSession, bizForMenu)
+        );
       }
       return;
     }
@@ -2274,6 +2870,7 @@ export class BotService {
       this.sendText.bind(this),
       this.deactivateSession.bind(this),
       this.handleMessage.bind(this),
+      await this.resolveHandlerCopyLang(session),
     );
     if (escapeResult.handled) return;
 
@@ -2284,20 +2881,21 @@ export class BotService {
     if (session.business_id && (text === 'cap_promo_verification' || text === 'promo_verification')) {
       const caps = (session.session_data?.capabilities as string[]) || [];
       if (!caps.includes('promo_verification')) {
-        await this.sendText(from, 'This feature is not available right now.');
+        await this.sendSessionLocalizedText(from, 'This feature is not available right now.', session);
         return;
       }
       try {
         const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
         const campaigns = await getActivePromoEntryCampaigns(session.business_id);
         if (campaigns.length === 0) {
-          await this.sendText(from, 'No active promotions right now. Check back later! 🎰');
+          await this.sendSessionLocalizedText(from, 'No active promotions right now. Check back later! 🎰', session);
         } else {
+          // renderPromoEntryMessage returns merchant-authored content — passthrough
           await this.sendText(from, renderPromoEntryMessage(campaigns));
         }
       } catch (err) {
         logger.error('[BOT] Instant Win entry error:', err);
-        await this.sendText(from, 'Something went wrong. Please try again.');
+        await this.sendSessionLocalizedText(from, 'Something went wrong. Please try again.', session);
       }
       return; // Terminate — booking/reservation/FlowExecutor cannot consume this action
     }
@@ -2347,30 +2945,33 @@ export class BotService {
           switch (scRecovery.type) {
             case 'completed':
             case 'already_completed':
-              await this.sendText(from, '✅ *Payment Confirmed!*\n\nYour payment has been verified and processed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.');
+              await this.sendSessionLocalizedText(from, '✅ *Payment Confirmed!*\n\nYour payment has been verified and processed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.', session);
               return;
             case 'requires_auth':
-              await this.sendText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`);
+              // authUrl is a protected transactional value — preserve exactly
+              await this.sendSessionLocalizedText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`, session,
+                { protectedValues: [scRecovery.authUrl].filter(Boolean) as string[] });
               return;
             case 'terminal_decline':
-              await this.sendText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`);
+              await this.sendSessionLocalizedText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`, session,
+                scRecovery.message ? { protectedValues: [scRecovery.message] } : undefined);
               return;
             case 'quarantined':
-              await this.sendText(from, 'Your payment session has expired. Please start a new payment by typing *Hi*.');
+              await this.sendSessionLocalizedText(from, 'Your payment session has expired. Please start a new payment by typing *Hi*.', session);
               return;
             case 'indeterminate':
-              await this.sendText(from, "We're still verifying your previous payment. Tap *I've Paid* again shortly.");
+              await this.sendSessionLocalizedText(from, "We're still verifying your previous payment. Tap *I've Paid* again shortly.", session);
               return;
             case 'provider_confirmed':
-              await this.sendText(from, "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.");
+              await this.sendSessionLocalizedText(from, "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.", session);
               return;
             case 'authority_rejected':
               // Provider may already have collected funds. Keep payment-ID authority
               // fenced and never fall through to ordinary reference recovery / retry.
-              await this.sendText(from, "Your payment was received by the payment provider, but Waaiio could not safely finalize it. Please do NOT pay again. Tap *I've Paid* to check the same payment again while we resolve it.");
+              await this.sendSessionLocalizedText(from, "Your payment was received by the payment provider, but Waaiio could not safely finalize it. Please do NOT pay again. Tap *I've Paid* to check the same payment again while we resolve it.", session);
               return;
             case 'error':
-              await this.sendText(from, 'We could not verify your saved-card payment right now. Please try again shortly.');
+              await this.sendSessionLocalizedText(from, 'We could not verify your saved-card payment right now. Please try again shortly.', session);
               return;
             case 'not_applicable':
               // Only genuinely non-saved-card cases may use reference recovery.
@@ -2404,13 +3005,20 @@ export class BotService {
           result = await recoverGeneric(recoveryCtx);
         }
 
+        // Slice 5A: Localize recovery messages (session-based, existing sendSessionLocalizedText)
+        // Protected values: references, amounts, purpose labels
+        const recoveryProtected: string[] = [];
+        if ('referenceCode' in result && result.referenceCode) recoveryProtected.push(result.referenceCode);
+        if ('amount' in result) recoveryProtected.push(formatCurrency((result as { amount: number }).amount, cc));
+        const recoveryOpts = recoveryProtected.length ? { protectedValues: recoveryProtected } : undefined;
+
         switch (result.type) {
           case 'confirmed':
           case 'reconciling':
           case 'not_found':
           case 'integrity_error':
           case 'error':
-            await this.sendText(from, result.message);
+            await this.sendSessionLocalizedText(from, result.message, session, recoveryOpts);
             return;
 
           case 'disambiguation': {
@@ -2420,10 +3028,21 @@ export class BotService {
               id: `i_paid_ref:${c.gatewayReference}`,
               title: c.referenceCode.slice(0, 20),
             }));
+            // Localize disambiguation body; button IDs/titles are authoritative references
+            // Translate the disambiguation body with protected values
+            let disambigBody = result.message;
+            const disambigLang = (session.session_data._detected_language as string) || '';
+            if (disambigLang && disambigLang !== 'en' && session.business_id) {
+              try {
+                const disambigTier = (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free';
+                const disambigTCtx = await this.buildTranslationContext(session.business_id, disambigTier);
+                disambigBody = await translateBotResponse(disambigBody, disambigLang, disambigTCtx, recoveryOpts);
+              } catch { /* fail closed to English */ }
+            }
             // Use this.messageSender (bound to inbound channel) — not resolveByBusinessId (#219)
             await this.messageSender.sendButtons({
               to: from,
-              body: result.message,
+              body: disambigBody,
               buttons,
             });
             return;
@@ -2450,7 +3069,7 @@ export class BotService {
           const intentId = parts[1];
           if (intentId) {
             if (!session.user_id) {
-              await this.sendText(from, 'Unable to verify your identity.');
+              await this.sendSessionLocalizedText(from, 'Unable to verify your identity.', session);
               return;
             }
 
@@ -2463,19 +3082,19 @@ export class BotService {
             if (declineErr || !result?.declined) {
               const reason = String(result?.reason || declineErr?.message || 'unknown');
               if (reason === 'expired') {
-                await this.sendText(from, 'This recurring offer has expired. Your payment is already confirmed.');
+                await this.sendSessionLocalizedText(from, 'This recurring offer has expired. Your payment is already confirmed.', session);
               } else if (reason === 'user_mismatch') {
-                await this.sendText(from, 'This offer is for a different account.');
+                await this.sendSessionLocalizedText(from, 'This offer is for a different account.', session);
               } else if (reason === 'tenant_mismatch') {
-                await this.sendText(from, 'Unable to process this request.');
+                await this.sendSessionLocalizedText(from, 'Unable to process this request.', session);
               } else if (reason?.startsWith('invalid_state_')) {
-                await this.sendText(from, 'This offer is no longer available.');
+                await this.sendSessionLocalizedText(from, 'This offer is no longer available.', session);
               } else {
-                await this.sendText(from, 'Could not decline the offer. Please try again.');
+                await this.sendSessionLocalizedText(from, 'Could not decline the offer. Please try again.', session);
               }
               return;
             }
-            await this.sendText(from, 'No problem! Your payment is confirmed.');
+            await this.sendSessionLocalizedText(from, 'No problem! Your payment is confirmed.', session);
             return;
           }
         } else {
@@ -2514,10 +3133,45 @@ export class BotService {
     }
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
-    // Only fire on non-free-text steps
+    // Only fire on non-free-text steps.
+    // Slice 4: bounded step-owned input precedence — when the current step has typed
+    // aliases and the input matches one, skip keyword routing so the step validator
+    // owns it. Unrelated keywords still fire normally on these steps.
+    const STEP_OWNED_INPUTS: Record<string, Set<string>> = {
+      'post_completion': new Set(['view options', 'options', 'book again', 'order again', 'give again', 'buy more tickets', 'my bookings', 'my orders', 'my tickets', 'my giving']),
+      'campaign_view': new Set(['donate', 'yes', 'back', 'donate_yes', 'donate_back']),
+      'invoice_detail': new Set(['pay', 'pay now', 'back', 'back to list', 'go back']),
+      'loyalty_menu': new Set(['history', 'points', 'redeem', 'redeem reward', 'back', 'view_history', 'back_to_account']),
+      'loyalty_redeem': new Set(['confirm_redeem', 'skip_redeem', 'go_back']),
+      'select_action': new Set(['cancel subscription', 'cancel recurring payment', 'pause', 'details', 'history', 'cancel_sub', 'pause_sub', 'resume_sub', 'view_details', 'payment_history']),
+      'subscription_details': new Set(['history', 'payments', 'back', 'payment_history', 'back_subs']),
+      'queue_start': new Set(['join', 'join queue', 'status', 'my position', 'queue_checkin', 'queue_status', 'check in']),
+      'queue_check_status': new Set(['join', 'join queue', 'leave', 'queue_checkin', 'leave_queue']),
+      'book_for_other': new Set(['myself', 'me', 'someone else', 'other', 'for_myself', 'for_other']),
+      'addon_continue': new Set(['more', 'add more', 'done', 'continue', 'more_addons', 'done_addons']),
+      'list_subscriptions': new Set(['back_to_account']),
+    };
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
+    const stepOwnedSet = STEP_OWNED_INPUTS[step];
+    // Bounded ownership: poll_question owns postback/numeric/escape + exact current option text
+    const isPollOwned = step === 'poll_question' && (
+      /^poll_vote_\d+$/.test(text) || /^\d{1,2}$/.test(text.trim()) ||
+      ['cancel', 'skip', 'exit', 'no thanks'].includes(text.toLowerCase().trim()) ||
+      // Dynamic: exact current poll option text from session_data
+      ((session.session_data?.poll_options as string[]) || [])
+        .some(opt => opt.toLowerCase() === text.toLowerCase().trim())
+    );
+    // Bounded ownership: select_campaign owns postback/go_back/numeric + exact current campaign title
+    const isCampaignOwned = step === 'select_campaign' && (
+      text.startsWith('campaign_') || text === 'go_back' || /^\d{1,2}$/.test(text.trim()) ||
+      // Dynamic: exact current eligible campaign title from session_data
+      ((session.session_data?._campaign_titles as string[]) || [])
+        .some(t => t.toLowerCase() === text.toLowerCase().trim())
+    );
+    const inputOwnedByStep = isPollOwned || isCampaignOwned ||
+      (stepOwnedSet !== undefined && stepOwnedSet.has(text.toLowerCase().trim()));
 
-    if (!isFreeTextStepForKeywords) {
+    if (!isFreeTextStepForKeywords && !inputOwnedByStep) {
       // Use cached category from session_data (saved during session creation)
       const businessCategory = (session.session_data?.business_category as string) || null;
 
@@ -2545,6 +3199,8 @@ export class BotService {
 
     // Handle "Did you mean?" business selection
     if (step === 'select_business_suggestion') {
+      // S-1: No business is bound in this step — all replies must be platform-scoped
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
       let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
 
@@ -2559,7 +3215,7 @@ export class BotService {
       const isNo = /^(biz_no|no|nah|nope|wrong|not)$/i.test(text);
       if (isNo) {
         await this.deactivateSession(session.id);
-        await this.sendText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_');
+        await this.sendPlatformLocalizedText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_', session);
         return;
       }
 
@@ -2598,16 +3254,25 @@ export class BotService {
         await this.deactivateSession(session.id);
         return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
       } else {
-        await this.sendText(from, 'Please select one of the options above, or send a *business code* to connect.');
+        await this.sendPlatformLocalizedText(from, 'Please select one of the options above, or send a *business code* to connect.', session);
         return;
       }
     }
 
     // Handle post-completion menu (after successful transaction)
     if (step === 'post_completion') {
+      // Normalize typed aliases to canonical postback IDs
+      const pcLower = text.toLowerCase().trim();
+      const pcAliasMap: Record<string, string> = {
+        'view options': 'pc_options', 'options': 'pc_options',
+        'book again': 'pc_again', 'order again': 'pc_again', 'give again': 'pc_again', 'buy more tickets': 'pc_again',
+        'my bookings': 'pc_history', 'my orders': 'pc_history', 'my tickets': 'pc_history', 'my giving': 'pc_history',
+      };
+      const pcText = pcAliasMap[pcLower] || text;
+
       // ACC-204 R4: Read provenance from session BEFORE deactivation for all pc_ paths
       const pcProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
-      if (text === 'pc_options' || text === 'pc_done') {
+      if (pcText === 'pc_options' || pcText === 'pc_done') {
         // View Options — restart at capability menu for same business
         await this.deactivateSession(session.id);
         if (session.business_id) {
@@ -2616,7 +3281,7 @@ export class BotService {
         }
         return;
       }
-      if (text === 'pc_again') {
+      if (pcText === 'pc_again') {
         // Start over at the same business
         await this.deactivateSession(session.id);
         if (session.business_id) {
@@ -2627,7 +3292,7 @@ export class BotService {
         }
         return;
       }
-      if (text === 'pc_history') {
+      if (pcText === 'pc_history') {
         // Route to the appropriate history view based on capability
         const cap = session.session_data._post_completion_cap as string || '';
         if (cap === 'ordering') {
@@ -2706,7 +3371,10 @@ export class BotService {
               .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel')
               .eq('id', session.business_id)
               .single();
-            await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
+            const _startFlowOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+            await runWithTranslationOverrides(_startFlowOv, () =>
+              this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null)
+            );
             return;
           }
         }
@@ -2875,6 +3543,11 @@ export class BotService {
 
           // Handle marketplace search (no business context needed)
           if (understanding.recommendedAction === 'search_marketplace') {
+            const hiddenIds = await loadDirectoryHiddenIds(this.supabase);
+            if (hiddenIds === null) {
+              await this.sendText(from, 'Business search is temporarily unavailable. Please try again shortly.');
+              return;
+            }
             const searchResult = await searchMarketplace(this.supabase, {
               category: understanding.entities.category,
               query:
@@ -2887,6 +3560,7 @@ export class BotService {
               partySize: understanding.entities.partySize,
               budgetMax: understanding.entities.budgetMax,
               country: undefined, // country_code not on BusinessRecord at this point
+              excludeIds: hiddenIds,
             });
             if (!searchResult.ok) {
               await this.sendText(from, 'Business search is temporarily unavailable. Please try again shortly.');
@@ -2994,7 +3668,10 @@ export class BotService {
     }
 
     _bmark('flow_exec_start');
-    await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType, resumedCanonical || undefined);
+    const _finalOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
+    await runWithTranslationOverrides(_finalOv, () =>
+      this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType, resumedCanonical || undefined)
+    );
     _bmark('flow_exec_done');
     logger.info('[BOT-PERF] timings_ms', _btimings);
     } catch (err) {
@@ -3016,6 +3693,7 @@ export class BotService {
     suggestions?: { id: string; name: string; bot_code: string }[];
     isCategory?: boolean;
     deepLinkCapability?: string;
+    authority: 'exact' | 'suggestion';
   }> {
     return _detectBotCodeWithSuggestions(this.supabase, text, callerPhone, countryFilter);
   }
@@ -3025,10 +3703,6 @@ export class BotService {
     callerPhone?: string,
   ): { id: string; name: string; bot_code: string }[] {
     return _rankSuggestions(businesses, callerPhone);
-  }
-
-  private async findReturningCustomerBusiness(phone: string, userId: string | null, countryFilter?: string | null): Promise<string | null> {
-    return _findReturningCustomerBusiness(this.supabase, phone, userId, countryFilter);
   }
 
   private async findReturningCustomerBusinesses(phone: string, userId: string | null, countryFilter?: string | null): Promise<{ id: string; name: string; bot_code: string }[]> {
@@ -3047,6 +3721,19 @@ export class BotService {
     return _capabilityToFirstStep(cap);
   }
 
+  // ── Canonical copy-language resolver for handlers (#561-C) ──
+  // Delegates to the exported resolveHandlerCopyLang — same production code
+  // path is exercised by both BotService and tests.
+  private async resolveHandlerCopyLang(session: BotSession): Promise<string> {
+    const { resolveHandlerCopyLang: resolve } = await import('./resolve-handler-copy-lang');
+    return resolve({
+      supabase: this.supabase,
+      businessId: session.business_id,
+      userId: session.user_id,
+      sessionLanguage: (session.session_data._detected_language as string) || null,
+    });
+  }
+
   // ── My Bookings (delegated to handlers/my-bookings.ts) ──
 
   private async handleMyBookings(session: BotSession, from: string, input: string): Promise<void> {
@@ -3054,7 +3741,8 @@ export class BotService {
   }
 
   private async handleRefundRequest(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleRefundRequest(this.supabase, this.messageSender, this.sendText.bind(this), session, from, input);
+    const lang = await this.resolveHandlerCopyLang(session);
+    return _handleRefundRequest(this.supabase, this.messageSender, this.sendText.bind(this), session, from, input, lang);
   }
 
   private async handleViewTicket(session: BotSession, from: string, ticketId: string): Promise<void> {
@@ -3072,15 +3760,18 @@ export class BotService {
   // ── My Orders (delegated to handlers/my-orders.ts) ──
 
   private async handleMyOrders(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleMyOrders(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input);
+    const lang = await this.resolveHandlerCopyLang(session);
+    return _handleMyOrders(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input, lang);
   }
 
   private async handleOrderDetail(session: BotSession, from: string, orderId: string): Promise<void> {
-    return _handleOrderDetail(this.supabase, this.messageSender, this.sendText.bind(this), session, from, orderId);
+    const lang = await this.resolveHandlerCopyLang(session);
+    return _handleOrderDetail(this.supabase, this.messageSender, this.sendText.bind(this), session, from, orderId, lang);
   }
 
   private async handleOrderDetailAction(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleOrderDetailAction(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input);
+    const lang = await this.resolveHandlerCopyLang(session);
+    return _handleOrderDetailAction(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input, lang);
   }
 
   // ── Route to My Account Menu (delegated to handlers/my-account-menu.ts) ──
@@ -3091,8 +3782,8 @@ export class BotService {
 
   // ── Transaction Document Handler ──────────────────────────
 
-  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt' | 'annual'): Promise<void> {
-    return _handleTransactionDocument(this.supabase, this.messageSender, this.sendText.bind(this), from, userId, type);
+  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt' | 'annual', lang?: string): Promise<void> {
+    return _handleTransactionDocument(this.supabase, this.messageSender, this.sendText.bind(this), from, userId, type, lang);
   }
 
   // ── Quote Response Handler ──────────────────────────────
@@ -3125,6 +3816,154 @@ export class BotService {
 
   private async deactivateSession(sessionId: string): Promise<void> {
     return _deactivateSession(this.supabase, sessionId);
+  }
+
+  /**
+   * Create (or recover) a null-business select_business_suggestion session.
+   * Handles stale expired sessions and 23505 collisions safely.
+   * Returns the session row on success, null on unrecoverable failure (logged + Sentry).
+   */
+  private async createNullBizSuggestionSession(
+    from: string, userId: string | null,
+    sessionData: Record<string, unknown>, ttlMs: number = 30 * 60 * 1000,
+  ): Promise<BotSession | null> {
+    const now = new Date().toISOString();
+    // (a) Deactivate expired-but-active null-biz sessions
+    await this.supabase.from('bot_sessions').update({ is_active: false })
+      .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true).lt('expires_at', now);
+    // (b) Insert (no delete of inactive rows — no unique index makes them collide;
+    //     idx_bot_sessions_unique_active_null_biz is partial on is_active=true only)
+    const { data: sess, error: insertErr } = await this.supabase.from('bot_sessions').insert({
+      whatsapp_number: from, user_id: userId, business_id: null,
+      current_step: 'select_business_suggestion', session_data: sessionData,
+      is_active: true, expires_at: new Date(Date.now() + ttlMs).toISOString(),
+    }).select().single();
+    if (!insertErr && sess) return sess as unknown as BotSession;
+    // (d) 23505: existing active null session survived cleanup (not expired)
+    if (insertErr?.code === '23505') {
+      const { data: existing } = await this.supabase.from('bot_sessions').select('*')
+        .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true).single();
+      if (existing && !existing.business_id) {
+        if (existing.expires_at && new Date(existing.expires_at) < new Date()) {
+          // Expired (race) — CAS deactivation conditional on version + is_active + expires_at.
+          // Prevents deactivating a session renewed concurrently between our read and this update.
+          const expiryCutoff = new Date().toISOString();
+          const { data: casDead } = await this.supabase.from('bot_sessions')
+            .update({ is_active: false, version: (existing.version ?? 0) + 1 })
+            .eq('id', existing.id)
+            .is('business_id', null)
+            .eq('is_active', true)
+            .lt('expires_at', expiryCutoff)
+            .eq('version', existing.version ?? 0)
+            .select('id');
+          if (!casDead || (casDead as unknown[]).length === 0) {
+            // CAS got 0 rows — session was renewed concurrently; re-read rather than inserting.
+            logger.info('[BOT] createNullBizSuggestionSession: CAS got 0 rows (concurrent renewal?), re-reading:', existing.id);
+            const { data: reReadRaw } = await this.supabase.from('bot_sessions')
+              .select('*').eq('id', existing.id).single();
+            const reRead = reReadRaw as unknown as BotSession | null;
+            if (reRead && reRead.is_active && reRead.expires_at && new Date(reRead.expires_at) > new Date()) {
+              logger.info('[BOT] createNullBizSuggestionSession: resumed renewed session after CAS race:', reRead.id);
+              return reRead;
+            }
+            logger.error('[BOT] createNullBizSuggestionSession: CAS race — session not renewable, failing closed:', existing.id);
+            return null;
+          }
+          // CAS succeeded — stale session cleared. Retry the insert exactly once.
+          // If the retry also fails for any reason (incl. another 23505) return null;
+          // callers handle null with a recoverable error message. No loop, no second retry.
+          logger.info('[BOT] createNullBizSuggestionSession: CAS deactivation succeeded, retrying insert once:', existing.id);
+          const { data: retried, error: retryErr } = await this.supabase.from('bot_sessions').insert({
+            whatsapp_number: from, user_id: userId, business_id: null,
+            current_step: 'select_business_suggestion', session_data: sessionData,
+            is_active: true, expires_at: new Date(Date.now() + ttlMs).toISOString(),
+          }).select().single();
+          if (!retryErr && retried) {
+            logger.info('[BOT] createNullBizSuggestionSession: retry insert succeeded:', (retried as unknown as BotSession).id);
+            return retried as unknown as BotSession;
+          }
+          logger.error('[BOT] createNullBizSuggestionSession: retry insert failed:', retryErr?.message, retryErr?.code);
+          return null;
+        }
+        // Not expired — update in place (CAS: version must match to prevent concurrent overwrites;
+        // advance version so a stale second worker holding the old version cannot overwrite this write)
+        const { data: updated, error: updateErr } = await this.supabase.from('bot_sessions')
+          .update({ current_step: 'select_business_suggestion', session_data: sessionData,
+            expires_at: new Date(Date.now() + ttlMs).toISOString(), version: (existing.version ?? 0) + 1 })
+          .eq('id', existing.id).eq('whatsapp_number', from).is('business_id', null)
+          .eq('is_active', true).eq('version', existing.version ?? 0).select().single();
+        if (!updateErr && updated) {
+          logger.info('[BOT] createNullBizSuggestionSession: updated existing session:', existing.id);
+          return updated as unknown as BotSession;
+        }
+        logger.error('[BOT] createNullBizSuggestionSession: update failed:', updateErr?.message);
+        Sentry.captureException(updateErr || new Error('Null-biz suggestion session update failed'));
+        return null;
+      }
+    }
+    // (e) Unrecoverable
+    logger.error('[BOT] createNullBizSuggestionSession: insert failed:', insertErr?.message, insertErr?.code);
+    Sentry.captureException(insertErr || new Error('Null-biz suggestion session insert failed'));
+    return null;
+  }
+
+  /**
+   * Send the first-contact language picker as a WhatsApp interactive list.
+   * Only shown when: no active session, no saved language preference,
+   * and the business offers more than one certified language.
+   */
+  private async sendLanguagePicker(
+    from: string,
+    business: { id: string; name: string },
+    allowedLanguages: string[],
+    sender: MessageSender,
+  ): Promise<void> {
+    // Import language catalog for native names
+    const { LANGUAGE_CATALOG } = await import('@/lib/bot/languages');
+
+    const catalog = LANGUAGE_CATALOG as ReadonlyArray<{ code: string; displayName: string; nativeName: string; certified: boolean }>;
+    const rows = allowedLanguages
+      .filter(code => code !== 'en') // English is the default, show others
+      .map(code => {
+        const entry = catalog.find(l => l.code === code);
+        return {
+          title: entry?.nativeName || entry?.displayName || code,
+          description: entry?.displayName || '',
+          postbackText: `lang_pick_${code}`,
+        };
+      });
+
+    // Always include English as the last option
+    rows.push({
+      title: 'English',
+      description: '',
+      postbackText: 'lang_pick_en',
+    });
+
+    if (rows.length < 2) return; // No point showing a single-option picker
+
+    const { getFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+
+    // Build multilingual body: English line + one line per non-English offered language
+    const bodyLines: string[] = [getFlowCopy('en', 'lang.picker_body')];
+    for (const code of allowedLanguages) {
+      if (code === 'en') continue;
+      const localizedLine = getFlowCopy(code, 'lang.picker_body');
+      // Only add if it differs from the English line (has a real translation)
+      if (localizedLine && localizedLine !== bodyLines[0]) {
+        const entry = catalog.find(l => l.code === code);
+        const tag = entry?.nativeName ? ` (${entry.nativeName})` : '';
+        bodyLines.push(`${localizedLine}${tag}`);
+      }
+    }
+
+    await sender.sendList({
+      to: from,
+      title: business.name,
+      body: bodyLines.join('\n'),
+      buttonLabel: getFlowCopy('en', 'lang.picker_button'),
+      items: rows,
+    });
   }
 
   private async sendText(to: string, text: string): Promise<void> {
@@ -3162,6 +4001,58 @@ export class BotService {
     const lang = (session?.session_data?._detected_language as string) || '';
     const translated = lang ? await translateBotResponse(text, lang, tCtx) : text;
     return sendBotText(this.messageSender, to, translated);
+  }
+
+  /**
+   * Localized send — resolves translation context from session's business.
+   * For Waaiio-owned customer-facing text in the active-session path.
+   * If session has no business or no detected language, sends English (no LLM call).
+   *
+   * Callers that interpolate dynamic values (merchant names, URLs, references)
+   * MUST pass them as protectedValues so they survive translation byte-for-byte.
+   */
+  private async sendSessionLocalizedText(
+    to: string,
+    text: string,
+    session: { session_data: Record<string, unknown>; business_id?: string | null },
+    opts?: TranslateOptions,
+  ): Promise<void> {
+    const lang = (session.session_data._detected_language as string) || '';
+    if (!lang || lang === 'en') {
+      return sendBotText(this.messageSender, to, text);
+    }
+    const tier = session.business_id
+      ? (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free'
+      : 'free';
+    const tCtx = await this.buildTranslationContext(session.business_id || null, tier);
+    const translated = await translateBotResponse(text, lang, tCtx, opts);
+    return sendBotText(this.messageSender, to, translated);
+  }
+
+  /**
+   * Platform-scoped localized send — same translation logic as sendSessionLocalizedText,
+   * but sends via sendPlatformText (bypasses business hard-stop guard).
+   * For tenantless suggestion-step replies that must be both platform-scoped AND translated.
+   * If translation fails, sends the English text platform-scoped (never silence).
+   */
+  private async sendPlatformLocalizedText(
+    to: string,
+    text: string,
+    session: { session_data: Record<string, unknown>; business_id?: string | null },
+    opts?: TranslateOptions,
+  ): Promise<void> {
+    const lang = (session.session_data._detected_language as string) || '';
+    if (!lang || lang === 'en') {
+      return this.sendPlatformText(to, text);
+    }
+    let textToSend = text;
+    try {
+      const tCtx = await this.buildTranslationContext(null, 'free');
+      textToSend = await translateBotResponse(text, lang, tCtx, opts);
+    } catch (err) {
+      logger.error('[BOT] sendPlatformLocalizedText translation error (sending English):', err);
+    }
+    return this.sendPlatformText(to, textToSend);
   }
 
   /** Build TranslationContext for a business — resolves entitlement from tier + configured languages */

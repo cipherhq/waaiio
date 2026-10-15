@@ -262,7 +262,7 @@ describe('Cross-source protection (R9 §2)', () => {
 
 describe('Onboarding integration', () => {
   it('registration route server-enforces wa_method=shared', () => {
-    const registerSource = readFileSync(join(process.cwd(), 'app/api/onboarding/register/route.ts'), 'utf-8');
+    const registerSource = readFileSync(join(process.cwd(), 'lib/onboarding/provision-business.ts'), 'utf-8');
     const insertBlock = registerSource.slice(
       registerSource.indexOf('.insert({'),
       registerSource.indexOf("status: 'pending'") + 20,

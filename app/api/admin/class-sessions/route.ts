@@ -1,22 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
-
-function corsHeaders(origin?: string | null) {
-  const allowedOrigins = [
-    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-    'http://localhost:8083',
-  ];
-  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+import { adminCorsHeaders } from '@/lib/admin-cors';
 
 export async function OPTIONS() {
-  return NextResponse.json({}, { headers: corsHeaders() });
+  return NextResponse.json({}, { headers: adminCorsHeaders(null, 'GET, OPTIONS') });
 }
 
 /**
@@ -30,7 +18,7 @@ export async function GET(request: NextRequest) {
     requiredRole: ['admin', 'support', 'operations'],
   });
   if (!admin) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: corsHeaders(origin) });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: adminCorsHeaders(origin, 'GET, OPTIONS') });
   }
 
   const supabase = createServiceClient();
@@ -46,7 +34,7 @@ export async function GET(request: NextRequest) {
       .single();
 
     if (!session) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404, headers: corsHeaders(origin) });
+      return NextResponse.json({ error: 'Session not found' }, { status: 404, headers: adminCorsHeaders(origin, 'GET, OPTIONS') });
     }
 
     // Enrich with names
@@ -74,7 +62,7 @@ export async function GET(request: NextRequest) {
         attendees: attendees || [],
         attendee_count: attendeeCount,
       },
-    }, { headers: corsHeaders(origin) });
+    }, { headers: adminCorsHeaders(origin, 'GET, OPTIONS') });
   }
 
   // List sessions with server-side pagination
@@ -104,11 +92,11 @@ export async function GET(request: NextRequest) {
   const { data: sessions, error } = await query;
 
   if (error) {
-    return NextResponse.json({ error: 'Failed to fetch sessions' }, { status: 500, headers: corsHeaders(origin) });
+    return NextResponse.json({ error: 'Failed to fetch sessions' }, { status: 500, headers: adminCorsHeaders(origin, 'GET, OPTIONS') });
   }
 
   if (!sessions || sessions.length === 0) {
-    return NextResponse.json({ data: [], page, limit, total: total || 0, totalPages: 0 }, { headers: corsHeaders(origin) });
+    return NextResponse.json({ data: [], page, limit, total: total || 0, totalPages: 0 }, { headers: adminCorsHeaders(origin, 'GET, OPTIONS') });
   }
 
   // Enrich with business/service/staff names
@@ -148,5 +136,5 @@ export async function GET(request: NextRequest) {
     limit,
     total: totalCount,
     totalPages: Math.ceil(totalCount / limit),
-  }, { headers: corsHeaders(origin) });
+  }, { headers: adminCorsHeaders(origin, 'GET, OPTIONS') });
 }

@@ -15,11 +15,14 @@ const nextConfig = {
       },
     ],
   },
+  // Moved from experimental (stable in Next 15).
+  serverExternalPackages: ['pdfkit'],
   experimental: {
-    // PDFKit loads its built-in AFM font data via fs.readFileSync(__dirname + '/data/...').
-    // Keep it externalized so __dirname resolves inside node_modules/pdfkit on Vercel
-    // instead of a bundled .next/server/chunks directory.
-    serverComponentsExternalPackages: ['pdfkit'],
+    // Preserve Next 14 client router cache behaviour; revisit after launch.
+    staleTimes: {
+      dynamic: 30,
+      static: 180,
+    },
     // Explicitly retain AFM data for every current server route that can reach
     // a PDFKit generator, including dynamic send-confirmation paths.
     outputFileTracingIncludes: {
@@ -39,6 +42,7 @@ const nextConfig = {
       '/api/webhooks/flutterwave': ['./node_modules/pdfkit/js/data/**/*'],
       '/api/cron/payment-reconciliation': ['./node_modules/pdfkit/js/data/**/*'],
       '/api/cron/retry-failed-charges': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/dashboard/pending-transfers/[id]': ['./node_modules/pdfkit/js/data/**/*'],
     },
   },
   async headers() {

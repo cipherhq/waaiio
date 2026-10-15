@@ -1036,8 +1036,8 @@ export default function ServicesPage() {
 
       <PageHelp
         pageKey="services"
-        title="Your Services"
-        description="These are the services your customers can request through WhatsApp. Add your prices, descriptions, and any deposit requirements. The bot will show these options to customers automatically."
+        title={`Your ${labels.serviceNamePlural || 'Services'}`}
+        description={`These are the ${(labels.serviceNamePlural || 'services').toLowerCase()} your customers can request through WhatsApp. Add your prices, descriptions, and any deposit requirements. The bot will show these options to customers automatically.`}
       />
 
       {error && (
@@ -1069,11 +1069,11 @@ export default function ServicesPage() {
       {services.length === 0 ? (
         <EmptyState
           icon="🛎️"
-          title="No services yet"
-          description="Add the services you offer so customers can request them on WhatsApp."
-          actionLabel="Add your first service"
+          title={`No ${(labels.serviceNamePlural || 'services').toLowerCase()} yet`}
+          description={`Add the ${(labels.serviceNamePlural || 'services').toLowerCase()} you offer so customers can request them on WhatsApp.`}
+          actionLabel={`Add your first ${(labels.serviceName || 'service').toLowerCase()}`}
           onAction={openAdd}
-          tip="Start with your most popular service — you can add more anytime."
+          tip={`Start with your most popular ${(labels.serviceName || 'service').toLowerCase()} — you can add more anytime.`}
         />
       ) : (
         <div className="mt-6 space-y-3">

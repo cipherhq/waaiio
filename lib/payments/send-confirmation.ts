@@ -9,6 +9,7 @@ import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { getEntityBalance } from '@/lib/payments/entity-balance';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -410,6 +411,20 @@ export async function sendProactiveConfirmation(
   } else if (payment.invoice_id) {
     confirmationTitle = 'Invoice Payment';
   }
+
+  // Slice 5A: Resolve proactive localization once for reuse in confirmation + post-completion
+  let proactiveTranslate: ((text: string, pv?: string[]) => Promise<string>) | undefined;
+  if (customerPhone && businessId) {
+    try {
+      const proactiveL10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+      if (proactiveL10n.language !== 'en') {
+        proactiveTranslate = proactiveL10n.translate;
+      }
+    } catch (err) {
+      logger.warn(`${logPrefix} Proactive localization setup failed (non-fatal):`, err);
+    }
+  }
+
   const lines = [
     `✅ *${confirmationTitle} Confirmed!*`,
     '',
@@ -655,7 +670,44 @@ export async function sendProactiveConfirmation(
   // Save/Replace Card CTA is now a separate button message sent AFTER finalization.
   // See checkAndOfferSavedCard() called after finalizeConfirmationClaim.
 
-  // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
+  // ── 4b. Localize the FULLY ASSEMBLED confirmation message (Slice 5A) ──
+  // Translation happens AFTER all customer-facing content is assembled (balance,
+  // guidance, calendar) and BEFORE the delivery claim/send. Protected values
+  // preserve all authoritative financial/merchant/reference data byte-for-byte.
+  let localizedText = lines.join('\n');
+  if (proactiveTranslate) {
+    try {
+      const protectedValues: string[] = [
+        businessName,
+        serviceName,
+        formatCurrency(payment.amount, countryCode),
+        referenceCode,
+      ].filter(Boolean);
+      if (balanceRemaining > 0) protectedValues.push(formatCurrency(balanceRemaining, countryCode));
+      if (bookingDate) protectedValues.push(bookingDate);
+      if (bookingTime) protectedValues.push(bookingTime);
+      if (bookingAddress) protectedValues.push(bookingAddress);
+      // B1: Extract and protect ALL URLs in the final message (calendar links, etc.)
+      const urlMatches = localizedText.match(/https?:\/\/[^\s)]+/g);
+      if (urlMatches) protectedValues.push(...urlMatches);
+
+      localizedText = await proactiveTranslate(localizedText, protectedValues);
+    } catch (err) {
+      // Fail closed to English — no state change, no retry disruption
+      logger.warn(`${logPrefix} Proactive localization failed (non-fatal):`, err);
+    }
+  }
+
+  // ── PRE-DELIVERY RENEWAL: Revalidate claim after translation, before delivery claim/send ──
+  // This is additive to existing CHECKPOINT 1 — if ownership was lost during translation,
+  // do not proceed to claim/authorize/send the customer WhatsApp delivery.
+  const preDelivery = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+  if (!preDelivery.ok) {
+    logger.warn(`${logPrefix} Ownership lost after translation, before delivery: ${preDelivery.reason}`);
+    return { status: 'processing', retryable: true };
+  }
+
+  // ── 5. Resolve channel + send (protected by checkpoint 1 + pre-delivery renewal above) ──
   try {
     if (whatsappOriginMissingChannel) {
       logger.warn(`${logPrefix} Customer WhatsApp send skipped — no origin channel for WhatsApp-originated payment ${payment.id}`);
@@ -694,7 +746,7 @@ export async function sendProactiveConfirmation(
         if (sendAuth?.authorized) {
           sideEffectsMayHaveOccurred = true;
           try {
-            const sendResult = await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+            const sendResult = await resolved.sender.sendText({ to: phone, text: localizedText });
             const wamid = sendResult?.messageId;
 
             if (wamid) {
@@ -805,9 +857,9 @@ export async function sendProactiveConfirmation(
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
         const customerName = await getCustomerName(supabase, customerPhone);
-        // Orders: amountPaid=0 (existing ACC-008 behavior, unchanged by #161).
-        // Bookings/Reservations: real payment.amount for receipts/loyalty + skipCustomerSpend
-        // because Stage 2 owns durable spend via apply_payment_spend_once.
+        // All entity types: pass real payment.amount so receipts are generated.
+        // Stage 2 owns durable spend for bookings/reservations/orders via RPCs;
+        // skipCustomerSpend prevents double-counting in post-completion.
         const isOrderPayment = !!payment.order_id;
         const isBookingPayment = !!payment.booking_id;
         const isReservationPayment = !!payment.reservation_id;
@@ -829,16 +881,16 @@ export async function sendProactiveConfirmation(
           serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
           referenceId: payment.booking_id || payment.reservation_id || undefined,
           sender: resolved?.sender,
-          amountPaid: isOrderPayment ? 0 : payment.amount,
+          amountPaid: payment.amount,
           // Skip automation for entities that don't have booking/order semantics (#173)
           skipAutomation: isOrderPayment || isCampaignPayment || isInvoicePayment,
-          // Only booking/reservation: suppress legacy additive spend (Stage 2 owns it).
-          // Orders: do NOT set skipCustomerSpend — existing amountPaid=0 behavior is unchanged.
-          skipCustomerSpend: isBookingPayment || isReservationPayment,
+          // Stage 2 owns durable spend for bookings, reservations, and orders.
+          skipCustomerSpend: isBookingPayment || isReservationPayment || isOrderPayment,
           // #167: Direct Giving skips loyalty; ambiguous payment-family fails closed
           skipLoyalty: isGivingPayment || isAmbiguousPayment,
           serviceName, referenceCode,
           currencyCode: paymentCurrencyCode,
+          translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [businessName, serviceName, referenceCode].filter(Boolean))) : undefined,
         });
       } catch (pcErr) {
         logSafeError(logPrefix, 'post-completion', pcErr);
@@ -1196,6 +1248,9 @@ export async function sendProactiveConfirmation(
                 ticketTypeName,
                 ticketPrice,
                 currencyCode: paymentCurrencyCode,
+                translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [
+                  event?.name, ticketBooking.guest_name, referenceCode, event?.venue,
+                ].filter(Boolean) as string[])) : undefined,
               };
 
               let ticketResult: Awaited<ReturnType<typeof ticketModule.ensureCanonicalTicketRows>> | null = null;
@@ -1284,6 +1339,20 @@ export async function sendProactiveConfirmation(
               googleCalUrl = generateGoogleCalendarUrl(calEvent);
             }
           }
+          // Slice 5B: Translate email labels if non-English customer
+          let bookingEmailLabels: import('@/lib/email/localize-email').BookingEmailLabels | undefined;
+          let bookingWrapperLabels: import('@/lib/email/localize-email').EmailWrapperLabels | undefined;
+          if (proactiveTranslate) {
+            try {
+              const { translateLabels, DEFAULT_BOOKING_LABELS, DEFAULT_WRAPPER_LABELS } = await import('@/lib/email/localize-email');
+              const l10n = await resolveProactiveLocalization(supabase, customerPhone!, businessId!);
+              if (l10n.language !== 'en') {
+                bookingEmailLabels = await translateLabels(DEFAULT_BOOKING_LABELS, l10n, [businessName, referenceCode]) as unknown as typeof DEFAULT_BOOKING_LABELS;
+                const { localizeWrapperLabels } = await import('@/lib/email/localize-email');
+                bookingWrapperLabels = await localizeWrapperLabels(l10n);
+              }
+            } catch { /* fail closed to English */ }
+          }
           const emailContent = bookingConfirmationEmail({
             firstName: emailBooking?.guest_name?.split(' ')[0] || 'there',
             businessName,
@@ -1297,6 +1366,8 @@ export async function sendProactiveConfirmation(
             confirmationEmoji: '✅',
             googleCalendarUrl: googleCalUrl,
             whitelabel: isWl,
+            labels: bookingEmailLabels,
+            wrapperLabels: bookingWrapperLabels,
           });
           const sendBookingEmail = async () => {
             const result = await sendEmail({ to: guestEmail, ...emailContent });
@@ -1346,6 +1417,20 @@ export async function sendProactiveConfirmation(
             const campaignTitle = (donation.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
             const { sendEmail } = await import('@/lib/email/client');
             const { donationReceiptEmail } = await import('@/lib/email/templates');
+            // Slice 5B: Translate donation email labels
+            let donationEmailLabels: import('@/lib/email/localize-email').DonationEmailLabels | undefined;
+            let donationWrapperLabels: import('@/lib/email/localize-email').EmailWrapperLabels | undefined;
+            if (proactiveTranslate) {
+              try {
+                const { translateLabels: tl, DEFAULT_DONATION_LABELS, DEFAULT_WRAPPER_LABELS: DWL } = await import('@/lib/email/localize-email');
+                const l10n = await resolveProactiveLocalization(supabase, customerPhone!, businessId!);
+                if (l10n.language !== 'en') {
+                  donationEmailLabels = await tl(DEFAULT_DONATION_LABELS, l10n, [businessName, campaignTitle, referenceCode]) as unknown as typeof DEFAULT_DONATION_LABELS;
+                  const { localizeWrapperLabels: lwl } = await import('@/lib/email/localize-email');
+                  donationWrapperLabels = await lwl(l10n);
+                }
+              } catch { /* fail closed to English */ }
+            }
             const emailContent = donationReceiptEmail({
               donorName: donation.donor_name || 'Donor',
               businessName,
@@ -1353,6 +1438,8 @@ export async function sendProactiveConfirmation(
               formattedAmount: formatCurrency(payment.amount, countryCode),
               referenceCode: donation.reference_code || referenceCode,
               whitelabel: isWl,
+              labels: donationEmailLabels,
+              wrapperLabels: donationWrapperLabels,
             });
             const sendDonationEmail = async () => {
               const result = await sendEmail({ to: donorEmail, ...emailContent });

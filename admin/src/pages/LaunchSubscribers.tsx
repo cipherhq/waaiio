@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { adminDb } from '@/lib/supabase';
 import { adminApiFetch } from '@/lib/adminApi';
 import { downloadCSV } from '@/lib/csv';
 import { Rocket, Download, Users, Globe, QrCode, TrendingUp, Send, RefreshCw } from 'lucide-react';
@@ -45,11 +44,17 @@ export default function LaunchSubscribers() {
   const [retryMode, setRetryMode] = useState(false);
 
   async function loadSubscribers() {
-    const { data } = await adminDb
-      .from('launch_subscribers')
-      .select('*')
-      .order('created_at', { ascending: false });
-    setSubscribers(data || []);
+    try {
+      const res = await adminApiFetch('/api/admin/query', {
+        table: 'launch_subscribers',
+        select: '*',
+        order: { column: 'created_at', ascending: false },
+      });
+      const json = await res.json();
+      setSubscribers(json.data || []);
+    } catch {
+      setSubscribers([]);
+    }
   }
 
   useEffect(() => {

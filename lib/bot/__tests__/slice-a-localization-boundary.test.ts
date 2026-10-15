@@ -21,6 +21,20 @@ const { mockCreate, mockIncrementAIUsage, mockLoggerWarn } = vi.hoisted(() => ({
   mockLoggerWarn: vi.fn(),
 }));
 
+const { mockReadPreferredResponseLanguage, mockWritePreferredResponseLanguage } = vi.hoisted(() => ({
+  mockReadPreferredResponseLanguage: vi.fn().mockResolvedValue(null),
+  mockWritePreferredResponseLanguage: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('@/lib/bot/language-preference', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../language-preference')>();
+  return {
+    ...actual,
+    readPreferredResponseLanguage: mockReadPreferredResponseLanguage,
+    writePreferredResponseLanguage: mockWritePreferredResponseLanguage,
+  };
+});
+
 // Mock Anthropic SDK — the only external AI call
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@anthropic-ai/sdk', () => {
@@ -211,10 +225,11 @@ function createTestStep() {
 /** Standard test session */
 function createTestSession(overrides?: Partial<{
   _detected_language: string;
+  user_id: string | null;
 }>) {
   return {
     id: 'sess-1',
-    user_id: null,
+    user_id: overrides?.user_id ?? null,
     business_id: 'biz-1',
     current_step: 'test_step',
     session_data: {
@@ -395,11 +410,11 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
 
     const session = createTestSession();
     // Mock Anthropic responses:
-    // (1) "Switched to French. ✅" confirmation text
-    // (2) "Pick a date:" → "Choisissez une date :" via ctx.t in the re-prompt
-    // (3) sendMessages re-translates the already-French prompt (by-design double-pass;
+    // Confirmation is now deterministic (getFlowCopy → English for uncertified 'fr'),
+    // so no Anthropic call is needed for it. Only the re-prompt translations remain:
+    // (1) "Pick a date:" → "Choisissez une date :" via ctx.t in the re-prompt
+    // (2) sendMessages re-translates the already-French prompt (by-design double-pass;
     //     in production the cache would absorb this, but in tests each mock is consumed once)
-    setupAnthropicResponse('Passage au français. ✅');
     setupAnthropicResponse('Choisissez une date :');
     setupAnthropicResponse('Choisissez une date :');
 
@@ -419,9 +434,13 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
       }),
     );
 
-    // Must send translated confirmation
+    // Must send confirmation — now deterministic via getFlowCopy.
+    // Since 'fr' is not in CERTIFIED_LANGUAGES, the confirmation falls back to English.
+    // The fillFlowCopy(targetLang, 'lang.switched', ...) call will use English because
+    // getFlowCopy gates on certification. This is intentional — the language switch
+    // still activates _detected_language for LLM translation of subsequent prompts.
     const msgs = sender.getMessages();
-    expect(msgs.some(m => m.type === 'text' && m.text?.includes('Passage au français'))).toBe(true);
+    expect(msgs.some(m => m.type === 'text' && m.text?.includes('Switched to French'))).toBe(true);
 
     // The re-prompt must have been called via ctx.t and the French translation consumed
     expect(ctxTStep.prompt).toHaveBeenCalled();
@@ -468,6 +487,51 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
 
     // Zero Anthropic calls — no translation needed for English
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('explicit durable intent writes only the resolved profile preference after business authority exists', async () => {
+    const session = createTestSession({ user_id: 'profile-1' });
+
+    await executor.execute('+2348001234567', 'always use English', session, TEST_BUSINESS);
+
+    expect(mockWritePreferredResponseLanguage).toHaveBeenCalledOnce();
+    expect(mockWritePreferredResponseLanguage).toHaveBeenCalledWith(
+      supabase,
+      'profile-1',
+      'en',
+    );
+    expect(session.business_id).toBe('biz-1');
+    expect(session.session_data.business_id).toBeUndefined();
+    expect(supabase.rpc).toHaveBeenCalledWith(
+      'update_session_cas',
+      expect.objectContaining({ p_session_id: 'sess-1' }),
+    );
+  });
+
+  it('ordinary temporary switch never writes the durable profile preference', async () => {
+    const session = createTestSession({ user_id: 'profile-1' });
+
+    await executor.execute('+2348001234567', 'switch to English', session, TEST_BUSINESS);
+
+    expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
+    expect(supabase.rpc).toHaveBeenCalled();
+  });
+
+  it('passive language-shaped text never writes the durable profile preference', async () => {
+    const session = createTestSession({ user_id: 'profile-1' });
+
+    await executor.execute('+2348001234567', 'I speak English with my family', session, TEST_BUSINESS);
+
+    expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
+  });
+
+  it('durable intent without canonical customer identity fails closed without a profile write', async () => {
+    const session = createTestSession({ user_id: null });
+
+    await executor.execute('+2348001234567', 'always use English', session, TEST_BUSINESS);
+
+    expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
+    expect(session.business_id).toBe('biz-1');
   });
 });
 
@@ -545,7 +609,7 @@ describe('Slice A — concurrent tenant attribution (truly overlapping)', () => 
 
 describe('Slice A — BotService lang_yes stale-policy revalidation', () => {
   /** Create a Supabase mock where the resumed session has _pending_language set */
-  function createBotServiceSupabase(pendingLang: string) {
+  function createBotServiceSupabase(pendingLang: string, pendingSource?: 'remembered') {
     const updateTracker: Array<{ table: string; data: unknown }> = [];
 
     function makeChain(resolveData: unknown = null) {
@@ -568,6 +632,7 @@ describe('Slice A — BotService lang_yes stale-policy revalidation', () => {
         active_capability: 'scheduling',
         capabilities: ['scheduling'],
         _pending_language: pendingLang,
+        ...(pendingSource ? { _pending_language_source: pendingSource } : {}),
         business_name: 'Test Salon',
       },
       conversation_log: [],
@@ -610,7 +675,23 @@ describe('Slice A — BotService lang_yes stale-policy revalidation', () => {
           if (table === 'profiles') return makeChain({ id: 'profile-1' });
           return makeChain();
         }),
-        rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 2, current_step: 'select_date' }, error: null }),
+        rpc: vi.fn().mockImplementation((name: string, params?: Record<string, unknown>) => {
+          // #266: bot service calls get_bot_context(phone, NULL) for unresolved sessions
+          if (name === 'get_bot_context' && params?.p_business_id === null) {
+            return Promise.resolve({
+              data: {
+                has_session: true,
+                ambiguous: false,
+                session: activeSession,
+                business,
+                capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+                capability_overrides: [],
+              },
+              error: null,
+            });
+          }
+          return Promise.resolve({ data: { success: true, version: 2, current_step: 'select_date' }, error: null });
+        }),
         storage: { from: vi.fn(() => ({ upload: vi.fn(), createSignedUrl: vi.fn(), getPublicUrl: vi.fn() })) },
       } as any,
       updateTracker,
@@ -687,5 +768,29 @@ describe('Slice A — BotService lang_yes stale-policy revalidation', () => {
       const sd = (lastUpdate.data as any)?.session_data;
       expect(sd?._pending_language).toBeUndefined();
     }
+  });
+
+  it('a confirmed remembered preference activates only the current session and consumes the one-shot offer', async () => {
+    mockGetEffectiveLanguages.mockReturnValue({
+      allowedLanguages: ['en', 'fr'],
+      llmAllowed: true,
+      translationAllowed: true,
+    });
+    mockCertifiedLanguages.length = 0;
+    mockCertifiedLanguages.push('en', 'fr');
+    const { supabase, updateTracker, activeSession } = createBotServiceSupabase('fr', 'remembered');
+    mockGetActiveSession.mockResolvedValue(activeSession);
+    setupAnthropicResponse('Très bien ! Je répondrai en français.');
+
+    const sender = createCaptureSender();
+    const botService = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    await botService.handleMessage('+2348001234567', 'lang_yes', 'text');
+
+    const sessionUpdates = updateTracker.filter(u => u.table === 'bot_sessions');
+    const activated = sessionUpdates.find(u => (u.data as any)?.session_data?._detected_language === 'fr');
+    expect(activated).toBeDefined();
+    expect((activated!.data as any).session_data._pending_language).toBeUndefined();
+    expect((activated!.data as any).session_data._pending_language_source).toBeUndefined();
+    expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
   });
 });

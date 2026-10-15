@@ -4,6 +4,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { finalizeOnboarding } from '@/lib/onboarding/finalize';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { initCapabilities } from '@/lib/capabilities/service';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -560,6 +562,23 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Paid onboarding completion: transition business to active after proven
+      // activation authority. Matches free path behavior (line ~600).
+      // Payment/subscription evidence is already committed and will not be
+      // rolled back. The existing idempotent verify/RPC replay converges on retry.
+      const { error: paidStatusErr } = await service
+        .from('businesses')
+        .update({ status: 'active' })
+        .eq('id', businessId)
+        .eq('status', 'pending');
+      if (paidStatusErr) {
+        console.warn('[ONBOARDING-VERIFY] Paid business status update failed (retryable):', paidStatusErr);
+        return NextResponse.json(
+          { message: 'Business activation failed after payment. Please retry verification.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
       // Post-authority provider identity update (only after successful activation)
       // For active-subscription replay, this is the only point where provider IDs change.
       if (existingSubIsActive && subscription?.id) {
@@ -605,6 +624,46 @@ export async function POST(request: NextRequest) {
       .select('bot_code, slug')
       .eq('id', businessId)
       .single();
+
+    // Admin-assisted onboarding converges here, after the canonical payment/free
+    // entitlement authority has activated the exact owned business. Dedicated or
+    // coexistence requests remain customer-action-required until Meta authorization.
+    try {
+      const { data: assisted } = await service.from('admin_onboarding_invites')
+        .select('id, created_by_admin_id, whatsapp_method, status, intended_plan, metadata')
+        .eq('business_id', businessId).eq('target_user_id', user.id)
+        .eq('status', 'customer_action_required').maybeSingle();
+      const requestedCapabilities = ((assisted?.metadata as { input?: { capabilities?: CapabilityId[] } } | null)?.input?.capabilities || []);
+      if (assisted?.intended_plan === plan && requestedCapabilities.length > 0) {
+        const { data: activatedBusiness } = await service.from('businesses').select('category, status, subscription_tier').eq('id', businessId).single();
+        if (activatedBusiness?.status === 'active' && activatedBusiness.subscription_tier === plan) {
+          await initCapabilities(service, businessId, activatedBusiness.category, requestedCapabilities);
+        }
+      }
+      if (assisted?.whatsapp_method === 'shared') {
+      const activatedAt = new Date().toISOString();
+      const { data: completed } = await service.from('admin_onboarding_invites')
+        .update({ status: 'active', activated_at: activatedAt, last_error: null })
+        .eq('id', assisted.id).eq('status', 'customer_action_required').select('id').maybeSingle();
+      if (completed) {
+        const { error: assistedAuditError } = await logAdminAudit({
+          actorId: assisted.created_by_admin_id,
+          action: 'admin_onboarding_activated',
+          entityType: 'admin_onboarding',
+          entityId: assisted.id,
+          details: { target_user_id: user.id, business_id: businessId, plan, completed_by_customer: true },
+        });
+        if (assistedAuditError) {
+          await service.from('admin_onboarding_invites').update({ status: 'customer_action_required', activated_at: null, last_error: 'Completion audit failed' }).eq('id', assisted.id).eq('status', 'active');
+          return NextResponse.json({ message: 'Activation completed, but onboarding audit failed. Contact support.', recoverable: true }, { status: 500 });
+        }
+      }
+      }
+    } catch (assistedError) {
+      // Completion tracking is ancillary to the canonical activation authority.
+      // A missing migration during a rolling deploy must not break public signup.
+      console.warn('[ONBOARDING-VERIFY] Assisted onboarding status sync deferred:', assistedError);
+    }
 
     return NextResponse.json({
       status: 'success',

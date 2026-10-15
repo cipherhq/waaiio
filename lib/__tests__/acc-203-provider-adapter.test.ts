@@ -8,6 +8,7 @@
  * 3. MetaApiError 5xx → ambiguous path (route-level regression)
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createTestSupabase } from './helpers/mock-supabase';
 
 // Mock circuit breaker to avoid interference
 vi.mock('@/lib/channels/circuit-breaker', () => ({
@@ -49,7 +50,7 @@ describe('MetaCloudSender.sendTemplate provider-adapter proof', () => {
 
   it('noRetry:true — ambiguous error causes exactly one underlying call', async () => {
     const cloudSendTemplate = vi.fn().mockRejectedValue(new Error('ETIMEDOUT'));
-    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate));
+    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate), createTestSupabase());
 
     await expect(sender.sendTemplate({ ...baseMsg, noRetry: true })).rejects.toThrow('ETIMEDOUT');
 
@@ -59,7 +60,7 @@ describe('MetaCloudSender.sendTemplate provider-adapter proof', () => {
 
   it('noRetry:true — 5xx MetaApiError causes exactly one underlying call', async () => {
     const cloudSendTemplate = vi.fn().mockRejectedValue(new MetaApiError('Cloud API error: 500', 500));
-    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate));
+    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate), createTestSupabase());
 
     await expect(sender.sendTemplate({ ...baseMsg, noRetry: true })).rejects.toThrow('500');
 
@@ -68,7 +69,7 @@ describe('MetaCloudSender.sendTemplate provider-adapter proof', () => {
 
   it('noRetry:true — success returns messageId', async () => {
     const cloudSendTemplate = vi.fn().mockResolvedValue({ messageId: 'wamid.test123' });
-    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate));
+    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate), createTestSupabase());
 
     const result = await sender.sendTemplate({ ...baseMsg, noRetry: true });
 
@@ -86,7 +87,7 @@ describe('MetaCloudSender.sendTemplate provider-adapter proof', () => {
       .mockRejectedValueOnce(new Error('Cloud API error: 500'))
       .mockResolvedValueOnce({ messageId: 'wamid.retry-success' });
 
-    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate));
+    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate), createTestSupabase());
 
     // Start the sendTemplate call — will fail first, then retry after delay
     const sendPromise = sender.sendTemplate({ ...baseMsg });
@@ -104,7 +105,7 @@ describe('MetaCloudSender.sendTemplate provider-adapter proof', () => {
 
   it('default — 4xx error does NOT retry', async () => {
     const cloudSendTemplate = vi.fn().mockRejectedValue(new MetaApiError('Cloud API error: 400', 400));
-    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate));
+    const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate), createTestSupabase());
 
     await expect(sender.sendTemplate({ ...baseMsg })).rejects.toThrow('400');
 

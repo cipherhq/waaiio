@@ -5,6 +5,7 @@ import { requireCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendWithTemplate } from '@/lib/channels/send-with-template';
 import { checkOptInBatch } from '@/lib/security/check-optin';
+import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 import { sendSms, isSmsEligible } from '@/lib/sms/bulksms-ng';
 
@@ -183,8 +184,9 @@ export async function POST(request: NextRequest) {
       }
 
       // Format the date
-      const dateStr = formatInviteDate(inviteTarget.date);
-      const timeStr = formatInviteTime(inviteTarget.time);
+      const cc = business?.country_code || 'NG';
+      const dateStr = formatInviteDate(inviteTarget.date, 'en', cc);
+      const timeStr = formatInviteTime(inviteTarget.time, 'en', cc);
 
       const inviteLink = `${appUrl}/rsvp/${invite.invite_token}`;
 
@@ -277,8 +279,8 @@ export async function POST(request: NextRequest) {
           // Send email invite with RSVP + WhatsApp opt-in link
           try {
             const { sendEmail } = await import('@/lib/email/client');
-            const eDateStr = formatInviteDate(inviteTarget.date);
-            const eTimeStr = formatInviteTime(inviteTarget.time);
+            const eDateStr = formatInviteDate(inviteTarget.date, 'en', business?.country_code || 'NG');
+            const eTimeStr = formatInviteTime(inviteTarget.time, 'en', business?.country_code || 'NG');
 
             await sendEmail({
               to: guestEmail,
@@ -326,7 +328,7 @@ export async function POST(request: NextRequest) {
             `You're Invited!`,
             hostName ? `${hostName} invites you to:` : '',
             inviteTarget.name,
-            inviteTarget.date ? formatInviteDate(inviteTarget.date) : '',
+            inviteTarget.date ? formatInviteDate(inviteTarget.date, 'en', business?.country_code || 'NG') : '',
             inviteTarget.venue ? `At ${inviteTarget.venue}` : '',
             '',
             `RSVP: ${inviteLink}`,
@@ -365,8 +367,8 @@ export async function POST(request: NextRequest) {
   if (emails && emails.length > 0 && inviteTarget) {
     try {
       const { sendEmail } = await import('@/lib/email/client');
-      const dateStr = formatInviteDate(inviteTarget.date);
-      const timeStr = formatInviteTime(inviteTarget.time);
+      const dateStr = formatInviteDate(inviteTarget.date, 'en', business?.country_code || 'NG');
+      const timeStr = formatInviteTime(inviteTarget.time, 'en', business?.country_code || 'NG');
 
       for (const email of emails.slice(0, 50)) {
         if (!email || !email.includes('@')) continue;
@@ -412,23 +414,14 @@ export async function POST(request: NextRequest) {
   });
 }
 
-function formatInviteDate(dateStr: string | null): string {
+function formatInviteDate(dateStr: string | null, lang = 'en', cc = 'NG'): string {
   if (!dateStr) return '';
-  try {
-    return new Date(dateStr + 'T00:00').toLocaleDateString('en-GB', {
-      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-    });
-  } catch { return dateStr; }
+  return formatDisplayDate(dateStr, 'long-year', lang, cc);
 }
 
-function formatInviteTime(timeStr: string | null): string {
+function formatInviteTime(timeStr: string | null, lang = 'en', cc = 'NG'): string {
   if (!timeStr) return '';
-  try {
-    const [h, m] = timeStr.split(':');
-    const dt = new Date();
-    dt.setHours(parseInt(h, 10), parseInt(m, 10));
-    return dt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
-  } catch { return timeStr; }
+  return formatDisplayTime(timeStr, lang, cc);
 }
 
 // Send reminders to pending/maybe guests
@@ -486,7 +479,7 @@ export async function PUT(request: NextRequest) {
   let reminderHostName = '';
   const { data: reminderBiz } = await service
     .from('businesses')
-    .select('name, owner_id')
+    .select('name, owner_id, country_code')
     .eq('id', businessId)
     .single();
   if (reminderBiz?.owner_id) {
@@ -523,12 +516,7 @@ export async function PUT(request: NextRequest) {
   let sent = 0;
 
   // Format the date
-  let dateStr = targetDate || '';
-  try {
-    dateStr = new Date(targetDate + 'T00:00').toLocaleDateString('en-GB', {
-      weekday: 'long', day: 'numeric', month: 'long',
-    });
-  } catch { /* keep raw */ }
+  const dateStr = targetDate ? formatDisplayDate(targetDate, 'long', 'en', reminderBiz?.country_code || 'NG') : '';
 
   for (const invite of invites) {
     const link = `${appUrl}/rsvp/${invite.invite_token}`;

@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (!business || business.owner_id !== user.id) {
-    return NextResponse.json({ success: false, reason: 'unauthorized' }, { status: 403 });
+    return NextResponse.json({ success: false, reason: 'unauthorized', message: 'You do not have write access to this business.' }, { status: 403 });
   }
 
   // If recurring is requested, enforce the effective recurring eligibility

@@ -410,7 +410,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 2200, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 200, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 2200
         );
@@ -435,7 +435,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 500, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 500
         );
@@ -454,7 +454,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1500, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1500
         );
@@ -470,7 +470,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 500, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 500
         );
@@ -488,7 +488,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 999000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 999000
         );
@@ -505,7 +505,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1000
         );
@@ -527,7 +527,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1000
         );
@@ -550,7 +550,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items1}'::jsonb, NULL, true, 1000
         );
@@ -561,7 +561,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 2000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items2}'::jsonb, NULL, true, 2000
         );
@@ -576,7 +576,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items1}'::jsonb, NULL, true, 1000
         );
@@ -587,7 +587,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 5000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items2}'::jsonb, NULL, true, 5000
         );
@@ -612,7 +612,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1200, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 200, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1200
         );
@@ -627,7 +627,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 9999, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 9999
         );
@@ -825,7 +825,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 3000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 3000
         );
@@ -854,7 +854,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1000
         );
@@ -873,7 +873,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1000
         );
@@ -1085,7 +1085,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${botId}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1000
         );
@@ -1600,7 +1600,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${botId}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1200, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1200
         );
@@ -1738,7 +1738,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 5000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 5000
         );
@@ -1930,7 +1930,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${freshSession}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
-          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          'pending', NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
           '${items}'::jsonb, NULL, true, 1000
         );

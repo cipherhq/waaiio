@@ -44,11 +44,20 @@ describe('ConversationOrchestrator', () => {
   };
 
   it('returns correction intent when active session and correction pattern detected', async () => {
+    const correctionSession: BotSession = {
+      ...activeSession,
+      current_step: 'select_date',
+      session_data: {
+        ...activeSession.session_data,
+        selected_date: 'thursday',
+      },
+    };
+
     const result = await orchestrator.understand(
       'actually Friday',
       'biz-1',
       'salon',
-      activeSession,
+      correctionSession,
       '2348000000000',
     );
 

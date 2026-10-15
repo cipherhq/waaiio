@@ -32,6 +32,7 @@ import { createAlert } from '@/lib/alerts/create-alert';
 
 function createMockSupabase(paymentData: Record<string, unknown> | null) {
   const updateFn = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: null }) });
+  const rpcFn = vi.fn().mockResolvedValue({ data: true, error: null });
   const selectResult = paymentData ? { data: paymentData, error: null } : { data: null, error: { message: 'not found' } };
 
   return {
@@ -44,7 +45,9 @@ function createMockSupabase(paymentData: Record<string, unknown> | null) {
       update: updateFn,
       insert: vi.fn().mockResolvedValue({ data: null }),
     })),
+    rpc: rpcFn,
     _updateFn: updateFn,
+    _rpcFn: rpcFn,
   };
 }
 
@@ -110,6 +113,23 @@ describe('processPaystackChargeSuccess', () => {
 
     // Should not call update since status is already 'success'
     expect(supabase._updateFn).not.toHaveBeenCalled();
+  });
+
+  it('enriches a completed payment from a late webhook without reconciling again', async () => {
+    mockReconcile.mockClear();
+    const supabase = createMockSupabase({
+      id: 'pay-late', status: 'success', amount: 5000,
+      booking_id: null, invoice_id: null, campaign_id: null,
+      reservation_id: null, order_id: null, metadata: { payment_origin: 'platform' },
+      gateway: 'paystack', payment_authority_version: null, finalization_completed_at: null,
+    });
+    await processPaystackChargeSuccess({
+      amount: 500000, currency: 'NGN', authorization: {
+        reusable: true, authorization_code: 'AUTH-LATE', last4: '1234', brand: 'visa',
+      }, customer: { email: 'payer@example.test', customer_code: 'CUS-LATE' },
+    }, 'ref-late', supabase as any);
+    expect(supabase._rpcFn).toHaveBeenCalledWith('persist_verified_paystack_card_authorization', expect.any(Object));
+    expect(mockReconcile).not.toHaveBeenCalled();
   });
 });
 

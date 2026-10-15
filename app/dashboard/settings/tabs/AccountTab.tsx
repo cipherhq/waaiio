@@ -478,7 +478,8 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                       if (!confirm('Disconnect your dedicated WhatsApp number? You will revert to the shared platform number.')) return;
                       setWaDisconnecting(true);
                       try {
-                        await fetch(`/api/settings/whatsapp-channel?business_id=${business.id}`, { method: 'DELETE' });
+                        const delRes = await fetch(`/api/settings/whatsapp-channel?business_id=${business.id}`, { method: 'DELETE' });
+                        if (!delRes.ok) throw new Error('Disconnect failed');
                         setWaChannel({ wa_method: 'shared', channel: null });
                       } catch {} finally {
                         setWaDisconnecting(false);
@@ -966,7 +967,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     setConsentSaving(true);
                     setConsentSaved(false);
                     try {
-                      await fetch('/api/account/consent', {
+                      const consentRes = await fetch('/api/account/consent', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -975,6 +976,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                           ai_processing: aiConsent,
                         }),
                       });
+                      if (!consentRes.ok) throw new Error('Save failed');
                       // Also update localStorage cookie consent to match
                       const existing = localStorage.getItem('waaiio_cookie_consent');
                       if (existing) {
@@ -1354,10 +1356,11 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
               console.error('[DOWNGRADE] Gateway cancellation error:', cancelErr);
             }
             const supabase = createClient();
-            await supabase
+            const { error: tierErr } = await supabase
               .from('businesses')
               .update({ subscription_tier: 'free' })
               .eq('id', business.id);
+            if (tierErr) { setDowngrading(false); return; }
             await supabase
               .from('subscriptions')
               .update({

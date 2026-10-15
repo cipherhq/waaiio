@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync, readdirSync } from 'fs';
+import { createTestSupabase } from './helpers/mock-supabase';
 import { resolve } from 'path';
 
 // ── Structural inventory test ──
@@ -85,10 +86,8 @@ describe('S-1 Egress Inventory (#256)', () => {
     expect(recurringVerify).not.toContain('assertMessagingAllowed');
     expect(recurringVerify).not.toContain('messaging_suspended');
 
-    // admin/otp — admin 2FA, no business context
-    const adminOtp = readFileSync(resolve(__dirname, '../../app/api/admin/otp/route.ts'), 'utf-8');
-    expect(adminOtp).not.toContain('assertMessagingAllowed');
-    expect(adminOtp).not.toContain('messaging_suspended');
+    // admin/otp removed by SEC-005 (#609) — replaced by native Supabase MFA.
+    // No WhatsApp messaging in the admin login path anymore.
 
     // auth/otp/send — user login OTP, uses sendAuthenticationTemplate on MetaCloudService directly (not MetaCloudSender)
     const authOtpSend = readFileSync(resolve(__dirname, '../../app/api/auth/otp/send/route.ts'), 'utf-8');
@@ -120,7 +119,7 @@ describe('S-1 Egress Inventory (#256)', () => {
       'lib/channels/payout-nudge-orchestrator.ts', // #257 orchestrator — uses withDirectRouteAttempt with authorizationCheck
       // Platform-scoped exemptions (no business context)
       'app/api/recurring/verify/route.ts',  // platform OTP — explicit exemption
-      'app/api/admin/otp/route.ts',         // admin OTP — explicit exemption
+      // admin/otp removed by SEC-005 (#609)
       'app/api/auth/otp/send/route.ts',     // user login OTP — uses MetaCloudService directly, platform-scoped
       // Edge Functions (guarded via messaging_suspended check)
       'supabase/functions/booking-reminders/index.ts',
@@ -266,7 +265,7 @@ describe('S-1 Send Guard Unit Tests (#256)', () => {
     const { MetaCloudSender } = await import('../channels/message-sender');
     const mockCloud = { sendText: vi.fn() };
     // Construct without businessId — defaults to ''
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
 
     await expect(sender.sendText({ to: '+1234567890', text: 'test' })).rejects.toThrow('missing_business_id');
     expect(guardCalled).toBe(true);
@@ -304,7 +303,7 @@ describe('S-1 Send Guard Unit Tests (#256)', () => {
       }),
     };
 
-    const sender = new MetaCloudSender(mockCloud as any, 'biz-1');
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
     // The send should fail: first attempt hits Meta (500), suspension activates,
     // retry calls assertMessagingAllowed which now throws
     await expect(sender.sendText({ to: '+1234567890', text: 'test' })).rejects.toThrow('suspended');
@@ -354,7 +353,7 @@ describe('S-1 Shared-Channel Business Identity (#256)', () => {
     const mockCloud = { sendText: vi.fn().mockResolvedValue({ messages: [{ id: 'msg-1' }] }) };
 
     // Business A: sender built from shared channel, then bound to biz-A
-    const senderA = new MetaCloudSender(mockCloud as any);
+    const senderA = new MetaCloudSender(mockCloud as any, createTestSupabase());
     senderA.bindBusiness('biz-A');
     await expect(senderA.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('suspended');
     expect(guardBusinessId).toBe('biz-A');
@@ -365,7 +364,7 @@ describe('S-1 Shared-Channel Business Identity (#256)', () => {
     guardBusinessId = null;
 
     // Business B: same shared channel, bound to biz-B
-    const senderB = new MetaCloudSender(mockCloud as any);
+    const senderB = new MetaCloudSender(mockCloud as any, createTestSupabase());
     senderB.bindBusiness('biz-B');
     await senderB.sendText({ to: '+234800', text: 'test' });
     expect(guardBusinessId).toBe('biz-B');
@@ -526,7 +525,7 @@ describe('S-1 Production-Shaped Binding + Scope Tests (#256)', () => {
     mockGuardAndCircuit();
     const { MetaCloudSender } = await import('../channels/message-sender');
     const mockCloud = { sendText: vi.fn().mockResolvedValue({ messages: [{ id: 'msg-1' }] }) };
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
     expect(sender.boundBusinessId).toBe('');
     const result = await sender.sendPlatformText({ to: '+234800', text: 'Welcome!' });
     expect(result.success).toBe(true);
@@ -539,7 +538,7 @@ describe('S-1 Production-Shaped Binding + Scope Tests (#256)', () => {
     const { MetaCloudSender } = await import('../channels/message-sender');
     const { assertMessagingAllowed } = await import('../channels/send-guard');
     const mockCloud = { sendText: vi.fn().mockResolvedValue({ messages: [{ id: 'msg-1' }] }) };
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
     sender.bindBusiness('biz-A');
     expect(sender.boundBusinessId).toBe('biz-A');
     await sender.sendText({ to: '+234800', text: 'test' });
@@ -551,7 +550,7 @@ describe('S-1 Production-Shaped Binding + Scope Tests (#256)', () => {
     mockGuardAndCircuit(new Set(['biz-A']));
     const { MetaCloudSender } = await import('../channels/message-sender');
     const mockCloud = { sendText: vi.fn() };
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
     sender.bindBusiness('biz-A');
     await expect(sender.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('suspended');
     expect(mockCloud.sendText).not.toHaveBeenCalled();
@@ -563,7 +562,7 @@ describe('S-1 Production-Shaped Binding + Scope Tests (#256)', () => {
     const { MetaCloudSender } = await import('../channels/message-sender');
     const { assertMessagingAllowed } = await import('../channels/send-guard');
     const mockCloud = { sendText: vi.fn().mockResolvedValue({ messages: [{ id: 'msg-1' }] }) };
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
     expect(sender.boundBusinessId).toBe('');
     // Simulate session resume: bind business
     sender.bindBusiness('biz-resumed');
@@ -580,7 +579,7 @@ describe('S-1 Production-Shaped Binding + Scope Tests (#256)', () => {
       sendText: vi.fn().mockResolvedValue({ messages: [{ id: 'msg-1' }] }),
       sendButtons: vi.fn().mockResolvedValue({ messages: [{ id: 'msg-2' }] }),
     };
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
 
     // Business A bound and suspended — business sends blocked
     sender.bindBusiness('biz-A');
@@ -611,7 +610,7 @@ describe('S-1 Production-Shaped Binding + Scope Tests (#256)', () => {
     mockGuardAndCircuit(new Set(['biz-A']));
     const { MetaCloudSender } = await import('../channels/message-sender');
     const mockCloud = { sendText: vi.fn() };
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
     // Simulate dedicated channel: business pre-bound
     sender.bindBusiness('biz-A');
     // No enterPlatformDiscovery — this is a dedicated channel, not a switch
@@ -624,7 +623,7 @@ describe('S-1 Production-Shaped Binding + Scope Tests (#256)', () => {
     mockGuardAndCircuit();
     const { MetaCloudSender } = await import('../channels/message-sender');
     const mockCloud = {};
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
     // TypeScript enforces private access, but runtime check: no 'businessId' public property
     expect(Object.getOwnPropertyDescriptor(sender, 'businessId')).toBeUndefined();
     // Only _businessId exists as a private field (convention)
@@ -636,7 +635,7 @@ describe('S-1 Production-Shaped Binding + Scope Tests (#256)', () => {
     mockGuardAndCircuit();
     const { MetaCloudSender } = await import('../channels/message-sender');
     const mockCloud = { sendText: vi.fn() };
-    const sender = new MetaCloudSender(mockCloud as any);
+    const sender = new MetaCloudSender(mockCloud as any, createTestSupabase());
     await expect(sender.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('missing_business_id');
     expect(mockCloud.sendText).not.toHaveBeenCalled();
   });

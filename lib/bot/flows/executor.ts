@@ -2,11 +2,20 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
-import { getEffectiveLanguages, loadBusinessLanguages } from '@/lib/bot/language-policy';
+import { localizeMessage } from '@/lib/bot/outbound-localizer';
+import { getEffectiveLanguages, loadBusinessLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
+import type { SupportedLanguage } from '@/lib/bot/languages';
+import { CERTIFIED_LANGUAGES } from '@/lib/bot/languages';
+import {
+  parseLanguagePreferenceIntent,
+  writePreferredResponseLanguage,
+  resolveEffectiveResponseLanguage,
+} from '@/lib/bot/language-preference';
 import type { StandaloneService } from '@/lib/bot/standalone.service';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import type { FlowContext, PromptMessage } from './types';
 import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants';
+import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlowDefinition } from './registry';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessage } from '@/lib/bot/conversation-guard';
@@ -163,8 +172,8 @@ export class FlowExecutor {
 
     if (!step) {
       Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
-      let errMsg = 'Something went wrong on our end. Send *Hi* to start over.';
-      errMsg = await this.maybeTranslate(errMsg, session, translationCtx);
+      const errLang = this.resolveCopyLang(session, entitlement);
+      const errMsg = getFlowCopy(errLang, 'error.generic');
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
@@ -238,6 +247,7 @@ export class FlowExecutor {
         const currentLang = (session.session_data._detected_language as string) || '';
         return translateBotResponse(text, currentLang, translationCtx);
       },
+      copyLang: this.resolveCopyLang(session, entitlement),
       currentCanonical, // CAS-004: ephemeral, not persisted
     };
 
@@ -335,7 +345,8 @@ export class FlowExecutor {
         }
         return;
       } else {
-        const noBackMsg = await this.maybeTranslate('You\'re at the beginning. Type *menu* to see the main menu.', session, translationCtx);
+        const noBackLang = this.resolveCopyLang(session, entitlement);
+        const noBackMsg = getFlowCopy(noBackLang, 'nav.at_beginning');
         session.conversation_log.push({ role: 'bot', content: noBackMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
         await this.sendText(from, noBackMsg, scopedSender);
@@ -358,7 +369,8 @@ export class FlowExecutor {
           .eq('reference_code', transferRef as string)
           .eq('status', 'pending');
       }
-      const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start over.', session, translationCtx);
+      const cancelLang = this.resolveCopyLang(session, entitlement);
+      const cancelMsg = getFlowCopy(cancelLang, 'nav.cancelled');
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
@@ -376,7 +388,8 @@ export class FlowExecutor {
           .eq('reference_code', transferRef as string)
           .eq('status', 'pending');
       }
-      const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start over.', session, translationCtx);
+      const restartLang = this.resolveCopyLang(session, entitlement);
+      const restartMsg = getFlowCopy(restartLang, 'nav.no_problem');
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
@@ -385,10 +398,71 @@ export class FlowExecutor {
       return;
     }
 
+    // #524: Language preference intent covers both persistent ("always speak pidgin")
+    // and session-scoped ("pidgin", "speak pidgin", "abeg talk pidgin") requests.
+    // Persistent writes to the profile; session-scoped only updates session_data.
+    //
+    // Bare language names ("pidgin", "english") defer to the active step: if the
+    // step accepts the word as an answer (option match, free-text), treat it as
+    // input, not a language switch. Verb phrases always switch regardless of step.
+    const languagePreferenceIntent = parseLanguagePreferenceIntent(input);
+    let preValidation: Awaited<ReturnType<typeof step.validate>> | undefined;
+    let skipBareSwitch = false;
+    if (languagePreferenceIntent?.isBare && step) {
+      preValidation = await step.validate(input, ctx);
+      if (preValidation.valid) skipBareSwitch = true;
+    }
+    if (languagePreferenceIntent && !skipBareSwitch) {
+      const targetLang = languagePreferenceIntent.language as SupportedLanguage;
+      const isPersistent = languagePreferenceIntent.persistence === 'persistent';
+      const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
+      const mayActivate = CERTIFIED_LANGUAGES.includes(targetLang)
+        && entitlement.allowedLanguages.includes(targetLang)
+        && (targetLang === 'en'
+          || (entitlement.translationAllowed && entitlement.llmAllowed));
+
+      if (mayActivate) {
+        session.session_data._detected_language = targetLang === 'en'
+          ? undefined
+          : targetLang;
+        const langSaved = await this.casUpdateSession(session, {
+          current_step: session.current_step,
+          session_data: session.session_data,
+        });
+        if (!langSaved) return;
+
+        if (isPersistent && session.user_id) {
+          try {
+            // The helper intentionally exposes only the narrow profiles operations it
+            // needs; the runtime Supabase client provides that same surface.
+            await writePreferredResponseLanguage(this.supabase as never, session.user_id, targetLang);
+          } catch (err) {
+            // Preference persistence is non-transactional presentation state. Keep
+            // the valid session switch working, but fail closed on the durable write.
+            logger.warn('[EXECUTOR] Could not persist response-language preference:', err);
+          }
+        }
+
+        const { getLanguageName } = await import('@/lib/bot/translate');
+        const confirmation = targetLang === 'en'
+          ? getFlowCopy('en', 'lang.switched_english')
+          : fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
+        await this.sendText(from, confirmation, scopedSender);
+      } else {
+        const { getLanguageName } = await import('@/lib/bot/translate');
+        const unavailMsg = fillFlowCopy('en', 'lang.not_available', { langName: getLanguageName(targetLang) });
+        await this.sendText(from, unavailMsg, scopedSender);
+      }
+
+      const retryMsgs = await step.prompt(ctx);
+      await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
+      return;
+    }
+
     // Language switching escape hatch: "switch to yoruba" / "speak hausa" / "parle français"
-    const langSwitchMatch = lowerInput.match(/\b(?:switch\s+to|speak|change\s+(?:to|language\s+to)|use)\s+(pidgin|yoruba|igbo|hausa|twi|french|spanish|english|français|español)\b/i);
+    const langSwitchMatch = lowerInput.match(/\b(?:switch\s+to|speak|talk|change\s+(?:to|language\s+to)|use)\s+(pidgin|yoruba|igbo|hausa|twi|french|spanish|english|français|español)\b/i);
     if (langSwitchMatch) {
-      const langMap: Record<string, string> = {
+      const langMap: Record<string, SupportedLanguage> = {
         pidgin: 'pcm', yoruba: 'yo', igbo: 'ig', hausa: 'ha', twi: 'tw',
         french: 'fr', français: 'fr', spanish: 'es', español: 'es', english: 'en',
       };
@@ -402,7 +476,7 @@ export class FlowExecutor {
             session_data: session.session_data,
           });
           if (!langSaved) return;
-          await this.sendText(from, 'Switched to English. ✅', scopedSender);
+          await this.sendText(from, getFlowCopy('en', 'lang.switched_english'), scopedSender);
         } else {
           // Validate target language against entitlement + certification before persisting
           const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
@@ -410,7 +484,7 @@ export class FlowExecutor {
               || !entitlement.allowedLanguages.includes(targetLang)
               || !CERTIFIED_LANGUAGES.includes(targetLang)) {
             const langName = getLanguageName(targetLang);
-            await this.sendText(from, `${langName} is not available for this business right now.`, scopedSender);
+            await this.sendText(from, fillFlowCopy('en', 'lang.not_available', { langName }), scopedSender);
             // Re-prompt current step without changing language
             const retryMsgs = await step.prompt(ctx);
             await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
@@ -422,8 +496,7 @@ export class FlowExecutor {
             session_data: session.session_data,
           });
           if (!langSaved) return;
-          const { translateBotResponse: translateFn } = await import('@/lib/bot/translate');
-          const msg = await translateFn(`Switched to ${getLanguageName(targetLang)}. ✅`, targetLang, translationCtx);
+          const msg = fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
           await this.sendText(from, msg, scopedSender);
         }
         // Re-prompt current step in new language
@@ -468,11 +541,8 @@ export class FlowExecutor {
         });
         if (!result.success) {
           // Escalation failed — send recoverable message, do not leave false state
-          const failMsg = await this.maybeTranslate(
-            "Sorry, I couldn't connect you to a team member right now. Please try again in a moment, or type *menu* to continue with the assistant.",
-            session,
-            translationCtx,
-          );
+          const escLang = this.resolveCopyLang(session, entitlement);
+          const failMsg = getFlowCopy(escLang, 'error.escalation_failed');
           session.conversation_log.push({ role: 'bot', content: failMsg, timestamp: new Date().toISOString() });
           if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
           await this.sendText(from, failMsg, scopedSender);
@@ -482,11 +552,8 @@ export class FlowExecutor {
         return;
       } else {
         // CAS-008: Chat capability not enabled — tell the customer clearly
-        const unavailableMsg = await this.maybeTranslate(
-          `Live chat isn't available for *${business.name}* right now.\n\nYou can continue with the assistant — type *menu* to see what's available.`,
-          session,
-          translationCtx,
-        );
+        const chatLang = this.resolveCopyLang(session, entitlement);
+        const unavailableMsg = fillFlowCopy(chatLang, 'chat.unavailable', { businessName: business.name });
         session.conversation_log.push({ role: 'bot', content: unavailableMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
         await this.sendText(from, unavailableMsg, scopedSender);
@@ -501,12 +568,9 @@ export class FlowExecutor {
     const isMediaMessage = mediaType && ['image', 'audio', 'video', 'sticker', 'voice', 'document'].includes(mediaType);
     const isEmptyOrMediaOnly = !input.trim() || (isMediaMessage && !input.trim());
     if (isMediaMessage && isEmptyOrMediaOnly && !step.acceptsMedia) {
-      const mediaHint = await this.maybeTranslate(
-        'Please reply with text. Photos and voice notes aren\'t supported at this step.',
-        session,
-        translationCtx,
-      );
-      const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session, translationCtx);
+      const mediaLang = this.resolveCopyLang(session, entitlement);
+      const mediaHint = getFlowCopy(mediaLang, 'error.media_unsupported');
+      const cancelHint = getFlowCopy(mediaLang, 'cancelHint');
       const errText = `${mediaHint}\n\n_${cancelHint}_`;
       session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
       // Re-send interactive prompts so user gets fresh clickable options
@@ -568,20 +632,126 @@ export class FlowExecutor {
       }
     }
 
-    // Validate input
+    // ── #559: Handle pending reroute confirmation ──
+    const pendingReroute = session.session_data._pending_reroute as { capability: string } | undefined;
+    if (pendingReroute) {
+      const isYes = input === 'REROUTE_YES' || /^(yes|yeah|yep|yea|y|confam|confirm|ok|okay|sure)\s*$/i.test(input.trim());
+      // Any non-YES response (including REROUTE_NO) clears the pending state and re-prompts
+      delete session.session_data._pending_reroute;
+      if (isYes) {
+        // Revalidate: target capability must still be enabled for this business
+        const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+        const currentCaps = await getEnabledCapabilities(this.supabase, session.business_id!);
+        const targetCap = pendingReroute.capability as CapabilityId;
+        if (currentCaps.includes(targetCap)) {
+          // Recompute firstStep from server-side authority (never from stored state)
+          const { capabilityToFirstStep } = await import('@/lib/bot/handlers/flow-routing');
+          const targetStep = capabilityToFirstStep(targetCap);
+          session.session_data.active_capability = targetCap;
+          await this.advanceToStep(session, targetStep, from, ctx, translationCtx, scopedSender);
+          return;
+        }
+        // Capability no longer valid — fail closed, re-prompt current step
+      }
+      // Clear pending state via CAS, then re-prompt current step
+      const retryMessages = await step.prompt(ctx);
+      if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
+        this.logPromptMessages(session, retryMessages);
+      }
+      if (!await this.casUpdateSession(session, {
+        current_step: session.current_step,
+        session_data: session.session_data,
+        conversation_log: session.conversation_log,
+      })) return; // Stale — send nothing
+      await this.sendMessages(from, retryMessages, undefined, translationCtx, scopedSender);
+      return;
+    }
+
+    // Validate input — reuse the probe result from bare-name disambiguation if available
     _fmark('pre_validate');
-    const result = await step.validate(input, ctx);
+    const result = preValidation ?? await step.validate(input, ctx);
     _fmark('step_validate');
 
     if (!result.valid) {
       // CAS-005: Stale worker must exit silently — no messages, no persistence
       if (result.abortSilently) return;
 
-      // CAS-005: Build complete conversation_log BEFORE CAS persistence
+      // ── #559: Mid-flow reroute probe (deterministic, zero LLM) ──
+      // Only on non-free-text guided steps, only for create_new intents
+      if (!FREE_TEXT_STEPS.includes(stepId)) {
+        const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
+        const probe = parseSmartIntent(input);
+        if (probe.understood && probe.intent && (probe.requestedAction === 'create_new' || !probe.requestedAction)) {
+          const activeCap = session.session_data.active_capability as CapabilityId | undefined;
+          let targetFamily = probe.semanticFamily;
+          // If family is null (ambiguous "book"), disambiguate by business category
+          if (!targetFamily && probe.intent === 'booking') {
+            const { disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
+            const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+            const caps = await getEnabledCapabilities(this.supabase, session.business_id!);
+            targetFamily = disambiguateByCategory(business?.category || null, caps);
+          }
+          if (targetFamily) {
+            const { resolveSemanticCapability } = await import('@/lib/bot/semantic-resolver');
+            const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+            const caps = await getEnabledCapabilities(this.supabase, session.business_id!);
+            const resolution = resolveSemanticCapability(targetFamily, 'create_new', caps);
+            if (resolution.canRoute && resolution.matchedCapability && resolution.matchedCapability !== activeCap) {
+              // Offer reroute — persist pending state via CAS BEFORE sending buttons
+              const { getFlowCopy, getRerouteKey } = await import('./flow-localization');
+              const effectiveLang = session.session_data._detected_language as string | undefined;
+              // Check entitlement for static copy
+              const langEntitlement = getEffectiveLanguages(
+                business?.subscription_tier || 'free',
+                await loadBusinessLanguages(this.supabase, session.business_id!),
+              );
+              const copyLang = effectiveLang && langEntitlement.allowedLanguages.includes(effectiveLang)
+                ? effectiveLang : 'en';
+
+              session.session_data._pending_reroute = { capability: resolution.matchedCapability };
+              const rerouteBody = getFlowCopy(copyLang, getRerouteKey(probe.intent));
+              session.conversation_log.push({ role: 'bot', content: rerouteBody, timestamp: new Date().toISOString() });
+
+              const casSaved = await this.casUpdateSession(session, {
+                current_step: session.current_step,
+                session_data: session.session_data,
+                conversation_log: session.conversation_log,
+              });
+              if (!casSaved) return; // Stale — send nothing
+
+              const rerouteMsg: PromptMessage = {
+                type: 'buttons',
+                body: rerouteBody,
+                buttons: [
+                  { id: 'REROUTE_YES', title: getFlowCopy(copyLang, 'yes') },
+                  { id: 'REROUTE_NO', title: getFlowCopy(copyLang, 'stayHere') },
+                ],
+              };
+              await this.sendMessages(from, [rerouteMsg], undefined, translationCtx, scopedSender);
+              return;
+            }
+          }
+        }
+      }
+
+      // ── Standard validation failure: localized error + re-prompt ──
+      const { getFlowCopy } = await import('./flow-localization');
+      const effectiveLang = session.session_data._detected_language as string | undefined;
+      const langEntitlement = getEffectiveLanguages(
+        business?.subscription_tier || 'free',
+        await loadBusinessLanguages(this.supabase, session.business_id!),
+      );
+      const copyLang = effectiveLang && langEntitlement.allowedLanguages.includes(effectiveLang)
+        ? effectiveLang : 'en';
+
       let errText = '';
       if (result.errorMessage) {
-        const translatedError = await this.maybeTranslate(result.errorMessage, session, translationCtx);
-        const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session, translationCtx);
+        // Use deterministic copy for known messages, LLM for dynamic ones
+        const knownError = result.errorMessage === 'That option is not available. Tap one of the choices above.';
+        const translatedError = knownError
+          ? getFlowCopy(copyLang, 'invalidSelection')
+          : await this.maybeTranslate(result.errorMessage, session, translationCtx);
+        const cancelHint = getFlowCopy(copyLang, 'cancelHint');
         errText = `${translatedError}\n\n_${cancelHint}_`;
         session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
       }
@@ -718,6 +888,9 @@ export class FlowExecutor {
     }
 
     if (!nextStep) {
+      Sentry.captureMessage('advanceToStep: next step not found', { level: 'warning', extra: { nextStepId, primaryFlowType, sessionId: session.id } });
+      const errMsg = getFlowCopy('en', 'error.generic');
+      await this.sendText(from, errMsg, sender);
       await this.deactivateSession(session.id);
       return;
     }
@@ -789,11 +962,13 @@ export class FlowExecutor {
     if (messages.length === 0) return;
 
     // Inject navigation footer on interactive messages (buttons/list) if not already set
-    // Footer: 40 chars — within WhatsApp's 60-char limit
-    const NAV_FOOTER = 'Type: back, menu (restart), or exit (leave)';
-    for (const msg of messages) {
-      if ((msg.type === 'buttons' || msg.type === 'list') && !msg.footer) {
-        msg.footer = NAV_FOOTER;
+    // Uses deterministic static copy with canonical language authority — no LLM call (#561)
+    const footerLang = session ? this.resolveCopyLang(session, tCtx.entitlement) : 'en';
+    const localizedFooter = getFlowCopy(footerLang, 'nav.footer');
+    for (const m of messages) {
+      if ((m.type === 'buttons' || m.type === 'list') && !m.footer) {
+        // Assign deterministic footer — replaces hardcoded NAV_FOOTER (#561-B)
+        Object.assign(m, { footer: localizedFooter });
       }
     }
 
@@ -815,40 +990,19 @@ export class FlowExecutor {
     }
   }
 
-  /** Translate a single prompt message — text, body, button labels, list items */
+  /**
+   * Translate a single prompt message through the canonical outbound localizer.
+   * Localizes all Waaiio-owned presentation fields (title, body, buttonLabel,
+   * section titles, footer, captions). Preserves merchant item titles and all
+   * action/postback IDs unchanged.
+   */
   private async translateMessage(msg: PromptMessage, lang: string, tCtx: TranslationContext): Promise<PromptMessage> {
-    switch (msg.type) {
-      case 'text':
-        return { ...msg, text: await translateBotResponse(msg.text, lang, tCtx) };
-      case 'buttons':
-        return {
-          ...msg,
-          body: await translateBotResponse(msg.body, lang, tCtx),
-          footer: msg.footer, // Don't translate — commands are English-only
-          buttons: await Promise.all(msg.buttons.map(async b => ({
-            ...b,
-            title: await translateBotResponse(b.title, lang, tCtx),
-          }))),
-        };
-      case 'list':
-        return {
-          ...msg,
-          body: await translateBotResponse(msg.body, lang, tCtx),
-          footer: msg.footer, // Don't translate — commands are English-only
-          items: await Promise.all(msg.items.map(async item => ({
-            ...item,
-            description: item.description ? await translateBotResponse(item.description, lang, tCtx) : item.description,
-            // Keep title as-is for service/product names — business entered them
-          }))),
-        };
-      case 'image':
-        return {
-          ...msg,
-          caption: msg.caption ? await translateBotResponse(msg.caption, lang, tCtx) : msg.caption,
-        };
-      default:
-        return msg;
-    }
+    // Delegate to the shared outbound localizer.
+    // waaiioOwnedItemTitles defaults to false — merchant-entered list items
+    // stay untranslated. Individual flows that build Waaiio-owned menus
+    // (capability-selection, navigation) should pass waaiioOwnedItemTitles: true
+    // via the new localizeMessage API when needed.
+    return localizeMessage(msg, lang, tCtx);
   }
 
   private async sendSingleMessage(to: string, msg: PromptMessage, sender?: MessageSender): Promise<void> {
@@ -893,6 +1047,33 @@ export class FlowExecutor {
     const lang = session.session_data._detected_language as string | undefined;
     if (!lang || lang === 'en') return text;
     return translateBotResponse(text, lang, tCtx);
+  }
+
+  /**
+   * Resolve the deterministic copy language for a session.
+   * Delegates to the canonical resolveEffectiveResponseLanguage —
+   * the same authority the rest of Waaiio uses for response-language selection.
+   * No second policy implementation.
+   */
+  private resolveCopyLang(
+    session: { session_data: Record<string, unknown>; user_id?: string | null },
+    entitlement: LanguageEntitlement,
+  ): string {
+    const result = resolveEffectiveResponseLanguage({
+      // No explicit language intent at this point — that's handled separately
+      // by the language-switch escape hatches above
+      explicitLanguage: null,
+      // _detected_language is the session-scoped response language (set when
+      // language was confirmed/auto-activated by CAS-004 or explicit switch)
+      sessionLanguage: (session.session_data._detected_language as string) || null,
+      // Remembered preference is read during session creation, not per-message.
+      // At this point the session already has _detected_language set if
+      // a remembered preference was activated. Pass null to avoid double-lookup.
+      rememberedLanguage: null,
+      entitlement,
+      certifiedLanguages: CERTIFIED_LANGUAGES,
+    });
+    return result.language;
   }
 
   /** Extract text from prompt messages and append to session's conversation_log */
@@ -958,42 +1139,41 @@ export class FlowExecutor {
     // Contextual buttons based on what the customer just did
     let buttons: Array<{ id: string; title: string }>;
 
+    const cl = ctx.copyLang;
     if (cap === 'giving' || cap === 'crowdfunding') {
       buttons = [
-        { id: 'pc_again', title: 'Give Again' },
-        { id: 'pc_history', title: 'My Giving' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.give_again') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_giving') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'ticketing') {
       buttons = [
-        { id: 'pc_again', title: 'Buy More Tickets' },
-        { id: 'pc_history', title: 'My Tickets' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.buy_more_tickets') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_tickets') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'ordering') {
       buttons = [
-        { id: 'pc_again', title: 'Order Again' },
-        { id: 'pc_history', title: 'My Orders' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.order_again') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'account.my_orders') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'reservation') {
       buttons = [
-        { id: 'pc_again', title: 'Book Again' },
-        { id: 'pc_history', title: 'My Bookings' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.book_again') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_bookings') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else {
       // scheduling, appointment, payment, default
       buttons = [
-        { id: 'pc_again', title: 'Book Again' },
-        { id: 'pc_history', title: 'My Bookings' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.book_again') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_bookings') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     }
 
-    const body = lang
-      ? await translateBotResponse('What would you like to do next?', lang, tCtx)
-      : 'What would you like to do next?';
+    const bodyText = getFlowCopy(cl, 'menu.what_next');
 
     // Keep session alive on post_completion step so buttons work
     const saved = await this.casUpdateSession(session, {
@@ -1002,8 +1182,17 @@ export class FlowExecutor {
     });
     if (!saved) return; // stale — another worker owns this session
 
+    // Localize the entire post-completion message through the canonical boundary
+    const postCompletionMsg: PromptMessage = { type: 'buttons', body: bodyText, buttons };
+    const shouldTranslate = lang && lang !== 'en';
+    const localizedMsg = shouldTranslate
+      ? await localizeMessage(postCompletionMsg, lang, tCtx)
+      : postCompletionMsg;
+
     const s = sender || this.sender;
-    await s.sendButtons({ to: from, body, buttons });
+    if (localizedMsg.type === 'buttons') {
+      await s.sendButtons({ to: from, body: localizedMsg.body, buttons: localizedMsg.buttons });
+    }
   }
 
   /** Map a capability to its corresponding FlowType */

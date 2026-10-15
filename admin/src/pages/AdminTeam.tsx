@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
@@ -6,6 +6,8 @@ import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDateTime } from '@/lib/formatters';
 import { Shield, UserPlus } from 'lucide-react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -49,6 +51,9 @@ export default function AdminTeam() {
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
 
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
+
   async function loadData() {
     setLoading(true);
     try {
@@ -80,42 +85,57 @@ export default function AdminTeam() {
     setInviteSuccess('');
 
     try {
-      const token = await getAuthToken();
-      if (!token) { setInviteError('Not authenticated'); return; }
+      const identifier = inviteEmail.trim();
+      const role = inviteRole;
 
-      const res = await fetch(`${API_URL}/api/admin/team`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ identifier: inviteEmail.trim(), role: inviteRole }),
-      });
+      const onAuthorized = async (stepUpId: string) => {
+        const token = await getAuthToken();
+        if (!token) { setInviteError('Not authenticated'); return; }
 
-      const data = await res.json();
+        const res = await fetch(`${API_URL}/api/admin/team`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ identifier, role, stepUpId }),
+        });
 
-      if (!res.ok) {
-        if (data.error === 'AUTH_USER_REQUIRED') {
-          setInviteError('No Waaiio account found for this email. The user must first create a Waaiio account before they can be assigned a platform role.');
-        } else if (data.error === 'Cannot change your own platform role') {
-          setInviteError('You cannot change your own role.');
-        } else {
-          setInviteError(data.error || 'Failed to assign role');
+        const data = await res.json();
+
+        if (!res.ok) {
+          if (data.error === 'AUTH_USER_REQUIRED') {
+            setInviteError('No Waaiio account found for this email. The user must first create a Waaiio account before they can be assigned a platform role.');
+          } else if (data.error === 'Cannot change your own platform role') {
+            setInviteError('You cannot change your own role.');
+          } else {
+            setInviteError(data.error || 'Failed to assign role');
+          }
+          return;
         }
-        return;
-      }
 
-      // Handle audit partial failure (207: mutation applied, audit failed)
-      if (data.error === 'ROLE_MUTATION_APPLIED_AUDIT_FAILED') {
-        setInviteError('Role change was applied, but the audit record could not be written. Verify/reconcile before continuing.');
+        // Handle audit partial failure (207: mutation applied, audit failed)
+        if (data.error === 'ROLE_MUTATION_APPLIED_AUDIT_FAILED') {
+          setInviteError('Role change was applied, but the audit record could not be written. Verify/reconcile before continuing.');
+          await loadData();
+          return;
+        }
+
+        const roleLabel = ADMIN_ROLES.find(r => r.value === role)?.label || role;
+        setInviteSuccess(`${data.user.email} has been assigned the ${roleLabel} role.`);
+        setInviteEmail('');
         await loadData();
-        return;
-      }
+      };
 
-      const roleLabel = ADMIN_ROLES.find(r => r.value === inviteRole)?.label || inviteRole;
-      setInviteSuccess(`${data.user.email} has been assigned the ${roleLabel} role.`);
-      setInviteEmail('');
-      await loadData();
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'team_grant',
+        targetId: identifier,
+        params: { role },
+        description: `Grant ${role} role to ${identifier}`,
+        onAuthorized,
+      });
     } catch (error) {
       console.error('Invite error:', error);
       setInviteError('Failed to assign role. Please try again.');
+      stepUp.reset();
     } finally {
       setInviting(false);
     }
@@ -128,32 +148,47 @@ export default function AdminTeam() {
 
     setRemoving(true);
     try {
-      const token = await getAuthToken();
-      if (!token) return;
+      const memberId = selected.id;
+      const memberEmail = selected.email;
 
-      const res = await fetch(`${API_URL}/api/admin/team`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ identifier: selected.id }),
+      const onAuthorized = async (stepUpId: string) => {
+        const token = await getAuthToken();
+        if (!token) return;
+
+        const res = await fetch(`${API_URL}/api/admin/team`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ identifier: memberId, stepUpId }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          alert(data.error || 'Failed to revoke role');
+          return;
+        }
+
+        // Handle audit partial failure
+        if (data.error === 'ROLE_MUTATION_APPLIED_AUDIT_FAILED') {
+          alert('Role was revoked, but the audit record could not be written. Verify/reconcile before continuing.');
+        }
+
+        setSelected(null);
+        await loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'team_revoke',
+        targetId: memberId,
+        params: { action: 'revoke' },
+        description: `Revoke platform role from ${memberEmail}`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(data.error || 'Failed to revoke role');
-        return;
-      }
-
-      // Handle audit partial failure
-      if (data.error === 'ROLE_MUTATION_APPLIED_AUDIT_FAILED') {
-        alert('Role was revoked, but the audit record could not be written. Verify/reconcile before continuing.');
-      }
-
-      setSelected(null);
-      await loadData();
     } catch (error) {
       console.error('Remove admin error:', error);
       alert('Failed to remove admin role');
+      stepUp.reset();
     } finally {
       setRemoving(false);
     }
@@ -273,6 +308,19 @@ export default function AdminTeam() {
           </>
         )}
       </DetailModal>
+
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (stepUpCallbackRef.current) {
+            stepUp.submitCode(code, stepUpCallbackRef.current);
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
 
       {showInvite && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">

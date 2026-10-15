@@ -56,6 +56,11 @@ vi.mock('@/lib/trial-status', () => ({
   resolveTrialCredit: vi.fn(async () => false),
 }));
 
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+}));
+
 // ── Supabase mock helpers ──
 
 function makeChain(result: { data: unknown; error: unknown }) {

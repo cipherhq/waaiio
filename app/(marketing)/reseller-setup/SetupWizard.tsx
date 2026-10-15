@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 
 // ── Category options (mirrors reseller accounts page) ─────────────
@@ -210,12 +211,12 @@ export default function SetupWizard({ token }: { token: string }) {
               </div>
               <h2 className="mt-4 text-lg font-semibold text-gray-900">Invalid Invite</h2>
               <p className="mt-2 text-sm text-gray-600">{error}</p>
-              <a
+              <Link
                 href="/"
                 className="mt-6 inline-block rounded-xl bg-brand px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-brand/90"
               >
                 Go to Homepage
-              </a>
+              </Link>
             </div>
           </AnimatedSection>
         </div>

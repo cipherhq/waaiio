@@ -6,6 +6,7 @@
  * and B selection/resolution through the actual state machine.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTestSupabase } from './helpers/mock-supabase';
 
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }) }));
@@ -173,12 +174,18 @@ function createStandaloneService() {
   } as any;
 }
 
-/** Count all business-scoped cloud calls (sendText, sendButtons, sendList, sendTemplate). */
-function totalBusinessScopedCalls(cloud: ReturnType<typeof createMockCloud>): number {
-  return cloud.sendText.mock.calls.length
+/** Count all business-scoped cloud calls (sendText, sendButtons, sendList, sendTemplate).
+ *  When `sender` is provided, subtracts platform-scoped calls (sendPlatformText, sendPlatformButtons)
+ *  so only genuinely business-attributable cloud calls remain. */
+function totalBusinessScopedCalls(cloud: ReturnType<typeof createMockCloud>, sender?: { sendPlatformText: { mock: { calls: unknown[] } }; sendPlatformButtons: { mock: { calls: unknown[] } } }): number {
+  const total = cloud.sendText.mock.calls.length
     + cloud.sendButtons.mock.calls.length
     + cloud.sendList.mock.calls.length
     + cloud.sendTemplate.mock.calls.length;
+  if (!sender) return total;
+  const platformCalls = sender.sendPlatformText.mock.calls.length
+    + sender.sendPlatformButtons.mock.calls.length;
+  return total - platformCalls;
 }
 
 /**
@@ -227,7 +234,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
 
   it('1. resumed A session: BotService binds A and produces business-scoped provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const supabase = createTableAwareSupabase({
       session: {
         id: 'sess-1', business_id: 'biz-A', current_step: 'select_capability', is_active: true,
@@ -257,7 +264,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
   it('2. suspended A via preResolved: exactly zero business-scoped Meta calls', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const bizA = { id: 'biz-A', name: 'Biz A', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, is_whitelabel: false };
     const newSession = { id: 'sess-new', business_id: 'biz-A', current_step: 'select_capability', is_active: true, session_data: { capabilities: ['scheduling'] }, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 };
     const supabase = createTableAwareSupabase({
@@ -275,11 +282,13 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
   it('3. switch <keyword>: BotService fuzzy picker reaches Meta via platform-scoped send', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-A');
-    mockDetectionResult = { businessId: null, suggestions: [{ id: 'biz-B', name: 'Spa B', bot_code: 'SPAB' }, { id: 'biz-C', name: 'Spa C', bot_code: 'SPAC' }] };
+    const SPA_SUGG = [{ id: 'biz-B', name: 'Spa B', bot_code: 'SPAB' }, { id: 'biz-C', name: 'Spa C', bot_code: 'SPAC' }];
+    mockDetectionResult = { businessId: null, suggestions: SPA_SUGG };
     const supabase = createTableAwareSupabase({
-      insertedSession: { id: 'sess-sug', business_id: null, current_step: 'select_business_suggestion', is_active: true, session_data: {}, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 },
+      // session_data.suggestions must be persisted so FINDING 2 fix reads correct buttons from session
+      insertedSession: { id: 'sess-sug', business_id: null, current_step: 'select_business_suggestion', is_active: true, session_data: { suggestions: SPA_SUGG }, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 },
     });
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
     await bot.handleMessage('+234800', 'switch spa', 'text', 'pnid-1');
@@ -297,7 +306,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
 
   it('4. B selection: picker postback resolves B, evaluates B authorization, produces B provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
 
     // Configure detection to resolve biz-B when the recursive call sends bot_code 'SPAB'
     mockDetectionResult = { businessId: 'biz-B', suggestions: [] };
@@ -341,7 +350,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
   it('5. dedicated suspended A: zero business-scoped Meta calls', async () => {
     suspendedBizIds.add('biz-dedicated');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const bizDedicated = { id: 'biz-dedicated', name: 'Ded Biz', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, is_whitelabel: false };
     const newSession = { id: 'sess-ded', business_id: 'biz-dedicated', current_step: 'select_capability', is_active: true, session_data: { capabilities: ['scheduling'] }, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 };
     const supabase = createTableAwareSupabase({
@@ -356,9 +365,11 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     expect(totalBusinessScopedCalls(cloud)).toBe(0);
   });
 
-  it('6. missing tenant: guard evaluates missing identity, zero business-scoped provider calls', async () => {
+  it('6. missing tenant: platform-scoped reply delivered, zero business-scoped provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
+    const spyPlatformButtons = vi.spyOn(sender, 'sendPlatformButtons');
     mockDetectionResult = { businessId: null, suggestions: [] };
     // Provide a realistic tenantless session so the flow proceeds past session insert
     const tenantlessSession = {
@@ -369,17 +380,15 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     const supabase = createTableAwareSupabase({ insertedSession: tenantlessSession });
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
     await bot.handleMessage('+234800', 'random text', 'text', 'pnid-1');
-    // Sender remains tenantless
+    // Sender transitioned to platform discovery (tenantless)
     expect(sender.boundBusinessId).toBe('');
-    // The missing-identity guard was called (assertMessagingAllowed with empty/falsy businessId)
-    const { assertMessagingAllowed } = await import('@/lib/channels/send-guard');
-    const guardCalls = (assertMessagingAllowed as any).mock.calls.filter(
-      (c: string[]) => !c[0] || c[0] === ''
-    );
-    expect(guardCalls.length).toBeGreaterThan(0);
-    // ALL business-scoped cloud calls must be exactly zero (guard blocked them)
-    expect(totalBusinessScopedCalls(cloud)).toBe(0);
-    // Guard: no generic fallback — the zero calls come from the guard, not a crash
+    // Platform-scoped sendPlatformText delivered the "couldn't find" message
+    expect(spyPlatformText).toHaveBeenCalled();
+    const platformTextArg = spyPlatformText.mock.calls[0]?.[0] as { text?: string } | undefined;
+    expect(platformTextArg?.text ?? '').toContain('couldn\'t find a business');
+    // ALL business-scoped cloud calls must be exactly zero (platform sends excluded)
+    expect(totalBusinessScopedCalls(cloud, { sendPlatformText: spyPlatformText, sendPlatformButtons: spyPlatformButtons })).toBe(0);
+    // Guard: no generic fallback
     const fallbackCalls = cloud.sendText.mock.calls.filter(
       (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Something went wrong')
     );

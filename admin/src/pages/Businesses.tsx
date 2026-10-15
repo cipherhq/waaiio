@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
@@ -100,6 +102,8 @@ export default function Businesses() {
   const [selectedStatus, setSelectedStatus] = useState('');
   const [statusSaving, setStatusSaving] = useState(false);
   const [suspensionSaving, setSuspensionSaving] = useState(false);
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
   // WhatsApp channel assignment
   const [channels, setChannels] = useState<Array<{ id: string; phone_number: string; display_name: string; country_code: string }>>([]);
   const [channelSaving, setChannelSaving] = useState(false);
@@ -113,12 +117,12 @@ export default function Businesses() {
   const [selectedProducts, setSelectedProducts] = useState<Array<{ id: string; name: string; price: number | null; stock: number | null; is_active: boolean }>>([]);
   const [showServices, setShowServices] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
-  // Payout verification limits from platform_settings (single source of truth)
-  const [payoutVerificationLimits, setPayoutVerificationLimits] = useState<Record<string, number>>({ unverified: 0, basic: 500000, standard: 2000000, full: 999999999 });
+  // Payout verification limits now live in countries.verification_tiers;
+  // the server route resolves them per-country — no client-side lookup needed.
   const perPage = 20;
 
   async function loadData() {
-    const [bizRes, chRes, limitsRes] = await Promise.all([
+    const [bizRes, chRes] = await Promise.all([
       adminDb
         .from('businesses')
         .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels, messaging_suspended')
@@ -128,20 +132,10 @@ export default function Businesses() {
         .select('id, phone_number, display_name, country_code')
         .eq('is_active', true)
         .order('country_code'),
-      adminDb
-        .from('platform_settings')
-        .select('value')
-        .eq('key', 'payout_verification_limits')
-        .single(),
     ]);
 
     setBusinesses(bizRes.data || []);
     setChannels(chRes.data || []);
-
-    // Load payout verification limits from DB (fall back to hardcoded defaults)
-    if (limitsRes.data?.value && typeof limitsRes.data.value === 'object') {
-      setPayoutVerificationLimits(limitsRes.data.value as Record<string, number>);
-    }
 
     setLoading(false);
   }
@@ -258,26 +252,50 @@ export default function Businesses() {
     if (!selected || selectedTier === selected.subscription_tier || !isFullAdmin) return;
     setTierSaving(true);
     try {
-      const { error } = await adminDb
-        .from('businesses')
-        .update({ subscription_tier: selectedTier })
-        .eq('id', selected.id);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) { alert('Session expired. Please log in again.'); return; }
 
-      if (error) throw error;
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
-      await logAudit({
-        action: 'change_tier',
-        entity_type: 'business',
-        entity_id: selected.id,
-        details: { previous_tier: selected.subscription_tier, new_tier: selectedTier, business_name: selected.name },
+      // Pre-check: warn if this is a paying business
+      let info: { paidPlan?: string | null; revertsOn?: string | null };
+      try {
+        const checkRes = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, { headers });
+        if (!checkRes.ok) throw new Error();
+        info = await checkRes.json();
+      } catch {
+        alert('Could not check whether this business has a paid plan. Tier not changed.');
+        setTierSaving(false);
+        return;
+      }
+      if (info.paidPlan) {
+        const planLabel = info.paidPlan.charAt(0).toUpperCase() + info.paidPlan.slice(1);
+        const dateStr = info.revertsOn ? new Date(info.revertsOn).toLocaleDateString() : 'next renewal';
+        const confirmed = confirm(
+          `This business pays for the ${planLabel} plan. Your change lasts until their next renewal on ${dateStr}, then returns to ${planLabel}. Billing is not changed.`,
+        );
+        if (!confirmed) { setTierSaving(false); return; }
+      }
+
+      const res = await fetch(`${apiUrl}/api/admin/businesses/${selected.id}/tier`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ tier: selectedTier }),
       });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || 'Failed to change tier');
+      }
 
       // Update local state
       setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, subscription_tier: selectedTier } : b));
       setSelected(prev => prev ? { ...prev, subscription_tier: selectedTier } : prev);
     } catch (err) {
       console.error('Tier change error:', err);
-      alert('Failed to change tier');
+      alert(err instanceof Error ? err.message : 'Failed to change tier');
     } finally {
       setTierSaving(false);
     }
@@ -314,22 +332,45 @@ export default function Businesses() {
   async function handleToggleSuspension() {
     if (!selected || !isFullAdmin) return;
     const newState = !selected.messaging_suspended;
-    const reason = newState
+    const reasonInput = newState
       ? prompt('Reason for suspending messaging (optional):')
       : prompt('Reason for resuming messaging (optional):');
+    if (reasonInput === null) return;
+    const reason = reasonInput.trim() || null;
     setSuspensionSaving(true);
     try {
-      const { data, error } = await adminDb.rpc('toggle_messaging_suspension', {
-        p_business_id: selected.id,
-        p_suspended: newState,
-        p_reason: reason || null,
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) { alert('Session expired'); return; }
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/businesses/messaging-suspension`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            businessId: selected.id, suspended: newState, reason, stepUpId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') { alert('Step-up authorization failed'); return; }
+          throw new Error(data.error || 'Failed');
+        }
+        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, messaging_suspended: newState } : b));
+        setSelected(prev => prev ? { ...prev, messaging_suspended: newState } : prev);
+      };
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'messaging_suspension',
+        targetId: selected.id,
+        params: { business_id: selected.id, suspended: newState, reason },
+        description: `${newState ? 'Suspend' : 'Resume'} messaging for ${selected.name}`,
+        onAuthorized,
       });
-      if (error) throw error;
-      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, messaging_suspended: newState } : b));
-      setSelected(prev => prev ? { ...prev, messaging_suspended: newState } : prev);
     } catch (err) {
       console.error('Suspension toggle error:', err);
       alert('Failed to toggle messaging suspension');
+      stepUp.reset();
     } finally {
       setSuspensionSaving(false);
     }
@@ -780,15 +821,31 @@ export default function Businesses() {
                       key={level}
                       disabled={selected.verification_level === level}
                       onClick={async () => {
-                        if (!confirm(`Set verification to "${level}" for ${selected.name}?`)) return;
-                        const limitForLevel = payoutVerificationLimits[level] ?? 0;
-                        await adminDb.from('businesses').update({
-                          verification_level: level,
-                          verification_status: level === 'unverified' ? 'unverified' : 'verified',
-                          payout_limit_monthly: limitForLevel,
-                        }).eq('id', selected.id);
-                        await logAudit({ action: 'set_verification', entity_type: 'business', entity_id: selected.id, details: { level, previous: selected.verification_level } });
-                        setSelected({ ...selected, verification_level: level, verification_status: level === 'unverified' ? 'unverified' : 'verified', payout_limit_monthly: limitForLevel });
+                        const reasonInput = prompt(`Reason for setting verification to "${level}" for ${selected.name}:`);
+                        if (!reasonInput) return;
+                        try {
+                          const { data: sessionData } = await supabase.auth.getSession();
+                          const token = sessionData?.session?.access_token;
+                          if (!token) { alert('Session expired'); return; }
+                          const apiUrl = import.meta.env.VITE_API_URL || '';
+                          const res = await fetch(`${apiUrl}/api/verification/review`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                            body: JSON.stringify({
+                              business_id: selected.id,
+                              action: 'set_level',
+                              level,
+                              reason: reasonInput.trim(),
+                            }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || 'Failed');
+                          setSelected({ ...selected, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly });
+                          setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly } : b));
+                        } catch (err) {
+                          console.error('Verification level change error:', err);
+                          alert(err instanceof Error ? err.message : 'Failed to update verification level');
+                        }
                       }}
                       className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                         selected.verification_level === level
@@ -947,27 +1004,30 @@ export default function Businesses() {
                       try {
                         const feePercentage = customFeePercentage.trim() !== '' ? parseFloat(customFeePercentage) : null;
                         const feeFlat = customFeeFlat.trim() !== '' ? parseInt(customFeeFlat, 10) : null;
-                        await adminDb.from('businesses').update({
-                          custom_fee_percentage: feePercentage,
-                          custom_fee_flat: feeFlat,
-                        }).eq('id', selected.id);
-                        await logAudit({
-                          action: 'set_custom_fees',
-                          entity_type: 'business',
-                          entity_id: selected.id,
-                          details: {
-                            business_name: selected.name,
+                        const reasonInput = prompt('Reason for setting custom fees:');
+                        if (!reasonInput) { setCustomFeeSaving(false); return; }
+                        const { data: sessionData } = await supabase.auth.getSession();
+                        const token = sessionData?.session?.access_token;
+                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
+                        const apiUrl = import.meta.env.VITE_API_URL || '';
+                        const res = await fetch(`${apiUrl}/api/verification/review`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({
+                            business_id: selected.id,
+                            action: 'set_custom_fees',
                             custom_fee_percentage: feePercentage,
                             custom_fee_flat: feeFlat,
-                            previous_fee_percentage: selected.custom_fee_percentage,
-                            previous_fee_flat: selected.custom_fee_flat,
-                          },
+                            reason: reasonInput.trim(),
+                          }),
                         });
-                        setSelected({ ...selected, custom_fee_percentage: feePercentage, custom_fee_flat: feeFlat });
-                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: feePercentage, custom_fee_flat: feeFlat } : b));
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Failed');
+                        setSelected({ ...selected, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat });
+                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat } : b));
                       } catch (err) {
                         console.error('Custom fee save error:', err);
-                        alert('Failed to save custom fees');
+                        alert(err instanceof Error ? err.message : 'Failed to save custom fees');
                       } finally {
                         setCustomFeeSaving(false);
                       }
@@ -981,20 +1041,23 @@ export default function Businesses() {
                     onClick={async () => {
                       setCustomFeeSaving(true);
                       try {
-                        await adminDb.from('businesses').update({
-                          custom_fee_percentage: null,
-                          custom_fee_flat: null,
-                        }).eq('id', selected.id);
-                        await logAudit({
-                          action: 'clear_custom_fees',
-                          entity_type: 'business',
-                          entity_id: selected.id,
-                          details: {
-                            business_name: selected.name,
-                            previous_fee_percentage: selected.custom_fee_percentage,
-                            previous_fee_flat: selected.custom_fee_flat,
-                          },
+                        const { data: sessionData } = await supabase.auth.getSession();
+                        const token = sessionData?.session?.access_token;
+                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
+                        const apiUrl = import.meta.env.VITE_API_URL || '';
+                        const res = await fetch(`${apiUrl}/api/verification/review`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({
+                            business_id: selected.id,
+                            action: 'set_custom_fees',
+                            custom_fee_percentage: null,
+                            custom_fee_flat: null,
+                            reason: 'Clearing custom fee overrides',
+                          }),
                         });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Failed');
                         setCustomFeePercentage('');
                         setCustomFeeFlat('');
                         setSelected({ ...selected, custom_fee_percentage: null, custom_fee_flat: null });
@@ -1143,6 +1206,14 @@ export default function Businesses() {
           </div>
         )}
       </DetailModal>
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => { if (stepUpCallbackRef.current) stepUp.submitCode(code, stepUpCallbackRef.current); }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }

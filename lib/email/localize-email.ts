@@ -1,0 +1,274 @@
+/**
+ * Email Localization — Slice 5B (#524)
+ *
+ * Complete Waaiio-owned email presentation labels for customer transactional emails.
+ * Labels are translated BEFORE HTML rendering — NEVER on completed HTML.
+ *
+ * Every label value MUST be HTML-escaped via esc() at the render boundary.
+ * Protected authoritative values (amounts, references, URLs, names) are
+ * passed as separate data parameters and escaped independently.
+ *
+ * Reuses the existing Slice 5A proactive localization infrastructure.
+ */
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { resolveProactiveLocalization, type ProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { logger } from '@/lib/logger';
+
+export interface BookingEmailLabels {
+  subject: string;
+  heading: string;
+  greeting: string;
+  reminderNote: string;
+  calendarBtn: string;
+  lblReference: string;
+  lblDate: string;
+  lblTime: string;
+  lblAmount: string;
+}
+
+export interface TicketEmailLabels {
+  subject: string;
+  heading: string;
+  greeting: string;
+  showQr: string;
+  enjoyEvent: string;
+  lblEvent: string;
+  lblOrganizer: string;
+  lblDate: string;
+  lblTime: string;
+  lblVenue: string;
+  lblTickets: string;
+  lblAmount: string;
+  lblReference: string;
+  lblTicketCodes: string;
+  lblTicketN: string;
+}
+
+export interface DonationEmailLabels {
+  subject: string;
+  heading: string;
+  greeting: string;
+  support: string;
+  lblCampaign: string;
+  lblOrganizer: string;
+  lblAmount: string;
+  lblReference: string;
+}
+
+export interface InvoiceEmailLabels {
+  subject: string;
+  heading: string;
+  greeting: string;
+  viewPay: string;
+  copyLink: string;
+  lblReference: string;
+  lblAmount: string;
+  lblDueDate: string;
+  lblItems: string;
+  colItem: string;
+  colQty: string;
+  colAmount: string;
+}
+
+export interface BookingReminderEmailLabels {
+  subject: string;
+  heading: string;
+  greeting: string;
+  details: string;
+  seeYou: string;
+  lblService: string;
+  lblDate: string;
+  lblTime: string;
+  lblReference: string;
+}
+
+export interface PaymentReceivedEmailLabels {
+  subject: string;
+  heading: string;
+  message: string;
+  lblService: string;
+  lblAmount: string;
+}
+
+export interface EmailWrapperLabels {
+  footer: string;
+  tagline: string;
+  htmlLang: string;
+}
+
+export const DEFAULT_BOOKING_LABELS: BookingEmailLabels = {
+  subject: 'Confirmed at {business} {emoji}',
+  heading: 'Confirmed {emoji}',
+  greeting: "Hi {name}, you're all set with {business}!",
+  reminderNote: "We'll send you a reminder beforehand. See you soon!",
+  calendarBtn: 'Add to Calendar',
+  lblReference: 'Reference', lblDate: 'Date', lblTime: 'Time', lblAmount: 'Amount',
+};
+
+export const DEFAULT_TICKET_LABELS: TicketEmailLabels = {
+  subject: 'Your ticket(s) for {event} 🎫',
+  heading: 'Ticket Confirmed! 🎫',
+  greeting: 'Hi {name}, your {count} ticket(s) for {event} confirmed!',
+  showQr: 'Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.',
+  enjoyEvent: 'Enjoy the event! 🎉',
+  lblEvent: 'Event', lblOrganizer: 'Organizer', lblDate: 'Date', lblTime: 'Time',
+  lblVenue: 'Venue', lblTickets: 'Tickets', lblAmount: 'Amount', lblReference: 'Reference',
+  lblTicketCodes: 'Your Ticket Codes:', lblTicketN: 'Ticket',
+};
+
+export const DEFAULT_DONATION_LABELS: DonationEmailLabels = {
+  subject: 'Donation receipt — {amount} to {campaign}',
+  heading: 'Donation Received',
+  greeting: 'Hi {name}, thank you for your generous donation to {campaign}!',
+  support: 'Your support makes a difference. Thank you!',
+  lblCampaign: 'Campaign', lblOrganizer: 'Organizer', lblAmount: 'Amount', lblReference: 'Reference',
+};
+
+export const DEFAULT_INVOICE_LABELS: InvoiceEmailLabels = {
+  subject: 'Invoice {ref} from {business}',
+  heading: 'Invoice from {business}',
+  greeting: 'Hi {name}, you have received an invoice from {business}.',
+  viewPay: 'View & Pay Invoice', copyLink: 'You can also copy and paste this link into your browser:',
+  lblReference: 'Reference', lblAmount: 'Amount', lblDueDate: 'Due Date',
+  lblItems: 'Items:', colItem: 'Item', colQty: 'Qty', colAmount: 'Amount',
+};
+
+export const DEFAULT_REMINDER_LABELS: BookingReminderEmailLabels = {
+  subject: 'Reminder: {service} at {business} tomorrow',
+  heading: 'Reminder',
+  greeting: 'Hi {name}, this is a friendly reminder about {business} tomorrow.',
+  details: 'Here are your booking details:', seeYou: 'See you tomorrow!',
+  lblService: 'Service', lblDate: 'Date', lblTime: 'Time', lblReference: 'Reference',
+};
+
+export const DEFAULT_PAYMENT_RECEIVED_LABELS: PaymentReceivedEmailLabels = {
+  subject: 'Payment received — {amount}',
+  heading: 'Payment Received',
+  message: 'A new payment has been received.',
+  lblService: 'Service', lblAmount: 'Amount',
+};
+
+export const DEFAULT_WRAPPER_LABELS: EmailWrapperLabels = {
+  footer: 'All rights reserved.',
+  tagline: 'Automate your business with WhatsApp',
+  htmlLang: 'en',
+};
+
+/**
+ * Wrapper labels generated by the same atomic translation call as the body labels.
+ * Existing production callers call translateLabels() then localizeWrapperLabels()
+ * with the same localization object, so this preserves their API while preventing
+ * mixed-language body/wrapper output.
+ */
+const wrapperBundleCache = new WeakMap<object, EmailWrapperLabels>();
+
+export async function resolveEmailLocalization(
+  supabase: SupabaseClient,
+  customerPhone: string,
+  businessId: string,
+): Promise<ProactiveLocalization> {
+  return resolveProactiveLocalization(supabase, customerPhone, businessId);
+}
+
+function marker(index: number): string {
+  return `__WAAIIO_EMAIL_SEGMENT_${index}__`;
+}
+
+function countOccurrences(value: string, token: string): number {
+  return value.split(token).length - 1;
+}
+
+/**
+ * Translate body labels and wrapper chrome as one atomic presentation bundle.
+ * Any thrown error, malformed marker set, or fail-closed unchanged translation
+ * causes the entire email presentation to remain English.
+ */
+export async function translateLabels<T extends { [K in keyof T]: string }>(
+  labels: T,
+  l10n: ProactiveLocalization,
+  protectedValues: string[] = [],
+): Promise<T> {
+  if (l10n.language === 'en') {
+    wrapperBundleCache.set(l10n as object, DEFAULT_WRAPPER_LABELS);
+    return labels;
+  }
+
+  const keys = Object.keys(labels) as (keyof T)[];
+  const values = keys.map((key) => labels[key] as string);
+  const presentationValues = [...values, DEFAULT_WRAPPER_LABELS.footer, DEFAULT_WRAPPER_LABELS.tagline];
+  const markers = presentationValues.map((_, index) => marker(index));
+  const placeholderTokens = Array.from(new Set(
+    presentationValues.flatMap((value) => value.match(/\{[A-Za-z0-9_]+\}/g) ?? []),
+  ));
+  const source = presentationValues.map((value, index) => `${markers[index]}${value}`).join('\n');
+
+  try {
+    const translatedSource = await l10n.translate(source, [
+      ...protectedValues,
+      ...placeholderTokens,
+      ...markers,
+    ]);
+
+    // The canonical translator itself fails closed by returning the source text.
+    // Treat that as an all-English presentation, never a partially localized one.
+    if (!translatedSource || translatedSource === source) {
+      wrapperBundleCache.set(l10n as object, DEFAULT_WRAPPER_LABELS);
+      return labels;
+    }
+
+    for (const token of markers) {
+      if (countOccurrences(translatedSource, token) !== 1) {
+        wrapperBundleCache.set(l10n as object, DEFAULT_WRAPPER_LABELS);
+        return labels;
+      }
+    }
+
+    const translatedValues = markers.map((token, index) => {
+      const start = translatedSource.indexOf(token) + token.length;
+      const next = index + 1 < markers.length ? translatedSource.indexOf(markers[index + 1]) : translatedSource.length;
+      if (start < token.length || next < start) throw new Error('Malformed email localization segment');
+      return translatedSource.slice(start, next).replace(/^\s+|\s+$/g, '');
+    });
+
+    if (translatedValues.some((value) => !value)) {
+      wrapperBundleCache.set(l10n as object, DEFAULT_WRAPPER_LABELS);
+      return labels;
+    }
+
+    const translated = { ...labels };
+    keys.forEach((key, index) => {
+      translated[key] = translatedValues[index] as T[keyof T];
+    });
+
+    wrapperBundleCache.set(l10n as object, {
+      footer: translatedValues[values.length],
+      tagline: translatedValues[values.length + 1],
+      htmlLang: l10n.language,
+    });
+    return translated;
+  } catch (err) {
+    logger.warn('[EMAIL-L10N] Atomic presentation translation failed (non-fatal), using English:', err);
+    wrapperBundleCache.set(l10n as object, DEFAULT_WRAPPER_LABELS);
+    return labels;
+  }
+}
+
+/**
+ * Return wrapper labels produced by the exact same atomic translation call as
+ * translateLabels(). If called independently, fail closed to English rather
+ * than risk creating a mixed-language email.
+ */
+export async function localizeWrapperLabels(
+  l10n: ProactiveLocalization,
+): Promise<EmailWrapperLabels> {
+  return wrapperBundleCache.get(l10n as object) ?? DEFAULT_WRAPPER_LABELS;
+}
+
+export function fillLabel(template: string, values: Record<string, string>): string {
+  let result = template;
+  for (const [key, value] of Object.entries(values)) {
+    result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
+  }
+  return result;
+}

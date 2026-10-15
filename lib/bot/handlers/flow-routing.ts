@@ -26,9 +26,15 @@ export function getFirstStep(flowType: FlowType): string {
  * CAS-004: Extract the user-facing capability subset.
  * Single source of truth — used by getFirstStepFromCapabilities,
  * capability-selection, and semantic mismatch detection.
+ *
+ * Contextual capabilities (for example Instant Win promo verification) are
+ * intentionally excluded from a mixed business's primary menu. They remain
+ * reachable through their dedicated inbound trigger/handler, and a business
+ * whose only capability is contextual still falls back to that capability's
+ * first step via getFirstStepFromCapabilities().
  */
 export function getUserFacingCapabilities(capabilities: CapabilityId[]): CapabilityId[] {
-  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'multi_location']);
+  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'multi_location', 'promo_verification']);
   if (capabilities.includes('scheduling') || capabilities.includes('table_reservation')) {
     nonUserFacing.add('payment');
     nonUserFacing.add('invoice');
@@ -78,7 +84,7 @@ export function capabilityToFirstStep(cap: CapabilityId): string {
     case 'packages': return 'select_service'; // purchased at point of booking, falls through to scheduling
     case 'class_booking': return 'select_service'; // uses scheduling flow with is_class=true
     case 'multi_location': return 'select_service'; // location selection is a step within scheduling
-    case 'promo_verification': return 'promo_entry'; // Dedicated entry step
+    case 'promo_verification': return 'promo_entry'; // Dedicated contextual entry step
     default: return 'select_service';
   }
 }

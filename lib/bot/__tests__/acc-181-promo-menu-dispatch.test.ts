@@ -199,11 +199,10 @@ describe('ACC-181: Instant Win label', () => {
     expect(getCapabilityLabel('promo_verification' as any, 'shop', 'Lucky Draw')).toBe('Lucky Draw');
   });
 
-  it('raw promo_verification never returned as label', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/capabilities/labels.ts', 'utf-8');
-    expect(src).toContain("case 'promo_verification':");
-    expect(src).toContain("'Instant Win'");
+  it('raw promo_verification never returned as label', async () => {
+    // 561-G: labels.ts refactored from switch to data-driven map — check runtime behavior
+    const { getCapabilityLabel } = await import('@/lib/capabilities/labels');
+    expect(getCapabilityLabel('promo_verification', 'shop')).toBe('Instant Win');
   });
 });
 

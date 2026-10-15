@@ -15,6 +15,12 @@ vi.mock('@/lib/constants', () => ({
   getPaymentGatewayForCountry: vi.fn().mockReturnValue('paystack'),
 }));
 
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  reconcileNullGateways: vi.fn().mockResolvedValue({ updated: 0, errors: [] }),
+}));
+
 import { initializePayment } from '../payment';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 
@@ -136,7 +142,9 @@ describe('initializePayment', () => {
     );
   });
 
-  it('uses gateway override when specified', async () => {
+  it('uses canonical gateway resolver (not gatewayOverride)', async () => {
+    // #493: initializePayment now uses the canonical resolver.
+    // The resolver mock returns 'paystack' by default.
     const gateway = createMockGateway();
     mockGetGatewayByName.mockReturnValue(gateway);
 
@@ -148,11 +156,12 @@ describe('initializePayment', () => {
       referenceCode: 'REF-002',
       businessName: 'Test Biz',
       phone: '+2341234567890',
-      gatewayOverride: 'stripe',
+      countryCode: 'NG',
     });
 
     expect(result).not.toBeNull();
-    expect(mockGetGatewayByName).toHaveBeenCalledWith('stripe');
+    // Resolver returns 'paystack', so getPaymentGatewayByName is called with 'paystack'
+    expect(mockGetGatewayByName).toHaveBeenCalledWith('paystack');
   });
 
   it('returns null when gateway throws', async () => {

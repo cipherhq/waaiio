@@ -31,6 +31,8 @@ export interface InvoicePdfData {
   countryCode: CountryCode;
   whitelabel?: boolean;
   logoUrl?: string | null;
+  /** Slice 5B: pre-translated Waaiio-owned labels */
+  labels?: import('./localize-pdf').InvoicePdfLabels;
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -58,6 +60,9 @@ function fmtCurrency(amount: number, countryCode: CountryCode): string {
 }
 
 export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
+  const { DEFAULT_INVOICE_LABELS: INV_DEFAULTS } = await import('./localize-pdf');
+  const IL = data.labels || INV_DEFAULTS;
+
   const margin = 50;
   const doc = new PDFDocument({ size: 'A4', margin });
   const bufferPromise = collectPdfBuffer(doc);
@@ -82,7 +87,7 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   }
 
   doc.fontSize(24).font('Helvetica-Bold').fillColor('#333333')
-    .text('INVOICE', margin + logoOffset, margin, { width: contentWidth - logoOffset, align: 'left' });
+    .text(IL.title, margin + logoOffset, margin, { width: contentWidth - logoOffset, align: 'left' });
 
   doc.fontSize(11).font('Helvetica-Bold').fillColor('#555555')
     .text(data.businessName, margin + logoOffset, margin + 30);
@@ -90,13 +95,13 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   // Reference + dates on right
   const headerRightX = pageWidth - margin - 180;
   doc.fontSize(9).font('Helvetica').fillColor('#666666');
-  doc.text(`Ref: ${data.referenceCode}`, headerRightX, margin, { width: 180, align: 'right' });
-  doc.text(`Issue Date: ${formatDate(data.issueDate)}`, headerRightX, margin + 14, { width: 180, align: 'right' });
-  doc.text(`Due Date: ${formatDate(data.dueDate)}`, headerRightX, margin + 28, { width: 180, align: 'right' });
+  doc.text(`${IL.lblRef}: ${data.referenceCode}`, headerRightX, margin, { width: 180, align: 'right' });
+  doc.text(`${IL.lblIssueDate}: ${formatDate(data.issueDate)}`, headerRightX, margin + 14, { width: 180, align: 'right' });
+  doc.text(`${IL.lblDueDate}: ${formatDate(data.dueDate)}`, headerRightX, margin + 28, { width: 180, align: 'right' });
 
   if (data.status === 'paid') {
     doc.fontSize(12).font('Helvetica-Bold').fillColor('#16a34a')
-      .text('PAID', headerRightX, margin + 46, { width: 180, align: 'right' });
+      .text(IL.lblPaid, headerRightX, margin + 46, { width: 180, align: 'right' });
   }
 
   // Divider
@@ -106,7 +111,7 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   // ── Bill To ──
   y += 15;
   doc.fontSize(9).font('Helvetica-Bold').fillColor('#999999')
-    .text('BILL TO', margin, y);
+    .text(IL.lblBillTo, margin, y);
   y += 14;
   doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
     .text(data.customerName, margin, y);
@@ -139,10 +144,10 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   doc.rect(margin, y, contentWidth, 20).fillColor('#f5f5f5').fill();
   doc.fillColor('#555555').fontSize(8).font('Helvetica-Bold');
   doc.text('#', colX.num + 4, y + 5, { width: colW.num });
-  doc.text('Description', colX.desc, y + 5, { width: colW.desc });
-  doc.text('Qty', colX.qty, y + 5, { width: colW.qty, align: 'right' });
-  doc.text('Unit Price', colX.price, y + 5, { width: colW.price, align: 'right' });
-  doc.text('Amount', colX.amount, y + 5, { width: colW.amount, align: 'right' });
+  doc.text(IL.colDescription, colX.desc, y + 5, { width: colW.desc });
+  doc.text(IL.colQty, colX.qty, y + 5, { width: colW.qty, align: 'right' });
+  doc.text(IL.colUnitPrice, colX.price, y + 5, { width: colW.price, align: 'right' });
+  doc.text(IL.colAmount, colX.amount, y + 5, { width: colW.amount, align: 'right' });
   y += 22;
 
   // Table rows
@@ -189,25 +194,25 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
     y += 16;
   }
 
-  summaryRow('Subtotal', fmtCurrency(data.subtotal, data.countryCode));
+  summaryRow(IL.lblSubtotal, fmtCurrency(data.subtotal, data.countryCode));
 
   if (data.taxRate > 0) {
-    summaryRow(`Tax (${data.taxRate}%)`, fmtCurrency(data.taxAmount, data.countryCode));
+    summaryRow(`${IL.lblTax} (${data.taxRate}%)`, fmtCurrency(data.taxAmount, data.countryCode));
   }
 
   if (data.discountAmount > 0) {
     const discountLabel = data.discountType === 'percent'
-      ? `Discount (${data.discountValue}%)`
-      : 'Discount';
+      ? `${IL.lblDiscount} (${data.discountValue}%)`
+      : IL.lblDiscount;
     summaryRow(discountLabel, `-${fmtCurrency(data.discountAmount, data.countryCode)}`);
   }
 
-  summaryRow('Total', fmtCurrency(data.totalAmount, data.countryCode), true);
+  summaryRow(IL.lblTotal, fmtCurrency(data.totalAmount, data.countryCode), true);
 
   if (data.amountPaid > 0) {
-    summaryRow('Amount Paid', fmtCurrency(data.amountPaid, data.countryCode));
+    summaryRow(IL.lblAmountPaid, fmtCurrency(data.amountPaid, data.countryCode));
     const balance = data.totalAmount - data.amountPaid;
-    summaryRow('Balance Due', fmtCurrency(balance, data.countryCode), true);
+    summaryRow(IL.lblBalanceDue, fmtCurrency(balance, data.countryCode), true);
   }
 
   // ── Notes & Terms ──
@@ -216,7 +221,7 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   if (data.notes) {
     if (y + 40 > doc.page.height - 60) { doc.addPage(); y = margin; }
     doc.fontSize(9).font('Helvetica-Bold').fillColor('#555555')
-      .text('Notes', margin, y);
+      .text(IL.lblNotes, margin, y);
     y += 14;
     doc.fontSize(9).font('Helvetica').fillColor('#666666')
       .text(data.notes, margin, y, { width: contentWidth - 100 });
@@ -226,7 +231,7 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   if (data.terms) {
     if (y + 40 > doc.page.height - 60) { doc.addPage(); y = margin; }
     doc.fontSize(9).font('Helvetica-Bold').fillColor('#555555')
-      .text('Terms & Conditions', margin, y);
+      .text(IL.lblTerms, margin, y);
     y += 14;
     doc.fontSize(8).font('Helvetica').fillColor('#888888')
       .text(data.terms, margin, y, { width: contentWidth - 100 });
@@ -238,7 +243,7 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
     y += 20;
     if (y + 20 > doc.page.height - 40) { doc.addPage(); y = margin; }
     doc.fontSize(8).font('Helvetica').fillColor('#aaaaaa')
-      .text('Powered by Waaiio', margin, y, { width: contentWidth, align: 'center' });
+      .text(IL.footer, margin, y, { width: contentWidth, align: 'center' });
   }
 
   doc.end();

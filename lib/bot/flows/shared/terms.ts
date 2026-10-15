@@ -14,7 +14,7 @@ export function getTermsPrompt(businessName: string, customTermsText?: string | 
   // Use business's own terms URL if set, otherwise link to Waaiio's standard terms
   const link = termsUrl || 'https://www.waaiio.com/terms';
 
-  const termsLink = link ? `\n\n📎 View details: ${link}` : '';
+  const termsLink = link ? `\n\n📎 View T&Cs: ${link}` : '';
 
   let body: string;
   if (customTermsText) {

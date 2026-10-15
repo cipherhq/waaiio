@@ -170,7 +170,7 @@ describe('P1-STAFF-1: source verification', () => {
   it('20. bot staff-unavailable prompt offers date change or cancel', () => {
     expect(schedulingFlow).toContain('pick_another_date_staff');
     expect(schedulingFlow).toContain('cancel_staff');
-    expect(schedulingFlow).toContain('no staff members are available');
+    expect(schedulingFlow).toContain("'booking.no_staff'");
   });
 
   it('21. bot narrows time slots by staff schedule when staff assigned', () => {

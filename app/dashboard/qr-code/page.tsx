@@ -82,13 +82,13 @@ export default function QRCodePage() {
   const cleanPhone = phone;
 
   const isSharedNumber = !business.wa_method || business.wa_method === 'shared';
-  const defaultPrefill = isSharedNumber && business.bot_code ? business.bot_code : 'Hi';
+  const routingCode = isSharedNumber ? (business.bot_code || '') : '';
   const isWhitelabel = PRICING_TIERS[(business.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
 
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('generic');
   const [copied, setCopied] = useState(false);
-  const [prefillText, setPrefillText] = useState(defaultPrefill);
-  const [prefillManuallyEdited, setPrefillManuallyEdited] = useState(false);
+  // Deep-link suffix auto-set by template; routing code is always prepended separately
+  const [deepLinkSuffix, setDeepLinkSuffix] = useState('');
   const posterRef = useRef<HTMLDivElement>(null);
   const qrOnlyRef = useRef<HTMLDivElement>(null);
 
@@ -105,22 +105,22 @@ export default function QRCodePage() {
   const effectiveSubtitle = customSubtitle || template.subtitle;
   const effectiveLabel = customLabel || template.label;
 
-  // When template changes, auto-update prefill text with deep-link suffix
+  // Build the WhatsApp pre-filled message: routing code is always present (non-editable),
+  // deep-link suffix is auto-set by template selection
+  const prefillText = routingCode
+    ? (deepLinkSuffix ? `${routingCode}:${deepLinkSuffix}` : routingCode)
+    : 'Hi';
+
+  // When template changes, auto-update deep-link suffix
   function handleTemplateChange(templateId: TemplateId) {
     setSelectedTemplate(templateId);
     setCustomColor('');
     setCustomSubtitle('');
     setCustomLabel('');
 
-    if (!prefillManuallyEdited) {
-      const tmpl = TEMPLATES.find(t => t.id === templateId);
-      const cap = tmpl?.capabilities?.[0];
-      if (cap && isSharedNumber && business.bot_code) {
-        setPrefillText(`${business.bot_code}:${cap}`);
-      } else {
-        setPrefillText(defaultPrefill);
-      }
-    }
+    const tmpl = TEMPLATES.find(t => t.id === templateId);
+    const cap = tmpl?.capabilities?.[0];
+    setDeepLinkSuffix(cap && routingCode ? cap : '');
   }
 
   const isAttendanceTemplate = selectedTemplate === 'attendance';
@@ -464,25 +464,30 @@ export default function QRCodePage() {
               <p className="mt-3 text-xs text-green-600">
                 This QR opens a web check-in form — customers enter their name and check in instantly. No WhatsApp needed.
               </p>
-            ) : (
+            ) : routingCode ? (
               <div className="mt-3">
-                <label className="mb-1 block text-xs font-medium text-gray-500">Pre-filled message</label>
-                <input
-                  type="text"
-                  value={prefillText}
-                  onChange={e => { setPrefillText(e.target.value); setPrefillManuallyEdited(true); }}
-                  placeholder="Hi"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                />
-                <p className="mt-1 text-xs text-gray-400">This message auto-fills when customers open the link</p>
-                {isSharedNumber && business.bot_code && (
-                  <p className="mt-1 text-xs text-amber-600">
-                    {prefillText.includes(':')
-                      ? `Smart QR: Customers who scan will go straight to the ${prefillText.split(':').pop()} flow — no menu needed.`
-                      : `Tip: Keep your bot code "${business.bot_code}" as the pre-filled message so customers get routed to your business automatically.`
-                    }
+                <label className="mb-1 block text-xs font-medium text-gray-500">WhatsApp routing code</label>
+                <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                  <span className="font-mono font-medium">{routingCode}</span>
+                  {deepLinkSuffix && (
+                    <span className="text-gray-400">:{deepLinkSuffix}</span>
+                  )}
+                  <span className="ml-auto rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-500">Read-only</span>
+                </div>
+                <p className="mt-1 text-xs text-gray-400">
+                  This code routes customers to your business on shared WhatsApp numbers. It cannot be changed from this page.
+                </p>
+                {deepLinkSuffix && (
+                  <p className="mt-1 text-xs text-green-600">
+                    Smart QR: Customers who scan will go straight to the {deepLinkSuffix} flow — no menu needed.
                   </p>
                 )}
+              </div>
+            ) : (
+              <div className="mt-3">
+                <p className="mt-1 text-xs text-gray-400">
+                  Customers who scan this QR will open a WhatsApp chat with your business.
+                </p>
               </div>
             )}
           </div>

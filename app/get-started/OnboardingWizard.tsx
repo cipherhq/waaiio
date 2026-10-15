@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { buildEmbeddedSignupLoginOptions, extractAuthCode, buildDiscoverRequestBody } from '@/lib/whatsapp/embedded-signup-config';
 import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { getPostHogClient } from '@/lib/posthog/client';
+import { WORDMARK_PATH, WORDMARK_ALT, WORDMARK_DISPLAY } from '@/lib/brand';
 import {
   CATEGORY_FLOW_MAP,
   formatCurrency,
@@ -40,6 +41,12 @@ import type {
   FbConnectionData,
   DiscoveredWaba,
 } from './steps';
+
+const STAGING_SUPABASE_URL = 'https://tqjvrzopvtczxfxiwmnz.supabase.co';
+
+function isStagingEmailSignupClient(): boolean {
+  return String(process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/$/, '') === STAGING_SUPABASE_URL;
+}
 
 declare global {
   interface Window {
@@ -149,16 +156,16 @@ const WA_OPTIONS: {
     title: 'Keep WhatsApp Business + add bot',
     badge: 'Advanced',
     badgeColor: 'bg-amber-100 text-amber-700',
-    description: 'If you already use WhatsApp Business app, you can add Waaiio\'s bot without losing your app. Both work at the same time.',
+    description: 'Business App Connect is a Meta-controlled pilot. Your existing WhatsApp Business app must not be transferred until Meta confirms coexistence eligibility.',
     pros: [
-      'Your WhatsApp Business app keeps working',
-      'Bot handles bookings and payments automatically',
+      'Designed to keep your eligible WhatsApp Business app connected',
+      'Waaiio automation can be added after approved onboarding',
       'You still reply to customers manually when needed',
     ],
     cons: [
       'Only works with WhatsApp Business app (not regular WhatsApp)',
       'Needs a Facebook Business Manager account',
-      'Some features are limited in this mode',
+      'Not available until Waaiio and Meta complete coexistence verification for your number and market',
     ],
   },
 ];
@@ -230,6 +237,7 @@ function OnboardingWizard() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [paymentWarning, setPaymentWarning] = useState('');
 
   // Auth state
   const [authMode, setAuthMode] = useState<AuthMode>('email');
@@ -440,11 +448,14 @@ function OnboardingWizard() {
     supabase.auth.getUser().then(({ data: { user: u } }) => {
       if (u) {
         setUser(u);
-        if (successStep === 'success' && successBusinessId) {
+        // Always capture business_id from URL for resumed onboarding.
+        // Server validates ownership + status='pending' before any exclusion.
+        if (successBusinessId) {
           setBusinessId(successBusinessId);
+        }
+        if (successStep === 'success' && successBusinessId) {
           setStep('success');
         } else if (successStep === 'whatsapp' && successBusinessId) {
-          setBusinessId(successBusinessId);
           setStep('success');
         } else {
           setStep('category');
@@ -563,7 +574,9 @@ function OnboardingWizard() {
     nameCheckTimeoutRef.current = setTimeout(async () => {
       try {
         const codeParam = botCodeEdited && customBotCode ? `&bot_code=${encodeURIComponent(customBotCode)}` : '';
-        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(value.trim())}${codeParam}`);
+        const currentBizId = pendingRetryId || businessId;
+        const pendingParam = currentBizId ? `&business_id=${encodeURIComponent(currentBizId)}` : '';
+        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(value.trim())}${codeParam}${pendingParam}`);
         const data = await res.json();
         setNameCheckStatus(data.slug_available !== false ? (data.code_available ? 'available' : 'taken') : 'taken');
         setSuggestedBotCode(data.suggested_code || data.bot_code || '');
@@ -591,7 +604,9 @@ function OnboardingWizard() {
     setBotCodeStatus('checking');
     botCodeCheckRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(name.trim())}&bot_code=${encodeURIComponent(cleaned)}`);
+        const currentBizId = pendingRetryId || businessId;
+        const pendingParam = currentBizId ? `&business_id=${encodeURIComponent(currentBizId)}` : '';
+        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(name.trim())}&bot_code=${encodeURIComponent(cleaned)}${pendingParam}`);
         const data = await res.json();
         setBotCodeStatus(data.code_available ? 'available' : 'taken');
       } catch {
@@ -706,7 +721,38 @@ function OnboardingWizard() {
         return;
       }
 
-      // Not an existing user — proceed with signup
+      // Dedicated staging creates an immediately usable test account on the
+      // server, then signs in with the same email/password. Production never
+      // calls this endpoint; it continues through the existing signup path.
+      if (isStagingEmailSignupClient()) {
+        const stagingSignupRes = await fetch('/api/auth/staging-signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+
+        if (!stagingSignupRes.ok) {
+          const stagingError = await stagingSignupRes.json().catch(() => ({}));
+          setError(stagingError.message || 'Unable to create staging account.');
+          return;
+        }
+
+        const { data: stagingSignInData, error: stagingSignInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (stagingSignInError || !stagingSignInData.session || !stagingSignInData.user) {
+          setError('Staging account was created, but sign-in failed. Please try signing in again.');
+          return;
+        }
+
+        setUser(stagingSignInData.user);
+        getPostHogClient()?.capture('signup_completed', { method: 'email', staging_test_mode: true });
+        setStep('category');
+        return;
+      }
+
+      // Not an existing user — proceed with normal production signup
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
@@ -753,6 +799,10 @@ function OnboardingWizard() {
   // ── Facebook Embedded Signup ──
 
   function launchWhatsAppSignup() {
+    if (waMethod === 'coexist') {
+      setError('Business App Connect is pending Meta eligibility verification. We will not transfer or register your existing WhatsApp Business number through the normal setup.');
+      return;
+    }
     if (!window.FB || !fbSdkLoaded.current) {
       setError('Facebook is still loading. Please wait a moment and try again.');
       return;
@@ -818,6 +868,10 @@ function OnboardingWizard() {
   }
 
   async function handleFbConnectAndRegister() {
+    if (waMethod === 'coexist') {
+      setError('Business App Connect requires Meta coexistence onboarding. No changes were made to your WhatsApp Business app number.');
+      return;
+    }
     if (!fbConnectionData) return;
 
     // Use selected WABA/phone from the phone_select step
@@ -895,7 +949,11 @@ function OnboardingWizard() {
 
       setBusinessId(registerData.business_id);
       setBotCode(registerData.bot_code);
-      getPostHogClient()?.capture('business_created', { category, country: selectedCountry, businessId: registerData.business_id });
+      // Surface payment readiness warning to the merchant (#493)
+      if (registerData.payment_ready === false) {
+        setPaymentWarning('Payment processing is not yet available for your region. Your business has been created, but customers will not be able to make payments until payment setup is complete. Contact support for assistance.');
+      }
+      getPostHogClient()?.capture('business_created', { category, country: selectedCountry, businessId: registerData.business_id, payment_ready: registerData.payment_ready });
 
       // Step 2: Connect the WhatsApp channel
       const fbRes = await fetch('/api/auth/facebook/callback', {
@@ -1168,7 +1226,7 @@ function OnboardingWizard() {
       <div className="hidden w-[420px] flex-shrink-0 bg-gradient-to-br from-brand-900 via-brand to-brand-700 lg:flex lg:flex-col">
         <div className="flex flex-1 flex-col justify-between p-10">
           <Link href="/">
-            <Image src="/logo.png" alt="Waaiio" width={120} height={32} className="h-8 w-auto brightness-0 invert" />
+            <Image src={WORDMARK_PATH} alt={WORDMARK_ALT} width={WORDMARK_DISPLAY.standard.width} height={WORDMARK_DISPLAY.standard.height} className="h-8 w-auto brightness-0 invert" />
           </Link>
 
           <div className="flex-1 flex flex-col justify-center">
@@ -1203,7 +1261,7 @@ function OnboardingWizard() {
         <header className="border-b border-gray-100 bg-white lg:hidden">
           <div className="flex items-center justify-between px-4 py-3">
             <Link href="/">
-              <Image src="/logo.png" alt="Waaiio" width={105} height={28} className="h-7 w-auto" />
+              <Image src={WORDMARK_PATH} alt={WORDMARK_ALT} width={WORDMARK_DISPLAY.small.width} height={WORDMARK_DISPLAY.small.height} className="h-7 w-auto" />
             </Link>
             <span className="text-xs text-gray-400">Step {stepIndex + 1} of {steps.length}</span>
           </div>
@@ -1271,6 +1329,13 @@ function OnboardingWizard() {
               <div className="mb-6 rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
                 {error}
                 <button onClick={() => setError('')} className="ml-2 font-semibold underline">Dismiss</button>
+              </div>
+            )}
+
+            {paymentWarning && (
+              <div data-testid="payment-readiness-warning" className="mb-6 rounded-xl bg-orange-50 border border-orange-200 p-4 text-sm text-orange-800">
+                {paymentWarning}
+                <button onClick={() => setPaymentWarning('')} className="ml-2 font-semibold underline">Dismiss</button>
               </div>
             )}
 
