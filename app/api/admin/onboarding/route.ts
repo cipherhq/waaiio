@@ -22,7 +22,53 @@ export async function GET(request: NextRequest) {
     service.from('category_templates').select('key, name').eq('is_active', true).order('name'),
   ]);
   if (queueResult.error || countriesResult.error || categoriesResult.error) return NextResponse.json({ error: 'Unable to load onboarding queue and authority options' }, { status: 500 });
-  return NextResponse.json({ onboardings: queueResult.data || [], options: { countries: countriesResult.data || [], categories: categoriesResult.data || [] } });
+
+  // Read-only connection readiness. Never expose WhatsApp access tokens or assume
+  // country availability implies an allocated, active shared channel.
+  const queued = queueResult.data || [];
+  const businessIds = [...new Set(queued.map(row => row.business_id).filter((id): id is string => typeof id === 'string' && !!id))];
+  let businesses: Array<{ id: string; status: string; wa_method: string | null; assigned_channel_id: string | null; whatsapp_channel_id: string | null; bot_code: string | null; country_code: string | null }> = [];
+  let channels: Array<{ id: string; channel_type: string | null; is_active: boolean; connection_status: string | null; country_code: string | null; business_id: string | null }> = [];
+  if (businessIds.length) {
+    const { data, error: businessError } = await service.from('businesses')
+      .select('id, status, wa_method, assigned_channel_id, whatsapp_channel_id, bot_code, country_code')
+      .in('id', businessIds);
+    if (businessError) return NextResponse.json({ error: 'Unable to verify WhatsApp readiness' }, { status: 500 });
+    businesses = data || [];
+    const channelIds = [...new Set(businesses.flatMap(b => [b.assigned_channel_id, b.whatsapp_channel_id]).filter((id): id is string => !!id))];
+    if (channelIds.length) {
+      const { data: channelRows, error: channelsError } = await service.from('whatsapp_channels')
+        .select('id, channel_type, is_active, connection_status, country_code, business_id')
+        .in('id', channelIds);
+      if (channelsError) return NextResponse.json({ error: 'Unable to verify WhatsApp channel status' }, { status: 500 });
+      channels = channelRows || [];
+    }
+  }
+  const byBusiness = new Map(businesses.map(b => [b.id, b]));
+  const byChannel = new Map(channels.map(c => [c.id, c]));
+  const onboardings = queued.map(row => {
+    const biz = row.business_id ? byBusiness.get(row.business_id) : null;
+    const ch = biz ? byChannel.get(biz.assigned_channel_id || biz.whatsapp_channel_id || '') : null;
+    const channelReady = !!(biz && ch && ch.is_active && ch.connection_status === 'active'
+      && (ch.channel_type !== 'dedicated' || ch.business_id === biz.id)
+      && (ch.channel_type !== 'shared' || ch.country_code === biz.country_code));
+    const requested = String(row.whatsapp_method || 'shared');
+    return {
+      ...row,
+      whatsapp_setup: {
+        requested_method: requested,
+        current_method: biz?.wa_method || null,
+        business_status: biz?.status || null,
+        country_code: biz?.country_code || null,
+        bot_code: biz?.bot_code || null,
+        channel_ready: channelReady,
+        channel_type: ch?.channel_type || null,
+        connection_status: ch?.connection_status || null,
+        owner_connection_required: requested !== 'shared' && !(channelReady && ch?.channel_type === 'dedicated'),
+      },
+    };
+  });
+  return NextResponse.json({ onboardings, options: { countries: countriesResult.data || [], categories: categoriesResult.data || [] } });
 }
 
 export async function POST(request: NextRequest) {
