@@ -646,38 +646,51 @@ export class BotService {
       _bmark('unresolved_get_bot_context');
     }
 
-    // ── P1-1: Early savedcard nav verification — BEFORE revalidation ──
-    // savedcard_menu/done payloads carry a user-controllable paymentId.
-    // Verify payment ownership before ANY session mutation (revalidation,
-    // CAS, deactivation, send). Unverified → return immediately.
-    const _earlyNavText = text.trim();
-    const _earlyNavMatch = _earlyNavText.match(/^(savedcard_menu|savedcard_done):(.+)$/);
-    let _earlyBizId: string | null = null;
-    if (_earlyNavMatch) {
+    // ── Read-only pre-verification for ALL saved-card button payloads ──
+    // Runs BEFORE CAP-001 revalidation. All 6 payload types carry a
+    // user-controllable paymentId. Verify ownership with SELECTs only
+    // before any session mutation (CAS, deactivation, send, RPC).
+    // Unverified → return immediately with zero side effects.
+    const _scPreMatch = text.trim().match(
+      /^(savedcard_menu|savedcard_done|save_card_accept|save_card_decline|replace_card_accept|replace_card_decline):(.+)$/
+    );
+    let _scVerifiedBizId: string | null = null;
+    if (_scPreMatch) {
+      const _scPayloadId = _scPreMatch[2];
       const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
-      const _earlyCanonPhone = canonicalSavedCardPhone(from);
-      let _earlyVerified = false;
+      const _scCanonPhone = canonicalSavedCardPhone(from);
+      let _scPreVerified = false;
 
-      if (_earlyCanonPhone) {
-        const { data: _earlyPayment } = await this.supabase.from('payments')
+      if (_scCanonPhone) {
+        // (a) Payment row loads without error
+        const { data: _scPayment, error: _scPayErr } = await this.supabase.from('payments')
           .select('id, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id, user_id')
-          .eq('id', _earlyNavMatch[2]).single();
-        if (_earlyPayment) {
-          const { verifyPaymentCustomerPhone } = await import('@/lib/payments/saved-card-offer');
-          const paymentPhone = await verifyPaymentCustomerPhone(this.supabase, _earlyPayment);
-          if (paymentPhone === _earlyCanonPhone) {
-            _earlyBizId = _earlyPayment.business_id;
-            if (session?.business_id && _earlyBizId && session.business_id !== _earlyBizId) {
-              logger.warn('[SAVED-CARD-NAV] Payment business mismatch with session', { paymentId: _earlyNavMatch[2] });
+          .eq('id', _scPayloadId).single();
+        if (!_scPayErr && _scPayment) {
+          // (b) payment.business_id is non-null
+          if (_scPayment.business_id) {
+            // (c) Payment customer phone matches sender
+            const { verifyPaymentCustomerPhone } = await import('@/lib/payments/saved-card-offer');
+            const paymentPhone = await verifyPaymentCustomerPhone(this.supabase, _scPayment);
+            if (paymentPhone === _scCanonPhone) {
+              // (d) Authoritative business check: preResolvedBusinessId (dedicated channel)
+              //     if present, else session.business_id. Must equal payment.business_id.
+              const authBiz = preResolvedBusinessId || session?.business_id || null;
+              if (!authBiz || authBiz === _scPayment.business_id) {
+                _scVerifiedBizId = _scPayment.business_id;
+                _scPreVerified = true;
+              } else {
+                logger.warn('[SAVED-CARD-PRE] Business mismatch', { paymentId: _scPayloadId });
+              }
             } else {
-              _earlyVerified = true;
+              logger.warn('[SAVED-CARD-PRE] Customer phone mismatch', { paymentId: _scPayloadId });
             }
           } else {
-            logger.warn('[SAVED-CARD-NAV] Payment customer phone mismatch', { paymentId: _earlyNavMatch[2] });
+            logger.warn('[SAVED-CARD-PRE] Payment has null business_id', { paymentId: _scPayloadId });
           }
         }
       }
-      if (!_earlyVerified) return;
+      if (!_scPreVerified) return;
     }
 
     // ── CAP-001 Point A: Session resume capability revalidation ──
@@ -1099,13 +1112,12 @@ export class BotService {
     }
 
     // ── Post-decline saved-card navigation buttons ──
-    // Verification already completed before revalidation (_earlyNavMatch).
-    // _earlyVerified is true if we reach here with a nav match.
-    if (_earlyNavMatch) {
-      const navAction = _earlyNavMatch[1];
-      const navPaymentId = _earlyNavMatch[2];
-      // _earlyBizId and _earlyVerified from the early block above
-      const _scNavBizId = _earlyBizId!;
+    // Pre-verification already passed if we reach here with a nav match.
+    const _scNavMatch = text.trim().match(/^(savedcard_menu|savedcard_done):(.+)$/);
+    if (_scNavMatch) {
+      const navAction = _scNavMatch[1];
+      const navPaymentId = _scNavMatch[2];
+      const _scNavBizId = _scVerifiedBizId!;
 
       if (navAction === 'savedcard_done') {
         // Bind the verified business before sending — required for S-1 guard
