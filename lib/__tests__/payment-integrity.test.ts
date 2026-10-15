@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { createHmac } from 'crypto';
-import { getPayableFeeRows } from '@/lib/payments/payable-fees';
+import { getPayableFeeRows, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
 
 // Test-mode key prefixes — split to avoid pre-commit secret scanner false positives
 const SK_TEST = 'sk_' + 'test_';
@@ -57,6 +57,7 @@ function createMockSupabase(overrides: {
   existingDedupEvent?: Record<string, unknown> | null;
 } = {}) {
   const updates: Array<{ table: string; data: Record<string, unknown>; filters: Record<string, unknown> }> = [];
+  const dedupUpserts: unknown[] = [];
 
   function chainBuilder(result: MockQueryResult = { data: null, error: null }) {
     const chain: Record<string, unknown> = {};
@@ -110,15 +111,16 @@ function createMockSupabase(overrides: {
               maybeSingle: () => Promise.resolve({ data: dedupData, error: null }),
             }),
           }),
-          upsert: () => ({
-            select: () =>
-              Promise.resolve(overrides.upsertResult ?? { data: [{ id: 'evt-1' }] }),
-          }),
+          upsert: (data: unknown) => {
+            dedupUpserts.push(data);
+            return Promise.resolve(overrides.upsertResult ?? { data: [{ id: 'evt-1' }], error: null });
+          },
         };
       }
       return chainBuilder();
     }),
     _updates: updates,
+    _dedupUpserts: dedupUpserts,
   };
   return sb;
 }
@@ -185,7 +187,8 @@ describe('BYO Webhook — provider verification failure', () => {
 
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('marks payment failed when provider returns mismatched amount', async () => {
+  it('does NOT mark payment failed for integrity case (amount mismatch)', async () => {
+    const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
       payment: { id: 'pay-1', status: 'pending', amount: 5000, currency: 'NGN' },
@@ -197,8 +200,9 @@ describe('BYO Webhook — provider verification failure', () => {
       processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
       processPaystackChargeFailed: vi.fn(),
     }));
+    vi.doMock('@sentry/nextjs', () => mockSentry);
 
-    // Mock fetch: provider returns a different amount
+    // Mock fetch: provider confirms success but with mismatched amount
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -218,15 +222,25 @@ describe('BYO Webhook — provider verification failure', () => {
 
       expect(res.status).toBe(200);
 
-      // processPaystackChargeSuccess should NOT have been called
+      // processPaystackChargeSuccess must NOT have been called
       const { processPaystackChargeSuccess } = await import('@/lib/payments/webhook-handler');
       expect(processPaystackChargeSuccess).not.toHaveBeenCalled();
 
-      // Payment should have been updated to failed
-      const paymentUpdates = mockSb._updates.filter(u => u.table === 'payments');
-      expect(paymentUpdates.length).toBeGreaterThan(0);
-      expect(paymentUpdates[0].data.status).toBe('failed');
-      expect(paymentUpdates[0].data.gateway_status).toBe('amount_mismatch');
+      // Payment status must NOT be set to 'failed' — only gateway_status recorded
+      const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
+      expect(failUpdates).toHaveLength(0);
+
+      // gateway_status should be written with the reason
+      const gatewayUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.gateway_status === 'amount_mismatch');
+      expect(gatewayUpdates.length).toBeGreaterThan(0);
+
+      // Sentry alert must have been raised
+      expect(mockSentry.captureMessage).toHaveBeenCalled();
+      const call = mockSentry.captureMessage.mock.calls[0];
+      expect(call[1]?.extra?.reason).toBe('amount_mismatch');
+
+      // NO dedup row written
+      expect(mockSb._dedupUpserts).toHaveLength(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -332,24 +346,26 @@ describe('BYO Webhook — Flutterwave hash verification', () => {
 // ═══════════════════════════════════════════════════════════
 
 describe('Direct Transfer Payout Accounting', () => {
-  it('getPayableFeeRows excludes is_direct_transfer rows', () => {
+  it('getPayableFeeRows includes false, excludes true, null and undefined', () => {
     const rows = [
-      { transaction_amount: 10000, fee_total: 250, gateway_fee: 150, waived: false, is_direct_transfer: false },
-      { transaction_amount: 5000, fee_total: 0, gateway_fee: 0, waived: false, is_direct_transfer: true },
-      { transaction_amount: 8000, fee_total: 200, gateway_fee: 120, waived: false, is_direct_transfer: null },
-      { transaction_amount: 3000, fee_total: 0, gateway_fee: 0, waived: false, is_direct_transfer: true },
+      { transaction_amount: 10000, fee_total: 250, gateway_fee: 150, waived: false, is_direct_transfer: false as boolean | null },
+      { transaction_amount: 5000, fee_total: 0, gateway_fee: 0, waived: false, is_direct_transfer: true as boolean | null },
+      { transaction_amount: 8000, fee_total: 200, gateway_fee: 120, waived: false, is_direct_transfer: null as boolean | null },
+      { transaction_amount: 3000, fee_total: 0, gateway_fee: 0, waived: false, is_direct_transfer: true as boolean | null },
+      { transaction_amount: 2000, fee_total: 50, gateway_fee: 30, waived: false } as { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer?: boolean | null },
     ];
 
     const payable = getPayableFeeRows(rows);
 
-    expect(payable).toHaveLength(2);
-    expect(payable.map(r => r.transaction_amount)).toEqual([10000, 8000]);
+    // Only the row with is_direct_transfer === false is payable
+    expect(payable).toHaveLength(1);
+    expect(payable[0].transaction_amount).toBe(10000);
   });
 
   it('returns all rows when none are direct transfers', () => {
     const rows = [
-      { transaction_amount: 1000, fee_total: 25, gateway_fee: 15, waived: false, is_direct_transfer: false },
-      { transaction_amount: 2000, fee_total: 50, gateway_fee: 30, waived: false },
+      { transaction_amount: 1000, fee_total: 25, gateway_fee: 15, waived: false, is_direct_transfer: false as boolean | null },
+      { transaction_amount: 2000, fee_total: 50, gateway_fee: 30, waived: false, is_direct_transfer: false as boolean | null },
     ];
 
     const payable = getPayableFeeRows(rows);
@@ -403,6 +419,193 @@ describe('BYO/Connect on platform_managed business — not in payable gross', ()
 
     expect(gross).toBe(5000);
     expect(payable).toHaveLength(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// P1 fix verification — behavioral tests through real handlers
+// ═══════════════════════════════════════════════════════════
+
+describe('P1 fix: getUnclassifiedFeeRows helper', () => {
+  it('returns rows with null is_direct_transfer', () => {
+    const rows = [
+      { transaction_amount: 1000, fee_total: 25, gateway_fee: 15, waived: false, is_direct_transfer: false as boolean | null | undefined },
+      { transaction_amount: 2000, fee_total: 50, gateway_fee: 30, waived: false, is_direct_transfer: null as boolean | null | undefined },
+      { transaction_amount: 3000, fee_total: 75, gateway_fee: 45, waived: false, is_direct_transfer: true as boolean | null | undefined },
+      { transaction_amount: 4000, fee_total: 100, gateway_fee: 60, waived: false } as { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer?: boolean | null },
+    ];
+    const unclassified = getUnclassifiedFeeRows(rows);
+    expect(unclassified).toHaveLength(2);
+    expect(unclassified.map(r => r.transaction_amount)).toEqual([2000, 4000]);
+  });
+
+  it('returns empty array when all rows have explicit custody', () => {
+    const rows = [
+      { transaction_amount: 1000, fee_total: 25, gateway_fee: 15, waived: false, is_direct_transfer: false as boolean | null },
+      { transaction_amount: 2000, fee_total: 50, gateway_fee: 30, waived: false, is_direct_transfer: true as boolean | null },
+    ];
+    expect(getUnclassifiedFeeRows(rows)).toHaveLength(0);
+  });
+});
+
+describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
+  const secretKey = `${SK_TEST}p1fix_verify`;
+
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('(d) terminal Paystack failure marks payment failed', async () => {
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-terminal', status: 'pending', amount: 1000, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { status: 'failed', reference: 'ref-terminal' } }),
+    });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-terminal' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-t', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-t' } });
+      expect(res.status).toBe(200);
+      const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
+      expect(failUpdates.length).toBeGreaterThan(0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('(e) unknown provider status does NOT mark payment failed', async () => {
+    const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-unknown', status: 'pending', amount: 1000, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => mockSentry);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { status: 'some_unknown_status', reference: 'ref-u' } }),
+    });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-u' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-u', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-u' } });
+      expect(res.status).toBe(200);
+      const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
+      expect(failUpdates).toHaveLength(0);
+      expect(mockSentry.captureMessage).toHaveBeenCalled();
+      expect(mockSb._dedupUpserts).toHaveLength(0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('(e) HTTP 404 from provider does NOT mark payment failed', async () => {
+    const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-404', status: 'pending', amount: 1000, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => mockSentry);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-404' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-404', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-404' } });
+      expect(res.status).toBe(200);
+      const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
+      expect(failUpdates).toHaveLength(0);
+      expect(mockSentry.captureMessage).toHaveBeenCalled();
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('(c) currency mismatch: payment stays pending, Sentry fired, no dedup, 200', async () => {
+    const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-curr', status: 'pending', amount: 1000, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => mockSentry);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        data: { status: 'success', amount: 100000, currency: 'USD', reference: 'ref-curr' },
+      }),
+    });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-curr' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-curr', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-curr' } });
+      expect(res.status).toBe(200);
+      const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
+      expect(failUpdates).toHaveLength(0);
+      const gatewayUpdate = mockSb._updates.find(u => u.table === 'payments' && u.data.gateway_status === 'currency_mismatch');
+      expect(gatewayUpdate).toBeDefined();
+      expect(mockSentry.captureMessage).toHaveBeenCalled();
+      expect(mockSb._dedupUpserts).toHaveLength(0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('(f) transient verify errors return 503', async () => {
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-503', status: 'pending', amount: 1000, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 429 });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-503' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-503', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-503' } });
+      expect(res.status).toBe(503);
+    } finally { globalThis.fetch = originalFetch; }
   });
 });
 
@@ -780,7 +983,7 @@ describe('BYO Webhook — definitive mismatch marks payment failed', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('amount mismatch → payment marked failed with Sentry capture', async () => {
+  it('amount mismatch (integrity case) — payment NOT marked failed, Sentry fired, gateway_status recorded', async () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
       payment: { id: 'pay-m1', status: 'pending', amount: 5000, currency: 'NGN' },
@@ -812,10 +1015,14 @@ describe('BYO Webhook — definitive mismatch marks payment failed', () => {
       const res = await POST(req, { params: { businessId: 'biz-1' } });
 
       expect(res.status).toBe(200);
-      const paymentUpdates = mockSb._updates.filter(u => u.table === 'payments');
-      expect(paymentUpdates.length).toBeGreaterThan(0);
-      expect(paymentUpdates[0].data.status).toBe('failed');
-      expect(paymentUpdates[0].data.gateway_status).toBe('amount_mismatch');
+      // Payment must NOT be set to 'failed' — integrity case, provider said success
+      const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
+      expect(failUpdates).toHaveLength(0);
+      // gateway_status must be recorded
+      const gwUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.gateway_status === 'amount_mismatch');
+      expect(gwUpdates.length).toBeGreaterThan(0);
+      // Sentry must fire
+      expect(sentryMock.captureMessage).toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;
     }

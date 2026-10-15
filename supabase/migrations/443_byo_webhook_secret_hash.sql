@@ -29,6 +29,17 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES
   ON TABLE public.business_payment_credentials FROM authenticated;
 REVOKE SELECT ON TABLE public.business_payment_credentials FROM authenticated;
 
+-- Explicitly revoke column-level INSERT/UPDATE from authenticated.
+-- has_table_privilege() does not detect column-level grants; these must be revoked separately.
+REVOKE INSERT (id, business_id, gateway, secret_key, public_key, platform_subaccount_code,
+               connect_account_id, connection_type, is_active, verified_at, created_at,
+               updated_at, webhook_secret_hash)
+  ON TABLE public.business_payment_credentials FROM authenticated;
+REVOKE UPDATE (id, business_id, gateway, secret_key, public_key, platform_subaccount_code,
+               connect_account_id, connection_type, is_active, verified_at, created_at,
+               updated_at, webhook_secret_hash)
+  ON TABLE public.business_payment_credentials FROM authenticated;
+
 -- Authenticated: column-level SELECT on metadata columns only.
 -- Matches M426 positive contract + GET route column list.
 GRANT SELECT (
@@ -62,9 +73,10 @@ BEGIN
     RAISE EXCEPTION 'M443 FAILED: anon retains privileges on business_payment_credentials';
   END IF;
 
-  -- authenticated must not write
-  IF has_table_privilege('authenticated', 'public.business_payment_credentials', 'INSERT')
-     OR has_table_privilege('authenticated', 'public.business_payment_credentials', 'UPDATE')
+  -- authenticated must not write (table-level OR column-level)
+  -- has_any_column_privilege detects column-level grants that has_table_privilege misses
+  IF has_any_column_privilege('authenticated', 'public.business_payment_credentials', 'INSERT')
+     OR has_any_column_privilege('authenticated', 'public.business_payment_credentials', 'UPDATE')
      OR has_table_privilege('authenticated', 'public.business_payment_credentials', 'DELETE')
      OR has_table_privilege('authenticated', 'public.business_payment_credentials', 'TRUNCATE') THEN
     RAISE EXCEPTION 'M443 FAILED: authenticated retains write privileges on business_payment_credentials';

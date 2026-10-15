@@ -12,7 +12,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
-import { getPayableFeeRows } from '@/lib/payments/payable-fees';
+import { getPayableFeeRows, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
 
@@ -132,7 +132,7 @@ export async function GET(request: NextRequest) {
     const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
 
     // Group fees by business_id
-    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean }[]>();
+    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean | null | undefined }[]>();
     for (const row of (allFeeRows || [])) {
       const list = feesByBiz.get(row.business_id) ?? [];
       list.push(row);
@@ -165,6 +165,17 @@ export async function GET(request: NextRequest) {
       // Exclude direct transfers — Waaiio never holds those funds
       const fees = feesByBiz.get(biz.id) ?? [];
       const payable = getPayableFeeRows(fees);
+      const unclassifiedFees = getUnclassifiedFeeRows(fees);
+      if (unclassifiedFees.length > 0) {
+        Sentry.captureMessage('[AUTO-PAYOUT] Fee rows excluded: custody unknown', {
+          level: 'warning',
+          extra: {
+            business_id: biz.id,
+            count: unclassifiedFees.length,
+            total_amount: unclassifiedFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0),
+          },
+        });
+      }
       const gross = payable.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       const totalFees = payable.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
       const totalGatewayFees = payable.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);

@@ -3,6 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(security): P1/P2 payment integrity hardening (#628 follow-up)
+
+### What changed
+- `lib/payments/payable-fees.ts`: `getPayableFeeRows` changed from `!f.is_direct_transfer` to strict `=== false` (fail-closed). NULL custody is now ineligible. Added `getUnclassifiedFeeRows` helper for monitoring unknown-custody rows.
+- `app/api/admin/payouts/generate/route.ts`: Added Sentry warning + `custody_warning` field in response when fee rows with unknown custody are excluded. Added `getUnclassifiedFeeRows` call after `getPayableFeeRows`.
+- `app/api/cron/auto-payout/route.ts`: Added Sentry warning for unclassified custody rows per business per run.
+- `app/api/payments/byo-webhook/[businessId]/route.ts`: Charge.success non-success path now splits on terminal vs integrity. Terminal provider failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark payment failed. Integrity/unverified outcomes (amount_mismatch, currency_mismatch, reference_mismatch, unknown status, HTTP 404, missing_transaction_id, unsupported_gateway) leave payment status unchanged, write `gateway_status` for reconciliation, fire Sentry error, write no dedup row. Dedup upsert errors now logged to Sentry (non-fatal).
+- `supabase/migrations/443_byo_webhook_secret_hash.sql`: Added explicit column-level `REVOKE INSERT/UPDATE` on all columns for `authenticated`. Self-check upgraded from `has_table_privilege` to `has_any_column_privilege` for INSERT/UPDATE, catching column-level grants that table-level check misses.
+- `lib/__tests__/payment-credentials-columns.pg.test.ts`: Added Finding 3 tests — column-level UPDATE grant escape (proves old table-level REVOKE did not remove it; new column-level REVOKE does) and self-check failure when sensitive-column SELECT grant is reintroduced.
+- `lib/__tests__/payment-integrity.test.ts`: Updated existing tests to match new behavior (integrity case ≠ failure). Added P1 behavioral tests: terminal vs integrity split, unknown status, HTTP 404, currency mismatch, transient 503, `getUnclassifiedFeeRows`.
+
+### What it affects / could break
+- Payout generation: fee rows where `is_direct_transfer IS NULL` are now excluded from payout gross (previously included). Column has `DEFAULT false`; no normal platform-held row should be NULL in production. Any row that slipped through as NULL will now be surfaced via Sentry warning.
+- BYO webhook: payments are no longer marked `failed` for amount/currency/reference mismatches, unknown statuses, or non-401/403/429 HTTP errors from the provider verify call. `gateway_status` is written instead for reconciliation. Only provider-confirmed terminal failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark the payment failed.
+- Migration 443 now also revokes column-level INSERT/UPDATE on every column of `business_payment_credentials` for `authenticated`. Idempotent on re-run.
+
 ## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
 
 ### What changed

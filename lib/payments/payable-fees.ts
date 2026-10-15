@@ -17,8 +17,17 @@ export interface PayableFeeRow {
 }
 
 /**
- * Returns fee rows eligible for payout — excludes direct transfers.
+ * Returns fee rows eligible for payout — requires explicit is_direct_transfer === false.
+ * Fail-closed: NULL or undefined custody is treated as ineligible (unknown ≠ platform-held).
  */
 export function getPayableFeeRows<T extends PayableFeeRow>(rows: T[]): T[] {
-  return rows.filter(f => !f.is_direct_transfer);
+  return rows.filter(f => f.is_direct_transfer === false);
+}
+
+/**
+ * Returns fee rows whose custody is unclassified (is_direct_transfer is null or undefined).
+ * Used to surface custody-unknown rows for monitoring without silently dropping them.
+ */
+export function getUnclassifiedFeeRows<T extends PayableFeeRow>(rows: T[]): T[] {
+  return rows.filter(f => f.is_direct_transfer == null);
 }

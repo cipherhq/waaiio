@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
@@ -6,7 +7,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logAdminAudit } from '@/lib/admin-audit';
-import { getPayableFeeRows } from '@/lib/payments/payable-fees';
+import { getPayableFeeRows, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
 
 interface Flag {
   type: string;
@@ -69,6 +70,8 @@ export async function POST(request: NextRequest) {
     let held = 0;
     let failed = 0;
     const needsAttention: string[] = [];
+    let custodyUnclassifiedCount = 0;
+    let custodyUnclassifiedAmount = 0;
 
     for (const biz of businesses) {
       // Check if payout already exists for this period
@@ -108,6 +111,16 @@ export async function POST(request: NextRequest) {
       // Gross from platform_fees.transaction_amount — only gateway payments (Waaiio holds these funds)
       // Direct transfers are excluded: business already has the money, we only invoice the platform fee
       const gatewayFees = getPayableFeeRows(fees || []);
+      const unclassifiedFees = getUnclassifiedFeeRows(fees || []);
+      if (unclassifiedFees.length > 0) {
+        const amt = unclassifiedFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
+        custodyUnclassifiedCount += unclassifiedFees.length;
+        custodyUnclassifiedAmount += amt;
+        Sentry.captureMessage('[PAYOUT-GENERATE] Fee rows excluded: custody unknown', {
+          level: 'warning',
+          extra: { business_id: biz.id, count: unclassifiedFees.length, total_amount: amt },
+        });
+      }
       const gross = gatewayFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       if (gross <= 0) continue;
 
@@ -416,6 +429,10 @@ export async function POST(request: NextRequest) {
         needs_attention: needsAttention.length > 0 ? needsAttention : undefined,
         failed,
         period: { start: periodStartStr, end: periodEndStr },
+        ...(custodyUnclassifiedCount > 0 ? {
+          custody_warning: `${custodyUnclassifiedCount} fee rows excluded: custody unknown`,
+          custody_unclassified_amount: custodyUnclassifiedAmount,
+        } : {}),
       }, { status: 207 });
     }
 
@@ -438,6 +455,10 @@ export async function POST(request: NextRequest) {
       skipped,
       failed: 0,
       period: { start: periodStartStr, end: periodEndStr },
+      ...(custodyUnclassifiedCount > 0 ? {
+        custody_warning: `${custodyUnclassifiedCount} fee rows excluded: custody unknown`,
+        custody_unclassified_amount: custodyUnclassifiedAmount,
+      } : {}),
     });
   } catch (error) {
     logger.withContext({ op: 'payout.generate', ...safeLogErrorContext(error) })

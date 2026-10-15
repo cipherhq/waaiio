@@ -180,36 +180,53 @@ export async function POST(
 
     if (event === 'charge.success' || event === 'charge.completed') {
       if (!verifyResult.success) {
-        Sentry.captureMessage('BYO webhook: provider verification failed (definitive)', {
-          level: 'warning',
-          extra: { businessId, reference, reason: verifyResult.reason, paymentId: payment.id },
-        });
-        await supabase
-          .from('payments')
-          .update({ status: 'failed', gateway_status: verifyResult.reason })
-          .eq('id', payment.id)
-          .eq('business_id', businessId)
-          .in('status', ['pending']);
-        // P1-C: amount_mismatch/definitive → NO dedup row
-        return NextResponse.json({ received: true });
-      }
+        const ps = verifyResult.providerStatus || '';
+        const isTerminalFailure = creds.gateway === 'flutterwave'
+          ? FLUTTERWAVE_TERMINAL_FAILURES.has(ps)
+          : PAYSTACK_TERMINAL_FAILURES.has(ps);
 
-      const outcome = await processPaystackChargeSuccess(
-        verifyResult.verifiedData!, reference, supabase, scope,
-      );
+        if (isTerminalFailure) {
+          // Provider confirms a terminal failure — mark payment failed and fall through to dedup
+          await supabase
+            .from('payments')
+            .update({ status: 'failed', gateway_status: verifyResult.reason })
+            .eq('id', payment.id)
+            .eq('business_id', businessId)
+            .in('status', ['pending']);
+          // Skip the success handler — fall through to dedup write
+        } else {
+          // Integrity / unverified outcome — do NOT change payment status
+          // Record reason durably for reconciliation without schema change
+          await supabase
+            .from('payments')
+            .update({ gateway_status: verifyResult.reason })
+            .eq('id', payment.id)
+            .eq('business_id', businessId);
+          Sentry.captureMessage('BYO webhook: integrity/unverified outcome — payment status unchanged', {
+            level: 'error',
+            extra: { businessId, paymentId: payment.id, reference, reason: verifyResult.reason },
+          });
+          // NO dedup row — allow provider retry on redelivery
+          return NextResponse.json({ received: true });
+        }
+      } else {
+        const outcome = await processPaystackChargeSuccess(
+          verifyResult.verifiedData!, reference, supabase, scope,
+        );
 
-      // Exhaustive outcome handling — every SuccessOutcome must be addressed
-      switch (outcome) {
-        case 'finalized':
-        case 'already_finalized':
-          break; // fall through to dedup write below
-        case 'incomplete':
-          return NextResponse.json({ error: 'Finalization incomplete' }, { status: 503 });
-        case 'amount_mismatch':
-          return NextResponse.json({ received: true }); // NO dedup row
-        default: {
-          const _exhaustive: never = outcome;
-          throw new Error(`Unhandled SuccessOutcome: ${_exhaustive}`);
+        // Exhaustive outcome handling — every SuccessOutcome must be addressed
+        switch (outcome) {
+          case 'finalized':
+          case 'already_finalized':
+            break; // fall through to dedup write below
+          case 'incomplete':
+            return NextResponse.json({ error: 'Finalization incomplete' }, { status: 503 });
+          case 'amount_mismatch':
+            return NextResponse.json({ received: true }); // NO dedup row
+          default: {
+            const _exhaustive: never = outcome;
+            throw new Error(`Unhandled SuccessOutcome: ${_exhaustive}`);
+          }
         }
       }
     } else if (event === 'charge.failed') {
@@ -234,12 +251,19 @@ export async function POST(
     }
 
     // Processing succeeded — write dedup
-    await supabase
+    const { error: dedupErr } = await supabase
       .from('processed_webhook_events')
       .upsert(
         { event_id: eventId, gateway: 'byo', event_type: `byo_${event}`, processed_at: new Date().toISOString() },
         { onConflict: 'event_id', ignoreDuplicates: true },
       );
+    if (dedupErr) {
+      // Non-fatal: payment is already processed. Log for idempotency monitoring.
+      Sentry.captureMessage('BYO webhook: dedup upsert failed — idempotency at risk', {
+        level: 'error',
+        extra: { businessId, eventId, errorMessage: dedupErr.message },
+      });
+    }
 
     return NextResponse.json({ received: true });
   } catch (err) {

@@ -361,4 +361,57 @@ describeDb('Migration 443: least-privilege grants on payment credentials', () =>
     `);
     expect(r).not.toMatch(/permission denied|42501|ERROR/i);
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // H. Finding 3 — column-level INSERT/UPDATE grant escape
+  // ═══════════════════════════════════════════════════════════════
+
+  it('F3: column-level UPDATE grant on secret_key to authenticated is removed by migration', () => {
+    // This test documents whether the old table-level REVOKE removed a column-level UPDATE grant.
+    // Outcome: without the explicit column REVOKE added in this fix, the grant survives.
+    // With the fix (REVOKE UPDATE (...) ON TABLE ... FROM authenticated), it is removed.
+
+    // Re-grant a column-level UPDATE on secret_key (simulating a pre-M443 column grant)
+    sql(`GRANT UPDATE (secret_key) ON TABLE public.business_payment_credentials TO authenticated;`);
+
+    // Verify the grant exists (pre-revoke state)
+    const before = sql(`SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'secret_key', 'UPDATE');`);
+    expect(before).toBe('t');
+
+    // Re-apply migration 443 (idempotent: ADD COLUMN IF NOT EXISTS is a no-op; grants/revokes re-execute)
+    const migrationSql = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/443_byo_webhook_secret_hash.sql'),
+      'utf-8',
+    );
+    const result = execSync(
+      `psql "${TEST_DB}" -v ON_ERROR_STOP=1 -t -A 2>&1`,
+      { encoding: 'utf-8', timeout: 15000, input: migrationSql },
+    ).trim();
+    expect(result).toContain('M443 self-check PASSED');
+
+    // Verify the grant is now gone
+    const after = sql(`SELECT has_column_privilege('authenticated', 'public.business_payment_credentials', 'secret_key', 'UPDATE');`);
+    expect(after).toBe('f');
+  });
+
+  it('F3: self-check fails when a sensitive-column SELECT grant is reintroduced', () => {
+    // Reintroduce a SELECT grant on secret_key to authenticated
+    sql(`GRANT SELECT (secret_key) ON TABLE public.business_payment_credentials TO authenticated;`);
+
+    // Extract and run only the self-check DO block from M443
+    const migrationSql = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/443_byo_webhook_secret_hash.sql'),
+      'utf-8',
+    );
+    // Extract the DO $$ ... $$ block
+    const doBlockMatch = migrationSql.match(/DO \$\$[\s\S]*?\$\$;/);
+    expect(doBlockMatch).not.toBeNull();
+    const doBlock = doBlockMatch![0];
+
+    const result = sql(doBlock);
+    expect(result).toMatch(/M443 FAILED.*authenticated can SELECT secret_key/i);
+
+    // Clean up: revoke the grant so subsequent tests are not affected
+    sql(`REVOKE SELECT (secret_key) ON TABLE public.business_payment_credentials FROM authenticated;`);
+  });
 });
