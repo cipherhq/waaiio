@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — feat(admin): assisted shared-number and owner WABA connection (#652)
+
+### What changed
+- Added permission-guarded WhatsApp Setup Assistance page for admin-onboarded businesses with verified country-/tenant-scoped active channel status, customer-ready link and QR only after business activation.
+- Added a rate-limited, audited owner connection handoff; the owner authenticates to Meta and verifies their own WABA number. Added a separately audited server-side shared-channel allocation action that does not silently displace a business-owned connection.
+- Removed legacy admin manual channel creation that reused platform tokens, masked channel credential columns from browser reads, and replaced direct business channel reassignment with verified assistance entry points.
+- Added readiness/tenant isolation and conditional QR link regression tests.
+
+### What it affects / could break
+- Manual admin-created "active" channel records are no longer available; new channels require legitimate provider verification. Shared allocation requires an eligible existing active channel.
+- No migration or live Meta action. Dedicated WABA authorization and staging messaging/financial gate acceptance remain owner-controlled and release-gated.
+
 ## 2026-10-14 — fix(bot): confirm saved-card decline choices with navigation buttons
 
 ### What changed

@@ -106,7 +106,6 @@ export default function Businesses() {
   const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
   // WhatsApp channel assignment
   const [channels, setChannels] = useState<Array<{ id: string; phone_number: string; display_name: string; country_code: string }>>([]);
-  const [channelSaving, setChannelSaving] = useState(false);
   // Inline editing
   const [editField, setEditField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -760,47 +759,26 @@ export default function Businesses() {
                 </div>
               </div>
 
-              {/* WhatsApp Channel Assignment */}
+              {/* WhatsApp assignment is read-only here: channel changes need
+                  owner Meta authorization or the audited allocation RPC. */}
               <div className="mt-3">
                 <label className="block text-xs font-medium text-gray-600 mb-1">WhatsApp Number</label>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={selected.assigned_channel_id || ''}
-                    onChange={async (e) => {
-                      const val = e.target.value || null;
-                      setChannelSaving(true);
-                      await adminDb.from('businesses').update({ assigned_channel_id: val }).eq('id', selected.id);
-                      await logAudit({
-                        action: 'assign_whatsapp_channel',
-                        entity_type: 'business',
-                        entity_id: selected.id,
-                        details: { business_name: selected.name, channel_id: val },
-                      });
-                      setSelected({ ...selected, assigned_channel_id: val });
-                      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, assigned_channel_id: val } : b));
-                      setChannelSaving(false);
-                    }}
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-                    disabled={channelSaving}
-                  >
-                    <option value="">Auto (country default)</option>
-                    {channels.map(ch => (
-                      <option key={ch.id} value={ch.id}>
-                        {ch.display_name || ch.phone_number} ({ch.country_code}) — +{ch.phone_number}
-                      </option>
-                    ))}
-                  </select>
-                  {channelSaving && <span className="text-xs text-gray-400">Saving...</span>}
-                </div>
-                <p className="mt-1 text-xs text-gray-400">
+                <p className="text-sm text-gray-700">
                   {selected.assigned_channel_id
-                    ? `Assigned: ${channels.find(c => c.id === selected.assigned_channel_id)?.display_name || 'Custom'}`
-                    : 'Using automatic country-based routing'}
+                    ? 'Assigned: ' + (channels.find(c => c.id === selected.assigned_channel_id)?.display_name || 'Verified channel')
+                    : 'No confirmed assigned channel'}
                 </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  Country: {selected.country_code || '—'}. Do not manually assign an unrelated WABA or channel.
+                  Use the audited shared-number allocator or send the owner a Meta connection handoff.
+                </p>
+                <a href="/whatsapp-assistance" className="mt-2 inline-block text-sm font-semibold text-brand underline">
+                  Open WhatsApp Setup Assistance
+                </a>
               </div>
             </div>
 
-            {/* Verification */}
+                        {/* Verification */}
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
               <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Verification</p>
               <div className="space-y-2">
