@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { computePlatformHeldTotals } from '@/lib/payments/payable-fees';
 import { assertMessagingAllowed, MessagingSuspendedError } from '@/lib/channels/send-guard';
 
 /**
@@ -80,16 +81,13 @@ export async function GET(request: NextRequest) {
       // Check if they have accumulated payments
       const { data: fees } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, is_direct_transfer')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
         .eq('business_id', biz.id)
         .is('refunded_at', null);
 
-      // Exclude direct-transfer fees: platform never held those funds (fail-closed: null excluded)
-      const platformFees = (fees || []).filter(f => f.is_direct_transfer === false);
-      const totalGross = platformFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
-      const totalFees = platformFees.reduce((s, f) => s + Number(f.fee_total || 0), 0);
-      const balance = totalGross - totalFees;
-      const paymentCount = platformFees.length;
+      // Canonical formula — same as generate/auto-payout
+      const { eligible, netAvailable: balance } = computePlatformHeldTotals(fees || []);
+      const paymentCount = eligible.length;
 
       // Only nudge if they have actual money waiting
       if (balance <= 0 || paymentCount === 0) continue;

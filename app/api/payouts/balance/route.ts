@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { computePlatformHeldTotals } from '@/lib/payments/payable-fees';
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Get total successful payments via bookings and orders
+    // Total business revenue from completed bookings/orders/invoices (display metric — all modes)
     const [{ data: bookingPayments }, { data: orderPayments }, { data: invoicePayments }] = await Promise.all([
       supabase
         .from('bookings')
@@ -51,7 +52,6 @@ export async function GET(request: NextRequest) {
     const orderGross = (orderPayments || []).reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
     const invoiceGross = (invoicePayments || []).reduce((sum, i) => sum + Number(i.total_amount || 0), 0);
 
-    // Subtract successful refunds
     const { data: refunds } = await supabase
       .from('refunds')
       .select('amount')
@@ -59,13 +59,41 @@ export async function GET(request: NextRequest) {
       .eq('status', 'success');
 
     const totalRefunds = (refunds || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
-    const gross = bookingGross + orderGross + invoiceGross - totalRefunds;
+    // total_revenue: all completed business revenue regardless of custody (display only)
+    const total_revenue = bookingGross + orderGross + invoiceGross - totalRefunds;
 
-    // Get platform fees
-    let totalFees = 0;
+    // Payout basis: already-paid and pending payouts (shared across both modes)
+    const [{ data: payouts }, { data: pendingPayouts }, { data: adjustments }] = await Promise.all([
+      supabase
+        .from('business_payouts')
+        .select('net_amount, status')
+        .eq('business_id', businessId)
+        .in('status', ['paid', 'processing']),
+      supabase
+        .from('business_payouts')
+        .select('net_amount')
+        .eq('business_id', businessId)
+        .in('status', ['pending', 'approved']),
+      supabase
+        .from('payout_adjustments')
+        .select('amount')
+        .eq('business_id', businessId)
+        .is('applied_to_payout_id', null),
+    ]);
+
+    const paidOut = (payouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
+    const pending = (pendingPayouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
+    const pendingAdjustments = (adjustments || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
+
+    // Payout-basis gross, fees, and net — derived from platform_fees custody classification
+    let gross: number;
+    let totalFees: number;
+    let netAvailable: number;
+
     if (biz.payout_mode === 'direct_split') {
       // For direct_split, Paystack deducts the fee at gateway level.
-      // Calculate from the payout account's platform_percentage instead.
+      // Use total_revenue as gross and compute the platform percentage as the fee estimate.
+      gross = total_revenue;
       const { data: payoutAccount } = await supabase
         .from('payout_accounts')
         .select('platform_percentage')
@@ -76,46 +104,22 @@ export async function GET(request: NextRequest) {
       const settings = await loadPlatformSettings({ useServiceClient: true });
       const pct = payoutAccount?.platform_percentage ?? settings.default_platform_fee_percent;
       totalFees = Math.round(gross * (pct / 100));
+      netAvailable = Math.max(0, gross - totalFees - paidOut - pending + pendingAdjustments);
     } else {
-      const { data: fees } = await supabase
+      // platform_managed: derive gross and net from custody-classified platform_fees rows.
+      // This is the authoritative payout basis — matches generate and auto-payout exactly.
+      const { data: platformFees } = await supabase
         .from('platform_fees')
-        .select('fee_total, is_direct_transfer')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
         .eq('business_id', businessId)
-        .eq('waived', false)
         .is('refunded_at', null);
 
-      // Exclude direct-transfer fees: platform never held those funds (fail-closed: null excluded)
-      totalFees = (fees || []).filter(f => f.is_direct_transfer === false).reduce((sum, f) => sum + Number(f.fee_total || 0), 0);
+      const allPriorPayouts = [...(payouts || []), ...(pendingPayouts || [])];
+      const totals = computePlatformHeldTotals(platformFees || [], adjustments || [], allPriorPayouts);
+      gross = totals.gross;
+      totalFees = totals.totalFees + totals.gatewayFees;
+      netAvailable = totals.netAvailable;
     }
-
-    // Get already paid out amounts
-    const { data: payouts } = await supabase
-      .from('business_payouts')
-      .select('net_amount, status')
-      .eq('business_id', businessId)
-      .in('status', ['paid', 'processing']);
-
-    const paidOut = (payouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
-
-    // Get unapplied payout adjustments (e.g. post-payout refunds pending deduction)
-    const { data: adjustments } = await supabase
-      .from('payout_adjustments')
-      .select('amount')
-      .eq('business_id', businessId)
-      .is('applied_to_payout_id', null);
-
-    const pendingAdjustments = (adjustments || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
-
-    // Get pending payouts
-    const { data: pendingPayouts } = await supabase
-      .from('business_payouts')
-      .select('net_amount')
-      .eq('business_id', businessId)
-      .in('status', ['pending', 'approved']);
-
-    const pending = (pendingPayouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
-
-    const netAvailable = Math.max(0, gross - totalFees - paidOut - pending + pendingAdjustments);
 
     // Get pending revenue from orders (confirmed but not yet paid)
     const { data: pendingOrders } = await supabase
@@ -149,7 +153,8 @@ export async function GET(request: NextRequest) {
       .eq('status', 'confirmed');
 
     return NextResponse.json({
-      gross,
+      total_revenue,      // all completed business revenue (bookings + orders + invoices − refunds)
+      gross,              // platform-held gross from platform_fees (platform_managed) or = total_revenue (direct_split)
       fees: totalFees,
       net_available: netAvailable,
       paid_out: paidOut,

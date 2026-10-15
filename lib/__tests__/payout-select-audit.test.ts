@@ -1,14 +1,19 @@
 /**
  * SELECT-side audit: every route that computes payout or held totals from
- * platform_fees must include is_direct_transfer in its select list.
+ * platform_fees must include all fields required by computePlatformHeldTotals.
  *
- * If is_direct_transfer is absent from the select, the getPayableFeeRows
- * filter (=== false) or inline equivalent cannot operate — direct-transfer
- * fees (funds the platform never held) would silently inflate balances.
+ * Required fields:
+ *   - transaction_amount: basis for gross
+ *   - fee_total: non-waived platform fee deduction
+ *   - gateway_fee: gateway cost deduction
+ *   - waived: controls whether fee_total is included
+ *   - is_direct_transfer: custody classification (fail-closed === false)
  *
- * This test reads each route as source text and asserts that the
- * platform_fees .select() call includes is_direct_transfer.
- * It fails immediately if the field is removed from any query.
+ * If any field is absent, computePlatformHeldTotals silently uses defaults
+ * (0 / false / null) and produces incorrect payout amounts.
+ *
+ * This test reads each route as source text and fails immediately if a field
+ * is removed from any platform_fees query.
  */
 
 import { readFileSync } from 'fs';
@@ -55,17 +60,22 @@ const PAYOUT_ROUTES: Array<{ file: string; desc: string }> = [
   },
 ];
 
+const REQUIRED_FIELDS = ['transaction_amount', 'fee_total', 'gateway_fee', 'waived', 'is_direct_transfer'];
+
 describe('payout platform_fees SELECT-side audit', () => {
   for (const { file, desc } of PAYOUT_ROUTES) {
-    it(`${desc}: platform_fees select includes is_direct_transfer`, () => {
+    it(`${desc}: platform_fees select includes all computePlatformHeldTotals fields`, () => {
       const src = readFileSync(join(ROOT, file), 'utf-8');
       const selects = extractPlatformFeesSelects(src);
       expect(selects.length).toBeGreaterThan(0);
-      const missing = selects.filter(s => !s.includes('is_direct_transfer'));
-      expect(
-        missing,
-        `${file}: found platform_fees select(s) without is_direct_transfer: ${JSON.stringify(missing)}`,
-      ).toHaveLength(0);
+
+      for (const field of REQUIRED_FIELDS) {
+        const missingField = selects.filter(s => !s.includes(field));
+        expect(
+          missingField,
+          `${file}: found platform_fees select(s) without '${field}': ${JSON.stringify(missingField)}`,
+        ).toHaveLength(0);
+      }
     });
   }
 });

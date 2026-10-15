@@ -3,6 +3,28 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(payments): canonical payout formula — computePlatformHeldTotals (#628 P1/P2 fix pass 3)
+
+### What changed
+- `lib/payments/payable-fees.ts`: Added `computePlatformHeldTotals()` — canonical formula for platform-held payout totals. Accepts `fees`, optional `adjustments`, and optional `priorPayouts`. Returns `{ eligible, gross, totalFees, gatewayFees, adjustmentSum, priorPaidOut, netAvailable }`. All payout callers now use this single function.
+- `app/api/admin/payouts/generate/route.ts`: Replaced inline gross/fees/net computation with `computePlatformHeldTotals`. Moved adjustments fetch before gross check. Removed `getPayableFeeRows` import (function still used elsewhere).
+- `app/api/cron/auto-payout/route.ts`: Replaced inline computation with `computePlatformHeldTotals`. Removed two-step netAmount calculation.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `gateway_fee, waived` to `platform_fees` select (were missing — formula used `transaction_amount - fee_total` instead of the canonical formula). Added `payout_adjustments` fetch. Now uses `computePlatformHeldTotals` with adjustments and priorPayouts for balance verification.
+- `app/api/payouts/balance/route.ts` (P1): For `platform_managed` mode — gross and net now derived from `platform_fees` via `computePlatformHeldTotals` instead of bookings/orders/invoices (which included direct-transfer revenue the platform never held). Added `total_revenue` response field (bookings+orders+invoices, display only). Direct_split mode unchanged.
+- `app/api/cron/payout-nudge/route.ts`: Added `gateway_fee, waived` to `platform_fees` select. Uses `computePlatformHeldTotals` instead of inline reduces.
+- `app/api/payments/byo-webhook/[businessId]/route.ts` (P2): Integrity-failure branch now adds `.in('status', ['pending'])` predicate — prevents overwriting `gateway_status` on already-finalized payments. Checks `updatedRows` result — if 0 rows (finalized), records Sentry warning anomaly only.
+- `app/dashboard/payouts/page.tsx`: Added `total_revenue` to Balance interface. Top stats label changed from "Total Earnings" to "Total Revenue" (shows `balance.total_revenue`).
+- `lib/__tests__/payout-select-audit.test.ts`: Extended to assert all 5 fields required by `computePlatformHeldTotals` (`transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer`).
+- `lib/__tests__/payout-custody-formula.test.ts` (new): 19 behavioral tests for `computePlatformHeldTotals` — mixed custody, NULL exclusion, waived handling, adjustments, priorPayouts, generate→approve reconciliation, balance matching generate.
+- `lib/__tests__/payment-credentials-columns.pg.test.ts`: Added PG test section for `platform_fees` authenticated SELECT grants — verifies table-level SELECT, column-level coverage for all 5 fields, RLS row isolation.
+
+### What it affects / could break
+- **Balance endpoint (platform_managed):** `gross` is now platform-held transaction total from `platform_fees`, not bookings/orders/invoices total. This is LOWER if there are direct-transfer transactions (correct — platform never held those funds). `net_available` now correctly subtracts `gateway_fee` and handles `waived` fees.
+- **Approve balance check:** Now deducts `gateway_fee`, handles `waived`, and includes `payout_adjustments`. A payout that passed the old check (which used `transaction_amount - fee_total`) might fail the new check if gateway fees are significant. This is correct — the old formula overstated available balance.
+- **Nudge:** Balance now accounts for gateway fees and waived status. Some nudges may show lower balance amounts.
+- **BYO webhook integrity branch:** Replayed webhooks on finalized payments no longer overwrite `gateway_status`. They generate a Sentry warning instead. This is safer (no data loss) but means `gateway_status` may not reflect the latest verification attempt for finalized payments.
+- **UI:** "Total Earnings" label changed to "Total Revenue" in payout page top stats. Uses `total_revenue ?? gross` for backwards compatibility.
+
 ## 2026-10-15 — fix(security): SELECT-side audit — add is_direct_transfer to payout balance queries (#628 follow-up)
 
 ### What changed

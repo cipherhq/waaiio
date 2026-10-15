@@ -12,7 +12,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
-import { getPayableFeeRows, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
 
@@ -164,7 +164,6 @@ export async function GET(request: NextRequest) {
       // Calculate gross and fee totals from pre-fetched batch data
       // Exclude direct transfers — Waaiio never holds those funds
       const fees = feesByBiz.get(biz.id) ?? [];
-      const payable = getPayableFeeRows(fees);
       const unclassifiedFees = getUnclassifiedFeeRows(fees);
       if (unclassifiedFees.length > 0) {
         Sentry.captureMessage('[AUTO-PAYOUT] Fee rows excluded: custody unknown', {
@@ -176,17 +175,10 @@ export async function GET(request: NextRequest) {
           },
         });
       }
-      const gross = payable.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
-      const totalFees = payable.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-      const totalGatewayFees = payable.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
-      let netAmount = Math.max(0, gross - totalFees - totalGatewayFees);
-
-      if (netAmount <= 0) continue;
-
-      // Deduct any unapplied payout adjustments (e.g. post-payout refunds)
       const adjustments = adjustmentsByBiz.get(biz.id) ?? [];
-      const totalAdjustments = adjustments.reduce((s, a) => s + Number(a.amount || 0), 0);
-      netAmount = Math.max(0, netAmount + totalAdjustments); // adjustments are negative
+      const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable } =
+        computePlatformHeldTotals(fees, adjustments);
+      let netAmount = netAvailable;
 
       if (netAmount <= 0) continue;
 

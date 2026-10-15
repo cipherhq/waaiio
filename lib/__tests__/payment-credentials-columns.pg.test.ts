@@ -415,3 +415,137 @@ describeDb('Migration 443: least-privilege grants on payment credentials', () =>
     sql(`REVOKE SELECT (secret_key) ON TABLE public.business_payment_credentials FROM authenticated;`);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// platform_fees: authenticated SELECT grants and is_direct_transfer coverage
+//
+// The balance endpoint and dashboard/financials page call platform_fees as the
+// authenticated role. They select is_direct_transfer (custody classification)
+// plus transaction_amount, fee_total, gateway_fee, waived.
+//
+// This test verifies:
+//   1. authenticated has table-level SELECT on platform_fees (Supabase project default)
+//   2. is_direct_transfer column exists and is selectable by authenticated
+//   3. RLS policy restricts rows to the owning business
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PF_BIZ_ID = '00000000-0000-0000-0000-000000628001';
+const PF_OWNER_ID = '00000000-0000-0000-0000-000000628010';
+const PF_OTHER_BIZ_ID = '00000000-0000-0000-0000-000000628002';
+const PF_OTHER_OWNER_ID = '00000000-0000-0000-0000-000000628011';
+
+describeDb('platform_fees: authenticated SELECT grants and is_direct_transfer coverage', () => {
+  beforeAll(() => {
+    // Roles already exist from the previous suite; create tables fresh
+    sql(`
+      CREATE TABLE IF NOT EXISTS public.platform_fees (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID NOT NULL,
+        transaction_amount NUMERIC DEFAULT 0,
+        fee_total NUMERIC DEFAULT 0,
+        gateway_fee NUMERIC DEFAULT 0,
+        waived BOOLEAN DEFAULT false,
+        is_direct_transfer BOOLEAN DEFAULT false,
+        refunded_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      ALTER TABLE public.platform_fees ENABLE ROW LEVEL SECURITY;
+    `);
+
+    // Supabase project-default: authenticated gets table-level SELECT
+    sql(`GRANT SELECT ON public.platform_fees TO authenticated;`);
+    sql(`GRANT SELECT, INSERT ON public.platform_fees TO service_role;`);
+
+    // RLS policy matching migration 002 (owners view own fees)
+    sql(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'platform_fees' AND policyname = 'owners_view_own_fees') THEN
+          CREATE POLICY owners_view_own_fees ON public.platform_fees
+            FOR SELECT USING (
+              business_id IN (SELECT id FROM public.businesses WHERE owner_id = auth.uid())
+            );
+        END IF;
+      END $$;
+    `);
+
+    // Seed
+    sql(`INSERT INTO auth.users (id) VALUES ('${PF_OWNER_ID}'), ('${PF_OTHER_OWNER_ID}') ON CONFLICT DO NOTHING;`);
+    sql(`
+      INSERT INTO public.businesses (id, owner_id, name) VALUES
+        ('${PF_BIZ_ID}', '${PF_OWNER_ID}', 'PF Test Biz'),
+        ('${PF_OTHER_BIZ_ID}', '${PF_OTHER_OWNER_ID}', 'Other Biz')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    sql(`
+      SET ROLE service_role;
+      INSERT INTO public.platform_fees
+        (business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer)
+      VALUES
+        ('${PF_BIZ_ID}',       10000, 500, 50, false, false),
+        ('${PF_BIZ_ID}',        5000, 250, 25, true,  false),
+        ('${PF_BIZ_ID}',        8000, 400, 40, false, true),
+        ('${PF_OTHER_BIZ_ID}', 9000,  450, 45, false, false);
+      RESET ROLE;
+    `);
+  });
+
+  afterAll(() => {
+    sql(`DELETE FROM public.platform_fees WHERE business_id IN ('${PF_BIZ_ID}', '${PF_OTHER_BIZ_ID}');`);
+    sql(`DELETE FROM public.businesses WHERE id IN ('${PF_BIZ_ID}', '${PF_OTHER_BIZ_ID}');`);
+    sql(`DELETE FROM auth.users WHERE id IN ('${PF_OWNER_ID}', '${PF_OTHER_OWNER_ID}');`);
+  });
+
+  it('authenticated has table-level SELECT on platform_fees', () => {
+    expect(sql("SELECT has_table_privilege('authenticated', 'public.platform_fees', 'SELECT');")).toBe('t');
+  });
+
+  it('authenticated does NOT have INSERT on platform_fees', () => {
+    expect(sql("SELECT has_table_privilege('authenticated', 'public.platform_fees', 'INSERT');")).toBe('f');
+  });
+
+  it('is_direct_transfer column exists and is selectable by authenticated', () => {
+    expect(sql("SELECT has_column_privilege('authenticated', 'public.platform_fees', 'is_direct_transfer', 'SELECT');")).toBe('t');
+  });
+
+  it('gateway_fee column is selectable by authenticated', () => {
+    expect(sql("SELECT has_column_privilege('authenticated', 'public.platform_fees', 'gateway_fee', 'SELECT');")).toBe('t');
+  });
+
+  it('waived column is selectable by authenticated', () => {
+    expect(sql("SELECT has_column_privilege('authenticated', 'public.platform_fees', 'waived', 'SELECT');")).toBe('t');
+  });
+
+  it('transaction_amount column is selectable by authenticated', () => {
+    expect(sql("SELECT has_column_privilege('authenticated', 'public.platform_fees', 'transaction_amount', 'SELECT');")).toBe('t');
+  });
+
+  it('RLS: owner sees only own rows (not other business rows)', () => {
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${PF_OWNER_ID}';
+      SELECT count(*) FROM public.platform_fees;
+      COMMIT;
+    `);
+    // Owner has 3 rows; other biz has 1 — RLS should return only 3
+    expect(r).toContain('3');
+  });
+
+  it('RLS: owner can select is_direct_transfer from own rows', () => {
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${PF_OWNER_ID}';
+      SELECT transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer
+        FROM public.platform_fees
+        WHERE business_id = '${PF_BIZ_ID}'
+        ORDER BY transaction_amount;
+      COMMIT;
+    `);
+    expect(r).not.toMatch(/permission denied|42501|ERROR/i);
+    // Should contain the three seeded rows
+    expect(r).toContain('5000');
+    expect(r).toContain('8000');
+    expect(r).toContain('10000');
+  });
+});

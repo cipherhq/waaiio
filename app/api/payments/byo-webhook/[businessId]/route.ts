@@ -195,17 +195,36 @@ export async function POST(
             .in('status', ['pending']);
           // Skip the success handler — fall through to dedup write
         } else {
-          // Integrity / unverified outcome — do NOT change payment status
-          // Record reason durably for reconciliation without schema change
-          await supabase
+          // Integrity / unverified outcome — do NOT change payment status.
+          // Only update gateway_status on payments that are still pending.
+          // If the payment is already finalized (status != 'pending'), record
+          // a Sentry anomaly and leave both status and gateway_status untouched.
+          const { data: updatedRows } = await supabase
             .from('payments')
             .update({ gateway_status: verifyResult.reason })
             .eq('id', payment.id)
-            .eq('business_id', businessId);
-          Sentry.captureMessage('BYO webhook: integrity/unverified outcome — payment status unchanged', {
-            level: 'error',
-            extra: { businessId, paymentId: payment.id, reference, reason: verifyResult.reason },
-          });
+            .eq('business_id', businessId)
+            .in('status', ['pending'])
+            .select('id');
+
+          if (!updatedRows || updatedRows.length === 0) {
+            // Payment already finalized — record anomaly but do not overwrite
+            Sentry.captureMessage('BYO webhook: integrity outcome on already-finalized payment — no update applied', {
+              level: 'warning',
+              extra: {
+                businessId,
+                paymentId: payment.id,
+                reference,
+                reason: verifyResult.reason,
+                existingStatus: payment.status,
+              },
+            });
+          } else {
+            Sentry.captureMessage('BYO webhook: integrity/unverified outcome — payment status unchanged', {
+              level: 'error',
+              extra: { businessId, paymentId: payment.id, reference, reason: verifyResult.reason },
+            });
+          }
           // NO dedup row — allow provider retry on redelivery
           return NextResponse.json({ received: true });
         }

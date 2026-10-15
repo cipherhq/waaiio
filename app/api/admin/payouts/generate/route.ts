@@ -7,7 +7,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logAdminAudit } from '@/lib/admin-audit';
-import { getPayableFeeRows, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
 
 interface Flag {
   type: string;
@@ -108,9 +108,21 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Gross from platform_fees.transaction_amount — only gateway payments (Waaiio holds these funds)
-      // Direct transfers are excluded: business already has the money, we only invoice the platform fee
-      const gatewayFees = getPayableFeeRows(fees || []);
+      // Fetch adjustments before gross check — needed for shared formula
+      const { data: adjustments, error: adjQueryError } = await supabase
+        .from('payout_adjustments')
+        .select('id, amount')
+        .eq('business_id', biz.id)
+        .is('applied_to_payout_id', null);
+
+      if (adjQueryError) {
+        logger.error('[PAYOUT] Adjustments query failed for business', { business_id: biz.id, error: adjQueryError.message });
+        failed++;
+        continue;
+      }
+
+      // Canonical formula: only gateway payments (Waaiio holds these funds).
+      // Direct transfers excluded — business already received those funds.
       const unclassifiedFees = getUnclassifiedFeeRows(fees || []);
       if (unclassifiedFees.length > 0) {
         const amt = unclassifiedFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
@@ -121,13 +133,13 @@ export async function POST(request: NextRequest) {
           extra: { business_id: biz.id, count: unclassifiedFees.length, total_amount: amt },
         });
       }
-      const gross = gatewayFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
+
+      const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable: net } =
+        computePlatformHeldTotals(fees || [], adjustments || []);
+
       if (gross <= 0) continue;
 
-      const totalFees = gatewayFees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-      const totalGatewayFees = gatewayFees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
-
-      // Still fetch payments for velocity check below
+      // Fetch payments for velocity check
       const { data: payments, error: paymentsError } = await supabase
         .from('payments')
         .select('created_at')
@@ -141,22 +153,6 @@ export async function POST(request: NextRequest) {
         failed++;
         continue;
       }
-
-      // Deduct any unapplied payout adjustments (e.g. post-payout refunds)
-      const { data: adjustments, error: adjQueryError } = await supabase
-        .from('payout_adjustments')
-        .select('id, amount')
-        .eq('business_id', biz.id)
-        .is('applied_to_payout_id', null);
-
-      if (adjQueryError) {
-        logger.error('[PAYOUT] Adjustments query failed for business', { business_id: biz.id, error: adjQueryError.message });
-        failed++;
-        continue;
-      }
-
-      const totalAdjustments = (adjustments || []).reduce((s, a) => s + Number(a.amount || 0), 0);
-      const net = Math.max(0, gross - totalFees - totalGatewayFees + totalAdjustments);
 
       // Minimum payout threshold — skip if amount too small
       const minPayout = MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000;
