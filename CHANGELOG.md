@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(security): SELECT-side audit — add is_direct_transfer to payout balance queries (#628 follow-up)
+
+### What changed
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `is_direct_transfer` to `platform_fees` select; filter `=== false` before computing `totalEarned`. Prevents direct-transfer fees (platform never held) from inflating the available balance used in approval gate.
+- `app/api/payouts/balance/route.ts`: Same fix for merchant-facing balance display.
+- `app/api/cron/payout-nudge/route.ts`: Same fix for nudge balance calculation.
+- `app/dashboard/financials/page.tsx`: Same fix for financials dashboard (non-direct-split path).
+- `lib/__tests__/payout-select-audit.test.ts` (new): Static audit test — asserts all five payout routes include `is_direct_transfer` in their `platform_fees` `.select()` call. Fails if the field is removed.
+- `lib/__tests__/fin-002-atomic-payout.test.ts`, `lib/__tests__/payout-account-autolink-620.test.ts`: Added `is_direct_transfer: false` to 7 mock `platform_fees` rows that mirrored real selects but lacked the field.
+
+### Why the 5 mock rows in admin-bearer-route-handlers.test.ts lacked the field
+Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `is_direct_transfer` in its real select. The mock data was written before the `=== false` filter was added — it was always semantically incomplete (it should have had `is_direct_transfer: false`) but the bug was dormant until the filter started excluding `null` values.
+
+### What it affects / could break
+- Approve route: `totalEarned` now excludes direct-transfer fees. If a business has BYO direct-transfer fees, their available balance for payout approval is lower (correct — platform never held those funds).
+- Balance display and nudge: same — balance now reflects only platform-held funds.
+- Financials page: `platformFees` display excludes direct-transfer rows (correct — no fee to show for pass-through funds).
+
 ## 2026-10-15 — fix(tests): add is_direct_transfer: false to cron mock data (#628 follow-up)
 
 ### What changed

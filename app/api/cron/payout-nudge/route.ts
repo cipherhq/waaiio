@@ -80,14 +80,16 @@ export async function GET(request: NextRequest) {
       // Check if they have accumulated payments
       const { data: fees } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total')
+        .select('transaction_amount, fee_total, is_direct_transfer')
         .eq('business_id', biz.id)
         .is('refunded_at', null);
 
-      const totalGross = (fees || []).reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
-      const totalFees = (fees || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+      // Exclude direct-transfer fees: platform never held those funds (fail-closed: null excluded)
+      const platformFees = (fees || []).filter(f => f.is_direct_transfer === false);
+      const totalGross = platformFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
+      const totalFees = platformFees.reduce((s, f) => s + Number(f.fee_total || 0), 0);
       const balance = totalGross - totalFees;
-      const paymentCount = (fees || []).length;
+      const paymentCount = platformFees.length;
 
       // Only nudge if they have actual money waiting
       if (balance <= 0 || paymentCount === 0) continue;

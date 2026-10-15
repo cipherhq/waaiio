@@ -79,12 +79,13 @@ export async function GET(request: NextRequest) {
     } else {
       const { data: fees } = await supabase
         .from('platform_fees')
-        .select('fee_total')
+        .select('fee_total, is_direct_transfer')
         .eq('business_id', businessId)
         .eq('waived', false)
         .is('refunded_at', null);
 
-      totalFees = (fees || []).reduce((sum, f) => sum + Number(f.fee_total || 0), 0);
+      // Exclude direct-transfer fees: platform never held those funds (fail-closed: null excluded)
+      totalFees = (fees || []).filter(f => f.is_direct_transfer === false).reduce((sum, f) => sum + Number(f.fee_total || 0), 0);
     }
 
     // Get already paid out amounts
