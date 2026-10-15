@@ -29,10 +29,10 @@ export function isAssignedWhatsAppChannelReady(
 
 /** Match Get Started's link convention only after verifying channel readiness. */
 export function buildVerifiedWhatsAppLink(
-  business: (ReadinessBusiness & { bot_code: string | null; status: string }) | null | undefined,
+  business: (ReadinessBusiness & { bot_code: string | null; status: string; messaging_suspended?: boolean | null }) | null | undefined,
   channel: (ReadinessChannel & { phone_number: string | null }) | null | undefined,
 ): string | null {
-  if (!business || !channel || business.status !== 'active' || !isAssignedWhatsAppChannelReady(business, channel)) return null;
+  if (!business || !channel || business.status !== 'active' || business.messaging_suspended === true || !isAssignedWhatsAppChannelReady(business, channel)) return null;
   const digits = String(channel.phone_number || '').replace(/[^0-9]/g, '');
   if (!/^[1-9]\d{6,14}$/.test(digits)) return null;
   if (channel.channel_type === 'dedicated') return 'https://wa.me/' + digits;
