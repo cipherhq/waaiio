@@ -11,6 +11,13 @@
  * the DB-level trigger fires regardless of which role issues the UPDATE, so an
  * application bug or bypass cannot silently create a signed contract with no
  * signer audit trail.
+ *
+ * Extended M450 assertions (ChatGPT review fixes):
+ *   - All signers must have status='signed' before the contract can be signed
+ *     (no unsigned signer may remain — mirrors the submit route ordering guarantee)
+ *   - trigger installed check
+ *   - function search_path hardened (pg_temp)
+ *   - REVOKE ALL on function verified
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -183,11 +190,11 @@ describeDb('Migration 450: DB-level zero-signer trigger — behavioral', () => {
     expect(r).toBe('pending');
   });
 
-  it('can mark a multi-signer contract as signed once a signer row exists', () => {
-    // Insert one signer row, then retry the UPDATE — should succeed.
+  it('can mark a multi-signer contract as signed once ALL signers have signed', () => {
+    // Insert one signer row with status='signed', then retry the UPDATE — should succeed.
     sql(`
-      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token)
-        VALUES ('${SIGNER_ID}', '${CONTRACT_ID}', '+2348001234567', 'tok450signer0001')
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${SIGNER_ID}', '${CONTRACT_ID}', '+2348001234567', 'tok450signer0001', 'signed')
         ON CONFLICT (id) DO NOTHING;
     `);
 
@@ -224,5 +231,161 @@ describeDb('Migration 450: DB-level zero-signer trigger — behavioral', () => {
     expect(status).toBe('signed');
 
     sql(`DELETE FROM public.contracts WHERE id = '${singleId}';`);
+  });
+
+  // ── Extended M450: unsigned-signer guard ─────────────────────────────────
+  //
+  // A multi-signer contract cannot become 'signed' if any signer row is still
+  // in a non-signed state.  This mirrors the submit route ordering guarantee.
+
+  it('extended guard: cannot sign a multi-signer contract when a signer is still pending', () => {
+    const cId  = '00000000-0000-0000-0000-000000450a01';
+    const s1Id = '00000000-0000-0000-0000-000000450a02';
+    const s2Id = '00000000-0000-0000-0000-000000450a03';
+
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contracts (id, business_id, title, token, status, signing_mode)
+        VALUES ('${cId}', '${BIZ_ID}', 'Unsigned Guard', 'tok450guard0001', 'active', 'parallel');
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${s1Id}', '${cId}', '+2348000000001', 'tok450gs001', 'signed');
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${s2Id}', '${cId}', '+2348000000002', 'tok450gs002', 'pending');  -- not signed yet
+      COMMIT;
+    `);
+
+    // Attempt to sign: s2 is still pending — trigger must block it
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE public.contracts SET status = 'signed' WHERE id = '${cId}';
+      COMMIT;
+    `);
+    expect(r).toMatch(/cannot mark contract|integrity_constraint_violation|23000/i);
+
+    const status = sql(`SELECT status FROM public.contracts WHERE id = '${cId}';`);
+    expect(status).toBe('active');
+
+    sql(`DELETE FROM public.contract_signers WHERE contract_id = '${cId}';`);
+    sql(`DELETE FROM public.contracts WHERE id = '${cId}';`);
+  });
+
+  it('extended guard: multi-signer contract CAN be signed when ALL signers have status=signed', () => {
+    const cId  = '00000000-0000-0000-0000-000000450b01';
+    const s1Id = '00000000-0000-0000-0000-000000450b02';
+    const s2Id = '00000000-0000-0000-0000-000000450b03';
+
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contracts (id, business_id, title, token, status, signing_mode)
+        VALUES ('${cId}', '${BIZ_ID}', 'All Signed', 'tok450allsign01', 'active', 'parallel');
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${s1Id}', '${cId}', '+2348000000003', 'tok450as001', 'signed');
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${s2Id}', '${cId}', '+2348000000004', 'tok450as002', 'signed');
+      COMMIT;
+    `);
+
+    // Both signers are signed — marking the contract signed should succeed
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE public.contracts SET status = 'signed' WHERE id = '${cId}';
+      COMMIT;
+    `);
+    expect(r).not.toMatch(/ERROR|cannot mark contract/i);
+
+    const status = sql(`SELECT status FROM public.contracts WHERE id = '${cId}';`);
+    expect(status).toBe('signed');
+
+    sql(`DELETE FROM public.contract_signers WHERE contract_id = '${cId}';`);
+    sql(`DELETE FROM public.contracts WHERE id = '${cId}';`);
+  });
+
+  it('extended guard: sequential signing sequence — last signer signs, then contract can be signed', () => {
+    const cId  = '00000000-0000-0000-0000-000000450c01';
+    const s1Id = '00000000-0000-0000-0000-000000450c02';
+    const s2Id = '00000000-0000-0000-0000-000000450c03';
+
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contracts (id, business_id, title, token, status, signing_mode)
+        VALUES ('${cId}', '${BIZ_ID}', 'Sequential Test', 'tok450seq00001', 'active', 'sequential');
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${s1Id}', '${cId}', '+2348000000005', 'tok450seq001', 'pending');
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${s2Id}', '${cId}', '+2348000000006', 'tok450seq002', 'pending');
+      COMMIT;
+    `);
+
+    // Step 1: first signer signs
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE public.contract_signers SET status = 'signed' WHERE id = '${s1Id}';
+      COMMIT;
+    `);
+
+    // Still cannot sign: s2 is pending
+    const r1 = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE public.contracts SET status = 'signed' WHERE id = '${cId}';
+      COMMIT;
+    `);
+    expect(r1).toMatch(/cannot mark contract|integrity_constraint_violation|23000/i);
+
+    // Step 2: second signer signs
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE public.contract_signers SET status = 'signed' WHERE id = '${s2Id}';
+      COMMIT;
+    `);
+
+    // Now all signed — contract can be marked signed
+    const r2 = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE public.contracts SET status = 'signed' WHERE id = '${cId}';
+      COMMIT;
+    `);
+    expect(r2).not.toMatch(/ERROR|cannot mark contract/i);
+
+    const status = sql(`SELECT status FROM public.contracts WHERE id = '${cId}';`);
+    expect(status).toBe('signed');
+
+    sql(`DELETE FROM public.contract_signers WHERE contract_id = '${cId}';`);
+    sql(`DELETE FROM public.contracts WHERE id = '${cId}';`);
+  });
+
+  // ── M450 function security hardening ────────────────────────────────────
+
+  it('M450 function search_path includes pg_temp (hardened against temp-table injection)', () => {
+    const r = sql(`
+      SELECT pg_get_functiondef(p.oid)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname = 'contracts_enforce_signer_rows';
+    `);
+    expect(r).toMatch(/SET search_path\s*=\s*public,\s*pg_temp/i);
+  });
+
+  it('M450 function: PUBLIC cannot directly invoke contracts_enforce_signer_rows', () => {
+    // The function is SECURITY DEFINER; direct invocation by PUBLIC should be revoked.
+    const r = sql(`
+      SELECT has_function_privilege(
+        'public',
+        'public.contracts_enforce_signer_rows()',
+        'EXECUTE'
+      );
+    `);
+    // REVOKE ALL ON FUNCTION FROM PUBLIC removes direct-call privilege.
+    // Triggers invoke the function as the trigger owner, not as the calling role.
+    expect(r).toBe('f');
   });
 });

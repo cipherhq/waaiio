@@ -47,15 +47,37 @@
 --
 -- Idempotent: GRANT is a no-op if the privilege already exists; REVOKE is a
 -- no-op if the privilege does not exist.
+--
+-- Defense-in-depth: REVOKE FROM PUBLIC on all six tables (in case of future
+-- inherited grants), plus explicit column-level REVOKE on every credential
+-- column (token, otp_code, meta_access_token, status, signed_at, otp_*).
+-- This ensures that even if a column-level grant to PUBLIC or a named role
+-- was issued by any grantor, the migration cleans it up unconditionally.
+--
+-- Behavioral triggers (B4/B5):
+--   contracts_signing_mode_immutable — prevents signing_mode changes once a
+--     contract leaves 'pending' state, for ALL roles including service_role.
+--   contract_signers_lock_on_signed  — prevents any modification to a
+--     contract_signers row once the parent contract is 'signed', and blocks
+--     authenticated DELETE of contract_signers at all times.
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- 1. contracts
 -- ══════════════════════════════════════════════════════════════════════════════
 
+-- Defense-in-depth: clean any PUBLIC grants before named-role revokes.
+REVOKE ALL ON public.contracts FROM PUBLIC;
+
 -- Clean-slate for anon and authenticated (removes broad ALTER DEFAULT PRIVILEGES
 -- grants on production; is a no-op on staging where none were granted).
 REVOKE ALL ON public.contracts FROM anon;
 REVOKE ALL ON public.contracts FROM authenticated;
+
+-- Explicit column-level REVOKE on credential/server-managed columns to handle
+-- any column-level grant that survived a table-level REVOKE (possible when the
+-- original grant was issued by a different grantor or to PUBLIC).
+REVOKE ALL (token, token_expires_at, status, signed_at, signature_data, audit_trail)
+  ON public.contracts FROM PUBLIC, anon, authenticated;
 
 -- service_role: full CRUD (M415 already grants SELECT/INSERT/UPDATE; add DELETE
 -- so revoke/hard-delete paths work via service client).
@@ -80,7 +102,8 @@ GRANT SELECT (
 --           signature_data (set during signing via service_role submit route),
 --           audit_trail (set during signing via service_role submit route),
 --           status (all status transitions are service_role: pending→expired→signed/declined),
---           signed_at (set during signing via service_role submit route).
+--           signed_at (set during signing via service_role submit route),
+--           signing_mode (immutable after creation — see trigger below).
 GRANT INSERT (
   business_id, title, template_url, signed_url,
   signer_name, signer_phone, signer_email,
@@ -94,7 +117,7 @@ GRANT UPDATE (
   title, template_url, signed_url,
   signer_name, signer_phone, signer_email,
   metadata,
-  updated_at, document_content, signing_mode, require_otp,
+  updated_at, document_content, require_otp,
   wa_message_id, wa_delivery_status, wa_status_updated_at,
   reference_code, declined_at, decline_reason
 ) ON public.contracts TO authenticated;
@@ -103,8 +126,16 @@ GRANT UPDATE (
 -- 2. contract_signers
 -- ══════════════════════════════════════════════════════════════════════════════
 
+-- Defense-in-depth: clean any PUBLIC grants before named-role revokes.
+REVOKE ALL ON public.contract_signers FROM PUBLIC;
+
 REVOKE ALL ON public.contract_signers FROM anon;
 REVOKE ALL ON public.contract_signers FROM authenticated;
+
+-- Explicit column-level REVOKE on credential/server-managed columns.
+REVOKE ALL (token, token_expires_at, otp_code, otp_expires_at, otp_verified,
+            otp_attempts, status, signed_at, signature_data, audit_trail)
+  ON public.contract_signers FROM PUBLIC, anon, authenticated;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.contract_signers TO service_role;
 
@@ -144,10 +175,15 @@ GRANT UPDATE (
   wa_message_id, wa_delivery_status, wa_status_updated_at
 ) ON public.contract_signers TO authenticated;
 
+-- No DELETE for authenticated on contract_signers. The signing-link route and
+-- all signer mutations (add/remove signers) go through service_role routes.
+-- Enforced also by the contract_signers_lock_on_signed trigger below.
+
 -- ══════════════════════════════════════════════════════════════════════════════
 -- 3. contract_templates
 -- ══════════════════════════════════════════════════════════════════════════════
 
+REVOKE ALL ON public.contract_templates FROM PUBLIC;
 REVOKE ALL ON public.contract_templates FROM anon;
 REVOKE ALL ON public.contract_templates FROM authenticated;
 
@@ -177,8 +213,13 @@ GRANT DELETE ON public.contract_templates TO authenticated;
 -- This eliminates authenticated access to meta_access_token (the Cloud API
 -- long-lived System User token) and to admin-session reads of shared-channel
 -- credentials via the is_admin RLS policy.
+REVOKE ALL ON public.whatsapp_channels FROM PUBLIC;
 REVOKE ALL ON public.whatsapp_channels FROM anon;
 REVOKE ALL ON public.whatsapp_channels FROM authenticated;
+
+-- Explicit column-level REVOKE on the credential column.
+REVOKE ALL (meta_access_token)
+  ON public.whatsapp_channels FROM PUBLIC, anon, authenticated;
 
 -- service_role: full access (unchanged — M293 already grants all four).
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.whatsapp_channels TO service_role;
@@ -207,6 +248,7 @@ GRANT SELECT (
 -- /api/waivers/templates uses SSR createClient() for GET, POST, PATCH, and
 -- the soft-delete PATCH — all via the authenticated role.
 
+REVOKE ALL ON public.waiver_templates FROM PUBLIC;
 REVOKE ALL ON public.waiver_templates FROM anon;
 REVOKE ALL ON public.waiver_templates FROM authenticated;
 
@@ -237,6 +279,7 @@ GRANT UPDATE (
 -- (for count query) and via SSR createClient() (/api/waivers/signed GET).
 -- No authenticated INSERT or UPDATE path exists — signing is service_role only.
 
+REVOKE ALL ON public.signed_waivers FROM PUBLIC;
 REVOKE ALL ON public.signed_waivers FROM anon;
 REVOKE ALL ON public.signed_waivers FROM authenticated;
 
@@ -253,12 +296,98 @@ GRANT SELECT (
 -- operations via service_role.
 
 -- ══════════════════════════════════════════════════════════════════════════════
--- 7. Self-check
+-- 7. Behavioral triggers
+-- ══════════════════════════════════════════════════════════════════════════════
+
+-- ── 7A. signing_mode immutability ─────────────────────────────────────────────
+--
+-- signing_mode is set at contract creation and must never change once the
+-- contract advances beyond 'pending'.  Verified: no app code path updates
+-- signing_mode post-creation.  This trigger adds a DB-level enforcement for
+-- ALL roles including service_role (BYPASSRLS does not bypass triggers).
+--
+-- Trigger fires on UPDATE; raises if signing_mode changed AND the old status
+-- was not 'pending' (i.e., the contract has already been sent/signed/etc.).
+
+CREATE OR REPLACE FUNCTION public.contracts_enforce_signing_mode_immutable()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.signing_mode IS DISTINCT FROM OLD.signing_mode
+     AND OLD.status IS DISTINCT FROM 'pending'
+  THEN
+    RAISE EXCEPTION
+      'contracts: signing_mode is immutable once a contract leaves pending status '
+      '(contract %, old_mode=%, new_mode=%, status=%)',
+      OLD.id, OLD.signing_mode, NEW.signing_mode, OLD.status
+      USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.contracts_enforce_signing_mode_immutable() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS contracts_signing_mode_immutable ON public.contracts;
+CREATE TRIGGER contracts_signing_mode_immutable
+  BEFORE UPDATE ON public.contracts
+  FOR EACH ROW
+  EXECUTE FUNCTION public.contracts_enforce_signing_mode_immutable();
+
+-- ── 7B. contract_signers: lock rows once parent contract is signed ─────────────
+--
+-- Once a contract's status becomes 'signed', its signer rows become immutable
+-- audit records.  Any attempt to UPDATE or DELETE a signer row when the parent
+-- contract is already 'signed' raises an exception.  This fires for ALL roles
+-- including service_role.
+--
+-- Covers:
+--   - authenticated DELETE on contract_signers (no DELETE grant exists, but the
+--     trigger adds a DB-level backstop regardless of future grant changes)
+--   - service_role or any privileged role accidentally mutating audit rows
+
+CREATE OR REPLACE FUNCTION public.contract_signers_enforce_signed_lock()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_contract_status TEXT;
+BEGIN
+  SELECT status INTO v_contract_status
+    FROM public.contracts
+   WHERE id = COALESCE(OLD.contract_id, NEW.contract_id);
+
+  IF v_contract_status = 'signed' THEN
+    RAISE EXCEPTION
+      'contract_signers: row % is locked — parent contract % is already signed',
+      COALESCE(OLD.id, NEW.id), COALESCE(OLD.contract_id, NEW.contract_id)
+      USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.contract_signers_enforce_signed_lock() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS contract_signers_lock_on_signed ON public.contract_signers;
+CREATE TRIGGER contract_signers_lock_on_signed
+  BEFORE UPDATE OR DELETE ON public.contract_signers
+  FOR EACH ROW
+  EXECUTE FUNCTION public.contract_signers_enforce_signed_lock();
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- 8. Self-check
 -- ══════════════════════════════════════════════════════════════════════════════
 
 DO $$
 BEGIN
-  -- ── 7.1 anon must have no privilege on any of the six tables ─────────────
+  -- ── 8.1 anon must have no privilege on any of the six tables ─────────────
 
   IF has_table_privilege('anon', 'public.contracts', 'SELECT') THEN
     RAISE EXCEPTION '449 SELF-CHECK FAILED: anon retains SELECT on contracts';
@@ -284,7 +413,7 @@ BEGIN
     RAISE EXCEPTION '449 SELF-CHECK FAILED: anon retains SELECT on signed_waivers';
   END IF;
 
-  -- ── 7.2 meta_access_token must be blocked for authenticated ───────────────
+  -- ── 8.2 meta_access_token must be blocked for authenticated ───────────────
 
   IF has_column_privilege(
     'authenticated', 'public.whatsapp_channels', 'meta_access_token', 'SELECT'
@@ -294,7 +423,16 @@ BEGIN
       'from whatsapp_channels — token credential exposed';
   END IF;
 
-  -- ── 7.3 authenticated must have no write access on whatsapp_channels ──────
+  -- Column-level REVOKE must also have cleared PUBLIC's access to meta_access_token
+  IF has_column_privilege(
+    'public', 'public.whatsapp_channels', 'meta_access_token', 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      '449 SELF-CHECK FAILED: PUBLIC can still SELECT meta_access_token '
+      'from whatsapp_channels — table-level PUBLIC grant not revoked';
+  END IF;
+
+  -- ── 8.3 authenticated must have no write access on whatsapp_channels ──────
 
   IF has_table_privilege('authenticated', 'public.whatsapp_channels', 'DELETE') THEN
     RAISE EXCEPTION
@@ -313,7 +451,7 @@ BEGIN
       'all channel mutations are service_role only';
   END IF;
 
-  -- ── 7.4 authenticated CAN SELECT non-credential metadata columns ──────────
+  -- ── 8.4 authenticated CAN SELECT non-credential metadata columns ──────────
 
   IF NOT has_column_privilege(
     'authenticated', 'public.whatsapp_channels', 'phone_number', 'SELECT'
@@ -331,7 +469,7 @@ BEGIN
       'from whatsapp_channels — over-revoked';
   END IF;
 
-  -- ── 7.5 otp_code must be blocked for authenticated on contract_signers ────
+  -- ── 8.5 otp_code must be blocked for authenticated on contract_signers ────
 
   IF has_column_privilege(
     'authenticated', 'public.contract_signers', 'otp_code', 'SELECT'
@@ -341,7 +479,7 @@ BEGIN
       'from contract_signers — OTP value exposed';
   END IF;
 
-  -- ── 7.5b token must be blocked for authenticated on contract_signers SELECT ─
+  -- ── 8.5b token must be blocked for authenticated on contract_signers SELECT ─
   -- Signing tokens are served only via /api/contracts/signing-link (service_role).
 
   IF has_column_privilege(
@@ -352,7 +490,7 @@ BEGIN
       'signing token exposed; use /api/contracts/signing-link instead';
   END IF;
 
-  -- ── 7.5c status/signed_at must NOT be in authenticated INSERT/UPDATE on contracts
+  -- ── 8.5c status/signed_at must NOT be in authenticated INSERT/UPDATE on contracts
 
   IF has_column_privilege('authenticated', 'public.contracts', 'status', 'INSERT') THEN
     RAISE EXCEPTION
@@ -366,7 +504,16 @@ BEGIN
       'signed_at is set by the submit route via service_role only';
   END IF;
 
-  -- ── 7.5d status/signed_at/otp_* must NOT be in authenticated INSERT on contract_signers
+  -- ── 8.5d signing_mode must NOT be in authenticated UPDATE on contracts
+  -- signing_mode is set on INSERT and enforced immutable by trigger after 'pending'.
+
+  IF has_column_privilege('authenticated', 'public.contracts', 'signing_mode', 'UPDATE') THEN
+    RAISE EXCEPTION
+      '449 SELF-CHECK FAILED: authenticated can UPDATE signing_mode on contracts — '
+      'signing_mode is immutable post-creation; see contracts_signing_mode_immutable trigger';
+  END IF;
+
+  -- ── 8.5e status/signed_at/otp_* must NOT be in authenticated INSERT on contract_signers
 
   IF has_column_privilege('authenticated', 'public.contract_signers', 'status', 'INSERT') THEN
     RAISE EXCEPTION
@@ -380,7 +527,7 @@ BEGIN
       'OTP state is service_role only';
   END IF;
 
-  -- ── 7.6 authenticated CAN SELECT/INSERT on contracts ─────────────────────
+  -- ── 8.6 authenticated CAN SELECT/INSERT on contracts ─────────────────────
   --
   -- Note: use has_any_column_privilege, not has_table_privilege, because these
   -- are column-level grants. has_table_privilege only reflects table-level ACL
@@ -396,7 +543,7 @@ BEGIN
       '449 SELF-CHECK FAILED: authenticated cannot INSERT into contracts';
   END IF;
 
-  -- ── 7.7 authenticated CAN SELECT/DELETE on contract_templates ────────────
+  -- ── 8.7 authenticated CAN SELECT/DELETE on contract_templates ────────────
   --
   -- SELECT: column-level → use has_any_column_privilege.
   -- DELETE: table-level (GRANT DELETE ON ... TO authenticated) → use has_table_privilege.
@@ -411,7 +558,7 @@ BEGIN
       '449 SELF-CHECK FAILED: authenticated cannot DELETE from contract_templates';
   END IF;
 
-  -- ── 7.8 authenticated CAN SELECT/INSERT on waiver_templates ──────────────
+  -- ── 8.8 authenticated CAN SELECT/INSERT on waiver_templates ──────────────
 
   IF NOT has_any_column_privilege('authenticated', 'public.waiver_templates', 'SELECT') THEN
     RAISE EXCEPTION
@@ -423,7 +570,7 @@ BEGIN
       '449 SELF-CHECK FAILED: authenticated cannot INSERT into waiver_templates';
   END IF;
 
-  -- ── 7.9 authenticated CAN SELECT from signed_waivers ─────────────────────
+  -- ── 8.9 authenticated CAN SELECT from signed_waivers ─────────────────────
 
   IF NOT has_any_column_privilege('authenticated', 'public.signed_waivers', 'SELECT') THEN
     RAISE EXCEPTION
@@ -437,7 +584,7 @@ BEGIN
       'signing is service_role only';
   END IF;
 
-  -- ── 7.10 service_role retains full access ─────────────────────────────────
+  -- ── 8.10 service_role retains full access ─────────────────────────────────
 
   IF NOT has_table_privilege('service_role', 'public.contracts', 'DELETE') THEN
     RAISE EXCEPTION
@@ -459,12 +606,37 @@ BEGIN
       '449 SELF-CHECK FAILED: service_role lost INSERT on signed_waivers';
   END IF;
 
+  -- ── 8.11 triggers must exist ──────────────────────────────────────────────
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.triggers
+     WHERE event_object_schema = 'public'
+       AND event_object_table  = 'contracts'
+       AND trigger_name        = 'contracts_signing_mode_immutable'
+  ) THEN
+    RAISE EXCEPTION
+      '449 SELF-CHECK FAILED: contracts_signing_mode_immutable trigger not found';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.triggers
+     WHERE event_object_schema = 'public'
+       AND event_object_table  = 'contract_signers'
+       AND trigger_name        = 'contract_signers_lock_on_signed'
+  ) THEN
+    RAISE EXCEPTION
+      '449 SELF-CHECK FAILED: contract_signers_lock_on_signed trigger not found';
+  END IF;
+
   RAISE NOTICE
     '449_least_privilege_acl: PASS — '
-    'anon excluded on all six tables, meta_access_token blocked, otp_code/token blocked, '
-    'status/signed_at/otp_* removed from authenticated INSERT/UPDATE, '
+    'PUBLIC revoked on all six tables, anon excluded, meta_access_token blocked, '
+    'otp_code/token blocked, status/signed_at/otp_* removed from authenticated INSERT/UPDATE, '
+    'signing_mode removed from authenticated UPDATE, '
     'no authenticated writes to whatsapp_channels or signed_waivers, '
     'contracts/contract_templates/waiver_templates accessible to authenticated, '
-    'service_role full access confirmed';
+    'service_role full access confirmed, '
+    'signing_mode immutability trigger installed, '
+    'contract_signers lock-on-signed trigger installed';
 END;
 $$;

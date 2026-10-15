@@ -3,6 +3,93 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 5 — ChatGPT P1/P2 review fixes
+
+### What changed (rev 5 — ChatGPT review response at SHA 6ce2c70a)
+
+**A. M449 defense-in-depth (ACL cleanup)**
+- Added `REVOKE ALL FROM PUBLIC` on all six tables (contracts, contract_signers,
+  contract_templates, whatsapp_channels, waiver_templates, signed_waivers).
+  Previously M449 only revoked from anon/authenticated; a PUBLIC grant would survive.
+- Added explicit column-level `REVOKE ALL (token, otp_code, meta_access_token, status,
+  signed_at, ...)` on sensitive columns FROM PUBLIC, anon, authenticated. Handles grants
+  issued by a different grantor that survive `REVOKE ALL ON TABLE`.
+- Removed `signing_mode` from the authenticated UPDATE column list (was a stale entry —
+  no app path updates signing_mode post-creation).
+- Added `contracts_signing_mode_immutable` trigger: blocks signing_mode changes for ALL
+  roles (including service_role, which bypasses RLS but not triggers) once the contract
+  has left `pending` status.
+- Added `contract_signers_lock_on_signed` trigger: blocks any UPDATE or DELETE on a
+  contract_signers row once the parent contract has `status='signed'`, for ALL roles.
+- Updated self-check to §8.x numbering; added checks for new trigger existence and
+  `signing_mode` not in authenticated UPDATE. Added PUBLIC meta_access_token check.
+- Both new trigger functions: `SECURITY DEFINER SET search_path = public, pg_temp`,
+  `REVOKE ALL ON FUNCTION FROM PUBLIC, anon, authenticated`.
+
+**B. M450 function hardening**
+- Changed `SET search_path = public` → `SET search_path = public, pg_temp` on
+  `contracts_enforce_signer_rows()` to prevent temp-table injection attacks.
+- Added `REVOKE ALL ON FUNCTION contracts_enforce_signer_rows() FROM PUBLIC, anon, authenticated`.
+- Extended guard: when a non-single contract transitions to `signed`, the trigger now
+  also counts unsigned signer rows (`COUNT(*) WHERE status != 'signed'`). If any signer
+  is not yet signed, the transaction is blocked with `integrity_constraint_violation`.
+  This mirrors the submit route's ordering guarantee (all signers confirmed signed before
+  contracts.status is set). Existing zero-signer guard unchanged.
+- Updated self-check: verifies `v_unsigned_count` exists in function body; updated
+  PASS notice to describe extended guard.
+
+**C. signing-link route hardening**
+- UUID validation: `signer_id` is now validated against `/^[0-9a-f]{8}-...-12$/i` before
+  any service-role DB query. Malformed values return 400. Prevents injection via query param.
+- `Cache-Control: no-store` + `Pragma: no-cache` headers added to ALL responses
+  (200, 400, 401, 404) so signing tokens cannot be stored in shared caches.
+- Rate limiting: `rateLimitResponseAsync(getRateLimitKey(request, 'contract-signing-link'),
+  30, 60_000)` — 30 req/min per IP/user key, consistent with sibling OTP routes.
+
+**D. Test additions**
+- `contracts-whatsapp-channels-acl.pg.test.ts`: Added sections A2 (hostile pre-state —
+  grants hostile column-level + PUBLIC grants before M449 and verifies cleanup), A3
+  (pg_default_acl query + finding that M449 has no ALTER DEFAULT PRIVILEGES SQL; PR
+  description corrected), B2 (verifies hostile pre-state grants were cleaned by M449),
+  E (signing_mode column grant assertion), M (signing_mode immutability trigger tests —
+  authenticated, service_role, pending-still-allowed), N (contract_signers lock trigger tests).
+- `contracts-zero-signer-behavioral.pg.test.ts`: Added unsigned-signer extended guard
+  tests (cannot sign with pending signer, can sign when all signed, sequential sequence),
+  M450 function hardening checks (search_path includes pg_temp, PUBLIC cannot invoke).
+- `contracts-signing-link-route.test.ts`: Added malformed UUID cases (6 variants),
+  Cache-Control/Pragma header tests on 200/404/400/401, rate limit 429 test.
+
+### A1 finding (hostile pre-state test result, PG only)
+- PUBLIC table-level grants **SURVIVE** the old M449 (no REVOKE FROM PUBLIC existed).
+- Column-level grants to named roles (authenticated, anon) are cleaned by PostgreSQL's
+  `REVOKE ALL ON TABLE t FROM role` (removes column-level grants for that role too).
+- Defense added: M449 now opens with REVOKE FROM PUBLIC on all six tables.
+
+### A3 finding (pg_default_acl)
+- M449 comments and the old PR description both claimed the migration "removes overly
+  broad ALTER DEFAULT PRIVILEGES grants". NO ALTER DEFAULT PRIVILEGES SQL exists in M449.
+  The REVOKE ALL statements clean existing table-level grants from any source (including
+  those originally set by ALTER DEFAULT PRIVILEGES). PR description has been corrected.
+
+### Codex P1 findings at this commit (all pre-existing, not introduced by this PR)
+- **P1-1 (signed contract mutability):** Authenticated has UPDATE on title/metadata/etc.
+  of signed contracts. Pre-existing before M449. Owner RLS always allowed this. Deferred
+  to separate hardening issue; scope of this PR is ACL shape, not full immutability.
+- **P1-2 (admin panel WhatsApp surface):** Admin panel uses anon key; `WhatsAppChannels.tsx`
+  does `select('*')` including `meta_access_token`. This was already true in M449 rev 1–4
+  (original revoke existed before this PR). Not introduced by rev 5 changes. Deferred.
+- **P1-3 (stale signing-link race in UI):** Pre-existing race condition in
+  `app/dashboard/contracts/page.tsx` — async fetches without cancellation. Not introduced
+  by this PR. Deferred to separate UI fix.
+
+### What it affects / could break
+- Contracts in non-pending status: `signing_mode` can no longer be changed by any role.
+  Only affects code that updates `signing_mode` post-creation — no such code exists.
+- Multi-signer contracts: can only reach `signed` when ALL signers have `status='signed'`
+  in the DB. This matches the existing submit route behavior.
+- Signing-link route: malformed UUIDs now return 400 (previously would reach service DB).
+  Rate limiting now applies. Responses are never cached.
+
 ## 2026-10-15 — fix(security): M449/450 ACL hardening rev 4 — signer-probe fix, M449 column-grant self-check, M450 INSERT+mode coverage
 
 ### What changed (rev 4 additions over rev 3)

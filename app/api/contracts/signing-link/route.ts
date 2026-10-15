@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/contracts/signing-link?signer_id=<uuid>
@@ -11,17 +12,48 @@ import { createServiceClient } from '@/lib/supabase/service';
  *
  * Access control: the requesting user must own the business that owns the
  * contract the signer belongs to.
+ *
+ * Security: signer_id is validated as a canonical UUID before any DB query to
+ * prevent injection via service-role query parameters.  Cache-Control: no-store
+ * on all responses to prevent signing-URL leakage via shared caches.
  */
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store',
+  'Pragma': 'no-cache',
+};
+
+function noCache(res: NextResponse): NextResponse {
+  res.headers.set('Cache-Control', 'no-store');
+  res.headers.set('Pragma', 'no-cache');
+  return res;
+}
+
 export async function GET(request: NextRequest) {
+  // Rate-limit: 30 requests per minute per IP/user key
+  const rl = await rateLimitResponseAsync(
+    getRateLimitKey(request, 'contract-signing-link'),
+    30,
+    60_000,
+  );
+  if (rl) return rl;
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return noCache(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }));
   }
 
   const signerId = request.nextUrl.searchParams.get('signer_id');
   if (!signerId) {
-    return NextResponse.json({ error: 'signer_id is required' }, { status: 400 });
+    return noCache(NextResponse.json({ error: 'signer_id is required' }, { status: 400 }));
+  }
+
+  // Validate canonical UUID format before any service-role query
+  if (!UUID_RE.test(signerId)) {
+    return noCache(NextResponse.json({ error: 'signer_id must be a valid UUID' }, { status: 400 }));
   }
 
   const service = createServiceClient();
@@ -34,7 +66,7 @@ export async function GET(request: NextRequest) {
     .single();
 
   if (!signer) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return noCache(NextResponse.json({ error: 'Not found' }, { status: 404 }));
   }
 
   // Verify the requesting user owns the business that owns the contract
@@ -45,7 +77,7 @@ export async function GET(request: NextRequest) {
     .single();
 
   if (!contract) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return noCache(NextResponse.json({ error: 'Not found' }, { status: 404 }));
   }
 
   const { data: biz } = await supabase
@@ -58,8 +90,8 @@ export async function GET(request: NextRequest) {
   if (!biz) {
     // Return 404 (not 403) so callers cannot probe whether a signer ID exists
     // by observing the difference between "not found" and "not your contract".
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return noCache(NextResponse.json({ error: 'Not found' }, { status: 404 }));
   }
 
-  return NextResponse.json({ url: `/sign/${signer.token}` });
+  return noCache(NextResponse.json({ url: `/sign/${signer.token}` }));
 }

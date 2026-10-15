@@ -8,10 +8,13 @@
  * Covered cases:
  *   1. 401 when unauthenticated (no user session)
  *   2. 400 when signer_id is missing
- *   3. 404 when signer_id does not exist
- *   4. 404 when signer exists but the caller does not own the contract
- *      (indistinguishable from case 3 — no signer-ID oracle)
- *   5. 200 + signing URL when signer exists and caller owns the contract
+ *   3. 400 when signer_id is malformed (not a valid UUID)
+ *   4. 404 when signer_id does not exist
+ *   5. 404 when signer exists but the caller does not own the contract
+ *      (indistinguishable from case 4 — no signer-ID oracle)
+ *   6. 200 + signing URL when signer exists and caller owns the contract
+ *   7. Cache-Control: no-store and Pragma: no-cache on ALL responses
+ *   8. Rate limit respected (429 when exhausted)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -20,6 +23,7 @@ import { NextRequest } from 'next/server';
 
 let mockGetUser: () => Promise<{ data: { user: { id: string } | null } }>;
 let mockServiceFrom: (table: string) => Record<string, unknown>;
+let mockRateLimit: () => Promise<Response | null>;
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -36,10 +40,15 @@ vi.mock('@/lib/supabase/service', () => ({
   })),
 }));
 
+vi.mock('@/lib/rate-limit', () => ({
+  rateLimitResponseAsync: vi.fn(() => mockRateLimit()),
+  getRateLimitKey: vi.fn((_req: unknown, key: string) => `test:${key}`),
+}));
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeRequest(signerIdParam?: string): NextRequest {
-  const url = signerIdParam
+  const url = signerIdParam !== undefined
     ? `http://localhost/api/contracts/signing-link?signer_id=${signerIdParam}`
     : 'http://localhost/api/contracts/signing-link';
   return new NextRequest(url, { method: 'GET' });
@@ -64,6 +73,8 @@ describe('GET /api/contracts/signing-link', () => {
       select: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }),
       maybeSingle: async () => ({ data: null }),
     });
+    // Default: rate limit not exhausted
+    mockRateLimit = async () => null;
   });
 
   it('returns 401 when no user session', async () => {
@@ -77,6 +88,22 @@ describe('GET /api/contracts/signing-link', () => {
     const { GET } = await import('@/app/api/contracts/signing-link/route');
     const res = await GET(makeRequest());
     expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when signer_id is a malformed UUID', async () => {
+    const { GET } = await import('@/app/api/contracts/signing-link/route');
+    const cases = [
+      'not-a-uuid',
+      '12345',
+      'aaaaaaaa-0000-0000-0000',                      // too short
+      'aaaaaaaa-0000-0000-0000-000000000001-extra',    // too long
+      '../../etc/passwd',                              // path traversal
+      "'; DROP TABLE contracts; --",                   // SQL injection attempt
+    ];
+    for (const bad of cases) {
+      const res = await GET(makeRequest(bad));
+      expect(res.status).toBe(400);
+    }
   });
 
   it('returns 404 when signer_id does not exist in contract_signers', async () => {
@@ -194,5 +221,105 @@ describe('GET /api/contracts/signing-link', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.url).toBe(`/sign/${TOKEN}`);
+  });
+
+  // ── Cache headers must be present on ALL responses ────────────────────────
+
+  it('sets Cache-Control: no-store and Pragma: no-cache on 200 response', async () => {
+    mockServiceFrom = (table: string) => {
+      if (table === 'contract_signers') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: async () => ({
+                data: { id: SIGNER_ID, token: TOKEN, contract_id: CONTRACT_ID },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'contracts') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: async () => ({ data: { business_id: BIZ_ID }, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'businesses') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({ maybeSingle: async () => ({ data: { id: BIZ_ID } }) }),
+            }),
+          }),
+        };
+      }
+      return { select: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }) };
+    };
+
+    const { GET } = await import('@/app/api/contracts/signing-link/route');
+    const res = await GET(makeRequest(SIGNER_ID));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(res.headers.get('Pragma')).toBe('no-cache');
+  });
+
+  it('sets Cache-Control: no-store and Pragma: no-cache on 404 response', async () => {
+    mockServiceFrom = (table: string) => {
+      if (table === 'contract_signers') {
+        return {
+          select: () => ({
+            eq: () => ({ single: async () => ({ data: null, error: { code: 'PGRST116' } }) }),
+          }),
+        };
+      }
+      return { select: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }) };
+    };
+
+    const { GET } = await import('@/app/api/contracts/signing-link/route');
+    const res = await GET(makeRequest(SIGNER_ID));
+    expect(res.status).toBe(404);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(res.headers.get('Pragma')).toBe('no-cache');
+  });
+
+  it('sets Cache-Control: no-store on 400 (missing signer_id)', async () => {
+    const { GET } = await import('@/app/api/contracts/signing-link/route');
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('sets Cache-Control: no-store on 400 (malformed UUID)', async () => {
+    const { GET } = await import('@/app/api/contracts/signing-link/route');
+    const res = await GET(makeRequest('not-a-uuid'));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('sets Cache-Control: no-store on 401 (unauthenticated)', async () => {
+    mockGetUser = async () => ({ data: { user: null } });
+    const { GET } = await import('@/app/api/contracts/signing-link/route');
+    const res = await GET(makeRequest(SIGNER_ID));
+    expect(res.status).toBe(401);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  // ── Rate limiting ─────────────────────────────────────────────────────────
+
+  it('returns 429 when rate limit is exhausted', async () => {
+    const { rateLimitResponseAsync } = await import('@/lib/rate-limit');
+    mockRateLimit = async () =>
+      new Response(JSON.stringify({ error: 'Too many requests' }), {
+        status: 429,
+        headers: { 'Cache-Control': 'no-store' },
+      });
+
+    const { GET } = await import('@/app/api/contracts/signing-link/route');
+    const res = await GET(makeRequest(SIGNER_ID));
+    expect(res.status).toBe(429);
   });
 });
