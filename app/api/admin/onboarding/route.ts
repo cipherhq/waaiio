@@ -28,11 +28,11 @@ export async function GET(request: NextRequest) {
   // country availability implies an allocated, active shared channel.
   const queued = queueResult.data || [];
   const businessIds = [...new Set(queued.map(row => row.business_id).filter((id): id is string => typeof id === 'string' && !!id))];
-  let businesses: Array<{ id: string; status: string; wa_method: string | null; assigned_channel_id: string | null; whatsapp_channel_id: string | null; bot_code: string | null; country_code: string | null }> = [];
+  let businesses: Array<{ id: string; status: string; wa_method: string | null; assigned_channel_id: string | null; whatsapp_channel_id: string | null; bot_code: string | null; country_code: string | null; messaging_suspended: boolean | null }> = [];
   let channels: Array<{ id: string; channel_type: string | null; is_active: boolean; connection_status: string | null; country_code: string | null; business_id: string | null; phone_number: string | null }> = [];
   if (businessIds.length) {
     const { data, error: businessError } = await service.from('businesses')
-      .select('id, status, wa_method, assigned_channel_id, whatsapp_channel_id, bot_code, country_code')
+      .select('id, status, wa_method, assigned_channel_id, whatsapp_channel_id, bot_code, country_code, messaging_suspended')
       .in('id', businessIds);
     if (businessError) return NextResponse.json({ error: 'Unable to verify WhatsApp readiness' }, { status: 500 });
     businesses = data || [];
@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
         requested_method: requested,
         current_method: biz?.wa_method || null,
         business_status: biz?.status || null,
+        messaging_suspended: biz?.messaging_suspended === true,
         country_code: biz?.country_code || null,
         bot_code: biz?.bot_code || null,
         channel_ready: channelReady,
