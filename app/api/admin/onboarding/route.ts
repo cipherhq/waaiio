@@ -7,7 +7,7 @@ import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboard
 import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
-import { isAssignedWhatsAppChannelReady } from '@/lib/onboarding/whatsapp-readiness';
+import { buildVerifiedWhatsAppLink, isAssignedWhatsAppChannelReady } from '@/lib/onboarding/whatsapp-readiness';
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
   const queued = queueResult.data || [];
   const businessIds = [...new Set(queued.map(row => row.business_id).filter((id): id is string => typeof id === 'string' && !!id))];
   let businesses: Array<{ id: string; status: string; wa_method: string | null; assigned_channel_id: string | null; whatsapp_channel_id: string | null; bot_code: string | null; country_code: string | null }> = [];
-  let channels: Array<{ id: string; channel_type: string | null; is_active: boolean; connection_status: string | null; country_code: string | null; business_id: string | null }> = [];
+  let channels: Array<{ id: string; channel_type: string | null; is_active: boolean; connection_status: string | null; country_code: string | null; business_id: string | null; phone_number: string | null }> = [];
   if (businessIds.length) {
     const { data, error: businessError } = await service.from('businesses')
       .select('id, status, wa_method, assigned_channel_id, whatsapp_channel_id, bot_code, country_code')
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     const channelIds = [...new Set(businesses.flatMap(b => [b.assigned_channel_id, b.whatsapp_channel_id]).filter((id): id is string => !!id))];
     if (channelIds.length) {
       const { data: channelRows, error: channelsError } = await service.from('whatsapp_channels')
-        .select('id, channel_type, is_active, connection_status, country_code, business_id')
+        .select('id, channel_type, is_active, connection_status, country_code, business_id, phone_number')
         .in('id', channelIds);
       if (channelsError) return NextResponse.json({ error: 'Unable to verify WhatsApp channel status' }, { status: 500 });
       channels = channelRows || [];
@@ -61,6 +61,7 @@ export async function GET(request: NextRequest) {
         country_code: biz?.country_code || null,
         bot_code: biz?.bot_code || null,
         channel_ready: channelReady,
+        whatsapp_link: buildVerifiedWhatsAppLink(biz, ch),
         channel_type: ch?.channel_type || null,
         connection_status: ch?.connection_status || null,
         owner_connection_required: requested !== 'shared' && !(channelReady && ch?.channel_type === 'dedicated'),
