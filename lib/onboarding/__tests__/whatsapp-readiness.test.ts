@@ -34,6 +34,7 @@ describe('admin WhatsApp channel readiness (tenant & country)', () => {
     const channel = { ...shared, phone_number: '+234 801 234 5678' };
     expect(buildVerifiedWhatsAppLink(active, channel)).toBe('https://wa.me/2348012345678?text=EXACT-TEST');
     expect(buildVerifiedWhatsAppLink({ ...active, status: 'pending' }, channel)).toBeNull();
+    expect(buildVerifiedWhatsAppLink({ ...active, messaging_suspended: true }, channel)).toBeNull();
     expect(buildVerifiedWhatsAppLink(active, { ...channel, country_code: 'US' })).toBeNull();
   });
   it('does not put a bot code on a dedicated channel QR link', () => {
