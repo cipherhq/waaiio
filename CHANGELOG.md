@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(bot): 7-finding hardening (ChatGPT review on bd042ae9 + 6bbd280b)
+
+### What changed
+- **(1)** `bot.service.ts:3003-3058`: All sends in `select_business_suggestion` step handler → platform-scoped (`enterPlatformDiscovery` + `sendPlatformText`). No business is bound in this step.
+- **(2)** `bot.service.ts:1726-1734`: `session = (newSession || session)` with null guard — 23505 recovery path no longer overwrites with null. `newSession.id` ref at L1692 → `effectiveId` with null check.
+- **(3)** `bot.service.ts:3665`: In-place update adds `.eq('whatsapp_number', from).eq('version', existing.version)` — CAS concurrency protection. 0 rows → return null.
+- **(4)** `bot.service.ts:1246-1251`: Did-you-mean helper returns null → explicit `sendPlatformText` error + `return` — never falls through to generic session creation.
+- **(5)** `bot.service.ts:3633-3634`: Removed delete of inactive null-biz rows — no unique index makes them collide (only `idx_bot_sessions_unique_active_null_biz` is partial on `is_active=true`). Deactivate only.
+- **(6)** `lib/__tests__/stale-null-session.test.ts:813-853`: Real two-message test: msg1 "Hi" returning → picker stored, msg2 "biz_0" → step handler deactivates, recursive call binds business.
+- **(7)** `bot.service.ts:2477-2494`: In-session `switch_biz` now calls `enterPlatformDiscovery` before sends. All replies platform-scoped (`sendPlatformButtons`, `sendPlatformText`). Suspended previous business cannot block switching.
+
 ## 2026-10-14 — fix(bot): DRY suggestion session creation via createNullBizSuggestionSession helper
 
 ### What changed

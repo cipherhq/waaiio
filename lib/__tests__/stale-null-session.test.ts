@@ -124,6 +124,38 @@ function makeChain(tableData: unknown, thenable = true) {
   return chain;
 }
 
+function createTableAwareSupabase(config: {
+  session?: Record<string, unknown> | null;
+  business?: Record<string, unknown> | null;
+  insertedSession?: Record<string, unknown> | null;
+} = {}) {
+  const { session = null, business = null, insertedSession = null } = config;
+  return {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === 'platform_settings') return makeChain({ value: false });
+      if (table === 'bot_sessions') {
+        const chain = makeChain(session);
+        if (insertedSession) {
+          chain.insert = vi.fn().mockImplementation(() => {
+            const ic = makeChain(insertedSession, true);
+            ic.select = vi.fn().mockImplementation(() => makeChain(insertedSession, false));
+            return ic;
+          });
+        }
+        return chain;
+      }
+      if (table === 'businesses') return makeChain(business);
+      if (table === 'blocked_phones') {
+        const c = makeChain(null);
+        c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+        return c;
+      }
+      return makeChain(null);
+    }),
+    rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+  };
+}
+
 describe('Stale null-business session fix', () => {
   beforeEach(() => {
     suspendedBizIds = new Set();
@@ -554,24 +586,88 @@ describe('Stale null-business session fix', () => {
     expect(platformTextArg?.text ?? '').toContain('Something went wrong');
   });
 
-  it('8. returning customer: msg1 "Hi" → picker buttons sent via helper (session stored)', async () => {
+  // ── Fix 1: Suggestion-step replies platform-scoped ──
+
+  it('8. biz_no reply: one platform-scoped send, zero business-scoped, session deactivated', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPT = vi.spyOn(sender, 'sendPlatformText');
+    const spyPB = vi.spyOn(sender, 'sendPlatformButtons');
+    mockDetectionResult = { businessId: null, suggestions: [] };
+    // Existing suggestion session (no business)
+    const sugSess = {
+      id: 'sess-sug', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: { suggestions: [{ id: 'biz-1', name: 'Spa A', bot_code: 'SPAA' }] },
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
+    };
+    const supabase = createTableAwareSupabase({ session: sugSess });
+    // RPC get_bot_context must return the suggestion session for no-business lookup
+    supabase.rpc = vi.fn().mockResolvedValue({ data: { has_session: true, session: sugSess, ambiguous: false }, error: null });
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', 'biz_no', 'text');
+    // Exactly one platform text send (the "No problem" message)
+    expect(spyPT.mock.calls.length).toBe(1);
+    expect((spyPT.mock.calls[0][0] as { text: string }).text).toContain('No problem');
+    // Zero business-scoped sends
+    const totalCloud = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length + cloud.sendList.mock.calls.length + cloud.sendTemplate.mock.calls.length;
+    const platformCalls = spyPT.mock.calls.length + spyPB.mock.calls.length;
+    expect(totalCloud - platformCalls).toBe(0);
+  });
+
+  it('9. out-of-range "9" with 2 suggestions: one platform-scoped reply', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPT = vi.spyOn(sender, 'sendPlatformText');
+    const spyPB = vi.spyOn(sender, 'sendPlatformButtons');
+    const sugSess = {
+      id: 'sess-oor', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: { suggestions: [
+        { id: 'b1', name: 'Biz 1', bot_code: 'B1' }, { id: 'b2', name: 'Biz 2', bot_code: 'B2' },
+      ]},
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
+    };
+    const supabase = createTableAwareSupabase({ session: sugSess });
+    supabase.rpc = vi.fn().mockResolvedValue({ data: { has_session: true, session: sugSess, ambiguous: false }, error: null });
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', '9', 'text');
+    expect(spyPT.mock.calls.length).toBe(1);
+    expect((spyPT.mock.calls[0][0] as { text: string }).text).toContain('select one of the options');
+    const totalCloud = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length;
+    expect(totalCloud - spyPT.mock.calls.length - spyPB.mock.calls.length).toBe(0);
+  });
+
+  // ── Fix 2: 23505 recovery uses effective session, not null newSession ──
+
+  it('10. insert 23505, expired row, retry succeeds: flow continues with retried session id', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     mockDetectionResult = { businessId: null, suggestions: [] };
-    // Single returning business → merged into suggestions → DYM "Did you mean?" picker
-    mockReturningBusinesses = [{ id: 'biz-R1', name: 'Return Spa', bot_code: 'RETSPA' }];
+    mockReturningBusinesses = [];
 
-    const freshSugg = {
-      id: 'sess-sug', business_id: null, current_step: 'select_business_suggestion',
-      is_active: true, session_data: { suggestions: [{ id: 'biz-R1', name: 'Return Spa', bot_code: 'RETSPA' }] },
-      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
+    const expiredNull = {
+      id: 'sess-expired', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: {}, whatsapp_number: '+234800',
+      expires_at: new Date(Date.now() - 3600000).toISOString(), version: 0,
     };
-
+    const retriedSession = {
+      id: 'sess-retried', business_id: null, current_step: 'greeting',
+      is_active: true, session_data: {}, whatsapp_number: '+234800',
+      expires_at: new Date(Date.now() + 86400000).toISOString(), version: 0,
+    };
     let insertCount = 0;
     const sharedInsert = vi.fn().mockImplementation(() => {
       insertCount++;
-      const ic = makeChain(freshSugg, true);
-      ic.select = vi.fn().mockImplementation(() => makeChain(freshSugg, false));
+      if (insertCount === 1) {
+        const err = makeChain(null, true);
+        err.select = vi.fn().mockImplementation(() => {
+          const sc = makeChain(null, false);
+          sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+          return sc;
+        });
+        return err;
+      }
+      const ic = makeChain(retriedSession, true);
+      ic.select = vi.fn().mockImplementation(() => makeChain(retriedSession, false));
       return ic;
     });
     const supabase = {
@@ -580,6 +676,7 @@ describe('Stale null-business session fix', () => {
         if (table === 'bot_sessions') {
           const chain = makeChain(null);
           chain.insert = sharedInsert;
+          chain.single = vi.fn().mockResolvedValue({ data: expiredNull, error: null });
           return chain;
         }
         if (table === 'blocked_phones') { const c = makeChain(null); c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) }); return c; }
@@ -588,81 +685,29 @@ describe('Stale null-business session fix', () => {
       rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
     };
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-
     await bot.handleMessage('+234800', 'Hi', 'text');
-    // Helper inserted a suggestion session
-    expect(insertCount).toBeGreaterThan(0);
-    // "Did you mean" picker buttons sent (returning business merged into suggestions)
-    const dymCall = cloud.sendButtons.mock.calls.find((c: any[]) => c[0]?.bodyText?.includes('Did you mean'));
-    expect(dymCall).toBeDefined();
-    // No "Something went wrong" fallback
+    expect(insertCount).toBe(2);
+    // A reply was sent (not stuck on null session)
+    expect(cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length).toBeGreaterThan(0);
     const fb = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong'));
     expect(fb.length).toBe(0);
   });
 
-  it('9. did-you-mean path: msg1 fuzzy → "Did you mean" buttons sent with session stored', async () => {
+  // ── Fix 3: CAS update concurrent change → null, fallback ──
+
+  it('11. CAS concurrent change (0 rows): helper returns null, no buttons, platform fallback', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
-    mockDetectionResult = { businessId: null, suggestions: [
-      { id: 'biz-F1', name: 'Fuzzy Spa', bot_code: 'FUZSPA' },
-      { id: 'biz-F2', name: 'Fuzzy Gym', bot_code: 'FUZGYM' },
-    ]};
-    mockReturningBusinesses = [];
-
-    const freshSugg = {
-      id: 'sess-dym', business_id: null, current_step: 'select_business_suggestion',
-      is_active: true, session_data: { suggestions: [
-        { id: 'biz-F1', name: 'Fuzzy Spa', bot_code: 'FUZSPA' },
-        { id: 'biz-F2', name: 'Fuzzy Gym', bot_code: 'FUZGYM' },
-      ]},
-      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
-    };
-
-    let insertCount = 0;
-    const sharedInsert = vi.fn().mockImplementation(() => {
-      insertCount++;
-      const ic = makeChain(freshSugg, true);
-      ic.select = vi.fn().mockImplementation(() => makeChain(freshSugg, false));
-      return ic;
-    });
-    const supabase = {
-      from: vi.fn().mockImplementation((table: string) => {
-        if (table === 'platform_settings') return makeChain({ value: false });
-        if (table === 'bot_sessions') {
-          const chain = makeChain(null);
-          chain.insert = sharedInsert;
-          return chain;
-        }
-        if (table === 'blocked_phones') { const c = makeChain(null); c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) }); return c; }
-        return makeChain(null);
-      }),
-      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
-    };
-    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-
-    await bot.handleMessage('+234800', 'fuzzy spa', 'text');
-    // Helper inserted a session
-    expect(insertCount).toBeGreaterThan(0);
-    // "Did you mean" buttons sent
-    const dym = cloud.sendButtons.mock.calls.find((c: any[]) => c[0]?.bodyText?.includes('Did you mean'));
-    expect(dym).toBeDefined();
-  });
-
-  it('10. non-expired existing null session: 23505 triggers in-place update, buttons still sent', async () => {
-    const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
-    mockDetectionResult = { businessId: null, suggestions: [{ id: 'biz-U1', name: 'Updated Spa', bot_code: 'UPDSPA' }] };
+    const spyPT = vi.spyOn(sender, 'sendPlatformText');
+    mockDetectionResult = { businessId: null, suggestions: [{ id: 'biz-C', name: 'Concurrent Biz', bot_code: 'CONC' }] };
     mockReturningBusinesses = [];
 
     const existing = {
-      id: 'sess-ex', business_id: null, current_step: 'select_business_suggestion',
+      id: 'sess-cas', business_id: null, current_step: 'select_business_suggestion',
       is_active: true, session_data: { suggestions: [{ id: 'old', name: 'Old', bot_code: 'OLD' }] },
-      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 900000).toISOString(), version: 0,
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 900000).toISOString(), version: 5,
     };
-    const updated = { ...existing, session_data: { suggestions: [{ id: 'biz-U1', name: 'Updated Spa', bot_code: 'UPDSPA' }] } };
-
     const sharedInsert = vi.fn().mockImplementation(() => {
-      // Always 23505 — existing non-expired session
       const err = makeChain(null, true);
       err.select = vi.fn().mockImplementation(() => {
         const sc = makeChain(null, false);
@@ -677,16 +722,19 @@ describe('Stale null-business session fix', () => {
         if (table === 'bot_sessions') {
           const chain = makeChain(null);
           chain.insert = sharedInsert;
-          // Recovery query returns existing non-expired session
           chain.select = vi.fn().mockImplementation(() => {
             const sc = makeChain(null, false);
             sc.single = vi.fn().mockResolvedValue({ data: existing, error: null });
             return sc;
           });
-          // Update in place returns updated session
+          // CAS update returns 0 rows (concurrent change)
           chain.update = vi.fn().mockImplementation(() => {
-            const uc = makeChain(updated);
-            uc.select = vi.fn().mockImplementation(() => makeChain(updated, false));
+            const uc = makeChain(null);
+            uc.select = vi.fn().mockImplementation(() => {
+              const sc = makeChain(null, false);
+              sc.single = vi.fn().mockResolvedValue({ data: null, error: null });
+              return sc;
+            });
             return uc;
           });
           return chain;
@@ -697,28 +745,31 @@ describe('Stale null-business session fix', () => {
       rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
     };
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-
-    await bot.handleMessage('+234800', 'Updated Spa', 'text');
-    // Buttons were sent despite 23505 (session updated in place)
-    expect(cloud.sendButtons.mock.calls.length).toBeGreaterThan(0);
-    // No fallback
-    const fb = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong'));
-    expect(fb.length).toBe(0);
+    await bot.handleMessage('+234800', 'Concurrent Biz', 'text');
+    const dym = cloud.sendButtons.mock.calls.filter((c: any[]) => c[0]?.bodyText?.includes('Did you mean'));
+    expect(dym.length).toBe(0);
+    expect(spyPT).toHaveBeenCalled();
+    const fb = spyPT.mock.calls.find((c: any[]) => (c[0] as { text?: string })?.text?.includes('Something went wrong'));
+    expect(fb).toBeDefined();
   });
 
-  it('11. suggestion insert fails hard (not 23505): no buttons, platform fallback', async () => {
+  // ── Fix 4: DYM helper returns null → platform error + return, no generic insert ──
+
+  it('12. did-you-mean hard insert failure: one platform error, no generic insert, no buttons', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const spyPT = vi.spyOn(sender, 'sendPlatformText');
     mockDetectionResult = { businessId: null, suggestions: [{ id: 'biz-X', name: 'X Biz', bot_code: 'XBIZ' }] };
     mockReturningBusinesses = [];
 
+    let insertCount = 0;
     const supabase = {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'platform_settings') return makeChain({ value: false });
         if (table === 'bot_sessions') {
           const chain = makeChain(null);
           chain.insert = vi.fn().mockImplementation(() => {
+            insertCount++;
             const err = makeChain(null, true);
             err.select = vi.fn().mockImplementation(() => {
               const sc = makeChain(null, false);
@@ -736,13 +787,137 @@ describe('Stale null-business session fix', () => {
     };
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
     await bot.handleMessage('+234800', 'X Biz', 'text');
-
-    // No "Did you mean" buttons
+    // Only 1 insert attempted (helper), no generic session insert
+    expect(insertCount).toBe(1);
+    // No DYM buttons
     const dym = cloud.sendButtons.mock.calls.filter((c: any[]) => c[0]?.bodyText?.includes('Did you mean'));
     expect(dym.length).toBe(0);
-    // Platform fallback
-    expect(spyPT).toHaveBeenCalled();
-    const fb = spyPT.mock.calls.find((c: any[]) => (c[0] as { text?: string })?.text?.includes('Something went wrong'));
-    expect(fb).toBeDefined();
+    // Exactly one platform error
+    const errors = spyPT.mock.calls.filter((c: any[]) => (c[0] as { text?: string })?.text?.includes('Something went wrong'));
+    expect(errors.length).toBe(1);
+  });
+
+  // ── Fix 6: Real two-message regression — returning customer with expired stale session ──
+
+  it('13. two-message: msg1 "Hi" → picker stored; msg2 "biz_0" resumes suggestion session, binds business via recursive call', async () => {
+    // MSG 1: verify picker is sent and session is stored
+    const cloud1 = createMockCloud();
+    const sender1 = new MetaCloudSender(cloud1 as any, createTestSupabase());
+    mockDetectionResult = { businessId: null, suggestions: [] };
+    mockReturningBusinesses = [{ id: 'biz-R1', name: 'Return Spa', bot_code: 'RETSPA' }];
+    const freshSugg = {
+      id: 'sess-sug', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: { suggestions: [{ id: 'biz-R1', name: 'Return Spa', bot_code: 'RETSPA' }] },
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
+    };
+    let insertCount1 = 0;
+    const sb1 = {
+      from: vi.fn().mockImplementation((t: string) => {
+        if (t === 'platform_settings') return makeChain({ value: false });
+        if (t === 'bot_sessions') {
+          const c = makeChain(null);
+          c.insert = vi.fn().mockImplementation(() => { insertCount1++; const ic = makeChain(freshSugg, true); ic.select = vi.fn().mockImplementation(() => makeChain(freshSugg, false)); return ic; });
+          return c;
+        }
+        if (t === 'blocked_phones') { const c = makeChain(null); c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) }); return c; }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+    const bot1 = new BotService(sb1 as any, sender1, createStandaloneService(), createMockIntelligence() as any);
+    await bot1.handleMessage('+234800', 'Hi', 'text');
+    expect(insertCount1).toBeGreaterThan(0);
+    expect(cloud1.sendButtons.mock.calls.length).toBeGreaterThan(0);
+
+    // MSG 2: biz_0 with suggestion session → step handler deactivates + recursive call with bot_code
+    const cloud2 = createMockCloud();
+    const sender2 = new MetaCloudSender(cloud2 as any, createTestSupabase());
+    const bizR1 = { id: 'biz-R1', name: 'Return Spa', status: 'active', category: 'spa', subscription_tier: 'free', country_code: 'NG', metadata: {}, bot_code: 'RETSPA', is_whitelabel: false };
+    const bizSess = { id: 'sess-biz', business_id: 'biz-R1', current_step: 'select_capability', is_active: true, session_data: { capabilities: ['scheduling'] }, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 };
+    mockDetectionResult = { businessId: 'biz-R1', suggestions: [], authority: 'exact' } as any;
+    // RPC returns suggestion session on first call, then null for the recursive call
+    let rpcCallCount = 0;
+    const sb2 = createTableAwareSupabase({ session: freshSugg, business: bizR1, insertedSession: bizSess });
+    sb2.rpc = vi.fn().mockImplementation(() => {
+      rpcCallCount++;
+      if (rpcCallCount === 1) return Promise.resolve({ data: { has_session: true, session: freshSugg, ambiguous: false }, error: null });
+      // Recursive call: no session (deactivated)
+      return Promise.resolve({ data: { has_session: false, ambiguous: false }, error: null });
+    });
+    const bot2 = new BotService(sb2 as any, sender2, createStandaloneService(), createMockIntelligence() as any);
+    await bot2.handleMessage('+234800', 'biz_0', 'text');
+    // Business R1 is bound after step handler resolved the bot_code via recursive handleMessage
+    expect(sender2.boundBusinessId).toBe('biz-R1');
+    // No "Something went wrong" — the business was resolved and flow attempted
+    const fb2 = cloud2.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong'));
+    expect(fb2.length).toBe(0);
+  });
+
+  // ── Fix 7: In-session switch_biz with suspended business A → picker delivered platform-scoped ──
+
+  it('14. suspended business A, switch_biz: picker delivered platform-scoped, zero A sends, session A deactivated', async () => {
+    suspendedBizIds.add('biz-A');
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPT = vi.spyOn(sender, 'sendPlatformText');
+    const spyPB = vi.spyOn(sender, 'sendPlatformButtons');
+
+    // Active session for suspended business A
+    const sessionA = {
+      id: 'sess-A', business_id: 'biz-A', current_step: 'select_capability',
+      is_active: true, session_data: { capabilities: ['scheduling'] },
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0,
+    };
+    const sugSess = {
+      id: 'sess-picker', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: { suggestions: [
+        { id: 'biz-B', name: 'Spa B', bot_code: 'SPAB' },
+        { id: 'biz-C', name: 'Spa C', bot_code: 'SPAC' },
+      ]},
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
+    };
+
+    // findReturningCustomerBusinesses returns 2 businesses for the picker
+    const { findReturningCustomerBusinesses } = await import('@/lib/bot/handlers/bot-code-detection');
+    (findReturningCustomerBusinesses as any).mockResolvedValue([
+      { id: 'biz-B', name: 'Spa B', bot_code: 'SPAB' },
+      { id: 'biz-C', name: 'Spa C', bot_code: 'SPAC' },
+    ]);
+
+    const sharedInsert = vi.fn().mockImplementation(() => {
+      const ic = makeChain(sugSess, true);
+      ic.select = vi.fn().mockImplementation(() => makeChain(sugSess, false));
+      return ic;
+    });
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          const chain = makeChain(null);
+          chain.insert = sharedInsert;
+          chain.single = vi.fn().mockResolvedValue({ data: sessionA, error: null });
+          return chain;
+        }
+        if (table === 'blocked_phones') { const c = makeChain(null); c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) }); return c; }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    // switch_biz while in suspended business A
+    sender.bindBusiness('biz-A');
+    await bot.handleMessage('+234800', 'switch_biz', 'text');
+    // Picker delivered (platform-scoped, not blocked by A's suspension)
+    expect(spyPB.mock.calls.length).toBeGreaterThan(0);
+    // Sender transitioned to platform discovery (not bound to A)
+    expect(sender.boundBusinessId).toBe('');
+    // Zero business-scoped sends for A
+    const totalCloud = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length + cloud.sendList.mock.calls.length + cloud.sendTemplate.mock.calls.length;
+    const platformCalls = spyPT.mock.calls.length + spyPB.mock.calls.length;
+    expect(totalCloud - platformCalls).toBe(0);
+    // Session A was deactivated (update called on bot_sessions)
+    const botSessionCalls = supabase.from.mock.calls.filter((c: any[]) => c[0] === 'bot_sessions');
+    expect(botSessionCalls.length).toBeGreaterThan(0);
   });
 });

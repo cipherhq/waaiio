@@ -1242,6 +1242,11 @@ export class BotService {
             await this.sendPlatformText(from, `${headerText}\n\n${list}\n\nReply with the number to select.`);
           }
           return;
+        } else {
+          // Helper failed — send platform error and stop; never fall through to generic session creation
+          if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          return;
         }
       }
 
@@ -1687,9 +1692,12 @@ export class BotService {
         const { CERTIFIED_LANGUAGES: certLangs } = await import('./language-policy');
         if (certLangs.includes(canonicalResult.language)) {
           const updatedSd = { ...sessionData, _pending_language: canonicalResult.language };
-          await this.supabase.from('bot_sessions')
-            .update({ session_data: updatedSd })
-            .eq('id', newSession.id);
+          const effectiveId = newSession?.id || session?.id;
+          if (effectiveId) {
+            await this.supabase.from('bot_sessions')
+              .update({ session_data: updatedSd })
+              .eq('id', effectiveId);
+          }
 
           const langName = getLanguageName(canonicalResult.language);
           try {
@@ -1723,7 +1731,14 @@ export class BotService {
         }
       }
 
-      session = newSession as BotSession;
+      // Use the effective session: newSession from insert, or recovered/retried from 23505 path
+      session = (newSession || session) as BotSession;
+      if (!session) {
+        logger.error('[BOT] No session obtained after insert/recovery — cannot continue');
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        return;
+      }
 
       // ACC-180: If promo was handled on first message, the canonical session has been created
       // through the normal path above. Promo response was already sent. Return without
@@ -2475,22 +2490,21 @@ export class BotService {
     // Handle "Switch Business" button — deactivate and show business picker
     if (text === 'switch_biz') {
       await this.deactivateSession(session.id);
+      // S-1: Transition to platform discovery — previous business must not block picker
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       // Force business picker by clearing business association and showing suggestions
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 1) {
         const quickPick = recentBiz.slice(0, 3);
         const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
         if (sugSess) {
-          await this.messageSender.sendButtons({
-            to: from,
-            body: 'Which business would you like to visit?',
-            buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
-          });
+          await this.sendPlatformButtons(from, 'Which business would you like to visit?',
+            quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
         } else {
           await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         }
       } else {
-        await this.sendSessionLocalizedText(from, 'Type the name or code of the business you\'d like to visit.', session);
+        await this.sendPlatformText(from, 'Type the name or code of the business you\'d like to visit.');
       }
       return;
     }
@@ -2999,6 +3013,8 @@ export class BotService {
 
     // Handle "Did you mean?" business selection
     if (step === 'select_business_suggestion') {
+      // S-1: No business is bound in this step — all replies must be platform-scoped
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
       let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
 
@@ -3013,7 +3029,7 @@ export class BotService {
       const isNo = /^(biz_no|no|nah|nope|wrong|not)$/i.test(text);
       if (isNo) {
         await this.deactivateSession(session.id);
-        await this.sendSessionLocalizedText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_', session);
+        await this.sendPlatformText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_');
         return;
       }
 
@@ -3052,7 +3068,7 @@ export class BotService {
         await this.deactivateSession(session.id);
         return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
       } else {
-        await this.sendSessionLocalizedText(from, 'Please select one of the options above, or send a *business code* to connect.', session);
+        await this.sendPlatformText(from, 'Please select one of the options above, or send a *business code* to connect.');
         return;
       }
     }
@@ -3629,10 +3645,8 @@ export class BotService {
     // (a) Deactivate expired-but-active null-biz sessions
     await this.supabase.from('bot_sessions').update({ is_active: false })
       .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true).lt('expires_at', now);
-    // (b) Delete inactive null-biz rows
-    await this.supabase.from('bot_sessions').delete()
-      .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-    // (c) Insert
+    // (b) Insert (no delete of inactive rows — no unique index makes them collide;
+    //     idx_bot_sessions_unique_active_null_biz is partial on is_active=true only)
     const { data: sess, error: insertErr } = await this.supabase.from('bot_sessions').insert({
       whatsapp_number: from, user_id: userId, business_id: null,
       current_step: 'select_business_suggestion', session_data: sessionData,
@@ -3658,11 +3672,12 @@ export class BotService {
           Sentry.captureException(retryErr || new Error('Null-biz suggestion session retry failed'));
           return null;
         }
-        // Not expired — update in place
+        // Not expired — update in place (CAS: version must match to prevent concurrent overwrites)
         const { data: updated, error: updateErr } = await this.supabase.from('bot_sessions')
           .update({ current_step: 'select_business_suggestion', session_data: sessionData,
             expires_at: new Date(Date.now() + ttlMs).toISOString() })
-          .eq('id', existing.id).is('business_id', null).eq('is_active', true).select().single();
+          .eq('id', existing.id).eq('whatsapp_number', from).is('business_id', null)
+          .eq('is_active', true).eq('version', existing.version ?? 0).select().single();
         if (!updateErr && updated) {
           logger.info('[BOT] createNullBizSuggestionSession: updated existing session:', existing.id);
           return updated as unknown as BotSession;
