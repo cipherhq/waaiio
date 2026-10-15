@@ -7,6 +7,7 @@ import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboard
 import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
+import { isAssignedWhatsAppChannelReady } from '@/lib/onboarding/whatsapp-readiness';
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
@@ -49,9 +50,7 @@ export async function GET(request: NextRequest) {
   const onboardings = queued.map(row => {
     const biz = row.business_id ? byBusiness.get(row.business_id) : null;
     const ch = biz ? byChannel.get(biz.assigned_channel_id || biz.whatsapp_channel_id || '') : null;
-    const channelReady = !!(biz && ch && ch.is_active && ch.connection_status === 'active'
-      && (ch.channel_type !== 'dedicated' || ch.business_id === biz.id)
-      && (ch.channel_type !== 'shared' || ch.country_code === biz.country_code));
+    const channelReady = isAssignedWhatsAppChannelReady(biz, ch);
     const requested = String(row.whatsapp_method || 'shared');
     return {
       ...row,
