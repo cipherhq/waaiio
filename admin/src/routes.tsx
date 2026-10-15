@@ -33,6 +33,7 @@ import Support from './pages/Support';
 import BotManagement from './pages/BotManagement';
 import BotDropoffs from './pages/BotDropoffs';
 import WhatsAppChannels from './pages/WhatsAppChannels';
+import WhatsAppAssistance from './pages/WhatsAppAssistance';
 import WhatsAppTemplates from './pages/WhatsAppTemplates';
 import Notifications from './pages/Notifications';
 import Broadcasts from './pages/Broadcasts';
@@ -122,6 +123,7 @@ export const router = createBrowserRouter([
       { path: 'bot-keywords', element: <RoleGuard roles={ADMIN_PERMISSIONS['bot-keywords']}><BotKeywords /></RoleGuard> },
       { path: 'llm-logs', element: <RoleGuard roles={ADMIN_PERMISSIONS['llm-logs']}><LLMClassifications /></RoleGuard> },
       { path: 'whatsapp-channels', element: <RoleGuard roles={ADMIN_PERMISSIONS['whatsapp-channels']}><WhatsAppChannels /></RoleGuard> },
+      { path: 'whatsapp-assistance', element: <RoleGuard roles={ADMIN_PERMISSIONS['customer-onboarding']}><WhatsAppAssistance /></RoleGuard> },
       { path: 'whatsapp-templates', element: <RoleGuard roles={ADMIN_PERMISSIONS['whatsapp-templates']}><WhatsAppTemplates /></RoleGuard> },
       { path: 'notifications', element: <RoleGuard roles={ADMIN_PERMISSIONS['notifications']}><Notifications /></RoleGuard> },
       { path: 'broadcasts', element: <RoleGuard roles={ADMIN_PERMISSIONS['broadcasts']}><Broadcasts /></RoleGuard> },
