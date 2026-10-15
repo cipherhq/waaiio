@@ -202,19 +202,18 @@ export class BotService {
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 1) {
         const quickPick = recentBiz.slice(0, 3);
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: quickPick },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        await this.sendPlatformButtons(from, 'Which business would you like to visit?',
-          quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
+        } else {
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        }
       } else {
         await this.sendPlatformText(from, 'Type the name or code of the business you\'d like to visit.');
       }
@@ -231,19 +230,18 @@ export class BotService {
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 0) {
         const quickPick = recentBiz.slice(0, 3);
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: quickPick },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
-          quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
+        } else {
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        }
       } else {
         await this.sendPlatformText(from, 'Welcome to Waaiio! Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
       }
@@ -908,27 +906,21 @@ export class BotService {
       }
 
       if (detection.suggestions && detection.suggestions.length > 0) {
-        // Show suggestions as buttons (platform-scoped: pre-business discovery)
-        if (detection.suggestions.length <= 3) {
-          await this.sendPlatformButtons(from, 'Which business did you mean?',
-            detection.suggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: detection.suggestions });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else if (persisted.length <= 3) {
+            await this.sendPlatformButtons(from, 'Which business did you mean?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          } else {
+            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+            await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
+          }
         } else {
-          const list = detection.suggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
-          await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         }
-
-        // Create suggestion session so the reply gets handled
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: detection.suggestions },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
         return;
       }
 
@@ -1356,44 +1348,50 @@ export class BotService {
 
       // "Did you mean?" — fuzzy suggestions / category matches / auto-correct confirmation
       if (!businessId && pendingSuggestions && pendingSuggestions.length > 0) {
-        // Clean up old sessions
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-
-        // Create a session at the select_business_suggestion step
-        const { data: sugSession } = await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: profile?.id || null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: pendingSuggestions, isCategory: isCategoryMatch },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 min expiry
-        }).select().single();
+        const sugSession = await this.createNullBizSuggestionSession(
+          from, profile?.id || null,
+          { suggestions: pendingSuggestions, isCategory: isCategoryMatch },
+        );
 
         if (sugSession) {
-          // Choose wording based on match type
-          const headerText = isCategoryMatch
+          // Always use the session's persisted suggestions for button payloads.
+          // The helper may return a recovered/renewed session whose persisted
+          // session_data.suggestions differs from the locally-generated array;
+          // using persisted data ensures biz_0 resolves to the button the user saw.
+          const persisted = (sugSession.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          const persistedIsCategory = sugSession.session_data?.isCategory as boolean | undefined;
+          if (persisted.length === 0) {
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            return;
+          }
+          // Choose wording based on persisted match type
+          const headerText = persistedIsCategory
             ? `Here are some businesses that might help:`
-            : pendingSuggestions.length === 1
-              ? `Did you mean *${pendingSuggestions[0].name}*?`
+            : persisted.length === 1
+              ? `Did you mean *${persisted[0].name}*?`
               : `Did you mean one of these businesses?`;
 
-          if (pendingSuggestions.length === 1 && !isCategoryMatch) {
+          if (persisted.length === 1 && !persistedIsCategory) {
             // Single fuzzy match — confirmation buttons (platform-scoped: pre-business discovery)
             await this.sendPlatformButtons(from, headerText, [
               { id: 'biz_0', title: 'Yes' },
               { id: 'biz_no', title: 'No' },
             ]);
-          } else if (pendingSuggestions.length <= 3) {
+          } else if (persisted.length <= 3) {
             // Use buttons (platform-scoped: pre-business discovery)
             await this.sendPlatformButtons(from, headerText,
-              pendingSuggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
           } else {
             // Fallback to numbered list as text (platform-scoped: pre-business discovery)
-            const list = pendingSuggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
             await this.sendPlatformText(from, `${headerText}\n\n${list}\n\nReply with the number to select.`);
           }
+          return;
+        } else {
+          // Helper failed — send platform error and stop; never fall through to generic session creation
+          if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
           return;
         }
       }
@@ -1764,19 +1762,93 @@ export class BotService {
             .eq('is_active', true)
             .single();
           if (existingNullSession && !existingNullSession.business_id) {
-            // Safe: this is a platform/disambiguation session with no business authority
-            session = existingNullSession as BotSession;
-            logger.info('[BOT] #266 R4: Recovered existing null-biz disambiguation session:', existingNullSession.id);
-            // Continue with the recovered session — do NOT auto-bind any business
+            // Check if the recovered session is expired — CAS-conditional deactivation, no retry insert
+            if (existingNullSession.expires_at && new Date(existingNullSession.expires_at) < new Date()) {
+              logger.info('[BOT] #266 R4: Stale expired null-biz session detected, deactivating:', existingNullSession.id);
+              // CAS deactivation — conditional on version + is_active + expires_at to prevent
+              // deactivating a session that was concurrently renewed between our read and this update.
+              const casNowIso = new Date().toISOString();
+              const { data: casDeactivated } = await this.supabase.from('bot_sessions')
+                .update({ is_active: false, version: (existingNullSession.version ?? 0) + 1 })
+                .eq('id', existingNullSession.id)
+                .is('business_id', null)
+                .eq('is_active', true)
+                .lt('expires_at', casNowIso)
+                .eq('version', existingNullSession.version ?? 0)
+                .select('id');
+              if (!casDeactivated || (casDeactivated as unknown[]).length === 0) {
+                // CAS got 0 rows — session was renewed concurrently between our read and update.
+                // Re-read to check its current state: do NOT retry the insert.
+                logger.info('[BOT] #266 R4: CAS deactivation got 0 rows (concurrent renewal?) — re-reading:', existingNullSession.id);
+                const { data: reReadSession } = await this.supabase.from('bot_sessions')
+                  .select('*').eq('id', existingNullSession.id).single();
+                const reRead = reReadSession as unknown as BotSession | null;
+                if (reRead && reRead.is_active && reRead.expires_at && new Date(reRead.expires_at) > new Date()) {
+                  // Session is now active and not expired — resume it instead of retrying insert
+                  session = reRead;
+                  logger.info('[BOT] #266 R4: Resumed renewed session after CAS race:', reRead.id);
+                } else {
+                  // Not recoverable — fail closed
+                  logger.error('[BOT] #266 R4: CAS race: session not renewable, failing closed:', existingNullSession.id);
+                  if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+                  await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  return;
+                }
+              } else {
+                // CAS succeeded — stale session cleared. Retry the insert exactly once.
+                // If the retry also fails for any reason (incl. another 23505) fail closed.
+                // No loop, no second retry.
+                logger.info('[BOT] #266 R4: CAS deactivation succeeded, retrying insert once:', existingNullSession.id);
+                const { data: retriedSession, error: retryInsertErr } = await this.supabase
+                  .from('bot_sessions')
+                  .insert({
+                    whatsapp_number: from,
+                    user_id: profile?.id || null,
+                    business_id: businessId,
+                    current_step: firstStep,
+                    session_data: sessionData,
+                    is_active: true,
+                    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                  })
+                  .select()
+                  .single();
+                if (!retryInsertErr && retriedSession) {
+                  session = retriedSession as BotSession;
+                  logger.info('[BOT] #266 R4: Retry insert succeeded after CAS deactivation:', (retriedSession as BotSession).id);
+                } else {
+                  logger.error('[BOT] #266 R4: Retry insert failed after CAS deactivation:', retryInsertErr?.message, retryInsertErr?.code);
+                  if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+                  await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  return;
+                }
+              }
+            } else {
+              // Safe: non-expired platform/disambiguation session with no business authority
+              session = existingNullSession as BotSession;
+              logger.info('[BOT] #266 R4: Recovered existing null-biz disambiguation session:', existingNullSession.id);
+              // Continue with the recovered session — do NOT auto-bind any business
+            }
           } else {
             // Unsafe: cannot recover a business-scoped session. Fail closed.
             logger.error('[BOT] #266 R4: 23505 recovery failed — no safe null-biz session to resume');
-            await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
             return;
           }
         } else {
           logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
-          await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          if (businessId) {
+            // Business is resolved — send fallback business-scoped (S-1 guard applies).
+            // If the business is suspended the guard blocks the send; catch so it doesn't crash.
+            try {
+              await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            } catch (sendErr) {
+              logger.error('[BOT] Session insert fallback send failed (business-scoped, guard may have blocked):', sendErr);
+            }
+          } else {
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          }
           return;
         }
       }
@@ -1796,9 +1868,12 @@ export class BotService {
         const { CERTIFIED_LANGUAGES: certLangs } = await import('./language-policy');
         if (certLangs.includes(canonicalResult.language)) {
           const updatedSd = { ...sessionData, _pending_language: canonicalResult.language };
-          await this.supabase.from('bot_sessions')
-            .update({ session_data: updatedSd })
-            .eq('id', newSession.id);
+          const effectiveId = newSession?.id || session?.id;
+          if (effectiveId) {
+            await this.supabase.from('bot_sessions')
+              .update({ session_data: updatedSd })
+              .eq('id', effectiveId);
+          }
 
           const langName = getLanguageName(canonicalResult.language);
           try {
@@ -1832,7 +1907,14 @@ export class BotService {
         }
       }
 
-      session = newSession as BotSession;
+      // Use the effective session: newSession from insert, or recovered/retried from 23505 path
+      session = (newSession || session) as BotSession;
+      if (!session) {
+        logger.error('[BOT] No session obtained after insert/recovery — cannot continue');
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        return;
+      }
 
       // ACC-180: If promo was handled on first message, the canonical session has been created
       // through the normal path above. Promo response was already sent. Return without
@@ -2262,6 +2344,9 @@ export class BotService {
       }
 
       // Fall through to marketplace greeting — no business found from bot code or past history
+      // S-1: No business bound — all sends below must be platform-scoped
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+
       // Check if this is a returning user with past businesses for quick-pick
       const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
@@ -2272,31 +2357,25 @@ export class BotService {
           : { data: null };
 
         const name = (returningProfile as { first_name?: string } | null)?.first_name;
-        await this.sendText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
-
-        // Clean up old sessions
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-
         const quickPick = recentBusinesses.slice(0, 3);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: profile?.id || null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: quickPick },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
-          buttons: quickPick.map((s, i) => ({
-            id: `biz_${i}`,
-            title: truncTitle(s.name),
-          })),
-        });
+        const sugSess = await this.createNullBizSuggestionSession(from, profile?.id || null, { suggestions: quickPick });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
+            await this.sendPlatformButtons(from,
+              'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
+              persisted.map((s, i) => ({
+                id: `biz_${i}`,
+                title: truncTitle(s.name),
+              })),
+            );
+          }
+        } else {
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        }
         return;
       }
 
@@ -2314,8 +2393,8 @@ export class BotService {
             flowToken: `onboarding:${from}`,
           });
         } else {
-          // Fallback: direct to web registration
-          await this.sendText(from, [
+          // Fallback: direct to web registration (platform-scoped: no business bound)
+          await this.sendPlatformText(from, [
             '*Register your business on Waaiio!*',
             '',
             'Set up your business in under 2 minutes:',
@@ -2327,10 +2406,10 @@ export class BotService {
         return;
       }
 
-      // ── First-time user — onboarding message ──
+      // ── First-time user — onboarding message (platform-scoped: no business bound) ──
       const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {
-        await this.sendText(from, [
+        await this.sendPlatformText(from, [
           '*Welcome to Waaiio!* 👋',
           '',
           'I help you book appointments, buy tickets, place orders, and make payments — all through WhatsApp.',
@@ -2346,7 +2425,7 @@ export class BotService {
           '• *receipt* — get your last receipt',
         ].join('\n'));
       } else {
-        await this.sendText(from, [
+        await this.sendPlatformText(from, [
           `I couldn't find a business matching "${text.trim().slice(0, 30)}". 🤔`,
           '',
           'Try sending the exact *business code*, or type *switch* followed by a business name.',
@@ -2592,26 +2671,26 @@ export class BotService {
     // Handle "Switch Business" button — deactivate and show business picker
     if (text === 'switch_biz') {
       await this.deactivateSession(session.id);
+      // S-1: Transition to platform discovery — previous business must not block picker
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       // Force business picker by clearing business association and showing suggestions
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 1) {
         const quickPick = recentBiz.slice(0, 3);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: quickPick },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'Which business would you like to visit?',
-          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
-        });
+        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
+        if (sugSess) {
+          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
+          if (persisted.length === 0) {
+            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          } else {
+            await this.sendPlatformButtons(from, 'Which business would you like to visit?',
+              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+          }
+        } else {
+          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        }
       } else {
-        await this.sendSessionLocalizedText(from, 'Type the name or code of the business you\'d like to visit.', session);
+        await this.sendPlatformLocalizedText(from, 'Type the name or code of the business you\'d like to visit.', session);
       }
       return;
     }
@@ -3120,6 +3199,8 @@ export class BotService {
 
     // Handle "Did you mean?" business selection
     if (step === 'select_business_suggestion') {
+      // S-1: No business is bound in this step — all replies must be platform-scoped
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
       let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
 
@@ -3134,7 +3215,7 @@ export class BotService {
       const isNo = /^(biz_no|no|nah|nope|wrong|not)$/i.test(text);
       if (isNo) {
         await this.deactivateSession(session.id);
-        await this.sendSessionLocalizedText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_', session);
+        await this.sendPlatformLocalizedText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_', session);
         return;
       }
 
@@ -3173,7 +3254,7 @@ export class BotService {
         await this.deactivateSession(session.id);
         return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
       } else {
-        await this.sendSessionLocalizedText(from, 'Please select one of the options above, or send a *business code* to connect.', session);
+        await this.sendPlatformLocalizedText(from, 'Please select one of the options above, or send a *business code* to connect.', session);
         return;
       }
     }
@@ -3738,6 +3819,95 @@ export class BotService {
   }
 
   /**
+   * Create (or recover) a null-business select_business_suggestion session.
+   * Handles stale expired sessions and 23505 collisions safely.
+   * Returns the session row on success, null on unrecoverable failure (logged + Sentry).
+   */
+  private async createNullBizSuggestionSession(
+    from: string, userId: string | null,
+    sessionData: Record<string, unknown>, ttlMs: number = 30 * 60 * 1000,
+  ): Promise<BotSession | null> {
+    const now = new Date().toISOString();
+    // (a) Deactivate expired-but-active null-biz sessions
+    await this.supabase.from('bot_sessions').update({ is_active: false })
+      .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true).lt('expires_at', now);
+    // (b) Insert (no delete of inactive rows — no unique index makes them collide;
+    //     idx_bot_sessions_unique_active_null_biz is partial on is_active=true only)
+    const { data: sess, error: insertErr } = await this.supabase.from('bot_sessions').insert({
+      whatsapp_number: from, user_id: userId, business_id: null,
+      current_step: 'select_business_suggestion', session_data: sessionData,
+      is_active: true, expires_at: new Date(Date.now() + ttlMs).toISOString(),
+    }).select().single();
+    if (!insertErr && sess) return sess as unknown as BotSession;
+    // (d) 23505: existing active null session survived cleanup (not expired)
+    if (insertErr?.code === '23505') {
+      const { data: existing } = await this.supabase.from('bot_sessions').select('*')
+        .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true).single();
+      if (existing && !existing.business_id) {
+        if (existing.expires_at && new Date(existing.expires_at) < new Date()) {
+          // Expired (race) — CAS deactivation conditional on version + is_active + expires_at.
+          // Prevents deactivating a session renewed concurrently between our read and this update.
+          const expiryCutoff = new Date().toISOString();
+          const { data: casDead } = await this.supabase.from('bot_sessions')
+            .update({ is_active: false, version: (existing.version ?? 0) + 1 })
+            .eq('id', existing.id)
+            .is('business_id', null)
+            .eq('is_active', true)
+            .lt('expires_at', expiryCutoff)
+            .eq('version', existing.version ?? 0)
+            .select('id');
+          if (!casDead || (casDead as unknown[]).length === 0) {
+            // CAS got 0 rows — session was renewed concurrently; re-read rather than inserting.
+            logger.info('[BOT] createNullBizSuggestionSession: CAS got 0 rows (concurrent renewal?), re-reading:', existing.id);
+            const { data: reReadRaw } = await this.supabase.from('bot_sessions')
+              .select('*').eq('id', existing.id).single();
+            const reRead = reReadRaw as unknown as BotSession | null;
+            if (reRead && reRead.is_active && reRead.expires_at && new Date(reRead.expires_at) > new Date()) {
+              logger.info('[BOT] createNullBizSuggestionSession: resumed renewed session after CAS race:', reRead.id);
+              return reRead;
+            }
+            logger.error('[BOT] createNullBizSuggestionSession: CAS race — session not renewable, failing closed:', existing.id);
+            return null;
+          }
+          // CAS succeeded — stale session cleared. Retry the insert exactly once.
+          // If the retry also fails for any reason (incl. another 23505) return null;
+          // callers handle null with a recoverable error message. No loop, no second retry.
+          logger.info('[BOT] createNullBizSuggestionSession: CAS deactivation succeeded, retrying insert once:', existing.id);
+          const { data: retried, error: retryErr } = await this.supabase.from('bot_sessions').insert({
+            whatsapp_number: from, user_id: userId, business_id: null,
+            current_step: 'select_business_suggestion', session_data: sessionData,
+            is_active: true, expires_at: new Date(Date.now() + ttlMs).toISOString(),
+          }).select().single();
+          if (!retryErr && retried) {
+            logger.info('[BOT] createNullBizSuggestionSession: retry insert succeeded:', (retried as unknown as BotSession).id);
+            return retried as unknown as BotSession;
+          }
+          logger.error('[BOT] createNullBizSuggestionSession: retry insert failed:', retryErr?.message, retryErr?.code);
+          return null;
+        }
+        // Not expired — update in place (CAS: version must match to prevent concurrent overwrites;
+        // advance version so a stale second worker holding the old version cannot overwrite this write)
+        const { data: updated, error: updateErr } = await this.supabase.from('bot_sessions')
+          .update({ current_step: 'select_business_suggestion', session_data: sessionData,
+            expires_at: new Date(Date.now() + ttlMs).toISOString(), version: (existing.version ?? 0) + 1 })
+          .eq('id', existing.id).eq('whatsapp_number', from).is('business_id', null)
+          .eq('is_active', true).eq('version', existing.version ?? 0).select().single();
+        if (!updateErr && updated) {
+          logger.info('[BOT] createNullBizSuggestionSession: updated existing session:', existing.id);
+          return updated as unknown as BotSession;
+        }
+        logger.error('[BOT] createNullBizSuggestionSession: update failed:', updateErr?.message);
+        Sentry.captureException(updateErr || new Error('Null-biz suggestion session update failed'));
+        return null;
+      }
+    }
+    // (e) Unrecoverable
+    logger.error('[BOT] createNullBizSuggestionSession: insert failed:', insertErr?.message, insertErr?.code);
+    Sentry.captureException(insertErr || new Error('Null-biz suggestion session insert failed'));
+    return null;
+  }
+
+  /**
    * Send the first-contact language picker as a WhatsApp interactive list.
    * Only shown when: no active session, no saved language preference,
    * and the business offers more than one certified language.
@@ -3857,6 +4027,32 @@ export class BotService {
     const tCtx = await this.buildTranslationContext(session.business_id || null, tier);
     const translated = await translateBotResponse(text, lang, tCtx, opts);
     return sendBotText(this.messageSender, to, translated);
+  }
+
+  /**
+   * Platform-scoped localized send — same translation logic as sendSessionLocalizedText,
+   * but sends via sendPlatformText (bypasses business hard-stop guard).
+   * For tenantless suggestion-step replies that must be both platform-scoped AND translated.
+   * If translation fails, sends the English text platform-scoped (never silence).
+   */
+  private async sendPlatformLocalizedText(
+    to: string,
+    text: string,
+    session: { session_data: Record<string, unknown>; business_id?: string | null },
+    opts?: TranslateOptions,
+  ): Promise<void> {
+    const lang = (session.session_data._detected_language as string) || '';
+    if (!lang || lang === 'en') {
+      return this.sendPlatformText(to, text);
+    }
+    let textToSend = text;
+    try {
+      const tCtx = await this.buildTranslationContext(null, 'free');
+      textToSend = await translateBotResponse(text, lang, tCtx, opts);
+    } catch (err) {
+      logger.error('[BOT] sendPlatformLocalizedText translation error (sending English):', err);
+    }
+    return this.sendPlatformText(to, textToSend);
   }
 
   /** Build TranslationContext for a business — resolves entitlement from tier + configured languages */
