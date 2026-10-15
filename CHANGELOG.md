@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(admin): guided admin onboarding and authoritative country options (#651)
+
+### What changed
+- Admin Customer Onboarding is now a guided owner → business/country → plan/capabilities/WhatsApp → review/invite workflow, matching the supported Get Started setup rules.
+- Active countries and categories are loaded from the canonical authenticated admin API. Errors/empty responses show a retry state and block submission instead of silently offering only Nigeria.
+- Post-invitation guidance preserves customer-owned activation, agreement to terms, plan payment, and Meta authorization. Coexistence is not selectable without eligibility.
+- Added regression coverage for supported selections, API failure and the guided owner/business review journey.
+
+### What it affects / could break
+- Admins must progress through separate guided steps instead of a single form.
+- Countries absent from the environment's active configuration cannot be submitted. No migration or entitlement change.
+
 ## 2026-10-14 — fix(bot): confirm saved-card decline choices with navigation buttons
 
 ### What changed
