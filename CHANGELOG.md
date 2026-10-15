@@ -3,6 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(admin): topup-packages editor fix pass #2 — P2 findings (PR #658)
+
+### What changed
+- **`admin/src/pages/PlatformSettings.tsx`:**
+  - (P2) `getTopupRowErrors`: replaced `parseFloat` with `/^\d+$/` regex — now rejects `'1e3'`, `'-5'`, `'1000.5'` (valid floats that bypassed the old check) as "Must be a valid whole number (digits only)".
+  - (P2) `serializeTopupPackages`: same regex fix — invalid input no longer silently produces a valid `amount_minor`; defaults to 0 for the validator to block.
+  - (P2) `parseTopupPackages`: added null/type guard before `Object.keys(pkg)` — null, string, number, array elements in stored packages no longer crash the editor. Each is replaced with a sentinel `_unknownFields` row, which triggers the data-loss banner and blocks Save.
+- **`app/api/admin/platform-settings/commercial/route.ts`:**
+  - (P2) Unexpected RPC errors no longer leak raw `error.message` to the client. Added `console.error('[COMMERCIAL_CONFIG]', ...)` and return generic `{ error: 'Internal server error', code: 'internal_error' }`. Version-conflict 409 path (authored message) unchanged.
+- **`admin/src/__tests__/topup-packages-editor.test.tsx`:**
+  - TC12: null/string/number/array elements in stored packages — no crash, data-loss warning, Save blocked.
+  - TC13 (8 cases via `it.each`): `'1e3'`, `'-5'`, `'1000.5'`, `'0'`, `''`, and JSDOM-sanitized inputs (`'1000abc'`, `'1,000'`, `' 1000'`) — each: error shown + Save disabled + fetch NOT called.
+- **`lib/__tests__/commercial-route-topup-packages.test.ts`:**
+  - Added: version conflict → 409 with authored message (unchanged). Unexpected PG error → 500 generic body, real message NOT in response.
+
+### What it affects / could break
+- Amount inputs that previously silently accepted `'1e3'` (= 1000) are now blocked. Admins who used scientific notation (unlikely but possible) will need to type plain integers.
+- Raw PG error text no longer surfaced to admin clients for unexpected route errors. Sentry/console.error receives the real message for debugging.
+
 ## 2026-10-15 — fix(admin): topup-packages editor fix pass (PR #658)
 
 ### What changed

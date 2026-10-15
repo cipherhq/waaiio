@@ -265,6 +265,41 @@ describe('POST /api/admin/platform-settings/commercial — topup-packages valida
     expect(rpcMock).toHaveBeenCalledTimes(1);
   });
 
+  // ── RPC error handling ────────────────────────────────────────────────────────
+  // Step-3 fix: unexpected RPC errors no longer leak raw error.message to the client.
+  // Version conflicts (intentional, authored message) still surface at 409.
+
+  it('returns 409 with error message for a version conflict', async () => {
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: 'version conflict on key messaging_topup_packages' },
+    });
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(409);
+    expect(json.code).toBe('version_conflict');
+    // Authored message is intentionally forwarded for version conflicts
+    expect(json.error).toContain('version conflict');
+  });
+
+  it('returns 500 with generic body for unexpected RPC error, real message not in response', async () => {
+    const realMessage = 'relation "platform_settings" does not exist';
+    rpcMock.mockResolvedValue({ data: null, error: { message: realMessage } });
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(500);
+    expect(json.code).toBe('internal_error');
+    expect(json.error).toBe('Internal server error');
+    // Raw PG error text must NOT appear anywhere in the response body
+    expect(JSON.stringify(json)).not.toContain(realMessage);
+  });
+
   it('passes a valid multi-currency payload', async () => {
     const { status } = await callRoute({
       key: 'messaging_topup_packages',

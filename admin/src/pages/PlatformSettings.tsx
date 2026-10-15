@@ -253,6 +253,17 @@ function parseTopupPackages(jsonStr: string): TopupEditorState {
       const c = key as TopupCurrency;
       if (Array.isArray(pkgs)) {
         state[c] = pkgs.map((p: unknown) => {
+          // Guard against non-object elements (null, primitive, nested array).
+          // Return a sentinel row so the serializer re-injects _unknownFields →
+          // validator rejects them → Save blocked with the data-loss banner.
+          if (p === null || typeof p !== 'object' || Array.isArray(p)) {
+            return {
+              amountMajor: '',
+              label: '',
+              description: '',
+              _unknownFields: { _invalidPackageType: true },
+            } as TopupPackageRow;
+          }
           const pkg = p as Record<string, unknown>;
           const minorPerMajor = TOPUP_MINOR_PER_MAJOR[c];
           const am = pkg['amount_minor'];
@@ -292,13 +303,10 @@ function serializeTopupPackages(state: TopupEditorState): string {
     if (rows.length === 0) continue;
     result[c] = rows.map(row => {
       const minorPerMajor = TOPUP_MINOR_PER_MAJOR[c];
-      const major = parseFloat(row.amountMajor);
-      // Use integer-only multiplication: non-integer major → 0 so the validator
-      // catches it (am <= 0) and disables Save. Math.round was a bug — it silently
-      // rounded 1000.5 → 100050 (a valid integer) even though the UI showed an error.
-      const amount_minor = Number.isFinite(major) && Number.isInteger(major)
-        ? major * minorPerMajor
-        : 0;
+      // Accept only digit-only strings to prevent parseFloat accepting '1e3',
+      // '1000abc', ' 1000', '1,000' etc. as valid numbers.
+      const majorNum = /^\d+$/.test(row.amountMajor) ? Number(row.amountMajor) : 0;
+      const amount_minor = majorNum > 0 ? majorNum * minorPerMajor : 0;
       const pkg: Record<string, unknown> = { amount_minor, label: row.label };
       if (row.description.trim()) pkg['description'] = row.description.trim();
       // Re-inject unknown fields so the validator can reject them → Save blocked.
@@ -322,23 +330,25 @@ function getTopupRowErrors(currency: TopupCurrency, rows: TopupPackageRow[]): Re
   rows.forEach((row, i) => {
     const errs: Record<string, string> = {};
     const minorPerMajor = TOPUP_MINOR_PER_MAJOR[currency];
-    const major = parseFloat(row.amountMajor);
-    const minor = Number.isFinite(major) ? Math.round(major * minorPerMajor) : NaN;
 
     if (row.amountMajor === '' || row.amountMajor === undefined) {
       errs.amount = 'Amount is required';
-    } else if (!Number.isFinite(major)) {
-      errs.amount = 'Must be a number';
-    } else if (major <= 0) {
-      errs.amount = 'Must be greater than 0';
-    } else if (!Number.isInteger(major)) {
-      errs.amount = 'Must be a whole number (no decimals)';
-    } else if (!Number.isInteger(minor)) {
-      errs.amount = 'Produces non-integer minor units';
-    } else if (seenAmounts.has(minor)) {
-      errs.amount = 'Duplicate amount in this currency';
+    } else if (!/^\d+$/.test(row.amountMajor)) {
+      // Reject scientific notation ('1e3'), trailing alpha ('1000abc'), commas,
+      // spaces, minus signs, and decimals — all bypass the onKeyDown blocker via paste.
+      errs.amount = 'Must be a valid whole number (digits only)';
     } else {
-      seenAmounts.add(minor);
+      const major = Number(row.amountMajor);
+      const minor = major * minorPerMajor;
+      if (major <= 0) {
+        errs.amount = 'Must be greater than 0';
+      } else if (!Number.isSafeInteger(minor)) {
+        errs.amount = 'Amount is too large';
+      } else if (seenAmounts.has(minor)) {
+        errs.amount = 'Duplicate amount in this currency';
+      } else {
+        seenAmounts.add(minor);
+      }
     }
 
     if (!row.label.trim()) {

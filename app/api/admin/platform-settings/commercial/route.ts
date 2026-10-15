@@ -72,7 +72,8 @@ export async function POST(request: NextRequest) {
       if (error.message.includes('version conflict')) {
         return NextResponse.json({ error: error.message, code: 'version_conflict' }, { status: 409, headers: cors });
       }
-      return NextResponse.json({ error: error.message }, { status: 500, headers: cors });
+      console.error('[COMMERCIAL_CONFIG] RPC error:', error.message);
+      return NextResponse.json({ error: 'Internal server error', code: 'internal_error' }, { status: 500, headers: cors });
     }
 
     return NextResponse.json({ versionId: data }, { headers: cors });

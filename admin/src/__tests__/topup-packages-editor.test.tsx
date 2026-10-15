@@ -373,6 +373,32 @@ describe('PlatformSettings — Messaging tab / TopupPackagesEditor', () => {
     expect(src).toContain('isTopupPackagesKey');
   });
 
+  // TC12 — null-safe parseTopupPackages: non-object array elements must not crash the editor
+  it('12. Non-object elements in stored packages do not crash the editor', async () => {
+    // null, string, number, nested array mixed with one valid package
+    seedTopupPackages({
+      NGN: [null, 'string-element', 42, [1, 2, 3], { amount_minor: 100000, label: 'valid' }],
+    });
+
+    await navigateToMessagingTab();
+
+    // Component must render without crashing
+    expect(screen.getByTestId('topup-packages-editor')).toBeInTheDocument();
+
+    // Data-loss warning is shown — malformed rows inject a sentinel _unknownFields
+    expect(screen.getByTestId('data-loss-warning')).toBeInTheDocument();
+
+    // Make an edit to trigger changed=true and expose the Save button
+    const editor = screen.getByTestId('topup-packages-editor');
+    await user.click(within(editor).getByTestId('add-row-GHS'));
+    await user.type(screen.getByTestId('amount-input-GHS-0'), '100');
+    await user.type(screen.getByTestId('label-input-GHS-0'), 'GH₵100');
+
+    // Save must be disabled: sentinel fields are re-injected and rejected by the validator
+    const saveBtn = screen.getByRole('button', { name: /^Save$/ });
+    expect(saveBtn).toBeDisabled();
+  });
+
   // TC11 — data-loss: unknown currency + unknown field on package blocks Save
   // Verifies: (a) warning banner visible before any edit, (b) Save is disabled even
   // after an edit, because the serializer re-injects unknown data for the validator to catch.
@@ -404,4 +430,49 @@ describe('PlatformSettings — Messaging tab / TopupPackagesEditor', () => {
     const saveBtn = screen.getByRole('button', { name: /^Save$/ });
     expect(saveBtn).toBeDisabled();
   });
+
+  // TC13 — /^\d+$/ regex rejects non-digit inputs that bypass the onKeyDown blocker
+  // (e.g. paste). Each case: error shown + Save disabled + fetch NOT called.
+  // JSDOM sanitizes '1000abc', '1,000', ' 1000' to '' for type=number inputs
+  // (they're not valid floating-point numbers). The error becomes "Amount is required".
+  // '1e3' and '1000.5' ARE valid floats so JSDOM passes them through — these are the
+  // critical regression cases that prove the /^\d+$/ regex fix.
+  const invalidAmountCases: Array<[string, RegExp]> = [
+    ['1000abc', /amount is required/i],   // sanitized to '' by type=number
+    ['1e3',     /valid whole number/i],   // valid float, regex catches it
+    ['1000.5',  /whole.number/i],         // valid float, regex catches it
+    ['1,000',   /amount is required/i],   // sanitized to '' by type=number
+    [' 1000',   /amount is required/i],   // sanitized to '' by type=number
+    ['-5',      /valid whole number/i],   // valid negative number, regex catches it
+    ['0',       /must be greater than 0/i],
+    ['',        /amount is required/i],
+  ];
+  it.each(invalidAmountCases)(
+    '13. Invalid amount input "%s" shows error, Save disabled, fetch not called',
+    async (badInput, errPattern) => {
+      seedTopupPackages({});
+      await navigateToMessagingTab();
+      const editor = screen.getByTestId('topup-packages-editor');
+
+      await user.click(within(editor).getByTestId('add-row-NGN'));
+      const amountInput = screen.getByTestId('amount-input-NGN-0');
+      const labelInput = screen.getByTestId('label-input-NGN-0');
+
+      // Seed a valid amount first so we start from a fully-changed state, then
+      // simulate paste of the bad value via fireEvent.change (bypasses onKeyDown)
+      fireEvent.change(amountInput, { target: { value: '1000' } });
+      await user.type(labelInput, 'test');
+      fireEvent.change(amountInput, { target: { value: badInput } });
+
+      // Error message must be visible
+      expect(screen.getByText(errPattern)).toBeInTheDocument();
+
+      // Save must be disabled
+      const saveBtn = screen.getByRole('button', { name: /^Save$/ });
+      expect(saveBtn).toBeDisabled();
+
+      // fetch must NOT have been called — Save was never triggered
+      expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    },
+  );
 });
