@@ -3,8 +3,21 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
+import { logger } from '@/lib/logger';
 import { isCountryAmountKey, validateCountryAmounts } from '@/shared/country-amounts';
 import { isTopupPackagesKey, validateTopupPackages } from '@/shared/topup-packages';
+
+// Authored RAISE EXCEPTION prefixes from svc_save_commercial_config (SQLSTATE P0001).
+// Explicit allowlist — do NOT use substring matching for classification.
+const VERSION_CONFLICT_PREFIXES = ['Config version conflict', 'config_version_conflict'] as const;
+const VALIDATION_ERROR_PREFIXES = [
+  'Key "',
+  'messaging_financial_gate',
+  'messaging_reservation_ttl_seconds',
+  'trial_days must be',
+  'messaging_topup_packages',
+  'svc_save_commercial_config requires admin role',
+] as const;
 
 export const dynamic = 'force-dynamic';
 
@@ -69,10 +82,17 @@ export async function POST(request: NextRequest) {
     });
 
     if (error) {
-      if (error.message.includes('version conflict')) {
-        return NextResponse.json({ error: error.message, code: 'version_conflict' }, { status: 409, headers: cors });
+      const sqlstate = error.code ?? '';
+      const errText = error.message ?? '';
+      if (sqlstate === 'P0001') {
+        if (VERSION_CONFLICT_PREFIXES.some(p => errText.startsWith(p))) {
+          return NextResponse.json({ error: errText, code: 'version_conflict' }, { status: 409, headers: cors });
+        }
+        if (VALIDATION_ERROR_PREFIXES.some(p => errText.startsWith(p))) {
+          return NextResponse.json({ error: errText, code: 'validation_error' }, { status: 400, headers: cors });
+        }
       }
-      console.error('[COMMERCIAL_CONFIG] RPC error:', error.message);
+      logger.error('[COMMERCIAL_CONFIG] unexpected RPC error', { key, sqlstate, message: errText });
       return NextResponse.json({ error: 'Internal server error', code: 'internal_error' }, { status: 500, headers: cors });
     }
 

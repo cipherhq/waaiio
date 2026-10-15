@@ -272,7 +272,8 @@ describe('POST /api/admin/platform-settings/commercial — topup-packages valida
   it('returns 409 with error message for a version conflict', async () => {
     rpcMock.mockResolvedValue({
       data: null,
-      error: { message: 'version conflict on key messaging_topup_packages' },
+      // M439 exact message format; SQLSTATE P0001 (default RAISE EXCEPTION)
+      error: { message: 'Config version conflict: expected abc-v1, got xyz-v2', code: 'P0001' },
     });
     const { status, json } = await callRoute({
       key: 'messaging_topup_packages',
@@ -285,9 +286,29 @@ describe('POST /api/admin/platform-settings/commercial — topup-packages valida
     expect(json.error).toContain('version conflict');
   });
 
+  it('returns 400 validation_error for an authored P0001 validation message', async () => {
+    // Simulates svc_save_commercial_config raising "trial_days must be a positive integer"
+    // for a non-topup-packages key that the route's JS validation doesn't pre-screen.
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: 'trial_days must be a positive integer', code: 'P0001' },
+    });
+    const { status, json } = await callRoute({
+      key: 'trial_days',
+      value: -1,
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.code).toBe('validation_error');
+    expect(json.error).toBe('trial_days must be a positive integer');
+    expect(consumeStepUpMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+  });
+
   it('returns 500 with generic body for unexpected RPC error, real message not in response', async () => {
     const realMessage = 'relation "platform_settings" does not exist';
-    rpcMock.mockResolvedValue({ data: null, error: { message: realMessage } });
+    // SQLSTATE 42P01 = undefined_table — an infrastructure error, not an authored P0001
+    rpcMock.mockResolvedValue({ data: null, error: { message: realMessage, code: '42P01' } });
     const { status, json } = await callRoute({
       key: 'messaging_topup_packages',
       value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
