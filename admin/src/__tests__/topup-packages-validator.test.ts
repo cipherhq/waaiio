@@ -21,6 +21,10 @@ import {
   isTopupPackagesKey,
   TOPUP_ALLOWED_CURRENCIES,
   TOPUP_MINOR_PER_MAJOR,
+  TOPUP_LABEL_MAX_LEN,
+  TOPUP_DESCRIPTION_MAX_LEN,
+  TOPUP_AMOUNT_MINOR_MAX,
+  TOPUP_MAX_PACKAGES_PER_CURRENCY,
   type TopupPackage,
 } from '@shared/topup-packages';
 
@@ -209,5 +213,106 @@ describe('validateTopupPackages — all allowed currencies', () => {
       const value = { [c]: [{ amount_minor: 1000, label: 'test' }] };
       expect(validateTopupPackages(value), `should accept currency ${c}`).toBeNull();
     }
+  });
+});
+
+describe('validateTopupPackages — label length cap (TOPUP_LABEL_MAX_LEN = 50)', () => {
+  it('accepts a label exactly at the max length', () => {
+    const label = 'A'.repeat(TOPUP_LABEL_MAX_LEN);
+    expect(validateTopupPackages({ NGN: [{ amount_minor: 1000, label }] })).toBeNull();
+  });
+
+  it('rejects a label one character over the max', () => {
+    const label = 'A'.repeat(TOPUP_LABEL_MAX_LEN + 1);
+    const errors = validateTopupPackages({ NGN: [{ amount_minor: 1000, label }] });
+    expect(errors).not.toBeNull();
+    expect(errors!.some(e => e.field.includes('label'))).toBe(true);
+    expect(errors!.some(e => e.message.includes(String(TOPUP_LABEL_MAX_LEN)))).toBe(true);
+  });
+});
+
+describe('validateTopupPackages — description validation', () => {
+  it('accepts a present description within the max length', () => {
+    const description = 'A'.repeat(TOPUP_DESCRIPTION_MAX_LEN);
+    expect(validateTopupPackages({ NGN: [{ amount_minor: 1000, label: 'ok', description }] })).toBeNull();
+  });
+
+  it('rejects a description one character over the max', () => {
+    const description = 'A'.repeat(TOPUP_DESCRIPTION_MAX_LEN + 1);
+    const errors = validateTopupPackages({ NGN: [{ amount_minor: 1000, label: 'ok', description }] });
+    expect(errors).not.toBeNull();
+    expect(errors!.some(e => e.field.includes('description'))).toBe(true);
+    expect(errors!.some(e => e.message.includes(String(TOPUP_DESCRIPTION_MAX_LEN)))).toBe(true);
+  });
+
+  it('rejects a non-string description (e.g. number)', () => {
+    const errors = validateTopupPackages({
+      NGN: [{ amount_minor: 1000, label: 'ok', description: 42 as unknown as string }],
+    });
+    expect(errors).not.toBeNull();
+    expect(errors!.some(e => e.field.includes('description'))).toBe(true);
+  });
+
+  it('accepts a package with no description key (field is optional)', () => {
+    expect(validateTopupPackages({ NGN: [{ amount_minor: 1000, label: 'ok' }] })).toBeNull();
+  });
+});
+
+describe('validateTopupPackages — amount_minor max (TOPUP_AMOUNT_MINOR_MAX)', () => {
+  it('accepts amount_minor exactly at the max', () => {
+    expect(validateTopupPackages({ NGN: [{ amount_minor: TOPUP_AMOUNT_MINOR_MAX, label: 'ok' }] })).toBeNull();
+  });
+
+  it('rejects amount_minor one above the max', () => {
+    const errors = validateTopupPackages({ NGN: [{ amount_minor: TOPUP_AMOUNT_MINOR_MAX + 1, label: 'ok' }] });
+    expect(errors).not.toBeNull();
+    expect(errors!.some(e => e.field.includes('amount_minor'))).toBe(true);
+    expect(errors!.some(e => e.message.includes(String(TOPUP_AMOUNT_MINOR_MAX)))).toBe(true);
+  });
+});
+
+describe('validateTopupPackages — max packages per currency (TOPUP_MAX_PACKAGES_PER_CURRENCY = 10)', () => {
+  it('accepts exactly the max number of packages', () => {
+    const pkgs = Array.from({ length: TOPUP_MAX_PACKAGES_PER_CURRENCY }, (_, i) => ({
+      amount_minor: (i + 1) * 1000,
+      label: `package ${i + 1}`,
+    }));
+    expect(validateTopupPackages({ NGN: pkgs })).toBeNull();
+  });
+
+  it('rejects one package over the max', () => {
+    const pkgs = Array.from({ length: TOPUP_MAX_PACKAGES_PER_CURRENCY + 1 }, (_, i) => ({
+      amount_minor: (i + 1) * 1000,
+      label: `package ${i + 1}`,
+    }));
+    const errors = validateTopupPackages({ NGN: pkgs });
+    expect(errors).not.toBeNull();
+    expect(errors!.some(e => e.field === 'NGN')).toBe(true);
+    expect(errors!.some(e => e.message.includes(String(TOPUP_MAX_PACKAGES_PER_CURRENCY)))).toBe(true);
+  });
+});
+
+describe('validateTopupPackages — unknown package keys', () => {
+  it('rejects a package with an unknown key', () => {
+    const errors = validateTopupPackages({
+      NGN: [{ amount_minor: 1000, label: 'ok', bonus: 'free' } as unknown as TopupPackage],
+    });
+    expect(errors).not.toBeNull();
+    expect(errors!.some(e => e.message.includes('"bonus"'))).toBe(true);
+  });
+
+  it('rejects multiple unknown keys on one package', () => {
+    const errors = validateTopupPackages({
+      NGN: [{ amount_minor: 1000, label: 'ok', foo: 1, bar: 2 } as unknown as TopupPackage],
+    });
+    expect(errors).not.toBeNull();
+    expect(errors!.some(e => e.message.includes('"foo"'))).toBe(true);
+    expect(errors!.some(e => e.message.includes('"bar"'))).toBe(true);
+  });
+
+  it('accepts a package with only the three known keys (amount_minor, label, description)', () => {
+    expect(validateTopupPackages({
+      NGN: [{ amount_minor: 1000, label: 'ok', description: 'note' }],
+    })).toBeNull();
   });
 });

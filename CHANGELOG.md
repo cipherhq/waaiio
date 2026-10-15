@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(admin): topup-packages editor fix pass (PR #658)
+
+### What changed
+- **`shared/topup-packages.ts`:** Tightened validator with new caps: `TOPUP_LABEL_MAX_LEN=50`, `TOPUP_DESCRIPTION_MAX_LEN=200`, `TOPUP_AMOUNT_MINOR_MAX=10_000_000_000`, `TOPUP_MAX_PACKAGES_PER_CURRENCY=10`, `KNOWN_PACKAGE_KEYS`. Added validation: unknown package keys rejected, description must be string if present, label/description length caps, amount_minor max, max 10 packages per currency.
+- **`admin/src/pages/PlatformSettings.tsx`:** Fixed `serializeTopupPackages` bug: replaced `Math.round(major × 100)` with integer-only check — non-integer major now produces `amount_minor=0` so the validator catches it and disables Save. Added unknown-currency and unknown-field tracking in editor state; serializer re-injects them back into output so validator blocks save with a clear error. Added `data-loss-warning` banner in `TopupPackagesEditor`.
+- **`admin/src/__tests__/topup-packages-editor.test.tsx`:** Rewrote TC4 to click Save and inspect exact `fetch` body (major→minor conversion, blank description omitted). Rewrote TC7 to use `fireEvent.change('1000.5')` proving Save is disabled. Added TC11 for data-loss (unknown currency + unknown field). Added `useStepUp` and `StepUpDialog` mocks.
+- **`admin/src/__tests__/topup-packages-validator.test.ts`:** Added tests for: label length cap, description length cap, description type check, amount_minor max, max packages per currency, unknown package keys.
+- **`lib/__tests__/commercial-route-topup-packages.test.ts`:** New — 16 route tests: all invalid payload types return 400 and `consumeStepUp` is NOT called; valid payloads call both `consumeStepUp` and RPC.
+
+### What it affects / could break
+- Validator now rejects unknown package keys (`bonus`, etc.) and description non-strings. Any stored package data with unknown fields will block save until cleaned.
+- `serializeTopupPackages` fix makes TC7's behaviour correct — no functional change for integer amounts.
+
 ## 2026-10-15 — feat(admin): structured editor for top-up packages
 
 ### What changed

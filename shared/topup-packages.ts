@@ -16,6 +16,40 @@
 export const TOPUP_ALLOWED_CURRENCIES = ['NGN', 'GHS', 'USD', 'GBP', 'CAD'] as const;
 export type TopupCurrency = (typeof TOPUP_ALLOWED_CURRENCIES)[number];
 
+/**
+ * Maximum character length for a package label.
+ * The billing page renders the label inside a button span; 50 chars prevents overflow.
+ * There is no WhatsApp interactive list path for topup packages currently.
+ */
+export const TOPUP_LABEL_MAX_LEN = 50;
+
+/**
+ * Maximum character length for an optional package description.
+ * Description is stored but not currently rendered in billing UI. Cap is generous
+ * (200 chars) purely for data hygiene and to guard against accidental huge strings.
+ */
+export const TOPUP_DESCRIPTION_MAX_LEN = 200;
+
+/**
+ * Maximum amount_minor per package.
+ * 10,000,000,000 = 10B minor units ≈ $100M USD / ₦100M NGN.
+ * Prevents accidental entry of absurdly large amounts.
+ */
+export const TOPUP_AMOUNT_MINOR_MAX = 10_000_000_000;
+
+/**
+ * Maximum number of packages per currency.
+ * Matches the WhatsApp interactive list section row limit for future-proofing.
+ */
+export const TOPUP_MAX_PACKAGES_PER_CURRENCY = 10;
+
+/**
+ * Known keys on a TopupPackage object.
+ * Extra keys are rejected to prevent unintentional data in the DB and to surface
+ * copy-paste errors (e.g. a field from a different schema pasted into a package).
+ */
+export const KNOWN_PACKAGE_KEYS = new Set(['amount_minor', 'label', 'description']);
+
 /** Display symbols for major-unit labels */
 export const TOPUP_CURRENCY_SYMBOLS: Record<TopupCurrency, string> = {
   NGN: '\u20A6',    // ₦
@@ -68,11 +102,12 @@ export function isTopupPackagesKey(key: string): boolean {
  * Rules (mirror M416 save_commercial_config):
  * - Must be a plain object (not null, not an array)
  * - Each key must be a non-empty, known currency code
- * - Each value must be an array of package objects
+ * - Each value must be an array of package objects with ≤ TOPUP_MAX_PACKAGES_PER_CURRENCY entries
+ * - Each package must have only known keys (amount_minor, label, description)
  * - Each package must have:
- *     amount_minor: positive integer (> 0, no decimals)
- *     label: non-empty string
- *     description: optional string (ignored in validation)
+ *     amount_minor: positive integer (> 0, no decimals, ≤ TOPUP_AMOUNT_MINOR_MAX)
+ *     label: non-empty string (≤ TOPUP_LABEL_MAX_LEN chars)
+ *     description: optional string (≤ TOPUP_DESCRIPTION_MAX_LEN chars)
  * - No duplicate amount_minor values within a currency
  */
 export function validateTopupPackages(
@@ -114,6 +149,15 @@ export function validateTopupPackages(
       continue;
     }
 
+    // Max packages per currency
+    if (packages.length > TOPUP_MAX_PACKAGES_PER_CURRENCY) {
+      errors.push({
+        field: currency,
+        message: `${currency}: at most ${TOPUP_MAX_PACKAGES_PER_CURRENCY} packages per currency (got ${packages.length})`,
+      });
+      continue;
+    }
+
     const seenAmounts = new Set<number>();
 
     for (let i = 0; i < packages.length; i++) {
@@ -128,6 +172,16 @@ export function validateTopupPackages(
       }
 
       const p = pkg as Record<string, unknown>;
+
+      // Unknown keys
+      for (const k of Object.keys(p)) {
+        if (!KNOWN_PACKAGE_KEYS.has(k)) {
+          errors.push({
+            field: `${currency}[${i}].${k}`,
+            message: `${currency}[${i}]: unknown field "${k}" — allowed fields are: ${[...KNOWN_PACKAGE_KEYS].join(', ')}`,
+          });
+        }
+      }
 
       // amount_minor validation
       const am = p['amount_minor'];
@@ -156,6 +210,11 @@ export function validateTopupPackages(
           field: `${currency}[${i}].amount_minor`,
           message: `${currency}[${i}]: amount_minor must be a whole number (no decimals)`,
         });
+      } else if (am > TOPUP_AMOUNT_MINOR_MAX) {
+        errors.push({
+          field: `${currency}[${i}].amount_minor`,
+          message: `${currency}[${i}]: amount_minor must not exceed ${TOPUP_AMOUNT_MINOR_MAX}`,
+        });
       } else if (seenAmounts.has(am)) {
         errors.push({
           field: `${currency}[${i}].amount_minor`,
@@ -182,6 +241,27 @@ export function validateTopupPackages(
           field: `${currency}[${i}].label`,
           message: `${currency}[${i}]: label must not be empty`,
         });
+      } else if ((lbl as string).length > TOPUP_LABEL_MAX_LEN) {
+        errors.push({
+          field: `${currency}[${i}].label`,
+          message: `${currency}[${i}]: label must not exceed ${TOPUP_LABEL_MAX_LEN} characters`,
+        });
+      }
+
+      // description validation (optional)
+      const desc = p['description'];
+      if (desc !== undefined && desc !== null) {
+        if (typeof desc !== 'string') {
+          errors.push({
+            field: `${currency}[${i}].description`,
+            message: `${currency}[${i}]: description must be a string`,
+          });
+        } else if ((desc as string).length > TOPUP_DESCRIPTION_MAX_LEN) {
+          errors.push({
+            field: `${currency}[${i}].description`,
+            message: `${currency}[${i}]: description must not exceed ${TOPUP_DESCRIPTION_MAX_LEN} characters`,
+          });
+        }
       }
     }
   }

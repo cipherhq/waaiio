@@ -4,19 +4,21 @@
  * Tests: real component render via PlatformSettings + vitest/jsdom.
  *
  * Acceptance criteria (task §4):
- *  TC1. Messaging tab is visible even when messaging_topup_packages is absent
- *  TC2. messaging_topup_packages renders as "Not configured" when absent
- *  TC3. An existing seeded value loads into the form (NGN amount + label visible)
- *  TC4. Adding a package row produces the correct JSON shape (major → minor conversion)
- *  TC5. Negative amount shows error and Save is disabled (client-side)
- *  TC6. Zero amount shows error and Save is disabled (client-side)
- *  TC7. Decimal amount (non-integer major) shows error and Save is disabled
- *  TC8. Empty label shows error and Save is disabled
- *  TC9. Duplicate amounts within a currency show error and Save is disabled
+ *  TC1.  Messaging tab is visible even when messaging_topup_packages is absent
+ *  TC2.  messaging_topup_packages renders as "Not configured" when absent
+ *  TC3.  An existing seeded value loads into the form (NGN amount + label visible)
+ *  TC4.  Save click sends exact JSON shape to /api/admin/platform-settings/commercial
+ *        (major → minor conversion; blank description omitted)
+ *  TC5.  Negative amount shows error and Save is disabled (client-side)
+ *  TC6.  Zero amount shows error and Save is disabled (client-side)
+ *  TC7.  Decimal amount (non-integer major) shows "whole-number" error AND Save is disabled
+ *  TC8.  Empty label shows error and Save is disabled
+ *  TC9.  Duplicate amounts within a currency show error and Save is disabled
  *  TC10. Source-code assertion: save goes through saveCommercialViaStepUp
+ *  TC11. Data loss: unknown currency + unknown field on package blocks Save with clear error
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
@@ -80,6 +82,22 @@ vi.mock('@/lib/formatters', () => ({
   fmtDateTime: vi.fn((d: string) => d),
 }));
 
+// Mock useStepUp so stepUp.execute() immediately calls onAuthorized without showing a dialog.
+vi.mock('@/hooks/useStepUp', () => ({
+  useStepUp: vi.fn(() => ({
+    execute: vi.fn(async ({ onAuthorized }: { onAuthorized: (id: string) => Promise<void> }) => {
+      await onAuthorized('mock-step-up-id');
+    }),
+    pending: null,
+    state: { phase: 'idle', description: '', error: null },
+  })),
+}));
+
+// Suppress StepUpDialog rendering — the real dialog requires a DOM portal.
+vi.mock('@/components/StepUpDialog', () => ({
+  StepUpDialog: () => null,
+}));
+
 // Prevent actual fetch calls from going out
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
   ok: true,
@@ -116,6 +134,11 @@ describe('PlatformSettings — Messaging tab / TopupPackagesEditor', () => {
     mockSupabase.auth.getSession.mockResolvedValue({
       data: { session: { user: { id: 'test-admin-id' }, access_token: 'mock-token' } },
     });
+    // Re-stub fetch after clearAllMocks so it is still a mock
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ versionId: 'v1' }),
+    }));
   });
 
   // TC1
@@ -165,30 +188,58 @@ describe('PlatformSettings — Messaging tab / TopupPackagesEditor', () => {
     expect(within(ghsRow).getByTestId('amount-input-GHS-0')).toHaveValue(100);
   });
 
-  // TC4 — adding a package row produces the correct JSON shape
-  it('4. Adding a package produces the correct minor-unit JSON via onChange', async () => {
-    // Render with a seeded empty config so the editor is visible, not the "Not configured" placeholder
+  // TC4 — Save sends exact JSON shape: major→minor conversion, blank description omitted
+  it('4. Save sends exact minor-unit JSON body to commercial route', async () => {
     seedTopupPackages({});
 
     await navigateToMessagingTab();
 
     const editor = screen.getByTestId('topup-packages-editor');
 
-    // Add a NGN package
+    // Add NGN package
     await user.click(within(editor).getByTestId('add-row-NGN'));
+    await user.clear(screen.getByTestId('amount-input-NGN-0'));
+    await user.type(screen.getByTestId('amount-input-NGN-0'), '1000');
+    await user.type(screen.getByTestId('label-input-NGN-0'), '₦1,000 credit');
+    // Leave description blank intentionally
 
-    // Fill in amount (1000 major → 100000 minor) and label
-    const amountInput = screen.getByTestId('amount-input-NGN-0');
-    const labelInput = screen.getByTestId('label-input-NGN-0');
+    // Add USD package
+    await user.click(within(editor).getByTestId('add-row-USD'));
+    await user.clear(screen.getByTestId('amount-input-USD-0'));
+    await user.type(screen.getByTestId('amount-input-USD-0'), '10');
+    await user.type(screen.getByTestId('label-input-USD-0'), '$10 credit');
 
-    await user.clear(amountInput);
-    await user.type(amountInput, '1000');
-    await user.clear(labelInput);
-    await user.type(labelInput, '₦1,000 credit');
-
-    // After filling in valid data, Save button should be enabled
+    // Save must be enabled
     const saveBtn = screen.getByRole('button', { name: /^Save$/ });
     expect(saveBtn).not.toBeDisabled();
+
+    // Click Save
+    await user.click(saveBtn);
+
+    // useStepUp.execute called onAuthorized('mock-step-up-id') immediately,
+    // which called fetch with the exact body.
+    await waitFor(() => {
+      expect(vi.mocked(fetch)).toHaveBeenCalled();
+    });
+
+    const fetchCall = vi.mocked(fetch).mock.calls[0];
+    const fetchBody = JSON.parse(fetchCall[1]?.body as string);
+
+    expect(fetchBody.key).toBe('messaging_topup_packages');
+    expect(fetchBody.stepUpId).toBe('mock-step-up-id');
+    expect(fetchBody.description).toBeNull();
+
+    // NGN: 1000 major × 100 = 100000 minor
+    expect(fetchBody.value.NGN).toEqual([
+      { amount_minor: 100000, label: '₦1,000 credit' },
+    ]);
+    // USD: 10 major × 100 = 1000 minor; no description key
+    expect(fetchBody.value.USD).toEqual([
+      { amount_minor: 1000, label: '$10 credit' },
+    ]);
+    // Blank description must NOT be present in the package object
+    expect(fetchBody.value.NGN[0]).not.toHaveProperty('description');
+    expect(fetchBody.value.USD[0]).not.toHaveProperty('description');
   });
 
   // TC5 — negative amount
@@ -207,8 +258,6 @@ describe('PlatformSettings — Messaging tab / TopupPackagesEditor', () => {
     await user.clear(amountInput);
     await user.type(amountInput, '-500');
 
-    // The input has type="number" min="1" so browser sets value to empty or clips;
-    // our validation checks the field value
     const saveBtn = screen.getByRole('button', { name: /^Save$/ });
     expect(saveBtn).toBeDisabled();
   });
@@ -233,23 +282,34 @@ describe('PlatformSettings — Messaging tab / TopupPackagesEditor', () => {
     expect(saveBtn).toBeDisabled();
   });
 
-  // TC7 — decimal amounts in minor units are rejected at the validator level
-  // The component uses step="1" on the amount input and a keydown handler that
-  // blocks the '.' key, enforcing integer-only major-unit input. The server-side
-  // validator (validateTopupPackages) additionally requires amount_minor to be an
-  // integer — verified thoroughly in topup-packages-validator.test.ts.
-  // This test verifies the amount input has step="1" (integer-only UI constraint).
-  it('7. Amount input enforces integer-only via step="1" attribute', async () => {
+  // TC7 — decimal amount: "whole-number" error visible AND Save is disabled
+  // Root fix: serializeTopupPackages now produces amount_minor=0 for non-integer major
+  // (instead of Math.round which silently rounded 1000.5 → 100050, a valid integer).
+  it('7. Decimal amount shows "whole-number" error and Save is disabled', async () => {
     seedTopupPackages({});
 
     await navigateToMessagingTab();
     const editor = screen.getByTestId('topup-packages-editor');
+
     await user.click(within(editor).getByTestId('add-row-NGN'));
 
+    // Add a label so the only error is the decimal amount
+    const labelInput = screen.getByTestId('label-input-NGN-0');
+    await user.type(labelInput, 'test');
+
+    // Use fireEvent.change to set a decimal value — bypasses the keydown
+    // blocker (which prevents '.' from being typed), simulating a paste or
+    // programmatic set from a browser autofill.
     const amountInput = screen.getByTestId('amount-input-NGN-0');
-    expect(amountInput).toHaveAttribute('step', '1');
-    expect(amountInput).toHaveAttribute('min', '1');
-    expect(amountInput).toHaveAttribute('type', 'number');
+    fireEvent.change(amountInput, { target: { value: '1000.5' } });
+
+    // The UI must show the "whole number" error
+    expect(screen.getByText(/whole.number/i)).toBeInTheDocument();
+
+    // Save must be disabled: serializeTopupPackages now emits amount_minor=0
+    // for non-integer major, so validateTopupPackages catches am<=0.
+    const saveBtn = screen.getByRole('button', { name: /^Save$/ });
+    expect(saveBtn).toBeDisabled();
   });
 
   // TC8 — empty label
@@ -311,5 +371,37 @@ describe('PlatformSettings — Messaging tab / TopupPackagesEditor', () => {
     expect(src).toContain('TopupPackagesEditor');
     // isTopupPackagesKey is used to branch the editor
     expect(src).toContain('isTopupPackagesKey');
+  });
+
+  // TC11 — data-loss: unknown currency + unknown field on package blocks Save
+  // Verifies: (a) warning banner visible before any edit, (b) Save is disabled even
+  // after an edit, because the serializer re-injects unknown data for the validator to catch.
+  it('11. Unknown currency and unknown field on package block Save with clear error', async () => {
+    // EUR is not an allowed currency; bonus is not a known package field.
+    seedTopupPackages({
+      NGN: [{ amount_minor: 100000, label: '₦1,000 credit', bonus: 'extra' }],
+      EUR: [{ amount_minor: 10000, label: '€100 credit' }],
+    });
+
+    await navigateToMessagingTab();
+
+    // Editor is shown (not "Not configured") since the key exists
+    expect(screen.getByTestId('topup-packages-editor')).toBeInTheDocument();
+
+    // Data-loss warning banner is visible immediately — no edit needed
+    expect(screen.getByTestId('data-loss-warning')).toBeInTheDocument();
+    // The unknown currency name must appear in the warning
+    expect(screen.getByText(/EUR/)).toBeInTheDocument();
+
+    // Make an edit to trigger `changed=true` and show the Save button.
+    // Even after a valid edit, Save must remain disabled because the serializer
+    // re-injects the unknown currency/fields so the validator catches them.
+    const editor = screen.getByTestId('topup-packages-editor');
+    await user.click(within(editor).getByTestId('add-row-GHS'));
+    await user.type(screen.getByTestId('amount-input-GHS-0'), '100');
+    await user.type(screen.getByTestId('label-input-GHS-0'), 'GH₵100 test');
+
+    const saveBtn = screen.getByRole('button', { name: /^Save$/ });
+    expect(saveBtn).toBeDisabled();
   });
 });

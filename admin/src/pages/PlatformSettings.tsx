@@ -21,6 +21,10 @@ import {
   TOPUP_CURRENCY_SYMBOLS,
   TOPUP_CURRENCY_NAMES,
   TOPUP_MINOR_PER_MAJOR,
+  TOPUP_LABEL_MAX_LEN,
+  TOPUP_DESCRIPTION_MAX_LEN,
+  TOPUP_MAX_PACKAGES_PER_CURRENCY,
+  KNOWN_PACKAGE_KEYS,
   type TopupCurrency,
   type TopupPackage,
 } from '@shared/topup-packages';
@@ -219,9 +223,16 @@ interface TopupPackageRow {
   amountMajor: string;
   label: string;
   description: string;
+  /** Unknown fields from the stored package, preserved so the serializer can include
+   *  them back → validator rejects them → Save is blocked with a clear error. */
+  _unknownFields?: Record<string, unknown>;
 }
 
-type TopupEditorState = Record<TopupCurrency, TopupPackageRow[]>;
+type TopupEditorState = Record<TopupCurrency, TopupPackageRow[]> & {
+  /** Unknown currency keys from the stored value, preserved so the serializer can
+   *  include them back → validator rejects them → Save is blocked with a clear error. */
+  _unknownCurrencies?: Record<string, unknown[]>;
+};
 
 function parseTopupPackages(jsonStr: string): TopupEditorState {
   const state: TopupEditorState = {} as TopupEditorState;
@@ -231,22 +242,42 @@ function parseTopupPackages(jsonStr: string): TopupEditorState {
   try {
     const parsed = JSON.parse(jsonStr);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return state;
-    for (const c of TOPUP_ALLOWED_CURRENCIES) {
-      const pkgs = (parsed as Record<string, unknown>)[c];
+    const unknownCurrencies: Record<string, unknown[]> = {};
+    for (const [key, pkgs] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!(TOPUP_ALLOWED_CURRENCIES as readonly string[]).includes(key)) {
+        // Unknown currency — preserve original data so the serializer can include it
+        // back, allowing the validator to catch and block Save.
+        unknownCurrencies[key] = Array.isArray(pkgs) ? pkgs : [pkgs];
+        continue;
+      }
+      const c = key as TopupCurrency;
       if (Array.isArray(pkgs)) {
         state[c] = pkgs.map((p: unknown) => {
-          const pkg = p as TopupPackage;
+          const pkg = p as Record<string, unknown>;
           const minorPerMajor = TOPUP_MINOR_PER_MAJOR[c];
-          const majorVal = typeof pkg.amount_minor === 'number' && minorPerMajor > 0
-            ? (pkg.amount_minor / minorPerMajor).toString()
+          const am = pkg['amount_minor'];
+          const majorVal = typeof am === 'number' && minorPerMajor > 0
+            ? (am / minorPerMajor).toString()
             : '';
-          return {
+          // Detect unknown fields on the package object
+          const unknownFields: Record<string, unknown> = {};
+          for (const k of Object.keys(pkg)) {
+            if (!KNOWN_PACKAGE_KEYS.has(k)) {
+              unknownFields[k] = pkg[k];
+            }
+          }
+          const row: TopupPackageRow = {
             amountMajor: majorVal,
-            label: typeof pkg.label === 'string' ? pkg.label : '',
-            description: typeof pkg.description === 'string' ? pkg.description : '',
+            label: typeof pkg['label'] === 'string' ? pkg['label'] : '',
+            description: typeof pkg['description'] === 'string' ? pkg['description'] : '',
           };
+          if (Object.keys(unknownFields).length > 0) row._unknownFields = unknownFields;
+          return row;
         });
       }
+    }
+    if (Object.keys(unknownCurrencies).length > 0) {
+      state._unknownCurrencies = unknownCurrencies;
     }
   } catch {
     // ignore — return empty state
@@ -255,20 +286,31 @@ function parseTopupPackages(jsonStr: string): TopupEditorState {
 }
 
 function serializeTopupPackages(state: TopupEditorState): string {
-  const result: Record<string, TopupPackage[]> = {};
+  const result: Record<string, unknown[]> = {};
   for (const c of TOPUP_ALLOWED_CURRENCIES) {
     const rows = state[c];
     if (rows.length === 0) continue;
     result[c] = rows.map(row => {
       const minorPerMajor = TOPUP_MINOR_PER_MAJOR[c];
       const major = parseFloat(row.amountMajor);
-      const pkg: TopupPackage = {
-        amount_minor: Number.isFinite(major) ? Math.round(major * minorPerMajor) : 0,
-        label: row.label,
-      };
-      if (row.description.trim()) pkg.description = row.description.trim();
+      // Use integer-only multiplication: non-integer major → 0 so the validator
+      // catches it (am <= 0) and disables Save. Math.round was a bug — it silently
+      // rounded 1000.5 → 100050 (a valid integer) even though the UI showed an error.
+      const amount_minor = Number.isFinite(major) && Number.isInteger(major)
+        ? major * minorPerMajor
+        : 0;
+      const pkg: Record<string, unknown> = { amount_minor, label: row.label };
+      if (row.description.trim()) pkg['description'] = row.description.trim();
+      // Re-inject unknown fields so the validator can reject them → Save blocked.
+      if (row._unknownFields) Object.assign(pkg, row._unknownFields);
       return pkg;
     });
+  }
+  // Re-inject unknown currencies so the validator can reject them → Save blocked.
+  if (state._unknownCurrencies) {
+    for (const [k, v] of Object.entries(state._unknownCurrencies)) {
+      result[k] = v;
+    }
   }
   return JSON.stringify(result, null, 2);
 }
@@ -301,6 +343,12 @@ function getTopupRowErrors(currency: TopupCurrency, rows: TopupPackageRow[]): Re
 
     if (!row.label.trim()) {
       errs.label = 'Label is required';
+    } else if (row.label.length > TOPUP_LABEL_MAX_LEN) {
+      errs.label = `Label must not exceed ${TOPUP_LABEL_MAX_LEN} characters`;
+    }
+
+    if (row.description.trim() && row.description.length > TOPUP_DESCRIPTION_MAX_LEN) {
+      errs.description = `Description must not exceed ${TOPUP_DESCRIPTION_MAX_LEN} characters`;
     }
 
     if (Object.keys(errs).length > 0) rowErrors[i] = errs;
@@ -353,8 +401,30 @@ function TopupPackagesEditor({
 
   const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-white';
 
+  // Detect data-loss conditions so the UI can warn the admin before Save is blocked.
+  const unknownCurrencyList = localState._unknownCurrencies
+    ? Object.keys(localState._unknownCurrencies)
+    : [];
+  const hasUnknownPkgFields = TOPUP_ALLOWED_CURRENCIES.some(c =>
+    localState[c].some(r => r._unknownFields && Object.keys(r._unknownFields).length > 0),
+  );
+
   return (
     <div className={`rounded-lg border p-4 space-y-5 ${borderClass}`} data-testid="topup-packages-editor">
+      {(unknownCurrencyList.length > 0 || hasUnknownPkgFields) && (
+        <div className="flex gap-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800" data-testid="data-loss-warning">
+          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-500" />
+          <div className="space-y-0.5">
+            <p className="font-medium">Stored data contains unsupported values — Save is blocked.</p>
+            {unknownCurrencyList.length > 0 && (
+              <p>Unknown currencies: <strong>{unknownCurrencyList.join(', ')}</strong>. Edit the raw JSON to remove them first.</p>
+            )}
+            {hasUnknownPkgFields && (
+              <p>Some packages have unrecognised fields. Edit the raw JSON to remove them first.</p>
+            )}
+          </div>
+        </div>
+      )}
       {TOPUP_ALLOWED_CURRENCIES.map(currency => {
         const rows = localState[currency];
         const rowErrors = getTopupRowErrors(currency, rows);
@@ -380,6 +450,12 @@ function TopupPackagesEditor({
 
             {rows.length === 0 && (
               <p className="text-[11px] text-gray-400 italic">No packages — click "Add package" to create one.</p>
+            )}
+
+            {rows.length > TOPUP_MAX_PACKAGES_PER_CURRENCY && (
+              <p className="text-[11px] text-red-500">
+                Maximum {TOPUP_MAX_PACKAGES_PER_CURRENCY} packages per currency (currently {rows.length}).
+              </p>
             )}
 
             {rows.map((row, idx) => {
