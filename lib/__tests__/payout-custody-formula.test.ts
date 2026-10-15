@@ -151,6 +151,44 @@ describe('computePlatformHeldTotals — adjustments', () => {
     const withOmitted = computePlatformHeldTotals(rows);
     expect(withEmpty.netAvailable).toBe(withOmitted.netAvailable);
   });
+
+  it('applied adjustment must be included in lifetime balance (P1-2 regression)', () => {
+    const fees = [
+      { transaction_amount: 10000, fee_total: 500, gateway_fee: 50, waived: false, is_direct_transfer: false as const },
+    ];
+
+    // Step 1: Generate — uses only unapplied adjustments, no priorPayouts
+    const unappliedAdj = [{ amount: -200 }];
+    const { netAvailable: generatedNet } = computePlatformHeldTotals(fees, unappliedAdj);
+    expect(generatedNet).toBe(9250);
+
+    // Step 2: After generate, the adjustment is applied (linked to the payout).
+    // Balance/approve must include ALL adjustments (applied + unapplied) to reconcile.
+    const allAdjustments = [{ amount: -200 }];
+    const priorPayouts = [{ net_amount: 9250 }];
+
+    const { netAvailable: balanceWithAll } = computePlatformHeldTotals(fees, allAdjustments, priorPayouts);
+    expect(balanceWithAll).toBe(0);
+
+    // BUG scenario: if balance accidentally uses only unapplied adjustments (empty after linking)
+    const noAdjustments: { amount: number }[] = [];
+    const { netAvailable: balanceWithBug } = computePlatformHeldTotals(fees, noAdjustments, priorPayouts);
+    expect(balanceWithBug).toBe(200); // documents the bug — phantom positive balance
+  });
+
+  it('multiple adjustments: mix of applied and unapplied in lifetime balance', () => {
+    const fees = [
+      { transaction_amount: 20000, fee_total: 1000, gateway_fee: 100, waived: false, is_direct_transfer: false as const },
+    ];
+
+    // Both adjustments must be included for the lifetime balance
+    const allAdjustments = [{ amount: -500 }, { amount: 300 }];
+    // Payout was generated with these adjustments: net = 20000-1000-100+(-500+300) = 18700
+    const priorPayouts = [{ net_amount: 18700 }];
+
+    const { netAvailable } = computePlatformHeldTotals(fees, allAdjustments, priorPayouts);
+    expect(netAvailable).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

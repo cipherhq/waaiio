@@ -190,11 +190,13 @@ export async function POST(
     return NextResponse.json({ error: 'Failed to load prior payout data' }, { status: 500 });
   }
 
+  // Fetch ALL adjustments (applied + unapplied) for lifetime balance.
+  // Prior payouts' net_amount already includes applied adjustments; including
+  // them again in the lifetime sum cancels correctly (P1-2 fix).
   const { data: balanceAdjustments, error: balAdjError } = await serviceClient
     .from('payout_adjustments')
     .select('amount')
-    .eq('business_id', payout.business_id)
-    .is('applied_to_payout_id', null);
+    .eq('business_id', payout.business_id);
 
   if (balAdjError) {
     return NextResponse.json({ error: 'Failed to load adjustment data' }, { status: 500 });

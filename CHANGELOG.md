@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(payments): include applied adjustments in lifetime balance (P1-2)
+
+### What changed
+- `app/api/payouts/balance/route.ts`: Split adjustment query into two — ALL adjustments for `computePlatformHeldTotals` lifetime balance, unapplied-only for `pending_adjustments` display field. Prior payouts' `net_amount` already includes applied adjustments; including them again in the lifetime sum cancels correctly.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Removed `.is('applied_to_payout_id', null)` filter from adjustment query for balance verification. Same fix — lifetime check must include all adjustments.
+- `lib/__tests__/payout-custody-formula.test.ts`: Added 2 P1-2 regression tests: (1) single applied adjustment must be included in lifetime balance; (2) mix of applied+unapplied adjustments with prior payout reconciles to 0.
+
+### What it affects / could break
+- Balance endpoint: after a payout with adjustments is paid, the remaining balance is now correct (was showing phantom positive balance equal to the adjustment amount). A business with only negative applied adjustments will now show a LOWER balance than before (correct — the platform already paid out those funds).
+- Approve route: same fix. A payout that passed the old check (which excluded applied adjustments) might now be blocked if the applied adjustment effect makes the balance lower. This is correct — the old check overstated available balance.
+- Generate/auto-payout: NOT affected — they correctly use unapplied-only for period-specific computation.
+
 ## 2026-10-15 — fix(payments): canonical payout formula — computePlatformHeldTotals (#628 P1/P2 fix pass 3)
 
 ### What changed

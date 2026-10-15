@@ -63,7 +63,10 @@ export async function GET(request: NextRequest) {
     const total_revenue = bookingGross + orderGross + invoiceGross - totalRefunds;
 
     // Payout basis: already-paid and pending payouts (shared across both modes)
-    const [{ data: payouts }, { data: pendingPayouts }, { data: adjustments }] = await Promise.all([
+    // Adjustments: fetch ALL for the lifetime balance, unapplied-only for display.
+    // Prior payouts' net_amount already includes applied adjustments; including them
+    // again in the lifetime sum cancels correctly (P1-2 fix).
+    const [{ data: payouts }, { data: pendingPayouts }, { data: allAdjustments }, { data: pendingAdjustmentRows }] = await Promise.all([
       supabase
         .from('business_payouts')
         .select('net_amount, status')
@@ -77,13 +80,18 @@ export async function GET(request: NextRequest) {
       supabase
         .from('payout_adjustments')
         .select('amount')
+        .eq('business_id', businessId),
+      supabase
+        .from('payout_adjustments')
+        .select('amount')
         .eq('business_id', businessId)
         .is('applied_to_payout_id', null),
     ]);
 
     const paidOut = (payouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
     const pending = (pendingPayouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
-    const pendingAdjustments = (adjustments || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
+    const allAdjustmentSum = (allAdjustments || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
+    const pendingAdjustments = (pendingAdjustmentRows || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
 
     // Payout-basis gross, fees, and net — derived from platform_fees custody classification
     let gross: number;
@@ -104,7 +112,7 @@ export async function GET(request: NextRequest) {
       const settings = await loadPlatformSettings({ useServiceClient: true });
       const pct = payoutAccount?.platform_percentage ?? settings.default_platform_fee_percent;
       totalFees = Math.round(gross * (pct / 100));
-      netAvailable = Math.max(0, gross - totalFees - paidOut - pending + pendingAdjustments);
+      netAvailable = Math.max(0, gross - totalFees - paidOut - pending + allAdjustmentSum);
     } else {
       // platform_managed: derive gross and net from custody-classified platform_fees rows.
       // This is the authoritative payout basis — matches generate and auto-payout exactly.
@@ -115,7 +123,7 @@ export async function GET(request: NextRequest) {
         .is('refunded_at', null);
 
       const allPriorPayouts = [...(payouts || []), ...(pendingPayouts || [])];
-      const totals = computePlatformHeldTotals(platformFees || [], adjustments || [], allPriorPayouts);
+      const totals = computePlatformHeldTotals(platformFees || [], allAdjustments || [], allPriorPayouts);
       gross = totals.gross;
       totalFees = totals.totalFees + totals.gatewayFees;
       netAvailable = totals.netAvailable;
