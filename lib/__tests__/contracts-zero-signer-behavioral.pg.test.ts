@@ -154,8 +154,11 @@ describeDb('Migration 450: DB-level zero-signer trigger — behavioral', () => {
   // ── Core behavioral assertion ────────────────────────────────────────────
 
   it('trigger installed: contracts_zero_signer_guard exists on public.contracts', () => {
+    // information_schema.triggers has one row per event type, so a BEFORE INSERT OR UPDATE
+    // trigger appears as two rows. Count distinct trigger names to assert "the trigger
+    // exists exactly once" regardless of how many event types it covers.
     const r = sql(`
-      SELECT COUNT(*) FROM information_schema.triggers
+      SELECT COUNT(DISTINCT trigger_name) FROM information_schema.triggers
        WHERE event_object_schema = 'public'
          AND event_object_table  = 'contracts'
          AND trigger_name        = 'contracts_zero_signer_guard';
