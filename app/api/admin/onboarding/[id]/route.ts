@@ -45,6 +45,41 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ success: true });
   }
 
+  if (action === 'ensure_shared_channel') {
+    const limit = await rateLimitResponseAsync(`admin-shared-channel:${onboarding.id}`, 5, 60 * 60_000);
+    if (limit) return limit;
+    if (!onboarding.business_id || !onboarding.target_user_id || ['cancelled', 'failed'].includes(onboarding.status)) {
+      return NextResponse.json({ error: 'Business onboarding is not eligible for shared routing' }, { status: 409 });
+    }
+    const { data: business, error: bizError } = await service.from('businesses')
+      .select('id, owner_id, country_code, wa_method, status')
+      .eq('id', onboarding.business_id).maybeSingle();
+    if (bizError || !business || business.owner_id !== onboarding.target_user_id) {
+      return NextResponse.json({ error: 'Business ownership could not be verified' }, { status: 409 });
+    }
+    // Never silently replace an already connected business-owned WABA.
+    if (business.wa_method !== 'shared' || !['pending', 'active'].includes(business.status)) {
+      return NextResponse.json({ error: 'This business requires an explicit owner-led channel transition' }, { status: 409 });
+    }
+    const { data: allocation, error: allocationError } = await service.rpc('allocate_shared_channel', {
+      p_business_id: business.id,
+      p_country_code: business.country_code,
+    });
+    if (allocationError || !allocation || !(allocation as { allocated?: boolean }).allocated) {
+      return NextResponse.json({ error: 'No eligible shared channel could be allocated. Check country-specific platform routing.' }, { status: 409 });
+    }
+    const { error: auditError } = await logAdminAudit({
+      actorId: admin.userId, action: 'admin_onboarding_shared_channel_reallocation',
+      entityType: 'admin_onboarding', entityId: onboarding.id,
+      details: { business_id: business.id, country_code: business.country_code },
+    });
+    if (auditError) return NextResponse.json({
+      error: 'Shared allocation applied but the audit record failed; reconcile before further changes.',
+      mutationApplied: true, auditRecorded: false,
+    }, { status: 207 });
+    return NextResponse.json({ success: true, recheck_readiness: true });
+  }
+
   if (action === 'whatsapp_instructions') {
     // Admins can guide owners, never complete Meta OAuth/OTP on the owner's behalf.
     // Only send the customer-owned dashboard link; do not mint an admin-access token.
