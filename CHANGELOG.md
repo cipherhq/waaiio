@@ -3,6 +3,14 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(tests): add is_direct_transfer: false to cron mock data (#628 follow-up)
+
+### What changed
+- `lib/__tests__/admin-bearer-route-handlers.test.ts`: Five `platform_fees` mock rows in cron auto-payout tests were missing `is_direct_transfer: false`. After the `=== false` fix these rows were excluded (null ≠ false), causing the cron to see no payable fees and return 500. Added the field to all five mock rows.
+
+### What it affects / could break
+- No production code changed. Test-only fix. 31/31 tests in affected suite pass; full suite 13,019 pass.
+
 ## 2026-10-15 — fix(security): P1/P2 payment integrity hardening (#628 follow-up)
 
 ### What changed
