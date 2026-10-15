@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { adminApiFetch, adminApiGet } from '@/lib/adminApi';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface WhatsAppSetup {
   requested_method: string;
@@ -8,6 +9,7 @@ interface WhatsAppSetup {
   country_code: string | null;
   bot_code: string | null;
   channel_ready: boolean;
+  whatsapp_link: string | null;
   channel_type: string | null;
   connection_status: string | null;
   owner_connection_required: boolean;
@@ -126,6 +128,10 @@ export default function WhatsAppAssistance() {
                 <p className="text-xs text-gray-500">Current: {setup?.current_method || '—'}; {setup?.channel_type || 'unassigned'}</p>
                 {setup?.bot_code && <p className="text-xs text-gray-500">Bot code: {setup.bot_code}</p>}
                 <p className="text-xs text-gray-500">Business: {setup?.business_status || 'pending'}</p>
+                {setup?.whatsapp_link && <div className="mt-2 flex items-center gap-2">
+                  <QRCodeSVG value={setup.whatsapp_link} size={76} aria-label="Verified business WhatsApp QR code" />
+                  <a href={setup.whatsapp_link} target="_blank" rel="noopener noreferrer" className="max-w-44 break-all text-xs font-medium text-brand underline">Test active WhatsApp link</a>
+                </div>}
               </td>
               <td className="p-3">
                 {setup?.owner_connection_required ? <button type="button"
