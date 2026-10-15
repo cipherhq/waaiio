@@ -3831,17 +3831,14 @@ export class BotService {
     if (!lang || lang === 'en') {
       return this.sendPlatformText(to, text);
     }
+    let textToSend = text;
     try {
-      const tier = session.business_id
-        ? (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free'
-        : 'free';
-      const tCtx = await this.buildTranslationContext(session.business_id || null, tier);
-      const translated = await translateBotResponse(text, lang, tCtx, opts);
-      return this.sendPlatformText(to, translated);
+      const tCtx = await this.buildTranslationContext(null, 'free');
+      textToSend = await translateBotResponse(text, lang, tCtx, opts);
     } catch (err) {
       logger.error('[BOT] sendPlatformLocalizedText translation error (sending English):', err);
-      return this.sendPlatformText(to, text);
     }
+    return this.sendPlatformText(to, textToSend);
   }
 
   /** Build TranslationContext for a business — resolves entitlement from tier + configured languages */
