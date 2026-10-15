@@ -377,7 +377,7 @@ REVOKE ALL ON FUNCTION public.contract_signers_enforce_signed_lock() FROM PUBLIC
 
 DROP TRIGGER IF EXISTS contract_signers_lock_on_signed ON public.contract_signers;
 CREATE TRIGGER contract_signers_lock_on_signed
-  BEFORE UPDATE OR DELETE ON public.contract_signers
+  BEFORE INSERT OR UPDATE OR DELETE ON public.contract_signers
   FOR EACH ROW
   EXECUTE FUNCTION public.contract_signers_enforce_signed_lock();
 
@@ -628,6 +628,21 @@ BEGIN
       '449 SELF-CHECK FAILED: contract_signers_lock_on_signed trigger not found';
   END IF;
 
+  -- Verify the trigger covers INSERT — prevents new signer rows from being added
+  -- to an already-signed contract.  information_schema.triggers has one row per
+  -- event type, so this check explicitly queries for event_manipulation = 'INSERT'.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.triggers
+     WHERE event_object_schema = 'public'
+       AND event_object_table  = 'contract_signers'
+       AND trigger_name        = 'contract_signers_lock_on_signed'
+       AND event_manipulation  = 'INSERT'
+  ) THEN
+    RAISE EXCEPTION
+      '449 SELF-CHECK FAILED: contract_signers_lock_on_signed does not cover INSERT — '
+      'new signer rows can be inserted into an already-signed contract';
+  END IF;
+
   RAISE NOTICE
     '449_least_privilege_acl: PASS — '
     'PUBLIC revoked on all six tables, anon excluded, meta_access_token blocked, '
@@ -637,6 +652,6 @@ BEGIN
     'contracts/contract_templates/waiver_templates accessible to authenticated, '
     'service_role full access confirmed, '
     'signing_mode immutability trigger installed, '
-    'contract_signers lock-on-signed trigger installed';
+    'contract_signers lock-on-signed trigger covers INSERT OR UPDATE OR DELETE';
 END;
 $$;

@@ -3,6 +3,45 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 6 — ChatGPT round 2 P1 fix
+
+### What changed (rev 6 — ChatGPT round 2 review response at SHA 14f93cb2)
+
+**P1: contract_signers_lock_on_signed trigger extended to cover INSERT**
+- Changed `BEFORE UPDATE OR DELETE` → `BEFORE INSERT OR UPDATE OR DELETE` on the
+  `contract_signers_lock_on_signed` trigger in M449.
+- Problem: authenticated has column-level INSERT on `contract_signers` (M449 lines 163–168).
+  Without INSERT coverage, a new signer row could be inserted into an already-signed contract,
+  leaving a signed contract with an unsigned signer — undermining audit integrity.
+- Function `contract_signers_enforce_signed_lock()` already handled INSERT correctly via
+  `COALESCE(OLD.contract_id, NEW.contract_id)` and `RETURN COALESCE(NEW, OLD)`. No
+  function body changes needed.
+- M449 §8.11 self-check: added explicit INSERT event check using
+  `information_schema.triggers WHERE event_manipulation = 'INSERT'`. Updated RAISE NOTICE
+  to confirm `INSERT OR UPDATE OR DELETE` coverage.
+
+**Minor hardening: signing-link rate-limit response now has Cache-Control: no-store**
+- The `if (rl) return rl` early-return in `signing-link/route.ts` previously bypassed
+  `noCache()`. Fixed by cloning the rate-limit `Response` into a `NextResponse` before
+  applying `noCache()`. All responses from this endpoint now consistently carry
+  `Cache-Control: no-store, Pragma: no-cache`.
+
+**Test additions (rev 6)**
+- `contracts-whatsapp-channels-acl.pg.test.ts` — Section N: added 3 new INSERT tests:
+  (1) INSERT blocked after signing via service_role, (2) INSERT blocked for authenticated
+  after signing (accepts both lock-trigger and privilege-denial errors), (3) INSERT allowed
+  before signing (pre-signed contract must still accept new signers).
+- `contracts-zero-signer-behavioral.pg.test.ts` — added defense-in-depth test: installs
+  M449 lock trigger inline, confirms M450 allows the signing transition (all signers
+  signed), then confirms the lock trigger blocks a post-signing INSERT. Drops trigger
+  after test to avoid interfering with afterAll cleanup.
+
+### What it affects / could break
+- `contract_signers_lock_on_signed` now fires on INSERT: any code that inserts a signer
+  row after the parent contract is already `signed` will fail with
+  `integrity_constraint_violation`. No such app path exists; the send-signers route
+  validates contract status before adding signers.
+
 ## 2026-10-15 — fix(security): M449/450 ACL hardening rev 5 — ChatGPT P1/P2 review fixes
 
 ### What changed (rev 5 — ChatGPT review response at SHA 6ce2c70a)

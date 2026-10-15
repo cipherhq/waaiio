@@ -1182,4 +1182,120 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
     sql(`DELETE FROM public.contract_signers WHERE id = '${signerId}';`);
     sql(`DELETE FROM public.contracts WHERE id = '${contractId}';`);
   });
+
+  it('N: INSERT blocked after signing — service_role cannot add a signer row to a signed contract', () => {
+    // This tests the P1 fix: the trigger now covers INSERT so a new signer row
+    // cannot be sneaked into an already-signed contract (which would leave a signed
+    // contract with an unsigned signer, undermining audit integrity).
+    const contractId = '00000000-0000-0000-0000-000000449bc5';
+    const existId    = '00000000-0000-0000-0000-000000449bc6';
+    const newId      = '00000000-0000-0000-0000-000000449bc7';
+
+    // Setup: single-mode contract with one existing signer, mark it signed
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contracts (id, business_id, title, token, status, signing_mode)
+        VALUES ('${contractId}', '${BIZ_ID}', 'Insert Lock Test', 'tok449ilk0001', 'pending', 'single');
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${existId}', '${contractId}', '+2348002220001', 'tok449ils001', 'signed');
+      UPDATE public.contracts SET status = 'signed' WHERE id = '${contractId}';
+      COMMIT;
+    `);
+
+    // Attempt to INSERT a new signer row — lock trigger must block this
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${newId}', '${contractId}', '+2348002220002', 'tok449ils002', 'pending');
+      COMMIT;
+    `);
+    expect(r).toMatch(/locked|integrity_constraint_violation|23000/i);
+
+    // Verify the row was NOT inserted
+    const count = sql(`SELECT COUNT(*) FROM public.contract_signers WHERE id = '${newId}';`);
+    expect(count).toBe('0');
+
+    // Cleanup: reset status so lock trigger allows DELETE
+    sql(`UPDATE public.contracts SET status = 'pending' WHERE id = '${contractId}';`);
+    sql(`DELETE FROM public.contract_signers WHERE contract_id = '${contractId}';`);
+    sql(`DELETE FROM public.contracts WHERE id = '${contractId}';`);
+  });
+
+  it('N: INSERT blocked for authenticated after signing — authenticated cannot add a signer to a signed contract', () => {
+    // Authenticated has column-level INSERT on some contract_signers columns (M449 lines 163–168).
+    // The lock trigger must also block authenticated inserts into signed contracts.
+    // Note: authenticated also lacks INSERT on token (NOT NULL, no default) so the
+    // block may manifest as a privilege error before the trigger fires; both correctly
+    // prevent the insert.
+    const contractId = '00000000-0000-0000-0000-000000449bc8';
+    const existId    = '00000000-0000-0000-0000-000000449bc9';
+    const newId      = '00000000-0000-0000-0000-000000449bca';
+
+    // Setup via service_role: signed contract with one existing signer
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contracts (id, business_id, title, token, status, signing_mode)
+        VALUES ('${contractId}', '${BIZ_ID}', 'Auth Insert Lock', 'tok449ailk001', 'pending', 'single');
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${existId}', '${contractId}', '+2348002221001', 'tok449ails001', 'signed');
+      UPDATE public.contracts SET status = 'signed' WHERE id = '${contractId}';
+      COMMIT;
+    `);
+
+    // Attempt INSERT as authenticated (business owner via RLS).
+    // Expected: blocked by lock trigger (integrity_constraint_violation / 23000) OR by
+    // privilege check (permission denied / 42501) — both prevent the row from being inserted.
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE authenticated;
+      SET LOCAL request.jwt.claim.sub = '${OWNER_ID}';
+      INSERT INTO public.contract_signers (contract_id, signer_phone)
+        VALUES ('${contractId}', '+2348002221002');
+      COMMIT;
+    `);
+    expect(r).toMatch(/locked|integrity_constraint_violation|23000|permission denied|42501|null value.*token|violates not-null/i);
+
+    // Verify the row was NOT inserted
+    const count = sql(`SELECT COUNT(*) FROM public.contract_signers WHERE id = '${newId}';`);
+    expect(count).toBe('0');
+
+    // Cleanup
+    sql(`UPDATE public.contracts SET status = 'pending' WHERE id = '${contractId}';`);
+    sql(`DELETE FROM public.contract_signers WHERE contract_id = '${contractId}';`);
+    sql(`DELETE FROM public.contracts WHERE id = '${contractId}';`);
+  });
+
+  it('N: INSERT allowed before signing — signer can be added to a non-signed contract', () => {
+    // Confirm the lock trigger does NOT block INSERT when the parent contract is still
+    // in a pre-signed state.
+    const contractId = '00000000-0000-0000-0000-000000449bcb';
+    const newId      = '00000000-0000-0000-0000-000000449bcc';
+
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contracts (id, business_id, title, token, status, signing_mode)
+        VALUES ('${contractId}', '${BIZ_ID}', 'Pre-Sign Insert', 'tok449psi0001', 'active', 'parallel');
+      COMMIT;
+    `);
+
+    // INSERT a signer while contract is still 'active' — must succeed
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${newId}', '${contractId}', '+2348002222001', 'tok449psi001', 'pending');
+      COMMIT;
+    `);
+    expect(r).not.toMatch(/ERROR|locked/i);
+
+    const count = sql(`SELECT COUNT(*) FROM public.contract_signers WHERE id = '${newId}';`);
+    expect(count).toBe('1');
+
+    sql(`DELETE FROM public.contract_signers WHERE contract_id = '${contractId}';`);
+    sql(`DELETE FROM public.contracts WHERE id = '${contractId}';`);
+  });
 });

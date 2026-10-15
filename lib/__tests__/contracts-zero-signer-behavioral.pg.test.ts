@@ -396,4 +396,102 @@ describeDb('Migration 450: DB-level zero-signer trigger — behavioral', () => {
     // Triggers invoke the function as the trigger owner, not as the calling role.
     expect(r).toBe('f');
   });
+
+  // ── Defense-in-depth: lock trigger + M450 guard ──────────────────────────
+  //
+  // M450 guards the TRANSITION: a contract cannot move to 'signed' unless all
+  // signers have status='signed'.  The M449 lock trigger guards POST-SIGNING
+  // MUTATIONS: once a contract is 'signed', no new signer rows can be inserted
+  // (which would leave a signed contract with an unsigned signer).
+  //
+  // This test installs the M449 lock trigger locally, exercises both layers,
+  // then removes the trigger so it does not interfere with afterAll cleanup.
+
+  it('defense-in-depth: INSERT blocked after parent contract is signed (lock trigger guards post-signing mutations)', () => {
+    const cId   = '00000000-0000-0000-0000-000000450d01';
+    const s1Id  = '00000000-0000-0000-0000-000000450d02';
+    const s2Id  = '00000000-0000-0000-0000-000000450d03';
+    const newId = '00000000-0000-0000-0000-000000450d04';
+
+    // Install the M449 lock trigger for this test only.
+    // CREATE OR REPLACE + DROP IF EXISTS make this idempotent.
+    sql(`
+      CREATE OR REPLACE FUNCTION public.contract_signers_enforce_signed_lock()
+      RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = public, pg_temp AS $$
+      DECLARE v_contract_status TEXT;
+      BEGIN
+        SELECT status INTO v_contract_status FROM public.contracts
+         WHERE id = COALESCE(OLD.contract_id, NEW.contract_id);
+        IF v_contract_status = 'signed' THEN
+          RAISE EXCEPTION
+            'contract_signers: row % is locked — parent contract % is already signed',
+            COALESCE(OLD.id, NEW.id), COALESCE(OLD.contract_id, NEW.contract_id)
+            USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN COALESCE(NEW, OLD);
+      END;
+      $$;
+
+      DROP TRIGGER IF EXISTS contract_signers_lock_on_signed ON public.contract_signers;
+      CREATE TRIGGER contract_signers_lock_on_signed
+        BEFORE INSERT OR UPDATE OR DELETE ON public.contract_signers
+        FOR EACH ROW
+        EXECUTE FUNCTION public.contract_signers_enforce_signed_lock();
+    `);
+
+    // Setup: multi-signer contract with two fully-signed signers
+    sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contracts (id, business_id, title, token, status, signing_mode)
+        VALUES ('${cId}', '${BIZ_ID}', 'DepthGuard', 'tok450dep00001', 'active', 'parallel')
+        ON CONFLICT (id) DO NOTHING;
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${s1Id}', '${cId}', '+2348000000010', 'tok450depsgn01', 'signed')
+        ON CONFLICT (id) DO NOTHING;
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${s2Id}', '${cId}', '+2348000000011', 'tok450depsgn02', 'signed')
+        ON CONFLICT (id) DO NOTHING;
+      COMMIT;
+    `);
+
+    // Transition contract to signed — M450 allows because all signers have status='signed'
+    const signResult = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE public.contracts SET status = 'signed' WHERE id = '${cId}';
+      COMMIT;
+    `);
+    expect(signResult).not.toMatch(/ERROR|cannot mark contract/i);
+
+    const status = sql(`SELECT status FROM public.contracts WHERE id = '${cId}';`);
+    expect(status).toBe('signed');
+
+    // Defense-in-depth: attempt to INSERT a new signer into the now-signed contract.
+    // M450 only fires on the contracts UPDATE transition — it does not guard post-signing
+    // inserts into contract_signers.  The M449 lock trigger fills this gap.
+    const r = sql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, token, status)
+        VALUES ('${newId}', '${cId}', '+2348000000012', 'tok450depsgn03', 'pending');
+      COMMIT;
+    `);
+    expect(r).toMatch(/locked|integrity_constraint_violation|23000/i);
+
+    // Verify the new signer was NOT inserted
+    const count = sql(`SELECT COUNT(*) FROM public.contract_signers WHERE id = '${newId}';`);
+    expect(count).toBe('0');
+
+    // Cleanup: reset status so the lock trigger allows subsequent DELETEs
+    sql(`UPDATE public.contracts SET status = 'pending' WHERE id = '${cId}';`);
+    sql(`DELETE FROM public.contract_signers WHERE contract_id = '${cId}';`);
+    sql(`DELETE FROM public.contracts WHERE id = '${cId}';`);
+
+    // Remove lock trigger so it does not interfere with afterAll cleanup of the
+    // main CONTRACT_ID contract (which is already 'signed').
+    sql(`DROP TRIGGER IF EXISTS contract_signers_lock_on_signed ON public.contract_signers;`);
+    sql(`DROP FUNCTION IF EXISTS public.contract_signers_enforce_signed_lock();`);
+  });
 });

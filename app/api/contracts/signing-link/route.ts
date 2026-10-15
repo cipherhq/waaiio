@@ -38,7 +38,10 @@ export async function GET(request: NextRequest) {
     30,
     60_000,
   );
-  if (rl) return rl;
+  if (rl) {
+    // Clone into NextResponse so noCache() headers apply to the 429 response.
+    return noCache(new NextResponse(rl.body, { status: rl.status, headers: rl.headers }));
+  }
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
