@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(bot): CAS conditional deactivation for stale null-biz sessions (#645)
+
+### What changed
+- `bot.service.ts` site (a) — inline 23505 recovery in `handleMessage`: stale expired null-biz session deactivation now uses a CAS update guarded by `.eq('is_active', true).lt('expires_at', now).eq('version', existing.version)` plus `.select('id')`. If 0 rows updated (concurrent renewal by another worker), re-reads the session; resumes if now active+unexpired, fails closed otherwise. Does NOT retry insert on CAS success.
+- `bot.service.ts` site (b) — expiry deactivation in `createNullBizSuggestionSession`: same CAS pattern. 0 rows → re-read → return renewed session; CAS success → return null (fail closed). No retry insert.
+- Both sites explicitly bump `version: (existing.version ?? 0) + 1` in the update payload. No trigger auto-increments version on `bot_sessions`; it must be set explicitly. The `update_bot_sessions_updated_at` trigger only sets `updated_at`; `trg_bot_session_deactivate` only sets `last_active_at`.
+- `lib/__tests__/stale-null-session.test.ts`: updated tests 1, 2, 10 to assert fail-closed behavior (no retry insert; "Something went wrong" reply sent). Added tests 18 (site A CAS 0-rows race → resumed session) and 19 (site B CAS 0-rows race → resumed session returned, business-picker sent). 19/19 pass.
+- `lib/bot/__tests__/session-resilience.test.ts`: added 15 new tests covering version-trigger absence, CAS guards on both sites, 0-rows resume path, explicit version bump, and behavioral mock tests.
+
+### What it affects / could break
+- Concurrent WhatsApp messages to an expired null-biz session: second concurrent request that loses the CAS race now gets "Something went wrong; send Hi to start over" instead of potentially creating a duplicate session or crashing. Active, unexpired sessions are never incorrectly deactivated.
+- No schema changes. `bot_sessions.version` column was added in migration 236.
+
 ## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
 
 ### What changed

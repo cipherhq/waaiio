@@ -2,7 +2,7 @@
  * Stale null-business session fix tests.
  *
  * Verifies:
- * 1. Expired null-biz session is deactivated and retry insert succeeds → business routes correctly
+ * 1. Expired null-biz session is deactivated (CAS); no retry insert → fail closed with one error reply
  * 2. "Hi" on shared number with stale session → platform-scoped reply, no MessagingSuspendedError
  * 3. Brand-new phone, "Hi", no business → platform reply, no crash
  * 4. Returning customer with past businesses, "Hi" → "Welcome back" sent platform-scoped
@@ -164,7 +164,7 @@ describe('Stale null-business session fix', () => {
     vi.clearAllMocks();
   });
 
-  it('1. stale expired null-biz session: 23505 deactivates stale row, retry succeeds, platform reply sent', async () => {
+  it('1. stale expired null-biz session: 23505 CAS deactivates stale row, fail closed (no retry insert)', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
 
@@ -208,10 +208,20 @@ describe('Stale null-business session fix', () => {
       return okChain;
     });
 
+    // Sequence counter for from('bot_sessions'):
+    // n=1: cleanup delete, n=2: insert (23505), n=3: re-read (expiredStaleSession),
+    // n=4: CAS update (return non-empty → CAS success), n=5+: retry insert + others
+    let sessN1 = 0;
     const supabase = {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'platform_settings') return makeChain({ value: false });
         if (table === 'bot_sessions') {
+          sessN1++;
+          const n = sessN1;
+          if (n === 4) {
+            // CAS update — return non-empty array to signal CAS succeeded
+            return makeChain([{ id: expiredStaleSession.id }]);
+          }
           const chain = makeChain(null);
           chain.insert = insertFn;
           // Recovery query: returns expired stale null-biz session
@@ -231,27 +241,27 @@ describe('Stale null-business session fix', () => {
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
     await bot.handleMessage('+234800', 'sometext', 'text', 'pnid-1');
 
-    // The stale session should trigger deactivation + retry
-    expect(insertCallCount).toBe(2); // first 23505, then retry
+    // CAS guard: deactivation succeeded (n=4 returns non-empty) → NO retry insert
+    expect(insertCallCount).toBe(1); // only the initial 23505 insert — no retry
 
     // Platform-scoped reply was delivered (no crash from MessagingSuspendedError)
     const textCalls = cloud.sendText.mock.calls;
     expect(textCalls.length).toBeGreaterThan(0);
 
-    // The stale session was deactivated (update called with is_active: false)
+    // The stale session was deactivated (update called via CAS)
     const updateCalls = supabase.from.mock.calls.filter(
       (c: any[]) => c[0] === 'bot_sessions'
     );
     expect(updateCalls.length).toBeGreaterThan(0);
 
-    // No "Something went wrong" fallback
+    // Exactly one recoverable error reply — no double-send
     const fallbackCalls = cloud.sendText.mock.calls.filter(
       (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Something went wrong')
     );
-    expect(fallbackCalls.length).toBe(0);
+    expect(fallbackCalls.length).toBe(1);
   });
 
-  it('2. stale expired null-biz session + "Hi": platform-scoped reply, no MessagingSuspendedError', async () => {
+  it('2. stale expired null-biz session + "Hi": CAS deactivation → fail closed, no MessagingSuspendedError', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     mockDetectionResult = { businessId: null, suggestions: [] };
@@ -273,10 +283,15 @@ describe('Stale null-business session fix', () => {
     };
 
     let insertCallCount = 0;
+    // n=1: cleanup, n=2: insert (23505), n=3: re-read, n=4: CAS (success), n=5+: retry insert
+    let sessN2 = 0;
     const supabase = {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'platform_settings') return makeChain({ value: false });
         if (table === 'bot_sessions') {
+          sessN2++;
+          const n = sessN2;
+          if (n === 4) return makeChain([{ id: expiredSession.id }]);
           const chain = makeChain(null);
           chain.insert = vi.fn().mockImplementation(() => {
             insertCallCount++;
@@ -311,11 +326,11 @@ describe('Stale null-business session fix', () => {
     // Should NOT throw — previously this would crash with MessagingSuspendedError
     await expect(bot.handleMessage('+234800', 'Hi', 'text', 'pnid-1')).resolves.toBeUndefined();
 
-    // Platform-scoped reply was sent (Welcome to Waaiio or similar)
+    // Platform-scoped recoverable error reply (CAS succeeded → fail closed; no retry insert)
     const textCalls = cloud.sendText.mock.calls;
     expect(textCalls.length).toBeGreaterThan(0);
-    const sentText = textCalls[0]?.[0]?.text || '';
-    expect(sentText).toContain('Welcome to Waaiio');
+    const allSentText = textCalls.map((c: any[]) => c[0]?.text || '').join(' ');
+    expect(allSentText).toContain('Something went wrong');
   });
 
   it('3. brand-new phone, "Hi", no business: platform reply, no crash', async () => {
@@ -638,7 +653,7 @@ describe('Stale null-business session fix', () => {
 
   // ── Fix 2: 23505 recovery uses effective session, not null newSession ──
 
-  it('10. insert 23505, expired row, retry succeeds: flow continues with retried session id', async () => {
+  it('10. insert 23505, expired row, CAS deactivation succeeds: fail closed (no retry insert, insertCount=1)', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     mockDetectionResult = { businessId: null, suggestions: [] };
@@ -670,10 +685,15 @@ describe('Stale null-business session fix', () => {
       ic.select = vi.fn().mockImplementation(() => makeChain(retriedSession, false));
       return ic;
     });
+    // n=1: cleanup, n=2: insert (23505), n=3: re-read, n=4: CAS (success), n=5+: retry insert
+    let sessN10 = 0;
     const supabase = {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'platform_settings') return makeChain({ value: false });
         if (table === 'bot_sessions') {
+          sessN10++;
+          const n = sessN10;
+          if (n === 4) return makeChain([{ id: expiredNull.id }]);
           const chain = makeChain(null);
           chain.insert = sharedInsert;
           chain.single = vi.fn().mockResolvedValue({ data: expiredNull, error: null });
@@ -686,11 +706,12 @@ describe('Stale null-business session fix', () => {
     };
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
     await bot.handleMessage('+234800', 'Hi', 'text');
-    expect(insertCount).toBe(2);
-    // A reply was sent (not stuck on null session)
+    // CAS guard: deactivation succeeded → no retry insert
+    expect(insertCount).toBe(1);
+    // A recoverable error reply is sent (exactly one)
     expect(cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length).toBeGreaterThan(0);
     const fb = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong'));
-    expect(fb.length).toBe(0);
+    expect(fb.length).toBe(1);
   });
 
   // ── Fix 3: CAS update concurrent change → null, fallback ──
@@ -972,6 +993,220 @@ describe('Stale null-business session fix', () => {
     expect((spyPT.mock.calls[0][0] as { text: string }).text).toContain('No problem');
     // NOT the translated version (translation failed)
     expect((spyPT.mock.calls[0][0] as { text: string }).text).not.toContain('[pcm]');
+  });
+
+  // ── #645 P2: CAS deactivation concurrency — both sites ──
+
+  it('18. SA inline CAS race: CAS returns 0 rows → renewed session resumed, no re-insert, 1 reply', async () => {
+    // Site (a): inline 23505 recovery in handleMessage.
+    // The expired session (version=5) is renewed concurrently; the CAS update returns 0 rows.
+    // Expected: NO retry insert, code resumes the renewed session and sends exactly 1 reply.
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    mockDetectionResult = { businessId: null, suggestions: [] };
+    mockReturningBusinesses = [];
+
+    const PAST_TS = new Date(Date.now() - 120_000).toISOString();
+    const FUTURE_TS = new Date(Date.now() + 86_400_000).toISOString();
+
+    const expiredSess = {
+      id: 'sess-cas-a', whatsapp_number: '+234800', business_id: null,
+      current_step: 'select_business_suggestion', is_active: true,
+      version: 5, expires_at: PAST_TS,
+      session_data: { suggestions: [] }, conversation_log: [], user_id: null,
+      last_active_at: new Date().toISOString(),
+    };
+    const renewedSess = {
+      ...expiredSess, version: 6, expires_at: FUTURE_TS,
+    };
+
+    let botSessionsN = 0;
+    let insertCallCount = 0;
+
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          botSessionsN++;
+          const n = botSessionsN;
+          if (n === 1) return makeChain(null); // cleanup delete
+          if (n === 2) {
+            // insert → 23505
+            insertCallCount++;
+            const c = makeChain(null);
+            c.insert = vi.fn().mockImplementation(() => {
+              const ic = makeChain(null, true);
+              ic.select = vi.fn().mockImplementation(() => {
+                const sc = makeChain(null, false);
+                sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+                return sc;
+              });
+              return ic;
+            });
+            return c;
+          }
+          if (n === 3) {
+            // re-read after 23505 → expired session
+            const c = makeChain(expiredSess);
+            c.single = vi.fn().mockResolvedValue({ data: expiredSess, error: null });
+            return c;
+          }
+          if (n === 4) {
+            // CAS update → 0 rows (concurrent renewal)
+            return makeChain([], true);
+          }
+          if (n === 5) {
+            // re-read → renewed session
+            const c = makeChain(renewedSess);
+            c.single = vi.fn().mockResolvedValue({ data: renewedSess, error: null });
+            return c;
+          }
+          return makeChain(null);
+        }
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({
+            ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }),
+          });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockImplementation((name: string) => {
+        if (name === 'get_bot_context') {
+          return Promise.resolve({
+            data: { has_session: false, ambiguous: false, session: null, business: null, capabilities: null, capability_overrides: null },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: { success: true, version: 7 }, error: null });
+      }),
+    };
+
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', 'biz_no', 'text');
+
+    // Assert 1: only 1 insert (the original that hit 23505) — no retry
+    expect(insertCallCount).toBe(1);
+
+    // Assert 2: exactly 1 platform-scoped reply
+    const totalReplies = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length;
+    expect(totalReplies).toBe(1);
+
+    // Assert 3: no "Something went wrong" (graceful path, not error path)
+    const errorReplies = cloud.sendText.mock.calls.filter(
+      (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Something went wrong'),
+    );
+    expect(errorReplies.length).toBe(0);
+  });
+
+  it('19. SB helper CAS race: CAS returns 0 rows → renewed session returned from helper, no re-insert, 1 reply', async () => {
+    // Site (b): expiry deactivation inside createNullBizSuggestionSession.
+    // Triggered via switch_biz → recentBiz.length > 1 → helper called.
+    // Expected: NO retry insert, helper returns renewed session, caller sends 1 platform reply.
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    mockDetectionResult = { businessId: null, suggestions: [] };
+
+    const PAST_TS = new Date(Date.now() - 120_000).toISOString();
+    const FUTURE_TS = new Date(Date.now() + 86_400_000).toISOString();
+
+    const expiredSess = {
+      id: 'sess-cas-b', whatsapp_number: '+234800', business_id: null,
+      current_step: 'select_business_suggestion', is_active: true,
+      version: 5, expires_at: PAST_TS,
+      session_data: { suggestions: [] }, conversation_log: [], user_id: null,
+      last_active_at: new Date().toISOString(),
+    };
+    const renewedSess = {
+      ...expiredSess, version: 6, expires_at: FUTURE_TS,
+    };
+
+    let botSessionsN = 0;
+    let insertCallCount = 0;
+
+    // Make findReturningCustomerBusinesses return 2 businesses so switch_biz calls the helper.
+    const { findReturningCustomerBusinesses } = await import('@/lib/bot/handlers/bot-code-detection');
+    vi.mocked(findReturningCustomerBusinesses).mockResolvedValueOnce([
+      { id: 'biz-x', name: 'Biz X', bot_code: 'bizx' } as any,
+      { id: 'biz-y', name: 'Biz Y', bot_code: 'bizy' } as any,
+    ]);
+
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          botSessionsN++;
+          const n = botSessionsN;
+          if (n === 1) return makeChain(null); // bulk cleanup in helper (step a)
+          if (n === 2) {
+            // insert → 23505
+            insertCallCount++;
+            const c = makeChain(null);
+            c.insert = vi.fn().mockImplementation(() => {
+              const ic = makeChain(null, true);
+              ic.select = vi.fn().mockImplementation(() => {
+                const sc = makeChain(null, false);
+                sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+                return sc;
+              });
+              return ic;
+            });
+            return c;
+          }
+          if (n === 3) {
+            // re-read after 23505 → expired session
+            const c = makeChain(expiredSess);
+            c.single = vi.fn().mockResolvedValue({ data: expiredSess, error: null });
+            return c;
+          }
+          if (n === 4) {
+            // CAS update → 0 rows (concurrent renewal)
+            return makeChain([], true);
+          }
+          if (n === 5) {
+            // re-read → renewed session
+            const c = makeChain(renewedSess);
+            c.single = vi.fn().mockResolvedValue({ data: renewedSess, error: null });
+            return c;
+          }
+          return makeChain(null);
+        }
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({
+            ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }),
+          });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockImplementation((name: string) => {
+        if (name === 'get_bot_context') {
+          return Promise.resolve({
+            data: { has_session: false, ambiguous: false, session: null, business: null, capabilities: null, capability_overrides: null },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: { success: true, version: 7 }, error: null });
+      }),
+    };
+
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', 'switch_biz', 'text');
+
+    // Assert 1: only 1 insert (the original that hit 23505) — no retry after CAS race
+    expect(insertCallCount).toBe(1);
+
+    // Assert 2: exactly 1 platform-scoped reply (the "Which business?" picker buttons)
+    const totalReplies = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length;
+    expect(totalReplies).toBe(1);
+
+    // Assert 3: it was the business picker (buttons), not an error message
+    expect(cloud.sendButtons.mock.calls.length).toBe(1);
+    expect(cloud.sendText.mock.calls.filter(
+      (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Something went wrong'),
+    ).length).toBe(0);
   });
 
   it('17. biz_no with en session: no translate call, platform-scoped send', async () => {

@@ -1738,36 +1738,46 @@ export class BotService {
             .eq('is_active', true)
             .single();
           if (existingNullSession && !existingNullSession.business_id) {
-            // Check if the recovered session is expired — if so, deactivate and retry insert once
+            // Check if the recovered session is expired — CAS-conditional deactivation, no retry insert
             if (existingNullSession.expires_at && new Date(existingNullSession.expires_at) < new Date()) {
               logger.info('[BOT] #266 R4: Stale expired null-biz session detected, deactivating:', existingNullSession.id);
-              await this.supabase.from('bot_sessions')
-                .update({ is_active: false })
+              // CAS deactivation — conditional on version + is_active + expires_at to prevent
+              // deactivating a session that was concurrently renewed between our read and this update.
+              const casNowIso = new Date().toISOString();
+              const { data: casDeactivated } = await this.supabase.from('bot_sessions')
+                .update({ is_active: false, version: (existingNullSession.version ?? 0) + 1 })
                 .eq('id', existingNullSession.id)
-                .is('business_id', null);
-              // Retry the insert once
-              const { data: retrySession, error: retryError } = await this.supabase
-                .from('bot_sessions')
-                .insert({
-                  whatsapp_number: from,
-                  user_id: profile?.id || null,
-                  business_id: businessId,
-                  current_step: firstStep,
-                  session_data: sessionData,
-                  is_active: true,
-                  expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-                })
-                .select()
-                .single();
-              if (retryError || !retrySession) {
-                logger.error('[BOT] #266 R4: Retry insert after stale deactivation failed:', retryError?.message);
-                Sentry.captureException(retryError || new Error('Retry null-biz session insert returned no data'));
+                .is('business_id', null)
+                .eq('is_active', true)
+                .lt('expires_at', casNowIso)
+                .eq('version', existingNullSession.version ?? 0)
+                .select('id');
+              if (!casDeactivated || (casDeactivated as unknown[]).length === 0) {
+                // CAS got 0 rows — session was renewed concurrently between our read and update.
+                // Re-read to check its current state: do NOT retry the insert.
+                logger.info('[BOT] #266 R4: CAS deactivation got 0 rows (concurrent renewal?) — re-reading:', existingNullSession.id);
+                const { data: reReadSession } = await this.supabase.from('bot_sessions')
+                  .select('*').eq('id', existingNullSession.id).single();
+                const reRead = reReadSession as unknown as BotSession | null;
+                if (reRead && reRead.is_active && reRead.expires_at && new Date(reRead.expires_at) > new Date()) {
+                  // Session is now active and not expired — resume it instead of retrying insert
+                  session = reRead;
+                  logger.info('[BOT] #266 R4: Resumed renewed session after CAS race:', reRead.id);
+                } else {
+                  // Not recoverable — fail closed
+                  logger.error('[BOT] #266 R4: CAS race: session not renewable, failing closed:', existingNullSession.id);
+                  if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+                  await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  return;
+                }
+              } else {
+                // CAS succeeded — expired session cleared. Do NOT retry the insert to prevent
+                // a further race. Fail closed; the user can restart cleanly on the next message.
+                logger.info('[BOT] #266 R4: CAS deactivation succeeded; not retrying insert:', existingNullSession.id);
                 if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
                 await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
                 return;
               }
-              session = retrySession as unknown as BotSession;
-              logger.info('[BOT] #266 R4: Retry insert succeeded after stale deactivation:', retrySession.id);
             } else {
               // Safe: non-expired platform/disambiguation session with no business authority
               session = existingNullSession as BotSession;
@@ -3781,17 +3791,33 @@ export class BotService {
         .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true).single();
       if (existing && !existing.business_id) {
         if (existing.expires_at && new Date(existing.expires_at) < new Date()) {
-          // Expired (race) — deactivate and retry once
-          await this.supabase.from('bot_sessions').update({ is_active: false })
-            .eq('id', existing.id).is('business_id', null);
-          const { data: retry, error: retryErr } = await this.supabase.from('bot_sessions').insert({
-            whatsapp_number: from, user_id: userId, business_id: null,
-            current_step: 'select_business_suggestion', session_data: sessionData,
-            is_active: true, expires_at: new Date(Date.now() + ttlMs).toISOString(),
-          }).select().single();
-          if (!retryErr && retry) return retry as unknown as BotSession;
-          logger.error('[BOT] createNullBizSuggestionSession: retry failed:', retryErr?.message);
-          Sentry.captureException(retryErr || new Error('Null-biz suggestion session retry failed'));
+          // Expired (race) — CAS deactivation conditional on version + is_active + expires_at.
+          // Prevents deactivating a session renewed concurrently between our read and this update.
+          const expiryCutoff = new Date().toISOString();
+          const { data: casDead } = await this.supabase.from('bot_sessions')
+            .update({ is_active: false, version: (existing.version ?? 0) + 1 })
+            .eq('id', existing.id)
+            .is('business_id', null)
+            .eq('is_active', true)
+            .lt('expires_at', expiryCutoff)
+            .eq('version', existing.version ?? 0)
+            .select('id');
+          if (!casDead || (casDead as unknown[]).length === 0) {
+            // CAS got 0 rows — session was renewed concurrently; re-read rather than inserting.
+            logger.info('[BOT] createNullBizSuggestionSession: CAS got 0 rows (concurrent renewal?), re-reading:', existing.id);
+            const { data: reReadRaw } = await this.supabase.from('bot_sessions')
+              .select('*').eq('id', existing.id).single();
+            const reRead = reReadRaw as unknown as BotSession | null;
+            if (reRead && reRead.is_active && reRead.expires_at && new Date(reRead.expires_at) > new Date()) {
+              logger.info('[BOT] createNullBizSuggestionSession: resumed renewed session after CAS race:', reRead.id);
+              return reRead;
+            }
+            logger.error('[BOT] createNullBizSuggestionSession: CAS race — session not renewable, failing closed:', existing.id);
+            return null;
+          }
+          // CAS succeeded — stale session cleared. Do NOT retry the insert to prevent a
+          // further race; callers handle the null return with a recoverable error message.
+          logger.info('[BOT] createNullBizSuggestionSession: CAS deactivation succeeded, not retrying insert:', existing.id);
           return null;
         }
         // Not expired — update in place (CAS: version must match to prevent concurrent overwrites)
