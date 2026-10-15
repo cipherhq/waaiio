@@ -6,6 +6,7 @@ interface WhatsAppSetup {
   requested_method: string;
   current_method: string | null;
   business_status: string | null;
+  messaging_suspended: boolean;
   country_code: string | null;
   bot_code: string | null;
   channel_ready: boolean;
@@ -128,6 +129,7 @@ export default function WhatsAppAssistance() {
                 <p className="text-xs text-gray-500">Current: {setup?.current_method || '—'}; {setup?.channel_type || 'unassigned'}</p>
                 {setup?.bot_code && <p className="text-xs text-gray-500">Bot code: {setup.bot_code}</p>}
                 <p className="text-xs text-gray-500">Business: {setup?.business_status || 'pending'}</p>
+                {setup?.messaging_suspended && <p className="text-xs font-semibold text-red-700">Messaging suspended — do not share bot link until resolved</p>}
                 {setup?.whatsapp_link && <div className="mt-2 flex items-center gap-2">
                   <QRCodeSVG value={setup.whatsapp_link} size={76} aria-label="Verified business WhatsApp QR code" />
                   <a href={setup.whatsapp_link} target="_blank" rel="noopener noreferrer" className="max-w-44 break-all text-xs font-medium text-brand underline">Test active WhatsApp link</a>
