@@ -3,6 +3,65 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 3 — column tightening, zero-signer trigger, signing-link server route
+
+### What changed (rev 3 additions over rev 2)
+- **M449 column tightening:**
+  - `contracts` authenticated INSERT/UPDATE: removed `status` and `signed_at`.
+    All status transitions (pending→expired→signed/declined) go through service_role routes only (send, submit, decline, [token]).
+  - `contract_signers` authenticated INSERT/UPDATE: removed `status`, `signed_at`, `otp_verified`, `otp_attempts`, `otp_expires_at`.
+    These are all set by otp/send, otp/verify, and submit routes using service_role.
+  - `contract_signers` authenticated SELECT: removed `token`.
+    Signing tokens are now served only via the new `/api/contracts/signing-link` route (service_role lookup).
+  - Self-check §7 extended with assertions for all newly-blocked columns.
+- **New migration 450** (`450_contracts_zero_signer_trigger.sql`):
+  - DB-level `BEFORE UPDATE` trigger `contracts_zero_signer_guard` on `contracts`.
+  - Fires when `NEW.status='signed'` AND `signing_mode='multi'` AND no `contract_signers` rows exist for the contract.
+  - Raises `integrity_constraint_violation` (SQLSTATE 23000). Fires for all roles including service_role (triggers are not bypassed by BYPASSRLS).
+  - Includes self-check DO block.
+- **New server route** `app/api/contracts/signing-link/route.ts`:
+  - `GET /api/contracts/signing-link?signer_id=<uuid>` — fetches `contract_signers.token` server-side via service_role, verifies business ownership, returns `{ url: "/sign/<token>" }`.
+  - The raw token never reaches the browser as part of a column-level SELECT response.
+- **Dashboard update** `app/dashboard/contracts/page.tsx`:
+  - Removed `token` from `contract_signers` sub-select and TypeScript interface.
+  - "Sign Now" in list view: changed `<a href>` to `<button onClick>` that calls `/api/contracts/signing-link` and opens the URL.
+  - "Share Signing Link" panel: signing URL now fetched via API effect on `selectedContract` change.
+  - "Sign Now" in detail panel: uses `ownerSignUrl` state populated by API call.
+- **Bug fix** `app/dashboard/waivers/page.tsx`:
+  - Changed `select('*')` on `waiver_templates` to explicit column list matching M449's authenticated SELECT grant.
+    `select('*')` with column-level-only grants causes a Postgres permission error (no table-level SELECT).
+- **PG test updates** (`contracts-whatsapp-channels-acl.pg.test.ts`):
+  - `contract_signers.token` SELECT test flipped to expect `'f'`.
+  - Added assertions: `contracts.status` and `contracts.signed_at` blocked from authenticated INSERT.
+  - Added assertions: `contract_signers.status`, `otp_verified`, `otp_attempts` blocked from authenticated INSERT.
+- **New behavioral PG test** (`contracts-zero-signer-behavioral.pg.test.ts`):
+  - Applies M450 trigger against a real Postgres instance.
+  - Verifies: multi-signer contract with zero signers cannot be UPDATEd to status='signed' by any role.
+  - Verifies: single-signer contracts (signing_mode='single') are exempt.
+  - Verifies: once a signer row is added, the UPDATE succeeds.
+
+### Write paths verified (no authenticated writes to removed columns)
+- `contracts.status`: written only by submit/route.ts (service_role), decline/route.ts (service_role), [token]/route.ts (service_role).
+- `contracts.signed_at`: written only by submit/route.ts (service_role).
+- `contract_signers.status`: same three service_role routes as above.
+- `contract_signers.signed_at`: written only by submit/route.ts (service_role).
+- `contract_signers.otp_verified`, `otp_attempts`, `otp_expires_at`: written only by otp/verify/route.ts and otp/send/route.ts (both service_role).
+
+### whatsapp_channels write paths (reconciled)
+- All writes are in API routes under `app/api/whatsapp/` (NOT `app/api/channels/`):
+  - `app/api/whatsapp/add-number/route.ts` (line 82): SELECT only; INSERT goes to `whatsapp_channel_candidates`. Client: service_role.
+  - `app/api/whatsapp/embedded-signup/route.ts` (lines 145, 153, 183): INSERT and UPDATE on whatsapp_channels. Client: service_role.
+  - `app/api/settings/whatsapp-channel/route.ts` (line 31): SELECT only for ownership check. Client: service_role.
+  - `app/api/channels/request/route.ts` (line 42): SELECT only. Client: service_role (checked).
+  - Cron, lib, bot service: all use service_role.
+- Browser/dashboard components: `.select('phone_number')`, `.select('id', { count: 'exact' })`, `.select('phone_number, provider, display_name, ...')` — all within the M449 column-level SELECT grant. No INSERT/UPDATE/DELETE from any browser client.
+
+### What it affects / could break
+- Any route that attempts to UPDATE `contracts.status` via an authenticated (SSR) client will now get a privilege error. Confirmed all status-writing routes use service_role.
+- Any route that attempts to INSERT `contract_signers.otp_verified` via authenticated client will fail. Confirmed all OTP routes use service_role.
+- `contract_signers.token` no longer readable via authenticated SELECT — dashboard UI now calls `/api/contracts/signing-link` to get signing URLs. The "Share Signing Link" panel requires the API to respond before showing the QR code.
+- `waiver_templates select('*')` in waivers dashboard was silently broken after M449 (returns 42501 for columns outside the grant); now uses explicit column list.
+
 ## 2026-10-15 — fix(security): M449 least-privilege ACL for contracts, whatsapp_channels, and waivers (rev 2)
 
 ### What changed (rev 2 additions over original)

@@ -547,8 +547,26 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
     expect(r).toBe('t');
   });
 
+  it('post-migration: authenticated CANNOT INSERT status into contracts (all transitions are service_role)', () => {
+    const r = sql(`
+      SELECT has_column_privilege(
+        'authenticated', 'public.contracts', 'status', 'INSERT'
+      );
+    `);
+    expect(r).toBe('f');
+  });
+
+  it('post-migration: authenticated CANNOT INSERT signed_at into contracts (set by submit route via service_role)', () => {
+    const r = sql(`
+      SELECT has_column_privilege(
+        'authenticated', 'public.contracts', 'signed_at', 'INSERT'
+      );
+    `);
+    expect(r).toBe('f');
+  });
+
   // ══════════════════════════════════════════════════════════════════════════
-  // F. Post-migration: contract_signers — otp_code blocked
+  // F. Post-migration: contract_signers — otp_code, token, status blocked
   // ══════════════════════════════════════════════════════════════════════════
 
   it('post-migration: authenticated CAN SELECT from contract_signers', () => {
@@ -566,20 +584,48 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
     expect(r).toBe('f');
   });
 
-  it('post-migration: authenticated CAN SELECT token from contract_signers (needed for signing link)', () => {
-    // The dashboard constructs the signing link from contract_signers.token.
+  it('post-migration: authenticated CANNOT SELECT token from contract_signers (served via /api/contracts/signing-link)', () => {
+    // token is removed from authenticated SELECT — signing URL is served server-side
+    // via /api/contracts/signing-link so the raw token never reaches the browser.
     const r = sql(`
       SELECT has_column_privilege(
         'authenticated', 'public.contract_signers', 'token', 'SELECT'
       );
     `);
-    expect(r).toBe('t');
+    expect(r).toBe('f');
   });
 
   it('post-migration: authenticated CANNOT INSERT otp_code into contract_signers', () => {
     const r = sql(`
       SELECT has_column_privilege(
         'authenticated', 'public.contract_signers', 'otp_code', 'INSERT'
+      );
+    `);
+    expect(r).toBe('f');
+  });
+
+  it('post-migration: authenticated CANNOT INSERT status into contract_signers (service_role only)', () => {
+    const r = sql(`
+      SELECT has_column_privilege(
+        'authenticated', 'public.contract_signers', 'status', 'INSERT'
+      );
+    `);
+    expect(r).toBe('f');
+  });
+
+  it('post-migration: authenticated CANNOT INSERT otp_verified into contract_signers (service_role only)', () => {
+    const r = sql(`
+      SELECT has_column_privilege(
+        'authenticated', 'public.contract_signers', 'otp_verified', 'INSERT'
+      );
+    `);
+    expect(r).toBe('f');
+  });
+
+  it('post-migration: authenticated CANNOT INSERT otp_attempts into contract_signers (service_role only)', () => {
+    const r = sql(`
+      SELECT has_column_privilege(
+        'authenticated', 'public.contract_signers', 'otp_attempts', 'INSERT'
       );
     `);
     expect(r).toBe('f');
