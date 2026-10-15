@@ -1917,7 +1917,7 @@ export class BotService {
                 if (!retryInsertErr && retriedSession) {
                   session = retriedSession as BotSession;
                   logger.info('[BOT] #266 R4: Retry insert succeeded after CAS deactivation:', (retriedSession as BotSession).id);
-                  return; // directory flow runs next message; avoids conflict with fresh null-biz session
+                  // Fall through: directory flow runs for this message (session now valid)
                 } else {
                   logger.error('[BOT] #266 R4: Retry insert failed after CAS deactivation:', retryInsertErr?.message, retryInsertErr?.code);
                   if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
@@ -2637,38 +2637,31 @@ export class BotService {
       const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {
         await sendDirectoryGreeting(dirSend, from);
-
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: profile?.id || null,
-          business_id: null,
-          current_step: 'directory_search',
-          session_data: { _directory_mode: true, _directory_country: sharedNumberCountry },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
+        // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
+        // On 23505 retry via CAS-UPDATE. Never silent on collision.
+        const dirGreetSess = await this.createDirectorySession(
+          from, profile?.id || null, 'directory_search',
+          { _directory_mode: true, _directory_country: sharedNumberCountry },
+        );
+        if (!dirGreetSess) {
+          logger.warn('[BOT] createDirectorySession(directory_search) failed — session not persisted after greeting');
+        }
         return;
       }
 
       // ── Unrecognized text — run a directory search immediately ──
       {
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-
         const searchData = await handleDirectorySearch(
           this.supabase, dirSend, from, text, sharedNumberCountry,
         );
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: profile?.id || null,
-          business_id: null,
-          current_step: 'directory_results',
-          session_data: { _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}) },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
+        // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
+        const dirSearchSess = await this.createDirectorySession(
+          from, profile?.id || null, 'directory_results',
+          { _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}) },
+        );
+        if (!dirSearchSess) {
+          logger.warn('[BOT] createDirectorySession(directory_results) failed — session not persisted after search');
+        }
       }
       return;
     }
@@ -4237,6 +4230,66 @@ export class BotService {
     // (e) Unrecoverable
     logger.error('[BOT] createNullBizSuggestionSession: insert failed:', insertErr?.message, insertErr?.code);
     Sentry.captureException(insertErr || new Error('Null-biz suggestion session insert failed'));
+    return null;
+  }
+
+  /**
+   * Create or update a null-business directory session (directory_search or directory_results).
+   * The partial unique index allows ONE active null-biz session per phone.
+   *
+   * Lifecycle:
+   * (a) UPDATE any existing active null-biz session to the new step — avoids INSERT 23505.
+   * (b) If 0 rows updated (no active session): INSERT fresh session.
+   * (c) On INSERT 23505 (concurrent insert race): re-read and CAS-UPDATE in place.
+   * (d) Any unrecoverable failure: return null (caller logs; reply already sent — no second message).
+   */
+  private async createDirectorySession(
+    from: string,
+    userId: string | null,
+    step: 'directory_search' | 'directory_results',
+    sessionData: Record<string, unknown>,
+    ttlMs: number = 30 * 60 * 1000,
+  ): Promise<BotSession | null> {
+    const newExpiry = new Date(Date.now() + ttlMs).toISOString();
+    // (a) UPDATE any existing active null-biz session — prevents 23505 on INSERT
+    const { data: updated, error: updateErr } = await this.supabase.from('bot_sessions')
+      .update({ current_step: step, session_data: sessionData, expires_at: newExpiry })
+      .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true)
+      .select().single();
+    if (!updateErr && updated) {
+      logger.info('[BOT] createDirectorySession: updated existing session to:', step, (updated as unknown as BotSession).id);
+      return updated as unknown as BotSession;
+    }
+    // (b) No active session — INSERT fresh
+    const { data: sess, error: insertErr } = await this.supabase.from('bot_sessions').insert({
+      whatsapp_number: from, user_id: userId, business_id: null,
+      current_step: step, session_data: sessionData,
+      is_active: true, expires_at: newExpiry,
+    }).select().single();
+    if (!insertErr && sess) return sess as unknown as BotSession;
+    // (c) 23505: concurrent INSERT won — re-read and CAS-UPDATE
+    if (insertErr?.code === '23505') {
+      const { data: existing } = await this.supabase.from('bot_sessions').select('*')
+        .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true).single();
+      if (existing) {
+        const existingSess = existing as unknown as BotSession;
+        const { data: casUpdated } = await this.supabase.from('bot_sessions')
+          .update({ current_step: step, session_data: sessionData, expires_at: newExpiry, version: (existingSess.version ?? 0) + 1 })
+          .eq('id', existingSess.id).is('business_id', null).eq('is_active', true)
+          .eq('version', existingSess.version ?? 0)
+          .select().single();
+        if (casUpdated) {
+          logger.info('[BOT] createDirectorySession: CAS-update after concurrent insert:', step, existingSess.id);
+          return casUpdated as unknown as BotSession;
+        }
+      }
+      logger.error('[BOT] createDirectorySession: 23505 recovery failed for step:', step);
+      Sentry.captureException(new Error(`createDirectorySession 23505 recovery failed: ${step}`));
+      return null;
+    }
+    // (d) Unrecoverable
+    logger.error('[BOT] createDirectorySession: insert failed:', insertErr?.message, insertErr?.code);
+    Sentry.captureException(insertErr || new Error(`createDirectorySession insert failed: ${step}`));
     return null;
   }
 

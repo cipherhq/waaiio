@@ -373,7 +373,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     // Spy on platform-scoped methods to distinguish from business-scoped cloud calls
-    vi.spyOn(sender, 'sendPlatformText');
+    const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
     vi.spyOn(sender, 'sendPlatformButtons');
     vi.spyOn(sender, 'sendPlatformList');
     mockDetectionResult = { businessId: null, suggestions: [] };
@@ -387,6 +387,11 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     await bot.handleMessage('+234800', 'random text', 'text', 'pnid-1');
     // Sender transitioned to platform discovery (tenantless)
     expect(sender.boundBusinessId).toBe('');
+    // Platform-scoped send reached Meta (directory search or no-result message)
+    expect(spyPlatformText).toHaveBeenCalled();
+    // Directory reply text confirms the send was a deliberate directory no-results message
+    const sentTexts = spyPlatformText.mock.calls.map((c: any[]) => (c[0] as { text?: string }).text ?? '');
+    expect(sentTexts.some(t => t.includes("couldn't find"))).toBe(true);
     // S-1 property: zero BUSINESS-scoped cloud calls (platform-scoped are legitimate)
     expect(totalBusinessScopedCalls(cloud, sender)).toBe(0);
     // Guard: no generic fallback — the sends are deliberate platform-scoped directory messages

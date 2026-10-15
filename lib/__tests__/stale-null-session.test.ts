@@ -157,11 +157,17 @@ function createTableAwareSupabase(config: {
 }
 
 describe('Stale null-business session fix', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     suspendedBizIds = new Set();
     mockDetectionResult = { businessId: null, suggestions: [] };
     mockReturningBusinesses = [];
     vi.clearAllMocks();
+    // Reset findReturningCustomerBusinesses to its default implementation.
+    // vi.clearAllMocks only clears call history — not mockResolvedValue overrides
+    // set by individual tests (e.g., test 19). Without this, a permanent
+    // mockResolvedValue leaks across tests and breaks the directory path.
+    const { findReturningCustomerBusinesses } = await import('@/lib/bot/handlers/bot-code-detection');
+    vi.mocked(findReturningCustomerBusinesses).mockImplementation(async () => mockReturningBusinesses);
   });
 
   it('1. stale expired null-biz session: 23505 CAS deactivates stale row, retry insert succeeds, normal flow continues', async () => {
@@ -256,6 +262,12 @@ describe('Stale null-business session fix', () => {
       (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Something went wrong')
     );
     expect(fallbackCalls.length).toBe(0);
+
+    // Normal flow continues — user receives a directory reply ('sometext' → search → no results)
+    const dirCalls = cloud.sendText.mock.calls.filter(
+      (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes("couldn't find")
+    );
+    expect(dirCalls.length).toBeGreaterThan(0);
   });
 
   it('2. stale expired null-biz session + "Hi": CAS success → retry insert fails (23505) → exactly one error reply', async () => {
@@ -702,6 +714,11 @@ describe('Stale null-business session fix', () => {
     // Normal flow continues — no recoverable error reply
     const fb = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong'));
     expect(fb.length).toBe(0);
+    // Normal flow continues — user receives directory greeting for 'Hi'
+    const greetCalls = cloud.sendText.mock.calls.filter(
+      (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('Welcome to Waaiio')
+    );
+    expect(greetCalls.length).toBeGreaterThan(0);
   });
 
   // ── Fix 3: CAS update concurrent change → null, fallback ──
@@ -1609,6 +1626,360 @@ describe('Stale null-business session fix', () => {
     const errorReplies = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong'));
     expect(errorReplies.length).toBe(1);
     expect(cloud.sendButtons.mock.calls.length).toBe(0);
+  });
+
+  // ── Directory CAS safety: stale sessions with different step types ──
+
+  it('24. (a) stale expired select_business_suggestion: CAS deactivates, retry succeeds, exactly one directory greeting', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    mockDetectionResult = { businessId: null, suggestions: [] };
+    mockReturningBusinesses = [];
+
+    const expiredStaleSug = {
+      id: 'sess-sug-stale', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: {}, whatsapp_number: '+234801',
+      expires_at: new Date(Date.now() - 3600000).toISOString(), version: 0,
+    };
+    const freshSess24 = {
+      id: 'sess-fresh-24', business_id: null, current_step: 'greeting',
+      is_active: true, session_data: {}, whatsapp_number: '+234801',
+      expires_at: new Date(Date.now() + 86400000).toISOString(), version: 0,
+    };
+    let insertCount24 = 0;
+    const insertFn24 = vi.fn().mockImplementation(() => {
+      insertCount24++;
+      if (insertCount24 === 1) {
+        const ec = makeChain(null, true);
+        ec.select = vi.fn().mockImplementation(() => {
+          const sc = makeChain(null, false);
+          sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+          return sc;
+        });
+        return ec;
+      }
+      const ic = makeChain(freshSess24, true);
+      ic.select = vi.fn().mockImplementation(() => makeChain(freshSess24, false));
+      return ic;
+    });
+    let sessN24 = 0;
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          sessN24++;
+          const n = sessN24;
+          if (n === 4) return makeChain([{ id: expiredStaleSug.id }]); // CAS success
+          const chain = makeChain(null);
+          chain.insert = insertFn24;
+          chain.single = vi.fn().mockResolvedValue({ data: expiredStaleSug, error: null });
+          return chain;
+        }
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234801', 'hello', 'text');
+    // CAS deactivated stale + retry insert = 2 inserts total
+    expect(insertCount24).toBe(2);
+    // Exactly one reply: the directory greeting
+    const greet24 = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Welcome to Waaiio'));
+    expect(greet24.length).toBeGreaterThan(0);
+    // No error reply
+    expect(cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong')).length).toBe(0);
+  });
+
+  it('25. (b) stale expired directory_search: CAS deactivates, retry succeeds, exactly one directory greeting', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    mockDetectionResult = { businessId: null, suggestions: [] };
+    mockReturningBusinesses = [];
+
+    const expiredDirSearch = {
+      id: 'sess-dirsearch-stale', business_id: null, current_step: 'directory_search',
+      is_active: true, session_data: { _directory_mode: true }, whatsapp_number: '+234802',
+      expires_at: new Date(Date.now() - 3600000).toISOString(), version: 2,
+    };
+    const freshSess25 = {
+      id: 'sess-fresh-25', business_id: null, current_step: 'greeting',
+      is_active: true, session_data: {}, whatsapp_number: '+234802',
+      expires_at: new Date(Date.now() + 86400000).toISOString(), version: 0,
+    };
+    let insertCount25 = 0;
+    const insertFn25 = vi.fn().mockImplementation(() => {
+      insertCount25++;
+      if (insertCount25 === 1) {
+        const ec = makeChain(null, true);
+        ec.select = vi.fn().mockImplementation(() => {
+          const sc = makeChain(null, false);
+          sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+          return sc;
+        });
+        return ec;
+      }
+      const ic = makeChain(freshSess25, true);
+      ic.select = vi.fn().mockImplementation(() => makeChain(freshSess25, false));
+      return ic;
+    });
+    let sessN25 = 0;
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          sessN25++;
+          const n = sessN25;
+          if (n === 4) return makeChain([{ id: expiredDirSearch.id }]); // CAS success
+          const chain = makeChain(null);
+          chain.insert = insertFn25;
+          chain.single = vi.fn().mockResolvedValue({ data: expiredDirSearch, error: null });
+          return chain;
+        }
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234802', 'hello', 'text');
+    expect(insertCount25).toBe(2);
+    const greet25 = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Welcome to Waaiio'));
+    expect(greet25.length).toBeGreaterThan(0);
+    expect(cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong')).length).toBe(0);
+  });
+
+  it('26. (c) stale expired directory_results: CAS deactivates, retry succeeds, exactly one directory greeting', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    mockDetectionResult = { businessId: null, suggestions: [] };
+    mockReturningBusinesses = [];
+
+    const expiredDirResults = {
+      id: 'sess-dirresults-stale', business_id: null, current_step: 'directory_results',
+      is_active: true, session_data: { _directory_mode: true }, whatsapp_number: '+234803',
+      expires_at: new Date(Date.now() - 7200000).toISOString(), version: 1,
+    };
+    const freshSess26 = {
+      id: 'sess-fresh-26', business_id: null, current_step: 'greeting',
+      is_active: true, session_data: {}, whatsapp_number: '+234803',
+      expires_at: new Date(Date.now() + 86400000).toISOString(), version: 0,
+    };
+    let insertCount26 = 0;
+    const insertFn26 = vi.fn().mockImplementation(() => {
+      insertCount26++;
+      if (insertCount26 === 1) {
+        const ec = makeChain(null, true);
+        ec.select = vi.fn().mockImplementation(() => {
+          const sc = makeChain(null, false);
+          sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+          return sc;
+        });
+        return ec;
+      }
+      const ic = makeChain(freshSess26, true);
+      ic.select = vi.fn().mockImplementation(() => makeChain(freshSess26, false));
+      return ic;
+    });
+    let sessN26 = 0;
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          sessN26++;
+          const n = sessN26;
+          if (n === 4) return makeChain([{ id: expiredDirResults.id }]); // CAS success
+          const chain = makeChain(null);
+          chain.insert = insertFn26;
+          chain.single = vi.fn().mockResolvedValue({ data: expiredDirResults, error: null });
+          return chain;
+        }
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234803', 'Hi', 'text');
+    expect(insertCount26).toBe(2);
+    const greet26 = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Welcome to Waaiio'));
+    expect(greet26.length).toBeGreaterThan(0);
+    expect(cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong')).length).toBe(0);
+  });
+
+  it('27. (d) non-expired directory_search session + repeated search: UPDATE path exercised, one search reply, no second INSERT', async () => {
+    // Existing non-expired directory_search session causes 23505 on INSERT.
+    // Non-expired recovery path: session = existingNullSession (no CAS, no retry).
+    // Falls through → directory flow → handleDirectorySearch → one reply.
+    // createDirectorySession UPDATE path succeeds, no second INSERT.
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    mockDetectionResult = { businessId: null, suggestions: [] };
+    mockReturningBusinesses = [];
+
+    const activeDir = {
+      id: 'sess-dir-active', business_id: null, current_step: 'directory_search',
+      is_active: true, session_data: { _directory_mode: true }, whatsapp_number: '+234804',
+      expires_at: new Date(Date.now() + 1800000).toISOString(), version: 1,
+    };
+    let insertCount27 = 0;
+    // n=1: cleanup, n=2: INSERT → 23505, n=3: re-read → non-expired activeDir,
+    // n=4+: createDirectorySession UPDATE → returns activeDir (non-null)
+    let sessN27 = 0;
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          sessN27++;
+          const n = sessN27;
+          if (n === 2) {
+            // INSERT → 23505
+            const chain = makeChain(null);
+            chain.insert = vi.fn().mockImplementation(() => {
+              insertCount27++;
+              const ec = makeChain(null, true);
+              ec.select = vi.fn().mockImplementation(() => {
+                const sc = makeChain(null, false);
+                sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+                return sc;
+              });
+              return ec;
+            });
+            chain.single = vi.fn().mockResolvedValue({ data: activeDir, error: null });
+            return chain;
+          }
+          // n=1 cleanup, n=3 re-read, n=4+ UPDATE (createDirectorySession)
+          const chain = makeChain(null);
+          chain.single = vi.fn().mockResolvedValue({ data: activeDir, error: null });
+          return chain;
+        }
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234804', 'restaurants', 'text');
+    // Only 1 INSERT (the initial 23505) — no retry because session was non-expired
+    expect(insertCount27).toBe(1);
+    // One search reply (no results) — no error reply
+    const searchReply = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes("couldn't find"));
+    expect(searchReply.length).toBeGreaterThan(0);
+    expect(cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong')).length).toBe(0);
+  });
+
+  it('28. (e) createDirectorySession CAS-UPDATE returns 0 rows → null → exactly one reply, no crash, no second message', async () => {
+    // User sends "hello" → directory greeting is sent.
+    // createDirectorySession then fails: UPDATE 0 rows → INSERT 23505 → re-read → CAS-UPDATE 0 rows → null.
+    // Caller receives null but does NOT send a second reply (only warns).
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    mockDetectionResult = { businessId: null, suggestions: [] };
+    mockReturningBusinesses = [];
+
+    const nonExpiredActive = {
+      id: 'sess-dir-ne', business_id: null, current_step: 'directory_search',
+      is_active: true, session_data: { _directory_mode: true }, whatsapp_number: '+234805',
+      expires_at: new Date(Date.now() + 1800000).toISOString(), version: 3,
+    };
+    // Session call sequence:
+    // n=1: cleanup, n=2: INSERT → 23505, n=3: re-read → non-expired session,
+    // [no CAS, no retry — non-expired recovery → falls through to directory flow]
+    // Greeting sent (cloud.sendText called).
+    // createDirectorySession:
+    //   n=4: UPDATE → 0 rows (null single), n=5: INSERT → 23505,
+    //   n=6: re-read → existing session, n=7: CAS-UPDATE → 0 rows → returns null
+    let sessN28 = 0;
+    let insertCount28 = 0;
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'platform_settings') return makeChain({ value: false });
+        if (table === 'bot_sessions') {
+          sessN28++;
+          const n = sessN28;
+          if (n === 2) {
+            // Main INSERT → 23505
+            const chain = makeChain(null);
+            chain.insert = vi.fn().mockImplementation(() => {
+              insertCount28++;
+              const ec = makeChain(null, true);
+              ec.select = vi.fn().mockImplementation(() => {
+                const sc = makeChain(null, false);
+                sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+                return sc;
+              });
+              return ec;
+            });
+            chain.single = vi.fn().mockResolvedValue({ data: nonExpiredActive, error: null });
+            return chain;
+          }
+          if (n === 4) {
+            // createDirectorySession UPDATE → 0 rows
+            const chain = makeChain(null);
+            chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+            return chain;
+          }
+          if (n === 5) {
+            // createDirectorySession INSERT → 23505
+            const chain = makeChain(null);
+            chain.insert = vi.fn().mockImplementation(() => {
+              insertCount28++;
+              const ec = makeChain(null, true);
+              ec.select = vi.fn().mockImplementation(() => {
+                const sc = makeChain(null, false);
+                sc.single = vi.fn().mockResolvedValue({ data: null, error: { code: '23505', message: 'dup' } });
+                return sc;
+              });
+              return ec;
+            });
+            chain.single = vi.fn().mockResolvedValue({ data: nonExpiredActive, error: null });
+            return chain;
+          }
+          if (n === 7) {
+            // createDirectorySession CAS-UPDATE → 0 rows
+            const chain = makeChain(null);
+            chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+            return chain;
+          }
+          // n=1 cleanup, n=3 re-read (non-expired recovery), n=6 re-read after 23505
+          const chain = makeChain(null);
+          chain.single = vi.fn().mockResolvedValue({ data: nonExpiredActive, error: null });
+          return chain;
+        }
+        if (table === 'blocked_phones') {
+          const c = makeChain(null);
+          c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
+          return c;
+        }
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+    };
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234805', 'hello', 'text');
+    // Exactly one reply (the greeting) — createDirectorySession returning null caused no second message
+    const greet28 = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Welcome to Waaiio'));
+    expect(greet28.length).toBeGreaterThan(0);
+    const totalReplies28 = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length;
+    expect(totalReplies28).toBe(1);
+    // No error reply
+    expect(cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong')).length).toBe(0);
   });
 
   it('17. biz_no with en session: no translate call, platform-scoped send', async () => {
