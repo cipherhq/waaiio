@@ -63,6 +63,24 @@ export default function WhatsAppAssistance() {
     }
   }
 
+  async function ensureSharedChannel(row: Onboarding) {
+    if (!row.business_id || busyId) return;
+    setBusyId(row.id);
+    setMessage('');
+    setError('');
+    try {
+      const response = await adminApiFetch('/api/admin/onboarding/' + encodeURIComponent(row.id), { action: 'ensure_shared_channel' });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Shared channel allocation was unavailable.');
+      setMessage('Shared allocation requested. Verify that the assigned channel is active before presenting a WhatsApp link.');
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to allocate shared channel.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return <div className="space-y-6">
     <div>
       <h1 className="text-2xl font-bold text-gray-900">WhatsApp Setup Assistance</h1>
@@ -117,7 +135,11 @@ export default function WhatsAppAssistance() {
                   {busyId === row.id ? 'Sending…' : 'Send owner WABA setup link'}
                 </button> : ready ?
                   <span className="text-xs text-green-700">Channel ready; confirm activation and bot routing</span> :
-                  <span className="text-xs text-amber-700">Check shared allocation / country routing in Channels</span>}
+                  <button type="button" disabled={!!busyId || ['cancelled', 'failed'].includes(row.status)}
+                    onClick={() => void ensureSharedChannel(row)}
+                    className="rounded-lg border border-amber-400 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-40">
+                    {busyId === row.id ? 'Checking…' : 'Allocate shared number'}
+                  </button>}
               </td>
             </tr>;
           })}</tbody>
