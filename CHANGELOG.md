@@ -3,6 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(security): M449 least-privilege ACL for contracts, whatsapp_channels, and waivers (rev 2)
+
+### What changed (rev 2 additions over original)
+- M449 extended to cover `waiver_templates` and `signed_waivers` (same staging-vs-production asymmetry as contracts).
+  - `waiver_templates`: `authenticated` SELECT/INSERT/UPDATE granted (SSR routes use authenticated client for full CRUD). `anon` excluded.
+  - `signed_waivers`: `authenticated` SELECT-only granted (signing happens via service_role). `anon` excluded.
+- M449 `whatsapp_channels` UPDATE grant for `authenticated` removed — confirmed no authenticated-session write path exists (all channel mutations go through `createServiceClient()`).
+- M449 column lists hardened: `contracts.token` removed from `authenticated` SELECT (dashboard does not select it; signer tokens come from `contract_signers`); `otp_code` removed from `contract_signers` SELECT/INSERT/UPDATE (`authenticated` has no business seeing the raw OTP value); `token`, `token_expires_at`, `signature_data`, and `audit_trail` removed from contracts/contract_signers INSERT/UPDATE grants (all set server-side by service_role).
+- Self-check extended: checks `authenticated` has no UPDATE on `whatsapp_channels`; checks `otp_code` is blocked on `contract_signers`; checks waiver tables have correct grants.
+- PG test updated to match new shape (UPDATE removed from whatsapp_channels, new otp_code + waiver sections).
+- New unit test (`lib/__tests__/contracts-zero-signer-guard.test.ts`): documents the existing server-side guard that blocks sending a contract with zero signers and blocks finalizing a contract as signed when no `contract_signers` DB rows exist.
+- `app/dashboard/services/page.tsx` line ~496: fixed copy from "Members can give on a regular schedule" to "Customers book and pay for this service on a repeating schedule" (was copying from the giving/donation flow instead of the services recurring flow).
+
+### What it affects / could break
+- Any code attempting to UPDATE `whatsapp_channels` via the `authenticated` client will now get a privilege error — all channel mutations must use `createServiceClient()`.
+- `otp_code` is no longer readable via `authenticated` client; this is intentional — OTP delivery is server-side only.
+- Waiver templates on staging that previously showed empty lists due to missing `authenticated` grants will now work correctly.
+- No change to RLS policies; data isolation is unchanged.
+
 ## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
 
 ### What changed

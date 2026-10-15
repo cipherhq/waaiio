@@ -122,12 +122,13 @@ export default function ContractsPage() {
   const loadContracts = useCallback(async () => {
     try {
       setError(false);
-      const { data } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('contracts')
         .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, reference_code, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status, token)')
         .eq('business_id', business.id)
         .order('created_at', { ascending: false });
 
+      if (fetchError) throw fetchError;
       setContracts(data || []);
     } catch {
       setError(true);
