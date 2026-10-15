@@ -772,9 +772,22 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   //   3. Asserts the self-check raises the expected exception
   //   4. Revokes the injected grant so subsequent tests are unaffected
 
-  it('self-check robustness: injected column-level UPDATE grant on contracts.status is detected', () => {
-    // Step 1 — inject the column-level grant
-    sql(`GRANT UPDATE (status) ON public.contracts TO authenticated;`);
+  it('self-check robustness: injected column-level UPDATE grant on whatsapp_channels is detected', () => {
+    // The M449 self-check §7.3 uses has_any_column_privilege to assert that
+    // authenticated has NO UPDATE on whatsapp_channels — including column-level grants.
+    // This test verifies that a GRANT UPDATE (col) injected after the migration is
+    // detected by the self-check on its next run.
+
+    // Step 1 — inject a column-level UPDATE grant on whatsapp_channels
+    sql(`GRANT UPDATE (connection_status) ON public.whatsapp_channels TO authenticated;`);
+
+    // Sanity: verify the injected grant is visible via has_any_column_privilege
+    const sanity = sql(`
+      SELECT has_any_column_privilege(
+        'authenticated', 'public.whatsapp_channels', 'UPDATE'
+      );
+    `);
+    expect(sanity).toBe('t');
 
     // Step 2 — re-read and re-run the migration's self-check DO block
     const migrationSql = readFileSync(
@@ -791,12 +804,12 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
       throw new Error('Could not extract self-check DO block from migration 449');
     }
 
-    // Step 3 — run it and expect the self-check to raise an exception
+    // Step 3 — run it and expect the self-check to raise the UPDATE exception
     const result = sql(lastDoBlock);
-    expect(result).toMatch(/449 SELF-CHECK FAILED.*authenticated has UPDATE.*contracts/i);
+    expect(result).toMatch(/449 SELF-CHECK FAILED.*authenticated has UPDATE.*whatsapp_channels/i);
 
     // Step 4 — revoke so subsequent tests (K) are unaffected
-    sql(`REVOKE UPDATE (status) ON public.contracts FROM authenticated;`);
+    sql(`REVOKE UPDATE (connection_status) ON public.whatsapp_channels FROM authenticated;`);
   });
 
   // ══════════════════════════════════════════════════════════════════════════
