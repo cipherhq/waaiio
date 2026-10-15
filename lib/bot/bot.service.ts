@@ -2504,7 +2504,7 @@ export class BotService {
           await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         }
       } else {
-        await this.sendPlatformText(from, 'Type the name or code of the business you\'d like to visit.');
+        await this.sendPlatformLocalizedText(from, 'Type the name or code of the business you\'d like to visit.', session);
       }
       return;
     }
@@ -3029,7 +3029,7 @@ export class BotService {
       const isNo = /^(biz_no|no|nah|nope|wrong|not)$/i.test(text);
       if (isNo) {
         await this.deactivateSession(session.id);
-        await this.sendPlatformText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_');
+        await this.sendPlatformLocalizedText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_', session);
         return;
       }
 
@@ -3068,7 +3068,7 @@ export class BotService {
         await this.deactivateSession(session.id);
         return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
       } else {
-        await this.sendPlatformText(from, 'Please select one of the options above, or send a *business code* to connect.');
+        await this.sendPlatformLocalizedText(from, 'Please select one of the options above, or send a *business code* to connect.', session);
         return;
       }
     }
@@ -3813,6 +3813,35 @@ export class BotService {
     const tCtx = await this.buildTranslationContext(session.business_id || null, tier);
     const translated = await translateBotResponse(text, lang, tCtx, opts);
     return sendBotText(this.messageSender, to, translated);
+  }
+
+  /**
+   * Platform-scoped localized send — same translation logic as sendSessionLocalizedText,
+   * but sends via sendPlatformText (bypasses business hard-stop guard).
+   * For tenantless suggestion-step replies that must be both platform-scoped AND translated.
+   * If translation fails, sends the English text platform-scoped (never silence).
+   */
+  private async sendPlatformLocalizedText(
+    to: string,
+    text: string,
+    session: { session_data: Record<string, unknown>; business_id?: string | null },
+    opts?: TranslateOptions,
+  ): Promise<void> {
+    const lang = (session.session_data._detected_language as string) || '';
+    if (!lang || lang === 'en') {
+      return this.sendPlatformText(to, text);
+    }
+    try {
+      const tier = session.business_id
+        ? (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free'
+        : 'free';
+      const tCtx = await this.buildTranslationContext(session.business_id || null, tier);
+      const translated = await translateBotResponse(text, lang, tCtx, opts);
+      return this.sendPlatformText(to, translated);
+    } catch (err) {
+      logger.error('[BOT] sendPlatformLocalizedText translation error (sending English):', err);
+      return this.sendPlatformText(to, text);
+    }
   }
 
   /** Build TranslationContext for a business — resolves entitlement from tier + configured languages */

@@ -920,4 +920,83 @@ describe('Stale null-business session fix', () => {
     const botSessionCalls = supabase.from.mock.calls.filter((c: any[]) => c[0] === 'bot_sessions');
     expect(botSessionCalls.length).toBeGreaterThan(0);
   });
+
+  // ── Localization: suggestion-step replies must be platform-scoped AND translated ──
+
+  it('15. biz_no with pcm session: platform-scoped AND translated via translateBotResponse', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPT = vi.spyOn(sender, 'sendPlatformText');
+    const { translateBotResponse: mockTranslate } = await import('@/lib/bot/translate');
+    (mockTranslate as any).mockImplementation(async (t: string, lang: string) => `[${lang}] ${t}`);
+    const sugSess = {
+      id: 'sess-pcm', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: {
+        suggestions: [{ id: 'biz-1', name: 'Spa A', bot_code: 'SPAA' }],
+        _detected_language: 'pcm',
+      },
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
+    };
+    const supabase = createTableAwareSupabase({ session: sugSess });
+    supabase.rpc = vi.fn().mockResolvedValue({ data: { has_session: true, session: sugSess, ambiguous: false }, error: null });
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', 'biz_no', 'text');
+    // translateBotResponse was called with 'pcm'
+    expect(mockTranslate).toHaveBeenCalledWith(expect.stringContaining('No problem'), 'pcm', expect.anything(), undefined);
+    // Platform-scoped send received the translated text
+    expect(spyPT.mock.calls.length).toBe(1);
+    expect((spyPT.mock.calls[0][0] as { text: string }).text).toContain('[pcm]');
+    expect((spyPT.mock.calls[0][0] as { text: string }).text).toContain('No problem');
+  });
+
+  it('16. biz_no with pcm session, translator throws: English text sent platform-scoped once', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPT = vi.spyOn(sender, 'sendPlatformText');
+    const { translateBotResponse: mockTranslate } = await import('@/lib/bot/translate');
+    (mockTranslate as any).mockRejectedValue(new Error('translation service down'));
+    const sugSess = {
+      id: 'sess-pcm2', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: {
+        suggestions: [{ id: 'biz-1', name: 'Spa A', bot_code: 'SPAA' }],
+        _detected_language: 'pcm',
+      },
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
+    };
+    const supabase = createTableAwareSupabase({ session: sugSess });
+    supabase.rpc = vi.fn().mockResolvedValue({ data: { has_session: true, session: sugSess, ambiguous: false }, error: null });
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', 'biz_no', 'text');
+    // English fallback sent exactly once, platform-scoped
+    expect(spyPT.mock.calls.length).toBe(1);
+    expect((spyPT.mock.calls[0][0] as { text: string }).text).toContain('No problem');
+    // NOT the translated version (translation failed)
+    expect((spyPT.mock.calls[0][0] as { text: string }).text).not.toContain('[pcm]');
+  });
+
+  it('17. biz_no with en session: no translate call, platform-scoped send', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const spyPT = vi.spyOn(sender, 'sendPlatformText');
+    const { translateBotResponse: mockTranslate } = await import('@/lib/bot/translate');
+    (mockTranslate as any).mockClear();
+    (mockTranslate as any).mockImplementation(async (t: string) => t);
+    const sugSess = {
+      id: 'sess-en', business_id: null, current_step: 'select_business_suggestion',
+      is_active: true, session_data: {
+        suggestions: [{ id: 'biz-1', name: 'Spa A', bot_code: 'SPAA' }],
+        _detected_language: 'en',
+      },
+      whatsapp_number: '+234800', expires_at: new Date(Date.now() + 1800000).toISOString(), version: 0,
+    };
+    const supabase = createTableAwareSupabase({ session: sugSess });
+    supabase.rpc = vi.fn().mockResolvedValue({ data: { has_session: true, session: sugSess, ambiguous: false }, error: null });
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+    await bot.handleMessage('+234800', 'biz_no', 'text');
+    // No translate call for English
+    expect(mockTranslate).not.toHaveBeenCalled();
+    // Platform-scoped send with English text
+    expect(spyPT.mock.calls.length).toBe(1);
+    expect((spyPT.mock.calls[0][0] as { text: string }).text).toContain('No problem');
+  });
 });
