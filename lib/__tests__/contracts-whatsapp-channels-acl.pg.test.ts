@@ -756,6 +756,53 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   // K. End-to-end: owner reads contracts + is blocked from meta_access_token
   // ══════════════════════════════════════════════════════════════════════════
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // L. Self-check robustness: injected column-level grant is detected
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // Rationale: has_table_privilege() only sees table-level ACL entries.
+  // The M449 negative checks (authenticated must NOT have INSERT/UPDATE on
+  // whatsapp_channels and signed_waivers) use has_any_column_privilege() so
+  // that a column-level grant injected after the migration is caught on the
+  // next run of the self-check block.
+  //
+  // This test:
+  //   1. Injects a column-level UPDATE grant on contracts.status to authenticated
+  //   2. Re-runs the M449 self-check DO block
+  //   3. Asserts the self-check raises the expected exception
+  //   4. Revokes the injected grant so subsequent tests are unaffected
+
+  it('self-check robustness: injected column-level UPDATE grant on contracts.status is detected', () => {
+    // Step 1 — inject the column-level grant
+    sql(`GRANT UPDATE (status) ON public.contracts TO authenticated;`);
+
+    // Step 2 — re-read and re-run the migration's self-check DO block
+    const migrationSql = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/449_least_privilege_acl_contracts_channels.sql'),
+      'utf-8',
+    );
+    // Extract the final DO block (self-check) only — the migration grants have
+    // already been applied; we just want to re-run the assertion logic.
+    // The self-check DO block is the last DO $$ ... $$; in the file.
+    const doBlocks = migrationSql.split(/(?=^DO \$\$)/m);
+    const lastDoBlock = doBlocks[doBlocks.length - 1].match(/DO \$\$[\s\S]*?\$\$;/)?.[0];
+
+    if (!lastDoBlock) {
+      throw new Error('Could not extract self-check DO block from migration 449');
+    }
+
+    // Step 3 — run it and expect the self-check to raise an exception
+    const result = sql(lastDoBlock);
+    expect(result).toMatch(/449 SELF-CHECK FAILED.*authenticated has UPDATE.*contracts/i);
+
+    // Step 4 — revoke so subsequent tests (K) are unaffected
+    sql(`REVOKE UPDATE (status) ON public.contracts FROM authenticated;`);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // K. End-to-end: owner reads contracts + is blocked from meta_access_token
+  // ══════════════════════════════════════════════════════════════════════════
+
   it('post-migration: owner reads own contracts via authenticated role (RLS + column grant)', () => {
     // Insert a contract via service_role first
     sql(`

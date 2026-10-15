@@ -56,7 +56,9 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
 
   if (!biz) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    // Return 404 (not 403) so callers cannot probe whether a signer ID exists
+    // by observing the difference between "not found" and "not your contract".
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
   return NextResponse.json({ url: `/sign/${signer.token}` });

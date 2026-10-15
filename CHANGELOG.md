@@ -3,6 +3,49 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 4 — signer-probe fix, M449 column-grant self-check, M450 INSERT+mode coverage
+
+### What changed (rev 4 additions over rev 3)
+- **`app/api/contracts/signing-link/route.ts`**: Changed `403` → `404` for ownership failure.
+  Previously the route returned `403 Unauthorized` when a valid signer_id was found but the
+  caller did not own the contract. That response code acted as a signer-ID oracle (403 meant
+  "signer exists, wrong owner"; 404 meant "signer not found"). Now both cases return 404 so
+  the existence of a signer row cannot be probed by comparing status codes.
+  401 is still returned for unauthenticated callers.
+- **New unit test** `lib/__tests__/contracts-signing-link-route.test.ts`:
+  - Tests: 401 (no session), 400 (missing signer_id), 404 (signer not found),
+    404 (signer exists, wrong owner — not 403), 200 (owner, returns signing URL).
+- **M449 self-check §7.3 + §7.9**: Changed `has_table_privilege` → `has_any_column_privilege`
+  for negative INSERT and UPDATE assertions on `whatsapp_channels` and `signed_waivers`.
+  `has_table_privilege` only checks table-level ACL entries and returns `f` for column-level
+  grants — a `GRANT INSERT (col) ON ... TO authenticated` after the migration would go
+  undetected by the old check. `has_any_column_privilege` catches both.
+- **M450 trigger expanded**:
+  - Changed `BEFORE UPDATE` → `BEFORE INSERT OR UPDATE` so a direct INSERT with
+    `status='signed'` is also blocked (not only UPDATEs).
+  - Added `TG_OP = 'INSERT'` branch to handle the no-OLD-row INSERT case.
+  - Widened signing-mode check from `NEW.signing_mode = 'multi'` to
+    `NEW.signing_mode IS DISTINCT FROM 'single'`. Research (send/route.ts:202):
+    multi-signer contracts default to `'parallel'` not `'multi'`, so the old check
+    silently missed parallel and sequential modes. Single-mode exemption is retained
+    (single-mode signing stores data on the contracts row with zero contract_signers rows).
+  - RAISE EXCEPTION message now includes `signing_mode` value for diagnosis.
+- **New PG injection test** (Section L in `contracts-whatsapp-channels-acl.pg.test.ts`):
+  - Injects `GRANT UPDATE (status) ON contracts TO authenticated` after M449 runs.
+  - Re-runs the M449 self-check DO block.
+  - Asserts the self-check raises `449 SELF-CHECK FAILED … authenticated has UPDATE … contracts`.
+  - Revokes the injected grant afterward to keep later tests clean.
+  - Confirms `has_any_column_privilege` in the self-check detects column-level grants.
+
+### What it affects / could break
+- Callers that distinguished 403 from 404 on `/api/contracts/signing-link` to infer signer
+  existence will now always see 404 for non-owner calls. No legitimate client should be
+  doing this — the route is only called by the contracts dashboard page.
+- M449 self-check is now stricter: a post-migration `GRANT INSERT (col) ON whatsapp_channels
+  TO authenticated` (or `signed_waivers`) will cause the self-check to fail on next run.
+- M450 trigger now fires on INSERT events too — a direct `INSERT INTO contracts (...,
+  status='signed', signing_mode='parallel') VALUES (...)` with zero signers will be blocked.
+
 ## 2026-10-15 — fix(security): M449/450 ACL hardening rev 3 — column tightening, zero-signer trigger, signing-link server route
 
 ### What changed (rev 3 additions over rev 2)

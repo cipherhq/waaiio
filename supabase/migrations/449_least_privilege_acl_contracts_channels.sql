@@ -301,12 +301,13 @@ BEGIN
       '449 SELF-CHECK FAILED: authenticated has DELETE on whatsapp_channels';
   END IF;
 
-  IF has_table_privilege('authenticated', 'public.whatsapp_channels', 'INSERT') THEN
+  -- has_any_column_privilege catches column-level grants that has_table_privilege misses
+  IF has_any_column_privilege('authenticated', 'public.whatsapp_channels', 'INSERT') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated has INSERT on whatsapp_channels';
   END IF;
 
-  IF has_table_privilege('authenticated', 'public.whatsapp_channels', 'UPDATE') THEN
+  IF has_any_column_privilege('authenticated', 'public.whatsapp_channels', 'UPDATE') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated has UPDATE on whatsapp_channels — '
       'all channel mutations are service_role only';
@@ -429,7 +430,8 @@ BEGIN
       '449 SELF-CHECK FAILED: authenticated cannot SELECT from signed_waivers';
   END IF;
 
-  IF has_table_privilege('authenticated', 'public.signed_waivers', 'INSERT') THEN
+  -- has_any_column_privilege catches column-level grants that has_table_privilege misses
+  IF has_any_column_privilege('authenticated', 'public.signed_waivers', 'INSERT') THEN
     RAISE EXCEPTION
       '449 SELF-CHECK FAILED: authenticated has INSERT on signed_waivers — '
       'signing is service_role only';
