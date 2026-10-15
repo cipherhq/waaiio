@@ -57,6 +57,17 @@ async function resolvePaymentCustomerPhone(
   return null;
 }
 
+/**
+ * Public wrapper for payment customer phone verification.
+ * Used by bot.service.ts to verify button-tap ownership before acting.
+ */
+export async function verifyPaymentCustomerPhone(
+  supabase: SupabaseClient,
+  payment: { id: string; booking_id?: string | null; reservation_id?: string | null; invoice_id?: string | null; order_id?: string | null; campaign_id?: string | null; user_id?: string | null },
+): Promise<string | null> {
+  return resolvePaymentCustomerPhone(supabase, payment);
+}
+
 // ─── Eligibility (K7: fail-closed on all reads) ───
 
 interface OfferEligibility {
@@ -250,6 +261,99 @@ export async function retryPendingSavedCardOffer(
   }
 }
 
+// ─── Decline confirmation helper ───
+
+async function sendDeclineConfirmation(
+  supabase: SupabaseClient,
+  sendText: (to: string, text: string) => Promise<void>,
+  sendButtons: ((msg: { to: string; body: string; buttons: Array<{ id: string; title: string }> }) => Promise<unknown>) | undefined,
+  from: string,
+  session: import('@/lib/bot/bot-types').BotSession | null,
+  action: 'save_decline' | 'replace_decline',
+  paymentId: string,
+  canonPhone: string,
+  bindBusiness?: (businessId: string) => void,
+): Promise<void> {
+  const { getFlowCopy, fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
+  const { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides } = await import('@/lib/bot/translations');
+
+  // Resolve business from payment — fail closed on error, no-row, or null business_id.
+  // Never substitute session.business_id; use payment's business_id only.
+  const { data: payment, error: paymentErr } = await supabase.from('payments')
+    .select('business_id').eq('id', paymentId).single();
+  if (paymentErr || !payment) {
+    logger.warn('[SAVED-CARD-DECLINE] Payment lookup failed — no bind, no send', { paymentId });
+    return;
+  }
+  const businessId = payment.business_id;
+  if (!businessId) {
+    logger.warn('[SAVED-CARD-DECLINE] Payment has null business_id — no bind, no send', { paymentId });
+    return;
+  }
+
+  // Reject when session is bound to a different business
+  if (session?.business_id && session.business_id !== businessId) {
+    logger.warn('[SAVED-CARD-DECLINE] Business mismatch — session vs payment', { paymentId });
+    return;
+  }
+
+  bindBusiness?.(businessId);
+
+  // Resolve language: session._detected_language → default 'en' (same source as bot flows)
+  const lang = (session?.session_data as Record<string, unknown> | undefined)?._detected_language as string || 'en';
+
+  // Load translation overrides for business context (#633)
+  let businessOverrides = new Map<string, string>();
+  let platformOverrides = new Map<string, string>();
+  try {
+    [businessOverrides, platformOverrides] = await Promise.all([
+      businessId ? loadBusinessOverrides(supabase, businessId) : Promise.resolve(new Map<string, string>()),
+      loadPlatformOverrides(supabase),
+    ]);
+  } catch { /* fail closed to English defaults */ }
+
+  const to = from.replace(/^\+/, '');
+
+  await runWithTranslationOverrides({ business: businessOverrides, platform: platformOverrides }, async () => {
+    let body: string;
+    if (action === 'replace_decline') {
+      // Saved cards are scoped per-business (UNIQUE(business_id, customer_phone, gateway)).
+      // If no businessId, skip the query and use generic copy.
+      let savedCardLast4: string | null = null;
+      if (businessId) {
+        const phoneN = canonPhone.slice(1);
+        const { data: savedCards } = await supabase.from('saved_payment_methods')
+          .select('card_last4')
+          .in('customer_phone', [canonPhone, phoneN])
+          .eq('is_active', true).eq('gateway', 'paystack')
+          .eq('business_id', businessId)
+          .order('last_used_at', { ascending: false, nullsFirst: false })
+          .limit(1);
+        savedCardLast4 = savedCards?.[0]?.card_last4 || null;
+      }
+      if (savedCardLast4) {
+        body = fillFlowCopy(lang, 'savedcard.decline_keep_last4', { last4: savedCardLast4 });
+      } else {
+        body = getFlowCopy(lang, 'savedcard.decline_keep_generic');
+      }
+    } else {
+      body = getFlowCopy(lang, 'savedcard.decline_not_saved');
+    }
+
+    const buttons = [
+      { id: `savedcard_menu:${paymentId}`, title: getFlowCopy(lang, 'savedcard.btn_main_menu') },
+      { id: `savedcard_done:${paymentId}`, title: getFlowCopy(lang, 'savedcard.btn_done') },
+    ];
+
+    if (sendButtons) {
+      await sendButtons({ to, body, buttons });
+    } else {
+      // Fallback: plain text when sendButtons unavailable
+      await sendText(from, body);
+    }
+  });
+}
+
 // ─── Button action handler (K5: atomic accept/decline via RPCs) ───
 
 export async function handleSavedCardOfferAction(
@@ -260,6 +364,7 @@ export async function handleSavedCardOfferAction(
   action: 'save_accept' | 'save_decline' | 'replace_accept' | 'replace_decline',
   paymentId: string,
   bindBusiness?: (businessId: string) => void,
+  sendButtons?: (msg: { to: string; body: string; buttons: Array<{ id: string; title: string }> }) => Promise<unknown>,
 ): Promise<void> {
   const canonPhone = canonicalSavedCardPhone(from);
   if (!canonPhone) { await sendText(from, 'Invalid phone number.'); return; }
@@ -277,10 +382,9 @@ export async function handleSavedCardOfferAction(
     }
     switch (result.result) {
       case 'transitioned':
-        // Silent success — offer declined, no further action needed
-        return;
       case 'already_declined':
-        // Idempotent — already declined, no mutation needed
+        // Send decline confirmation with navigation buttons
+        await sendDeclineConfirmation(supabase, sendText, sendButtons, from, session, action, paymentId, canonPhone, bindBusiness);
         return;
       case 'wrong_customer':
         await sendText(from, 'This offer is not for your account.');

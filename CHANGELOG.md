@@ -3,6 +3,28 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
+
+### What changed
+- The public `/pay/[token]` page now explains that hosted payment providers process cards, Waaiio does not retain full card numbers or CVV, and merchants cannot see full card credentials.
+- The notice correctly discloses merchant visibility of transaction amount, status and customer-provided purchase information; it does not make absolute "no payment data" promises.
+- Shared copy is shown before redirect to the business's configured gateway; added copy regression tests.
+
+### What it affects / could break
+- Checkout disclosure text/visuals change; no payment initiation logic, gateway routing, database schema or settlement behavior is modified.
+
+## 2026-10-15 — fix(admin): guided admin onboarding and authoritative country options (#651)
+
+### What changed
+- Admin Customer Onboarding is now a guided owner → business/country → plan/capabilities/WhatsApp → review/invite workflow, matching the supported Get Started setup rules.
+- Active countries and categories are loaded from the canonical authenticated admin API. Errors/empty responses show a retry state and block submission instead of silently offering only Nigeria.
+- Post-invitation guidance preserves customer-owned activation, agreement to terms, plan payment, and Meta authorization. Coexistence is not selectable without eligibility.
+- Added regression coverage for supported selections, API failure and the guided owner/business review journey.
+
+### What it affects / could break
+- Admins must progress through separate guided steps instead of a single form.
+- Countries absent from the environment's active configuration cannot be submitted. No migration or entitlement change.
+
 ## 2026-10-15 — fix(bot): 7-finding hardening (ChatGPT review on bd042ae9 + 6bbd280b)
 
 ### What changed
@@ -13,6 +35,20 @@ If something breaks, check this log to find what changed and when.
 - **(5)** `bot.service.ts:3633-3634`: Removed delete of inactive null-biz rows — no unique index makes them collide (only `idx_bot_sessions_unique_active_null_biz` is partial on `is_active=true`). Deactivate only.
 - **(6)** `lib/__tests__/stale-null-session.test.ts:813-853`: Real two-message test: msg1 "Hi" returning → picker stored, msg2 "biz_0" → step handler deactivates, recursive call binds business.
 - **(7)** `bot.service.ts:2477-2494`: In-session `switch_biz` now calls `enterPlatformDiscovery` before sends. All replies platform-scoped (`sendPlatformButtons`, `sendPlatformText`). Suspended previous business cannot block switching.
+
+## 2026-10-14 — fix(bot): confirm saved-card decline choices with navigation buttons
+
+### What changed
+- `lib/payments/saved-card-offer.ts` (~L253-319): `handleSavedCardOfferAction` decline paths (`save_decline`, `replace_decline`, `already_declined`) now send a confirmation message with [Main menu] [Done] buttons instead of silently returning. Added `sendButtons` parameter and `sendDeclineConfirmation` helper. replace_decline looks up saved card last4 for personalized copy; falls back to generic if unavailable.
+- `lib/bot/bot.service.ts` (~L1065-1118): Passes `sendButtons` to `handleSavedCardOfferAction`. Added routing for `savedcard_menu:{paymentId}` (resets session to capability selection, shows business menu) and `savedcard_done:{paymentId}` (deactivates session, sends goodbye).
+- `lib/bot/flows/flow-localization.ts`: Added 7 new `savedcard.*` keys across all 8 locales (en, pcm, yo, ig, ha, tw, fr, es): `decline_keep_last4`, `decline_keep_generic`, `decline_not_saved`, `btn_main_menu`, `btn_done`, `session_done`. Added `decline_keep_last4` to PLACEHOLDER_SCHEMA. Added `btn_main_menu` and `btn_done` to BUTTON_TITLE_KEYS.
+
+### What it affects / could break
+- Customers who tap "Not now" or "Keep current" on saved-card offers will now see a confirmation message instead of silence.
+- Duplicate taps send the same confirmation (idempotent — no second mutation).
+- Main menu button routes to the business's capability selection menu.
+- Done button deactivates the session with a goodbye message.
+- No change to accept paths (save_accept/replace_accept already confirm + enter PIN flow).
 
 ## 2026-10-14 — fix(bot): DRY suggestion session creation via createNullBizSuggestionSession helper
 
