@@ -45,6 +45,49 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ success: true });
   }
 
+  if (action === 'whatsapp_instructions') {
+    // Admins can guide owners, never complete Meta OAuth/OTP on the owner's behalf.
+    // Only send the customer-owned dashboard link; do not mint an admin-access token.
+    const limit = await rateLimitResponseAsync(`admin-whatsapp-handoff:${onboarding.id}`, 3, 24 * 60 * 60_000);
+    if (limit) return limit;
+    if (!onboarding.target_user_id || !onboarding.business_id || ['cancelled', 'failed'].includes(onboarding.status)) {
+      return NextResponse.json({ error: 'Business onboarding is not ready for WhatsApp assistance' }, { status: 409 });
+    }
+    const { data: business, error: businessError } = await service.from('businesses')
+      .select('id, owner_id, status').eq('id', onboarding.business_id).maybeSingle();
+    if (businessError || !business || business.owner_id !== onboarding.target_user_id) {
+      return NextResponse.json({ error: 'Business ownership could not be verified' }, { status: 409 });
+    }
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!appUrl) return NextResponse.json({ error: 'Customer app URL is not configured' }, { status: 503 });
+    let destination: URL;
+    try {
+      destination = new URL('/dashboard/whatsapp/connect', appUrl);
+      if (destination.protocol !== 'https:' || new URL(appUrl).pathname !== '/') throw new Error('invalid app origin');
+    } catch {
+      return NextResponse.json({ error: 'Customer app URL is invalid' }, { status: 503 });
+    }
+    const sent = await sendEmail({
+      to: onboarding.target_email,
+      subject: 'Complete your Waaiio WhatsApp connection',
+      html: `<h1>Connect your business WhatsApp number</h1>
+<p>A Waaiio administrator can guide you through setup. Please sign in to your own Waaiio account and finish activation if it is still pending.</p>
+<p>To connect your number, you must personally authorize Waaiio in Meta and complete any verification. Never share your WhatsApp code, Meta password, or access tokens with support.</p>
+<p><a href="${destination.toString()}">Open your secure WhatsApp setup</a></p>
+<p>Prefer Waaiio's shared number? Contact your Waaiio administrator so they can check your country's channel availability.</p>`,
+    });
+    if (!sent.success) return NextResponse.json({ error: 'WhatsApp setup instructions could not be delivered' }, { status: 502 });
+    const { error: auditError } = await logAdminAudit({
+      actorId: admin.userId, action: 'admin_whatsapp_owner_handoff',
+      entityType: 'admin_onboarding', entityId: onboarding.id,
+      details: { business_id: business.id, target_user_id: onboarding.target_user_id },
+    });
+    if (auditError) {
+      return NextResponse.json({ error: 'Instructions were sent, but the audit write failed; reconcile before resending.', mutationApplied: true, auditRecorded: false }, { status: 207 });
+    }
+    return NextResponse.json({ success: true, owner_action_required: true });
+  }
+
   if (action === 'cancel') {
     if (!['provisioning', 'invite_pending', 'invite_sent', 'customer_action_required', 'failed'].includes(onboarding.status)) {
       return NextResponse.json({ error: 'This onboarding can no longer be cancelled' }, { status: 409 });
