@@ -840,6 +840,16 @@ Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `i
 - Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
 - If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
 
+## 2026-10-15 — fix(bot): CAS retry must return before directory flow to prevent double session insert
+
+### What changed
+- `lib/bot/bot.service.ts` (line ~1875): Added `return;` after the `#266 R4` CAS deactivation + retry insert succeeds. Before this fix, the directory flow section ran immediately after the retry, attempting to insert a second active null-biz session (which would 23505 silently in production). Now the function exits cleanly; the fresh session is used on the user's next message.
+
+### What it affects / could break
+- Edge case only: affects users whose prior null-biz session expired but wasn't cleaned up. They now get no response on the first message (CAS recovery is silent); the next message works normally.
+- `stale-null-session.test.ts` tests 1 and 10 now pass (were failing with insertCount=3 instead of 2).
+- `session-resilience.test.ts` source-scan assertion for 1400-char window still passes (comment kept to 1 line to stay within window).
+
 ## 2026-10-14 — fix(bot): sendPlatformList, provenance tests, s1 guard restoration
 
 ### What changed

@@ -1917,6 +1917,7 @@ export class BotService {
                 if (!retryInsertErr && retriedSession) {
                   session = retriedSession as BotSession;
                   logger.info('[BOT] #266 R4: Retry insert succeeded after CAS deactivation:', (retriedSession as BotSession).id);
+                  return; // directory flow runs next message; avoids conflict with fresh null-biz session
                 } else {
                   logger.error('[BOT] #266 R4: Retry insert failed after CAS deactivation:', retryInsertErr?.message, retryInsertErr?.code);
                   if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
