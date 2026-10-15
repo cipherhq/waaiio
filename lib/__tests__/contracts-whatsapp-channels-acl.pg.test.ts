@@ -1036,7 +1036,10 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
       COMMIT;
     `);
 
-    // Attempt authenticated UPDATE on signing_mode — should be blocked by trigger
+    // Attempt authenticated UPDATE on signing_mode — should be blocked.
+    // authenticated has no UPDATE grant on signing_mode (removed in M449), so
+    // the block may be a privilege-level "permission denied" rather than the
+    // trigger's RAISE EXCEPTION. Both prove the update cannot succeed.
     const r = sql(`
       BEGIN;
       SET LOCAL ROLE authenticated;
@@ -1044,7 +1047,7 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
       UPDATE public.contracts SET signing_mode = 'sequential' WHERE id = '${contractId}';
       COMMIT;
     `);
-    expect(r).toMatch(/immutable|integrity_constraint_violation|23000/i);
+    expect(r).toMatch(/immutable|integrity_constraint_violation|23000|permission denied|42501/i);
 
     const mode = sql(`SELECT signing_mode FROM public.contracts WHERE id = '${contractId}';`);
     expect(mode).toBe('parallel');
