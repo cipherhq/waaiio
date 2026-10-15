@@ -27,6 +27,33 @@ If something breaks, check this log to find what changed and when.
 - BYO webhook: payments are no longer marked `failed` for amount/currency/reference mismatches, unknown statuses, or non-401/403/429 HTTP errors from the provider verify call. `gateway_status` is written instead for reconciliation. Only provider-confirmed terminal failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark the payment failed.
 - Migration 443 now also revokes column-level INSERT/UPDATE on every column of `business_payment_credentials` for `authenticated`. Idempotent on re-run.
 
+## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
+
+### What changed
+- **Finding 1 (P2) — version advance in in-place update (`bot.service.ts` ~L3890):** The non-expired 23505 in-place update inside `createNullBizSuggestionSession` now sets `version: (existing.version ?? 0) + 1` in the UPDATE payload alongside the existing `.eq('version', ...)` predicate. Without the payload advance, a second concurrent worker holding the same stale version could overwrite the newly written session data.
+- **Finding 2 (P2) — persisted suggestions for button construction:** All 6 callers of `createNullBizSuggestionSession` (covering `switch_biz`, no-session, returning-customer, 23505 recovery, and inline `handleMessage` recovery paths) now read `session.session_data.suggestions` from the returned session rather than their locally-generated `quickPick` arrays. If the persisted array is empty, each caller fails closed with a single platform-scoped "Something went wrong" reply. This prevents a race window where `biz_0` and `biz_1` resolve to different businesses than the picker labels show.
+- **Design Ruling — retry once after CAS success:** Previously, a successful CAS deactivation (non-zero rows) returned `null` immediately (fail-closed). Now both sites retry the insert exactly once after winning the CAS race. If the retry succeeds → continue normally. If the retry fails for any reason (including another 23505) → fail closed with exactly one "Something went wrong" reply, no loop. Zero-row deactivation is unchanged: re-read, resume if active+unexpired, never insert. Applied at BOTH sites: `createNullBizSuggestionSession` (~L3872) and the inline `handleMessage` 23505 recovery (~L1795).
+- **Tests updated:** Tests 1, 2, 10 (`stale-null-session.test.ts`) updated from `insertCount=1` (no retry) to `insertCount=2` (original + retry). New tests 20–23 added covering: (a) in-place version advance assertion, (b) persisted-suggestions button content assertion, (c) CAS success + retry succeeds → normal flow, (d) CAS success + retry fails → exactly one error reply, no buttons. `s1-botservice-real-handleMessage.test.ts` updated so `insertedSession.session_data.suggestions` is populated (Finding 2 fix). `session-resilience.test.ts` source-string tests updated to match new retry-once log messages.
+- **Note:** Corrects the prior CHANGELOG entry for commit 4ab7d8b5, which stated "CAS success → return null (fail closed). No retry insert." — the error reply now happens only when the single retry also fails.
+
+### What it affects / could break
+- Concurrent null-biz session creation: the winning worker now retries insert once instead of dropping the customer immediately; a customer who won the CAS race will usually get a working picker session instead of an error reply.
+- Button content during CAS recovery: if persisted suggestions are empty (edge case: very short-lived recovered session), user now sees "Something went wrong" instead of buttons built from a potentially stale local array.
+- No schema changes. No DB writes.
+
+## 2026-10-15 — fix(bot): CAS conditional deactivation for stale null-biz sessions (#645)
+
+### What changed
+- `bot.service.ts` site (a) — inline 23505 recovery in `handleMessage`: stale expired null-biz session deactivation now uses a CAS update guarded by `.eq('is_active', true).lt('expires_at', now).eq('version', existing.version)` plus `.select('id')`. If 0 rows updated (concurrent renewal by another worker), re-reads the session; resumes if now active+unexpired, fails closed otherwise. Does NOT retry insert on CAS success.
+- `bot.service.ts` site (b) — expiry deactivation in `createNullBizSuggestionSession`: same CAS pattern. 0 rows → re-read → return renewed session; CAS success → return null (fail closed). No retry insert.
+- Both sites explicitly bump `version: (existing.version ?? 0) + 1` in the update payload. No trigger auto-increments version on `bot_sessions`; it must be set explicitly. The `update_bot_sessions_updated_at` trigger only sets `updated_at`; `trg_bot_session_deactivate` only sets `last_active_at`.
+- `lib/__tests__/stale-null-session.test.ts`: updated tests 1, 2, 10 to assert fail-closed behavior (no retry insert; "Something went wrong" reply sent). Added tests 18 (site A CAS 0-rows race → resumed session) and 19 (site B CAS 0-rows race → resumed session returned, business-picker sent). 19/19 pass.
+- `lib/bot/__tests__/session-resilience.test.ts`: added 15 new tests covering version-trigger absence, CAS guards on both sites, 0-rows resume path, explicit version bump, and behavioral mock tests.
+
+### What it affects / could break
+- Concurrent WhatsApp messages to an expired null-biz session: second concurrent request that loses the CAS race now gets "Something went wrong; send Hi to start over" instead of potentially creating a duplicate session or crashing. Active, unexpired sessions are never incorrectly deactivated.
+- No schema changes. `bot_sessions.version` column was added in migration 236.
+
 ## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
 
 ### What changed
@@ -49,6 +76,17 @@ If something breaks, check this log to find what changed and when.
 - Admins must progress through separate guided steps instead of a single form.
 - Countries absent from the environment's active configuration cannot be submitted. No migration or entitlement change.
 
+## 2026-10-15 — fix(bot): 7-finding hardening (ChatGPT review on bd042ae9 + 6bbd280b)
+
+### What changed
+- **(1)** `bot.service.ts:3003-3058`: All sends in `select_business_suggestion` step handler → platform-scoped (`enterPlatformDiscovery` + `sendPlatformText`). No business is bound in this step.
+- **(2)** `bot.service.ts:1726-1734`: `session = (newSession || session)` with null guard — 23505 recovery path no longer overwrites with null. `newSession.id` ref at L1692 → `effectiveId` with null check.
+- **(3)** `bot.service.ts:3665`: In-place update adds `.eq('whatsapp_number', from).eq('version', existing.version)` — CAS concurrency protection. 0 rows → return null.
+- **(4)** `bot.service.ts:1246-1251`: Did-you-mean helper returns null → explicit `sendPlatformText` error + `return` — never falls through to generic session creation.
+- **(5)** `bot.service.ts:3633-3634`: Removed delete of inactive null-biz rows — no unique index makes them collide (only `idx_bot_sessions_unique_active_null_biz` is partial on `is_active=true`). Deactivate only.
+- **(6)** `lib/__tests__/stale-null-session.test.ts:813-853`: Real two-message test: msg1 "Hi" returning → picker stored, msg2 "biz_0" → step handler deactivates, recursive call binds business.
+- **(7)** `bot.service.ts:2477-2494`: In-session `switch_biz` now calls `enterPlatformDiscovery` before sends. All replies platform-scoped (`sendPlatformButtons`, `sendPlatformText`). Suspended previous business cannot block switching.
+
 ## 2026-10-14 — fix(bot): confirm saved-card decline choices with navigation buttons
 
 ### What changed
@@ -62,6 +100,33 @@ If something breaks, check this log to find what changed and when.
 - Main menu button routes to the business's capability selection menu.
 - Done button deactivates the session with a goodbye message.
 - No change to accept paths (save_accept/replace_accept already confirm + enter PIN flow).
+
+## 2026-10-14 — fix(bot): DRY suggestion session creation via createNullBizSuggestionSession helper
+
+### What changed
+- `lib/bot/bot.service.ts:3664-3720`: New `createNullBizSuggestionSession(from, userId, sessionData, ttlMs)` helper. Deactivates expired active null-biz sessions, cleans up inactive rows, inserts new session. On 23505: if existing is expired, deactivates + retries once; if not expired, updates in place. Returns null on unrecoverable failure (log + Sentry).
+- All 6 call sites that created null-biz `select_business_suggestion` sessions now use the helper: `switch_biz` (L204), `home` (L228), switch-keyword suggestions (L852), did-you-mean (L1216), "Welcome back" quick-pick (L2170), in-session `switch_biz` (L2482). Buttons/suggestions only sent if helper returns a session; otherwise platform-scoped "Something went wrong" fallback.
+- Generic session-insert failure branch (L1688): only calls `enterPlatformDiscovery + sendPlatformText` when `!businessId`; when businessId is set, sends fallback business-scoped with guard (MessagingSuspendedError caught).
+- `lib/__tests__/stale-null-session.test.ts`: Added tests 8-11: returning customer picker via helper, did-you-mean via helper, 23505 in-place update, hard insert failure → fallback.
+
+### What it affects / could break
+- Session creation is now atomic per helper call — stale sessions cleaned up before insert. Prevents 23505 from silently dropping the session.
+- Buttons are only sent after session is confirmed stored — prevents orphaned buttons with no backing session.
+
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1627-1666`: 23505 null-biz recovery now checks if the recovered session is expired (`expires_at < now`). If expired: deactivates the stale row (`is_active=false`, scoped by id + `business_id IS NULL`), retries the insert once. If retry fails: logs, Sentry, sends fallback via platform path. Only resumes non-expired sessions.
+- `lib/bot/bot.service.ts:1659-1669`: 23505 fallback "Something went wrong" messages changed from `this.sendText` (business-scoped, crashes with MessagingSuspendedError when no business) to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2039-2041`: Added `enterPlatformDiscovery()` call at the start of the marketplace greeting section (no business bound).
+- `lib/bot/bot.service.ts:2053,2070-2076,2095,2110,2126`: Changed all no-business sends from `this.sendText` / `this.messageSender.sendButtons` to `this.sendPlatformText` / `this.sendPlatformButtons` — "Welcome back", quick-pick buttons, registration fallback, first-time greeting, "couldn't find a business".
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering stale session deactivation + retry, Hi with stale session, brand-new phone greeting, returning customer picker.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts:360-388`: Updated test 6 — no longer expects guard to block (sends are now platform-scoped), instead verifies "couldn't find" message is delivered.
+
+### What it affects / could break
+- The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
+- PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
+- The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
 
 ## 2026-10-13 — #628 fix(payments): Flutterwave BYO webhook secret hash required at setup
 
