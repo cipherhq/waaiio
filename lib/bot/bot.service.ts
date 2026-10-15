@@ -646,6 +646,40 @@ export class BotService {
       _bmark('unresolved_get_bot_context');
     }
 
+    // ── P1-1: Early savedcard nav verification — BEFORE revalidation ──
+    // savedcard_menu/done payloads carry a user-controllable paymentId.
+    // Verify payment ownership before ANY session mutation (revalidation,
+    // CAS, deactivation, send). Unverified → return immediately.
+    const _earlyNavText = text.trim();
+    const _earlyNavMatch = _earlyNavText.match(/^(savedcard_menu|savedcard_done):(.+)$/);
+    let _earlyBizId: string | null = null;
+    if (_earlyNavMatch) {
+      const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+      const _earlyCanonPhone = canonicalSavedCardPhone(from);
+      let _earlyVerified = false;
+
+      if (_earlyCanonPhone) {
+        const { data: _earlyPayment } = await this.supabase.from('payments')
+          .select('id, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id, user_id')
+          .eq('id', _earlyNavMatch[2]).single();
+        if (_earlyPayment) {
+          const { verifyPaymentCustomerPhone } = await import('@/lib/payments/saved-card-offer');
+          const paymentPhone = await verifyPaymentCustomerPhone(this.supabase, _earlyPayment);
+          if (paymentPhone === _earlyCanonPhone) {
+            _earlyBizId = _earlyPayment.business_id;
+            if (session?.business_id && _earlyBizId && session.business_id !== _earlyBizId) {
+              logger.warn('[SAVED-CARD-NAV] Payment business mismatch with session', { paymentId: _earlyNavMatch[2] });
+            } else {
+              _earlyVerified = true;
+            }
+          } else {
+            logger.warn('[SAVED-CARD-NAV] Payment customer phone mismatch', { paymentId: _earlyNavMatch[2] });
+          }
+        }
+      }
+      if (!_earlyVerified) return;
+    }
+
     // ── CAP-001 Point A: Session resume capability revalidation ──
     // When an existing business-associated session is found, refresh capabilities
     // and verify business status using the canonical policy resolver.
@@ -1065,45 +1099,13 @@ export class BotService {
     }
 
     // ── Post-decline saved-card navigation buttons ──
-    const _scNavMatch = _scTrimmed.match(/^(savedcard_menu|savedcard_done):(.+)$/);
-    if (_scNavMatch) {
-      const navAction = _scNavMatch[1];
-      const navPaymentId = _scNavMatch[2];
-
-      // SECURITY: Verify payment belongs to THIS customer before any action.
-      // Uses the same phone normalisation as saved-card-offer.ts.
-      const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
-      const _scNavCanonPhone = canonicalSavedCardPhone(from);
-      let _scNavVerified = false;
-      let _scNavBizId: string | null = null;
-
-      if (_scNavCanonPhone) {
-        const { data: _scNavPayment } = await this.supabase.from('payments')
-          .select('id, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id, user_id')
-          .eq('id', navPaymentId).single();
-        if (_scNavPayment) {
-          // Resolve customer phone from payment entity chain
-          const { verifyPaymentCustomerPhone } = await import('@/lib/payments/saved-card-offer');
-          const paymentPhone = await verifyPaymentCustomerPhone(this.supabase, _scNavPayment);
-          if (paymentPhone === _scNavCanonPhone) {
-            // Phone matches — also verify business consistency with session
-            _scNavBizId = _scNavPayment.business_id;
-            if (session?.business_id && _scNavBizId && session.business_id !== _scNavBizId) {
-              // Payment is from a different business than the bound session — reject
-              logger.warn('[SAVED-CARD-NAV] Payment business mismatch with session', { paymentId: navPaymentId });
-            } else {
-              _scNavVerified = true;
-            }
-          } else {
-            logger.warn('[SAVED-CARD-NAV] Payment customer phone mismatch', { paymentId: navPaymentId });
-          }
-        }
-      }
-
-      // FIX #2: Unverified tap → return immediately. No fall-through.
-      if (!_scNavVerified) {
-        return;
-      }
+    // Verification already completed before revalidation (_earlyNavMatch).
+    // _earlyVerified is true if we reach here with a nav match.
+    if (_earlyNavMatch) {
+      const navAction = _earlyNavMatch[1];
+      const navPaymentId = _earlyNavMatch[2];
+      // _earlyBizId and _earlyVerified from the early block above
+      const _scNavBizId = _earlyBizId!;
 
       if (navAction === 'savedcard_done') {
         // Bind the verified business before sending — required for S-1 guard

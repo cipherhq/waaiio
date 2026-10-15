@@ -277,20 +277,27 @@ async function sendDeclineConfirmation(
   const { getFlowCopy, fillFlowCopy } = await import('@/lib/bot/flows/flow-localization');
   const { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides } = await import('@/lib/bot/translations');
 
-  // Resolve business from payment for S-1 binding and override context
-  const { data: payment } = await supabase.from('payments')
+  // Resolve business from payment — fail closed on error, no-row, or null business_id.
+  // Never substitute session.business_id; use payment's business_id only.
+  const { data: payment, error: paymentErr } = await supabase.from('payments')
     .select('business_id').eq('id', paymentId).single();
-  const paymentBizId = payment?.business_id;
-  const sessionBizId = session?.business_id;
+  if (paymentErr || !payment) {
+    logger.warn('[SAVED-CARD-DECLINE] Payment lookup failed — no bind, no send', { paymentId });
+    return;
+  }
+  const businessId = payment.business_id;
+  if (!businessId) {
+    logger.warn('[SAVED-CARD-DECLINE] Payment has null business_id — no bind, no send', { paymentId });
+    return;
+  }
 
-  // FIX #4: If session is bound to a different business than the payment, do not bind or send
-  if (sessionBizId && paymentBizId && sessionBizId !== paymentBizId) {
+  // Reject when session is bound to a different business
+  if (session?.business_id && session.business_id !== businessId) {
     logger.warn('[SAVED-CARD-DECLINE] Business mismatch — session vs payment', { paymentId });
     return;
   }
 
-  const businessId = paymentBizId || sessionBizId;
-  if (businessId) bindBusiness?.(businessId);
+  bindBusiness?.(businessId);
 
   // Resolve language: session._detected_language → default 'en' (same source as bot flows)
   const lang = (session?.session_data as Record<string, unknown> | undefined)?._detected_language as string || 'en';

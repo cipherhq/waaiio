@@ -320,23 +320,81 @@ describe('Saved-card decline confirmation', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // FIX R3-#3: no payment business and no session business → generic copy, no card query
+  // P1-2a: payment with null business_id → fail closed, no bind, no send
   // ═══════════════════════════════════════════════════════════════
-  it('replace_decline with null businessId → generic copy, no saved_payment_methods query', async () => {
+  it('decline with payment null business_id → no bind, no send, no card query', async () => {
     const supabase = buildMockSupabase({
       payment: { ...PLATFORM_PAYMENT, business_id: null },
     });
+    const bindBusiness = vi.fn();
     const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
     await handleSavedCardOfferAction(
-      supabase as any, sendText, PHONE, null, 'replace_decline', PAY_ID, vi.fn(), sendButtons,
+      supabase as any, sendText, PHONE, null, 'replace_decline', PAY_ID, bindBusiness, sendButtons,
     );
 
-    // Should send generic copy (no last4)
-    expect(sendButtons).toHaveBeenCalledTimes(1);
-    const call = sendButtons.mock.calls[0][0];
-    expect(call.body).toContain('current card');
-    // saved_payment_methods should NOT have been queried
+    expect(bindBusiness).not.toHaveBeenCalled();
+    expect(sendButtons).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
     const pmCalls = supabase.from.mock.calls.filter((c: unknown[]) => c[0] === 'saved_payment_methods');
     expect(pmCalls).toHaveLength(0);
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // P1-2b: payment lookup DB error → no bind, no send
+  // ═══════════════════════════════════════════════════════════════
+  it('decline with payment lookup DB error → no bind, no send', async () => {
+    const supabase = buildMockSupabase();
+    // Override payments chain to return error
+    const origFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'payments') {
+        const chain: Record<string, any> = {};
+        ['select', 'eq', 'in', 'or', 'order', 'limit', 'not', 'gte', 'update', 'delete'].forEach(m => {
+          chain[m] = vi.fn().mockReturnValue(chain);
+        });
+        chain.single = vi.fn().mockResolvedValue({ data: null, error: { message: 'DB connection failed' } });
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: { message: 'DB connection failed' } });
+        return chain;
+      }
+      return origFrom(table);
+    }) as any;
+    const bindBusiness = vi.fn();
+    const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+    await handleSavedCardOfferAction(
+      supabase as any, sendText, PHONE, null, 'save_decline', PAY_ID, bindBusiness, sendButtons,
+    );
+
+    expect(bindBusiness).not.toHaveBeenCalled();
+    expect(sendButtons).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // P1-2c: payment not found → no bind, no send
+  // ═══════════════════════════════════════════════════════════════
+  it('decline with payment not found → no bind, no send', async () => {
+    const supabase = buildMockSupabase();
+    const origFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'payments') {
+        const chain: Record<string, any> = {};
+        ['select', 'eq', 'in', 'or', 'order', 'limit', 'not', 'gte', 'update', 'delete'].forEach(m => {
+          chain[m] = vi.fn().mockReturnValue(chain);
+        });
+        chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        return chain;
+      }
+      return origFrom(table);
+    }) as any;
+    const bindBusiness = vi.fn();
+    const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+    await handleSavedCardOfferAction(
+      supabase as any, sendText, PHONE, null, 'save_decline', PAY_ID, bindBusiness, sendButtons,
+    );
+
+    expect(bindBusiness).not.toHaveBeenCalled();
+    expect(sendButtons).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
   });
 });
