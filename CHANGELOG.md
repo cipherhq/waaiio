@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
+
+### What changed
+- The public `/pay/[token]` page now explains that hosted payment providers process cards, Waaiio does not retain full card numbers or CVV, and merchants cannot see full card credentials.
+- The notice correctly discloses merchant visibility of transaction amount, status and customer-provided purchase information; it does not make absolute "no payment data" promises.
+- Shared copy is shown before redirect to the business's configured gateway; added copy regression tests.
+
+### What it affects / could break
+- Checkout disclosure text/visuals change; no payment initiation logic, gateway routing, database schema or settlement behavior is modified.
+
 ## 2026-10-15 — fix(admin): guided admin onboarding and authoritative country options (#651)
 
 ### What changed

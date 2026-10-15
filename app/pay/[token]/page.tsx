@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { PAYMENT_LINK_PRIVACY } from '@/lib/payments/payment-link-privacy';
 
 interface PayLinkInfo {
   id: string;
@@ -272,16 +273,17 @@ export default function ScanToPayPage() {
             </div>
           )}
 
-          {/* Security note */}
-          <div className="rounded-lg bg-gray-100 p-4">
-            <p className="text-xs leading-relaxed text-gray-500">
-              Payments are processed securely via our payment partners. Your payment details are never stored on our servers.
+          {/* Gateway-neutral privacy reassurance: shown before redirecting to hosted checkout. */}
+          <section aria-label="Payment privacy" className="rounded-lg border border-blue-100 bg-blue-50/70 p-4">
+            <p className="text-sm font-semibold text-gray-800">{PAYMENT_LINK_PRIVACY.heading}</p>
+            <p className="mt-1 text-xs leading-relaxed text-gray-700">{PAYMENT_LINK_PRIVACY.description}</p>
+            <p className="mt-2 text-xs leading-relaxed text-gray-500">
               By proceeding, you agree to our{' '}
-              <a href="/terms" className="font-medium text-blue-600 hover:underline">Terms of Service</a>{' '}
+              <a href="/terms" className="font-medium text-blue-700 hover:underline">Terms of Service</a>{' '}
               and{' '}
-              <a href="/privacy" className="font-medium text-blue-600 hover:underline">Privacy Policy</a>.
+              <a href="/privacy" className="font-medium text-blue-700 hover:underline">Privacy Policy</a>.
             </p>
-          </div>
+          </section>
         </div>
       </main>
 
