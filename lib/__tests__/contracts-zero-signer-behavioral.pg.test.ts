@@ -365,14 +365,22 @@ describeDb('Migration 450: DB-level zero-signer trigger — behavioral', () => {
   // ── M450 function security hardening ────────────────────────────────────
 
   it('M450 function search_path includes pg_temp (hardened against temp-table injection)', () => {
+    // pg_get_functiondef normalizes SET clauses so the exact syntax may differ.
+    // Query proconfig directly — PostgreSQL stores SET clauses as 'key=value' strings
+    // in the proconfig array; the entry will be 'search_path=public, pg_temp'.
     const r = sql(`
-      SELECT pg_get_functiondef(p.oid)
-        FROM pg_proc p
-        JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'public'
-         AND p.proname = 'contracts_enforce_signer_rows';
+      SELECT EXISTS(
+        SELECT 1
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace,
+               unnest(p.proconfig) AS cfg
+         WHERE n.nspname = 'public'
+           AND p.proname = 'contracts_enforce_signer_rows'
+           AND cfg LIKE 'search_path=%'
+           AND cfg LIKE '%pg_temp%'
+      );
     `);
-    expect(r).toMatch(/SET search_path\s*=\s*public,\s*pg_temp/i);
+    expect(r).toBe('t');
   });
 
   it('M450 function: PUBLIC cannot directly invoke contracts_enforce_signer_rows', () => {

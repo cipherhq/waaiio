@@ -344,26 +344,8 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
       GRANT SELECT, INSERT ON public.signed_waivers TO service_role;
     `);
 
-    // ── HOSTILE pre-state: column-level grants that M449 must clean up ────────
-    // These simulate an adversarial scenario where column-level grants to sensitive
-    // columns were made (e.g. by a different grantor, or directly by a DB admin)
-    // before the migration runs.  M449 must remove them.
-    sql(`
-      -- (a) column-level SELECT on credential columns to authenticated and anon
-      GRANT SELECT (token)             ON public.contract_signers TO authenticated, anon;
-      GRANT SELECT (otp_code)          ON public.contract_signers TO authenticated, anon;
-      GRANT SELECT (meta_access_token) ON public.whatsapp_channels TO authenticated, anon;
-      -- (b) column-level UPDATE on server-managed columns to authenticated
-      GRANT UPDATE (status)    ON public.contracts TO authenticated;
-      GRANT UPDATE (signed_at) ON public.contracts TO authenticated;
-      -- (c) table-level grant to PUBLIC on all six tables
-      GRANT SELECT, INSERT, UPDATE, DELETE ON public.contracts TO PUBLIC;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON public.contract_signers TO PUBLIC;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON public.contract_templates TO PUBLIC;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON public.whatsapp_channels TO PUBLIC;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON public.waiver_templates TO PUBLIC;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON public.signed_waivers TO PUBLIC;
-    `);
+    // Note: HOSTILE pre-state grants are applied in section A2's first test so they
+    // do not interfere with section A pre-migration assertions.
 
     // Seed data
     sql(`INSERT INTO auth.users (id) VALUES ('${OWNER_ID}') ON CONFLICT DO NOTHING;`);
@@ -423,8 +405,28 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
 
   // ══════════════════════════════════════════════════════════════════════════
   // A2. Hostile pre-state: hostile column-level + PUBLIC grants exist BEFORE M449
-  // These were injected in beforeAll; verify they exist so we can confirm M449 cleans them.
+  //
+  // Grants are applied HERE (not in beforeAll) so section A assertions above see
+  // the clean pre-migration state before any PUBLIC grants are added.
   // ══════════════════════════════════════════════════════════════════════════
+
+  it('A2 setup: apply hostile column-level and PUBLIC table grants before M449', () => {
+    // (a) column-level SELECT on credential columns to authenticated and anon
+    sql(`GRANT SELECT (token)             ON public.contract_signers TO authenticated, anon;`);
+    sql(`GRANT SELECT (otp_code)          ON public.contract_signers TO authenticated, anon;`);
+    sql(`GRANT SELECT (meta_access_token) ON public.whatsapp_channels TO authenticated, anon;`);
+    // (b) column-level UPDATE on server-managed columns to authenticated
+    sql(`GRANT UPDATE (status)    ON public.contracts TO authenticated;`);
+    sql(`GRANT UPDATE (signed_at) ON public.contracts TO authenticated;`);
+    // (c) table-level grant to PUBLIC on all six tables
+    sql(`GRANT SELECT, INSERT, UPDATE, DELETE ON public.contracts TO PUBLIC;`);
+    sql(`GRANT SELECT, INSERT, UPDATE, DELETE ON public.contract_signers TO PUBLIC;`);
+    sql(`GRANT SELECT, INSERT, UPDATE, DELETE ON public.contract_templates TO PUBLIC;`);
+    sql(`GRANT SELECT, INSERT, UPDATE, DELETE ON public.whatsapp_channels TO PUBLIC;`);
+    sql(`GRANT SELECT, INSERT, UPDATE, DELETE ON public.waiver_templates TO PUBLIC;`);
+    sql(`GRANT SELECT, INSERT, UPDATE, DELETE ON public.signed_waivers TO PUBLIC;`);
+    // No assertions — purely setup; A2 verification tests follow.
+  });
 
   it('hostile pre-state: authenticated has column-level SELECT on contract_signers.token', () => {
     const r = sql(`
@@ -1022,7 +1024,7 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   });
 
   it('M: authenticated cannot change signing_mode after contract leaves pending', () => {
-    const contractId = '00000000-0000-0000-0000-000000449m01';
+    const contractId = '00000000-0000-0000-0000-000000449ac1';
     // Insert via service_role, send = move to non-pending by setting status='active'
     sql(`
       BEGIN;
@@ -1051,7 +1053,7 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   });
 
   it('M: service_role cannot change signing_mode after contract leaves pending', () => {
-    const contractId = '00000000-0000-0000-0000-000000449m02';
+    const contractId = '00000000-0000-0000-0000-000000449ac2';
     sql(`
       BEGIN;
       SET LOCAL ROLE service_role;
@@ -1076,7 +1078,7 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   });
 
   it('M: signing_mode CAN change while contract is still pending', () => {
-    const contractId = '00000000-0000-0000-0000-000000449m03';
+    const contractId = '00000000-0000-0000-0000-000000449ac3';
     sql(`
       BEGIN;
       SET LOCAL ROLE service_role;
@@ -1118,8 +1120,8 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   });
 
   it('N: service_role cannot UPDATE a signer row after parent contract is signed', () => {
-    const contractId = '00000000-0000-0000-0000-000000449n01';
-    const signerId   = '00000000-0000-0000-0000-000000449n02';
+    const contractId = '00000000-0000-0000-0000-000000449bc1';
+    const signerId   = '00000000-0000-0000-0000-000000449bc2';
     sql(`
       BEGIN;
       SET LOCAL ROLE service_role;
@@ -1150,8 +1152,8 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
   });
 
   it('N: service_role CAN UPDATE signer rows while parent contract is not yet signed', () => {
-    const contractId = '00000000-0000-0000-0000-000000449n03';
-    const signerId   = '00000000-0000-0000-0000-000000449n04';
+    const contractId = '00000000-0000-0000-0000-000000449bc3';
+    const signerId   = '00000000-0000-0000-0000-000000449bc4';
     sql(`
       BEGIN;
       SET LOCAL ROLE service_role;
