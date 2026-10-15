@@ -3,6 +3,37 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — feat(#402): /data-deletion public page — Meta app publication, truthfulness contract
+
+### What changed
+- **`app/(marketing)/data-deletion/page.tsx`** (NEW): Public, unauthenticated page at `/data-deletion` documenting how users can delete their Waaiio account. Required by Meta for app publication (GDPR/CCPA). Page is publicly reachable without login — middleware protects only `/dashboard/*` paths.
+- **Page copy accurately reflects backend behavior** (`app/api/account/route.ts`):
+  - Two deletion options: **Immediate Deletion** (Danger Zone card in Settings → Account) and **30-Day Grace Period** (Privacy & Data modal). The page documents both clearly.
+  - Businesses are **soft-deleted** (`status: 'deleted'`), not physically removed. Bot sessions deactivated. Active subscriptions cancelled on Stripe/Paystack.
+  - **Cancel a Pending Deletion** correctly directs to the **Cancel Deletion** dashboard button — cancellation is NOT automatic on login. (PATCH `/api/account` is called explicitly by the dashboard banner button, not by the login flow.)
+  - Data retention section explains that financial, booking, and operational records may be retained for legal/compliance reasons — no false "all data deleted" claim.
+  - No GDPR/CCPA response-time guarantees (no cron worker to enforce them).
+- **`lib/__tests__/data-deletion-page-402.test.ts`** (NEW): Truthfulness regression tests (24 assertions across 3 describe blocks). Prevents future copy changes from re-introducing: unsupported permanent-removal claims, auto-deletion after grace period, login-cancels-deletion claim, missing soft-delete language, or missing cancel/retention disclosures.
+- **OG metadata and canonical URL** added (`NEXT_PUBLIC_APP_URL`-relative canonical link, OpenGraph title/description/type).
+
+### What it affects / could break
+- `/data-deletion` is a new public route with no authentication requirement. No impact on existing routes, auth, or database schema.
+- If the deletion UX in `AccountTab.tsx` changes (section names, button labels, flow) the page copy and the truthfulness tests must be updated together.
+- The test reads `app/api/account/route.ts` source directly — if the backend deletion logic changes (e.g. adding a hard-delete path), tests assert the page still matches.
+
+### Claim verification (page copy vs code)
+| Claim | Code location | Verdict |
+|---|---|---|
+| Immediate deletion removes auth user | `route.ts:190` `admin.deleteUser` | ✓ |
+| Business soft-delete `status:'deleted'` | `route.ts:168-173` | ✓ |
+| Subscriptions cancelled on gateway | `route.ts:66-84` | ✓ |
+| Bot sessions deactivated | `route.ts:89-95` | ✓ |
+| Confirmation email sent | `route.ts:147-156`, `178-187` | ✓ |
+| 30-day grace period schedules deletion | `route.ts:113-114` `deletion_date +30d` | ✓ |
+| Cancel requires "Cancel Deletion" button | `dashboard/page.tsx:282-295` PATCH `/api/account` | ✓ |
+| `/data-deletion` publicly accessible | `middleware.ts` — only `/dashboard` protected | ✓ |
+| `/privacy` and `/terms` pages exist | `app/(marketing)/privacy/page.tsx`, `app/(marketing)/terms/page.tsx` | ✓ |
+
 ## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
 
 ### What changed
