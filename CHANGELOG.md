@@ -3,6 +3,43 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(db): M451 — contract_id immutability guard in signer-lock trigger (ChatGPT round 4 P1)
+
+### What changed (rev 8 — ChatGPT round 4 P1 at SHA ec91d36d)
+
+**P1: COALESCE bypass — contract_id reassignment on contract_signers**
+- Root cause: the lock trigger used `COALESCE(OLD.contract_id, NEW.contract_id)` to
+  identify the parent contract. On UPDATE, OLD is never NULL, so COALESCE always picks
+  OLD.contract_id. An `UPDATE contract_signers SET contract_id = <signed_id>` would have
+  the trigger look up the OLD (unsigned/draft) parent → status ≠ 'signed' → allows the
+  mutation → signer row is silently moved to a signed contract, bypassing the lock.
+  Only reachable by service_role (M449 excludes contract_id from authenticated UPDATE
+  grants), but the invariant must hold for ALL roles.
+- Fix 1 — immutability guard: added `IF TG_OP = 'UPDATE' AND OLD.contract_id IS DISTINCT
+  FROM NEW.contract_id THEN RAISE EXCEPTION 'contract_id reassignment is forbidden ...'
+  USING ERRCODE = '23514'` at the top of the function body, before the FOR UPDATE check.
+- Fix 2 — explicit resolution: replaced `COALESCE(OLD.contract_id, NEW.contract_id)` with
+  `v_target_contract_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.contract_id ELSE
+  NEW.contract_id END`. After the immutability guard, OLD = NEW for UPDATE, so the CASE
+  is unambiguous. Declared `v_target_contract_id UUID` in the DECLARE block.
+- Self-check 6 added: verifies `contract_id reassignment is forbidden` string is present
+  in `pg_proc.prosrc` after the migration runs.
+- RAISE NOTICE updated to mention "contract_id reassignment guard in place".
+- M449, M450, and the trigger binding are unchanged.
+
+**New test: `lib/__tests__/contract-signer-concurrency.pg.test.ts` — test 4**
+- Creates a signed contract (single-mode, so M450 zero-signer guard doesn't apply)
+  and a draft contract, each with one signer.
+- Attempts `UPDATE contract_signers SET contract_id = <signed_id>` on the draft signer.
+- Asserts: raises with message matching `contract_id reassignment is forbidden`, error
+  code `23514` (check_violation), and signer row is unchanged.
+
+### What it affects / could break
+- Any code path that attempts to change `contract_id` on an existing `contract_signers`
+  row will now fail with `check_violation (23514)`. No such code path exists in the app —
+  signers are created once and never reassigned. The immutability guard makes this
+  invariant explicit and enforced at the DB level for all roles.
+
 ## 2026-10-15 — fix(security): M451 — contract_signers lock FOR UPDATE concurrency fix (ChatGPT round 3 P1)
 
 ### What changed (rev 7 — ChatGPT round 3 P1 at SHA a154c2ea)

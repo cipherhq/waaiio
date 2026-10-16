@@ -51,6 +51,10 @@ const S2A    = '00000000-0000-0000-0000-000000451007'; // test 2 existing signer
 const NS2    = '00000000-0000-0000-0000-000000451008'; // test 2 new signer (inserts before finalization)
 const C3_ID  = '00000000-0000-0000-0000-000000451009'; // test 3 contract (rollback)
 const NS3    = '00000000-0000-0000-0000-000000451010'; // test 3 new signer (succeeds after rollback)
+const C4_SIGNED  = '00000000-0000-0000-0000-000000451011'; // test 4 signed contract (reassignment target)
+const C4_DRAFT   = '00000000-0000-0000-0000-000000451012'; // test 4 draft contract (signer source)
+const S4A        = '00000000-0000-0000-0000-000000451013'; // test 4 signer on signed contract
+const S4_DRAFT   = '00000000-0000-0000-0000-000000451014'; // test 4 signer on draft (to be reassigned)
 
 describeDb('M451: FOR UPDATE concurrency — signer mutations serialized against contract finalization', () => {
   let admin: Client;
@@ -186,9 +190,9 @@ describeDb('M451: FOR UPDATE concurrency — signer mutations serialized against
     try {
       await admin.query(`
         UPDATE public.contracts SET status = 'pending'
-         WHERE id IN ('${C1_ID}', '${C2_ID}', '${C3_ID}');
+         WHERE id IN ('${C1_ID}', '${C2_ID}', '${C3_ID}', '${C4_SIGNED}', '${C4_DRAFT}');
         DELETE FROM public.contracts
-         WHERE id IN ('${C1_ID}', '${C2_ID}', '${C3_ID}');
+         WHERE id IN ('${C1_ID}', '${C2_ID}', '${C3_ID}', '${C4_SIGNED}', '${C4_DRAFT}');
         DELETE FROM public.businesses WHERE id = '${BIZ_ID}';
       `);
     } catch (_) { /* ignore */ }
@@ -409,4 +413,63 @@ describeDb('M451: FOR UPDATE concurrency — signer mutations serialized against
       await connB.end();
     }
   }, 10_000);
+
+  // ── Test 4 ─────────────────────────────────────────────────────────────────
+  //
+  // Immutability guard (M451 round 4): contract_id reassignment must be rejected.
+  //
+  // A signer row on a draft contract is UPDATEd to point at a signed contract.
+  // Before the fix, COALESCE(OLD.contract_id, NEW.contract_id) always picked
+  // OLD (draft, status≠'signed') → trigger allowed the mutation.
+  // After the fix, the immutability guard raises before the FOR UPDATE lookup.
+
+  it('rejects contract_id reassignment on contract_signers', async () => {
+    // Setup: C4_SIGNED (single-mode, signed) with one signed signer (S4A);
+    //        C4_DRAFT  (single-mode, active)  with one pending signer (S4_DRAFT).
+    await admin.query(`
+      INSERT INTO public.contracts (id, business_id, title, token, status, signing_mode)
+        VALUES
+          ('${C4_SIGNED}', '${BIZ_ID}', 'T4-signed', 'tok451c4signed001', 'active', 'single'),
+          ('${C4_DRAFT}',  '${BIZ_ID}', 'T4-draft',  'tok451c4draft001',  'active', 'single')
+        ON CONFLICT (id) DO NOTHING;
+      INSERT INTO public.contract_signers (id, contract_id, signer_phone, status)
+        VALUES
+          ('${S4A}',      '${C4_SIGNED}', '+2340000000010', 'signed'),
+          ('${S4_DRAFT}', '${C4_DRAFT}',  '+2340000000011', 'pending')
+        ON CONFLICT (id) DO NOTHING;
+      -- Finalize C4_SIGNED (single-mode → M450 zero-signer guard does not apply)
+      UPDATE public.contracts SET status = 'signed' WHERE id = '${C4_SIGNED}';
+    `);
+
+    // Attempt: reassign S4_DRAFT from C4_DRAFT (active) to C4_SIGNED (signed).
+    // With the old COALESCE the trigger would look up OLD.contract_id = C4_DRAFT
+    // (status='active') and allow the move.  With the immutability guard it must raise.
+    let err: Error | null = null;
+    try {
+      await admin.query(`
+        UPDATE public.contract_signers
+           SET contract_id = '${C4_SIGNED}'
+         WHERE id = '${S4_DRAFT}'
+      `);
+    } catch (e) {
+      err = e as Error;
+    }
+
+    expect(err).toBeTruthy();
+    expect(err!.message).toMatch(/contract_id reassignment is forbidden/i);
+    expect((err as any).code).toBe('23514'); // check_violation
+
+    // S4_DRAFT must still belong to C4_DRAFT
+    const { rows } = await admin.query(
+      `SELECT contract_id FROM public.contract_signers WHERE id = '${S4_DRAFT}'`,
+    );
+    expect(rows[0].contract_id).toBe(C4_DRAFT);
+
+    // Inline cleanup (afterAll also covers these in the fallback path)
+    await admin.query(`
+      UPDATE public.contracts SET status = 'pending' WHERE id = '${C4_SIGNED}';
+      DELETE FROM public.contract_signers WHERE id IN ('${S4A}', '${S4_DRAFT}');
+      DELETE FROM public.contracts WHERE id IN ('${C4_SIGNED}', '${C4_DRAFT}');
+    `).catch(() => {});
+  });
 });

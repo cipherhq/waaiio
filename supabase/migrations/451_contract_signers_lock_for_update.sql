@@ -25,6 +25,24 @@
 -- M450 is unaffected: the FOR UPDATE on the contracts row in M449 guarantees that
 -- any in-flight signer mutation has committed before M450's SELECT on contract_signers
 -- runs, so M450 always sees a consistent signer count.
+--
+-- ChatGPT P1 (round 4): COALESCE bypass — contract_id reassignment.
+--
+-- On UPDATE, COALESCE(OLD.contract_id, NEW.contract_id) always picks OLD.contract_id
+-- (OLD is never NULL for UPDATE).  A signer row could be reassigned from an unsigned
+-- (draft) contract to a signed contract:
+--   UPDATE contract_signers SET contract_id = <signed_id> WHERE id = <signer_id>;
+-- The trigger would look up OLD.contract_id (draft, status≠'signed') → allow the
+-- mutation.  The signer row ends up attached to the signed contract, bypassing the lock.
+--
+-- M449 column grants exclude contract_id from the authenticated UPDATE grant, so
+-- this bypass is only reachable by service_role.  However, the database invariant
+-- must hold for ALL roles — a column grant restriction is not a substitute for a
+-- trigger-level integrity check.
+--
+-- Fix: add an immutability guard that raises before the FOR UPDATE check, plus
+-- replace the COALESCE with an explicit CASE WHEN TG_OP = 'DELETE' so the lookup
+-- always uses the correct parent contract regardless of trigger operation.
 
 CREATE OR REPLACE FUNCTION public.contract_signers_enforce_signed_lock()
 RETURNS TRIGGER
@@ -33,17 +51,37 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_contract_status TEXT;
+  v_contract_status    TEXT;
+  v_target_contract_id UUID;
 BEGIN
+  -- ── Immutability guard (M451 round 4) ──────────────────────────────────────
+  -- contract_id must never change once set.  An UPDATE that changes contract_id
+  -- would look up the OLD parent (not the new signed one) via the old COALESCE,
+  -- allowing a signer to be silently moved onto a signed contract.
+  IF TG_OP = 'UPDATE' AND OLD.contract_id IS DISTINCT FROM NEW.contract_id THEN
+    RAISE EXCEPTION 'contract_id reassignment is forbidden on contract_signers'
+      USING ERRCODE = '23514';   -- check_violation
+  END IF;
+
+  -- ── Explicit parent-contract resolution ─────────────────────────────────────
+  -- DELETE: OLD row is being removed → use OLD.contract_id.
+  -- INSERT / UPDATE: use NEW.contract_id.
+  -- (After the immutability guard above, OLD.contract_id = NEW.contract_id for
+  -- UPDATE, so this distinction matters only for INSERT vs DELETE.)
+  v_target_contract_id := CASE
+    WHEN TG_OP = 'DELETE' THEN OLD.contract_id
+    ELSE                       NEW.contract_id
+  END;
+
   SELECT status INTO v_contract_status
     FROM public.contracts
-   WHERE id = COALESCE(OLD.contract_id, NEW.contract_id)
+   WHERE id = v_target_contract_id
      FOR UPDATE;                              -- serialize on parent row (M451 concurrency fix)
 
   IF v_contract_status = 'signed' THEN
     RAISE EXCEPTION
       'contract_signers: row % is locked — parent contract % is already signed',
-      COALESCE(OLD.id, NEW.id), COALESCE(OLD.contract_id, NEW.contract_id)
+      COALESCE(OLD.id, NEW.id), v_target_contract_id
       USING ERRCODE = 'integrity_constraint_violation';
   END IF;
 
@@ -106,8 +144,19 @@ BEGIN
       '451 SELF-CHECK FAILED: authenticated retains EXECUTE on contract_signers_enforce_signed_lock';
   END IF;
 
+  -- 6. Immutability guard must be present (M451 round 4 fix)
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+     WHERE proname = 'contract_signers_enforce_signed_lock'
+       AND prosrc ILIKE '%contract_id reassignment is forbidden%'
+  ) THEN
+    RAISE EXCEPTION
+      '451 SELF-CHECK FAILED: immutability guard missing from contract_signers_enforce_signed_lock';
+  END IF;
+
   RAISE NOTICE
     '451 SELF-CHECK PASSED: FOR UPDATE concurrency fix verified — '
-    'serializes signer mutations against contract finalization';
+    'serializes signer mutations against contract finalization; '
+    'contract_id reassignment guard in place';
 END;
 $$;
