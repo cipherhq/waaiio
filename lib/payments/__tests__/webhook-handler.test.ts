@@ -27,7 +27,7 @@ vi.mock('../reconcile', () => ({
   reconcilePayment: (...args: unknown[]) => mockReconcile(...args),
 }));
 
-import { processPaystackChargeSuccess, processPaystackChargeFailed } from '../webhook-handler';
+import { processPaystackChargeSuccess, processPaystackChargeFailed, ScopedUpdateError } from '../webhook-handler';
 import { createAlert } from '@/lib/alerts/create-alert';
 
 function createMockSupabase(paymentData: Record<string, unknown> | null) {
@@ -186,5 +186,116 @@ describe('processPaystackChargeFailed', () => {
     );
 
     expect(createAlert).not.toHaveBeenCalled();
+  });
+
+  it('does nothing if payment already refunded (terminal)', async () => {
+    const supabase = createMockSupabase({
+      id: 'pay-refunded',
+      status: 'refunded',
+      amount: 5000,
+      business_id: 'biz-3',
+    });
+
+    await processPaystackChargeFailed(
+      { gateway_response: 'Failed' },
+      'ref-fail-refunded',
+      supabase as any,
+    );
+
+    expect(createAlert).not.toHaveBeenCalled();
+  });
+});
+
+describe('processPaystackChargeFailed — scoped zero-row handling', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  /** Build a mock that supports: initial read → update → re-read (different results per call) */
+  function createScopedMock(opts: {
+    initialPayment: Record<string, unknown>;
+    updateResult: { data: unknown[] | null; error: unknown };
+    rereadResult: { data: Record<string, unknown> | null; error: unknown };
+  }) {
+    let fromPaymentsCount = 0;
+    return {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table !== 'payments') {
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) };
+        }
+        fromPaymentsCount++;
+        const callNum = fromPaymentsCount;
+
+        if (callNum === 1) {
+          // Initial read
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: opts.initialPayment, error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (callNum === 2) {
+          // Update chain
+          const uc: Record<string, unknown> = {};
+          const proxy = () => uc;
+          uc.eq = proxy;
+          uc.select = proxy;
+          uc.then = (r: (v: unknown) => void) => Promise.resolve(opts.updateResult).then(r);
+          return { update: vi.fn().mockReturnValue(uc) };
+        }
+        // callNum === 3: re-read
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue(opts.rereadResult),
+              }),
+            }),
+          }),
+        };
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+  }
+
+  const scope = { paymentId: 'pay-zr', businessId: 'biz-zr' };
+
+  it('zero rows + re-read = terminal (failed) → returns normally', async () => {
+    const sb = createScopedMock({
+      initialPayment: { id: 'pay-zr', status: 'pending', amount: 1000, business_id: 'biz-zr' },
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'failed' }, error: null },
+    });
+
+    // Should NOT throw — terminal state confirmed
+    await processPaystackChargeFailed(
+      { gateway_response: 'Failed' }, 'ref-zr-term', sb as any, scope,
+    );
+  });
+
+  it('zero rows + re-read = nonterminal → throws ScopedUpdateError', async () => {
+    const sb = createScopedMock({
+      initialPayment: { id: 'pay-zr', status: 'pending', amount: 1000, business_id: 'biz-zr' },
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'pending' }, error: null },
+    });
+
+    await expect(
+      processPaystackChargeFailed({ gateway_response: 'Failed' }, 'ref-zr-nonterm', sb as any, scope),
+    ).rejects.toThrow(ScopedUpdateError);
+  });
+
+  it('zero rows + re-read fails → throws ScopedUpdateError', async () => {
+    const sb = createScopedMock({
+      initialPayment: { id: 'pay-zr', status: 'pending', amount: 1000, business_id: 'biz-zr' },
+      updateResult: { data: [], error: null },
+      rereadResult: { data: null, error: { message: 'connection lost' } },
+    });
+
+    await expect(
+      processPaystackChargeFailed({ gateway_response: 'Failed' }, 'ref-zr-err', sb as any, scope),
+    ).rejects.toThrow(ScopedUpdateError);
   });
 });

@@ -45,7 +45,7 @@ interface Contract {
   signing_mode: string;
   wa_delivery_status: string | null;
   reference_code: string | null;
-  contract_signers?: { id: string; signer_name: string | null; signer_phone: string; status: string; signed_at: string | null; wa_delivery_status: string | null; token: string }[];
+  contract_signers?: { id: string; signer_name: string | null; signer_phone: string; status: string; signed_at: string | null; wa_delivery_status: string | null }[];
 }
 
 interface CustomTemplate {
@@ -71,6 +71,9 @@ export default function ContractsPage() {
   const [toastMsg, setToastMsg] = useState('');
   const [shareLinkUrl, setShareLinkUrl] = useState('');
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
+  // Signing URLs fetched server-side so the raw token never lands in the browser
+  const [ownerSignUrl, setOwnerSignUrl] = useState<string | null>(null);
+  const [sharedSignUrl, setSharedSignUrl] = useState<string | null>(null);
 
   // Edit state
   const [editingContract, setEditingContract] = useState<Contract | null>(null);
@@ -122,12 +125,13 @@ export default function ContractsPage() {
   const loadContracts = useCallback(async () => {
     try {
       setError(false);
-      const { data } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('contracts')
-        .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, reference_code, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status, token)')
+        .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, reference_code, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status)')
         .eq('business_id', business.id)
         .order('created_at', { ascending: false });
 
+      if (fetchError) throw fetchError;
       setContracts(data || []);
     } catch {
       setError(true);
@@ -498,6 +502,32 @@ export default function ContractsPage() {
     ) || null;
   }
 
+  // Fetch signing URLs server-side whenever the detail panel opens
+  // (token is excluded from the authenticated SELECT grant on contract_signers)
+  useEffect(() => {
+    setOwnerSignUrl(null);
+    setSharedSignUrl(null);
+    if (!selectedContract) return;
+
+    const ownerSigner = getOwnerPendingSigner(selectedContract);
+    if (ownerSigner) {
+      fetch(`/api/contracts/signing-link?signer_id=${ownerSigner.id}`)
+        .then(r => r.json())
+        .then(d => { if (d.url) setOwnerSignUrl(d.url); })
+        .catch(() => {});
+    }
+
+    const firstPending = selectedContract.contract_signers?.find(s => s.status === 'pending')
+      ?? selectedContract.contract_signers?.[0];
+    if (firstPending) {
+      fetch(`/api/contracts/signing-link?signer_id=${firstPending.id}`)
+        .then(r => r.json())
+        .then(d => { if (d.url) setSharedSignUrl(d.url); })
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedContract?.id]);
+
   // Check if Step 1 can proceed to Step 2
   const canProceed = title && (docTab !== 'upload' || uploadedFileUrl);
 
@@ -628,14 +658,17 @@ export default function ContractsPage() {
                       {(() => {
                         const ownerSigner = getOwnerPendingSigner(c);
                         if (ownerSigner) return (
-                          <a
-                            href={`/sign/${ownerSigner.token}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            onClick={async e => {
+                              e.stopPropagation();
+                              const r = await fetch(`/api/contracts/signing-link?signer_id=${ownerSigner.id}`);
+                              const { url } = await r.json();
+                              if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                            }}
                             className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
                           >
                             Sign Now
-                          </a>
+                          </button>
                         );
                         return null;
                       })()}
@@ -729,8 +762,9 @@ export default function ContractsPage() {
 
             {/* Share Signing Link */}
             {(selectedContract.status === 'pending' || selectedContract.status === 'expired') && (() => {
-              const signerToken = selectedContract.contract_signers?.[0]?.token;
-              const signUrl = signerToken ? `${window.location.origin}/sign/${signerToken}` : '';
+              // sharedSignUrl is fetched server-side via /api/contracts/signing-link
+              // (token excluded from authenticated SELECT grant on contract_signers)
+              const signUrl = sharedSignUrl ? `${window.location.origin}${sharedSignUrl}` : '';
               if (!signUrl) return null;
               return (
                 <div className="mb-4 rounded-xl border border-brand-100 bg-brand-50/50 p-4">
@@ -859,14 +893,16 @@ export default function ContractsPage() {
                       <p className="text-sm font-semibold text-gray-900">You need to sign this contract</p>
                       <p className="mt-0.5 text-xs text-gray-500">Your signature is required to complete this document.</p>
                     </div>
-                    <a
-                      href={`/sign/${ownerSigner.token}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-                    >
-                      Sign Now
-                    </a>
+                    {ownerSignUrl && (
+                      <a
+                        href={ownerSignUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+                      >
+                        Sign Now
+                      </a>
+                    )}
                   </div>
                 </div>
               );

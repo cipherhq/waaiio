@@ -204,7 +204,8 @@ export async function processPaystackChargeFailed(
     existingPayment = p;
   }
 
-  if (existingPayment.status === 'success' || existingPayment.status === 'failed') return;
+  const TERMINAL_STATES = new Set(['success', 'failed', 'refunded']);
+  if (TERMINAL_STATES.has(existingPayment.status as string)) return;
 
   if (scope) {
     const { data: updated, error } = await supabase
@@ -218,7 +219,23 @@ export async function processPaystackChargeFailed(
       .eq('status', 'pending')
       .select('id');
     if (error) throw new ScopedUpdateError('chargeFailed scoped update error');
-    if (!updated?.length) return;
+    if (!updated?.length) {
+      // Zero rows — re-read to confirm terminal before allowing caller to dedup
+      const { data: reread, error: rereadErr } = await supabase
+        .from('payments')
+        .select('status')
+        .eq('id', scope.paymentId)
+        .eq('business_id', scope.businessId)
+        .single();
+      if (rereadErr || !reread) {
+        throw new ScopedUpdateError(`chargeFailed zero-row update, re-read failed: ${rereadErr?.message || 'not found'}`);
+      }
+      if (!TERMINAL_STATES.has(reread.status)) {
+        throw new ScopedUpdateError(`chargeFailed zero-row update, payment not terminal: status=${reread.status}`);
+      }
+      // Payment confirmed terminal — return normally so caller can dedup
+      return;
+    }
   } else {
     await supabase
       .from('payments')
