@@ -977,7 +977,7 @@ export class BotService {
         const connectProfile = await getProfile();
         const connectDirSess = await this.createDirectorySession(
           from, connectProfile?.id || null, 'directory_results',
-          { _directory_mode: true, ...(searchData || {}) },
+          { ...searchData },
         );
         if (!connectDirSess) {
           logger.warn('[BOT] createDirectorySession(connect-fallback) failed — session not persisted after search');
