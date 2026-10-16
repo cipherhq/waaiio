@@ -3,6 +3,55 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(security): M451 — contract_signers lock FOR UPDATE concurrency fix (ChatGPT round 3 P1)
+
+### What changed (rev 7 — ChatGPT round 3 P1 at SHA a154c2ea)
+
+**P1: Race condition — concurrent signer INSERT can slip past contract finalization**
+- Root cause: M449's `contract_signers_enforce_signed_lock()` used a plain SELECT to
+  read `contracts.status`. Under READ COMMITTED, Tx A's `UPDATE contracts SET
+  status='signed'` holds the row lock but is uncommitted. Tx B's INSERT trigger reads
+  stale status='pending' → allows INSERT. Both commit → signed contract has unsigned signer.
+- Fix: new migration `451_contract_signers_lock_for_update.sql` — `CREATE OR REPLACE` the
+  function with `SELECT ... FOR UPDATE` on the contracts parent row. Serializes on the
+  contracts row: if Tx A (finalization) holds the lock, Tx B (signer INSERT) blocks until
+  Tx A commits; after commit Tx B re-reads status='signed' and rejects. If Tx B acquires
+  the lock first, Tx A (finalization) blocks until Tx B commits; M450 then sees the new
+  unsigned signer and rejects finalization.
+- Deadlock analysis: both transactions contend on the same contracts row only — no circular
+  dependency possible.
+- Re-applies `REVOKE ALL ON FUNCTION FROM PUBLIC, anon, authenticated` (CREATE OR REPLACE
+  resets grants to defaults).
+- M449 and M450 are unchanged. The trigger binding from M449 is preserved (M451 only
+  updates the function body via CREATE OR REPLACE).
+- Self-check in M451: verifies FOR UPDATE in prosrc, SECURITY DEFINER, search_path
+  hardened, anon/authenticated cannot directly EXECUTE.
+
+**New dev dependency: `pg` + `@types/pg`**
+- Required for the concurrency test which needs two independent database connections.
+  Neither is possible with psql + execSync (single-threaded). pg Client instances allow
+  holding a transaction open on one connection while issuing concurrent queries on another.
+
+**New test: `lib/__tests__/contract-signer-concurrency.pg.test.ts`**
+- 3 concurrency tests using two independent pg Client connections each:
+  1. Tx A (finalize) holds row lock → Tx B (signer INSERT) blocks; after A commits,
+     B fails with "locked — already signed".
+  2. Tx B (signer INSERT) holds FOR UPDATE lock → Tx A (finalize) blocks; after B commits
+     (unsigned signer in DB), A fails with M450 "have not yet signed".
+  3. Tx A holds lock then ROLLBACKS → Tx B unblocks, FOR UPDATE reads 'active' → INSERT
+     succeeds. Verifies lock release semantics.
+- Each test uses a 400ms sleep to confirm the blocked connection is still waiting before
+  releasing the lock. Test timeout: 10s per test.
+- Schema is installed inline in beforeAll (self-contained; no dependency on other PG tests
+  having run first). M451 is applied via readFileSync. M450 zero-signer guard is inlined.
+
+### What it affects / could break
+- Any code path that calls INSERT/UPDATE/DELETE on `contract_signers` while another
+  transaction holds the contracts row locked will now serialize (block) rather than
+  proceeding concurrently. This is the intended behavior — blocking is brief (until the
+  concurrent transaction commits). No app path performs concurrent signer mutations and
+  contract finalization in separate transactions.
+
 ## 2026-10-15 — fix(security): M449/450 ACL hardening rev 6 — ChatGPT round 2 P1 fix
 
 ### What changed (rev 6 — ChatGPT round 2 review response at SHA 14f93cb2)
