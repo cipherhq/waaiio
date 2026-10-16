@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-16 — fix(bot): stale business-scoped session lifecycle — expired cleanup + 23505 recovery
+
+### What changed
+- **Root cause:** The unique index `idx_bot_sessions_phone_business` covers ALL rows where `business_id IS NOT NULL` (no `is_active` filter), unlike the null-biz index which filters on `is_active = true`. When a business-scoped session expires but remains `is_active = true`, the pre-insert cleanup (which only deleted `is_active = false` rows) could not free the unique index slot. New session INSERTs hit 23505, and the recovery path only handled `!businessId` collisions — business-scoped 23505 fell through to a generic error reply, creating a repeated failure loop across incoming messages.
+- **Part 1 — Expired-session cleanup (`bot.service.ts` ~L1728):** Before the existing inactive-row DELETE, business-scoped sessions now DELETE expired-but-active rows for the same `whatsapp_number + business_id`. This uses DELETE (not UPDATE `is_active = false`) because the unique index requires row removal to free the slot.
+- **Part 2 — Business-scoped 23505 recovery (`bot.service.ts` ~L1848):** New `else if (sessionError?.code === '23505' && businessId)` branch with CAS-safe recovery: (a) reads the existing row, (b) if active + not expired → resumes it (concurrent creation), (c) if expired/inactive → CAS-conditional DELETE by version, retry INSERT once, (d) if CAS DELETE fails (concurrent renewal) → re-read and resume if now active, else fail closed.
+- **Staging data fix:** Stale row `e49f5752` (expired 2026-10-15 23:22:26 UTC, `is_active = true`) deleted from staging via SQL editor to unblock the staging bot immediately.
+
+### What it affects / could break
+- Business-scoped session creation: expired sessions are now properly cleaned up before INSERT, preventing the infinite error loop.
+- Concurrent business-scoped session creation: 23505 collisions now have a recovery path matching the null-biz pattern (CAS DELETE + single retry).
+- The 7+ other insertion paths in `global-queries.ts`, `keyword-actions.ts`, `action-dispatcher.ts` share the same vulnerability but are lower-traffic. A shared session-creation primitive (Option B) is planned as follow-up before code freeze.
+- No schema changes. No new migrations.
+
 ## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
 
 ### What changed
