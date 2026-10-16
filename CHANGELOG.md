@@ -3,12 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-17 — fix(bot): CTO-review concurrency hardening — version+state+expiration CAS predicates
+
+### What changed
+- **CTO-review Finding 1 (P1):** Pre-INSERT cleanup now reads the stale candidate first, then uses a version+expiration+state conditional DELETE instead of a blind expiration-only DELETE. Prevents deleting a concurrently renewed session.
+- **CTO-review Finding 2 (P1):** Recovery CAS DELETE now includes `is_active` and `expires_at` predicates alongside the existing version check. If the session was inactive, requires `is_active = false`; if active-but-expired, requires `is_active = true AND expires_at < now`. Prevents deleting a session that was concurrently renewed even if version alone matched.
+- **Zero-row log message** updated to distinguish renewal from other causes.
+
+### What it affects / could break
+- Same scope as the original fix — business-scoped session creation only. No null-biz path changes.
+- The additional predicates make CAS DELETEs stricter (more likely to get 0 rows on concurrent renewal), which correctly falls through to the re-read-and-resume path.
+
 ## 2026-10-16 — fix(bot): stale business-scoped session lifecycle — expired cleanup + 23505 recovery
 
 ### What changed
 - **Root cause:** The unique index `idx_bot_sessions_phone_business` covers ALL rows where `business_id IS NOT NULL` (no `is_active` filter), unlike the null-biz index which filters on `is_active = true`. When a business-scoped session expires but remains `is_active = true`, the pre-insert cleanup (which only deleted `is_active = false` rows) could not free the unique index slot. New session INSERTs hit 23505, and the recovery path only handled `!businessId` collisions — business-scoped 23505 fell through to a generic error reply, creating a repeated failure loop across incoming messages.
-- **Part 1 — Expired-session cleanup (`bot.service.ts` ~L1728):** Before the existing inactive-row DELETE, business-scoped sessions now DELETE expired-but-active rows for the same `whatsapp_number + business_id`. This uses DELETE (not UPDATE `is_active = false`) because the unique index requires row removal to free the slot.
-- **Part 2 — Business-scoped 23505 recovery (`bot.service.ts` ~L1848):** New `else if (sessionError?.code === '23505' && businessId)` branch with CAS-safe recovery: (a) reads the existing row, (b) if active + not expired → resumes it (concurrent creation), (c) if expired/inactive → CAS-conditional DELETE by version, retry INSERT once, (d) if CAS DELETE fails (concurrent renewal) → re-read and resume if now active, else fail closed.
+- **Part 1 — Expired-session cleanup (`bot.service.ts` ~L1728):** Before the existing inactive-row DELETE, business-scoped sessions now read the stale candidate, then CAS DELETE with version+expiration+state predicates to free the slot. This uses DELETE (not UPDATE `is_active = false`) because the unique index requires row removal to free the slot.
+- **Part 2 — Business-scoped 23505 recovery (`bot.service.ts` ~L1848):** New `else if (sessionError?.code === '23505' && businessId)` branch with CAS-safe recovery: (a) reads the existing row, (b) if active + not expired → resumes it (concurrent creation), (c) if expired/inactive → CAS-conditional DELETE by version+state+expiration, retry INSERT once, (d) if CAS DELETE fails (concurrent renewal) → re-read and resume if now active, else fail closed.
 - **Staging data fix:** Stale row `e49f5752` (expired 2026-10-15 23:22:26 UTC, `is_active = true`) deleted from staging via SQL editor to unblock the staging bot immediately.
 
 ### What it affects / could break

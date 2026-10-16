@@ -1731,14 +1731,27 @@ export class BotService {
       // NOT free the slot — the row must be DELETED.
       // Null-biz sessions use a different index with is_active=true filter, so
       // their deactivation path (handled elsewhere) is correct.
+      // CTO-review: read candidate first, then version+expiration+state conditional
+      // DELETE to prevent deleting a concurrently renewed session.
       if (businessId) {
         const nowIso = new Date().toISOString();
-        await this.supabase.from('bot_sessions')
-          .delete()
+        const { data: staleCandidate } = await this.supabase.from('bot_sessions')
+          .select('id, version, is_active, expires_at')
           .eq('whatsapp_number', from)
           .eq('business_id', businessId)
           .eq('is_active', true)
-          .lt('expires_at', nowIso);
+          .lt('expires_at', nowIso)
+          .maybeSingle();
+        if (staleCandidate) {
+          const staleVersion = (staleCandidate as unknown as { version: number | null }).version ?? 0;
+          await this.supabase.from('bot_sessions')
+            .delete()
+            .eq('id', staleCandidate.id)
+            .eq('business_id', businessId)
+            .eq('is_active', true)
+            .lt('expires_at', nowIso)
+            .eq('version', staleVersion);
+        }
       }
 
       // Remove old inactive sessions for this phone+business to avoid unique constraint violation
@@ -1872,13 +1885,24 @@ export class BotService {
             } else {
               // Expired or inactive — CAS-conditional DELETE to free the unique index slot,
               // then retry INSERT once.
+              // CTO-review: version + state + expiration predicates — prevents deleting
+              // a session that was concurrently renewed (even if version alone matched).
               const casVersion = existingBiz.version ?? 0;
-              const { data: casDeleted } = await this.supabase.from('bot_sessions')
+              const casNowIso = new Date().toISOString();
+              const casDeleteQuery = this.supabase.from('bot_sessions')
                 .delete()
                 .eq('id', existingBiz.id)
                 .eq('business_id', businessId)
-                .eq('version', casVersion)
-                .select('id');
+                .eq('version', casVersion);
+              // Add state/expiration predicates matching the branch condition:
+              // either inactive OR expired (the row we read was one of these).
+              if (!existingBiz.is_active) {
+                casDeleteQuery.eq('is_active', false);
+              } else {
+                // Active but expired — require it still be expired at DELETE time
+                casDeleteQuery.eq('is_active', true).lt('expires_at', casNowIso);
+              }
+              const { data: casDeleted } = await casDeleteQuery.select('id');
               if (casDeleted && (casDeleted as unknown[]).length > 0) {
                 // CAS DELETE succeeded — retry INSERT exactly once
                 logger.info('[BOT] #BIZ-SESSION: CAS DELETE succeeded, retrying insert once:', existingBiz.id);
@@ -1908,8 +1932,9 @@ export class BotService {
                   return;
                 }
               } else {
-                // CAS DELETE got 0 rows — version changed (concurrent renewal). Re-read.
-                logger.info('[BOT] #BIZ-SESSION: CAS DELETE got 0 rows (concurrent renewal?) — re-reading:', existingBiz.id);
+                // CAS DELETE got 0 rows — version, state, or expiration changed
+                // (concurrent renewal or another worker intervened). Re-read to distinguish.
+                logger.info('[BOT] #BIZ-SESSION: CAS DELETE got 0 rows — re-reading to distinguish renewal from error:', existingBiz.id);
                 const { data: reReadData } = await this.supabase.from('bot_sessions')
                   .select('*').eq('id', existingBiz.id).single();
                 const reRead = reReadData as unknown as BotSession | null;
