@@ -205,6 +205,7 @@ export async function handleDirectorySearch(
     return {
       _directory_mode: true,
       _directory_results: searchResult.results,
+      _directory_suggestions: [],
       _directory_query: text,
       _directory_total: searchResult.results.length,
       _directory_country: sharedCountry,
@@ -224,7 +225,10 @@ export async function handleDirectorySearch(
 
   return {
     _directory_mode: true,
+    _directory_results: [],
+    _directory_suggestions: [],
     _directory_query: text,
+    _directory_total: 0,
     _directory_country: sharedCountry,
   };
 }
@@ -266,6 +270,7 @@ async function handleNameSearch(
     return {
       _directory_mode: true,
       _directory_results: searchResult.results,
+      _directory_suggestions: [],
       _directory_query: nameQuery,
       _directory_total: searchResult.results.length,
       _directory_country: country,
@@ -276,7 +281,10 @@ async function handleNameSearch(
   await send.sendPlatformText(from, getFlowCopy(lang, 'directory.no_results'));
   return {
     _directory_mode: true,
+    _directory_results: [],
+    _directory_suggestions: [],
     _directory_query: nameQuery,
+    _directory_total: 0,
     _directory_country: country,
   };
 }
@@ -321,8 +329,10 @@ async function sendFuzzySuggestions(
 
   return {
     _directory_mode: true,
+    _directory_results: [],
     _directory_suggestions: items,
     _directory_query: originalQuery,
+    _directory_total: 0,
     _directory_country: null,
   };
 }

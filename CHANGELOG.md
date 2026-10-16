@@ -840,6 +840,18 @@ Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `i
 - Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
 - If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
 
+## 2026-10-16 — fix(bot): stale directory results + connect fallback CAS safety (ChatGPT P1 findings)
+
+### What changed
+- **P1-A: `lib/bot/handlers/directory-search.ts`:** Every return path in `handleDirectorySearch()`, `handleNameSearch()`, and `sendFuzzySuggestions()` now includes ALL directory session fields explicitly. When results or suggestions are empty, `_directory_results: []`, `_directory_suggestions: []`, and `_directory_total: 0` are set instead of being omitted. Prevents stale results from a previous search persisting in session_data via spread merge.
+- **P1-B: `lib/bot/bot.service.ts` (connect/switch fallback ~L961-982):** Replaced raw `deactivateSession()` + `.delete()` + `.insert()` sequence with `createDirectorySession()`, the CAS-safe method that uses UPDATE-first, INSERT fallback, and 23505 recovery. If `createDirectorySession()` returns null, logs via Sentry and returns (no crash, no stale state).
+- **Tests:** Added 4 regression tests in `lib/bot/__tests__/directory-flow.test.ts`: (1) `handleDirectorySearch` returns explicit empty arrays on no-results, (2) stale `dir_result_0` tap after no-results search fails correctly, (3) source-code assertion that connect fallback uses `createDirectorySession` (no raw INSERT/DELETE), (4) connect fallback with null return does not crash.
+
+### What it affects / could break
+- P1-A: Searching for a term with no results now explicitly clears session_data directory fields. Previously, tapping a previous search's result after a no-results search could select a stale business.
+- P1-B: Connect/switch fallback on shared number no longer deletes inactive null-biz sessions. Session creation uses the same CAS lifecycle as the rest of the directory flow.
+- No schema changes.
+
 ## 2026-10-15 — fix(bot): CAS retry must return before directory flow to prevent double session insert
 
 ### What changed

@@ -965,24 +965,23 @@ export class BotService {
         // Fall through to restart/escape-hatch/flow-executor handling below.
       } else {
         // Outside a business flow (e.g., directory_search or no session at all):
-        // run a directory search with the keyword.
+        // run a directory search with the keyword, then persist via CAS-safe helper.
         if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
         const dirSend = this.buildDirectorySend();
         const searchData = await handleDirectorySearch(
           this.supabase, dirSend, from, keyword, null,
         );
-        if (session) await this.deactivateSession(session.id);
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'directory_results',
-          session_data: { _directory_mode: true, ...(searchData || {}) },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
+        // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
+        // On 23505 retry via CAS-UPDATE. Never silent on collision.
+        const connectProfile = await getProfile();
+        const connectDirSess = await this.createDirectorySession(
+          from, connectProfile?.id || null, 'directory_results',
+          { _directory_mode: true, ...(searchData || {}) },
+        );
+        if (!connectDirSess) {
+          logger.warn('[BOT] createDirectorySession(connect-fallback) failed — session not persisted after search');
+          Sentry.captureException(new Error('createDirectorySession failed in connect/switch fallback'));
+        }
         return;
       }
     }
