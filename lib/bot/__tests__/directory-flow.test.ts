@@ -745,8 +745,8 @@ describe('WhatsApp Directory Flow', () => {
     const anchor = 'Outside a business flow';
     const idx = src.indexOf(anchor);
     expect(idx).toBeGreaterThan(-1);
-    // 800-char window covers the full connect fallback block
-    const block = src.slice(idx, idx + 800);
+    // 900-char window covers the full connect fallback block (including null-search guard)
+    const block = src.slice(idx, idx + 900);
     // Must use createDirectorySession
     expect(block).toContain('createDirectorySession');
     // Must NOT contain raw .delete() or raw .insert() on bot_sessions
@@ -781,5 +781,35 @@ describe('WhatsApp Directory Flow', () => {
     await bot.handleMessage(PHONE, 'connect Nonexistent', 'text', SHARED_PNID);
     // If we got here without throwing, the test passes
     expect(true).toBe(true);
+  });
+
+  it('connect fallback: rate-limited search returns null → existing directory session unchanged', async () => {
+    // Existing session has real results the user can still tap
+    const existingResults = [
+      { businessId: 'biz-prev', name: 'Previous Salon', botCode: 'PREV', category: 'salon', city: 'Lagos' },
+    ];
+    const db = buildMock({
+      existingSession: dirSession({
+        _directory_results: existingResults,
+        _directory_query: 'salon',
+        _directory_total: 1,
+      }),
+    });
+    const { bot, sender } = createBot(db);
+
+    // Block rate limiting so handleDirectorySearch returns null
+    rateLimitBlocked = true;
+
+    await bot.handleMessage(PHONE, 'connect SomeShop', 'text', SHARED_PNID);
+
+    // Rate limit message was sent
+    const rlMsg = msgs(sender).find(m => textOf(m).includes('too fast') || textOf(m).includes('searching'));
+    expect(rlMsg).toBeDefined();
+
+    // No session insert or update with directory_results step (existing session preserved)
+    const dirInserted = db._inserted.find((s: any) => s.current_step === 'directory_results');
+    const dirUpdated = db._updated.find((u: any) => u.current_step === 'directory_results');
+    expect(dirInserted).toBeUndefined();
+    expect(dirUpdated).toBeUndefined();
   });
 });

@@ -971,6 +971,7 @@ export class BotService {
         const searchData = await handleDirectorySearch(
           this.supabase, dirSend, from, keyword, null,
         );
+        if (!searchData) return; // rate-limited or unavailable — reply already sent, preserve existing session
         // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
         // On 23505 retry via CAS-UPDATE. Never silent on collision.
         const connectProfile = await getProfile();
