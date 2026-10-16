@@ -187,12 +187,24 @@ export async function POST(
 
         if (isTerminalFailure) {
           // Provider confirms a terminal failure — mark payment failed and fall through to dedup
-          await supabase
+          const { data: failedRows, error: failUpdateErr } = await supabase
             .from('payments')
             .update({ status: 'failed', gateway_status: verifyResult.reason })
             .eq('id', payment.id)
             .eq('business_id', businessId)
-            .in('status', ['pending']);
+            .in('status', ['pending'])
+            .select('id');
+
+          if (failUpdateErr) {
+            // DB error — return retryable without dedup row so provider can redeliver
+            Sentry.captureException(new Error('BYO webhook: terminal-failure update failed'), {
+              extra: { businessId, paymentId: payment.id, reference, dbError: failUpdateErr.message },
+            });
+            return NextResponse.json({ error: 'Database error' }, { status: 503 });
+          }
+
+          // Zero rows means payment was already finalized (success/failed/refunded).
+          // Safe to fall through to dedup — payment is already in a terminal state.
           // Skip the success handler — fall through to dedup write
         } else {
           // Integrity / unverified outcome — do NOT change payment status.
@@ -263,10 +275,18 @@ export async function POST(
         return NextResponse.json({ error: 'Provider verification temporarily unavailable' }, { status: 503 });
       }
 
-      await processPaystackChargeFailed(
-        { gateway_response: verifyResult.reason || ps },
-        reference, supabase, scope,
-      );
+      try {
+        await processPaystackChargeFailed(
+          { gateway_response: verifyResult.reason || ps },
+          reference, supabase, scope,
+        );
+      } catch (failErr) {
+        // DB or scoped-update error — return retryable without dedup row
+        Sentry.captureException(failErr, {
+          extra: { businessId, reference, event: 'charge.failed', component: 'byo-webhook' },
+        });
+        return NextResponse.json({ error: 'Processing failed' }, { status: 503 });
+      }
     }
 
     // Processing succeeded — write dedup

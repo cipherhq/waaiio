@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-16 — fix(payments): check terminal-failure update result before dedup write — P1
+
+### What changed
+- `app/api/payments/byo-webhook/[businessId]/route.ts`:
+  - **Terminal-failure branch in `charge.success` handler (~line 188):** The `payments` UPDATE that marks a payment `failed` now checks the result. DB errors → return 503 (retryable), no dedup row. Zero rows (payment already finalized) → safe to dedup (already terminal).
+  - **`charge.failed` handler (~line 278):** `processPaystackChargeFailed` is now wrapped in try/catch. If it throws (DB error, scoped-update error) → return 503, no dedup row written. Previously the error would bubble to the outer catch and return 500.
+- `lib/__tests__/payment-integrity.test.ts`: Added 3 regression tests: (1) terminal-failure DB UPDATE error → 503, no dedup; (2) terminal-failure zero rows (already finalized) → 200, dedup written; (3) processPaystackChargeFailed throws → 503, no dedup.
+
+### What it affects / could break
+- BYO webhook: if the DB write fails when marking a terminal failure, the webhook now returns 503 instead of falling through to write a dedup row and returning 200. This means the provider will retry the webhook (correct — the payment state was never updated, so the retry is needed).
+- BYO webhook charge.failed: DB errors now return 503 (retryable) instead of 500 (ambiguous retry behavior). This is safer for webhook redelivery.
+- No change to the success path or integrity branch. No change to dedup behavior when the DB write succeeds.
+
 ## 2026-10-15 — fix(payments): include applied adjustments in lifetime balance (P1-2)
 
 ### What changed

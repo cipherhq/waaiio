@@ -3081,3 +3081,110 @@ describe('Payment credentials route — Flutterwave webhook_secret_hash', () => 
   });
 });
 
+// ═══════════════════════════════════════════════════════════
+// P1: Terminal-failure dedup safety — DB errors must NOT write dedup rows
+// ═══════════════════════════════════════════════════════════
+
+describe('P1: terminal-failure UPDATE result checked before dedup write', () => {
+  const secretKey = `${SK_TEST}dedup_safety`;
+
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('charge.success terminal failure: DB UPDATE error → 503, NO dedup row', async () => {
+    const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-dberr', status: 'pending', amount: 1000, currency: 'NGN' },
+      updateResult: { data: null, error: { message: 'connection reset' } },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => mockSentry);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { status: 'failed', reference: 'ref-dberr' } }),
+    });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-dberr' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-dberr', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-dberr' } });
+
+      expect(res.status).toBe(503);
+      expect(mockSb._dedupUpserts).toHaveLength(0);
+      expect(mockSentry.captureException).toHaveBeenCalled();
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('charge.success terminal failure: zero rows (already finalized) → 200, dedup row written', async () => {
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-already', status: 'pending', amount: 1000, currency: 'NGN' },
+      updateResult: { data: [], error: null },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { status: 'failed', reference: 'ref-already' } }),
+    });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-already' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-already', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-already' } });
+
+      expect(res.status).toBe(200);
+      expect(mockSb._dedupUpserts.length).toBeGreaterThan(0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('charge.failed: processPaystackChargeFailed throws → 503, NO dedup row', async () => {
+    const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-failthrow', status: 'pending', amount: 500, currency: 'NGN' },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn().mockRejectedValue(new Error('Scoped update failed')),
+    }));
+    vi.doMock('@sentry/nextjs', () => mockSentry);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { status: 'failed', reference: 'ref-failthrow' } }),
+    });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.failed', data: { reference: 'ref-failthrow' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-failthrow', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-failthrow' } });
+
+      expect(res.status).toBe(503);
+      expect(mockSb._dedupUpserts).toHaveLength(0);
+      expect(mockSentry.captureException).toHaveBeenCalled();
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});
+
