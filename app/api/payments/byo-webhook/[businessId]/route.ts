@@ -203,8 +203,35 @@ export async function POST(
             return NextResponse.json({ error: 'Database error' }, { status: 503 });
           }
 
-          // Zero rows means payment was already finalized (success/failed/refunded).
-          // Safe to fall through to dedup — payment is already in a terminal state.
+          if (!failedRows || failedRows.length === 0) {
+            // Zero rows — conditional UPDATE did not match. Re-read to confirm terminal state
+            // before writing dedup (do not assume terminal without verification).
+            const TERMINAL_STATES = new Set(['success', 'failed', 'refunded']);
+            const { data: reread, error: rereadErr } = await supabase
+              .from('payments')
+              .select('status')
+              .eq('id', payment.id)
+              .eq('business_id', businessId)
+              .single();
+
+            if (rereadErr || !reread) {
+              Sentry.captureMessage('BYO webhook: terminal-failure zero-row update, re-read failed', {
+                level: 'error',
+                extra: { businessId, paymentId: payment.id, reference, rereadError: rereadErr?.message },
+              });
+              return NextResponse.json({ error: 'Database error' }, { status: 503 });
+            }
+
+            if (!TERMINAL_STATES.has(reread.status)) {
+              // Payment is not in a terminal state — return retryable so provider can redeliver
+              Sentry.captureMessage('BYO webhook: terminal-failure zero-row update, payment not terminal', {
+                level: 'warning',
+                extra: { businessId, paymentId: payment.id, reference, currentStatus: reread.status },
+              });
+              return NextResponse.json({ error: 'Payment state unresolved' }, { status: 503 });
+            }
+            // Payment confirmed terminal — safe to fall through to dedup
+          }
           // Skip the success handler — fall through to dedup write
         } else {
           // Integrity / unverified outcome — do NOT change payment status.

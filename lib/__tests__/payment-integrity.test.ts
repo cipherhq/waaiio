@@ -48,6 +48,24 @@ interface MockQueryResult {
   error: unknown;
 }
 
+/** Standalone chain builder for custom mocks (re-read failure test) */
+function chainBuilderWith(result: MockQueryResult) {
+  const chain: Record<string, unknown> = {};
+  const proxy = () => chain;
+  chain.select = proxy;
+  chain.eq = proxy;
+  chain.in = proxy;
+  chain.is = proxy;
+  chain.not = proxy;
+  chain.gte = proxy;
+  chain.lte = proxy;
+  chain.limit = proxy;
+  chain.maybeSingle = () => Promise.resolve(result);
+  chain.single = () => Promise.resolve(result);
+  chain.then = (resolve: (v: MockQueryResult) => void) => Promise.resolve(result).then(resolve);
+  return chain;
+}
+
 function createMockSupabase(overrides: {
   credentials?: Record<string, unknown> | null;
   payment?: Record<string, unknown> | null;
@@ -250,6 +268,7 @@ describe('BYO Webhook — provider verification failure', () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
       payment: { id: 'pay-2', status: 'pending', amount: 1000, currency: 'NGN' },
+      updateResult: { data: [{ id: 'pay-2' }], error: null },
     });
 
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
@@ -458,6 +477,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
       payment: { id: 'pay-terminal', status: 'pending', amount: 1000, currency: 'NGN' },
+      updateResult: { data: [{ id: 'pay-terminal' }], error: null },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -3124,10 +3144,11 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
     } finally { globalThis.fetch = originalFetch; }
   });
 
-  it('charge.success terminal failure: zero rows (already finalized) → 200, dedup row written', async () => {
+  it('charge.success terminal failure: zero rows + re-read = terminal → 200, dedup written', async () => {
+    // Payment is already in a terminal state (success) — re-read confirms, safe to dedup
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-already', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-already', status: 'success', amount: 1000, currency: 'NGN' },
       updateResult: { data: [], error: null },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
@@ -3152,6 +3173,110 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
 
       expect(res.status).toBe(200);
       expect(mockSb._dedupUpserts.length).toBeGreaterThan(0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('charge.success terminal failure: zero rows + re-read = nonterminal → 503, NO dedup', async () => {
+    // Payment is still pending (re-read confirms nonterminal) — must NOT dedup
+    const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
+    const mockSb = createMockSupabase({
+      credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
+      payment: { id: 'pay-nonterm', status: 'pending', amount: 1000, currency: 'NGN' },
+      updateResult: { data: [], error: null },
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => mockSentry);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { status: 'failed', reference: 'ref-nonterm' } }),
+    });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-nonterm' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-nonterm', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-nonterm' } });
+
+      expect(res.status).toBe(503);
+      expect(mockSb._dedupUpserts).toHaveLength(0);
+      expect(mockSentry.captureMessage).toHaveBeenCalled();
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('charge.success terminal failure: zero rows + re-read fails → 503, NO dedup', async () => {
+    // Re-read itself fails — cannot confirm terminal, must NOT dedup
+    const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
+    const payment = { id: 'pay-rereadfail', status: 'pending', amount: 1000, currency: 'NGN' };
+    const creds = { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null };
+
+    // Custom mock: initial payment read succeeds, update returns 0 rows, re-read returns error
+    let paymentReadCount = 0;
+    const sb = {
+      from: vi.fn((table: string) => {
+        if (table === 'business_payment_credentials') {
+          return chainBuilderWith({ data: creds, error: null });
+        }
+        if (table === 'payments') {
+          const base = chainBuilderWith({ data: payment, error: null });
+          base.update = () => {
+            const uc: Record<string, unknown> = {};
+            const up = () => uc;
+            uc.eq = up; uc.in = up; uc.select = up;
+            uc.then = (r: (v: unknown) => void) => Promise.resolve({ data: [], error: null }).then(r);
+            return uc;
+          };
+          // Override single to fail on re-read (second non-update call)
+          const origSingle = base.single;
+          base.single = () => {
+            paymentReadCount++;
+            if (paymentReadCount > 1) {
+              return Promise.resolve({ data: null, error: { message: 'connection lost' } });
+            }
+            return origSingle();
+          };
+          return base;
+        }
+        if (table === 'processed_webhook_events') {
+          return {
+            select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }),
+            upsert: () => Promise.resolve({ data: [{ id: 'x' }], error: null }),
+          };
+        }
+        return chainBuilderWith({ data: null, error: null });
+      }),
+      _updates: [] as unknown[],
+      _dedupUpserts: [] as unknown[],
+    };
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => sb }));
+    vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
+    vi.doMock('@/lib/payments/webhook-handler', () => ({
+      processPaystackChargeSuccess: vi.fn().mockReturnValue('finalized'),
+      processPaystackChargeFailed: vi.fn(),
+    }));
+    vi.doMock('@sentry/nextjs', () => mockSentry);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { status: 'failed', reference: 'ref-rrf' } }),
+    });
+    try {
+      const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
+      const body = { event: 'charge.success', data: { reference: 'ref-rrf' } };
+      const rawBody = JSON.stringify(body);
+      const sig = paystackSignature(rawBody, secretKey);
+      const res = await POST(makeByoWebhookRequest('biz-rrf', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-rrf' } });
+
+      expect(res.status).toBe(503);
+      expect(sb._dedupUpserts).toHaveLength(0);
+      expect(mockSentry.captureMessage).toHaveBeenCalled();
     } finally { globalThis.fetch = originalFetch; }
   });
 

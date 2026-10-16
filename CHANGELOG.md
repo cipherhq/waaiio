@@ -7,14 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ### What changed
 - `app/api/payments/byo-webhook/[businessId]/route.ts`:
-  - **Terminal-failure branch in `charge.success` handler (~line 188):** The `payments` UPDATE that marks a payment `failed` now checks the result. DB errors → return 503 (retryable), no dedup row. Zero rows (payment already finalized) → safe to dedup (already terminal).
-  - **`charge.failed` handler (~line 278):** `processPaystackChargeFailed` is now wrapped in try/catch. If it throws (DB error, scoped-update error) → return 503, no dedup row written. Previously the error would bubble to the outer catch and return 500.
-- `lib/__tests__/payment-integrity.test.ts`: Added 3 regression tests: (1) terminal-failure DB UPDATE error → 503, no dedup; (2) terminal-failure zero rows (already finalized) → 200, dedup written; (3) processPaystackChargeFailed throws → 503, no dedup.
+  - **Terminal-failure branch in `charge.success` handler (~line 188):** The `payments` UPDATE that marks a payment `failed` now checks the result. DB errors → return 503 (retryable), no dedup row. Zero rows → re-read payment by scoped identifiers; only dedup if confirmed terminal (`success`/`failed`/`refunded`); return 503 if nonterminal or re-read fails.
+  - **`charge.failed` handler (~line 296):** `processPaystackChargeFailed` is now wrapped in try/catch. If it throws (DB error, scoped-update error) → return 503, no dedup row written. Previously the error would bubble to the outer catch and return 500.
+- `lib/__tests__/payment-integrity.test.ts`: Added `chainBuilderWith` helper for custom mocks. Added 5 regression tests: (1) DB UPDATE error → 503, no dedup; (2) zero rows + re-read = terminal → 200, dedup; (3) zero rows + re-read = nonterminal → 503, no dedup; (4) zero rows + re-read fails → 503, no dedup; (5) processPaystackChargeFailed throws → 503, no dedup. Updated 2 existing terminal-failure tests with explicit `updateResult` to match new row-count contract.
 
 ### What it affects / could break
-- BYO webhook: if the DB write fails when marking a terminal failure, the webhook now returns 503 instead of falling through to write a dedup row and returning 200. This means the provider will retry the webhook (correct — the payment state was never updated, so the retry is needed).
-- BYO webhook charge.failed: DB errors now return 503 (retryable) instead of 500 (ambiguous retry behavior). This is safer for webhook redelivery.
-- No change to the success path or integrity branch. No change to dedup behavior when the DB write succeeds.
+- BYO webhook terminal-failure path: zero-row UPDATE results no longer unconditionally dedup. Payment state is re-verified. A payment stuck in a nonterminal state due to a race returns 503 for provider retry.
+- BYO webhook charge.failed: DB errors now return 503 (retryable) instead of 500 (ambiguous retry behavior).
+- No change to the success path or integrity branch. No change to dedup behavior when the DB write succeeds (1+ rows).
 
 ## 2026-10-15 — fix(payments): include applied adjustments in lifetime balance (P1-2)
 
