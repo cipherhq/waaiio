@@ -3,6 +3,261 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-15 — fix(db): M451 — contract_id immutability guard in signer-lock trigger (ChatGPT round 4 P1)
+
+### What changed (rev 8 — ChatGPT round 4 P1 at SHA ec91d36d)
+
+**P1: COALESCE bypass — contract_id reassignment on contract_signers**
+- Root cause: the lock trigger used `COALESCE(OLD.contract_id, NEW.contract_id)` to
+  identify the parent contract. On UPDATE, OLD is never NULL, so COALESCE always picks
+  OLD.contract_id. An `UPDATE contract_signers SET contract_id = <signed_id>` would have
+  the trigger look up the OLD (unsigned/draft) parent → status ≠ 'signed' → allows the
+  mutation → signer row is silently moved to a signed contract, bypassing the lock.
+  Only reachable by service_role (M449 excludes contract_id from authenticated UPDATE
+  grants), but the invariant must hold for ALL roles.
+- Fix 1 — immutability guard: added `IF TG_OP = 'UPDATE' AND OLD.contract_id IS DISTINCT
+  FROM NEW.contract_id THEN RAISE EXCEPTION 'contract_id reassignment is forbidden ...'
+  USING ERRCODE = '23514'` at the top of the function body, before the FOR UPDATE check.
+- Fix 2 — explicit resolution: replaced `COALESCE(OLD.contract_id, NEW.contract_id)` with
+  `v_target_contract_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.contract_id ELSE
+  NEW.contract_id END`. After the immutability guard, OLD = NEW for UPDATE, so the CASE
+  is unambiguous. Declared `v_target_contract_id UUID` in the DECLARE block.
+- Self-check 6 added: verifies `contract_id reassignment is forbidden` string is present
+  in `pg_proc.prosrc` after the migration runs.
+- RAISE NOTICE updated to mention "contract_id reassignment guard in place".
+- M449, M450, and the trigger binding are unchanged.
+
+**New test: `lib/__tests__/contract-signer-concurrency.pg.test.ts` — test 4**
+- Creates a signed contract (single-mode, so M450 zero-signer guard doesn't apply)
+  and a draft contract, each with one signer.
+- Attempts `UPDATE contract_signers SET contract_id = <signed_id>` on the draft signer.
+- Asserts: raises with message matching `contract_id reassignment is forbidden`, error
+  code `23514` (check_violation), and signer row is unchanged.
+
+### What it affects / could break
+- Any code path that attempts to change `contract_id` on an existing `contract_signers`
+  row will now fail with `check_violation (23514)`. No such code path exists in the app —
+  signers are created once and never reassigned. The immutability guard makes this
+  invariant explicit and enforced at the DB level for all roles.
+
+## 2026-10-15 — fix(security): M451 — contract_signers lock FOR UPDATE concurrency fix (ChatGPT round 3 P1)
+
+### What changed (rev 7 — ChatGPT round 3 P1 at SHA a154c2ea)
+
+**P1: Race condition — concurrent signer INSERT can slip past contract finalization**
+- Root cause: M449's `contract_signers_enforce_signed_lock()` used a plain SELECT to
+  read `contracts.status`. Under READ COMMITTED, Tx A's `UPDATE contracts SET
+  status='signed'` holds the row lock but is uncommitted. Tx B's INSERT trigger reads
+  stale status='pending' → allows INSERT. Both commit → signed contract has unsigned signer.
+- Fix: new migration `451_contract_signers_lock_for_update.sql` — `CREATE OR REPLACE` the
+  function with `SELECT ... FOR UPDATE` on the contracts parent row. Serializes on the
+  contracts row: if Tx A (finalization) holds the lock, Tx B (signer INSERT) blocks until
+  Tx A commits; after commit Tx B re-reads status='signed' and rejects. If Tx B acquires
+  the lock first, Tx A (finalization) blocks until Tx B commits; M450 then sees the new
+  unsigned signer and rejects finalization.
+- Deadlock analysis: both transactions contend on the same contracts row only — no circular
+  dependency possible.
+- Re-applies `REVOKE ALL ON FUNCTION FROM PUBLIC, anon, authenticated` (CREATE OR REPLACE
+  resets grants to defaults).
+- M449 and M450 are unchanged. The trigger binding from M449 is preserved (M451 only
+  updates the function body via CREATE OR REPLACE).
+- Self-check in M451: verifies FOR UPDATE in prosrc, SECURITY DEFINER, search_path
+  hardened, anon/authenticated cannot directly EXECUTE.
+
+**New dev dependency: `pg` + `@types/pg`**
+- Required for the concurrency test which needs two independent database connections.
+  Neither is possible with psql + execSync (single-threaded). pg Client instances allow
+  holding a transaction open on one connection while issuing concurrent queries on another.
+
+**New test: `lib/__tests__/contract-signer-concurrency.pg.test.ts`**
+- 3 concurrency tests using two independent pg Client connections each:
+  1. Tx A (finalize) holds row lock → Tx B (signer INSERT) blocks; after A commits,
+     B fails with "locked — already signed".
+  2. Tx B (signer INSERT) holds FOR UPDATE lock → Tx A (finalize) blocks; after B commits
+     (unsigned signer in DB), A fails with M450 "have not yet signed".
+  3. Tx A holds lock then ROLLBACKS → Tx B unblocks, FOR UPDATE reads 'active' → INSERT
+     succeeds. Verifies lock release semantics.
+- Each test uses a 400ms sleep to confirm the blocked connection is still waiting before
+  releasing the lock. Test timeout: 10s per test.
+- Schema is installed inline in beforeAll (self-contained; no dependency on other PG tests
+  having run first). M451 is applied via readFileSync. M450 zero-signer guard is inlined.
+
+### What it affects / could break
+- Any code path that calls INSERT/UPDATE/DELETE on `contract_signers` while another
+  transaction holds the contracts row locked will now serialize (block) rather than
+  proceeding concurrently. This is the intended behavior — blocking is brief (until the
+  concurrent transaction commits). No app path performs concurrent signer mutations and
+  contract finalization in separate transactions.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 6 — ChatGPT round 2 P1 fix
+
+### What changed (rev 6 — ChatGPT round 2 review response at SHA 14f93cb2)
+
+**P1: contract_signers_lock_on_signed trigger extended to cover INSERT**
+- Changed `BEFORE UPDATE OR DELETE` → `BEFORE INSERT OR UPDATE OR DELETE` on the
+  `contract_signers_lock_on_signed` trigger in M449.
+- Problem: authenticated has column-level INSERT on `contract_signers` (M449 lines 163–168).
+  Without INSERT coverage, a new signer row could be inserted into an already-signed contract,
+  leaving a signed contract with an unsigned signer — undermining audit integrity.
+- Function `contract_signers_enforce_signed_lock()` already handled INSERT correctly via
+  `COALESCE(OLD.contract_id, NEW.contract_id)` and `RETURN COALESCE(NEW, OLD)`. No
+  function body changes needed.
+- M449 §8.11 self-check: added explicit INSERT event check using
+  `information_schema.triggers WHERE event_manipulation = 'INSERT'`. Updated RAISE NOTICE
+  to confirm `INSERT OR UPDATE OR DELETE` coverage.
+
+**Minor hardening: signing-link rate-limit response now has Cache-Control: no-store**
+- The `if (rl) return rl` early-return in `signing-link/route.ts` previously bypassed
+  `noCache()`. Fixed by cloning the rate-limit `Response` into a `NextResponse` before
+  applying `noCache()`. All responses from this endpoint now consistently carry
+  `Cache-Control: no-store, Pragma: no-cache`.
+
+**Test additions (rev 6)**
+- `contracts-whatsapp-channels-acl.pg.test.ts` — Section N: added 3 new INSERT tests:
+  (1) INSERT blocked after signing via service_role, (2) INSERT blocked for authenticated
+  after signing (accepts both lock-trigger and privilege-denial errors), (3) INSERT allowed
+  before signing (pre-signed contract must still accept new signers).
+- `contracts-zero-signer-behavioral.pg.test.ts` — added defense-in-depth test: installs
+  M449 lock trigger inline, confirms M450 allows the signing transition (all signers
+  signed), then confirms the lock trigger blocks a post-signing INSERT. Drops trigger
+  after test to avoid interfering with afterAll cleanup.
+
+### What it affects / could break
+- `contract_signers_lock_on_signed` now fires on INSERT: any code that inserts a signer
+  row after the parent contract is already `signed` will fail with
+  `integrity_constraint_violation`. No such app path exists; the send-signers route
+  validates contract status before adding signers.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 5 — ChatGPT P1/P2 review fixes
+
+### What changed (rev 5 — ChatGPT review response at SHA 6ce2c70a)
+
+**A. M449 defense-in-depth (ACL cleanup)**
+- Added `REVOKE ALL FROM PUBLIC` on all six tables (contracts, contract_signers,
+  contract_templates, whatsapp_channels, waiver_templates, signed_waivers).
+  Previously M449 only revoked from anon/authenticated; a PUBLIC grant would survive.
+- Added explicit column-level `REVOKE ALL (token, otp_code, meta_access_token, status,
+  signed_at, ...)` on sensitive columns FROM PUBLIC, anon, authenticated. Handles grants
+  issued by a different grantor that survive `REVOKE ALL ON TABLE`.
+- Removed `signing_mode` from the authenticated UPDATE column list (was a stale entry —
+  no app path updates signing_mode post-creation).
+- Added `contracts_signing_mode_immutable` trigger: blocks signing_mode changes for ALL
+  roles (including service_role, which bypasses RLS but not triggers) once the contract
+  has left `pending` status.
+- Added `contract_signers_lock_on_signed` trigger: blocks any UPDATE or DELETE on a
+  contract_signers row once the parent contract has `status='signed'`, for ALL roles.
+- Updated self-check to §8.x numbering; added checks for new trigger existence and
+  `signing_mode` not in authenticated UPDATE. Added PUBLIC meta_access_token check.
+- Both new trigger functions: `SECURITY DEFINER SET search_path = public, pg_temp`,
+  `REVOKE ALL ON FUNCTION FROM PUBLIC, anon, authenticated`.
+
+**B. M450 function hardening**
+- Changed `SET search_path = public` → `SET search_path = public, pg_temp` on
+  `contracts_enforce_signer_rows()` to prevent temp-table injection attacks.
+- Added `REVOKE ALL ON FUNCTION contracts_enforce_signer_rows() FROM PUBLIC, anon, authenticated`.
+- Extended guard: when a non-single contract transitions to `signed`, the trigger now
+  also counts unsigned signer rows (`COUNT(*) WHERE status != 'signed'`). If any signer
+  is not yet signed, the transaction is blocked with `integrity_constraint_violation`.
+  This mirrors the submit route's ordering guarantee (all signers confirmed signed before
+  contracts.status is set). Existing zero-signer guard unchanged.
+- Updated self-check: verifies `v_unsigned_count` exists in function body; updated
+  PASS notice to describe extended guard.
+
+**C. signing-link route hardening**
+- UUID validation: `signer_id` is now validated against `/^[0-9a-f]{8}-...-12$/i` before
+  any service-role DB query. Malformed values return 400. Prevents injection via query param.
+- `Cache-Control: no-store` + `Pragma: no-cache` headers added to ALL responses
+  (200, 400, 401, 404) so signing tokens cannot be stored in shared caches.
+- Rate limiting: `rateLimitResponseAsync(getRateLimitKey(request, 'contract-signing-link'),
+  30, 60_000)` — 30 req/min per IP/user key, consistent with sibling OTP routes.
+
+**D. Test additions**
+- `contracts-whatsapp-channels-acl.pg.test.ts`: Added sections A2 (hostile pre-state —
+  grants hostile column-level + PUBLIC grants before M449 and verifies cleanup), A3
+  (pg_default_acl query + finding that M449 has no ALTER DEFAULT PRIVILEGES SQL; PR
+  description corrected), B2 (verifies hostile pre-state grants were cleaned by M449),
+  E (signing_mode column grant assertion), M (signing_mode immutability trigger tests —
+  authenticated, service_role, pending-still-allowed), N (contract_signers lock trigger tests).
+- `contracts-zero-signer-behavioral.pg.test.ts`: Added unsigned-signer extended guard
+  tests (cannot sign with pending signer, can sign when all signed, sequential sequence),
+  M450 function hardening checks (search_path includes pg_temp, PUBLIC cannot invoke).
+- `contracts-signing-link-route.test.ts`: Added malformed UUID cases (6 variants),
+  Cache-Control/Pragma header tests on 200/404/400/401, rate limit 429 test.
+
+### A1 finding (hostile pre-state test result, PG only)
+- PUBLIC table-level grants **SURVIVE** the old M449 (no REVOKE FROM PUBLIC existed).
+- Column-level grants to named roles (authenticated, anon) are cleaned by PostgreSQL's
+  `REVOKE ALL ON TABLE t FROM role` (removes column-level grants for that role too).
+- Defense added: M449 now opens with REVOKE FROM PUBLIC on all six tables.
+
+### A3 finding (pg_default_acl)
+- M449 comments and the old PR description both claimed the migration "removes overly
+  broad ALTER DEFAULT PRIVILEGES grants". NO ALTER DEFAULT PRIVILEGES SQL exists in M449.
+  The REVOKE ALL statements clean existing table-level grants from any source (including
+  those originally set by ALTER DEFAULT PRIVILEGES). PR description has been corrected.
+
+### Codex P1 findings at this commit (all pre-existing, not introduced by this PR)
+- **P1-1 (signed contract mutability):** Authenticated has UPDATE on title/metadata/etc.
+  of signed contracts. Pre-existing before M449. Owner RLS always allowed this. Deferred
+  to separate hardening issue; scope of this PR is ACL shape, not full immutability.
+- **P1-2 (admin panel WhatsApp surface):** Admin panel uses anon key; `WhatsAppChannels.tsx`
+  does `select('*')` including `meta_access_token`. This was already true in M449 rev 1–4
+  (original revoke existed before this PR). Not introduced by rev 5 changes. Deferred.
+- **P1-3 (stale signing-link race in UI):** Pre-existing race condition in
+  `app/dashboard/contracts/page.tsx` — async fetches without cancellation. Not introduced
+  by this PR. Deferred to separate UI fix.
+
+### What it affects / could break
+- Contracts in non-pending status: `signing_mode` can no longer be changed by any role.
+  Only affects code that updates `signing_mode` post-creation — no such code exists.
+- Multi-signer contracts: can only reach `signed` when ALL signers have `status='signed'`
+  in the DB. This matches the existing submit route behavior.
+- Signing-link route: malformed UUIDs now return 400 (previously would reach service DB).
+  Rate limiting now applies. Responses are never cached.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 4 — signer-probe fix, M449 column-grant self-check, M450 INSERT+mode coverage
+
+### What changed (rev 4 additions over rev 3)
+- **`app/api/contracts/signing-link/route.ts`**: Changed `403` → `404` for ownership failure.
+  Previously the route returned `403 Unauthorized` when a valid signer_id was found but the
+  caller did not own the contract. That response code acted as a signer-ID oracle (403 meant
+  "signer exists, wrong owner"; 404 meant "signer not found"). Now both cases return 404 so
+  the existence of a signer row cannot be probed by comparing status codes.
+  401 is still returned for unauthenticated callers.
+- **New unit test** `lib/__tests__/contracts-signing-link-route.test.ts`:
+  - Tests: 401 (no session), 400 (missing signer_id), 404 (signer not found),
+    404 (signer exists, wrong owner — not 403), 200 (owner, returns signing URL).
+- **M449 self-check §7.3 + §7.9**: Changed `has_table_privilege` → `has_any_column_privilege`
+  for negative INSERT and UPDATE assertions on `whatsapp_channels` and `signed_waivers`.
+  `has_table_privilege` only checks table-level ACL entries and returns `f` for column-level
+  grants — a `GRANT INSERT (col) ON ... TO authenticated` after the migration would go
+  undetected by the old check. `has_any_column_privilege` catches both.
+- **M450 trigger expanded**:
+  - Changed `BEFORE UPDATE` → `BEFORE INSERT OR UPDATE` so a direct INSERT with
+    `status='signed'` is also blocked (not only UPDATEs).
+  - Added `TG_OP = 'INSERT'` branch to handle the no-OLD-row INSERT case.
+  - Widened signing-mode check from `NEW.signing_mode = 'multi'` to
+    `NEW.signing_mode IS DISTINCT FROM 'single'`. Research (send/route.ts:202):
+    multi-signer contracts default to `'parallel'` not `'multi'`, so the old check
+    silently missed parallel and sequential modes. Single-mode exemption is retained
+    (single-mode signing stores data on the contracts row with zero contract_signers rows).
+  - RAISE EXCEPTION message now includes `signing_mode` value for diagnosis.
+- **New PG injection test** (Section L in `contracts-whatsapp-channels-acl.pg.test.ts`):
+  - Injects `GRANT UPDATE (connection_status) ON whatsapp_channels TO authenticated` after M449 runs.
+  - Re-runs the M449 self-check DO block.
+  - Asserts the self-check raises `449 SELF-CHECK FAILED … authenticated has UPDATE on whatsapp_channels`.
+  - Revokes the injected grant afterward to keep later tests clean.
+  - Confirms `has_any_column_privilege` in the self-check detects column-level grants.
+
+### What it affects / could break
+- Callers that distinguished 403 from 404 on `/api/contracts/signing-link` to infer signer
+  existence will now always see 404 for non-owner calls. No legitimate client should be
+  doing this — the route is only called by the contracts dashboard page.
+- M449 self-check is now stricter: a post-migration `GRANT INSERT (col) ON whatsapp_channels
+  TO authenticated` (or `signed_waivers`) will cause the self-check to fail on next run.
+- M450 trigger now fires on INSERT events too — a direct `INSERT INTO contracts (...,
+  status='signed', signing_mode='parallel') VALUES (...)` with zero signers will be blocked.
+
 ## 2026-10-15 — fix(admin): topup-packages editor fix pass #2 — P2 findings (PR #658)
 
 ### What changed
@@ -75,6 +330,84 @@ If something breaks, check this log to find what changed and when.
 ### What it affects / could break
 - Concurrent WhatsApp messages to an expired null-biz session: second concurrent request that loses the CAS race now gets "Something went wrong; send Hi to start over" instead of potentially creating a duplicate session or crashing. Active, unexpired sessions are never incorrectly deactivated.
 - No schema changes. `bot_sessions.version` column was added in migration 236.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 3 — column tightening, zero-signer trigger, signing-link server route
+
+### What changed (rev 3 additions over rev 2)
+- **M449 column tightening:**
+  - `contracts` authenticated INSERT/UPDATE: removed `status` and `signed_at`.
+    All status transitions (pending→expired→signed/declined) go through service_role routes only (send, submit, decline, [token]).
+  - `contract_signers` authenticated INSERT/UPDATE: removed `status`, `signed_at`, `otp_verified`, `otp_attempts`, `otp_expires_at`.
+    These are all set by otp/send, otp/verify, and submit routes using service_role.
+  - `contract_signers` authenticated SELECT: removed `token`.
+    Signing tokens are now served only via the new `/api/contracts/signing-link` route (service_role lookup).
+  - Self-check §7 extended with assertions for all newly-blocked columns.
+- **New migration 450** (`450_contracts_zero_signer_trigger.sql`):
+  - DB-level `BEFORE UPDATE` trigger `contracts_zero_signer_guard` on `contracts`.
+  - Fires when `NEW.status='signed'` AND `signing_mode='multi'` AND no `contract_signers` rows exist for the contract.
+  - Raises `integrity_constraint_violation` (SQLSTATE 23000). Fires for all roles including service_role (triggers are not bypassed by BYPASSRLS).
+  - Includes self-check DO block.
+- **New server route** `app/api/contracts/signing-link/route.ts`:
+  - `GET /api/contracts/signing-link?signer_id=<uuid>` — fetches `contract_signers.token` server-side via service_role, verifies business ownership, returns `{ url: "/sign/<token>" }`.
+  - The raw token never reaches the browser as part of a column-level SELECT response.
+- **Dashboard update** `app/dashboard/contracts/page.tsx`:
+  - Removed `token` from `contract_signers` sub-select and TypeScript interface.
+  - "Sign Now" in list view: changed `<a href>` to `<button onClick>` that calls `/api/contracts/signing-link` and opens the URL.
+  - "Share Signing Link" panel: signing URL now fetched via API effect on `selectedContract` change.
+  - "Sign Now" in detail panel: uses `ownerSignUrl` state populated by API call.
+- **Bug fix** `app/dashboard/waivers/page.tsx`:
+  - Changed `select('*')` on `waiver_templates` to explicit column list matching M449's authenticated SELECT grant.
+    `select('*')` with column-level-only grants causes a Postgres permission error (no table-level SELECT).
+- **PG test updates** (`contracts-whatsapp-channels-acl.pg.test.ts`):
+  - `contract_signers.token` SELECT test flipped to expect `'f'`.
+  - Added assertions: `contracts.status` and `contracts.signed_at` blocked from authenticated INSERT.
+  - Added assertions: `contract_signers.status`, `otp_verified`, `otp_attempts` blocked from authenticated INSERT.
+- **New behavioral PG test** (`contracts-zero-signer-behavioral.pg.test.ts`):
+  - Applies M450 trigger against a real Postgres instance.
+  - Verifies: multi-signer contract with zero signers cannot be UPDATEd to status='signed' by any role.
+  - Verifies: single-signer contracts (signing_mode='single') are exempt.
+  - Verifies: once a signer row is added, the UPDATE succeeds.
+
+### Write paths verified (no authenticated writes to removed columns)
+- `contracts.status`: written only by submit/route.ts (service_role), decline/route.ts (service_role), [token]/route.ts (service_role).
+- `contracts.signed_at`: written only by submit/route.ts (service_role).
+- `contract_signers.status`: same three service_role routes as above.
+- `contract_signers.signed_at`: written only by submit/route.ts (service_role).
+- `contract_signers.otp_verified`, `otp_attempts`, `otp_expires_at`: written only by otp/verify/route.ts and otp/send/route.ts (both service_role).
+
+### whatsapp_channels write paths (reconciled)
+- All writes are in API routes under `app/api/whatsapp/` (NOT `app/api/channels/`):
+  - `app/api/whatsapp/add-number/route.ts` (line 82): SELECT only; INSERT goes to `whatsapp_channel_candidates`. Client: service_role.
+  - `app/api/whatsapp/embedded-signup/route.ts` (lines 145, 153, 183): INSERT and UPDATE on whatsapp_channels. Client: service_role.
+  - `app/api/settings/whatsapp-channel/route.ts` (line 31): SELECT only for ownership check. Client: service_role.
+  - `app/api/channels/request/route.ts` (line 42): SELECT only. Client: service_role (checked).
+  - Cron, lib, bot service: all use service_role.
+- Browser/dashboard components: `.select('phone_number')`, `.select('id', { count: 'exact' })`, `.select('phone_number, provider, display_name, ...')` — all within the M449 column-level SELECT grant. No INSERT/UPDATE/DELETE from any browser client.
+
+### What it affects / could break
+- Any route that attempts to UPDATE `contracts.status` via an authenticated (SSR) client will now get a privilege error. Confirmed all status-writing routes use service_role.
+- Any route that attempts to INSERT `contract_signers.otp_verified` via authenticated client will fail. Confirmed all OTP routes use service_role.
+- `contract_signers.token` no longer readable via authenticated SELECT — dashboard UI now calls `/api/contracts/signing-link` to get signing URLs. The "Share Signing Link" panel requires the API to respond before showing the QR code.
+- `waiver_templates select('*')` in waivers dashboard was silently broken after M449 (returns 42501 for columns outside the grant); now uses explicit column list.
+
+## 2026-10-15 — fix(security): M449 least-privilege ACL for contracts, whatsapp_channels, and waivers (rev 2)
+
+### What changed (rev 2 additions over original)
+- M449 extended to cover `waiver_templates` and `signed_waivers` (same staging-vs-production asymmetry as contracts).
+  - `waiver_templates`: `authenticated` SELECT/INSERT/UPDATE granted (SSR routes use authenticated client for full CRUD). `anon` excluded.
+  - `signed_waivers`: `authenticated` SELECT-only granted (signing happens via service_role). `anon` excluded.
+- M449 `whatsapp_channels` UPDATE grant for `authenticated` removed — confirmed no authenticated-session write path exists (all channel mutations go through `createServiceClient()`).
+- M449 column lists hardened: `contracts.token` removed from `authenticated` SELECT (dashboard does not select it; signer tokens come from `contract_signers`); `otp_code` removed from `contract_signers` SELECT/INSERT/UPDATE (`authenticated` has no business seeing the raw OTP value); `token`, `token_expires_at`, `signature_data`, and `audit_trail` removed from contracts/contract_signers INSERT/UPDATE grants (all set server-side by service_role).
+- Self-check extended: checks `authenticated` has no UPDATE on `whatsapp_channels`; checks `otp_code` is blocked on `contract_signers`; checks waiver tables have correct grants.
+- PG test updated to match new shape (UPDATE removed from whatsapp_channels, new otp_code + waiver sections).
+- New unit test (`lib/__tests__/contracts-zero-signer-guard.test.ts`): documents the existing server-side guard that blocks sending a contract with zero signers and blocks finalizing a contract as signed when no `contract_signers` DB rows exist.
+- `app/dashboard/services/page.tsx` line ~496: fixed copy from "Members can give on a regular schedule" to "Customers book and pay for this service on a repeating schedule" (was copying from the giving/donation flow instead of the services recurring flow).
+
+### What it affects / could break
+- Any code attempting to UPDATE `whatsapp_channels` via the `authenticated` client will now get a privilege error — all channel mutations must use `createServiceClient()`.
+- `otp_code` is no longer readable via `authenticated` client; this is intentional — OTP delivery is server-side only.
+- Waiver templates on staging that previously showed empty lists due to missing `authenticated` grants will now work correctly.
+- No change to RLS policies; data isolation is unchanged.
 
 ## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
 

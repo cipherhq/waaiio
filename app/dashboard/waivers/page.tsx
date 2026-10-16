@@ -104,7 +104,7 @@ export default function WaiversPage() {
     try {
       const { data } = await supabase
         .from('waiver_templates')
-        .select('*')
+        .select('id, business_id, title, body, fields, is_active, require_before_booking, token, pdf_url, created_at, updated_at')
         .eq('business_id', business.id)
         .order('is_active', { ascending: false })
         .order('created_at', { ascending: false });
