@@ -221,6 +221,52 @@ If something breaks, check this log to find what changed and when.
 - M450 trigger now fires on INSERT events too — a direct `INSERT INTO contracts (...,
   status='signed', signing_mode='parallel') VALUES (...)` with zero signers will be blocked.
 
+## 2026-10-15 — fix(admin): topup-packages editor fix pass #2 — P2 findings (PR #658)
+
+### What changed
+- **`admin/src/pages/PlatformSettings.tsx`:**
+  - (P2) `getTopupRowErrors`: replaced `parseFloat` with `/^\d+$/` regex — now rejects `'1e3'`, `'-5'`, `'1000.5'` (valid floats that bypassed the old check) as "Must be a valid whole number (digits only)".
+  - (P2) `serializeTopupPackages`: same regex fix — invalid input no longer silently produces a valid `amount_minor`; defaults to 0 for the validator to block.
+  - (P2) `parseTopupPackages`: added null/type guard before `Object.keys(pkg)` — null, string, number, array elements in stored packages no longer crash the editor. Each is replaced with a sentinel `_unknownFields` row, which triggers the data-loss banner and blocks Save.
+- **`app/api/admin/platform-settings/commercial/route.ts`:**
+  - (P2) Unexpected RPC errors no longer leak raw `error.message` to the client. Added `console.error('[COMMERCIAL_CONFIG]', ...)` and return generic `{ error: 'Internal server error', code: 'internal_error' }`. Version-conflict 409 path (authored message) unchanged.
+- **`admin/src/__tests__/topup-packages-editor.test.tsx`:**
+  - TC12: null/string/number/array elements in stored packages — no crash, data-loss warning, Save blocked.
+  - TC13 (8 cases via `it.each`): `'1e3'`, `'-5'`, `'1000.5'`, `'0'`, `''`, and JSDOM-sanitized inputs (`'1000abc'`, `'1,000'`, `' 1000'`) — each: error shown + Save disabled + fetch NOT called.
+- **`lib/__tests__/commercial-route-topup-packages.test.ts`:**
+  - Added: version conflict → 409 with authored message (unchanged). Unexpected PG error → 500 generic body, real message NOT in response.
+
+### What it affects / could break
+- Amount inputs that previously silently accepted `'1e3'` (= 1000) are now blocked. Admins who used scientific notation (unlikely but possible) will need to type plain integers.
+- Raw PG error text no longer surfaced to admin clients for unexpected route errors. Sentry/console.error receives the real message for debugging.
+
+## 2026-10-15 — fix(admin): topup-packages editor fix pass (PR #658)
+
+### What changed
+- **`shared/topup-packages.ts`:** Tightened validator with new caps: `TOPUP_LABEL_MAX_LEN=50`, `TOPUP_DESCRIPTION_MAX_LEN=200`, `TOPUP_AMOUNT_MINOR_MAX=10_000_000_000`, `TOPUP_MAX_PACKAGES_PER_CURRENCY=10`, `KNOWN_PACKAGE_KEYS`. Added validation: unknown package keys rejected, description must be string if present, label/description length caps, amount_minor max, max 10 packages per currency.
+- **`admin/src/pages/PlatformSettings.tsx`:** Fixed `serializeTopupPackages` bug: replaced `Math.round(major × 100)` with integer-only check — non-integer major now produces `amount_minor=0` so the validator catches it and disables Save. Added unknown-currency and unknown-field tracking in editor state; serializer re-injects them back into output so validator blocks save with a clear error. Added `data-loss-warning` banner in `TopupPackagesEditor`.
+- **`admin/src/__tests__/topup-packages-editor.test.tsx`:** Rewrote TC4 to click Save and inspect exact `fetch` body (major→minor conversion, blank description omitted). Rewrote TC7 to use `fireEvent.change('1000.5')` proving Save is disabled. Added TC11 for data-loss (unknown currency + unknown field). Added `useStepUp` and `StepUpDialog` mocks.
+- **`admin/src/__tests__/topup-packages-validator.test.ts`:** Added tests for: label length cap, description length cap, description type check, amount_minor max, max packages per currency, unknown package keys.
+- **`lib/__tests__/commercial-route-topup-packages.test.ts`:** New — 16 route tests: all invalid payload types return 400 and `consumeStepUp` is NOT called; valid payloads call both `consumeStepUp` and RPC.
+
+### What it affects / could break
+- Validator now rejects unknown package keys (`bonus`, etc.) and description non-strings. Any stored package data with unknown fields will block save until cleaned.
+- `serializeTopupPackages` fix makes TC7's behaviour correct — no functional change for integer amounts.
+
+## 2026-10-15 — feat(admin): structured editor for top-up packages
+
+### What changed
+- **New file `shared/topup-packages.ts`:** Framework-neutral validator for `messaging_topup_packages`. Exports `validateTopupPackages`, `isTopupPackagesKey`, currency constants (`TOPUP_ALLOWED_CURRENCIES`, `TOPUP_CURRENCY_SYMBOLS`, `TOPUP_CURRENCY_NAMES`, `TOPUP_MINOR_PER_MAJOR`). Allowed currencies: NGN, GHS, USD, GBP, CAD. Mirrors M416 write-time validation at the HTTP layer.
+- **`app/api/admin/platform-settings/commercial/route.ts`:** Added server-side HTTP-layer validation for `messaging_topup_packages` (alongside existing country-amount validation). The DB RPC already validated; this adds defense-in-depth at the route boundary, matching the existing pattern for `isCountryAmountKey`.
+- **`admin/src/pages/PlatformSettings.tsx`:** Added new "Messaging" group to GROUPS array containing `messaging_topup_packages`. Built `TopupPackagesEditor` component (per-currency rows with major-unit amount input → stored as minor units × 100, label, optional description). Added `hasTopupPackagesErrors` for Save button disabling. Updated unconfigured-key configure flow to show the structured editor. Imports `@shared/topup-packages`.
+- **Tests added:** `admin/src/__tests__/topup-packages-validator.test.ts` (25 tests: valid shapes, null/type errors, unknown currency, empty currency, negative, zero, decimal minor, duplicate amounts, missing/empty label, all allowed currencies) and `admin/src/__tests__/topup-packages-editor.test.tsx` (10 tests: Messaging tab visible, Not-configured placeholder, seeded value loads, valid save shape, negative/zero/decimal/empty-label/duplicate-amount client-side validation, source-code assertion).
+
+### What it affects / could break
+- PlatformSettings Messaging tab now shows `messaging_topup_packages`. If not yet seeded in DB, shows as "Not configured" placeholder with a structured Configure UI.
+- Saving `messaging_topup_packages` via the admin still routes through `saveCommercialViaStepUp` → `/api/admin/platform-settings/commercial` → `svc_save_commercial_config` RPC. Auth and step-up behavior unchanged.
+- Server validation added at the HTTP layer for `messaging_topup_packages`: invalid currency codes, negative/zero/decimal/duplicate amounts, missing labels now return 400 from the route before reaching the DB. Previously only the DB RPC rejected these. Existing valid payloads are unaffected.
+- No DB changes. No migrations. No user-facing changes outside the admin panel.
+
 ## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
 
 ### What changed
