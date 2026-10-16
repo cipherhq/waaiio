@@ -17,6 +17,399 @@ If something breaks, check this log to find what changed and when.
 - The 7+ other insertion paths in `global-queries.ts`, `keyword-actions.ts`, `action-dispatcher.ts` share the same vulnerability but are lower-traffic. A shared session-creation primitive (Option B) is planned as follow-up before code freeze.
 - No schema changes. No new migrations.
 
+## 2026-10-16 — fix(payments): check terminal-failure update result before dedup write — P1
+
+### What changed
+- `app/api/payments/byo-webhook/[businessId]/route.ts`:
+  - **Terminal-failure branch in `charge.success` handler (~line 188):** The `payments` UPDATE that marks a payment `failed` now checks the result. DB errors → return 503 (retryable), no dedup row. Zero rows → re-read payment by scoped identifiers; only dedup if confirmed terminal (`success`/`failed`/`refunded`); return 503 if nonterminal or re-read fails.
+  - **`charge.failed` handler (~line 296):** `processPaystackChargeFailed` is now wrapped in try/catch. If it throws (DB error, scoped-update error) → return 503, no dedup row written. Previously the error would bubble to the outer catch and return 500.
+- `lib/payments/webhook-handler.ts`: `processPaystackChargeFailed` scoped zero-row path now re-reads the payment and throws `ScopedUpdateError` if not terminal or re-read fails. Early-exit check extended to include `refunded` as terminal.
+- `lib/__tests__/payment-integrity.test.ts`: Added `chainBuilderWith` helper for custom mocks. Added 5 regression tests for `charge.success` terminal failure: (1) DB UPDATE error → 503, no dedup; (2) zero rows + re-read = terminal → 200, dedup; (3) zero rows + re-read = nonterminal → 503, no dedup; (4) zero rows + re-read fails → 503, no dedup; (5) processPaystackChargeFailed throws → 503, no dedup. Updated 2 existing terminal-failure tests with explicit `updateResult` to match new row-count contract.
+- `lib/payments/__tests__/webhook-handler.test.ts`: Added 4 tests: `refunded` early-exit, scoped zero-row + re-read = terminal (returns normally), scoped zero-row + re-read = nonterminal (throws ScopedUpdateError), scoped zero-row + re-read fails (throws ScopedUpdateError).
+
+### What it affects / could break
+- BYO webhook terminal-failure path: zero-row UPDATE results no longer unconditionally dedup. Payment state is re-verified. A payment stuck in a nonterminal state due to a race returns 503 for provider retry.
+- BYO webhook charge.failed: DB errors now return 503 (retryable) instead of 500 (ambiguous retry behavior).
+- `processPaystackChargeFailed` scoped path: zero-row conditional UPDATE now throws `ScopedUpdateError` if re-read shows nonterminal state or fails. Callers (BYO webhook) catch this and return 503 without dedup.
+- No change to the success path or integrity branch. No change to dedup behavior when the DB write succeeds (1+ rows).
+
+## 2026-10-15 — fix(payments): include applied adjustments in lifetime balance (P1-2)
+
+### What changed
+- `app/api/payouts/balance/route.ts`: Split adjustment query into two — ALL adjustments for `computePlatformHeldTotals` lifetime balance, unapplied-only for `pending_adjustments` display field. Prior payouts' `net_amount` already includes applied adjustments; including them again in the lifetime sum cancels correctly.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Removed `.is('applied_to_payout_id', null)` filter from adjustment query for balance verification. Same fix — lifetime check must include all adjustments.
+- `lib/__tests__/payout-custody-formula.test.ts`: Added 2 P1-2 regression tests: (1) single applied adjustment must be included in lifetime balance; (2) mix of applied+unapplied adjustments with prior payout reconciles to 0.
+
+### What it affects / could break
+- Balance endpoint: after a payout with adjustments is paid, the remaining balance is now correct (was showing phantom positive balance equal to the adjustment amount). A business with only negative applied adjustments will now show a LOWER balance than before (correct — the platform already paid out those funds).
+- Approve route: same fix. A payout that passed the old check (which excluded applied adjustments) might now be blocked if the applied adjustment effect makes the balance lower. This is correct — the old check overstated available balance.
+- Generate/auto-payout: NOT affected — they correctly use unapplied-only for period-specific computation.
+
+## 2026-10-15 — fix(payments): canonical payout formula — computePlatformHeldTotals (#628 P1/P2 fix pass 3)
+
+### What changed
+- `lib/payments/payable-fees.ts`: Added `computePlatformHeldTotals()` — canonical formula for platform-held payout totals. Accepts `fees`, optional `adjustments`, and optional `priorPayouts`. Returns `{ eligible, gross, totalFees, gatewayFees, adjustmentSum, priorPaidOut, netAvailable }`. All payout callers now use this single function.
+- `app/api/admin/payouts/generate/route.ts`: Replaced inline gross/fees/net computation with `computePlatformHeldTotals`. Moved adjustments fetch before gross check. Removed `getPayableFeeRows` import (function still used elsewhere).
+- `app/api/cron/auto-payout/route.ts`: Replaced inline computation with `computePlatformHeldTotals`. Removed two-step netAmount calculation.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `gateway_fee, waived` to `platform_fees` select (were missing — formula used `transaction_amount - fee_total` instead of the canonical formula). Added `payout_adjustments` fetch. Now uses `computePlatformHeldTotals` with adjustments and priorPayouts for balance verification.
+- `app/api/payouts/balance/route.ts` (P1): For `platform_managed` mode — gross and net now derived from `platform_fees` via `computePlatformHeldTotals` instead of bookings/orders/invoices (which included direct-transfer revenue the platform never held). Added `total_revenue` response field (bookings+orders+invoices, display only). Direct_split mode unchanged.
+- `app/api/cron/payout-nudge/route.ts`: Added `gateway_fee, waived` to `platform_fees` select. Uses `computePlatformHeldTotals` instead of inline reduces.
+- `app/api/payments/byo-webhook/[businessId]/route.ts` (P2): Integrity-failure branch now adds `.in('status', ['pending'])` predicate — prevents overwriting `gateway_status` on already-finalized payments. Checks `updatedRows` result — if 0 rows (finalized), records Sentry warning anomaly only.
+- `app/dashboard/payouts/page.tsx`: Added `total_revenue` to Balance interface. Top stats label changed from "Total Earnings" to "Total Revenue" (shows `balance.total_revenue`).
+- `lib/__tests__/payout-select-audit.test.ts`: Extended to assert all 5 fields required by `computePlatformHeldTotals` (`transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer`).
+- `lib/__tests__/payout-custody-formula.test.ts` (new): 19 behavioral tests for `computePlatformHeldTotals` — mixed custody, NULL exclusion, waived handling, adjustments, priorPayouts, generate→approve reconciliation, balance matching generate.
+- `lib/__tests__/payment-credentials-columns.pg.test.ts`: Added PG test section for `platform_fees` authenticated SELECT grants — verifies table-level SELECT, column-level coverage for all 5 fields, RLS row isolation.
+
+### What it affects / could break
+- **Balance endpoint (platform_managed):** `gross` is now platform-held transaction total from `platform_fees`, not bookings/orders/invoices total. This is LOWER if there are direct-transfer transactions (correct — platform never held those funds). `net_available` now correctly subtracts `gateway_fee` and handles `waived` fees.
+- **Approve balance check:** Now deducts `gateway_fee`, handles `waived`, and includes `payout_adjustments`. A payout that passed the old check (which used `transaction_amount - fee_total`) might fail the new check if gateway fees are significant. This is correct — the old formula overstated available balance.
+- **Nudge:** Balance now accounts for gateway fees and waived status. Some nudges may show lower balance amounts.
+- **BYO webhook integrity branch:** Replayed webhooks on finalized payments no longer overwrite `gateway_status`. They generate a Sentry warning instead. This is safer (no data loss) but means `gateway_status` may not reflect the latest verification attempt for finalized payments.
+- **UI:** "Total Earnings" label changed to "Total Revenue" in payout page top stats. Uses `total_revenue ?? gross` for backwards compatibility.
+
+## 2026-10-15 — fix(db): M451 — contract_id immutability guard in signer-lock trigger (ChatGPT round 4 P1)
+
+### What changed (rev 8 — ChatGPT round 4 P1 at SHA ec91d36d)
+
+**P1: COALESCE bypass — contract_id reassignment on contract_signers**
+- Root cause: the lock trigger used `COALESCE(OLD.contract_id, NEW.contract_id)` to
+  identify the parent contract. On UPDATE, OLD is never NULL, so COALESCE always picks
+  OLD.contract_id. An `UPDATE contract_signers SET contract_id = <signed_id>` would have
+  the trigger look up the OLD (unsigned/draft) parent → status ≠ 'signed' → allows the
+  mutation → signer row is silently moved to a signed contract, bypassing the lock.
+  Only reachable by service_role (M449 excludes contract_id from authenticated UPDATE
+  grants), but the invariant must hold for ALL roles.
+- Fix 1 — immutability guard: added `IF TG_OP = 'UPDATE' AND OLD.contract_id IS DISTINCT
+  FROM NEW.contract_id THEN RAISE EXCEPTION 'contract_id reassignment is forbidden ...'
+  USING ERRCODE = '23514'` at the top of the function body, before the FOR UPDATE check.
+- Fix 2 — explicit resolution: replaced `COALESCE(OLD.contract_id, NEW.contract_id)` with
+  `v_target_contract_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.contract_id ELSE
+  NEW.contract_id END`. After the immutability guard, OLD = NEW for UPDATE, so the CASE
+  is unambiguous. Declared `v_target_contract_id UUID` in the DECLARE block.
+- Self-check 6 added: verifies `contract_id reassignment is forbidden` string is present
+  in `pg_proc.prosrc` after the migration runs.
+- RAISE NOTICE updated to mention "contract_id reassignment guard in place".
+- M449, M450, and the trigger binding are unchanged.
+
+**New test: `lib/__tests__/contract-signer-concurrency.pg.test.ts` — test 4**
+- Creates a signed contract (single-mode, so M450 zero-signer guard doesn't apply)
+  and a draft contract, each with one signer.
+- Attempts `UPDATE contract_signers SET contract_id = <signed_id>` on the draft signer.
+- Asserts: raises with message matching `contract_id reassignment is forbidden`, error
+  code `23514` (check_violation), and signer row is unchanged.
+
+### What it affects / could break
+- Any code path that attempts to change `contract_id` on an existing `contract_signers`
+  row will now fail with `check_violation (23514)`. No such code path exists in the app —
+  signers are created once and never reassigned. The immutability guard makes this
+  invariant explicit and enforced at the DB level for all roles.
+
+## 2026-10-15 — fix(security): M451 — contract_signers lock FOR UPDATE concurrency fix (ChatGPT round 3 P1)
+
+### What changed (rev 7 — ChatGPT round 3 P1 at SHA a154c2ea)
+
+**P1: Race condition — concurrent signer INSERT can slip past contract finalization**
+- Root cause: M449's `contract_signers_enforce_signed_lock()` used a plain SELECT to
+  read `contracts.status`. Under READ COMMITTED, Tx A's `UPDATE contracts SET
+  status='signed'` holds the row lock but is uncommitted. Tx B's INSERT trigger reads
+  stale status='pending' → allows INSERT. Both commit → signed contract has unsigned signer.
+- Fix: new migration `451_contract_signers_lock_for_update.sql` — `CREATE OR REPLACE` the
+  function with `SELECT ... FOR UPDATE` on the contracts parent row. Serializes on the
+  contracts row: if Tx A (finalization) holds the lock, Tx B (signer INSERT) blocks until
+  Tx A commits; after commit Tx B re-reads status='signed' and rejects. If Tx B acquires
+  the lock first, Tx A (finalization) blocks until Tx B commits; M450 then sees the new
+  unsigned signer and rejects finalization.
+- Deadlock analysis: both transactions contend on the same contracts row only — no circular
+  dependency possible.
+- Re-applies `REVOKE ALL ON FUNCTION FROM PUBLIC, anon, authenticated` (CREATE OR REPLACE
+  resets grants to defaults).
+- M449 and M450 are unchanged. The trigger binding from M449 is preserved (M451 only
+  updates the function body via CREATE OR REPLACE).
+- Self-check in M451: verifies FOR UPDATE in prosrc, SECURITY DEFINER, search_path
+  hardened, anon/authenticated cannot directly EXECUTE.
+
+**New dev dependency: `pg` + `@types/pg`**
+- Required for the concurrency test which needs two independent database connections.
+  Neither is possible with psql + execSync (single-threaded). pg Client instances allow
+  holding a transaction open on one connection while issuing concurrent queries on another.
+
+**New test: `lib/__tests__/contract-signer-concurrency.pg.test.ts`**
+- 3 concurrency tests using two independent pg Client connections each:
+  1. Tx A (finalize) holds row lock → Tx B (signer INSERT) blocks; after A commits,
+     B fails with "locked — already signed".
+  2. Tx B (signer INSERT) holds FOR UPDATE lock → Tx A (finalize) blocks; after B commits
+     (unsigned signer in DB), A fails with M450 "have not yet signed".
+  3. Tx A holds lock then ROLLBACKS → Tx B unblocks, FOR UPDATE reads 'active' → INSERT
+     succeeds. Verifies lock release semantics.
+- Each test uses a 400ms sleep to confirm the blocked connection is still waiting before
+  releasing the lock. Test timeout: 10s per test.
+- Schema is installed inline in beforeAll (self-contained; no dependency on other PG tests
+  having run first). M451 is applied via readFileSync. M450 zero-signer guard is inlined.
+
+### What it affects / could break
+- Any code path that calls INSERT/UPDATE/DELETE on `contract_signers` while another
+  transaction holds the contracts row locked will now serialize (block) rather than
+  proceeding concurrently. This is the intended behavior — blocking is brief (until the
+  concurrent transaction commits). No app path performs concurrent signer mutations and
+  contract finalization in separate transactions.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 6 — ChatGPT round 2 P1 fix
+
+### What changed (rev 6 — ChatGPT round 2 review response at SHA 14f93cb2)
+
+**P1: contract_signers_lock_on_signed trigger extended to cover INSERT**
+- Changed `BEFORE UPDATE OR DELETE` → `BEFORE INSERT OR UPDATE OR DELETE` on the
+  `contract_signers_lock_on_signed` trigger in M449.
+- Problem: authenticated has column-level INSERT on `contract_signers` (M449 lines 163–168).
+  Without INSERT coverage, a new signer row could be inserted into an already-signed contract,
+  leaving a signed contract with an unsigned signer — undermining audit integrity.
+- Function `contract_signers_enforce_signed_lock()` already handled INSERT correctly via
+  `COALESCE(OLD.contract_id, NEW.contract_id)` and `RETURN COALESCE(NEW, OLD)`. No
+  function body changes needed.
+- M449 §8.11 self-check: added explicit INSERT event check using
+  `information_schema.triggers WHERE event_manipulation = 'INSERT'`. Updated RAISE NOTICE
+  to confirm `INSERT OR UPDATE OR DELETE` coverage.
+
+**Minor hardening: signing-link rate-limit response now has Cache-Control: no-store**
+- The `if (rl) return rl` early-return in `signing-link/route.ts` previously bypassed
+  `noCache()`. Fixed by cloning the rate-limit `Response` into a `NextResponse` before
+  applying `noCache()`. All responses from this endpoint now consistently carry
+  `Cache-Control: no-store, Pragma: no-cache`.
+
+**Test additions (rev 6)**
+- `contracts-whatsapp-channels-acl.pg.test.ts` — Section N: added 3 new INSERT tests:
+  (1) INSERT blocked after signing via service_role, (2) INSERT blocked for authenticated
+  after signing (accepts both lock-trigger and privilege-denial errors), (3) INSERT allowed
+  before signing (pre-signed contract must still accept new signers).
+- `contracts-zero-signer-behavioral.pg.test.ts` — added defense-in-depth test: installs
+  M449 lock trigger inline, confirms M450 allows the signing transition (all signers
+  signed), then confirms the lock trigger blocks a post-signing INSERT. Drops trigger
+  after test to avoid interfering with afterAll cleanup.
+
+### What it affects / could break
+- `contract_signers_lock_on_signed` now fires on INSERT: any code that inserts a signer
+  row after the parent contract is already `signed` will fail with
+  `integrity_constraint_violation`. No such app path exists; the send-signers route
+  validates contract status before adding signers.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 5 — ChatGPT P1/P2 review fixes
+
+### What changed (rev 5 — ChatGPT review response at SHA 6ce2c70a)
+
+**A. M449 defense-in-depth (ACL cleanup)**
+- Added `REVOKE ALL FROM PUBLIC` on all six tables (contracts, contract_signers,
+  contract_templates, whatsapp_channels, waiver_templates, signed_waivers).
+  Previously M449 only revoked from anon/authenticated; a PUBLIC grant would survive.
+- Added explicit column-level `REVOKE ALL (token, otp_code, meta_access_token, status,
+  signed_at, ...)` on sensitive columns FROM PUBLIC, anon, authenticated. Handles grants
+  issued by a different grantor that survive `REVOKE ALL ON TABLE`.
+- Removed `signing_mode` from the authenticated UPDATE column list (was a stale entry —
+  no app path updates signing_mode post-creation).
+- Added `contracts_signing_mode_immutable` trigger: blocks signing_mode changes for ALL
+  roles (including service_role, which bypasses RLS but not triggers) once the contract
+  has left `pending` status.
+- Added `contract_signers_lock_on_signed` trigger: blocks any UPDATE or DELETE on a
+  contract_signers row once the parent contract has `status='signed'`, for ALL roles.
+- Updated self-check to §8.x numbering; added checks for new trigger existence and
+  `signing_mode` not in authenticated UPDATE. Added PUBLIC meta_access_token check.
+- Both new trigger functions: `SECURITY DEFINER SET search_path = public, pg_temp`,
+  `REVOKE ALL ON FUNCTION FROM PUBLIC, anon, authenticated`.
+
+**B. M450 function hardening**
+- Changed `SET search_path = public` → `SET search_path = public, pg_temp` on
+  `contracts_enforce_signer_rows()` to prevent temp-table injection attacks.
+- Added `REVOKE ALL ON FUNCTION contracts_enforce_signer_rows() FROM PUBLIC, anon, authenticated`.
+- Extended guard: when a non-single contract transitions to `signed`, the trigger now
+  also counts unsigned signer rows (`COUNT(*) WHERE status != 'signed'`). If any signer
+  is not yet signed, the transaction is blocked with `integrity_constraint_violation`.
+  This mirrors the submit route's ordering guarantee (all signers confirmed signed before
+  contracts.status is set). Existing zero-signer guard unchanged.
+- Updated self-check: verifies `v_unsigned_count` exists in function body; updated
+  PASS notice to describe extended guard.
+
+**C. signing-link route hardening**
+- UUID validation: `signer_id` is now validated against `/^[0-9a-f]{8}-...-12$/i` before
+  any service-role DB query. Malformed values return 400. Prevents injection via query param.
+- `Cache-Control: no-store` + `Pragma: no-cache` headers added to ALL responses
+  (200, 400, 401, 404) so signing tokens cannot be stored in shared caches.
+- Rate limiting: `rateLimitResponseAsync(getRateLimitKey(request, 'contract-signing-link'),
+  30, 60_000)` — 30 req/min per IP/user key, consistent with sibling OTP routes.
+
+**D. Test additions**
+- `contracts-whatsapp-channels-acl.pg.test.ts`: Added sections A2 (hostile pre-state —
+  grants hostile column-level + PUBLIC grants before M449 and verifies cleanup), A3
+  (pg_default_acl query + finding that M449 has no ALTER DEFAULT PRIVILEGES SQL; PR
+  description corrected), B2 (verifies hostile pre-state grants were cleaned by M449),
+  E (signing_mode column grant assertion), M (signing_mode immutability trigger tests —
+  authenticated, service_role, pending-still-allowed), N (contract_signers lock trigger tests).
+- `contracts-zero-signer-behavioral.pg.test.ts`: Added unsigned-signer extended guard
+  tests (cannot sign with pending signer, can sign when all signed, sequential sequence),
+  M450 function hardening checks (search_path includes pg_temp, PUBLIC cannot invoke).
+- `contracts-signing-link-route.test.ts`: Added malformed UUID cases (6 variants),
+  Cache-Control/Pragma header tests on 200/404/400/401, rate limit 429 test.
+
+### A1 finding (hostile pre-state test result, PG only)
+- PUBLIC table-level grants **SURVIVE** the old M449 (no REVOKE FROM PUBLIC existed).
+- Column-level grants to named roles (authenticated, anon) are cleaned by PostgreSQL's
+  `REVOKE ALL ON TABLE t FROM role` (removes column-level grants for that role too).
+- Defense added: M449 now opens with REVOKE FROM PUBLIC on all six tables.
+
+### A3 finding (pg_default_acl)
+- M449 comments and the old PR description both claimed the migration "removes overly
+  broad ALTER DEFAULT PRIVILEGES grants". NO ALTER DEFAULT PRIVILEGES SQL exists in M449.
+  The REVOKE ALL statements clean existing table-level grants from any source (including
+  those originally set by ALTER DEFAULT PRIVILEGES). PR description has been corrected.
+
+### Codex P1 findings at this commit (all pre-existing, not introduced by this PR)
+- **P1-1 (signed contract mutability):** Authenticated has UPDATE on title/metadata/etc.
+  of signed contracts. Pre-existing before M449. Owner RLS always allowed this. Deferred
+  to separate hardening issue; scope of this PR is ACL shape, not full immutability.
+- **P1-2 (admin panel WhatsApp surface):** Admin panel uses anon key; `WhatsAppChannels.tsx`
+  does `select('*')` including `meta_access_token`. This was already true in M449 rev 1–4
+  (original revoke existed before this PR). Not introduced by rev 5 changes. Deferred.
+- **P1-3 (stale signing-link race in UI):** Pre-existing race condition in
+  `app/dashboard/contracts/page.tsx` — async fetches without cancellation. Not introduced
+  by this PR. Deferred to separate UI fix.
+
+### What it affects / could break
+- Contracts in non-pending status: `signing_mode` can no longer be changed by any role.
+  Only affects code that updates `signing_mode` post-creation — no such code exists.
+- Multi-signer contracts: can only reach `signed` when ALL signers have `status='signed'`
+  in the DB. This matches the existing submit route behavior.
+- Signing-link route: malformed UUIDs now return 400 (previously would reach service DB).
+  Rate limiting now applies. Responses are never cached.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 4 — signer-probe fix, M449 column-grant self-check, M450 INSERT+mode coverage
+
+### What changed (rev 4 additions over rev 3)
+- **`app/api/contracts/signing-link/route.ts`**: Changed `403` → `404` for ownership failure.
+  Previously the route returned `403 Unauthorized` when a valid signer_id was found but the
+  caller did not own the contract. That response code acted as a signer-ID oracle (403 meant
+  "signer exists, wrong owner"; 404 meant "signer not found"). Now both cases return 404 so
+  the existence of a signer row cannot be probed by comparing status codes.
+  401 is still returned for unauthenticated callers.
+- **New unit test** `lib/__tests__/contracts-signing-link-route.test.ts`:
+  - Tests: 401 (no session), 400 (missing signer_id), 404 (signer not found),
+    404 (signer exists, wrong owner — not 403), 200 (owner, returns signing URL).
+- **M449 self-check §7.3 + §7.9**: Changed `has_table_privilege` → `has_any_column_privilege`
+  for negative INSERT and UPDATE assertions on `whatsapp_channels` and `signed_waivers`.
+  `has_table_privilege` only checks table-level ACL entries and returns `f` for column-level
+  grants — a `GRANT INSERT (col) ON ... TO authenticated` after the migration would go
+  undetected by the old check. `has_any_column_privilege` catches both.
+- **M450 trigger expanded**:
+  - Changed `BEFORE UPDATE` → `BEFORE INSERT OR UPDATE` so a direct INSERT with
+    `status='signed'` is also blocked (not only UPDATEs).
+  - Added `TG_OP = 'INSERT'` branch to handle the no-OLD-row INSERT case.
+  - Widened signing-mode check from `NEW.signing_mode = 'multi'` to
+    `NEW.signing_mode IS DISTINCT FROM 'single'`. Research (send/route.ts:202):
+    multi-signer contracts default to `'parallel'` not `'multi'`, so the old check
+    silently missed parallel and sequential modes. Single-mode exemption is retained
+    (single-mode signing stores data on the contracts row with zero contract_signers rows).
+  - RAISE EXCEPTION message now includes `signing_mode` value for diagnosis.
+- **New PG injection test** (Section L in `contracts-whatsapp-channels-acl.pg.test.ts`):
+  - Injects `GRANT UPDATE (connection_status) ON whatsapp_channels TO authenticated` after M449 runs.
+  - Re-runs the M449 self-check DO block.
+  - Asserts the self-check raises `449 SELF-CHECK FAILED … authenticated has UPDATE on whatsapp_channels`.
+  - Revokes the injected grant afterward to keep later tests clean.
+  - Confirms `has_any_column_privilege` in the self-check detects column-level grants.
+
+### What it affects / could break
+- Callers that distinguished 403 from 404 on `/api/contracts/signing-link` to infer signer
+  existence will now always see 404 for non-owner calls. No legitimate client should be
+  doing this — the route is only called by the contracts dashboard page.
+- M449 self-check is now stricter: a post-migration `GRANT INSERT (col) ON whatsapp_channels
+  TO authenticated` (or `signed_waivers`) will cause the self-check to fail on next run.
+- M450 trigger now fires on INSERT events too — a direct `INSERT INTO contracts (...,
+  status='signed', signing_mode='parallel') VALUES (...)` with zero signers will be blocked.
+
+## 2026-10-15 — fix(admin): topup-packages editor fix pass #2 — P2 findings (PR #658)
+
+### What changed
+- **`admin/src/pages/PlatformSettings.tsx`:**
+  - (P2) `getTopupRowErrors`: replaced `parseFloat` with `/^\d+$/` regex — now rejects `'1e3'`, `'-5'`, `'1000.5'` (valid floats that bypassed the old check) as "Must be a valid whole number (digits only)".
+  - (P2) `serializeTopupPackages`: same regex fix — invalid input no longer silently produces a valid `amount_minor`; defaults to 0 for the validator to block.
+  - (P2) `parseTopupPackages`: added null/type guard before `Object.keys(pkg)` — null, string, number, array elements in stored packages no longer crash the editor. Each is replaced with a sentinel `_unknownFields` row, which triggers the data-loss banner and blocks Save.
+- **`app/api/admin/platform-settings/commercial/route.ts`:**
+  - (P2) Unexpected RPC errors no longer leak raw `error.message` to the client. Added `console.error('[COMMERCIAL_CONFIG]', ...)` and return generic `{ error: 'Internal server error', code: 'internal_error' }`. Version-conflict 409 path (authored message) unchanged.
+- **`admin/src/__tests__/topup-packages-editor.test.tsx`:**
+  - TC12: null/string/number/array elements in stored packages — no crash, data-loss warning, Save blocked.
+  - TC13 (8 cases via `it.each`): `'1e3'`, `'-5'`, `'1000.5'`, `'0'`, `''`, and JSDOM-sanitized inputs (`'1000abc'`, `'1,000'`, `' 1000'`) — each: error shown + Save disabled + fetch NOT called.
+- **`lib/__tests__/commercial-route-topup-packages.test.ts`:**
+  - Added: version conflict → 409 with authored message (unchanged). Unexpected PG error → 500 generic body, real message NOT in response.
+
+### What it affects / could break
+- Amount inputs that previously silently accepted `'1e3'` (= 1000) are now blocked. Admins who used scientific notation (unlikely but possible) will need to type plain integers.
+- Raw PG error text no longer surfaced to admin clients for unexpected route errors. Sentry/console.error receives the real message for debugging.
+
+## 2026-10-15 — fix(admin): topup-packages editor fix pass (PR #658)
+
+### What changed
+- **`shared/topup-packages.ts`:** Tightened validator with new caps: `TOPUP_LABEL_MAX_LEN=50`, `TOPUP_DESCRIPTION_MAX_LEN=200`, `TOPUP_AMOUNT_MINOR_MAX=10_000_000_000`, `TOPUP_MAX_PACKAGES_PER_CURRENCY=10`, `KNOWN_PACKAGE_KEYS`. Added validation: unknown package keys rejected, description must be string if present, label/description length caps, amount_minor max, max 10 packages per currency.
+- **`admin/src/pages/PlatformSettings.tsx`:** Fixed `serializeTopupPackages` bug: replaced `Math.round(major × 100)` with integer-only check — non-integer major now produces `amount_minor=0` so the validator catches it and disables Save. Added unknown-currency and unknown-field tracking in editor state; serializer re-injects them back into output so validator blocks save with a clear error. Added `data-loss-warning` banner in `TopupPackagesEditor`.
+- **`admin/src/__tests__/topup-packages-editor.test.tsx`:** Rewrote TC4 to click Save and inspect exact `fetch` body (major→minor conversion, blank description omitted). Rewrote TC7 to use `fireEvent.change('1000.5')` proving Save is disabled. Added TC11 for data-loss (unknown currency + unknown field). Added `useStepUp` and `StepUpDialog` mocks.
+- **`admin/src/__tests__/topup-packages-validator.test.ts`:** Added tests for: label length cap, description length cap, description type check, amount_minor max, max packages per currency, unknown package keys.
+- **`lib/__tests__/commercial-route-topup-packages.test.ts`:** New — 16 route tests: all invalid payload types return 400 and `consumeStepUp` is NOT called; valid payloads call both `consumeStepUp` and RPC.
+
+### What it affects / could break
+- Validator now rejects unknown package keys (`bonus`, etc.) and description non-strings. Any stored package data with unknown fields will block save until cleaned.
+- `serializeTopupPackages` fix makes TC7's behaviour correct — no functional change for integer amounts.
+
+## 2026-10-15 — feat(admin): structured editor for top-up packages
+
+### What changed
+- **New file `shared/topup-packages.ts`:** Framework-neutral validator for `messaging_topup_packages`. Exports `validateTopupPackages`, `isTopupPackagesKey`, currency constants (`TOPUP_ALLOWED_CURRENCIES`, `TOPUP_CURRENCY_SYMBOLS`, `TOPUP_CURRENCY_NAMES`, `TOPUP_MINOR_PER_MAJOR`). Allowed currencies: NGN, GHS, USD, GBP, CAD. Mirrors M416 write-time validation at the HTTP layer.
+- **`app/api/admin/platform-settings/commercial/route.ts`:** Added server-side HTTP-layer validation for `messaging_topup_packages` (alongside existing country-amount validation). The DB RPC already validated; this adds defense-in-depth at the route boundary, matching the existing pattern for `isCountryAmountKey`.
+- **`admin/src/pages/PlatformSettings.tsx`:** Added new "Messaging" group to GROUPS array containing `messaging_topup_packages`. Built `TopupPackagesEditor` component (per-currency rows with major-unit amount input → stored as minor units × 100, label, optional description). Added `hasTopupPackagesErrors` for Save button disabling. Updated unconfigured-key configure flow to show the structured editor. Imports `@shared/topup-packages`.
+- **Tests added:** `admin/src/__tests__/topup-packages-validator.test.ts` (25 tests: valid shapes, null/type errors, unknown currency, empty currency, negative, zero, decimal minor, duplicate amounts, missing/empty label, all allowed currencies) and `admin/src/__tests__/topup-packages-editor.test.tsx` (10 tests: Messaging tab visible, Not-configured placeholder, seeded value loads, valid save shape, negative/zero/decimal/empty-label/duplicate-amount client-side validation, source-code assertion).
+
+### What it affects / could break
+- PlatformSettings Messaging tab now shows `messaging_topup_packages`. If not yet seeded in DB, shows as "Not configured" placeholder with a structured Configure UI.
+- Saving `messaging_topup_packages` via the admin still routes through `saveCommercialViaStepUp` → `/api/admin/platform-settings/commercial` → `svc_save_commercial_config` RPC. Auth and step-up behavior unchanged.
+- Server validation added at the HTTP layer for `messaging_topup_packages`: invalid currency codes, negative/zero/decimal/duplicate amounts, missing labels now return 400 from the route before reaching the DB. Previously only the DB RPC rejected these. Existing valid payloads are unaffected.
+- No DB changes. No migrations. No user-facing changes outside the admin panel.
+
+## 2026-10-15 — fix(security): SELECT-side audit — add is_direct_transfer to payout balance queries (#628 follow-up)
+
+### What changed
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `is_direct_transfer` to `platform_fees` select; filter `=== false` before computing `totalEarned`. Prevents direct-transfer fees (platform never held) from inflating the available balance used in approval gate.
+- `app/api/payouts/balance/route.ts`: Same fix for merchant-facing balance display.
+- `app/api/cron/payout-nudge/route.ts`: Same fix for nudge balance calculation.
+- `app/dashboard/financials/page.tsx`: Same fix for financials dashboard (non-direct-split path).
+- `lib/__tests__/payout-select-audit.test.ts` (new): Static audit test — asserts all five payout routes include `is_direct_transfer` in their `platform_fees` `.select()` call. Fails if the field is removed.
+- `lib/__tests__/fin-002-atomic-payout.test.ts`, `lib/__tests__/payout-account-autolink-620.test.ts`: Added `is_direct_transfer: false` to 7 mock `platform_fees` rows that mirrored real selects but lacked the field.
+
+### Why the 5 mock rows in admin-bearer-route-handlers.test.ts lacked the field
+Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `is_direct_transfer` in its real select. The mock data was written before the `=== false` filter was added — it was always semantically incomplete (it should have had `is_direct_transfer: false`) but the bug was dormant until the filter started excluding `null` values.
+
+### What it affects / could break
+- Approve route: `totalEarned` now excludes direct-transfer fees. If a business has BYO direct-transfer fees, their available balance for payout approval is lower (correct — platform never held those funds).
+- Balance display and nudge: same — balance now reflects only platform-held funds.
+- Financials page: `platformFees` display excludes direct-transfer rows (correct — no fee to show for pass-through funds).
+
+## 2026-10-15 — fix(tests): add is_direct_transfer: false to cron mock data (#628 follow-up)
+
+### What changed
+- `lib/__tests__/admin-bearer-route-handlers.test.ts`: Five `platform_fees` mock rows in cron auto-payout tests were missing `is_direct_transfer: false`. After the `=== false` fix these rows were excluded (null ≠ false), causing the cron to see no payable fees and return 500. Added the field to all five mock rows.
+
+### What it affects / could break
+- No production code changed. Test-only fix. 31/31 tests in affected suite pass; full suite 13,019 pass.
+
+## 2026-10-15 — fix(security): P1/P2 payment integrity hardening (#628 follow-up)
+
+### What changed
+- `lib/payments/payable-fees.ts`: `getPayableFeeRows` changed from `!f.is_direct_transfer` to strict `=== false` (fail-closed). NULL custody is now ineligible. Added `getUnclassifiedFeeRows` helper for monitoring unknown-custody rows.
+- `app/api/admin/payouts/generate/route.ts`: Added Sentry warning + `custody_warning` field in response when fee rows with unknown custody are excluded. Added `getUnclassifiedFeeRows` call after `getPayableFeeRows`.
+- `app/api/cron/auto-payout/route.ts`: Added Sentry warning for unclassified custody rows per business per run.
+- `app/api/payments/byo-webhook/[businessId]/route.ts`: Charge.success non-success path now splits on terminal vs integrity. Terminal provider failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark payment failed. Integrity/unverified outcomes (amount_mismatch, currency_mismatch, reference_mismatch, unknown status, HTTP 404, missing_transaction_id, unsupported_gateway) leave payment status unchanged, write `gateway_status` for reconciliation, fire Sentry error, write no dedup row. Dedup upsert errors now logged to Sentry (non-fatal).
+- `supabase/migrations/443_byo_webhook_secret_hash.sql`: Added explicit column-level `REVOKE INSERT/UPDATE` on all columns for `authenticated`. Self-check upgraded from `has_table_privilege` to `has_any_column_privilege` for INSERT/UPDATE, catching column-level grants that table-level check misses.
+- `lib/__tests__/payment-credentials-columns.pg.test.ts`: Added Finding 3 tests — column-level UPDATE grant escape (proves old table-level REVOKE did not remove it; new column-level REVOKE does) and self-check failure when sensitive-column SELECT grant is reintroduced.
+- `lib/__tests__/payment-integrity.test.ts`: Updated existing tests to match new behavior (integrity case ≠ failure). Added P1 behavioral tests: terminal vs integrity split, unknown status, HTTP 404, currency mismatch, transient 503, `getUnclassifiedFeeRows`.
+
+### What it affects / could break
+- Payout generation: fee rows where `is_direct_transfer IS NULL` are now excluded from payout gross (previously included). Column has `DEFAULT false`; no normal platform-held row should be NULL in production. Any row that slipped through as NULL will now be surfaced via Sentry warning.
+- BYO webhook: payments are no longer marked `failed` for amount/currency/reference mismatches, unknown statuses, or non-401/403/429 HTTP errors from the provider verify call. `gateway_status` is written instead for reconciliation. Only provider-confirmed terminal failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark the payment failed.
+- Migration 443 now also revokes column-level INSERT/UPDATE on every column of `business_payment_credentials` for `authenticated`. Idempotent on re-run.
+
 ## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
 
 ### What changed
@@ -43,6 +436,84 @@ If something breaks, check this log to find what changed and when.
 ### What it affects / could break
 - Concurrent WhatsApp messages to an expired null-biz session: second concurrent request that loses the CAS race now gets "Something went wrong; send Hi to start over" instead of potentially creating a duplicate session or crashing. Active, unexpired sessions are never incorrectly deactivated.
 - No schema changes. `bot_sessions.version` column was added in migration 236.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 3 — column tightening, zero-signer trigger, signing-link server route
+
+### What changed (rev 3 additions over rev 2)
+- **M449 column tightening:**
+  - `contracts` authenticated INSERT/UPDATE: removed `status` and `signed_at`.
+    All status transitions (pending→expired→signed/declined) go through service_role routes only (send, submit, decline, [token]).
+  - `contract_signers` authenticated INSERT/UPDATE: removed `status`, `signed_at`, `otp_verified`, `otp_attempts`, `otp_expires_at`.
+    These are all set by otp/send, otp/verify, and submit routes using service_role.
+  - `contract_signers` authenticated SELECT: removed `token`.
+    Signing tokens are now served only via the new `/api/contracts/signing-link` route (service_role lookup).
+  - Self-check §7 extended with assertions for all newly-blocked columns.
+- **New migration 450** (`450_contracts_zero_signer_trigger.sql`):
+  - DB-level `BEFORE UPDATE` trigger `contracts_zero_signer_guard` on `contracts`.
+  - Fires when `NEW.status='signed'` AND `signing_mode='multi'` AND no `contract_signers` rows exist for the contract.
+  - Raises `integrity_constraint_violation` (SQLSTATE 23000). Fires for all roles including service_role (triggers are not bypassed by BYPASSRLS).
+  - Includes self-check DO block.
+- **New server route** `app/api/contracts/signing-link/route.ts`:
+  - `GET /api/contracts/signing-link?signer_id=<uuid>` — fetches `contract_signers.token` server-side via service_role, verifies business ownership, returns `{ url: "/sign/<token>" }`.
+  - The raw token never reaches the browser as part of a column-level SELECT response.
+- **Dashboard update** `app/dashboard/contracts/page.tsx`:
+  - Removed `token` from `contract_signers` sub-select and TypeScript interface.
+  - "Sign Now" in list view: changed `<a href>` to `<button onClick>` that calls `/api/contracts/signing-link` and opens the URL.
+  - "Share Signing Link" panel: signing URL now fetched via API effect on `selectedContract` change.
+  - "Sign Now" in detail panel: uses `ownerSignUrl` state populated by API call.
+- **Bug fix** `app/dashboard/waivers/page.tsx`:
+  - Changed `select('*')` on `waiver_templates` to explicit column list matching M449's authenticated SELECT grant.
+    `select('*')` with column-level-only grants causes a Postgres permission error (no table-level SELECT).
+- **PG test updates** (`contracts-whatsapp-channels-acl.pg.test.ts`):
+  - `contract_signers.token` SELECT test flipped to expect `'f'`.
+  - Added assertions: `contracts.status` and `contracts.signed_at` blocked from authenticated INSERT.
+  - Added assertions: `contract_signers.status`, `otp_verified`, `otp_attempts` blocked from authenticated INSERT.
+- **New behavioral PG test** (`contracts-zero-signer-behavioral.pg.test.ts`):
+  - Applies M450 trigger against a real Postgres instance.
+  - Verifies: multi-signer contract with zero signers cannot be UPDATEd to status='signed' by any role.
+  - Verifies: single-signer contracts (signing_mode='single') are exempt.
+  - Verifies: once a signer row is added, the UPDATE succeeds.
+
+### Write paths verified (no authenticated writes to removed columns)
+- `contracts.status`: written only by submit/route.ts (service_role), decline/route.ts (service_role), [token]/route.ts (service_role).
+- `contracts.signed_at`: written only by submit/route.ts (service_role).
+- `contract_signers.status`: same three service_role routes as above.
+- `contract_signers.signed_at`: written only by submit/route.ts (service_role).
+- `contract_signers.otp_verified`, `otp_attempts`, `otp_expires_at`: written only by otp/verify/route.ts and otp/send/route.ts (both service_role).
+
+### whatsapp_channels write paths (reconciled)
+- All writes are in API routes under `app/api/whatsapp/` (NOT `app/api/channels/`):
+  - `app/api/whatsapp/add-number/route.ts` (line 82): SELECT only; INSERT goes to `whatsapp_channel_candidates`. Client: service_role.
+  - `app/api/whatsapp/embedded-signup/route.ts` (lines 145, 153, 183): INSERT and UPDATE on whatsapp_channels. Client: service_role.
+  - `app/api/settings/whatsapp-channel/route.ts` (line 31): SELECT only for ownership check. Client: service_role.
+  - `app/api/channels/request/route.ts` (line 42): SELECT only. Client: service_role (checked).
+  - Cron, lib, bot service: all use service_role.
+- Browser/dashboard components: `.select('phone_number')`, `.select('id', { count: 'exact' })`, `.select('phone_number, provider, display_name, ...')` — all within the M449 column-level SELECT grant. No INSERT/UPDATE/DELETE from any browser client.
+
+### What it affects / could break
+- Any route that attempts to UPDATE `contracts.status` via an authenticated (SSR) client will now get a privilege error. Confirmed all status-writing routes use service_role.
+- Any route that attempts to INSERT `contract_signers.otp_verified` via authenticated client will fail. Confirmed all OTP routes use service_role.
+- `contract_signers.token` no longer readable via authenticated SELECT — dashboard UI now calls `/api/contracts/signing-link` to get signing URLs. The "Share Signing Link" panel requires the API to respond before showing the QR code.
+- `waiver_templates select('*')` in waivers dashboard was silently broken after M449 (returns 42501 for columns outside the grant); now uses explicit column list.
+
+## 2026-10-15 — fix(security): M449 least-privilege ACL for contracts, whatsapp_channels, and waivers (rev 2)
+
+### What changed (rev 2 additions over original)
+- M449 extended to cover `waiver_templates` and `signed_waivers` (same staging-vs-production asymmetry as contracts).
+  - `waiver_templates`: `authenticated` SELECT/INSERT/UPDATE granted (SSR routes use authenticated client for full CRUD). `anon` excluded.
+  - `signed_waivers`: `authenticated` SELECT-only granted (signing happens via service_role). `anon` excluded.
+- M449 `whatsapp_channels` UPDATE grant for `authenticated` removed — confirmed no authenticated-session write path exists (all channel mutations go through `createServiceClient()`).
+- M449 column lists hardened: `contracts.token` removed from `authenticated` SELECT (dashboard does not select it; signer tokens come from `contract_signers`); `otp_code` removed from `contract_signers` SELECT/INSERT/UPDATE (`authenticated` has no business seeing the raw OTP value); `token`, `token_expires_at`, `signature_data`, and `audit_trail` removed from contracts/contract_signers INSERT/UPDATE grants (all set server-side by service_role).
+- Self-check extended: checks `authenticated` has no UPDATE on `whatsapp_channels`; checks `otp_code` is blocked on `contract_signers`; checks waiver tables have correct grants.
+- PG test updated to match new shape (UPDATE removed from whatsapp_channels, new otp_code + waiver sections).
+- New unit test (`lib/__tests__/contracts-zero-signer-guard.test.ts`): documents the existing server-side guard that blocks sending a contract with zero signers and blocks finalizing a contract as signed when no `contract_signers` DB rows exist.
+- `app/dashboard/services/page.tsx` line ~496: fixed copy from "Members can give on a regular schedule" to "Customers book and pay for this service on a repeating schedule" (was copying from the giving/donation flow instead of the services recurring flow).
+
+### What it affects / could break
+- Any code attempting to UPDATE `whatsapp_channels` via the `authenticated` client will now get a privilege error — all channel mutations must use `createServiceClient()`.
+- `otp_code` is no longer readable via `authenticated` client; this is intentional — OTP delivery is server-side only.
+- Waiver templates on staging that previously showed empty lists due to missing `authenticated` grants will now work correctly.
+- No change to RLS policies; data isolation is unchanged.
 
 ## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
 
@@ -117,6 +588,17 @@ If something breaks, check this log to find what changed and when.
 - The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
 - PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
 - The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
+## 2026-10-13 — #628 fix(payments): Flutterwave BYO webhook secret hash required at setup
+
+### What changed
+- `app/api/settings/payment-credentials/route.ts`: Flutterwave BYO setup now requires `webhook_secret_hash` — trimmed, max 256 chars, must differ from the secret key. Returns 400 with clear message if missing or invalid. Paystack/Stripe unchanged. No GET or response ever returns secret_key or webhook_secret_hash.
+- `app/dashboard/settings/tabs/PaymentsTab.tsx`: Flutterwave BYO form adds password-type input for webhook secret hash (autocomplete=off), read-only webhook URL with copy button, and disables "Verify & Connect" until both secret key and hash are filled. Sends `webhook_secret_hash` for Flutterwave only.
+- `lib/dashboard-i18n.ts`: Added en/pcm keys for webhook hash label, help text, and webhook URL label.
+
+### What could break
+- Existing Flutterwave BYO setups without a webhook_secret_hash will continue to work (credentials already saved). New setups require the hash. The BYO webhook handler already rejects Flutterwave webhooks without a configured hash (added in earlier commit).
+- If a merchant tries to set up Flutterwave BYO without configuring a webhook secret in their Flutterwave dashboard first, the setup will be rejected with a clear error message.
 
 ## 2026-10-14 — fix(security): harden image source URL validation
 

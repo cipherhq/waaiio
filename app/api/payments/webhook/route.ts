@@ -168,7 +168,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      await processPaystackChargeSuccess(data, reference, supabase);
+      const _successOutcome = await processPaystackChargeSuccess(data, reference, supabase);
     } else if (event === 'charge.failed') {
       await processPaystackChargeFailed(data, reference, supabase);
     }

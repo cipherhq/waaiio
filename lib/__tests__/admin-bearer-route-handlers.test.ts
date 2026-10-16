@@ -1974,7 +1974,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-ok', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+                  data: [{ business_id: 'biz-ok', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
                   error: null,
                 }),
               }),
@@ -2119,7 +2119,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+                  data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
                   error: null,
                 }),
               }),
@@ -2251,7 +2251,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-pf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+                  data: [{ business_id: 'biz-pf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
                   error: null,
                 }),
               }),
@@ -2367,7 +2367,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         chain.in = vi.fn().mockReturnValue({
           is: vi.fn().mockReturnValue({ gte: vi.fn().mockReturnValue({ lte: vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue({
-              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
               error: null,
             }),
           }) }) }),
@@ -2484,7 +2484,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-noAdj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false }],
+                  data: [{ business_id: 'biz-noAdj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
                   error: null,
                 }),
               }),
