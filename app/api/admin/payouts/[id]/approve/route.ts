@@ -9,6 +9,7 @@ import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { classifyPaystackError, classifyStripeError } from '@/lib/payments/payout-classification';
+import { computePlatformHeldTotals } from '@/lib/payments/payable-fees';
 import { logAdminAudit } from '@/lib/admin-audit';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 
@@ -170,7 +171,7 @@ export async function POST(
   // ── Balance verification (includes review_required as reserved) ──
   const { data: balancePayments, error: balanceError } = await serviceClient
     .from('platform_fees')
-    .select('transaction_amount, fee_total')
+    .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
     .eq('business_id', payout.business_id)
     .is('refunded_at', null);
 
@@ -189,9 +190,24 @@ export async function POST(
     return NextResponse.json({ error: 'Failed to load prior payout data' }, { status: 500 });
   }
 
-  const totalEarned = (balancePayments || []).reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
-  const totalPaidOut = (priorPayouts || []).reduce((sum, p) => sum + Number(p.net_amount), 0);
-  const availableBalance = totalEarned - totalPaidOut;
+  // Fetch ALL adjustments (applied + unapplied) for lifetime balance.
+  // Prior payouts' net_amount already includes applied adjustments; including
+  // them again in the lifetime sum cancels correctly (P1-2 fix).
+  const { data: balanceAdjustments, error: balAdjError } = await serviceClient
+    .from('payout_adjustments')
+    .select('amount')
+    .eq('business_id', payout.business_id);
+
+  if (balAdjError) {
+    return NextResponse.json({ error: 'Failed to load adjustment data' }, { status: 500 });
+  }
+
+  // Canonical formula — same as generate and auto-payout, plus prior-payout deduction
+  const { netAvailable: availableBalance } = computePlatformHeldTotals(
+    balancePayments || [],
+    balanceAdjustments || [],
+    priorPayouts || [],
+  );
 
   if (payout.net_amount > availableBalance + 0.01) {
     return NextResponse.json({

@@ -3,6 +3,56 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-16 — fix(payments): check terminal-failure update result before dedup write — P1
+
+### What changed
+- `app/api/payments/byo-webhook/[businessId]/route.ts`:
+  - **Terminal-failure branch in `charge.success` handler (~line 188):** The `payments` UPDATE that marks a payment `failed` now checks the result. DB errors → return 503 (retryable), no dedup row. Zero rows → re-read payment by scoped identifiers; only dedup if confirmed terminal (`success`/`failed`/`refunded`); return 503 if nonterminal or re-read fails.
+  - **`charge.failed` handler (~line 296):** `processPaystackChargeFailed` is now wrapped in try/catch. If it throws (DB error, scoped-update error) → return 503, no dedup row written. Previously the error would bubble to the outer catch and return 500.
+- `lib/payments/webhook-handler.ts`: `processPaystackChargeFailed` scoped zero-row path now re-reads the payment and throws `ScopedUpdateError` if not terminal or re-read fails. Early-exit check extended to include `refunded` as terminal.
+- `lib/__tests__/payment-integrity.test.ts`: Added `chainBuilderWith` helper for custom mocks. Added 5 regression tests for `charge.success` terminal failure: (1) DB UPDATE error → 503, no dedup; (2) zero rows + re-read = terminal → 200, dedup; (3) zero rows + re-read = nonterminal → 503, no dedup; (4) zero rows + re-read fails → 503, no dedup; (5) processPaystackChargeFailed throws → 503, no dedup. Updated 2 existing terminal-failure tests with explicit `updateResult` to match new row-count contract.
+- `lib/payments/__tests__/webhook-handler.test.ts`: Added 4 tests: `refunded` early-exit, scoped zero-row + re-read = terminal (returns normally), scoped zero-row + re-read = nonterminal (throws ScopedUpdateError), scoped zero-row + re-read fails (throws ScopedUpdateError).
+
+### What it affects / could break
+- BYO webhook terminal-failure path: zero-row UPDATE results no longer unconditionally dedup. Payment state is re-verified. A payment stuck in a nonterminal state due to a race returns 503 for provider retry.
+- BYO webhook charge.failed: DB errors now return 503 (retryable) instead of 500 (ambiguous retry behavior).
+- `processPaystackChargeFailed` scoped path: zero-row conditional UPDATE now throws `ScopedUpdateError` if re-read shows nonterminal state or fails. Callers (BYO webhook) catch this and return 503 without dedup.
+- No change to the success path or integrity branch. No change to dedup behavior when the DB write succeeds (1+ rows).
+
+## 2026-10-15 — fix(payments): include applied adjustments in lifetime balance (P1-2)
+
+### What changed
+- `app/api/payouts/balance/route.ts`: Split adjustment query into two — ALL adjustments for `computePlatformHeldTotals` lifetime balance, unapplied-only for `pending_adjustments` display field. Prior payouts' `net_amount` already includes applied adjustments; including them again in the lifetime sum cancels correctly.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Removed `.is('applied_to_payout_id', null)` filter from adjustment query for balance verification. Same fix — lifetime check must include all adjustments.
+- `lib/__tests__/payout-custody-formula.test.ts`: Added 2 P1-2 regression tests: (1) single applied adjustment must be included in lifetime balance; (2) mix of applied+unapplied adjustments with prior payout reconciles to 0.
+
+### What it affects / could break
+- Balance endpoint: after a payout with adjustments is paid, the remaining balance is now correct (was showing phantom positive balance equal to the adjustment amount). A business with only negative applied adjustments will now show a LOWER balance than before (correct — the platform already paid out those funds).
+- Approve route: same fix. A payout that passed the old check (which excluded applied adjustments) might now be blocked if the applied adjustment effect makes the balance lower. This is correct — the old check overstated available balance.
+- Generate/auto-payout: NOT affected — they correctly use unapplied-only for period-specific computation.
+
+## 2026-10-15 — fix(payments): canonical payout formula — computePlatformHeldTotals (#628 P1/P2 fix pass 3)
+
+### What changed
+- `lib/payments/payable-fees.ts`: Added `computePlatformHeldTotals()` — canonical formula for platform-held payout totals. Accepts `fees`, optional `adjustments`, and optional `priorPayouts`. Returns `{ eligible, gross, totalFees, gatewayFees, adjustmentSum, priorPaidOut, netAvailable }`. All payout callers now use this single function.
+- `app/api/admin/payouts/generate/route.ts`: Replaced inline gross/fees/net computation with `computePlatformHeldTotals`. Moved adjustments fetch before gross check. Removed `getPayableFeeRows` import (function still used elsewhere).
+- `app/api/cron/auto-payout/route.ts`: Replaced inline computation with `computePlatformHeldTotals`. Removed two-step netAmount calculation.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `gateway_fee, waived` to `platform_fees` select (were missing — formula used `transaction_amount - fee_total` instead of the canonical formula). Added `payout_adjustments` fetch. Now uses `computePlatformHeldTotals` with adjustments and priorPayouts for balance verification.
+- `app/api/payouts/balance/route.ts` (P1): For `platform_managed` mode — gross and net now derived from `platform_fees` via `computePlatformHeldTotals` instead of bookings/orders/invoices (which included direct-transfer revenue the platform never held). Added `total_revenue` response field (bookings+orders+invoices, display only). Direct_split mode unchanged.
+- `app/api/cron/payout-nudge/route.ts`: Added `gateway_fee, waived` to `platform_fees` select. Uses `computePlatformHeldTotals` instead of inline reduces.
+- `app/api/payments/byo-webhook/[businessId]/route.ts` (P2): Integrity-failure branch now adds `.in('status', ['pending'])` predicate — prevents overwriting `gateway_status` on already-finalized payments. Checks `updatedRows` result — if 0 rows (finalized), records Sentry warning anomaly only.
+- `app/dashboard/payouts/page.tsx`: Added `total_revenue` to Balance interface. Top stats label changed from "Total Earnings" to "Total Revenue" (shows `balance.total_revenue`).
+- `lib/__tests__/payout-select-audit.test.ts`: Extended to assert all 5 fields required by `computePlatformHeldTotals` (`transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer`).
+- `lib/__tests__/payout-custody-formula.test.ts` (new): 19 behavioral tests for `computePlatformHeldTotals` — mixed custody, NULL exclusion, waived handling, adjustments, priorPayouts, generate→approve reconciliation, balance matching generate.
+- `lib/__tests__/payment-credentials-columns.pg.test.ts`: Added PG test section for `platform_fees` authenticated SELECT grants — verifies table-level SELECT, column-level coverage for all 5 fields, RLS row isolation.
+
+### What it affects / could break
+- **Balance endpoint (platform_managed):** `gross` is now platform-held transaction total from `platform_fees`, not bookings/orders/invoices total. This is LOWER if there are direct-transfer transactions (correct — platform never held those funds). `net_available` now correctly subtracts `gateway_fee` and handles `waived` fees.
+- **Approve balance check:** Now deducts `gateway_fee`, handles `waived`, and includes `payout_adjustments`. A payout that passed the old check (which used `transaction_amount - fee_total`) might fail the new check if gateway fees are significant. This is correct — the old formula overstated available balance.
+- **Nudge:** Balance now accounts for gateway fees and waived status. Some nudges may show lower balance amounts.
+- **BYO webhook integrity branch:** Replayed webhooks on finalized payments no longer overwrite `gateway_status`. They generate a Sentry warning instead. This is safer (no data loss) but means `gateway_status` may not reflect the latest verification attempt for finalized payments.
+- **UI:** "Total Earnings" label changed to "Total Revenue" in payout page top stats. Uses `total_revenue ?? gross` for backwards compatibility.
+
 ## 2026-10-15 — fix(db): M451 — contract_id immutability guard in signer-lock trigger (ChatGPT round 4 P1)
 
 ### What changed (rev 8 — ChatGPT round 4 P1 at SHA ec91d36d)
@@ -304,6 +354,48 @@ If something breaks, check this log to find what changed and when.
 - Server validation added at the HTTP layer for `messaging_topup_packages`: invalid currency codes, negative/zero/decimal/duplicate amounts, missing labels now return 400 from the route before reaching the DB. Previously only the DB RPC rejected these. Existing valid payloads are unaffected.
 - No DB changes. No migrations. No user-facing changes outside the admin panel.
 
+## 2026-10-15 — fix(security): SELECT-side audit — add is_direct_transfer to payout balance queries (#628 follow-up)
+
+### What changed
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `is_direct_transfer` to `platform_fees` select; filter `=== false` before computing `totalEarned`. Prevents direct-transfer fees (platform never held) from inflating the available balance used in approval gate.
+- `app/api/payouts/balance/route.ts`: Same fix for merchant-facing balance display.
+- `app/api/cron/payout-nudge/route.ts`: Same fix for nudge balance calculation.
+- `app/dashboard/financials/page.tsx`: Same fix for financials dashboard (non-direct-split path).
+- `lib/__tests__/payout-select-audit.test.ts` (new): Static audit test — asserts all five payout routes include `is_direct_transfer` in their `platform_fees` `.select()` call. Fails if the field is removed.
+- `lib/__tests__/fin-002-atomic-payout.test.ts`, `lib/__tests__/payout-account-autolink-620.test.ts`: Added `is_direct_transfer: false` to 7 mock `platform_fees` rows that mirrored real selects but lacked the field.
+
+### Why the 5 mock rows in admin-bearer-route-handlers.test.ts lacked the field
+Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `is_direct_transfer` in its real select. The mock data was written before the `=== false` filter was added — it was always semantically incomplete (it should have had `is_direct_transfer: false`) but the bug was dormant until the filter started excluding `null` values.
+
+### What it affects / could break
+- Approve route: `totalEarned` now excludes direct-transfer fees. If a business has BYO direct-transfer fees, their available balance for payout approval is lower (correct — platform never held those funds).
+- Balance display and nudge: same — balance now reflects only platform-held funds.
+- Financials page: `platformFees` display excludes direct-transfer rows (correct — no fee to show for pass-through funds).
+
+## 2026-10-15 — fix(tests): add is_direct_transfer: false to cron mock data (#628 follow-up)
+
+### What changed
+- `lib/__tests__/admin-bearer-route-handlers.test.ts`: Five `platform_fees` mock rows in cron auto-payout tests were missing `is_direct_transfer: false`. After the `=== false` fix these rows were excluded (null ≠ false), causing the cron to see no payable fees and return 500. Added the field to all five mock rows.
+
+### What it affects / could break
+- No production code changed. Test-only fix. 31/31 tests in affected suite pass; full suite 13,019 pass.
+
+## 2026-10-15 — fix(security): P1/P2 payment integrity hardening (#628 follow-up)
+
+### What changed
+- `lib/payments/payable-fees.ts`: `getPayableFeeRows` changed from `!f.is_direct_transfer` to strict `=== false` (fail-closed). NULL custody is now ineligible. Added `getUnclassifiedFeeRows` helper for monitoring unknown-custody rows.
+- `app/api/admin/payouts/generate/route.ts`: Added Sentry warning + `custody_warning` field in response when fee rows with unknown custody are excluded. Added `getUnclassifiedFeeRows` call after `getPayableFeeRows`.
+- `app/api/cron/auto-payout/route.ts`: Added Sentry warning for unclassified custody rows per business per run.
+- `app/api/payments/byo-webhook/[businessId]/route.ts`: Charge.success non-success path now splits on terminal vs integrity. Terminal provider failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark payment failed. Integrity/unverified outcomes (amount_mismatch, currency_mismatch, reference_mismatch, unknown status, HTTP 404, missing_transaction_id, unsupported_gateway) leave payment status unchanged, write `gateway_status` for reconciliation, fire Sentry error, write no dedup row. Dedup upsert errors now logged to Sentry (non-fatal).
+- `supabase/migrations/443_byo_webhook_secret_hash.sql`: Added explicit column-level `REVOKE INSERT/UPDATE` on all columns for `authenticated`. Self-check upgraded from `has_table_privilege` to `has_any_column_privilege` for INSERT/UPDATE, catching column-level grants that table-level check misses.
+- `lib/__tests__/payment-credentials-columns.pg.test.ts`: Added Finding 3 tests — column-level UPDATE grant escape (proves old table-level REVOKE did not remove it; new column-level REVOKE does) and self-check failure when sensitive-column SELECT grant is reintroduced.
+- `lib/__tests__/payment-integrity.test.ts`: Updated existing tests to match new behavior (integrity case ≠ failure). Added P1 behavioral tests: terminal vs integrity split, unknown status, HTTP 404, currency mismatch, transient 503, `getUnclassifiedFeeRows`.
+
+### What it affects / could break
+- Payout generation: fee rows where `is_direct_transfer IS NULL` are now excluded from payout gross (previously included). Column has `DEFAULT false`; no normal platform-held row should be NULL in production. Any row that slipped through as NULL will now be surfaced via Sentry warning.
+- BYO webhook: payments are no longer marked `failed` for amount/currency/reference mismatches, unknown statuses, or non-401/403/429 HTTP errors from the provider verify call. `gateway_status` is written instead for reconciliation. Only provider-confirmed terminal failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark the payment failed.
+- Migration 443 now also revokes column-level INSERT/UPDATE on every column of `business_payment_credentials` for `authenticated`. Idempotent on re-run.
+
 ## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
 
 ### What changed
@@ -482,6 +574,17 @@ If something breaks, check this log to find what changed and when.
 - The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
 - PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
 - The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
+## 2026-10-13 — #628 fix(payments): Flutterwave BYO webhook secret hash required at setup
+
+### What changed
+- `app/api/settings/payment-credentials/route.ts`: Flutterwave BYO setup now requires `webhook_secret_hash` — trimmed, max 256 chars, must differ from the secret key. Returns 400 with clear message if missing or invalid. Paystack/Stripe unchanged. No GET or response ever returns secret_key or webhook_secret_hash.
+- `app/dashboard/settings/tabs/PaymentsTab.tsx`: Flutterwave BYO form adds password-type input for webhook secret hash (autocomplete=off), read-only webhook URL with copy button, and disables "Verify & Connect" until both secret key and hash are filled. Sends `webhook_secret_hash` for Flutterwave only.
+- `lib/dashboard-i18n.ts`: Added en/pcm keys for webhook hash label, help text, and webhook URL label.
+
+### What could break
+- Existing Flutterwave BYO setups without a webhook_secret_hash will continue to work (credentials already saved). New setups require the hash. The BYO webhook handler already rejects Flutterwave webhooks without a configured hash (added in earlier commit).
+- If a merchant tries to set up Flutterwave BYO without configuring a webhook secret in their Flutterwave dashboard first, the setup will be rejected with a clear error message.
 
 ## 2026-10-14 — fix(security): harden image source URL validation
 
