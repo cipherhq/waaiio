@@ -231,22 +231,44 @@ export async function POST(
   }
 
   if (!updated) {
-    // Race lost: another scanner consumed the ticket between our SELECT and UPDATE.
-    // Re-read for accurate duplicate details.
-    const { data: current } = await supabase
+    // Race lost: ticket status changed between our SELECT and UPDATE.
+    // Re-read to determine whether it was checked in or cancelled.
+    const { data: current, error: reReadError } = await supabase
       .from('event_tickets')
-      .select('scanned_at, scanned_by')
+      .select('status, scanned_at, scanned_by')
       .eq('id', ticket.id)
       .single();
 
+    if (reReadError || !current) {
+      return NextResponse.json(
+        { success: false, error: 'Failed to check in. Please try again.' },
+        { status: 500 },
+      );
+    }
+
+    if (current.status === 'cancelled') {
+      return NextResponse.json(
+        { success: false, error: 'This ticket has been cancelled' },
+        { status: 410 },
+      );
+    }
+
+    if (current.status === 'used') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `This ticket was already checked in${current.scanned_at ? ` at ${new Date(current.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}${current.scanned_by ? ` by ${current.scanned_by}` : ''}`,
+          scanned_at: current.scanned_at,
+          scanned_by: current.scanned_by,
+        },
+        { status: 409 },
+      );
+    }
+
+    // Unexpected status — fail closed
     return NextResponse.json(
-      {
-        success: false,
-        error: `This ticket was already checked in${current?.scanned_at ? ` at ${new Date(current.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}${current?.scanned_by ? ` by ${current.scanned_by}` : ''}`,
-        scanned_at: current?.scanned_at,
-        scanned_by: current?.scanned_by,
-      },
-      { status: 409 },
+      { success: false, error: 'Failed to check in. Please try again.' },
+      { status: 500 },
     );
   }
 

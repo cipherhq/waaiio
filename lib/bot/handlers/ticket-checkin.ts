@@ -79,7 +79,7 @@ export async function handleTicketCheckin(
 
     // Atomic conditional update: only succeeds if ticket is still 'valid'.
     // Prevents race condition where two concurrent check-ins both read 'valid'.
-    const { data: updated } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from('event_tickets')
       .update({
         status: 'used',
@@ -91,17 +91,43 @@ export async function handleTicketCheckin(
       .select('id')
       .maybeSingle();
 
+    if (updateError) {
+      logger.error('[BOT] Ticket check-in UPDATE error:', updateError);
+      await sendText(from, `Something went wrong checking in ticket *${ticketCode}*. Please try again.`);
+      return;
+    }
+
     if (!updated) {
-      // Race lost: another check-in consumed the ticket between our SELECT and UPDATE.
-      const { data: current } = await supabase
+      // Race lost: ticket status changed between our SELECT and UPDATE.
+      // Re-read to determine whether it was checked in or cancelled.
+      const { data: current, error: reReadError } = await supabase
         .from('event_tickets')
-        .select('scanned_at, scanned_by')
+        .select('status, scanned_at, scanned_by')
         .eq('id', ticket.id)
         .single();
-      const scannedTime = current?.scanned_at
-        ? new Date(current.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-        : '';
-      await sendText(from, `⚠️ Ticket *${ticketCode}* was already checked in${scannedTime ? ` at ${scannedTime}` : ''}${current?.scanned_by && current.scanned_by !== 'self' ? ` by ${current.scanned_by}` : ''}.`);
+
+      if (reReadError || !current) {
+        logger.error('[BOT] Ticket check-in re-read error:', reReadError);
+        await sendText(from, `Something went wrong checking in ticket *${ticketCode}*. Please try again.`);
+        return;
+      }
+
+      if (current.status === 'used') {
+        const scannedTime = current.scanned_at
+          ? new Date(current.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+          : '';
+        await sendText(from, `⚠️ Ticket *${ticketCode}* was already checked in${scannedTime ? ` at ${scannedTime}` : ''}${current.scanned_by && current.scanned_by !== 'self' ? ` by ${current.scanned_by}` : ''}.`);
+        return;
+      }
+
+      if (current.status === 'cancelled') {
+        await sendText(from, `❌ Ticket *${ticketCode}* has been cancelled.`);
+        return;
+      }
+
+      // Unexpected status — fail closed
+      logger.error(`[BOT] Ticket check-in unexpected status after race loss: ${current.status}`, { ticketCode, ticketId: ticket.id });
+      await sendText(from, `Something went wrong checking in ticket *${ticketCode}*. Please try again.`);
       return;
     }
 

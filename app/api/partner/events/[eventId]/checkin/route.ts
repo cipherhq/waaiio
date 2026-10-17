@@ -73,16 +73,31 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     if (!updated) {
-      // Race lost: another check-in consumed the ticket between our SELECT and UPDATE.
-      const { data: current } = await supabase
+      // Race lost: ticket status changed between our SELECT and UPDATE.
+      // Re-read to determine whether it was checked in or cancelled.
+      const { data: current, error: reReadError } = await supabase
         .from('event_tickets')
-        .select('scanned_at')
+        .select('status, scanned_at')
         .eq('id', ticket.id)
         .single();
-      return NextResponse.json({
-        error: 'Ticket already checked in',
-        checked_in_at: current?.scanned_at,
-      }, { status: 409 });
+
+      if (reReadError || !current) {
+        return NextResponse.json({ error: 'Failed to check in' }, { status: 500 });
+      }
+
+      if (current.status === 'cancelled') {
+        return NextResponse.json({ error: 'Ticket has been cancelled' }, { status: 400 });
+      }
+
+      if (current.status === 'used') {
+        return NextResponse.json({
+          error: 'Ticket already checked in',
+          checked_in_at: current.scanned_at,
+        }, { status: 409 });
+      }
+
+      // Unexpected status — fail closed
+      return NextResponse.json({ error: 'Failed to check in' }, { status: 500 });
     }
 
     // Dispatch webhook

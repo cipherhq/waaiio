@@ -3,6 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-18 — fix(ticketing): race-loss error handling — DB errors and cancellation race
+
+### What changed
+- **Finding 1 (bot handler):** Conditional UPDATE now captures `updateError`. A DB/network failure no longer falls through to the duplicate-message branch — it sends a retryable failure message and returns.
+- **Finding 2 (all three check-in paths):** Race-loss re-read now includes `status` and branches on used/cancelled/unexpected:
+  - `status = 'used'` → duplicate response (unchanged behavior)
+  - `status = 'cancelled'` → cancelled response matching each path's existing pattern (410 for verify, 400 for partner, ❌ message for bot)
+  - Re-read error or unexpected status → 500 / retryable error (fail closed)
+- Re-read errors are handled separately from successful re-reads in every path.
+
+### What it affects / could break
+- Bot handler: guests no longer see false "already checked in" messages on DB errors or cancellation races.
+- Verify route: cancellation race returns 410 (was 409), matching the existing cancelled-ticket handling at line 171.
+- Partner route: cancellation race returns 400 (was 409), matching existing cancelled handling at line 56.
+- Success and genuine-duplicate response shapes preserved for scanner UI compatibility.
+
 ## 2026-10-17 — fix(ticketing): atomic conditional check-in — prevent double-entry race condition (P1)
 
 ### What changed
