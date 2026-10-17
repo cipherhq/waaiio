@@ -41,7 +41,7 @@ SECRET_PATTERNS=(
   'SUPABASE_SERVICE_ROLE_KEY=[a-zA-Z0-9]+'
   're_[a-zA-Z0-9]{20,}'
   'AC[0-9a-f]{32}'
-  'SG\.[a-zA-Z0-9_\.-]+'
+  'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}'
   'AIzaSy[a-zA-Z0-9_-]{33}'
   'ghp_[a-zA-Z0-9]{36,}'
   'gho_[a-zA-Z0-9]{36,}'

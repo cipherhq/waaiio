@@ -840,6 +840,68 @@ Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `i
 - Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
 - If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
 
+## 2026-10-16 — fix(bot): stale directory results + connect fallback CAS safety (ChatGPT P1 findings)
+
+### What changed
+- **P1-A: `lib/bot/handlers/directory-search.ts`:** Every return path in `handleDirectorySearch()`, `handleNameSearch()`, and `sendFuzzySuggestions()` now includes ALL directory session fields explicitly. When results or suggestions are empty, `_directory_results: []`, `_directory_suggestions: []`, and `_directory_total: 0` are set instead of being omitted. Prevents stale results from a previous search persisting in session_data via spread merge.
+- **P1-B: `lib/bot/bot.service.ts` (connect/switch fallback ~L961-982):** Replaced raw `deactivateSession()` + `.delete()` + `.insert()` sequence with `createDirectorySession()`, the CAS-safe method that uses UPDATE-first, INSERT fallback, and 23505 recovery. If `createDirectorySession()` returns null, logs via Sentry and returns (no crash, no stale state).
+- **Tests:** Added 4 regression tests in `lib/bot/__tests__/directory-flow.test.ts`: (1) `handleDirectorySearch` returns explicit empty arrays on no-results, (2) stale `dir_result_0` tap after no-results search fails correctly, (3) source-code assertion that connect fallback uses `createDirectorySession` (no raw INSERT/DELETE), (4) connect fallback with null return does not crash.
+
+### What it affects / could break
+- P1-A: Searching for a term with no results now explicitly clears session_data directory fields. Previously, tapping a previous search's result after a no-results search could select a stale business.
+- P1-B: Connect/switch fallback on shared number no longer deletes inactive null-biz sessions. Session creation uses the same CAS lifecycle as the rest of the directory flow.
+- No schema changes.
+
+## 2026-10-15 — fix(bot): CAS retry must return before directory flow to prevent double session insert
+
+### What changed
+- `lib/bot/bot.service.ts` (line ~1875): Added `return;` after the `#266 R4` CAS deactivation + retry insert succeeds. Before this fix, the directory flow section ran immediately after the retry, attempting to insert a second active null-biz session (which would 23505 silently in production). Now the function exits cleanly; the fresh session is used on the user's next message.
+
+### What it affects / could break
+- Edge case only: affects users whose prior null-biz session expired but wasn't cleaned up. They now get no response on the first message (CAS recovery is silent); the next message works normally.
+- `stale-null-session.test.ts` tests 1 and 10 now pass (were failing with insertCount=3 instead of 2).
+- `session-resilience.test.ts` source-scan assertion for 1400-char window still passes (comment kept to 1 line to stay within window).
+
+## 2026-10-14 — fix(bot): sendPlatformList, provenance tests, s1 guard restoration
+
+### What changed
+- `lib/channels/message-sender.ts`: Added `sendPlatformList` to interface and `MetaCloudSender` with the same guard semantics as `sendPlatformText`/`sendPlatformButtons` (`platformScopeAllowed: true` — allowed only in platform discovery mode, refused with a business bound).
+- `lib/bot/bot.service.ts`: `sendPlatformList` now delegates to the sender's platform-scoped list method (real WhatsApp interactive list, not text fallback).
+- `lib/bot/__tests__/directory-flow.test.ts`: Replaced code-inspection provenance test with 6 real behavior tests (search result tap, suggestion tap, numeric pick, connect match, biz_N pick, typed bot code). List tests assert `type === 'list'` with ≤10 rows and ≤24 char titles.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts`: Restored `totalBusinessScopedCalls === 0` assertion. Extended helper to subtract platform-scoped sends (`sendPlatformText`/`sendPlatformButtons`/`sendPlatformList` spies) from total cloud calls.
+
+### What it affects / could break
+- Directory results now use proper WhatsApp interactive list messages (not text fallback).
+- `sendPlatformList` on a sender with a bound business will throw (same as `sendPlatformText`).
+
+## 2026-10-14 — fix(bot): directory flow Part A — security, provenance, localization
+
+### What changed
+- `lib/bot/bot.service.ts`: switch/connect handler now looks up first, only deactivates session on match. No-match inside a business flow falls through to the flow. No-match outside a flow runs directory search. Directory handoffs pass correct resolution source: 'fuzzy' for search/suggestion/connect picks, 'returning_customer' for biz_N picks, 'bot_code' for typed codes. "directory" and "search" aliases only activate on the shared number (not dedicated channels).
+- `lib/bot/handlers/directory-search.ts`: Switched from sync `checkRateLimit` to async `checkRateLimitAsync` (same pattern as bot rate limiter). Localized hard-coded strings in `buildResultDescription` and `buildSearchDescription`.
+- `lib/bot/flows/flow-localization.ts`: Added 4 new keys (`directory.open_now`, `directory.desc_category_in_location`, `directory.desc_businesses_in`, `directory.desc_your_search`) to all 8 locales.
+- `lib/bot/__tests__/directory-flow.test.ts`: Rewrote tests — no either/or assertions, provenance verification, connect/switch command variants (outside flow, inside flow, no match), dedicated channel test, rate limit test.
+
+### What it affects / could break
+- "switch/connect <text>" inside an active business flow with no match no longer deactivates the session — the flow handles the text normally. Previously it would deactivate and show "no business found."
+- "search" and "directory" commands on a dedicated business number now reach the business flow instead of going to the directory.
+
+## 2026-10-14 — feat(bot): WhatsApp directory search on shared number
+
+### What changed
+- `lib/bot/handlers/directory-search.ts` (NEW): Directory search handler — greeting, search, fuzzy suggestions, result selection, "connect <name>" command.
+- `lib/bot/bot.service.ts`: Replaced no-business-found greeting with directory flow. Added `directory_search` and `directory_results` session steps. `home` command now shows directory. "connect <name>" works alongside "switch <name>". Added `sendPlatformList` and `buildDirectorySend` helpers.
+- `lib/bot/flows/flow-localization.ts`: Added 17 translation keys under `directory.*` prefix (en + pcm). Platform-owned, not business-editable.
+- `lib/bot/inbound-command-normalization.ts`: Added `directory` and `search` as aliases for the `home` navigation command.
+- `lib/bot/__tests__/directory-flow.test.ts` (NEW): 11 integration tests covering the full directory flow via handleMessage.
+
+### What it affects / could break
+- Shared-number customers now see a directory search prompt instead of "Send a business code". Returning customers get quick-pick buttons + search.
+- The `home`, `directory`, and `search` commands all return to the directory.
+- "connect <name>" is a new command alias for "switch <name>".
+- Dedicated-number messaging is unchanged — directory never shows.
+- Depends on #636 (marketplace search infrastructure). Depends on #633 (platform translation overrides) for admin-editable directory text.
+
 ## 2026-10-13 — fix(security): move bank account writes server-side (M448)
 
 ### What changed
