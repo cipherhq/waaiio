@@ -3,6 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-17 — fix(ticketing): atomic conditional check-in — prevent double-entry race condition (P1)
+
+### What changed
+- **All three ticket check-in paths** replaced read-then-write with atomic conditional UPDATE:
+  - `app/api/tickets/verify/[code]/route.ts` POST — HTTP check-in endpoint
+  - `lib/bot/handlers/ticket-checkin.ts` — WhatsApp bot check-in
+  - `app/api/partner/events/[eventId]/checkin/route.ts` — Partner API check-in
+- The UPDATE now includes `WHERE status = 'valid'` and chains `.select('id').maybeSingle()` to detect if the row was actually modified.
+- If 0 rows returned (ticket already consumed by a concurrent scanner), returns 409 with accurate duplicate details from a re-read.
+- Bot handler: consolidated two UPDATE branches (phone match / mismatch) into one conditional UPDATE.
+
+### What it affects / could break
+- **Fixed:** Two concurrent scanners could both read `status = 'valid'`, both pass the app-level check, and both mark the ticket `used`. The second scanner would overwrite `scanned_at`/`scanned_by` from the first. Now exactly one scanner succeeds; the other gets a duplicate response.
+- Response shape unchanged: `{ success: true }` on success, `{ success: false, error, scanned_at, scanned_by }` on duplicate (409).
+- Partner webhook only dispatches on the winner, not the loser.
+- No migration required — uses existing `status` column with existing values ('valid', 'used', 'cancelled').
+
 ## 2026-10-17 — fix(bot): CAS DELETE error capture — fail closed on DB errors (P1)
 
 ### What changed

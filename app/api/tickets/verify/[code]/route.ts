@@ -207,20 +207,46 @@ export async function POST(
     }
   }
 
-  // Mark as used
-  const { error: updateError } = await supabase
+  // Atomic conditional update: only succeeds if ticket is still 'valid'.
+  // Prevents race condition where two concurrent scanners both read 'valid'.
+  const now = new Date().toISOString();
+  const scanner = scannedBy || 'self';
+  const { data: updated, error: updateError } = await supabase
     .from('event_tickets')
     .update({
       status: 'used',
-      scanned_at: new Date().toISOString(),
-      scanned_by: scannedBy || 'self',
+      scanned_at: now,
+      scanned_by: scanner,
     })
-    .eq('id', ticket.id);
+    .eq('id', ticket.id)
+    .eq('status', 'valid')
+    .select('id')
+    .maybeSingle();
 
   if (updateError) {
     return NextResponse.json(
       { success: false, error: 'Failed to check in. Please try again.' },
       { status: 500 },
+    );
+  }
+
+  if (!updated) {
+    // Race lost: another scanner consumed the ticket between our SELECT and UPDATE.
+    // Re-read for accurate duplicate details.
+    const { data: current } = await supabase
+      .from('event_tickets')
+      .select('scanned_at, scanned_by')
+      .eq('id', ticket.id)
+      .single();
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: `This ticket was already checked in${current?.scanned_at ? ` at ${new Date(current.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}${current?.scanned_by ? ` by ${current.scanned_by}` : ''}`,
+        scanned_at: current?.scanned_at,
+        scanned_by: current?.scanned_by,
+      },
+      { status: 409 },
     );
   }
 
