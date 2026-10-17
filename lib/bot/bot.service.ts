@@ -1725,15 +1725,58 @@ export class BotService {
           }
         : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
 
+      // #BIZ-SESSION: Delete expired-but-active business-scoped sessions.
+      // The unique index idx_bot_sessions_phone_business covers ALL rows where
+      // business_id IS NOT NULL (no is_active filter), so deactivating alone does
+      // NOT free the slot — the row must be DELETED.
+      // Null-biz sessions use a different index with is_active=true filter, so
+      // their deactivation path (handled elsewhere) is correct.
+      // CTO-review: read candidate first, then version+expiration+state conditional
+      // DELETE to prevent deleting a concurrently renewed session.
+      if (businessId) {
+        const nowIso = new Date().toISOString();
+        const { data: staleCandidate, error: staleFetchError } = await this.supabase.from('bot_sessions')
+          .select('id, version, is_active, expires_at')
+          .eq('whatsapp_number', from)
+          .eq('business_id', businessId)
+          .eq('is_active', true)
+          .lt('expires_at', nowIso)
+          .maybeSingle();
+        if (staleFetchError) {
+          logger.error('[BOT] #BIZ-SESSION: Pre-insert stale candidate SELECT failed:', staleFetchError.message);
+          // Continue — INSERT will fail with 23505 if stale row survives, which is handled below
+        }
+        if (staleCandidate) {
+          const staleVersion = (staleCandidate as unknown as { version: number | null }).version ?? 0;
+          const { error: staleDeleteError } = await this.supabase.from('bot_sessions')
+            .delete()
+            .eq('id', staleCandidate.id)
+            .eq('business_id', businessId)
+            .eq('is_active', true)
+            .lt('expires_at', nowIso)
+            .eq('version', staleVersion);
+          if (staleDeleteError) {
+            logger.error('[BOT] #BIZ-SESSION: Pre-insert stale candidate DELETE failed:', staleDeleteError.message);
+            // Continue — INSERT will fail with 23505 if stale row survives, which is handled below
+          }
+        }
+      }
+
       // Remove old inactive sessions for this phone+business to avoid unique constraint violation
       const cleanupQuery = this.supabase.from('bot_sessions')
         .delete()
         .eq('whatsapp_number', from)
         .eq('is_active', false);
       if (businessId) {
-        await cleanupQuery.eq('business_id', businessId);
+        const { error: inactiveCleanupError } = await cleanupQuery.eq('business_id', businessId);
+        if (inactiveCleanupError) {
+          logger.error('[BOT] #BIZ-SESSION: Inactive session cleanup failed:', inactiveCleanupError.message);
+        }
       } else {
-        await cleanupQuery.is('business_id', null);
+        const { error: inactiveCleanupError } = await cleanupQuery.is('business_id', null);
+        if (inactiveCleanupError) {
+          logger.error('[BOT] #BIZ-SESSION: Inactive session cleanup failed:', inactiveCleanupError.message);
+        }
       }
 
       const { data: newSession, error: sessionError } = await this.supabase
@@ -1833,6 +1876,132 @@ export class BotService {
             logger.error('[BOT] #266 R4: 23505 recovery failed — no safe null-biz session to resume');
             if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
             await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            return;
+          }
+        } else if (sessionError?.code === '23505' && businessId) {
+          // #BIZ-SESSION: Business-scoped 23505 collision — the pre-insert cleanup
+          // may have raced with a concurrent message, or an expired-but-active row
+          // survived. The business-scoped unique index covers ALL rows (no is_active
+          // filter), so we must DELETE or reuse the existing row.
+          logger.warn('[BOT] #BIZ-SESSION: 23505 collision for business-scoped session, attempting recovery:', businessId);
+          const { data: existingBizSession, error: existingBizError } = await this.supabase
+            .from('bot_sessions')
+            .select('*')
+            .eq('whatsapp_number', from)
+            .eq('business_id', businessId)
+            .single();
+          if (existingBizError) {
+            logger.error('[BOT] #BIZ-SESSION: 23505 recovery SELECT failed — failing closed:', existingBizError.message);
+            try {
+              await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            } catch (sendErr) {
+              logger.error('[BOT] #BIZ-SESSION: Fallback send failed:', sendErr);
+            }
+            return;
+          }
+          if (existingBizSession) {
+            const existingBiz = existingBizSession as unknown as BotSession;
+            if (existingBiz.is_active && existingBiz.expires_at && new Date(existingBiz.expires_at) > new Date()) {
+              // Active and not expired — concurrently created. Resume it.
+              session = existingBiz;
+              logger.info('[BOT] #BIZ-SESSION: Resumed concurrently-created active session:', existingBiz.id);
+            } else {
+              // Expired or inactive — CAS-conditional DELETE to free the unique index slot,
+              // then retry INSERT once.
+              // CTO-review: version + state + expiration predicates — prevents deleting
+              // a session that was concurrently renewed (even if version alone matched).
+              const casVersion = existingBiz.version ?? 0;
+              const casNowIso = new Date().toISOString();
+              const casDeleteQuery = this.supabase.from('bot_sessions')
+                .delete()
+                .eq('id', existingBiz.id)
+                .eq('business_id', businessId)
+                .eq('version', casVersion);
+              // Add state/expiration predicates matching the branch condition:
+              // either inactive OR expired (the row we read was one of these).
+              if (!existingBiz.is_active) {
+                casDeleteQuery.eq('is_active', false);
+              } else {
+                // Active but expired — require it still be expired at DELETE time
+                casDeleteQuery.eq('is_active', true).lt('expires_at', casNowIso);
+              }
+              const { data: casDeleted, error: casDeleteError } = await casDeleteQuery.select('id');
+              if (casDeleteError) {
+                // DB/permission/connection failure — fail closed, do NOT enter re-read path
+                logger.error('[BOT] #BIZ-SESSION: CAS DELETE query failed — failing closed:', casDeleteError.message, casDeleteError.code);
+                try {
+                  await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                } catch (sendErr) {
+                  logger.error('[BOT] #BIZ-SESSION: Fallback send failed:', sendErr);
+                }
+                return;
+              }
+              if (casDeleted && (casDeleted as unknown[]).length > 0) {
+                // CAS DELETE succeeded — retry INSERT exactly once
+                logger.info('[BOT] #BIZ-SESSION: CAS DELETE succeeded, retrying insert once:', existingBiz.id);
+                const { data: retriedSession, error: retryErr } = await this.supabase
+                  .from('bot_sessions')
+                  .insert({
+                    whatsapp_number: from,
+                    user_id: profile?.id || null,
+                    business_id: businessId,
+                    current_step: firstStep,
+                    session_data: sessionData,
+                    is_active: true,
+                    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                  })
+                  .select()
+                  .single();
+                if (!retryErr && retriedSession) {
+                  session = retriedSession as BotSession;
+                  logger.info('[BOT] #BIZ-SESSION: Retry insert succeeded:', (retriedSession as BotSession).id);
+                } else {
+                  logger.error('[BOT] #BIZ-SESSION: Retry insert failed after CAS DELETE:', retryErr?.message, retryErr?.code);
+                  try {
+                    await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  } catch (sendErr) {
+                    logger.error('[BOT] #BIZ-SESSION: Fallback send failed:', sendErr);
+                  }
+                  return;
+                }
+              } else {
+                // CAS DELETE got 0 rows — version, state, or expiration changed
+                // (concurrent renewal or another worker intervened). Re-read to distinguish.
+                logger.info('[BOT] #BIZ-SESSION: CAS DELETE got 0 rows — re-reading to distinguish renewal from error:', existingBiz.id);
+                const { data: reReadData, error: reReadError } = await this.supabase.from('bot_sessions')
+                  .select('*').eq('id', existingBiz.id).single();
+                if (reReadError) {
+                  logger.error('[BOT] #BIZ-SESSION: CAS re-read failed — failing closed:', reReadError.message);
+                  try {
+                    await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  } catch (sendErr) {
+                    logger.error('[BOT] #BIZ-SESSION: Fallback send failed:', sendErr);
+                  }
+                  return;
+                }
+                const reRead = reReadData as unknown as BotSession | null;
+                if (reRead && reRead.is_active && reRead.expires_at && new Date(reRead.expires_at) > new Date()) {
+                  session = reRead;
+                  logger.info('[BOT] #BIZ-SESSION: Resumed renewed session after CAS race:', reRead.id);
+                } else {
+                  logger.error('[BOT] #BIZ-SESSION: CAS race: session not renewable, failing closed:', existingBiz.id);
+                  try {
+                    await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+                  } catch (sendErr) {
+                    logger.error('[BOT] #BIZ-SESSION: Fallback send failed:', sendErr);
+                  }
+                  return;
+                }
+              }
+            }
+          } else {
+            // No existing row found despite 23505 — transient race. Fail closed.
+            logger.error('[BOT] #BIZ-SESSION: 23505 but no existing row found — transient race');
+            try {
+              await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            } catch (sendErr) {
+              logger.error('[BOT] #BIZ-SESSION: Fallback send failed:', sendErr);
+            }
             return;
           }
         } else {
