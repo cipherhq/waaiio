@@ -976,17 +976,22 @@ describe('Null-biz session CAS deactivation — P2 concurrency fix', () => {
       expect(botServiceSrc).not.toContain('CAS won — retry the insert once');
     });
 
-    it('CAS-success path retries insert once; retry failure sends exactly one error reply', () => {
+    it('CAS-success path retries insert once; retry success falls through (no return), retry failure sends exactly one error reply + return', () => {
       // Find the CAS-success branch by its unique log line (site 1 is the first occurrence).
-      // New design: CAS success → retry insert once.  If retry also fails → exactly one sendPlatformText + return.
+      // New design: CAS success → retry insert once.
+      //   Retry success → fall through to directory flow (NO return — #642 fix).
+      //   Retry failure → exactly one sendPlatformText + return.
       const anchor = "CAS deactivation succeeded, retrying insert once:";
       const anchorIdx = botServiceSrc.indexOf(anchor);
       expect(anchorIdx).toBeGreaterThan(-1);
-      // Use 1400-char window: covers the full retry block but stops before the separate
-      // "Unsafe: cannot recover" branch that has its own sendPlatformText.
-      const branch = botServiceSrc.slice(anchorIdx, anchorIdx + 1400);
+      // Use 1500-char window to cover both success and failure branches
+      const branch = botServiceSrc.slice(anchorIdx, anchorIdx + 1500);
+      // Retry failure path has exactly one error send
       const sendCount = (branch.match(/sendPlatformText\(/g) ?? []).length;
       expect(sendCount).toBe(1);
+      // Retry SUCCESS comment says "Fall through" — no return; so directory flow runs
+      expect(branch).toContain('Fall through: directory flow runs for this message');
+      // Retry FAILURE path has return (the return; is after the sendPlatformText in the else branch)
       expect(branch).toContain('return;');
     });
   });

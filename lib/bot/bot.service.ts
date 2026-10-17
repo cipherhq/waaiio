@@ -53,6 +53,15 @@ import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
 import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
+import {
+  sendDirectoryGreeting,
+  sendReturningGreeting,
+  handleDirectorySearch,
+  handleDirectorySelection,
+  handleConnectCommand,
+  CONNECT_PATTERN,
+  type DirectorySessionData,
+} from './handlers/directory-search';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -220,30 +229,48 @@ export class BotService {
       return;
     }
 
-    // ── "home" command — return to Waaiio marketplace / business picker ──
-    if (HOME_PATTERN.test(text.trim())) {
+    // ── "home" / "directory" / "search" — return to directory ──
+    // "directory" and "search" only act as directory navigation on the shared number.
+    // On a dedicated channel (preResolvedBusinessId set), they fall through to the
+    // business flow so the business can handle them as keywords or flow input.
+    // "home" always returns to directory regardless of channel type (existing behavior).
+    // Detection: preResolvedBusinessId is set by the webhook from dedicated channel's
+    // business_id (route.ts:540). Shared channels have business_id stripped to null
+    // by stripSharedChannelBusinessAuthority (channel-resolver.ts:38-44).
+    if (HOME_PATTERN.test(text.trim()) && !preResolvedBusinessId) {
       const activeSession = await this.getActiveSession(from);
       if (activeSession) await this.deactivateSession(activeSession.id);
       // S-1 (#256): Explicitly transition to platform discovery
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-      // Show marketplace greeting (platform-scoped: pre-business discovery)
+
+      const dirSend = this.buildDirectorySend();
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 0) {
-        const quickPick = recentBiz.slice(0, 3);
-        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
-        if (sugSess) {
-          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
-          if (persisted.length === 0) {
-            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          } else {
-            await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
-              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
-          }
-        } else {
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        }
+        await sendReturningGreeting(dirSend, from, recentBiz, null);
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'directory_search',
+          session_data: { _directory_mode: true, suggestions: recentBiz.slice(0, 2) },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
       } else {
-        await this.sendPlatformText(from, 'Welcome to Waaiio! Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
+        await sendDirectoryGreeting(dirSend, from);
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'directory_search',
+          session_data: { _directory_mode: true },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
       }
       return;
     }
@@ -878,60 +905,92 @@ export class BotService {
     // Update session in case handleGlobalQuery modified it (e.g. reference code fall-through)
     session = globalResult.session;
 
-    // Check for "switch <keyword>" command — lets users swap between businesses
-    const switchMatch = text.match(/^switch\s+(.+)$/i);
+    // Check for "connect <name>" / "switch <keyword>" command — lets users swap between businesses.
+    // Owner rule: message must START with the keyword; look up first; only deactivate
+    // the current session on a match or suggestions. Inside an active business flow
+    // with no match: fall through so the flow handles the text normally.
+    const switchMatch = text.match(/^(?:switch|connect)\s+(.+)$/i);
     if (switchMatch) {
       const keyword = switchMatch[1].trim().toLowerCase();
-      if (session) {
-        await this.deactivateSession(session.id);
-      }
-      // S-1 (#256): Transition to platform discovery for business switching
-      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
 
-      // Use the full fuzzy matching engine (same as bot code detection)
+      // Look up BEFORE deactivating — preserve the current session until we know
       const detection = await this.detectBotCodeWithSuggestions(keyword, from);
 
       if (detection.businessId) {
-        // Exact/confident match — route directly
+        // Exact/confident match — deactivate current session, then route
+        if (session) await this.deactivateSession(session.id);
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
         const { data: biz } = await this.supabase
           .from('businesses')
           .select('id, bot_code')
           .eq('id', detection.businessId)
           .single();
         if (biz) {
-          // ACC-204 R4: Keyword/switch match is user-initiated fuzzy lookup — NOT authoritative
-          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id, undefined, undefined, 'bot_code');
+          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id, undefined, undefined, 'fuzzy');
           return;
         }
       }
 
       if (detection.suggestions && detection.suggestions.length > 0) {
-        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: detection.suggestions });
-        if (sugSess) {
-          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
-          if (persisted.length === 0) {
-            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          } else if (persisted.length <= 3) {
-            await this.sendPlatformButtons(from, 'Which business did you mean?',
-              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
-          } else {
-            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
-            await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
-          }
+        // Suggestions found — deactivate current session, show picker
+        if (session) await this.deactivateSession(session.id);
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+
+        if (detection.suggestions.length <= 3) {
+          await this.sendPlatformButtons(from, 'Which business did you mean?',
+            detection.suggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
         } else {
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          const list = detection.suggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+          await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
         }
+
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'select_business_suggestion',
+          session_data: { suggestions: detection.suggestions },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
         return;
       }
 
-      await this.sendPlatformText(from, `No business found matching "${keyword}". Try: switch restaurant, switch spa, switch church, switch shop, etc.`);
-      return;
+      // No match. Inside an active business flow (including free-text steps): fall through
+      // so the flow handles "connect/switch <text>" as normal input.
+      if (session?.business_id) {
+        // Do NOT deactivate, do NOT reply — let the flow process the full text.
+        // Fall through to restart/escape-hatch/flow-executor handling below.
+      } else {
+        // Outside a business flow (e.g., directory_search or no session at all):
+        // run a directory search with the keyword, then persist via CAS-safe helper.
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        const dirSend = this.buildDirectorySend();
+        const searchData = await handleDirectorySearch(
+          this.supabase, dirSend, from, keyword, null,
+        );
+        if (!searchData) return; // rate-limited or unavailable — reply already sent, preserve existing session
+        // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
+        // On 23505 retry via CAS-UPDATE. Never silent on collision.
+        const connectProfile = await getProfile();
+        const connectDirSess = await this.createDirectorySession(
+          from, connectProfile?.id || null, 'directory_results',
+          { ...searchData },
+        );
+        if (!connectDirSess) {
+          logger.warn('[BOT] createDirectorySession(connect-fallback) failed — session not persisted after search');
+          Sentry.captureException(new Error('createDirectorySession failed in connect/switch fallback'));
+        }
+        return;
+      }
     }
 
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
     const isChatStep = currentStep === 'chat_handoff' || currentStep === 'chat_start';
-    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'].includes(currentStep);
+    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion', 'directory_search', 'directory_results', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'].includes(currentStep);
 
     // Detect greetings and booking intent for restart detection (without detectIntent)
     const normalizedForRestart = text.toLowerCase().trim();
@@ -1858,6 +1917,7 @@ export class BotService {
                 if (!retryInsertErr && retriedSession) {
                   session = retriedSession as BotSession;
                   logger.info('[BOT] #266 R4: Retry insert succeeded after CAS deactivation:', (retriedSession as BotSession).id);
+                  // Fall through: directory flow runs for this message (session now valid)
                 } else {
                   logger.error('[BOT] #266 R4: Retry insert failed after CAS deactivation:', retryInsertErr?.message, retryInsertErr?.code);
                   if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
@@ -2512,43 +2572,15 @@ export class BotService {
         return;
       }
 
-      // Fall through to marketplace greeting — no business found from bot code or past history
-      // S-1: No business bound — all sends below must be platform-scoped
+      // ── Directory flow: no business found from bot code or past history ──
+      // S-1 (#256): Transition to platform discovery for directory sends
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+      const dirSend = this.buildDirectorySend();
 
       // Check if this is a returning user with past businesses for quick-pick
       const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
-      // ── Returning user with past businesses — quick-pick ──
-      if (recentBusinesses.length >= 1) {
-        const { data: returningProfile } = profile ? await this.supabase
-          .from('profiles').select('first_name').eq('id', profile.id).single()
-          : { data: null };
-
-        const name = (returningProfile as { first_name?: string } | null)?.first_name;
-        const quickPick = recentBusinesses.slice(0, 3);
-        const sugSess = await this.createNullBizSuggestionSession(from, profile?.id || null, { suggestions: quickPick });
-        if (sugSess) {
-          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
-          if (persisted.length === 0) {
-            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          } else {
-            await this.sendPlatformText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
-            await this.sendPlatformButtons(from,
-              'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
-              persisted.map((s, i) => ({
-                id: `biz_${i}`,
-                title: truncTitle(s.name),
-              })),
-            );
-          }
-        } else {
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        }
-        return;
-      }
-
-      // ── Business registration via WhatsApp Flow ──
+      // ── Business registration via WhatsApp Flow (before directory) ──
       const onboardingKeywords = /\b(register|sign\s*up|onboard|create\s*(my\s*)?business|start\s*(my\s*)?business|set\s*up)\b/i;
       if (onboardingKeywords.test(text)) {
         const flowId = process.env.WHATSAPP_ONBOARDING_FLOW_ID;
@@ -2575,36 +2607,61 @@ export class BotService {
         return;
       }
 
-      // ── First-time user — onboarding message (platform-scoped: no business bound) ──
+      // ── Returning user with past businesses — directory greeting + quick-pick ──
+      if (recentBusinesses.length >= 1) {
+        const { data: returningProfile } = profile ? await this.supabase
+          .from('profiles').select('first_name').eq('id', profile.id).single()
+          : { data: null };
+
+        const name = (returningProfile as { first_name?: string } | null)?.first_name;
+
+        await sendReturningGreeting(dirSend, from, recentBusinesses, name || null);
+
+        // Clean up old sessions
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: profile?.id || null,
+          business_id: null,
+          current_step: 'directory_search',
+          session_data: { _directory_mode: true, suggestions: recentBusinesses.slice(0, 2), _directory_country: sharedNumberCountry },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        return;
+      }
+
+      // ── First-time user — directory greeting ──
       const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {
-        await this.sendPlatformText(from, [
-          '*Welcome to Waaiio!* 👋',
-          '',
-          'I help you book appointments, buy tickets, place orders, and make payments — all through WhatsApp.',
-          '',
-          '*How to get started:*',
-          '1️⃣ Send a *business code* (from their website, card, or socials)',
-          '2️⃣ Or browse businesses at *waaiio.com/directory*',
-          '',
-          '*Useful commands:*',
-          '• *switch <name>* — visit a different business',
-          '• *my account* — view bookings, orders & receipts',
-          '• *my bookings* — check upcoming appointments',
-          '• *receipt* — get your last receipt',
-        ].join('\n'));
-      } else {
-        await this.sendPlatformText(from, [
-          `I couldn't find a business matching "${text.trim().slice(0, 30)}". 🤔`,
-          '',
-          'Try sending the exact *business code*, or type *switch* followed by a business name.',
-          '',
-          'Browse businesses at *waaiio.com/directory*',
-          '',
-          '_Example: switch FacesByKoph_',
-          '',
-          'Type *Hi* for help getting started.',
-        ].join('\n'));
+        await sendDirectoryGreeting(dirSend, from);
+        // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
+        // On 23505 retry via CAS-UPDATE. Never silent on collision.
+        const dirGreetSess = await this.createDirectorySession(
+          from, profile?.id || null, 'directory_search',
+          { _directory_mode: true, _directory_country: sharedNumberCountry },
+        );
+        if (!dirGreetSess) {
+          logger.warn('[BOT] createDirectorySession(directory_search) failed — session not persisted after greeting');
+        }
+        return;
+      }
+
+      // ── Unrecognized text — run a directory search immediately ──
+      {
+        const searchData = await handleDirectorySearch(
+          this.supabase, dirSend, from, text, sharedNumberCountry,
+        );
+        // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
+        const dirSearchSess = await this.createDirectorySession(
+          from, profile?.id || null, 'directory_results',
+          { _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}) },
+        );
+        if (!dirSearchSess) {
+          logger.warn('[BOT] createDirectorySession(directory_results) failed — session not persisted after search');
+        }
       }
       return;
     }
@@ -3366,6 +3423,106 @@ export class BotService {
 
     // (saved-card commands moved earlier — before no-session path)
 
+    // ── Directory flow steps (shared-number business discovery) ──
+    if (step === 'directory_search' || step === 'directory_results') {
+      // S-1 (#256): Ensure platform discovery mode for all directory sends
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+      const dirSend = this.buildDirectorySend();
+      const dirData = session.session_data as unknown as DirectorySessionData;
+
+      // Navigation commands → restart directory
+      if (/^(menu|back|exit|home|cancel|quit|stop|restart|start\s*over|directory|search)$/i.test(text)) {
+        await this.deactivateSession(session.id);
+        await this.handleMessage(from, 'home', messageType, destinationPhone);
+        return;
+      }
+
+      // "Find a business" button from returning greeting
+      if (text === 'dir_find') {
+        const { getFlowCopy } = await import('./flows/flow-localization');
+        await this.sendPlatformText(from, getFlowCopy(undefined, 'directory.search_prompt'));
+        return;
+      }
+
+      // Handle result/suggestion selection (dir_result_N, dir_sug_N, numeric)
+      if (step === 'directory_results' || dirData._directory_results || dirData._directory_suggestions) {
+        const selection = await handleDirectorySelection(this.supabase, dirSend, from, text, dirData);
+        if (selection) {
+          await this.deactivateSession(session.id);
+          // Directory handoffs set resolution source to 'fuzzy' — user-initiated search pick
+          await this.handleMessage(from, selection.botCode, messageType, destinationPhone, selection.businessId, undefined, undefined, 'fuzzy');
+          return;
+        }
+        // dir_find was handled above; dir_result/dir_sug that didn't match → fall through to search
+      }
+
+      // Returning-customer quick-pick buttons (biz_0, biz_1)
+      const bizBtnMatch = text.match(/^biz_(\d+)$/i);
+      if (bizBtnMatch && dirData.suggestions) {
+        const idx = parseInt(bizBtnMatch[1], 10);
+        const picks = (dirData.suggestions as Array<{ id: string; name: string; bot_code: string }>);
+        const pick = picks[idx];
+        if (pick) {
+          await this.deactivateSession(session.id);
+          // Returning-customer pick — resolution source 'returning_customer'
+          await this.handleMessage(from, pick.bot_code, messageType, destinationPhone, pick.id, undefined, undefined, 'returning_customer');
+          return;
+        }
+      }
+
+      // Check if text is a bot code (exact match bypasses directory)
+      const botCodeDetection = await this.detectBotCode(text);
+      if (botCodeDetection) {
+        await this.deactivateSession(session.id);
+        // Typed bot code in directory — resolution source 'bot_code'
+        await this.handleMessage(from, text, messageType, destinationPhone, botCodeDetection, undefined, undefined, 'bot_code');
+        return;
+      }
+
+      // Check for "connect <name>" / "switch <name>"
+      const connectMatch = text.match(/^(?:connect|switch)\s+(.+)$/i);
+      if (connectMatch) {
+        const connectResult = await handleConnectCommand(
+          this.supabase, dirSend, from, connectMatch[1].trim(),
+          dirData._directory_country || null,
+        );
+        if (connectResult.action === 'enter') {
+          await this.deactivateSession(session.id);
+          // Connect command match — resolution source 'fuzzy'
+          await this.handleMessage(from, connectResult.botCode, messageType, destinationPhone, connectResult.businessId, undefined, undefined, 'fuzzy');
+          return;
+        }
+        if (connectResult.action === 'suggestions' && connectResult.sessionData) {
+          await this.supabase.from('bot_sessions').update({
+            current_step: 'directory_results',
+            session_data: { ...session.session_data, ...connectResult.sessionData },
+          }).eq('id', session.id);
+          return;
+        }
+        if (connectResult.action === 'search' && connectResult.sessionData) {
+          await this.supabase.from('bot_sessions').update({
+            current_step: 'directory_results',
+            session_data: { ...session.session_data, ...connectResult.sessionData },
+          }).eq('id', session.id);
+          return;
+        }
+        // action === 'none' → fall through to directory search below
+      }
+
+      // Run a directory search with the text
+      const searchData = await handleDirectorySearch(
+        this.supabase, dirSend, from, text,
+        dirData._directory_country || null,
+      );
+      if (searchData) {
+        await this.supabase.from('bot_sessions').update({
+          current_step: 'directory_results',
+          session_data: { ...session.session_data, ...searchData },
+        }).eq('id', session.id);
+      }
+      return;
+    }
+
     // Handle "Did you mean?" business selection
     if (step === 'select_business_suggestion') {
       // S-1: No business is bound in this step — all replies must be platform-scoped
@@ -3559,7 +3716,7 @@ export class BotService {
     const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
     // Skip AI classification for deterministic postback IDs — these are button/list taps
     // that will be handled by the flow executor's step-specific validate() function
-    const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|\d{1,2})$/.test(text)
+    const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|dir_result_\d+|dir_sug_\d+|dir_find|\d{1,2})$/.test(text)
       || (messageType === 'button' || messageType === 'list');
     let resumedCanonical: import('./canonical-understanding').CanonicalUnderstanding | null = null;
     _bmark(isDeterministicPostback ? 'cas004_skipped_deterministic' : 'cas004_start');
@@ -4077,6 +4234,66 @@ export class BotService {
   }
 
   /**
+   * Create or update a null-business directory session (directory_search or directory_results).
+   * The partial unique index allows ONE active null-biz session per phone.
+   *
+   * Lifecycle:
+   * (a) UPDATE any existing active null-biz session to the new step — avoids INSERT 23505.
+   * (b) If 0 rows updated (no active session): INSERT fresh session.
+   * (c) On INSERT 23505 (concurrent insert race): re-read and CAS-UPDATE in place.
+   * (d) Any unrecoverable failure: return null (caller logs; reply already sent — no second message).
+   */
+  private async createDirectorySession(
+    from: string,
+    userId: string | null,
+    step: 'directory_search' | 'directory_results',
+    sessionData: Record<string, unknown>,
+    ttlMs: number = 30 * 60 * 1000,
+  ): Promise<BotSession | null> {
+    const newExpiry = new Date(Date.now() + ttlMs).toISOString();
+    // (a) UPDATE any existing active null-biz session — prevents 23505 on INSERT
+    const { data: updated, error: updateErr } = await this.supabase.from('bot_sessions')
+      .update({ current_step: step, session_data: sessionData, expires_at: newExpiry })
+      .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true)
+      .select().single();
+    if (!updateErr && updated) {
+      logger.info('[BOT] createDirectorySession: updated existing session to:', step, (updated as unknown as BotSession).id);
+      return updated as unknown as BotSession;
+    }
+    // (b) No active session — INSERT fresh
+    const { data: sess, error: insertErr } = await this.supabase.from('bot_sessions').insert({
+      whatsapp_number: from, user_id: userId, business_id: null,
+      current_step: step, session_data: sessionData,
+      is_active: true, expires_at: newExpiry,
+    }).select().single();
+    if (!insertErr && sess) return sess as unknown as BotSession;
+    // (c) 23505: concurrent INSERT won — re-read and CAS-UPDATE
+    if (insertErr?.code === '23505') {
+      const { data: existing } = await this.supabase.from('bot_sessions').select('*')
+        .eq('whatsapp_number', from).is('business_id', null).eq('is_active', true).single();
+      if (existing) {
+        const existingSess = existing as unknown as BotSession;
+        const { data: casUpdated } = await this.supabase.from('bot_sessions')
+          .update({ current_step: step, session_data: sessionData, expires_at: newExpiry, version: (existingSess.version ?? 0) + 1 })
+          .eq('id', existingSess.id).is('business_id', null).eq('is_active', true)
+          .eq('version', existingSess.version ?? 0)
+          .select().single();
+        if (casUpdated) {
+          logger.info('[BOT] createDirectorySession: CAS-update after concurrent insert:', step, existingSess.id);
+          return casUpdated as unknown as BotSession;
+        }
+      }
+      logger.error('[BOT] createDirectorySession: 23505 recovery failed for step:', step);
+      Sentry.captureException(new Error(`createDirectorySession 23505 recovery failed: ${step}`));
+      return null;
+    }
+    // (d) Unrecoverable
+    logger.error('[BOT] createDirectorySession: insert failed:', insertErr?.message, insertErr?.code);
+    Sentry.captureException(insertErr || new Error(`createDirectorySession insert failed: ${step}`));
+    return null;
+  }
+
+  /**
    * Send the first-contact language picker as a WhatsApp interactive list.
    * Only shown when: no active session, no saved language preference,
    * and the business offers more than one certified language.
@@ -4163,6 +4380,37 @@ export class BotService {
     } else {
       await this.messageSender.sendButtons({ to, body, buttons });
     }
+  }
+
+  /**
+   * Platform-scoped list send for pre-business directory results.
+   * Uses the sender's sendPlatformList (same guard semantics as sendPlatformText:
+   * allowed only in platform discovery mode, refused with a business bound).
+   */
+  private async sendPlatformList(to: string, msg: {
+    title: string;
+    body: string;
+    buttonLabel: string;
+    items: Array<{ title: string; description?: string; postbackText: string }>;
+    footer?: string;
+  }): Promise<void> {
+    if (this.messageSender.sendPlatformList) {
+      await this.messageSender.sendPlatformList({ to, ...msg });
+    } else {
+      // Fallback for test senders without sendPlatformList
+      await this.messageSender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, footer: msg.footer });
+    }
+  }
+
+  /**
+   * Build the platform send helpers needed by the directory handler.
+   */
+  private buildDirectorySend(): Parameters<typeof sendDirectoryGreeting>[0] {
+    return {
+      sendPlatformText: this.sendPlatformText.bind(this),
+      sendPlatformButtons: this.sendPlatformButtons.bind(this),
+      sendPlatformList: this.sendPlatformList.bind(this),
+    };
   }
 
   /** Send text with auto-translation based on session language */
