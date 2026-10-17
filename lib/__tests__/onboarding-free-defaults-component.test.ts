@@ -243,23 +243,23 @@ describe('StepCategory — category selection replaces stale paid state', () => 
 
 const PRICING_FIXTURE = {
   trialDays: 14, annualDiscountPercentage: 25,
-  tierFees: { free: { feePercentage: 3.0 }, growth: { feePercentage: 2.0 }, business: { feePercentage: 1.0 } },
+  tierFees: { free: { feePercentage: 3.0 }, growth: { feePercentage: 1.5 }, business: { feePercentage: 1.0 } },
   categoryFees: {}, byoFeePolicy: '0%',
   country: {
     code: 'NG', name: 'Nigeria', currencyCode: 'NGN', currencySymbol: '₦',
     currencyLocale: 'en-NG', flag: '🇳🇬', gateway: 'paystack',
     pricing: {
-      free: { price: 0, feeFlat: 200, feePercentage: 3.0 },
-      growth: { price: 25000, feeFlat: 75, feePercentage: 2.0 },
-      business: { price: 70000, feeFlat: 100, feePercentage: 1.0 },
+      free: { price: 0, feeFlat: 0, feePercentage: 3.0 },
+      growth: { price: 15000, feeFlat: 0, feePercentage: 1.5 },
+      business: { price: 45000, feeFlat: 0, feePercentage: 1.0 },
     },
   },
   countries: [{ code: 'NG', name: 'Nigeria', currencyCode: 'NGN', currencySymbol: '₦',
     currencyLocale: 'en-NG', flag: '🇳🇬', gateway: 'paystack',
     pricing: {
-      free: { price: 0, feeFlat: 200, feePercentage: 3.0 },
-      growth: { price: 25000, feeFlat: 75, feePercentage: 2.0 },
-      business: { price: 70000, feeFlat: 100, feePercentage: 1.0 },
+      free: { price: 0, feeFlat: 0, feePercentage: 3.0 },
+      growth: { price: 15000, feeFlat: 0, feePercentage: 1.5 },
+      business: { price: 45000, feeFlat: 0, feePercentage: 1.0 },
     },
   }],
 };
