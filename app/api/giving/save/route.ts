@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
+import { getLegacyDefaultCapabilities } from '@/lib/capabilities/legacy-defaults';
 import { resolveTrialCredit } from '@/lib/trial-status';
 import { buildGivingServicePayload, type GivingServiceInput } from '@/lib/services/payload-builders';
+import { logger } from '@/lib/logger';
 
 const SUPPORTED_INTERVALS = new Set(['weekly', 'monthly']);
 
@@ -50,15 +53,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, reason: 'missing_required_fields' }, { status: 400 });
   }
 
-  // Verify business ownership
-  const { data: business } = await supabase
+  // Verify business ownership (Safeguard D: distinguish DB errors from auth failures)
+  const { data: business, error: bizError } = await supabase
     .from('businesses')
-    .select('id, owner_id, recurring_enabled, subscription_tier, trial_ends_at, capability_overrides')
+    .select('id, owner_id, recurring_enabled, subscription_tier, trial_ends_at, category')
     .eq('id', businessId)
     .single();
 
+  if (bizError) {
+    logger.withContext({ op: 'giving.save' })
+      .error(`Business query failed for ${businessId}: ${bizError.message}`);
+    return NextResponse.json(
+      { success: false, reason: 'internal_error', message: 'An unexpected error occurred.' },
+      { status: 500 },
+    );
+  }
+
   if (!business || business.owner_id !== user.id) {
-    return NextResponse.json({ success: false, reason: 'unauthorized', message: 'You do not have write access to this business.' }, { status: 403 });
+    return NextResponse.json(
+      { success: false, reason: 'unauthorized', message: 'You do not have write access to this business.' },
+      { status: 403 },
+    );
   }
 
   // If recurring is requested, enforce the effective recurring eligibility
