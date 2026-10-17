@@ -219,7 +219,7 @@ describe('Payment: recurring failure recovery', () => {
 describe('Payment: whitelabel footer', () => {
   const step = getStep(paymentFlow, 'payment_thank_you');
 
-  it('whitelabel business does NOT show Powered by Waaiio', async () => {
+  it('business tier without whitelabel shows Powered by Waaiio', async () => {
     const ctx = createMockContext({
       session: {
         id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'payment_thank_you',
@@ -231,8 +231,8 @@ describe('Payment: whitelabel footer', () => {
     const messages = await step.prompt(ctx);
     expect(messages).toHaveLength(1);
     const text = (messages[0] as any).text;
-    // business tier has whitelabel — should NOT contain Powered by
-    expect(text).not.toContain('Powered by');
+    // Approved launch pricing disables whitelabel for every tier, including business.
+    expect(text).toContain('Powered by Waaiio');
   });
 
   it('non-whitelabel business shows Powered by Waaiio', async () => {
