@@ -88,17 +88,38 @@ export async function POST(request: NextRequest) {
     }
 
     // Gate 2: effective recurring capability (policy-aware: tier + trial + overrides)
-    const configResult = await getConfiguredCapabilities(supabase, businessId);
+    const service = createServiceClient();
+
+    const configResult = await getConfiguredCapabilities(service, businessId);
     if (!configResult.ok) {
       return NextResponse.json({ success: false, reason: 'capability_check_failed' }, { status: 500 });
     }
 
-    const hasTrialCredit = await resolveTrialCredit(supabase, businessId);
+    // Safeguard A: fail closed on override query error
+    const { data: overrideRows, error: overrideError } = await service
+      .from('capability_overrides')
+      .select('capability')
+      .eq('business_id', businessId);
+    if (overrideError) {
+      logger.withContext({ op: 'giving.save' })
+        .error(`Override query failed for ${businessId}: ${overrideError.message}`);
+      return NextResponse.json({ success: false, reason: 'override_read_error' }, { status: 500 });
+    }
+    const overrides = (overrideRows || []).map(r => r.capability as string);
+
+    // Safeguard C: legacy defaults for zero-row businesses
+    let configuredRows = configResult.rows;
+    if (configuredRows.length === 0) {
+      const defaultCaps = getLegacyDefaultCapabilities(business.category);
+      configuredRows = defaultCaps.map((cap, i) => ({ capability: cap, is_enabled: true, sort_order: i }));
+    }
+
+    const hasTrialCredit = await resolveTrialCredit(service, businessId);
     const effectiveCaps = getEffectiveCapabilities({
-      configuredCapabilities: configResult.rows,
+      configuredCapabilities: configuredRows,
       tier: business.subscription_tier || 'free',
       trialEndsAt: business.trial_ends_at || null,
-      overrides: (business.capability_overrides as string[]) || [],
+      overrides,
       hasTrialCredit,
     });
 
