@@ -402,7 +402,7 @@ describe('#224 LAYER 1: real POST() handler with mocked Supabase transport', () 
       business: null,
       capabilities: [],
     });
-    // Override the from().select()...single() to return an error
+    // Override the from().select()...maybeSingle() to return a genuine error
     const origFrom = client.from.bind(client);
     client.from = (table: string) => {
       const chain = origFrom(table);
@@ -410,7 +410,7 @@ describe('#224 LAYER 1: real POST() handler with mocked Supabase transport', () 
         chain.select = () => {
           const inner: Record<string, unknown> = {};
           inner.eq = () => inner;
-          inner.single = () => Promise.resolve({ data: null, error: { message: 'connection timeout' } });
+          inner.maybeSingle = () => Promise.resolve({ data: null, error: { message: 'connection timeout' } });
           return inner;
         };
       }
@@ -443,6 +443,24 @@ describe('#224 LAYER 1: real POST() handler with mocked Supabase transport', () 
     expect(res.status).toBe(500);
     const json = await res.json();
     expect(json.reason).toBe('internal_error');
+  });
+
+  it('RLS-hidden business (zero rows, no error) returns 403, not 500', async () => {
+    // .maybeSingle() returns {data: null, error: null} when RLS hides the row
+    const { calls } = await setupRoute({
+      user: { id: OWNER_ID },
+      business: null, // zero rows — RLS-hidden or nonexistent
+      capabilities: [],
+    });
+
+    const res = await POST(makeRequest({ businessId: BIZ_ID, name: 'Test' }));
+    expect(res.status).toBe(403);
+    const json = await res.json();
+    expect(json.reason).toBe('unauthorized');
+
+    // ZERO persistence calls
+    const writes = calls.filter(c => c.op === 'insert' || c.op === 'update');
+    expect(writes).toHaveLength(0);
   });
 
   it('override query failure returns 500 (Safeguard A)', async () => {

@@ -54,13 +54,16 @@ export async function POST(request: NextRequest) {
   }
 
   // Verify business ownership (Safeguard D: distinguish DB errors from auth failures)
+  // Use .maybeSingle() so an RLS-hidden zero-row result yields {data: null, error: null}
+  // instead of a PGRST116 error that would be misclassified as a 500.
   const { data: business, error: bizError } = await supabase
     .from('businesses')
     .select('id, owner_id, recurring_enabled, subscription_tier, trial_ends_at, category')
     .eq('id', businessId)
-    .single();
+    .maybeSingle();
 
   if (bizError) {
+    // Genuine query error (connection failure, syntax error, etc.) — 500
     logger.withContext({ op: 'giving.save' })
       .error(`Business query failed for ${businessId}: ${bizError.message}`);
     return NextResponse.json(
@@ -69,6 +72,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // No row (RLS-hidden or nonexistent) or row belongs to another user — 403.
+  // Do not distinguish hidden from nonexistent to avoid existence leaks.
   if (!business || business.owner_id !== user.id) {
     return NextResponse.json(
       { success: false, reason: 'unauthorized', message: 'You do not have write access to this business.' },
