@@ -27,6 +27,21 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: vi.fn().mockReturnValue({
+    from: () => ({
+      select: () => {
+        const obj: Record<string, unknown> = {
+          eq: () => obj,
+          then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
+            Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        };
+        return obj;
+      },
+    }),
+  }),
+}));
+
 vi.mock('@/lib/capabilities/service', () => ({
   getConfiguredCapabilities: vi.fn().mockResolvedValue({ ok: true, rows: [] }),
 }));
@@ -41,8 +56,19 @@ vi.mock('@/lib/capabilities/policy', () => ({
   }),
 }));
 
+vi.mock('@/lib/capabilities/legacy-defaults', () => ({
+  getLegacyDefaultCapabilities: vi.fn().mockReturnValue(['scheduling']),
+}));
+
 vi.mock('@/lib/trial-status', () => ({
   resolveTrialCredit: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+    withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }),
+  },
 }));
 
 vi.mock('@/lib/services/payload-builders', () => ({
@@ -76,14 +102,14 @@ function setupOwner() {
       return {
         select: () => ({
           eq: () => ({
-            single: () => Promise.resolve({
+            maybeSingle: () => Promise.resolve({
               data: {
                 id: BIZ_ID,
                 owner_id: OWNER_ID,
                 recurring_enabled: false,
                 subscription_tier: 'free',
                 trial_ends_at: null,
-                capability_overrides: [],
+                category: 'church',
               },
               error: null,
             }),
@@ -118,14 +144,14 @@ function setupAdmin() {
       return {
         select: () => ({
           eq: () => ({
-            single: () => Promise.resolve({
+            maybeSingle: () => Promise.resolve({
               data: {
                 id: BIZ_ID,
                 owner_id: OWNER_ID, // admin does NOT own this business
                 recurring_enabled: false,
                 subscription_tier: 'free',
                 trial_ends_at: null,
-                capability_overrides: [],
+                category: 'church',
               },
               error: null,
             }),
@@ -218,10 +244,10 @@ describe('POST /api/giving/save', () => {
         return {
           select: () => ({
             eq: () => ({
-              single: () => Promise.resolve({
+              maybeSingle: () => Promise.resolve({
                 data: {
                   id: BIZ_ID, owner_id: OWNER_ID, recurring_enabled: false,
-                  subscription_tier: 'free', trial_ends_at: null, capability_overrides: [],
+                  subscription_tier: 'free', trial_ends_at: null, category: 'church',
                 },
                 error: null,
               }),
@@ -262,10 +288,10 @@ describe('POST /api/giving/save', () => {
         return {
           select: () => ({
             eq: () => ({
-              single: () => Promise.resolve({
+              maybeSingle: () => Promise.resolve({
                 data: {
                   id: BIZ_ID, owner_id: OWNER_ID, recurring_enabled: false,
-                  subscription_tier: 'free', trial_ends_at: null, capability_overrides: [],
+                  subscription_tier: 'free', trial_ends_at: null, category: 'church',
                 },
                 error: null,
               }),
