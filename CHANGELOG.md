@@ -3,6 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-17 — fix(bot): CAS DELETE error capture — fail closed on DB errors (P1)
+
+### What changed
+- **ChatGPT P1 finding:** CAS DELETE in 23505 recovery did not capture `error`, so a DB/permission/connection failure entered the "0 rows" re-read path as if it were a concurrency miss. Now captures `casDeleteError` and fails closed (log + user error message + return) on any error.
+- **23505 recovery SELECT:** Now captures `existingBizError` and fails closed instead of proceeding with undefined data.
+- **CAS-miss re-read SELECT:** Now captures `reReadError` and fails closed instead of proceeding with undefined data.
+- **Pre-INSERT stale candidate SELECT:** Now captures `staleFetchError` and logs it. Continues (best-effort) since INSERT will fail with 23505 if stale row survives, which has its own recovery.
+- **Pre-INSERT stale candidate DELETE:** Now captures `staleDeleteError` and logs it. Same best-effort rationale.
+- **Inactive session cleanup DELETE:** Both branches (businessId and null) now capture errors and log them.
+
+### What it affects / could break
+- All 6 locations are in the business-scoped session creation path in `bot.service.ts`.
+- Fail-closed locations (CAS DELETE, recovery SELECT, re-read) now return early with a user-facing error message instead of entering undefined behavior on DB failures.
+- Best-effort locations (pre-INSERT cleanup) now log errors but continue, matching their existing intent — they are opportunistic cleanup before the guarded INSERT.
+- No behavior change on success paths. Only error paths are affected.
+
 ## 2026-10-17 — fix(bot): CTO-review concurrency hardening — version+state+expiration CAS predicates
 
 ### What changed
