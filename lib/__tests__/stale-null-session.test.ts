@@ -1250,7 +1250,12 @@ describe('Stale null-business session fix', () => {
     // A second worker holding the old version cannot overwrite: .eq('version', oldVersion) gets 0 rows.
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
-    mockDetectionResult = { businessId: null, suggestions: [{ id: 'biz-A', name: 'Alpha', bot_code: 'alpha' }] };
+    // Exercise the actual switch_biz picker path, which calls createNullBizSuggestionSession.
+    // Two returning businesses are required for the picker to be created.
+    mockReturningBusinesses = [
+      { id: 'biz-A', name: 'Alpha', bot_code: 'alpha' },
+      { id: 'biz-B', name: 'Beta', bot_code: 'beta' },
+    ] as any;
 
     const existingSession = {
       id: 'sess-inplace', whatsapp_number: '+234800', business_id: null,
@@ -1314,8 +1319,8 @@ describe('Stale null-business session fix', () => {
     };
 
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-    // Trigger via switch path — detection.suggestions.length=1 triggers createNullBizSuggestionSession
-    await bot.handleMessage('+234800', 'switch alpha', 'text');
+    // Trigger the exact early switch_biz path; 'switch alpha' is ordinary search text.
+    await bot.handleMessage('+234800', 'switch_biz', 'text');
 
     // Assert: in-place update payload includes version = existingSession.version + 1 = 4
     expect(updatePayload).not.toBeNull();
