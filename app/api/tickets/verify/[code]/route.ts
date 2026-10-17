@@ -207,17 +207,65 @@ export async function POST(
     }
   }
 
-  // Mark as used
-  const { error: updateError } = await supabase
+  // Atomic conditional update: only succeeds if ticket is still 'valid'.
+  // Prevents race condition where two concurrent scanners both read 'valid'.
+  const now = new Date().toISOString();
+  const scanner = scannedBy || 'self';
+  const { data: updated, error: updateError } = await supabase
     .from('event_tickets')
     .update({
       status: 'used',
-      scanned_at: new Date().toISOString(),
-      scanned_by: scannedBy || 'self',
+      scanned_at: now,
+      scanned_by: scanner,
     })
-    .eq('id', ticket.id);
+    .eq('id', ticket.id)
+    .eq('status', 'valid')
+    .select('id')
+    .maybeSingle();
 
   if (updateError) {
+    return NextResponse.json(
+      { success: false, error: 'Failed to check in. Please try again.' },
+      { status: 500 },
+    );
+  }
+
+  if (!updated) {
+    // Race lost: ticket status changed between our SELECT and UPDATE.
+    // Re-read to determine whether it was checked in or cancelled.
+    const { data: current, error: reReadError } = await supabase
+      .from('event_tickets')
+      .select('status, scanned_at, scanned_by')
+      .eq('id', ticket.id)
+      .single();
+
+    if (reReadError || !current) {
+      return NextResponse.json(
+        { success: false, error: 'Failed to check in. Please try again.' },
+        { status: 500 },
+      );
+    }
+
+    if (current.status === 'cancelled') {
+      return NextResponse.json(
+        { success: false, error: 'This ticket has been cancelled' },
+        { status: 410 },
+      );
+    }
+
+    if (current.status === 'used') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `This ticket was already checked in${current.scanned_at ? ` at ${new Date(current.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}${current.scanned_by ? ` by ${current.scanned_by}` : ''}`,
+          scanned_at: current.scanned_at,
+          scanned_by: current.scanned_by,
+        },
+        { status: 409 },
+      );
+    }
+
+    // Unexpected status — fail closed
     return NextResponse.json(
       { success: false, error: 'Failed to check in. Please try again.' },
       { status: 500 },
