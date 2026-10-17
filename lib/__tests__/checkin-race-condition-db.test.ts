@@ -100,27 +100,33 @@ describe.skipIf(!canRun)('Ticket check-in race condition (real PG)', () => {
     insertTicket(TK1, 'TK-RACE01', 1);
 
     // Both sessions attempt the same conditional UPDATE simultaneously.
-    // Session A holds the row lock via pg_advisory_xact_lock, does the UPDATE, then sleeps.
-    // Session B starts immediately after, attempts the same UPDATE, blocks on the row lock,
+    // Session A does the UPDATE then sleeps holding the transaction open.
+    // Session B starts shortly after, attempts the same UPDATE, blocks on the row lock,
     // and when A commits, B's WHERE status='valid' finds status='used' → 0 rows.
+    // We use WITH...RETURNING + CASE to detect success in plain SQL (no PL/pgSQL FOUND).
     const sqlA = `
       BEGIN;
-      UPDATE event_tickets
-        SET status = 'used', scanned_at = now(), scanned_by = 'scanner_A'
-        WHERE id = '${TK1}' AND status = 'valid';
-      SELECT 'A_updated_' || FOUND AS result;
+      WITH updated AS (
+        UPDATE event_tickets
+          SET status = 'used', scanned_at = now(), scanned_by = 'scanner_A'
+          WHERE id = '${TK1}' AND status = 'valid'
+          RETURNING id
+      )
+      SELECT CASE WHEN COUNT(*) > 0 THEN 'A_updated_true' ELSE 'A_updated_false' END AS result FROM updated;
       SELECT pg_sleep(2);
       COMMIT;
     `;
 
     const sqlB = `
       BEGIN;
-      -- Small delay to ensure A's UPDATE runs first and holds the row lock
       SELECT pg_sleep(0.5);
-      UPDATE event_tickets
-        SET status = 'used', scanned_at = now(), scanned_by = 'scanner_B'
-        WHERE id = '${TK1}' AND status = 'valid';
-      SELECT 'B_updated_' || FOUND AS result;
+      WITH updated AS (
+        UPDATE event_tickets
+          SET status = 'used', scanned_at = now(), scanned_by = 'scanner_B'
+          WHERE id = '${TK1}' AND status = 'valid'
+          RETURNING id
+      )
+      SELECT CASE WHEN COUNT(*) > 0 THEN 'B_updated_true' ELSE 'B_updated_false' END AS result FROM updated;
       COMMIT;
     `;
 
@@ -223,14 +229,18 @@ describe.skipIf(!canRun)('Ticket check-in race condition (real PG)', () => {
     insertTicket(TK1, 'TK-RACE01', 1);
 
     // Three concurrent sessions all try to check in the same ticket.
-    // A holds the lock longest, B and C start shortly after.
+    // A holds the lock longest via pg_sleep after UPDATE, B and C start shortly after.
+    // Uses WITH...RETURNING + CASE for reliable success detection in plain SQL.
     const makeSql = (label: string, sleepBefore: number, sleepAfter: number) => `
       BEGIN;
       SELECT pg_sleep(${sleepBefore});
-      UPDATE event_tickets
-        SET status = 'used', scanned_at = now(), scanned_by = '${label}'
-        WHERE id = '${TK1}' AND status = 'valid';
-      SELECT '${label}_updated_' || FOUND AS result;
+      WITH updated AS (
+        UPDATE event_tickets
+          SET status = 'used', scanned_at = now(), scanned_by = '${label}'
+          WHERE id = '${TK1}' AND status = 'valid'
+          RETURNING id
+      )
+      SELECT CASE WHEN COUNT(*) > 0 THEN '${label}_updated_true' ELSE '${label}_updated_false' END AS result FROM updated;
       SELECT pg_sleep(${sleepAfter});
       COMMIT;
     `;
@@ -258,6 +268,11 @@ describe.skipIf(!canRun)('Ticket check-in race condition (real PG)', () => {
       execPsql(makeSql('scanner_B', 0.3, 0)),
       execPsql(makeSql('scanner_C', 0.6, 0)),
     ]);
+
+    // All sessions should complete without errors
+    expect(a.exitCode).toBe(0);
+    expect(b.exitCode).toBe(0);
+    expect(c.exitCode).toBe(0);
 
     // Count how many succeeded
     const successes = [a, b, c].filter(r => r.stdout.includes('_updated_true')).length;
