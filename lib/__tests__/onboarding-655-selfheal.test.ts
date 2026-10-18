@@ -191,4 +191,41 @@ describe('PR #655 regression: free-plan self-healing success path', () => {
     expect(mockAllocate).not.toHaveBeenCalled();
     expect(businessUpdateCalls).toBe(1);
   });
+
+  it('TEST 8: trial RPC error or {activated:false} does NOT block free activation (but is inspected)', async () => {
+    // Trial RPC returns error — activation should still succeed
+    mockServiceRpc.mockResolvedValue({ data: null, error: { message: 'config_version_missing' } });
+    setupServiceFrom(/* firstFails */ false, /* secondFails */ false);
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { POST } = await import('@/app/api/onboarding/verify/route');
+    const res = await POST(makeRequest({ business_id: 'biz-1', plan: 'free' }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe('success');
+
+    // The RPC error was logged (inspected), not silently swallowed
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Trial activation RPC error'),
+      expect.anything(),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('TEST 9: trial RPC returns {activated:false} — logged but activation succeeds', async () => {
+    mockServiceRpc.mockResolvedValue({ data: { activated: false, reason: 'no_config_version' }, error: null });
+    setupServiceFrom(/* firstFails */ false, /* secondFails */ false);
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { POST } = await import('@/app/api/onboarding/verify/route');
+    const res = await POST(makeRequest({ business_id: 'biz-1', plan: 'free' }));
+
+    expect(res.status).toBe(200);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Trial not activated'),
+      expect.stringContaining('no_config_version'),
+    );
+    warnSpy.mockRestore();
+  });
 });

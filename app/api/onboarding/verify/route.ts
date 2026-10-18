@@ -667,11 +667,19 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Trial activation after business is active — RPC requires status = 'active'
+      // Trial activation after business is active — RPC requires status = 'active'.
+      // A failed trial grant must not block free-tier activation (the business is
+      // still usable), but the result must be inspected so missing config or
+      // financial-integrity failures are surfaced rather than silently swallowed.
       try {
-        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+        const { data: trialResult, error: trialRpcError } = await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+        if (trialRpcError) {
+          console.warn('[ONBOARDING-VERIFY] Trial activation RPC error (non-fatal):', trialRpcError);
+        } else if (trialResult && trialResult.activated !== true) {
+          console.warn('[ONBOARDING-VERIFY] Trial not activated (non-fatal):', trialResult.reason || 'unknown');
+        }
       } catch (trialErr) {
-        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+        console.warn('[ONBOARDING-VERIFY] Trial activation transport error (non-fatal):', trialErr);
       }
     }
 
