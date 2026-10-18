@@ -3,6 +3,7 @@ import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
+import { hasAccess } from '@/lib/permissions';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -772,9 +773,9 @@ export default function Businesses() {
                   Country: {selected.country_code || '—'}. Do not manually assign an unrelated WABA or channel.
                   Use the audited shared-number allocator or send the owner a Meta connection handoff.
                 </p>
-                <a href="/whatsapp-assistance" className="mt-2 inline-block text-sm font-semibold text-brand underline">
+                {adminSession?.role && hasAccess('customer-onboarding', adminSession.role) && <a href="/whatsapp-assistance" className="mt-2 inline-block text-sm font-semibold text-brand underline">
                   Open WhatsApp Setup Assistance
-                </a>
+                </a>}
               </div>
             </div>
 

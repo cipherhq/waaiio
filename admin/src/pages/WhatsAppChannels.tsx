@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
+import { hasAccess } from '@/lib/permissions';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -199,9 +200,9 @@ export default function WhatsAppChannels() {
           <h1 className="text-2xl font-bold text-gray-900">WhatsApp Channels</h1>
           <p className="mt-1 text-sm text-gray-500">Manage WhatsApp channels and business configurations</p>
         </div>
-        <a href="/whatsapp-assistance" className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600">
+        {session?.role && hasAccess('customer-onboarding', session.role) && <a href="/whatsapp-assistance" className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600">
           Help Business Connect WhatsApp
-        </a>
+        </a>}
       </div>
       <p className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">
         Customer-owned WABA numbers must be connected through the owner's authenticated Meta flow.

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
-import { consumeStepUp } from '@/lib/admin-step-up';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
@@ -141,9 +141,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     try {
       await consumeStepUp(admin, stepUpId, 'messaging_config', String(onboarding.id), authoritativeStepUpParams);
     } catch (stepUpErr) {
+      // Only expose StepUpError messages (generic auth failure text).
+      // Other errors (e.g. database) use a safe fallback to avoid leaking internals.
+      const safeMessage = stepUpErr instanceof StepUpError
+        ? stepUpErr.message
+        : 'Step-up MFA verification required for shared channel allocation';
       return NextResponse.json(
         {
-          error: stepUpErr instanceof Error ? stepUpErr.message : 'Step-up MFA verification required for shared channel allocation',
+          error: safeMessage,
           code: 'STEP_UP_REQUIRED',
           step_up_context: authoritativeStepUpParams,
         },
@@ -200,9 +205,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       : { data: null, error: null };
 
     if (postBizErr || postChErr || !isAssignedWhatsAppChannelReady(updatedBusiness, assignedChannel)) {
-      // P1-4: Readiness failed — audit the inconsistent state before returning error.
-      // The allocation RPC already mutated assigned_channel_id; log the dangling assignment
-      // so it can be reconciled. Do NOT silently leave an unverified assignment.
+      // Readiness failed — compensate by clearing the unusable assignment.
+      // The business stays in its previous state (pending/active without a
+      // working shared channel). This prevents an unverified assignment from
+      // being treated as live by the resolver or QR link generator.
+      const danglingId = updatedBusiness?.assigned_channel_id ?? allocation.channel_id ?? null;
+      let compensated = false;
+      if (danglingId) {
+        const { error: clearErr } = await service
+          .from('businesses')
+          .update({ assigned_channel_id: null })
+          .eq('id', business.id)
+          .eq('assigned_channel_id', danglingId); // CAS: only clear if still the same
+        compensated = !clearErr;
+      }
       await logAdminAudit({
         actorId: admin.userId,
         action: 'admin_onboarding_shared_channel_readiness_failed',
@@ -210,15 +226,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         entityId: onboarding.id,
         details: {
           business_id: business.id,
-          allocated_channel_id: allocation.channel_id ?? null,
+          allocated_channel_id: danglingId,
           post_biz_error: postBizErr?.message ?? null,
           post_ch_error: postChErr?.message ?? null,
-          assigned_channel_id: updatedBusiness?.assigned_channel_id ?? null,
+          compensated,
           readiness_passed: false,
         },
       });
       return NextResponse.json(
-        { error: 'Shared channel was assigned but failed readiness verification. The assignment is logged for reconciliation.' },
+        { error: `Shared channel failed readiness verification. ${compensated ? 'The unusable assignment was cleared.' : 'Manual reconciliation may be required.'}` },
         { status: 422 },
       );
     }

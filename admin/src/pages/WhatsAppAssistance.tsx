@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { adminApiFetch, adminApiGet } from '@/lib/adminApi';
+import { useAdminSession } from '@/components/AdminLayout';
+import { hasAccess } from '@/lib/permissions';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 import { QRCodeSVG } from 'qrcode.react';
@@ -32,6 +34,7 @@ export default function WhatsAppAssistance() {
   const [message, setMessage] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pendingStepUpAction, setPendingStepUpAction] = useState<((stepUpId: string) => Promise<void>) | null>(null);
+  const session = useAdminSession();
   const stepUp = useStepUp();
 
   const refresh = useCallback(async () => {
@@ -130,7 +133,7 @@ export default function WhatsAppAssistance() {
       the owner completes Meta's authorization in their dashboard. Coexistence requires confirmed eligibility.
     </div>
     <div className="flex items-center gap-3">
-      <a href="/customer-onboarding" className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white">New customer onboarding</a>
+      {session?.role && hasAccess('customer-onboarding', session.role) && <a href="/customer-onboarding" className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white">New customer onboarding</a>}
       <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded-lg border px-4 py-2 text-sm font-medium">Refresh status</button>
     </div>
     {message && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm text-green-800">{message}</p>}
