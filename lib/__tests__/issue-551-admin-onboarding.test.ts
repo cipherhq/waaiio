@@ -101,4 +101,18 @@ describe('#551 admin-assisted onboarding authority contract', () => {
     expect(adminUi).toContain("'resend'");
     expect(adminUi).toContain("'cancel'");
   });
+
+  it('enforces operation-bound single-use step-up MFA and dedicated-channel protection on ensure_shared_channel', () => {
+    const waAssistanceUi = readFileSync('admin/src/pages/WhatsAppAssistance.tsx', 'utf8');
+    expect(actionRoute).toContain('consumeStepUp');
+    expect(actionRoute).toContain("'messaging_config'");
+    expect(actionRoute).toContain('STEP_UP_REQUIRED');
+    expect(actionRoute).toContain('allocateSharedChannelWithFallback');
+    expect(actionRoute).toContain('whatsapp_channel_candidates');
+    expect(waAssistanceUi).toContain('useStepUp');
+    expect(waAssistanceUi).toContain('StepUpDialog');
+    expect(waAssistanceUi).toContain("actionType: 'messaging_config'");
+    expect(waAssistanceUi).toContain("operation: 'ensure_shared_channel'");
+  });
 });
+

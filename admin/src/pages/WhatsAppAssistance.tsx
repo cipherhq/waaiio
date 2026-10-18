@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { adminApiFetch, adminApiGet } from '@/lib/adminApi';
+import { useStepUp } from '@/hooks/useStepUp';
+import StepUpDialog from '@/components/StepUpDialog';
 import { QRCodeSVG } from 'qrcode.react';
 
 interface WhatsAppSetup {
@@ -29,6 +31,8 @@ export default function WhatsAppAssistance() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [pendingStepUpAction, setPendingStepUpAction] = useState<(() => Promise<void>) | null>(null);
+  const stepUp = useStepUp();
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -66,8 +70,8 @@ export default function WhatsAppAssistance() {
     }
   }
 
-  async function ensureSharedChannel(row: Onboarding) {
-    if (!row.business_id || busyId) return;
+  async function performEnsureSharedChannel(row: Onboarding) {
+    if (!row.business_id) return;
     setBusyId(row.id);
     setMessage('');
     setError('');
@@ -75,13 +79,40 @@ export default function WhatsAppAssistance() {
       const response = await adminApiFetch('/api/admin/onboarding/' + encodeURIComponent(row.id), { action: 'ensure_shared_channel' });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || 'Shared channel allocation was unavailable.');
-      setMessage('Shared allocation requested. Verify that the assigned channel is active before presenting a WhatsApp link.');
+      const fallbackNote = result.fallback_used && result.channel_country
+        ? ` (regional shared routing via ${result.channel_country})`
+        : '';
+      setMessage(`Shared channel verified and allocated${fallbackNote}. Confirm activation before sharing the WhatsApp link.`);
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to allocate shared channel.');
     } finally {
       setBusyId(null);
     }
+  }
+
+  function ensureSharedChannel(row: Onboarding) {
+    if (!row.business_id || busyId) return;
+    const countryCode = String(row.whatsapp_setup?.country_code || '');
+    const stepUpParams = {
+      operation: 'ensure_shared_channel',
+      onboarding_id: String(row.id),
+      business_id: String(row.business_id),
+      business_country: countryCode,
+      fallback_policy: countryCode === 'GH' ? 'GH_TO_NG_SHARED' : 'EXACT_COUNTRY',
+      expected_wa_method: 'shared',
+    };
+    const action = async () => {
+      await performEnsureSharedChannel(row);
+    };
+    setPendingStepUpAction(() => action);
+    void stepUp.execute({
+      actionType: 'messaging_config',
+      targetId: String(row.id),
+      params: stepUpParams,
+      description: `Verify MFA to allocate a shared WhatsApp channel for ${row.target_email}`,
+      onAuthorized: action,
+    });
   }
 
   return <div className="space-y-6">
@@ -144,7 +175,7 @@ export default function WhatsAppAssistance() {
                 </button> : ready ?
                   <span className="text-xs text-green-700">Channel ready; confirm activation and bot routing</span> :
                   <button type="button" disabled={!!busyId || ['cancelled', 'failed'].includes(row.status)}
-                    onClick={() => void ensureSharedChannel(row)}
+                    onClick={() => ensureSharedChannel(row)}
                     className="rounded-lg border border-amber-400 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-40">
                     {busyId === row.id ? 'Checking…' : 'Allocate shared number'}
                   </button>}
@@ -155,5 +186,21 @@ export default function WhatsAppAssistance() {
         {rows.filter(row => !!row.business_id).length === 0 &&
           <p className="p-5 text-sm text-gray-500">No assisted businesses are in the onboarding queue.</p>}
       </div>}
+    <StepUpDialog
+      open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+      description={stepUp.state.description}
+      error={stepUp.state.error}
+      verifying={stepUp.state.phase === 'verifying'}
+      onSubmit={(code) => {
+        if (pendingStepUpAction) {
+          void stepUp.submitCode(code, pendingStepUpAction);
+        }
+      }}
+      onCancel={() => {
+        stepUp.reset();
+        setPendingStepUpAction(null);
+      }}
+    />
   </div>;
 }
+

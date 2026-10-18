@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { finalizeOnboarding } from '@/lib/onboarding/finalize';
+import { allocateSharedChannelWithFallback } from '@/lib/onboarding/whatsapp-readiness';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { initCapabilities } from '@/lib/capabilities/service';
@@ -602,7 +603,7 @@ export async function POST(request: NextRequest) {
       }
     } else if (plan === 'free') {
       // Free path: set status + tier directly, then attempt trial activation
-      const { error: bizUpdateError } = await service
+      let { error: bizUpdateError } = await service
         .from('businesses')
         .update({
           status: 'active',
@@ -610,12 +611,54 @@ export async function POST(request: NextRequest) {
         })
         .eq('id', businessId);
 
-      if (!bizUpdateError) {
+      // If activation was blocked by chk_shared_requires_channel (e.g. GH shared business
+      // provisioned before fallback channel allocation), attempt shared-channel self-healing once.
+      if (bizUpdateError) {
         try {
-          await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
-        } catch (trialErr) {
-          console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+          const { data: pendingBiz } = await service
+            .from('businesses')
+            .select('country_code, wa_method, assigned_channel_id')
+            .eq('id', businessId)
+            .maybeSingle();
+          if (pendingBiz && (!pendingBiz.wa_method || pendingBiz.wa_method === 'shared') && !pendingBiz.assigned_channel_id) {
+            const { data: healed } = await allocateSharedChannelWithFallback(
+              service,
+              businessId,
+              pendingBiz.country_code,
+              { repairStaleSharedChannel: true },
+            );
+            if (healed?.allocated) {
+              const retryUpdate = await service
+                .from('businesses')
+                .update({
+                  status: 'active',
+                  subscription_tier: plan,
+                })
+                .eq('id', businessId);
+              bizUpdateError = retryUpdate.error;
+            }
+          }
+        } catch (healErr) {
+          console.warn('[ONBOARDING-VERIFY] Shared channel self-heal attempt failed:', healErr);
         }
+      }
+
+      if (bizUpdateError) {
+        console.warn('[ONBOARDING-VERIFY] Free business status update failed (retryable):', bizUpdateError);
+        return NextResponse.json(
+          {
+            status: 'error',
+            message: 'Business activation failed because WhatsApp channel routing is not yet ready. Please retry or contact support.',
+            recoverable: true,
+          },
+          { status: 500 },
+        );
+      }
+
+      try {
+        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+      } catch (trialErr) {
+        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
       }
     }
 

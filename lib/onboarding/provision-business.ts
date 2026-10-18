@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { CATEGORY_FLOW_MAP, generateBotCode, generateSlug, getPayoutLimit, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
 import { initCapabilities } from '@/lib/capabilities/service';
 import { finalizeOnboarding } from '@/lib/onboarding/finalize';
+import { allocateSharedChannelWithFallback } from '@/lib/onboarding/whatsapp-readiness';
 import type { CapabilityId } from '@/lib/capabilities/types';
 
 export class OnboardingProvisionError extends Error {
@@ -84,17 +85,18 @@ export async function provisionPendingBusiness(service: SupabaseClient, input: P
     throw new OnboardingProvisionError('Failed to create business. Please try again.');
   }
 
-  // #266 R7: Allocate shared channel
+  // #266 R7: Allocate shared channel (with explicit regional fallback for GH -> NG)
   if (input.countryCode) {
-    const { data: allocation, error: allocError } = await service.rpc('allocate_shared_channel', {
-      p_business_id: business.id,
-      p_country_code: input.countryCode,
-    });
-    if (allocError || !allocation || !(allocation as any).allocated) {
+    const { data: allocation, error: allocError } = await allocateSharedChannelWithFallback(
+      service,
+      business.id,
+      input.countryCode,
+    );
+    if (allocError || !allocation || !allocation.allocated) {
       // Allocation failed — business remains pending without channel
       // The CHECK constraint will prevent activation until allocated
       // Log but don't throw — the business can be retry-allocated later
-      console.warn(`[ONBOARDING] Shared channel allocation failed for ${business.id}: ${allocError?.message || (allocation as any)?.reason || 'unknown'}`);
+      console.warn(`[ONBOARDING] Shared channel allocation failed for ${business.id}: ${allocError?.message || allocation?.reason || 'unknown'}`);
     }
   }
 

@@ -199,4 +199,81 @@ describe('POST /api/onboarding/verify — activation invariant', () => {
     const activationUpdate = businessUpdates.find((u: any) => u.status === 'active');
     expect(activationUpdate).toBeDefined();
   });
+
+  it('TEST 4: free-plan business status update failure (e.g. chk_shared_requires_channel) fails closed with 500 and never marks admin invite active', async () => {
+    let inviteUpdated = false;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'business_capabilities') {
+        return {
+          select: () => ({
+            eq: () => Promise.resolve({
+              data: [{ capability: 'scheduling', is_enabled: true }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'subscriptions') {
+        return {
+          upsert: (data: unknown) => {
+            subscriptionUpserts.push(data);
+            return { select: () => ({ single: () => Promise.resolve({ data: { id: 'sub-1' }, error: null }) }) };
+          },
+        };
+      }
+      if (table === 'businesses') {
+        return {
+          update: (data: unknown) => {
+            businessUpdates.push(data);
+            return {
+              eq: () => Promise.resolve({
+                error: { code: '23514', message: 'new row for relation "businesses" violates check constraint "chk_shared_requires_channel"' },
+              }),
+            };
+          },
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({
+                data: { country_code: 'GH', wa_method: 'shared', assigned_channel_id: null },
+                error: null,
+              }),
+              single: () => Promise.resolve({ data: { bot_code: 'TEST', slug: 'test' }, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'admin_onboarding_invites') {
+        return {
+          update: () => {
+            inviteUpdated = true;
+            return { eq: () => ({ eq: () => ({ select: () => ({ maybeSingle: () => Promise.resolve({ data: { id: 'inv-1' }, error: null }) }) }) }) };
+          },
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: { id: 'inv-1', whatsapp_method: 'shared' }, error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }),
+        upsert: () => ({ select: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }),
+        insert: () => Promise.resolve({ error: null }),
+        update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+      };
+    });
+
+    const { POST } = await import('@/app/api/onboarding/verify/route');
+    const res = await POST(makeRequest({ business_id: 'biz-1', plan: 'free' }));
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.recoverable).toBe(true);
+    expect(inviteUpdated).toBe(false);
+  });
 });
+

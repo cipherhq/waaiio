@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
 import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboardingInput } from '@/lib/onboarding/admin-assisted';
 import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
+import {
+  allocateSharedChannelWithFallback,
+  getSharedChannelFallbackPolicy,
+  isAssignedWhatsAppChannelReady,
+} from '@/lib/onboarding/whatsapp-readiness';
 import { CAPABILITY_TIER_REQUIREMENTS, tierMeetsRequirement, type CapabilityId, type SubscriptionTier } from '@/shared/capabilities';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
@@ -51,8 +57,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!onboarding.business_id || !onboarding.target_user_id || ['cancelled', 'failed'].includes(onboarding.status)) {
       return NextResponse.json({ error: 'Business onboarding is not eligible for shared routing' }, { status: 409 });
     }
+    if (onboarding.wa_method && onboarding.wa_method !== 'shared') {
+      return NextResponse.json({ error: 'This onboarding is configured for an owner-managed dedicated number' }, { status: 409 });
+    }
+    if (onboarding.whatsapp_channel_id) {
+      return NextResponse.json({ error: 'A dedicated WhatsApp channel is already linked to this onboarding' }, { status: 409 });
+    }
     const { data: business, error: bizError } = await service.from('businesses')
-      .select('id, owner_id, country_code, wa_method, status')
+      .select('id, owner_id, country_code, wa_method, status, assigned_channel_id')
       .eq('id', onboarding.business_id).maybeSingle();
     if (bizError || !business || business.owner_id !== onboarding.target_user_id) {
       return NextResponse.json({ error: 'Business ownership could not be verified' }, { status: 409 });
@@ -61,23 +73,147 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (business.wa_method !== 'shared' || !['pending', 'active'].includes(business.status)) {
       return NextResponse.json({ error: 'This business requires an explicit owner-led channel transition' }, { status: 409 });
     }
-    const { data: allocation, error: allocationError } = await service.rpc('allocate_shared_channel', {
-      p_business_id: business.id,
-      p_country_code: business.country_code,
-    });
-    if (allocationError || !allocation || !(allocation as { allocated?: boolean }).allocated) {
-      return NextResponse.json({ error: 'No eligible shared channel could be allocated. Check country-specific platform routing.' }, { status: 409 });
+
+    // Check for any active dedicated channel owned by this business
+    const { data: activeDedicated } = await service
+      .from('whatsapp_channels')
+      .select('id')
+      .eq('business_id', business.id)
+      .eq('channel_type', 'dedicated')
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+    if (activeDedicated) {
+      return NextResponse.json({ error: 'Cannot allocate a shared channel when the business has an active dedicated WABA channel' }, { status: 409 });
     }
+
+    // Check for any in-flight WABA channel candidate for this business
+    const { data: openCandidate } = await service
+      .from('whatsapp_channel_candidates')
+      .select('id, status')
+      .eq('business_id', business.id)
+      .in('status', ['discovered', 'verifying', 'verified', 'failed'])
+      .limit(1)
+      .maybeSingle();
+    if (openCandidate) {
+      return NextResponse.json({ error: 'Cannot allocate a shared channel while an owner WABA setup candidate is in progress' }, { status: 409 });
+    }
+
+    // If the business already has a ready assigned shared channel, return idempotently without consuming step-up
+    const previousChannelId = business.assigned_channel_id ?? null;
+    if (previousChannelId) {
+      const { data: existingChannel } = await service
+        .from('whatsapp_channels')
+        .select('id, phone_number, channel_type, is_active, connection_status, country_code, business_id')
+        .eq('id', previousChannelId)
+        .maybeSingle();
+      if (isAssignedWhatsAppChannelReady(business, existingChannel)) {
+        return NextResponse.json({
+          success: true,
+          allocated: true,
+          idempotent: true,
+          channel_id: existingChannel?.id ?? previousChannelId,
+          phone_number: existingChannel?.phone_number ?? null,
+          channel_country: existingChannel?.country_code ?? null,
+          fallback_used: existingChannel?.country_code !== business.country_code,
+          recheck_readiness: true,
+        });
+      }
+    }
+
+    // Operation-bound single-use step-up MFA verification (SEC-005)
+    const authoritativeStepUpParams = {
+      operation: 'ensure_shared_channel',
+      onboarding_id: String(onboarding.id),
+      business_id: String(business.id),
+      business_country: String(business.country_code || ''),
+      fallback_policy: getSharedChannelFallbackPolicy(business.country_code),
+      expected_wa_method: 'shared',
+    };
+    const stepUpOk = await consumeStepUp(admin, 'messaging_config', String(onboarding.id), authoritativeStepUpParams);
+    if (!stepUpOk) {
+      return NextResponse.json(
+        {
+          error: 'Step-up MFA verification required for shared channel allocation',
+          code: 'STEP_UP_REQUIRED',
+          step_up_context: authoritativeStepUpParams,
+        },
+        { status: 403 },
+      );
+    }
+
+    const { data: allocation, error: allocationError } = await allocateSharedChannelWithFallback(
+      service,
+      business.id,
+      business.country_code,
+      { repairStaleSharedChannel: true },
+    );
+    if (allocationError || !allocation || !allocation.allocated) {
+      return NextResponse.json({
+        error: 'No eligible shared channel could be allocated. Check country-specific platform routing.',
+        reason: allocationError?.message || allocation?.reason || 'allocation_failed',
+      }, { status: 409 });
+    }
+
+    // Post-allocation readiness verification
+    const { data: updatedBusiness } = await service
+      .from('businesses')
+      .select('id, country_code, assigned_channel_id')
+      .eq('id', business.id)
+      .maybeSingle();
+    const { data: assignedChannel } = updatedBusiness?.assigned_channel_id
+      ? await service
+          .from('whatsapp_channels')
+          .select('id, phone_number, channel_type, is_active, connection_status, country_code, business_id')
+          .eq('id', updatedBusiness.assigned_channel_id)
+          .maybeSingle()
+      : { data: null };
+
+    if (!isAssignedWhatsAppChannelReady(updatedBusiness, assignedChannel)) {
+      return NextResponse.json(
+        { error: 'Shared channel was assigned but failed readiness verification.' },
+        { status: 422 },
+      );
+    }
+
+    if (
+      typeof onboarding.last_error === 'string' &&
+      onboarding.last_error.toLowerCase().includes('shared')
+    ) {
+      await service
+        .from('admin_onboarding_invites')
+        .update({ last_error: null, updated_at: new Date().toISOString() })
+        .eq('id', onboarding.id);
+    }
+
     const { error: auditError } = await logAdminAudit({
-      actorId: admin.userId, action: 'admin_onboarding_shared_channel_reallocation',
-      entityType: 'admin_onboarding', entityId: onboarding.id,
-      details: { business_id: business.id, country_code: business.country_code },
+      actorId: admin.userId,
+      action: 'admin_onboarding_shared_channel_reallocation',
+      entityType: 'admin_onboarding',
+      entityId: onboarding.id,
+      details: {
+        business_id: business.id,
+        business_country: business.country_code,
+        previous_channel_id: previousChannelId,
+        allocated_channel_id: assignedChannel?.id ?? allocation.channel_id ?? null,
+        channel_country: assignedChannel?.country_code ?? allocation.channel_country ?? business.country_code,
+        fallback_used: Boolean(allocation.fallback_used || (assignedChannel?.country_code && assignedChannel.country_code !== business.country_code)),
+        step_up_verified: true,
+      },
     });
     if (auditError) return NextResponse.json({
       error: 'Shared allocation applied but the audit record failed; reconcile before further changes.',
       mutationApplied: true, auditRecorded: false,
     }, { status: 207 });
-    return NextResponse.json({ success: true, recheck_readiness: true });
+    return NextResponse.json({
+      success: true,
+      allocated: true,
+      channel_id: assignedChannel?.id ?? allocation.channel_id ?? null,
+      phone_number: assignedChannel?.phone_number ?? allocation.phone_number ?? null,
+      channel_country: assignedChannel?.country_code ?? allocation.channel_country ?? business.country_code,
+      fallback_used: Boolean(allocation.fallback_used || (assignedChannel?.country_code && assignedChannel.country_code !== business.country_code)),
+      recheck_readiness: true,
+    });
   }
 
   if (action === 'whatsapp_instructions') {
