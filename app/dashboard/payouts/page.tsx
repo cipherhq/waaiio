@@ -31,7 +31,8 @@ interface TermsAcceptance {
 }
 
 interface Balance {
-  gross: number;
+  total_revenue: number;  // all completed business revenue (bookings + orders + invoices)
+  gross: number;          // platform-held gross (platform_managed) or = total_revenue (direct_split)
   fees: number;
   net_available: number;
   paid_out: number;
@@ -516,8 +517,8 @@ export default function PayoutsPage() {
         {balance && (
           <div className="mt-6 grid gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-gray-200 bg-white p-5">
-              <p className="text-xs font-medium text-gray-500">Total Earnings</p>
-              <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(balance.gross, country)}</p>
+              <p className="text-xs font-medium text-gray-500">Total Revenue</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(balance.total_revenue ?? balance.gross, country)}</p>
             </div>
             <div className="rounded-xl border border-gray-200 bg-white p-5">
               <p className="text-xs font-medium text-gray-500">Platform Fees</p>

@@ -165,7 +165,7 @@ describe('Webhook Amount Validation', () => {
         'ref-nonexistent',
         supabase as any,
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe('already_finalized');
 
     // No update should be called
     expect(supabase._updateFn).not.toHaveBeenCalled();

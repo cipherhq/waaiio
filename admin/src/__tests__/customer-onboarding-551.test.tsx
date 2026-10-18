@@ -22,13 +22,19 @@ describe('#551 Admin customer onboarding journey', () => {
 
   it('reviews exact owner/business data before sending an idempotent server request', async () => {
     render(<CustomerOnboarding />);
-    await screen.findByRole('option', { name: 'Restaurant' });
-    const values: Record<string, string> = {
+    await screen.findByLabelText('Owner email');
+    const ownerFields: Record<string, string> = {
       'Owner first name': 'Ada', 'Owner last name': 'Lovelace', 'Owner email': 'ada@example.test',
-      'Business name': 'Exact Business', 'Business phone': '+2348012345678', 'Country code': 'NG',
-      'Category key': 'restaurant', City: 'Lagos', Address: '1 Test Street',
     };
-    for (const [label, value] of Object.entries(values)) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    for (const [label, value] of Object.entries(ownerFields)) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('option', { name: 'Restaurant' });
+    const businessFields: Record<string, string> = {
+      'Business name': 'Exact Business', 'Business phone': '+2348012345678',
+      'Country code': 'NG', 'Category key': 'restaurant', City: 'Lagos', Address: '1 Test Street',
+    };
+    for (const [label, value] of Object.entries(businessFields)) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     fireEvent.click(screen.getByRole('button', { name: 'Review onboarding' }));
     expect(screen.getByText('Review before creation')).toBeInTheDocument();
     expect(screen.getByText(/Exact Business/)).toBeInTheDocument();
@@ -38,5 +44,15 @@ describe('#551 Admin customer onboarding journey', () => {
       request_key: '9f96271c-6715-4e20-ab96-fce6409ed4cd', owner_email: 'ada@example.test', business_name: 'Exact Business',
     }));
     expect(await screen.findByText('Activation invitation sent. Customer action is now required.')).toBeInTheDocument();
+  });
+
+  it('fails closed when the authoritative country API is unavailable', async () => {
+    api.get.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Unavailable' }), { status: 503 }));
+    render(<CustomerOnboarding />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load supported countries');
+    expect(screen.queryByLabelText('Country code')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review onboarding' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalled();
   });
 });

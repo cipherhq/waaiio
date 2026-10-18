@@ -493,7 +493,7 @@ export default function ServicesPage() {
                 <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 px-4 py-3">
                   <div>
                     <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Recurring</p>
-                    <p className="text-xs text-gray-400 dark:text-gray-500">Members can give on a regular schedule</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Customers book and pay for this service on a repeating schedule</p>
                   </div>
                   <button
                     type="button"

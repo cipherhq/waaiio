@@ -127,7 +127,7 @@ function setupMocks(config: AutoLinkTestConfig = {}) {
         data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', gateway: 'paystack' },
       });
     } else if (table === 'platform_fees') {
-      chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+      chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
     } else if (table === 'profiles') {
       chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
     } else {

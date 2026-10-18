@@ -1185,16 +1185,16 @@ describe('supplemental: source structure verification — provenance laundering'
     expect(src).toMatch(/handleMessage\(from.*lastSession\.business_id.*lastProvenance\)/);
   });
 
-  it('keyword/switch action passes bot_code provenance (structure proof)', () => {
+  it('keyword/switch action passes fuzzy provenance (structure proof)', () => {
     const fs = require('fs');
     const path = require('path');
     const src = fs.readFileSync(
       path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
     );
-    // Keyword action passes 'bot_code' as _internalProvenance
-    expect(src).toContain("'bot_code'");
-    // The handleMessage call for keyword detection includes bot_code provenance
-    expect(src).toMatch(/handleMessage\(from.*biz\.bot_code.*biz\.id.*'bot_code'\)/);
+    // switch/connect match is user-initiated fuzzy lookup — NOT authoritative
+    expect(src).toContain("'fuzzy'");
+    // The handleMessage call for switch/connect detection includes fuzzy provenance
+    expect(src).toMatch(/handleMessage\(from.*biz\.bot_code.*biz\.id.*'fuzzy'\)/);
   });
 
   it('restart_yes carries forward session biz_resolution (structure proof)', () => {

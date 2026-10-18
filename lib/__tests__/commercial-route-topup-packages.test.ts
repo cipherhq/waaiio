@@ -1,0 +1,395 @@
+/**
+ * Commercial config route: messaging_topup_packages server-side validation
+ *
+ * Proves that POST /api/admin/platform-settings/commercial:
+ *   1. Runs requirePlatformAdmin (auth) BEFORE validation — route.ts line 18
+ *   2. Runs validateTopupPackages BEFORE consumeStepUp — route.ts lines 40-48 vs line 52
+ *   3. Returns 400 + does NOT call consumeStepUp for every invalid payload
+ *   4. Calls consumeStepUp and the RPC for a valid payload
+ *
+ * Run:
+ *   npx vitest run lib/__tests__/commercial-route-topup-packages.test.ts
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// --- Mocks ---
+
+const rpcMock = vi.fn();
+
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: () => ({
+    rpc: rpcMock,
+  }),
+}));
+
+vi.mock('@/lib/admin-auth', () => ({
+  requirePlatformAdmin: vi.fn(async () => ({
+    id: 'admin-1',
+    userId: 'admin-1',
+    email: 'admin@test.test',
+    role: 'admin',
+    aal: 'aal2',
+    bearerToken: 'tok',
+    sessionId: 'sess-1',
+  })),
+}));
+
+const consumeStepUpMock = vi.fn(async () => {});
+
+vi.mock('@/lib/admin-step-up', () => ({
+  consumeStepUp: consumeStepUpMock,
+  StepUpError: class StepUpError extends Error {},
+}));
+
+vi.mock('@/lib/admin-cors', () => ({
+  adminCorsHeaders: () => ({}),
+}));
+
+function makeRequest(body: Record<string, unknown>) {
+  return {
+    json: async () => body,
+    headers: { get: () => null },
+  } as unknown as import('next/server').NextRequest;
+}
+
+describe('POST /api/admin/platform-settings/commercial — topup-packages validation', () => {
+  const envBackup: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rpcMock.mockResolvedValue({ data: 'version-1', error: null });
+    consumeStepUpMock.mockResolvedValue(undefined);
+    envBackup.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    envBackup.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://unit.example.test';
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'unit-test-public-key';
+  });
+
+  afterEach(() => {
+    if (envBackup.NEXT_PUBLIC_SUPABASE_URL === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = envBackup.NEXT_PUBLIC_SUPABASE_URL;
+    if (envBackup.NEXT_PUBLIC_SUPABASE_ANON_KEY === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    else process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = envBackup.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  });
+
+  async function callRoute(body: Record<string, unknown>) {
+    const { POST } = await import('@/app/api/admin/platform-settings/commercial/route');
+    const res = await POST(makeRequest(body));
+    const json = await res.json();
+    return { status: res.status, json };
+  }
+
+  // ── Auth-before-validation order proof ───────────────────────────────────────
+  // route.ts line 18: requirePlatformAdmin (auth)
+  // route.ts lines 40-48: isTopupPackagesKey / validateTopupPackages (validation)
+  // route.ts line 52: consumeStepUp (step-up authorization)
+  // This order means: validation never reaches the step-up layer for bad payloads.
+
+  // ── Rejection tests — consumeStepUp must NOT be called ───────────────────────
+
+  it('rejects null value', async () => {
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: null,
+      stepUpId: 'su-1',
+    });
+    // null hits the !key || value === undefined guard at line 24; null !== undefined
+    // so it passes that guard. validateTopupPackages rejects null with a 400.
+    expect(status).toBe(400);
+    expect(json.code).toBe('validation_error');
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a string value', async () => {
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: '{"NGN":[]}',
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.code).toBe('validation_error');
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an array value', async () => {
+    const { status } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: [],
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown currency code', async () => {
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { EUR: [{ amount_minor: 1000, label: '€10' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.error).toContain('EUR');
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects negative amount_minor', async () => {
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: -1000, label: 'bad' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.error).toContain('greater than 0');
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects zero amount_minor', async () => {
+    const { status } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 0, label: 'bad' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a decimal amount_minor', async () => {
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 1000.5, label: 'bad' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.error).toContain('whole number');
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate amount_minor values within a currency', async () => {
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: {
+        NGN: [
+          { amount_minor: 100000, label: 'First' },
+          { amount_minor: 100000, label: 'Duplicate' },
+        ],
+      },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.error).toContain('duplicate');
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing label', async () => {
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000 }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.error).toContain('label');
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty label', async () => {
+    const { status } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-object package (array element that is a string)', async () => {
+    const { status } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: ['not-an-object'] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown field on a package', async () => {
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: 'ok', bonus: 'free' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.error).toContain('"bonus"');
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-string description', async () => {
+    const { status } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: 'ok', description: 42 }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(consumeStepUpMock).not.toHaveBeenCalled();
+  });
+
+  // ── Pass-through test — consumeStepUp and RPC are both called ────────────────
+
+  it('passes a valid single-currency payload through to consumeStepUp and the RPC', async () => {
+    const { status } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: {
+        NGN: [
+          { amount_minor: 100000, label: '₦1,000 credit' },
+          { amount_minor: 500000, label: '₦5,000 credit', description: 'Best value' },
+        ],
+      },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(200);
+    expect(consumeStepUpMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    const rpcArgs = rpcMock.mock.calls[0][1];
+    expect(rpcArgs.p_key).toBe('messaging_topup_packages');
+    expect(rpcArgs.p_value.NGN[0].amount_minor).toBe(100000);
+  });
+
+  it('passes an empty object {} — clears all packages — through to consumeStepUp and RPC', async () => {
+    const { status } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: {},
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(200);
+    expect(consumeStepUpMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+  });
+
+  // ── RPC error handling ────────────────────────────────────────────────────────
+  // Step-3 fix: unexpected RPC errors no longer leak raw error.message to the client.
+  // Version conflicts (intentional, authored message) still surface at 409.
+
+  it('returns 409 with error message for a version conflict', async () => {
+    rpcMock.mockResolvedValue({
+      data: null,
+      // M439 exact message format; SQLSTATE P0001 (default RAISE EXCEPTION)
+      error: { message: 'Config version conflict: expected abc-v1, got xyz-v2', code: 'P0001' },
+    });
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(409);
+    expect(json.code).toBe('version_conflict');
+    // Authored message is intentionally forwarded for version conflicts
+    expect(json.error).toContain('version conflict');
+  });
+
+  it('returns 400 validation_error for an authored P0001 validation message', async () => {
+    // Simulates svc_save_commercial_config raising "trial_days must be a positive integer"
+    // for a non-topup-packages key that the route's JS validation doesn't pre-screen.
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: 'trial_days must be a positive integer', code: 'P0001' },
+    });
+    const { status, json } = await callRoute({
+      key: 'trial_days',
+      value: -1,
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.code).toBe('validation_error');
+    expect(json.error).toBe('trial_days must be a positive integer');
+    expect(consumeStepUpMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 500 with generic body for unexpected RPC error, real message not in response', async () => {
+    const realMessage = 'relation "platform_settings" does not exist';
+    // SQLSTATE 42P01 = undefined_table — an infrastructure error, not an authored P0001
+    rpcMock.mockResolvedValue({ data: null, error: { message: realMessage, code: '42P01' } });
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(500);
+    expect(json.code).toBe('internal_error');
+    expect(json.error).toBe('Internal server error');
+    // Raw PG error text must NOT appear anywhere in the response body
+    expect(JSON.stringify(json)).not.toContain(realMessage);
+  });
+
+  // ── Negative-control tests for SQLSTATE + prefix classifier ─────────────────
+  // Proves the classifier is fail-closed: unrecognized messages and wrong
+  // SQLSTATE codes fall through to generic 500, never leaking the raw text.
+
+  it('returns 500 with generic body for unrecognized P0001 message (fail-closed)', async () => {
+    const craftedMessage = 'Something unexpected happened in svc_save_commercial_config';
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: craftedMessage, code: 'P0001' },
+    });
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(500);
+    expect(json.code).toBe('internal_error');
+    expect(json.error).toBe('Internal server error');
+    expect(JSON.stringify(json)).not.toContain(craftedMessage);
+  });
+
+  it('returns 500 when a recognized prefix arrives with a non-P0001 SQLSTATE', async () => {
+    // A message starting with a known validation prefix but with wrong SQLSTATE
+    // must NOT be treated as a safe authored error
+    const spoofedMessage = 'Key "trial_days" is invalid — injected via non-P0001 path';
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: spoofedMessage, code: '42000' },
+    });
+    const { status, json } = await callRoute({
+      key: 'trial_days',
+      value: -1,
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(500);
+    expect(json.code).toBe('internal_error');
+    expect(json.error).toBe('Internal server error');
+    expect(JSON.stringify(json)).not.toContain(spoofedMessage);
+  });
+
+  it('returns 400 validation_error for an authored P0001 messaging_topup_packages message', async () => {
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { message: 'messaging_topup_packages must contain at least one currency', code: 'P0001' },
+    });
+    const { status, json } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: { NGN: [{ amount_minor: 100000, label: '₦1,000' }] },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(400);
+    expect(json.code).toBe('validation_error');
+    expect(json.error).toContain('messaging_topup_packages');
+  });
+
+  it('passes a valid multi-currency payload', async () => {
+    const { status } = await callRoute({
+      key: 'messaging_topup_packages',
+      value: {
+        NGN: [{ amount_minor: 100000, label: '₦1,000' }],
+        GHS: [{ amount_minor: 10000, label: 'GH₵100' }],
+        USD: [{ amount_minor: 1000, label: '$10' }],
+        GBP: [{ amount_minor: 1000, label: '£10' }],
+        CAD: [{ amount_minor: 1000, label: 'CA$10' }],
+      },
+      stepUpId: 'su-1',
+    });
+    expect(status).toBe(200);
+    expect(consumeStepUpMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+  });
+});
