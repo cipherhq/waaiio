@@ -57,7 +57,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!onboarding.business_id || !onboarding.target_user_id || ['cancelled', 'failed'].includes(onboarding.status)) {
       return NextResponse.json({ error: 'Business onboarding is not eligible for shared routing' }, { status: 409 });
     }
-    if (onboarding.wa_method && onboarding.wa_method !== 'shared') {
+    // P2-2: Column is whatsapp_method per M429, not wa_method
+    if (onboarding.whatsapp_method && onboarding.whatsapp_method !== 'shared') {
       return NextResponse.json({ error: 'This onboarding is configured for an owner-managed dedicated number' }, { status: 409 });
     }
     if (onboarding.whatsapp_channel_id) {
@@ -74,8 +75,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: 'This business requires an explicit owner-led channel transition' }, { status: 409 });
     }
 
-    // Check for any active dedicated channel owned by this business
-    const { data: activeDedicated } = await service
+    // P1-2: Fail closed on dedicated-channel query errors
+    const { data: activeDedicated, error: dedicatedErr } = await service
       .from('whatsapp_channels')
       .select('id')
       .eq('business_id', business.id)
@@ -83,18 +84,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       .eq('is_active', true)
       .limit(1)
       .maybeSingle();
+    if (dedicatedErr) {
+      return NextResponse.json({ error: 'Unable to verify dedicated channel state. Retry or check database connectivity.' }, { status: 500 });
+    }
     if (activeDedicated) {
       return NextResponse.json({ error: 'Cannot allocate a shared channel when the business has an active dedicated WABA channel' }, { status: 409 });
     }
 
-    // Check for any in-flight WABA channel candidate for this business
-    const { data: openCandidate } = await service
+    // P1-1: Use actual candidate states from M391 schema; P1-2: fail closed on error
+    const { data: openCandidate, error: candidateErr } = await service
       .from('whatsapp_channel_candidates')
       .select('id, status')
       .eq('business_id', business.id)
-      .in('status', ['discovered', 'verifying', 'verified', 'failed'])
+      .in('status', ['pending', 'validating', 'ready'])
       .limit(1)
       .maybeSingle();
+    if (candidateErr) {
+      return NextResponse.json({ error: 'Unable to verify WABA candidate state. Retry or check database connectivity.' }, { status: 500 });
+    }
     if (openCandidate) {
       return NextResponse.json({ error: 'Cannot allocate a shared channel while an owner WABA setup candidate is in progress' }, { status: 409 });
     }
@@ -144,6 +151,27 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       );
     }
 
+    // P1-3: Re-verify dedicated/candidate state after step-up to narrow race window.
+    // Between the initial check and step-up consumption, an owner could have started
+    // WABA setup via embedded signup. The M430 RPC locks the business row, but it
+    // does not check for candidates — that's our responsibility.
+    {
+      const { data: raceDedicated, error: raceDE } = await service
+        .from('whatsapp_channels').select('id')
+        .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true)
+        .limit(1).maybeSingle();
+      if (raceDE || raceDedicated) {
+        return NextResponse.json({ error: 'A dedicated channel appeared during MFA verification. Shared allocation aborted.' }, { status: 409 });
+      }
+      const { data: raceCandidate, error: raceCE } = await service
+        .from('whatsapp_channel_candidates').select('id')
+        .eq('business_id', business.id).in('status', ['pending', 'validating', 'ready'])
+        .limit(1).maybeSingle();
+      if (raceCE || raceCandidate) {
+        return NextResponse.json({ error: 'An owner WABA setup started during MFA verification. Shared allocation aborted.' }, { status: 409 });
+      }
+    }
+
     const { data: allocation, error: allocationError } = await allocateSharedChannelWithFallback(
       service,
       business.id,
@@ -158,24 +186,62 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     // Post-allocation readiness verification
-    const { data: updatedBusiness } = await service
+    const { data: updatedBusiness, error: postBizErr } = await service
       .from('businesses')
       .select('id, country_code, assigned_channel_id')
       .eq('id', business.id)
       .maybeSingle();
-    const { data: assignedChannel } = updatedBusiness?.assigned_channel_id
+    const { data: assignedChannel, error: postChErr } = updatedBusiness?.assigned_channel_id
       ? await service
           .from('whatsapp_channels')
           .select('id, phone_number, channel_type, is_active, connection_status, country_code, business_id')
           .eq('id', updatedBusiness.assigned_channel_id)
           .maybeSingle()
-      : { data: null };
+      : { data: null, error: null };
 
-    if (!isAssignedWhatsAppChannelReady(updatedBusiness, assignedChannel)) {
+    if (postBizErr || postChErr || !isAssignedWhatsAppChannelReady(updatedBusiness, assignedChannel)) {
+      // P1-4: Readiness failed — audit the inconsistent state before returning error.
+      // The allocation RPC already mutated assigned_channel_id; log the dangling assignment
+      // so it can be reconciled. Do NOT silently leave an unverified assignment.
+      await logAdminAudit({
+        actorId: admin.userId,
+        action: 'admin_onboarding_shared_channel_readiness_failed',
+        entityType: 'admin_onboarding',
+        entityId: onboarding.id,
+        details: {
+          business_id: business.id,
+          allocated_channel_id: allocation.channel_id ?? null,
+          post_biz_error: postBizErr?.message ?? null,
+          post_ch_error: postChErr?.message ?? null,
+          assigned_channel_id: updatedBusiness?.assigned_channel_id ?? null,
+          readiness_passed: false,
+        },
+      });
       return NextResponse.json(
-        { error: 'Shared channel was assigned but failed readiness verification.' },
+        { error: 'Shared channel was assigned but failed readiness verification. The assignment is logged for reconciliation.' },
         { status: 422 },
       );
+    }
+
+    // P1-3 (post-allocation): Verify no concurrent dedicated setup appeared during allocation
+    {
+      const { data: postDedicated } = await service
+        .from('whatsapp_channels').select('id')
+        .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true)
+        .limit(1).maybeSingle();
+      if (postDedicated) {
+        await logAdminAudit({
+          actorId: admin.userId,
+          action: 'admin_onboarding_shared_channel_concurrent_dedicated_conflict',
+          entityType: 'admin_onboarding',
+          entityId: onboarding.id,
+          details: { business_id: business.id, shared_channel_id: assignedChannel?.id, dedicated_channel_id: postDedicated.id },
+        });
+        return NextResponse.json(
+          { error: 'A dedicated WABA channel was connected concurrently. Shared allocation is inconsistent; reconciliation required.' },
+          { status: 409 },
+        );
+      }
     }
 
     if (

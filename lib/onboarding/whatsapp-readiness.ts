@@ -157,24 +157,30 @@ export async function allocateSharedChannelWithFallback(
           };
         }
 
-        // Assigned shared channel is stale/inactive — find a healthy compatible shared channel and reassign
+        // Assigned shared channel is stale/inactive — find a healthy compatible
+        // shared channel and reassign. Query only schema-verified columns;
+        // capacity is enforced inside the reassign_shared_channel RPC via
+        // platform_settings.shared_number_capacity (not per-channel columns).
         for (let fIdx = 0; fIdx < candidateCountries.length; fIdx++) {
           const repairCountry = candidateCountries[fIdx];
-          const { data: candidates } = await service
+          const { data: candidates, error: candidateErr } = await service
             .from('whatsapp_channels')
-            .select('id, phone_number, country_code, business_count, max_businesses')
+            .select('id, phone_number, country_code')
             .eq('channel_type', 'shared')
             .eq('country_code', repairCountry)
             .eq('is_active', true)
             .eq('connection_status', 'active')
             .is('business_id', null)
-            .order('business_count', { ascending: true })
+            .order('created_at', { ascending: true })
             .limit(10);
 
+          // P1-2: Fail closed on query errors — do not proceed with stale data
+          if (candidateErr) {
+            return { data: null, error: { message: `Stale-repair candidate query failed: ${candidateErr.message}` } };
+          }
+
           const healthyTarget = (candidates ?? []).find(
-            (c: { id: string; business_count?: number | null; max_businesses?: number | null }) =>
-              c.id !== result.channel_id &&
-              (c.max_businesses == null || (c.business_count ?? 0) < c.max_businesses),
+            (c: { id: string }) => c.id !== result.channel_id,
           );
 
           if (healthyTarget) {
