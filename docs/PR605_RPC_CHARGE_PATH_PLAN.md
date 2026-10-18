@@ -128,7 +128,55 @@ The explicit `cancellation_operational_state` column is **not implemented**. The
 
 **Trade-off:** Adding a dedicated column would make the state machine explicit in a single field but adds a new CHECK constraint, migration complexity, and requires updating all existing consumers. The current representation achieves the safety goal (all claims/dispatches check `cancellation_requested_at IS NOT NULL`) without the additional column.
 
-**Decision needed:** Whether to add `cancellation_operational_state` as a formal column or accept the implicit two-field representation. Current implementation is safe but less self-documenting.
+### Evidence matrix: crash recovery and webhook retry durability
+
+The following matrix proves every cancellation operational state is durably reconstructable from persisted columns after any crash point, without a dedicated `cancellation_operational_state` column.
+
+**Persisted columns used:** `customer_subscriptions.cancellation_requested_at`, `customer_subscriptions.status`, `paystack_billing_attempts.status`, `processed_webhook_events.status`
+
+| Scenario | Crash/Retry Point | Persisted State After Recovery | Reconstructed Operational State | Correct Behavior on Restart |
+|---|---|---|---|---|
+| **S1.** Cancel request, intent written, process crashes before provider call | After `UPDATE cancellation_requested_at` commits, before HTTP to Paystack/Stripe | `cancellation_requested_at IS NOT NULL`, `status = active` | **pending_provider** | Customer retries → intent CAS finds `cancellation_requested_at` already set → re-read confirms intent → proceeds to provider call (idempotent) |
+| **S2.** Provider cancel succeeds, process crashes before DB status update | After Paystack `/subscription/disable` returns 200, before `UPDATE status = 'cancelled'` | `cancellation_requested_at IS NOT NULL`, `status = active` | **pending_provider** (provider actually verified) | Customer retries → intent already set → provider call returns "already disabled" or status check shows `non-renewing`/`cancelled` → `providerCancelled = true` → DB updated |
+| **S3.** Provider cancel fails (network timeout), process crashes | After HTTP timeout, before 503 response to customer | `cancellation_requested_at IS NOT NULL`, `status = active` | **pending_provider** | All billing claims blocked by intent. Customer retries → full flow re-executes. Cron cannot create new charges. |
+| **S4.** Cancel complete (both intent + provider + DB update) | Normal completion | `cancellation_requested_at IS NOT NULL`, `status = cancelled` | **provider_verified** | Idempotent: returns `already_cancelled: true` |
+| **S5.** Dispatch committed, cancel intent arrives during provider charge | After `dispatch_paystack_attempt` commits, concurrent `UPDATE cancellation_requested_at` | `cancellation_requested_at IS NOT NULL`, `status = active/past_due`, attempt `status = dispatched` | **needs_reconciliation** | `executePaystackDispatchedCharge` re-reads subscription → sees intent → BLOCKED. Attempt stays `dispatched`. Reconciliation cron picks up via `paystack_billing_attempts WHERE status IN ('dispatched','charged')` query. |
+| **S6.** Charge reached provider, provider charges card, process crashes before recording | After Paystack debits customer, before `recordCharged` | `cancellation_requested_at IS NOT NULL`, attempt `status = dispatched` | **needs_reconciliation** | Reconciliation cron → `verify(provider_reference)` → `status: success` → `finalize` → payment recorded. No duplicate charge (attempt status guards). |
+| **S7.** Charge succeeded + recorded, process crashes before finalization | After `status = charged`, before `finalize_paystack_recurring_charge` | `cancellation_requested_at IS NOT NULL`, attempt `status = charged` | **needs_reconciliation** | Reconciliation cron → `verify` → `finalize` → booking + payment + fee created atomically. Idempotent: `finalize` checks `status = 'finalized'` before creating records. |
+| **S8.** Flutterwave claim exists, cancel arrives, webhook fires for prior charge | `claim_recurring_billing_cycle` blocked by intent; existing `processed_webhook_events` row | `cancellation_requested_at IS NOT NULL`, event `status = claimed` or `provider_success` | **needs_reconciliation** | `list_cancelled_flutterwave_claims` selects events joined on cancelled/intent subscriptions → `reconcileCancelledFlutterwaveClaim` verifies → finalizes if provider confirms success. No `chargeToken` called. |
+| **S9.** Flutterwave reconciliation verifies provider success, crashes before finalization | After `verify(attemptRef)` returns successful, before `finalize_token_recurring_charge` | Event `status = provider_success` (updated before crash), `cancellation_requested_at IS NOT NULL` | **needs_reconciliation** | Next cron run → `list_cancelled_flutterwave_claims` → sees `provider_success` → `reconcileCancelledFlutterwaveClaim` → re-verifies → finalizes. |
+| **S10.** Webhook retry for already-finalized payment | Paystack/Flutterwave re-delivers charge.success for a completed cycle | `cancellation_requested_at IS NOT NULL`, attempt `status = finalized` or event `status = completed` | **provider_verified** (already settled) | Paystack: `finalize` returns `already_finalized: true` with canonical IDs. Flutterwave: `claim` returns `already_completed`. No duplicate financial records. |
+
+### Reconstruction query for any operational state
+
+```sql
+-- Pending provider: intent set, not yet cancelled at provider
+SELECT id FROM customer_subscriptions
+WHERE cancellation_requested_at IS NOT NULL AND status != 'cancelled';
+
+-- Provider verified: fully cancelled
+SELECT id FROM customer_subscriptions
+WHERE cancellation_requested_at IS NOT NULL AND status = 'cancelled';
+
+-- Needs reconciliation (Paystack): has in-flight attempts
+SELECT s.id, a.id as attempt_id, a.status as attempt_status
+FROM customer_subscriptions s
+JOIN paystack_billing_attempts a ON a.customer_subscription_id = s.id
+WHERE s.cancellation_requested_at IS NOT NULL
+  AND a.status IN ('dispatched', 'charged');
+
+-- Needs reconciliation (Flutterwave): has in-flight claims
+SELECT * FROM list_cancelled_flutterwave_claims(100);
+```
+
+### Conclusion
+
+A dedicated `cancellation_operational_state` column is **not necessary**. Every operational state is:
+1. **Durably persisted** in existing columns that survive crashes (all are committed in separate transactions before the next step)
+2. **Uniquely reconstructable** from a single query against existing columns
+3. **Correctly handled** by existing code paths (cancel route retry, cron reconciliation, webhook idempotency)
+
+Adding a redundant column would create a synchronization obligation (keep it consistent with the source-of-truth columns) without improving safety. The existing design is crash-safe because each step commits its state change before proceeding to the next non-idempotent operation. Current implementation is safe but less self-documenting.
 
 ---
 

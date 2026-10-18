@@ -9,12 +9,13 @@ import { execFileSync } from 'node:child_process';
 const url = process.env.TEST_DATABASE_URL;
 assert.ok(url, 'TEST_DATABASE_URL required');
 const parsed = new URL(url);
-assert.equal(parsed.pathname, '/waaiio_pr605_full_r2_20261019', 'Refusing unexpected database');
+assert.ok(parsed.pathname.startsWith('/waaiio_pr605_'), 'Refusing unexpected database: must start with waaiio_pr605_');
 assert.ok(['localhost','127.0.0.1','::1'].includes(parsed.hostname), 'Refusing nonlocal host');
 assert.ok(!parsed.port || parsed.port === '5432', 'Refusing unexpected port');
+const expectedDb = parsed.pathname.slice(1);
 const args = ['-X', '-q', '-t', '-A', '-v', 'ON_ERROR_STOP=1', url];
 const sql = (q) => execFileSync('psql',args,{input:q,encoding:'utf8',timeout:30000,maxBuffer:1024*1024}).trim();
-assert.equal(sql('SELECT current_database()'), 'waaiio_pr605_full_r2_20261019');
+assert.equal(sql('SELECT current_database()'), expectedDb);
 assert.equal(sql("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'"), '0', 'Must use EMPTY disposable DB');
 // M337-compatible, minimal disposable fixture with no merchant information.
 const ddl = `

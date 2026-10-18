@@ -6,7 +6,7 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url){console.error('SKIPPED: supply TEST_DATABASE_URL for an isolated disposable database');process.exit(2)}
 let db;
 try { db=new URL(url); } catch { throw new Error('Invalid TEST_DATABASE_URL'); }
-if(db.pathname!=='/waaiio_pr605_race_20261019' || !['localhost','127.0.0.1','::1'].includes(db.hostname) || (db.port && db.port !== '5432')) throw new Error('Refusing unsafe database target: require localhost:5432/waaiio_pr605_race_20261019');
+if(!db.pathname.startsWith('/waaiio_pr605_') || !['localhost','127.0.0.1','::1'].includes(db.hostname) || (db.port && db.port !== '5432')) throw new Error('Refusing unsafe database target: require localhost:5432/waaiio_pr605_*');
 const args=['-X','-q','-t','-A','-v','ON_ERROR_STOP=1',url];
 function sql(query){return execFileSync('psql',args,{input:query,encoding:'utf8',timeout:30000}).trim()}
 function asyncSql(query){return new Promise((resolve,reject)=>{

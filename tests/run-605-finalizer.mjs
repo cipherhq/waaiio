@@ -5,7 +5,7 @@ import {execFileSync,spawn} from 'node:child_process';
 const url=process.env.TEST_DATABASE_URL;
 if(!url) throw Error('TEST_DATABASE_URL required');
 const parsed=new URL(url);
-if(parsed.pathname!=='/waaiio_pr605_finalizer_20261019'||!['localhost','127.0.0.1','::1'].includes(parsed.hostname)|| (parsed.port && parsed.port!=='5432')) throw Error('Refusing unsafe DB target');
+if(!parsed.pathname.startsWith('/waaiio_pr605_')||!['localhost','127.0.0.1','::1'].includes(parsed.hostname)|| (parsed.port && parsed.port!=='5432')) throw Error('Refusing unsafe DB target: require localhost:5432/waaiio_pr605_*');
 const args=['-X','-q','-t','-A','-v','ON_ERROR_STOP=1',url];
 const sql=q=>execFileSync('psql',args,{input:q,encoding:'utf8',timeout:30000}).trim();
 const asyncSql=q=>new Promise((resolve,reject)=>{const p=spawn('psql',args);let o='',e='';p.stdout.on('data',x=>o+=x);p.stderr.on('data',x=>e+=x);p.on('close',c=>c===0?resolve(o.trim()):reject(Error(e||'psql exit '+c)));p.stdin.end(q)});
