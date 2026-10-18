@@ -107,6 +107,8 @@ export async function POST(request: NextRequest) {
     // ── B1 R2: Strict fail-closed gateway classification ──
     // Classify by gateway FIRST. Paystack/Stripe REQUIRE provider codes.
     // Only Flutterwave (cron-managed token billing) may do DB-only cancel.
+    // #605: ALL gateway/credential validation runs BEFORE the intent write, so a
+    // request that can never reach the provider never persists intent.
     const gateway = sub.gateway as string;
 
     if (!SUPPORTED_GATEWAYS.includes(gateway as SupportedGateway)) {
@@ -117,15 +119,52 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const providerCode = (sub.gateway_subscription_code as string | null) || '';
+    const emailToken = ((sub.metadata as Record<string, unknown>)?.email_token as string) || '';
+
+    if (gateway === 'paystack') {
+      // Paystack: REQUIRE provider subscription code AND email token
+      if (!providerCode) {
+        logger.error('[RECURRING-CANCEL] Paystack subscription missing provider code:', subscriptionId);
+        return NextResponse.json(
+          { error: 'This subscription cannot be cancelled online — missing provider reference. Please contact support.' },
+          { status: 422 },
+        );
+      }
+      if (!emailToken) {
+        logger.error('[RECURRING-CANCEL] Paystack subscription missing email token:', subscriptionId);
+        return NextResponse.json(
+          { error: 'This subscription cannot be cancelled online — missing provider credentials. Please contact support.' },
+          { status: 422 },
+        );
+      }
+    } else if (gateway === 'stripe') {
+      // Stripe: REQUIRE provider subscription code
+      if (!providerCode) {
+        logger.error('[RECURRING-CANCEL] Stripe subscription missing provider code:', subscriptionId);
+        return NextResponse.json(
+          { error: 'This subscription cannot be cancelled online — missing provider reference. Please contact support.' },
+          { status: 422 },
+        );
+      }
+    }
+
     // ── M439: Set durable cancellation intent BEFORE provider call ──
     // This blocks all future billing claim/dispatch RPCs even if the
     // subsequent provider call or DB status update fails.
-    const { error: intentError } = await supabase
+    // CAS: exact subscription + phone + original status, and only if no intent
+    // has been recorded yet.
+    // DEPENDENCY: requires customer_subscriptions.cancellation_requested_at
+    // (M439). That column does not exist in staging/production as of this
+    // change; until it does, this write errors and the handler returns 503.
+    const { data: intentRows, error: intentError } = await supabase
       .from('customer_subscriptions')
       .update({ cancellation_requested_at: new Date().toISOString() })
       .eq('id', subscriptionId)
       .eq('customer_phone', normalizedPhone)
-      .is('cancellation_requested_at', null); // Only set once (CAS)
+      .eq('status', originalStatus)
+      .is('cancellation_requested_at', null)
+      .select('id');
 
     if (intentError) {
       logger.error('[RECURRING-CANCEL] Failed to record cancellation intent:', intentError.message);
@@ -134,31 +173,58 @@ export async function POST(request: NextRequest) {
         { status: 503 },
       );
     }
-    // Note: if intent was already set (zero rows from CAS), that's fine —
-    // it means a prior attempt already recorded the intent. We proceed with
-    // the provider call regardless.
+
+    if (!intentRows || intentRows.length === 0) {
+      // Zero rows: either a prior attempt already recorded intent (retry), or
+      // the subscription changed concurrently. Re-read and decide; NEVER call
+      // the provider while state is ambiguous.
+      const { data: current, error: rereadError } = await supabase
+        .from('customer_subscriptions')
+        .select('status, cancellation_requested_at')
+        .eq('id', subscriptionId)
+        .eq('customer_phone', normalizedPhone)
+        .maybeSingle();
+
+      if (rereadError || !current) {
+        logger.error('[RECURRING-CANCEL] Re-read failed after zero-row intent CAS:', rereadError?.message || 'not found');
+        return NextResponse.json(
+          { error: 'Unable to confirm cancellation status. Please check your subscription and try again.' },
+          { status: 503 },
+        );
+      }
+
+      if (current.status === 'cancelled') {
+        return NextResponse.json({ success: true, already_cancelled: true });
+      }
+
+      if (current.status !== originalStatus) {
+        logger.warn('[RECURRING-CANCEL] Intent CAS conflict: status changed from', originalStatus, 'to', current.status);
+        return NextResponse.json(
+          { error: 'Subscription status changed. Please refresh and try again.' },
+          { status: 409 },
+        );
+      }
+
+      if (!current.cancellation_requested_at) {
+        // Same status and no intent, yet the CAS matched zero rows — unexplained.
+        logger.error('[RECURRING-CANCEL] Zero-row intent CAS with no recorded intent:', subscriptionId);
+        return NextResponse.json(
+          { error: 'Unable to process cancellation. Please try again.' },
+          { status: 503 },
+        );
+      }
+
+      // Same status and intent already recorded by a prior attempt: this is a
+      // retry (e.g. provider-success/DB-failure). Proceed so provider state can
+      // be verified and the DB can converge. Provider cancel calls are
+      // idempotent (Paystack /subscription/disable, Stripe DELETE).
+    }
 
     let providerCancelled = false;
 
     if (gateway === 'paystack') {
-      // Paystack: REQUIRE provider subscription code AND email token
-      if (!sub.gateway_subscription_code) {
-        logger.error('[RECURRING-CANCEL] Paystack subscription missing provider code:', subscriptionId);
-        return NextResponse.json(
-          { error: 'This subscription cannot be cancelled online — missing provider reference. Please contact support.' },
-          { status: 422 },
-        );
-      }
-      const emailToken = ((sub.metadata as Record<string, unknown>)?.email_token as string) || '';
-      if (!emailToken) {
-        logger.error('[RECURRING-CANCEL] Paystack subscription missing email token:', subscriptionId);
-        return NextResponse.json(
-          { error: 'This subscription cannot be cancelled online — missing provider credentials. Please contact support.' },
-          { status: 422 },
-        );
-      }
       try {
-        const result = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
+        const result = await cancelPaystackSub(providerCode, emailToken);
         providerCancelled = result === true;
       } catch (err) {
         logger.error('[RECURRING-CANCEL] Paystack cancel error:', err);
@@ -188,16 +254,9 @@ export async function POST(request: NextRequest) {
       }
 
     } else if (gateway === 'stripe') {
-      // Stripe: REQUIRE provider subscription code
-      if (!sub.gateway_subscription_code) {
-        logger.error('[RECURRING-CANCEL] Stripe subscription missing provider code:', subscriptionId);
-        return NextResponse.json(
-          { error: 'This subscription cannot be cancelled online — missing provider reference. Please contact support.' },
-          { status: 422 },
-        );
-      }
+      // Stripe provider code validated above, before the intent write.
       try {
-        const result = await cancelStripeSub(sub.gateway_subscription_code);
+        const result = await cancelStripeSub(providerCode);
         providerCancelled = result === true;
       } catch (err) {
         logger.error('[RECURRING-CANCEL] Stripe cancel error:', err);

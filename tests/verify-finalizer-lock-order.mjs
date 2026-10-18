@@ -1,0 +1,11 @@
+import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+const sql=readFileSync(new URL('../supabase/migrations/452_cancellation_intent_charge_gate.sql',import.meta.url),'utf8');
+const finalizer=sql.slice(sql.lastIndexOf('CREATE OR REPLACE FUNCTION finalize_paystack_recurring_charge('));
+const lockSub=finalizer.indexOf('FROM public.customer_subscriptions WHERE id = v_parent FOR UPDATE');
+const lockAttempt=finalizer.indexOf('FROM public.paystack_billing_attempts\n    WHERE id = p_attempt_id FOR UPDATE');
+assert.ok(lockSub>0 && lockAttempt>lockSub,'finalizer must lock subscription before attempt');
+assert.ok(finalizer.includes('v_attempt.customer_subscription_id IS DISTINCT FROM v_parent'),'parent must be validated after locking');
+assert.ok(finalizer.includes('apply_payment_spend_once(v_payment_id)'),'financial accounting must be retained');
+assert.ok(finalizer.includes("status = 'finalized'"),'finalized attempts must retain their status');
+console.log('PASS draft finalizer lock order and M337 accounting invariants (STATIC ONLY)');

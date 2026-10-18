@@ -77,6 +77,12 @@ let mockStripeStatus: string | null = null;
 let providerCallCount = 0;
 let providerVerifyCount = 0;
 let dbUpdateCalls: { id: string; status: string }[] = [];
+// Intent CAS modelling
+let mockIntentData: unknown[] | null = null;       // rows returned by intent CAS .select('id')
+let mockIntentRereadData: Record<string, unknown> | null | undefined = undefined; // re-read after zero-row intent CAS
+let mockIntentRereadError: unknown = null;
+let intentWrites: { vals: Record<string, unknown>; filters: [string, string, unknown][] }[] = [];
+let callLog: string[] = []; // ordered: 'intent' | 'provider' | 'status_update'
 
 function resetMocks() {
   mockSubData = {
@@ -95,6 +101,11 @@ function resetMocks() {
   providerCallCount = 0;
   providerVerifyCount = 0;
   dbUpdateCalls = [];
+  mockIntentData = [{ id: SUB_ID }];
+  mockIntentRereadData = undefined;
+  mockIntentRereadError = null;
+  intentWrites = [];
+  callLog = [];
 }
 
 // Supabase chain mock that handles the multi-step query patterns
@@ -113,35 +124,30 @@ vi.mock('@/lib/supabase/service', () => ({
       }
 
       fromCallCount++;
-      const callNum = fromCallCount;
       let isUpdate = false;
       let updateVals: Record<string, unknown> = {};
+      const filters: [string, string, unknown][] = [];
 
       const chain: Record<string, unknown> = {};
-      const chainSelf = () => chain;
 
-      chain.select = (cols?: string) => {
+      chain.select = () => {
         if (isUpdate) {
-          // Distinguish intent update from cancellation update
-          if (updateVals.cancellation_requested_at && !updateVals.status) {
-            // This is the M439 intent-setting update — always succeeds
-            return Promise.resolve({ data: null, error: mockIntentError });
+          // Intent CAS: update sets ONLY cancellation_requested_at
+          // (production chain: .update().eq(id).eq(phone).eq(status).is(cra, null).select('id'))
+          if (updateVals.cancellation_requested_at && !('status' in updateVals)) {
+            intentWrites.push({ vals: updateVals, filters: [...filters] });
+            callLog.push('intent');
+            return Promise.resolve({ data: mockIntentError ? null : mockIntentData, error: mockIntentError });
           }
-          // This is the status cancellation update
+          // Status cancellation CAS
+          callLog.push('status_update');
           return Promise.resolve({ data: mockUpdateData, error: mockUpdateError });
         }
         return chain;
       };
-      chain.eq = chainSelf;
-      chain.in = chainSelf;
-      chain.is = () => {
-        // .is() is the terminal call for the intent update (.update().eq().eq().is())
-        // When this is an update chain (intent-setting), return the update result
-        if (isUpdate && updateVals.cancellation_requested_at && !updateVals.status) {
-          return Promise.resolve({ data: null, error: mockIntentError });
-        }
-        return chain;
-      };
+      chain.eq = (col: string, val: unknown) => { filters.push(['eq', col, val]); return chain; };
+      chain.in = (col: string, val: unknown) => { filters.push(['in', col, val]); return chain; };
+      chain.is = (col: string, val: unknown) => { filters.push(['is', col, val]); return chain; };
       chain.update = (vals: Record<string, unknown>) => {
         isUpdate = true;
         updateVals = vals;
@@ -151,10 +157,15 @@ vi.mock('@/lib/supabase/service', () => ({
         return chain;
       };
       chain.maybeSingle = () => {
-        // Check for re-read after cancellation CAS
+        // Re-read after cancellation (status) CAS
         const cancelUpdateDone = dbUpdateCalls.some(c => c.status === 'cancelled');
         if (cancelUpdateDone && mockRereadData !== undefined) {
           return Promise.resolve({ data: mockRereadData, error: null });
+        }
+        // Re-read after zero-row intent CAS
+        if (!cancelUpdateDone && intentWrites.length > 0 &&
+            (mockIntentRereadData !== undefined || mockIntentRereadError)) {
+          return Promise.resolve({ data: mockIntentRereadError ? null : mockIntentRereadData, error: mockIntentRereadError });
         }
         return Promise.resolve({ data: mockSubData, error: mockSubError });
       };
@@ -166,6 +177,7 @@ vi.mock('@/lib/supabase/service', () => ({
 vi.mock('@/lib/payments/paystack-recurring', () => ({
   cancelSubscription: async () => {
     providerCallCount++;
+    callLog.push('provider');
     if (mockPaystackResult instanceof Error) throw mockPaystackResult;
     return mockPaystackResult;
   },
@@ -178,6 +190,7 @@ vi.mock('@/lib/payments/paystack-recurring', () => ({
 vi.mock('@/lib/payments/stripe-recurring', () => ({
   cancelSubscription: async () => {
     providerCallCount++;
+    callLog.push('provider');
     if (mockStripeResult instanceof Error) throw mockStripeResult;
     return mockStripeResult;
   },
@@ -259,6 +272,7 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     expect(r.status).toBe(400);
     expect(r.body.error).toContain('cannot be cancelled online');
     expect(providerCallCount).toBe(0);
+    expect(intentWrites).toHaveLength(0); // #605: no intent persisted
   });
 
   it('422 for Paystack subscription missing provider code', async () => {
@@ -269,6 +283,7 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     expect(r.body.error).toContain('missing provider reference');
     expect(providerCallCount).toBe(0);
     expect(dbUpdateCalls).toHaveLength(0); // NO DB cancel
+    expect(intentWrites).toHaveLength(0); // #605: no intent persisted
   });
 
   it('422 for Paystack subscription missing email token', async () => {
@@ -279,6 +294,7 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     expect(r.body.error).toContain('missing provider credentials');
     expect(providerCallCount).toBe(0);
     expect(dbUpdateCalls).toHaveLength(0);
+    expect(intentWrites).toHaveLength(0); // #605: no intent persisted
   });
 
   it('422 for Stripe subscription missing provider code', async () => {
@@ -289,6 +305,7 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     expect(r.body.error).toContain('missing provider reference');
     expect(providerCallCount).toBe(0);
     expect(dbUpdateCalls).toHaveLength(0);
+    expect(intentWrites).toHaveLength(0); // #605: no intent persisted
   });
 
   // ── Provider behavior ──
@@ -605,9 +622,110 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
     expect(r.status).toBe(200);
     expect(r.body.success).toBe(true);
-    // Intent was set (implicit — no error), then provider called, then status updated
+    expect(intentWrites).toHaveLength(1);
+    expect(callLog).toEqual(['intent', 'provider', 'status_update']);
     expect(providerCallCount).toBe(1);
     expect(dbUpdateCalls).toHaveLength(1);
+    expect(dbUpdateCalls[0].status).toBe('cancelled');
+  });
+
+  it('#605: intent CAS is anchored to id, phone, original status and null intent', async () => {
+    mockSubData = { ...mockSubData!, status: 'past_due' };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(intentWrites).toHaveLength(1);
+    expect(Object.keys(intentWrites[0].vals)).toEqual(['cancellation_requested_at']);
+    expect(intentWrites[0].filters).toEqual([
+      ['eq', 'id', SUB_ID],
+      ['eq', 'customer_phone', PHONE],
+      ['eq', 'status', 'past_due'],
+      ['is', 'cancellation_requested_at', null],
+    ]);
+  });
+
+  it('#605: Stripe intent DB error → 503, zero provider calls', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'stripe', gateway_subscription_code: 'sub_x' };
+    mockIntentError = { message: 'column does not exist' };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('#605: Flutterwave intent DB error → 503, no DB-only cancel', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'flutterwave', gateway_subscription_code: null };
+    mockIntentError = { message: 'connection lost' };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  // ── #605: Zero-row intent CAS must never blindly reach the provider ──
+
+  it('#605: zero-row intent CAS + concurrent status change → 409, zero provider calls', async () => {
+    mockIntentData = [];
+    mockIntentRereadData = { status: 'paused', cancellation_requested_at: null };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(409);
+    expect(r.body.success).toBeUndefined();
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('#605: zero-row intent CAS + concurrently cancelled → 200 already_cancelled, zero provider calls', async () => {
+    mockIntentData = [];
+    mockIntentRereadData = { status: 'cancelled', cancellation_requested_at: '2026-01-01T00:00:00Z' };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(200);
+    expect(r.body.already_cancelled).toBe(true);
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('#605: zero-row intent CAS + re-read DB error → 503, zero provider calls', async () => {
+    mockIntentData = [];
+    mockIntentRereadError = { message: 'connection reset' };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('#605: zero-row intent CAS + row vanished → 503, zero provider calls', async () => {
+    mockIntentData = [];
+    mockIntentRereadData = null;
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(providerCallCount).toBe(0);
+  });
+
+  it('#605: zero-row intent CAS + same status but no intent (unexplained) → 503, zero provider calls', async () => {
+    mockIntentData = [];
+    mockIntentRereadData = { status: 'active', cancellation_requested_at: null };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('#605: zero-row intent CAS + intent already recorded (retry) → provider verified, converges', async () => {
+    mockIntentData = [];
+    mockIntentRereadData = { status: 'active', cancellation_requested_at: '2026-01-01T00:00:00Z' };
+    mockPaystackResult = false;          // already disabled at provider
+    mockPaystackStatus = 'non-renewing'; // status check confirms
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(200);
+    expect(r.body.success).toBe(true);
+    expect(callLog).toEqual(['intent', 'provider', 'status_update']);
+    expect(providerVerifyCount).toBe(1);
     expect(dbUpdateCalls[0].status).toBe('cancelled');
   });
 });

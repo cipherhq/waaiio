@@ -1,3 +1,13 @@
+### PR #605 offline payment cancellation gate candidate (2026-10-19)
+- Proposed M452 (NOT applied): cancellation intent + Paystack/Flutterwave claim and dispatch gates with subscription-first locking.
+- Retry cron: executable Paystack pre-provider guard and bounded post-cancellation reconciliation of in-flight attempts using existing verify_attempts CAS rotation.
+- Flutterwave post-cancellation reconciliation: read-only work queue via `list_cancelled_flutterwave_claims` RPC + verification-only recovery in `flutterwave-cancellation-reconciliation.ts`.
+- Tests: Paystack provider-boundary executable regressions, Flutterwave renewal pre-charge cancellation checks, Flutterwave cancelled-claim reconciliation, disposable-PG race harness.
+- Fix: `tests/run-605-complete-migration.mjs` line 121 used single quotes instead of backticks for `stableRef`, causing literal `${FLW}` in SQL instead of the UUID constant — broke Flutterwave reconciliation queue tests.
+- Fix: `lib/__tests__/paystack-split-recurring.test.ts` source-string test referenced removed `chargeResult.status` marker; updated to `chargeDecision.action` matching refactored cron route.
+- Fix: `app/api/cron/retry-failed-charges/route.ts:163` — added `async` to `rereadSubscription` lambda to satisfy TypeScript's Promise type constraint for the Supabase builder chain.
+- Risk: provider network calls are non-atomic with Postgres; already-dispatched charges may settle and must reconcile. Owner approval required before migration/deploy.
+
 # Changelog
 
 All notable bot flow, security, and infrastructure changes are tracked here.
