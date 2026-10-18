@@ -122,6 +122,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     // Operation-bound single-use step-up MFA verification (SEC-005)
+    const stepUpId = String(body.stepUpId || '');
     const authoritativeStepUpParams = {
       operation: 'ensure_shared_channel',
       onboarding_id: String(onboarding.id),
@@ -130,11 +131,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       fallback_policy: getSharedChannelFallbackPolicy(business.country_code),
       expected_wa_method: 'shared',
     };
-    const stepUpOk = await consumeStepUp(admin, 'messaging_config', String(onboarding.id), authoritativeStepUpParams);
-    if (!stepUpOk) {
+    try {
+      await consumeStepUp(admin, stepUpId, 'messaging_config', String(onboarding.id), authoritativeStepUpParams);
+    } catch (stepUpErr) {
       return NextResponse.json(
         {
-          error: 'Step-up MFA verification required for shared channel allocation',
+          error: stepUpErr instanceof Error ? stepUpErr.message : 'Step-up MFA verification required for shared channel allocation',
           code: 'STEP_UP_REQUIRED',
           step_up_context: authoritativeStepUpParams,
         },

@@ -109,10 +109,15 @@ describe('#551 admin-assisted onboarding authority contract', () => {
     expect(actionRoute).toContain('STEP_UP_REQUIRED');
     expect(actionRoute).toContain('allocateSharedChannelWithFallback');
     expect(actionRoute).toContain('whatsapp_channel_candidates');
+    // stepUpId must be extracted from request body and passed as first positional arg
+    expect(actionRoute).toContain("body.stepUpId");
+    expect(actionRoute).toContain("stepUpId, 'messaging_config'");
     expect(waAssistanceUi).toContain('useStepUp');
     expect(waAssistanceUi).toContain('StepUpDialog');
     expect(waAssistanceUi).toContain("actionType: 'messaging_config'");
     expect(waAssistanceUi).toContain("operation: 'ensure_shared_channel'");
+    // Client must pass stepUpId in the mutation request
+    expect(waAssistanceUi).toContain('stepUpId');
   });
 });
 

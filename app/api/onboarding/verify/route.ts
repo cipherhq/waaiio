@@ -602,8 +602,15 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (plan === 'free') {
-      // Free path: set status + tier directly, then attempt trial activation
-      let { error: bizUpdateError } = await service
+      // Attempt trial activation immediately
+      try {
+        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+      } catch (trialErr) {
+        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+      }
+
+      // Update business status and tier
+      const { error: bizUpdateError } = await service
         .from('businesses')
         .update({
           status: 'active',
@@ -611,8 +618,8 @@ export async function POST(request: NextRequest) {
         })
         .eq('id', businessId);
 
-      // If activation was blocked by chk_shared_requires_channel (e.g. GH shared business
-      // provisioned before fallback channel allocation), attempt shared-channel self-healing once.
+      // If activation was blocked by shared-channel requirement, attempt self-healing once
+      let selfHealed = false;
       if (bizUpdateError) {
         try {
           const { data: pendingBiz } = await service
@@ -620,6 +627,7 @@ export async function POST(request: NextRequest) {
             .select('country_code, wa_method, assigned_channel_id')
             .eq('id', businessId)
             .maybeSingle();
+
           if (pendingBiz && (!pendingBiz.wa_method || pendingBiz.wa_method === 'shared') && !pendingBiz.assigned_channel_id) {
             const { data: healed } = await allocateSharedChannelWithFallback(
               service,
@@ -628,22 +636,33 @@ export async function POST(request: NextRequest) {
               { repairStaleSharedChannel: true },
             );
             if (healed?.allocated) {
-              const retryUpdate = await service
+              const retry = await service
                 .from('businesses')
                 .update({
                   status: 'active',
                   subscription_tier: plan,
                 })
                 .eq('id', businessId);
-              bizUpdateError = retryUpdate.error;
+              if (retry.error) {
+                console.warn('[ONBOARDING-VERIFY] Free business status update retry failed (retryable):', retry.error);
+                return NextResponse.json(
+                  {
+                    status: 'error',
+                    message: 'Business activation failed because WhatsApp channel routing is not yet ready. Please retry or contact support.',
+                    recoverable: true,
+                  },
+                  { status: 500 },
+                );
+              }
+              selfHealed = true;
             }
           }
         } catch (healErr) {
-          console.warn('[ONBOARDING-VERIFY] Shared channel self-heal attempt failed:', healErr);
+          console.warn('[ONBOARDING-VERIFY] Shared channel self‑heal attempt failed:', healErr);
         }
       }
 
-      if (bizUpdateError) {
+      if (bizUpdateError && !selfHealed) {
         console.warn('[ONBOARDING-VERIFY] Free business status update failed (retryable):', bizUpdateError);
         return NextResponse.json(
           {
@@ -653,12 +672,6 @@ export async function POST(request: NextRequest) {
           },
           { status: 500 },
         );
-      }
-
-      try {
-        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
-      } catch (trialErr) {
-        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
       }
     }
 
@@ -684,23 +697,23 @@ export async function POST(request: NextRequest) {
         }
       }
       if (assisted?.whatsapp_method === 'shared') {
-      const activatedAt = new Date().toISOString();
-      const { data: completed } = await service.from('admin_onboarding_invites')
-        .update({ status: 'active', activated_at: activatedAt, last_error: null })
-        .eq('id', assisted.id).eq('status', 'customer_action_required').select('id').maybeSingle();
-      if (completed) {
-        const { error: assistedAuditError } = await logAdminAudit({
-          actorId: assisted.created_by_admin_id,
-          action: 'admin_onboarding_activated',
-          entityType: 'admin_onboarding',
-          entityId: assisted.id,
-          details: { target_user_id: user.id, business_id: businessId, plan, completed_by_customer: true },
-        });
-        if (assistedAuditError) {
-          await service.from('admin_onboarding_invites').update({ status: 'customer_action_required', activated_at: null, last_error: 'Completion audit failed' }).eq('id', assisted.id).eq('status', 'active');
-          return NextResponse.json({ message: 'Activation completed, but onboarding audit failed. Contact support.', recoverable: true }, { status: 500 });
+        const activatedAt = new Date().toISOString();
+        const { data: completed } = await service.from('admin_onboarding_invites')
+          .update({ status: 'active', activated_at: activatedAt, last_error: null })
+          .eq('id', assisted.id).eq('status', 'customer_action_required').select('id').maybeSingle();
+        if (completed) {
+          const { error: assistedAuditError } = await logAdminAudit({
+            actorId: assisted.created_by_admin_id,
+            action: 'admin_onboarding_activated',
+            entityType: 'admin_onboarding',
+            entityId: assisted.id,
+            details: { target_user_id: user.id, business_id: businessId, plan, completed_by_customer: true },
+          });
+          if (assistedAuditError) {
+            await service.from('admin_onboarding_invites').update({ status: 'customer_action_required', activated_at: null, last_error: 'Completion audit failed' }).eq('id', assisted.id).eq('status', 'active');
+            return NextResponse.json({ message: 'Activation completed, but onboarding audit failed. Contact support.', recoverable: true }, { status: 500 });
+          }
         }
-      }
       }
     } catch (assistedError) {
       // Completion tracking is ancillary to the canonical activation authority.

@@ -31,7 +31,7 @@ export default function WhatsAppAssistance() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [pendingStepUpAction, setPendingStepUpAction] = useState<(() => Promise<void>) | null>(null);
+  const [pendingStepUpAction, setPendingStepUpAction] = useState<((stepUpId: string) => Promise<void>) | null>(null);
   const stepUp = useStepUp();
 
   const refresh = useCallback(async () => {
@@ -70,13 +70,13 @@ export default function WhatsAppAssistance() {
     }
   }
 
-  async function performEnsureSharedChannel(row: Onboarding) {
+  async function performEnsureSharedChannel(row: Onboarding, stepUpId?: string) {
     if (!row.business_id) return;
     setBusyId(row.id);
     setMessage('');
     setError('');
     try {
-      const response = await adminApiFetch('/api/admin/onboarding/' + encodeURIComponent(row.id), { action: 'ensure_shared_channel' });
+      const response = await adminApiFetch('/api/admin/onboarding/' + encodeURIComponent(row.id), { action: 'ensure_shared_channel', stepUpId });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || 'Shared channel allocation was unavailable.');
       const fallbackNote = result.fallback_used && result.channel_country
@@ -102,8 +102,8 @@ export default function WhatsAppAssistance() {
       fallback_policy: countryCode === 'GH' ? 'GH_TO_NG_SHARED' : 'EXACT_COUNTRY',
       expected_wa_method: 'shared',
     };
-    const action = async () => {
-      await performEnsureSharedChannel(row);
+    const action = async (stepUpId: string) => {
+      await performEnsureSharedChannel(row, stepUpId);
     };
     setPendingStepUpAction(() => action);
     void stepUp.execute({
