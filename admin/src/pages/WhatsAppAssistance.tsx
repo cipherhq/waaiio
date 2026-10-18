@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { adminApiFetch, adminApiGet } from '@/lib/adminApi';
 import { useStepUp } from '@/hooks/useStepUp';
-import StepUpDialog from '@/components/StepUpDialog';
+import { StepUpDialog } from '@/components/StepUpDialog';
 import { QRCodeSVG } from 'qrcode.react';
 
 interface WhatsAppSetup {
@@ -190,7 +190,7 @@ export default function WhatsAppAssistance() {
       open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
       description={stepUp.state.description}
       error={stepUp.state.error}
-      verifying={stepUp.state.phase === 'verifying'}
+      loading={stepUp.state.phase === 'verifying'}
       onSubmit={(code) => {
         if (pendingStepUpAction) {
           void stepUp.submitCode(code, pendingStepUpAction);
