@@ -1,0 +1,82 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { sendEmail } from '@/lib/email/client';
+import { logger } from '@/lib/logger';
+
+export async function POST(request: NextRequest) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const { business_id, password } = body;
+
+  if (!business_id) {
+    return NextResponse.json({ error: 'Missing business_id' }, { status: 400 });
+  }
+
+  // Re-authentication required
+  if (!password || typeof password !== 'string') {
+    return NextResponse.json({ error: 'Password required to disconnect payout account' }, { status: 403 });
+  }
+
+  if (!user.email) {
+    return NextResponse.json({ error: 'User email not found' }, { status: 400 });
+  }
+
+  // Verify password with a throwaway client so the session cookies are not rotated
+  const authCheck = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  );
+  const { error: authError } = await authCheck.auth.signInWithPassword({
+    email: user.email,
+    password,
+  });
+  if (authError) {
+    return NextResponse.json({ error: 'Incorrect password' }, { status: 403 });
+  }
+
+  // Verify the user owns this business (session client enforces RLS)
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('id, name')
+    .eq('id', business_id)
+    .eq('owner_id', user.id)
+    .single();
+
+  if (!biz) {
+    return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+  }
+
+  const service = createServiceClient();
+
+  try {
+    // Atomic disconnect: deactivate account + reset payout_mode in one transaction
+    const { error: rpcError } = await service.rpc('disconnect_payout_account', {
+      p_business_id: business_id,
+    });
+
+    if (rpcError) {
+      logger.error('disconnect_payout_account RPC error:', rpcError);
+      return NextResponse.json({ error: 'Failed to disconnect payout account' }, { status: 500 });
+    }
+
+    // Send notification email
+    sendEmail({
+      to: user.email!,
+      subject: `Payout account disconnected — ${biz.name}`,
+      html: `<p>The payout account for <strong>${biz.name}</strong> has been disconnected.</p><p>Payments will be held until a new account is connected.</p><p>If this wasn't you, contact support immediately.</p>`,
+    }).catch(e => logger.error('Failed to send disconnect notification:', e));
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    logger.error('Disconnect payout error:', (error as Error).message);
+    return NextResponse.json({ error: 'Failed to disconnect payout account' }, { status: 500 });
+  }
+}

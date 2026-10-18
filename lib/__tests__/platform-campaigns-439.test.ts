@@ -359,7 +359,7 @@ describe('Asset creation route — authority contracts (#439)', () => {
   });
 
   it('writes audit log', () => {
-    expect(assetRouteSrc).toContain('admin_audit_logs');
+    expect(assetRouteSrc).toContain('logAdminAudit');
     expect(assetRouteSrc).toContain('platform_campaign_asset_created');
   });
 

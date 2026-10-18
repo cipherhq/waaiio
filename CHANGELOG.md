@@ -38,6 +38,966 @@ If something breaks, check this log to find what changed and when.
 - WhatsApp bot cancellation via `recurring-manage.flow.ts` is NOT affected (separate code path).
 - No migration. No provider calls during implementation.
 
+## 2026-10-18 — fix(ticketing): race-loss error handling — DB errors and cancellation race
+
+### What changed
+- **Finding 1 (bot handler):** Conditional UPDATE now captures `updateError`. A DB/network failure no longer falls through to the duplicate-message branch — it sends a retryable failure message and returns.
+- **Finding 2 (all three check-in paths):** Race-loss re-read now includes `status` and branches on used/cancelled/unexpected:
+  - `status = 'used'` → duplicate response (unchanged behavior)
+  - `status = 'cancelled'` → cancelled response matching each path's existing pattern (410 for verify, 400 for partner, ❌ message for bot)
+  - Re-read error or unexpected status → 500 / retryable error (fail closed)
+- Re-read errors are handled separately from successful re-reads in every path.
+
+### What it affects / could break
+- Bot handler: guests no longer see false "already checked in" messages on DB errors or cancellation races.
+- Verify route: cancellation race returns 410 (was 409), matching the existing cancelled-ticket handling at line 171.
+- Partner route: cancellation race returns 400 (was 409), matching existing cancelled handling at line 56.
+- Success and genuine-duplicate response shapes preserved for scanner UI compatibility.
+
+## 2026-10-17 — fix(ticketing): atomic conditional check-in — prevent double-entry race condition (P1)
+
+### What changed
+- **All three ticket check-in paths** replaced read-then-write with atomic conditional UPDATE:
+  - `app/api/tickets/verify/[code]/route.ts` POST — HTTP check-in endpoint
+  - `lib/bot/handlers/ticket-checkin.ts` — WhatsApp bot check-in
+  - `app/api/partner/events/[eventId]/checkin/route.ts` — Partner API check-in
+- The UPDATE now includes `WHERE status = 'valid'` and chains `.select('id').maybeSingle()` to detect if the row was actually modified.
+- If 0 rows returned (ticket already consumed by a concurrent scanner), returns 409 with accurate duplicate details from a re-read.
+- Bot handler: consolidated two UPDATE branches (phone match / mismatch) into one conditional UPDATE.
+
+### What it affects / could break
+- **Fixed:** Two concurrent scanners could both read `status = 'valid'`, both pass the app-level check, and both mark the ticket `used`. The second scanner would overwrite `scanned_at`/`scanned_by` from the first. Now exactly one scanner succeeds; the other gets a duplicate response.
+- Response shape unchanged: `{ success: true }` on success, `{ success: false, error, scanned_at, scanned_by }` on duplicate (409).
+- Partner webhook only dispatches on the winner, not the loser.
+- No migration required — uses existing `status` column with existing values ('valid', 'used', 'cancelled').
+
+## 2026-10-17 — fix(bot): CAS DELETE error capture — fail closed on DB errors (P1)
+
+### What changed
+- **ChatGPT P1 finding:** CAS DELETE in 23505 recovery did not capture `error`, so a DB/permission/connection failure entered the "0 rows" re-read path as if it were a concurrency miss. Now captures `casDeleteError` and fails closed (log + user error message + return) on any error.
+- **23505 recovery SELECT:** Now captures `existingBizError` and fails closed instead of proceeding with undefined data.
+- **CAS-miss re-read SELECT:** Now captures `reReadError` and fails closed instead of proceeding with undefined data.
+- **Pre-INSERT stale candidate SELECT:** Now captures `staleFetchError` and logs it. Continues (best-effort) since INSERT will fail with 23505 if stale row survives, which has its own recovery.
+- **Pre-INSERT stale candidate DELETE:** Now captures `staleDeleteError` and logs it. Same best-effort rationale.
+- **Inactive session cleanup DELETE:** Both branches (businessId and null) now capture errors and log them.
+
+### What it affects / could break
+- All 6 locations are in the business-scoped session creation path in `bot.service.ts`.
+- Fail-closed locations (CAS DELETE, recovery SELECT, re-read) now return early with a user-facing error message instead of entering undefined behavior on DB failures.
+- Best-effort locations (pre-INSERT cleanup) now log errors but continue, matching their existing intent — they are opportunistic cleanup before the guarded INSERT.
+- No behavior change on success paths. Only error paths are affected.
+
+## 2026-10-17 — fix(bot): CTO-review concurrency hardening — version+state+expiration CAS predicates
+
+### What changed
+- **CTO-review Finding 1 (P1):** Pre-INSERT cleanup now reads the stale candidate first, then uses a version+expiration+state conditional DELETE instead of a blind expiration-only DELETE. Prevents deleting a concurrently renewed session.
+- **CTO-review Finding 2 (P1):** Recovery CAS DELETE now includes `is_active` and `expires_at` predicates alongside the existing version check. If the session was inactive, requires `is_active = false`; if active-but-expired, requires `is_active = true AND expires_at < now`. Prevents deleting a session that was concurrently renewed even if version alone matched.
+- **Zero-row log message** updated to distinguish renewal from other causes.
+
+### What it affects / could break
+- Same scope as the original fix — business-scoped session creation only. No null-biz path changes.
+- The additional predicates make CAS DELETEs stricter (more likely to get 0 rows on concurrent renewal), which correctly falls through to the re-read-and-resume path.
+
+## 2026-10-16 — fix(bot): stale business-scoped session lifecycle — expired cleanup + 23505 recovery
+
+### What changed
+- **Root cause:** The unique index `idx_bot_sessions_phone_business` covers ALL rows where `business_id IS NOT NULL` (no `is_active` filter), unlike the null-biz index which filters on `is_active = true`. When a business-scoped session expires but remains `is_active = true`, the pre-insert cleanup (which only deleted `is_active = false` rows) could not free the unique index slot. New session INSERTs hit 23505, and the recovery path only handled `!businessId` collisions — business-scoped 23505 fell through to a generic error reply, creating a repeated failure loop across incoming messages.
+- **Part 1 — Expired-session cleanup (`bot.service.ts` ~L1728):** Before the existing inactive-row DELETE, business-scoped sessions now read the stale candidate, then CAS DELETE with version+expiration+state predicates to free the slot. This uses DELETE (not UPDATE `is_active = false`) because the unique index requires row removal to free the slot.
+- **Part 2 — Business-scoped 23505 recovery (`bot.service.ts` ~L1848):** New `else if (sessionError?.code === '23505' && businessId)` branch with CAS-safe recovery: (a) reads the existing row, (b) if active + not expired → resumes it (concurrent creation), (c) if expired/inactive → CAS-conditional DELETE by version+state+expiration, retry INSERT once, (d) if CAS DELETE fails (concurrent renewal) → re-read and resume if now active, else fail closed.
+- **Staging data fix:** Stale row `e49f5752` (expired 2026-10-15 23:22:26 UTC, `is_active = true`) deleted from staging via SQL editor to unblock the staging bot immediately.
+
+### What it affects / could break
+- Business-scoped session creation: expired sessions are now properly cleaned up before INSERT, preventing the infinite error loop.
+- Concurrent business-scoped session creation: 23505 collisions now have a recovery path matching the null-biz pattern (CAS DELETE + single retry).
+- The 7+ other insertion paths in `global-queries.ts`, `keyword-actions.ts`, `action-dispatcher.ts` share the same vulnerability but are lower-traffic. A shared session-creation primitive (Option B) is planned as follow-up before code freeze.
+- No schema changes. No new migrations.
+
+## 2026-10-16 — fix(payments): check terminal-failure update result before dedup write — P1
+
+### What changed
+- `app/api/payments/byo-webhook/[businessId]/route.ts`:
+  - **Terminal-failure branch in `charge.success` handler (~line 188):** The `payments` UPDATE that marks a payment `failed` now checks the result. DB errors → return 503 (retryable), no dedup row. Zero rows → re-read payment by scoped identifiers; only dedup if confirmed terminal (`success`/`failed`/`refunded`); return 503 if nonterminal or re-read fails.
+  - **`charge.failed` handler (~line 296):** `processPaystackChargeFailed` is now wrapped in try/catch. If it throws (DB error, scoped-update error) → return 503, no dedup row written. Previously the error would bubble to the outer catch and return 500.
+- `lib/payments/webhook-handler.ts`: `processPaystackChargeFailed` scoped zero-row path now re-reads the payment and throws `ScopedUpdateError` if not terminal or re-read fails. Early-exit check extended to include `refunded` as terminal.
+- `lib/__tests__/payment-integrity.test.ts`: Added `chainBuilderWith` helper for custom mocks. Added 5 regression tests for `charge.success` terminal failure: (1) DB UPDATE error → 503, no dedup; (2) zero rows + re-read = terminal → 200, dedup; (3) zero rows + re-read = nonterminal → 503, no dedup; (4) zero rows + re-read fails → 503, no dedup; (5) processPaystackChargeFailed throws → 503, no dedup. Updated 2 existing terminal-failure tests with explicit `updateResult` to match new row-count contract.
+- `lib/payments/__tests__/webhook-handler.test.ts`: Added 4 tests: `refunded` early-exit, scoped zero-row + re-read = terminal (returns normally), scoped zero-row + re-read = nonterminal (throws ScopedUpdateError), scoped zero-row + re-read fails (throws ScopedUpdateError).
+
+### What it affects / could break
+- BYO webhook terminal-failure path: zero-row UPDATE results no longer unconditionally dedup. Payment state is re-verified. A payment stuck in a nonterminal state due to a race returns 503 for provider retry.
+- BYO webhook charge.failed: DB errors now return 503 (retryable) instead of 500 (ambiguous retry behavior).
+- `processPaystackChargeFailed` scoped path: zero-row conditional UPDATE now throws `ScopedUpdateError` if re-read shows nonterminal state or fails. Callers (BYO webhook) catch this and return 503 without dedup.
+- No change to the success path or integrity branch. No change to dedup behavior when the DB write succeeds (1+ rows).
+
+## 2026-10-15 — fix(payments): include applied adjustments in lifetime balance (P1-2)
+
+### What changed
+- `app/api/payouts/balance/route.ts`: Split adjustment query into two — ALL adjustments for `computePlatformHeldTotals` lifetime balance, unapplied-only for `pending_adjustments` display field. Prior payouts' `net_amount` already includes applied adjustments; including them again in the lifetime sum cancels correctly.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Removed `.is('applied_to_payout_id', null)` filter from adjustment query for balance verification. Same fix — lifetime check must include all adjustments.
+- `lib/__tests__/payout-custody-formula.test.ts`: Added 2 P1-2 regression tests: (1) single applied adjustment must be included in lifetime balance; (2) mix of applied+unapplied adjustments with prior payout reconciles to 0.
+
+### What it affects / could break
+- Balance endpoint: after a payout with adjustments is paid, the remaining balance is now correct (was showing phantom positive balance equal to the adjustment amount). A business with only negative applied adjustments will now show a LOWER balance than before (correct — the platform already paid out those funds).
+- Approve route: same fix. A payout that passed the old check (which excluded applied adjustments) might now be blocked if the applied adjustment effect makes the balance lower. This is correct — the old check overstated available balance.
+- Generate/auto-payout: NOT affected — they correctly use unapplied-only for period-specific computation.
+
+## 2026-10-15 — fix(payments): canonical payout formula — computePlatformHeldTotals (#628 P1/P2 fix pass 3)
+
+### What changed
+- `lib/payments/payable-fees.ts`: Added `computePlatformHeldTotals()` — canonical formula for platform-held payout totals. Accepts `fees`, optional `adjustments`, and optional `priorPayouts`. Returns `{ eligible, gross, totalFees, gatewayFees, adjustmentSum, priorPaidOut, netAvailable }`. All payout callers now use this single function.
+- `app/api/admin/payouts/generate/route.ts`: Replaced inline gross/fees/net computation with `computePlatformHeldTotals`. Moved adjustments fetch before gross check. Removed `getPayableFeeRows` import (function still used elsewhere).
+- `app/api/cron/auto-payout/route.ts`: Replaced inline computation with `computePlatformHeldTotals`. Removed two-step netAmount calculation.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `gateway_fee, waived` to `platform_fees` select (were missing — formula used `transaction_amount - fee_total` instead of the canonical formula). Added `payout_adjustments` fetch. Now uses `computePlatformHeldTotals` with adjustments and priorPayouts for balance verification.
+- `app/api/payouts/balance/route.ts` (P1): For `platform_managed` mode — gross and net now derived from `platform_fees` via `computePlatformHeldTotals` instead of bookings/orders/invoices (which included direct-transfer revenue the platform never held). Added `total_revenue` response field (bookings+orders+invoices, display only). Direct_split mode unchanged.
+- `app/api/cron/payout-nudge/route.ts`: Added `gateway_fee, waived` to `platform_fees` select. Uses `computePlatformHeldTotals` instead of inline reduces.
+- `app/api/payments/byo-webhook/[businessId]/route.ts` (P2): Integrity-failure branch now adds `.in('status', ['pending'])` predicate — prevents overwriting `gateway_status` on already-finalized payments. Checks `updatedRows` result — if 0 rows (finalized), records Sentry warning anomaly only.
+- `app/dashboard/payouts/page.tsx`: Added `total_revenue` to Balance interface. Top stats label changed from "Total Earnings" to "Total Revenue" (shows `balance.total_revenue`).
+- `lib/__tests__/payout-select-audit.test.ts`: Extended to assert all 5 fields required by `computePlatformHeldTotals` (`transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer`).
+- `lib/__tests__/payout-custody-formula.test.ts` (new): 19 behavioral tests for `computePlatformHeldTotals` — mixed custody, NULL exclusion, waived handling, adjustments, priorPayouts, generate→approve reconciliation, balance matching generate.
+- `lib/__tests__/payment-credentials-columns.pg.test.ts`: Added PG test section for `platform_fees` authenticated SELECT grants — verifies table-level SELECT, column-level coverage for all 5 fields, RLS row isolation.
+
+### What it affects / could break
+- **Balance endpoint (platform_managed):** `gross` is now platform-held transaction total from `platform_fees`, not bookings/orders/invoices total. This is LOWER if there are direct-transfer transactions (correct — platform never held those funds). `net_available` now correctly subtracts `gateway_fee` and handles `waived` fees.
+- **Approve balance check:** Now deducts `gateway_fee`, handles `waived`, and includes `payout_adjustments`. A payout that passed the old check (which used `transaction_amount - fee_total`) might fail the new check if gateway fees are significant. This is correct — the old formula overstated available balance.
+- **Nudge:** Balance now accounts for gateway fees and waived status. Some nudges may show lower balance amounts.
+- **BYO webhook integrity branch:** Replayed webhooks on finalized payments no longer overwrite `gateway_status`. They generate a Sentry warning instead. This is safer (no data loss) but means `gateway_status` may not reflect the latest verification attempt for finalized payments.
+- **UI:** "Total Earnings" label changed to "Total Revenue" in payout page top stats. Uses `total_revenue ?? gross` for backwards compatibility.
+
+## 2026-10-15 — fix(db): M451 — contract_id immutability guard in signer-lock trigger (ChatGPT round 4 P1)
+
+### What changed (rev 8 — ChatGPT round 4 P1 at SHA ec91d36d)
+
+**P1: COALESCE bypass — contract_id reassignment on contract_signers**
+- Root cause: the lock trigger used `COALESCE(OLD.contract_id, NEW.contract_id)` to
+  identify the parent contract. On UPDATE, OLD is never NULL, so COALESCE always picks
+  OLD.contract_id. An `UPDATE contract_signers SET contract_id = <signed_id>` would have
+  the trigger look up the OLD (unsigned/draft) parent → status ≠ 'signed' → allows the
+  mutation → signer row is silently moved to a signed contract, bypassing the lock.
+  Only reachable by service_role (M449 excludes contract_id from authenticated UPDATE
+  grants), but the invariant must hold for ALL roles.
+- Fix 1 — immutability guard: added `IF TG_OP = 'UPDATE' AND OLD.contract_id IS DISTINCT
+  FROM NEW.contract_id THEN RAISE EXCEPTION 'contract_id reassignment is forbidden ...'
+  USING ERRCODE = '23514'` at the top of the function body, before the FOR UPDATE check.
+- Fix 2 — explicit resolution: replaced `COALESCE(OLD.contract_id, NEW.contract_id)` with
+  `v_target_contract_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.contract_id ELSE
+  NEW.contract_id END`. After the immutability guard, OLD = NEW for UPDATE, so the CASE
+  is unambiguous. Declared `v_target_contract_id UUID` in the DECLARE block.
+- Self-check 6 added: verifies `contract_id reassignment is forbidden` string is present
+  in `pg_proc.prosrc` after the migration runs.
+- RAISE NOTICE updated to mention "contract_id reassignment guard in place".
+- M449, M450, and the trigger binding are unchanged.
+
+**New test: `lib/__tests__/contract-signer-concurrency.pg.test.ts` — test 4**
+- Creates a signed contract (single-mode, so M450 zero-signer guard doesn't apply)
+  and a draft contract, each with one signer.
+- Attempts `UPDATE contract_signers SET contract_id = <signed_id>` on the draft signer.
+- Asserts: raises with message matching `contract_id reassignment is forbidden`, error
+  code `23514` (check_violation), and signer row is unchanged.
+
+### What it affects / could break
+- Any code path that attempts to change `contract_id` on an existing `contract_signers`
+  row will now fail with `check_violation (23514)`. No such code path exists in the app —
+  signers are created once and never reassigned. The immutability guard makes this
+  invariant explicit and enforced at the DB level for all roles.
+
+## 2026-10-15 — fix(security): M451 — contract_signers lock FOR UPDATE concurrency fix (ChatGPT round 3 P1)
+
+### What changed (rev 7 — ChatGPT round 3 P1 at SHA a154c2ea)
+
+**P1: Race condition — concurrent signer INSERT can slip past contract finalization**
+- Root cause: M449's `contract_signers_enforce_signed_lock()` used a plain SELECT to
+  read `contracts.status`. Under READ COMMITTED, Tx A's `UPDATE contracts SET
+  status='signed'` holds the row lock but is uncommitted. Tx B's INSERT trigger reads
+  stale status='pending' → allows INSERT. Both commit → signed contract has unsigned signer.
+- Fix: new migration `451_contract_signers_lock_for_update.sql` — `CREATE OR REPLACE` the
+  function with `SELECT ... FOR UPDATE` on the contracts parent row. Serializes on the
+  contracts row: if Tx A (finalization) holds the lock, Tx B (signer INSERT) blocks until
+  Tx A commits; after commit Tx B re-reads status='signed' and rejects. If Tx B acquires
+  the lock first, Tx A (finalization) blocks until Tx B commits; M450 then sees the new
+  unsigned signer and rejects finalization.
+- Deadlock analysis: both transactions contend on the same contracts row only — no circular
+  dependency possible.
+- Re-applies `REVOKE ALL ON FUNCTION FROM PUBLIC, anon, authenticated` (CREATE OR REPLACE
+  resets grants to defaults).
+- M449 and M450 are unchanged. The trigger binding from M449 is preserved (M451 only
+  updates the function body via CREATE OR REPLACE).
+- Self-check in M451: verifies FOR UPDATE in prosrc, SECURITY DEFINER, search_path
+  hardened, anon/authenticated cannot directly EXECUTE.
+
+**New dev dependency: `pg` + `@types/pg`**
+- Required for the concurrency test which needs two independent database connections.
+  Neither is possible with psql + execSync (single-threaded). pg Client instances allow
+  holding a transaction open on one connection while issuing concurrent queries on another.
+
+**New test: `lib/__tests__/contract-signer-concurrency.pg.test.ts`**
+- 3 concurrency tests using two independent pg Client connections each:
+  1. Tx A (finalize) holds row lock → Tx B (signer INSERT) blocks; after A commits,
+     B fails with "locked — already signed".
+  2. Tx B (signer INSERT) holds FOR UPDATE lock → Tx A (finalize) blocks; after B commits
+     (unsigned signer in DB), A fails with M450 "have not yet signed".
+  3. Tx A holds lock then ROLLBACKS → Tx B unblocks, FOR UPDATE reads 'active' → INSERT
+     succeeds. Verifies lock release semantics.
+- Each test uses a 400ms sleep to confirm the blocked connection is still waiting before
+  releasing the lock. Test timeout: 10s per test.
+- Schema is installed inline in beforeAll (self-contained; no dependency on other PG tests
+  having run first). M451 is applied via readFileSync. M450 zero-signer guard is inlined.
+
+### What it affects / could break
+- Any code path that calls INSERT/UPDATE/DELETE on `contract_signers` while another
+  transaction holds the contracts row locked will now serialize (block) rather than
+  proceeding concurrently. This is the intended behavior — blocking is brief (until the
+  concurrent transaction commits). No app path performs concurrent signer mutations and
+  contract finalization in separate transactions.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 6 — ChatGPT round 2 P1 fix
+
+### What changed (rev 6 — ChatGPT round 2 review response at SHA 14f93cb2)
+
+**P1: contract_signers_lock_on_signed trigger extended to cover INSERT**
+- Changed `BEFORE UPDATE OR DELETE` → `BEFORE INSERT OR UPDATE OR DELETE` on the
+  `contract_signers_lock_on_signed` trigger in M449.
+- Problem: authenticated has column-level INSERT on `contract_signers` (M449 lines 163–168).
+  Without INSERT coverage, a new signer row could be inserted into an already-signed contract,
+  leaving a signed contract with an unsigned signer — undermining audit integrity.
+- Function `contract_signers_enforce_signed_lock()` already handled INSERT correctly via
+  `COALESCE(OLD.contract_id, NEW.contract_id)` and `RETURN COALESCE(NEW, OLD)`. No
+  function body changes needed.
+- M449 §8.11 self-check: added explicit INSERT event check using
+  `information_schema.triggers WHERE event_manipulation = 'INSERT'`. Updated RAISE NOTICE
+  to confirm `INSERT OR UPDATE OR DELETE` coverage.
+
+**Minor hardening: signing-link rate-limit response now has Cache-Control: no-store**
+- The `if (rl) return rl` early-return in `signing-link/route.ts` previously bypassed
+  `noCache()`. Fixed by cloning the rate-limit `Response` into a `NextResponse` before
+  applying `noCache()`. All responses from this endpoint now consistently carry
+  `Cache-Control: no-store, Pragma: no-cache`.
+
+**Test additions (rev 6)**
+- `contracts-whatsapp-channels-acl.pg.test.ts` — Section N: added 3 new INSERT tests:
+  (1) INSERT blocked after signing via service_role, (2) INSERT blocked for authenticated
+  after signing (accepts both lock-trigger and privilege-denial errors), (3) INSERT allowed
+  before signing (pre-signed contract must still accept new signers).
+- `contracts-zero-signer-behavioral.pg.test.ts` — added defense-in-depth test: installs
+  M449 lock trigger inline, confirms M450 allows the signing transition (all signers
+  signed), then confirms the lock trigger blocks a post-signing INSERT. Drops trigger
+  after test to avoid interfering with afterAll cleanup.
+
+### What it affects / could break
+- `contract_signers_lock_on_signed` now fires on INSERT: any code that inserts a signer
+  row after the parent contract is already `signed` will fail with
+  `integrity_constraint_violation`. No such app path exists; the send-signers route
+  validates contract status before adding signers.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 5 — ChatGPT P1/P2 review fixes
+
+### What changed (rev 5 — ChatGPT review response at SHA 6ce2c70a)
+
+**A. M449 defense-in-depth (ACL cleanup)**
+- Added `REVOKE ALL FROM PUBLIC` on all six tables (contracts, contract_signers,
+  contract_templates, whatsapp_channels, waiver_templates, signed_waivers).
+  Previously M449 only revoked from anon/authenticated; a PUBLIC grant would survive.
+- Added explicit column-level `REVOKE ALL (token, otp_code, meta_access_token, status,
+  signed_at, ...)` on sensitive columns FROM PUBLIC, anon, authenticated. Handles grants
+  issued by a different grantor that survive `REVOKE ALL ON TABLE`.
+- Removed `signing_mode` from the authenticated UPDATE column list (was a stale entry —
+  no app path updates signing_mode post-creation).
+- Added `contracts_signing_mode_immutable` trigger: blocks signing_mode changes for ALL
+  roles (including service_role, which bypasses RLS but not triggers) once the contract
+  has left `pending` status.
+- Added `contract_signers_lock_on_signed` trigger: blocks any UPDATE or DELETE on a
+  contract_signers row once the parent contract has `status='signed'`, for ALL roles.
+- Updated self-check to §8.x numbering; added checks for new trigger existence and
+  `signing_mode` not in authenticated UPDATE. Added PUBLIC meta_access_token check.
+- Both new trigger functions: `SECURITY DEFINER SET search_path = public, pg_temp`,
+  `REVOKE ALL ON FUNCTION FROM PUBLIC, anon, authenticated`.
+
+**B. M450 function hardening**
+- Changed `SET search_path = public` → `SET search_path = public, pg_temp` on
+  `contracts_enforce_signer_rows()` to prevent temp-table injection attacks.
+- Added `REVOKE ALL ON FUNCTION contracts_enforce_signer_rows() FROM PUBLIC, anon, authenticated`.
+- Extended guard: when a non-single contract transitions to `signed`, the trigger now
+  also counts unsigned signer rows (`COUNT(*) WHERE status != 'signed'`). If any signer
+  is not yet signed, the transaction is blocked with `integrity_constraint_violation`.
+  This mirrors the submit route's ordering guarantee (all signers confirmed signed before
+  contracts.status is set). Existing zero-signer guard unchanged.
+- Updated self-check: verifies `v_unsigned_count` exists in function body; updated
+  PASS notice to describe extended guard.
+
+**C. signing-link route hardening**
+- UUID validation: `signer_id` is now validated against `/^[0-9a-f]{8}-...-12$/i` before
+  any service-role DB query. Malformed values return 400. Prevents injection via query param.
+- `Cache-Control: no-store` + `Pragma: no-cache` headers added to ALL responses
+  (200, 400, 401, 404) so signing tokens cannot be stored in shared caches.
+- Rate limiting: `rateLimitResponseAsync(getRateLimitKey(request, 'contract-signing-link'),
+  30, 60_000)` — 30 req/min per IP/user key, consistent with sibling OTP routes.
+
+**D. Test additions**
+- `contracts-whatsapp-channels-acl.pg.test.ts`: Added sections A2 (hostile pre-state —
+  grants hostile column-level + PUBLIC grants before M449 and verifies cleanup), A3
+  (pg_default_acl query + finding that M449 has no ALTER DEFAULT PRIVILEGES SQL; PR
+  description corrected), B2 (verifies hostile pre-state grants were cleaned by M449),
+  E (signing_mode column grant assertion), M (signing_mode immutability trigger tests —
+  authenticated, service_role, pending-still-allowed), N (contract_signers lock trigger tests).
+- `contracts-zero-signer-behavioral.pg.test.ts`: Added unsigned-signer extended guard
+  tests (cannot sign with pending signer, can sign when all signed, sequential sequence),
+  M450 function hardening checks (search_path includes pg_temp, PUBLIC cannot invoke).
+- `contracts-signing-link-route.test.ts`: Added malformed UUID cases (6 variants),
+  Cache-Control/Pragma header tests on 200/404/400/401, rate limit 429 test.
+
+### A1 finding (hostile pre-state test result, PG only)
+- PUBLIC table-level grants **SURVIVE** the old M449 (no REVOKE FROM PUBLIC existed).
+- Column-level grants to named roles (authenticated, anon) are cleaned by PostgreSQL's
+  `REVOKE ALL ON TABLE t FROM role` (removes column-level grants for that role too).
+- Defense added: M449 now opens with REVOKE FROM PUBLIC on all six tables.
+
+### A3 finding (pg_default_acl)
+- M449 comments and the old PR description both claimed the migration "removes overly
+  broad ALTER DEFAULT PRIVILEGES grants". NO ALTER DEFAULT PRIVILEGES SQL exists in M449.
+  The REVOKE ALL statements clean existing table-level grants from any source (including
+  those originally set by ALTER DEFAULT PRIVILEGES). PR description has been corrected.
+
+### Codex P1 findings at this commit (all pre-existing, not introduced by this PR)
+- **P1-1 (signed contract mutability):** Authenticated has UPDATE on title/metadata/etc.
+  of signed contracts. Pre-existing before M449. Owner RLS always allowed this. Deferred
+  to separate hardening issue; scope of this PR is ACL shape, not full immutability.
+- **P1-2 (admin panel WhatsApp surface):** Admin panel uses anon key; `WhatsAppChannels.tsx`
+  does `select('*')` including `meta_access_token`. This was already true in M449 rev 1–4
+  (original revoke existed before this PR). Not introduced by rev 5 changes. Deferred.
+- **P1-3 (stale signing-link race in UI):** Pre-existing race condition in
+  `app/dashboard/contracts/page.tsx` — async fetches without cancellation. Not introduced
+  by this PR. Deferred to separate UI fix.
+
+### What it affects / could break
+- Contracts in non-pending status: `signing_mode` can no longer be changed by any role.
+  Only affects code that updates `signing_mode` post-creation — no such code exists.
+- Multi-signer contracts: can only reach `signed` when ALL signers have `status='signed'`
+  in the DB. This matches the existing submit route behavior.
+- Signing-link route: malformed UUIDs now return 400 (previously would reach service DB).
+  Rate limiting now applies. Responses are never cached.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 4 — signer-probe fix, M449 column-grant self-check, M450 INSERT+mode coverage
+
+### What changed (rev 4 additions over rev 3)
+- **`app/api/contracts/signing-link/route.ts`**: Changed `403` → `404` for ownership failure.
+  Previously the route returned `403 Unauthorized` when a valid signer_id was found but the
+  caller did not own the contract. That response code acted as a signer-ID oracle (403 meant
+  "signer exists, wrong owner"; 404 meant "signer not found"). Now both cases return 404 so
+  the existence of a signer row cannot be probed by comparing status codes.
+  401 is still returned for unauthenticated callers.
+- **New unit test** `lib/__tests__/contracts-signing-link-route.test.ts`:
+  - Tests: 401 (no session), 400 (missing signer_id), 404 (signer not found),
+    404 (signer exists, wrong owner — not 403), 200 (owner, returns signing URL).
+- **M449 self-check §7.3 + §7.9**: Changed `has_table_privilege` → `has_any_column_privilege`
+  for negative INSERT and UPDATE assertions on `whatsapp_channels` and `signed_waivers`.
+  `has_table_privilege` only checks table-level ACL entries and returns `f` for column-level
+  grants — a `GRANT INSERT (col) ON ... TO authenticated` after the migration would go
+  undetected by the old check. `has_any_column_privilege` catches both.
+- **M450 trigger expanded**:
+  - Changed `BEFORE UPDATE` → `BEFORE INSERT OR UPDATE` so a direct INSERT with
+    `status='signed'` is also blocked (not only UPDATEs).
+  - Added `TG_OP = 'INSERT'` branch to handle the no-OLD-row INSERT case.
+  - Widened signing-mode check from `NEW.signing_mode = 'multi'` to
+    `NEW.signing_mode IS DISTINCT FROM 'single'`. Research (send/route.ts:202):
+    multi-signer contracts default to `'parallel'` not `'multi'`, so the old check
+    silently missed parallel and sequential modes. Single-mode exemption is retained
+    (single-mode signing stores data on the contracts row with zero contract_signers rows).
+  - RAISE EXCEPTION message now includes `signing_mode` value for diagnosis.
+- **New PG injection test** (Section L in `contracts-whatsapp-channels-acl.pg.test.ts`):
+  - Injects `GRANT UPDATE (connection_status) ON whatsapp_channels TO authenticated` after M449 runs.
+  - Re-runs the M449 self-check DO block.
+  - Asserts the self-check raises `449 SELF-CHECK FAILED … authenticated has UPDATE on whatsapp_channels`.
+  - Revokes the injected grant afterward to keep later tests clean.
+  - Confirms `has_any_column_privilege` in the self-check detects column-level grants.
+
+### What it affects / could break
+- Callers that distinguished 403 from 404 on `/api/contracts/signing-link` to infer signer
+  existence will now always see 404 for non-owner calls. No legitimate client should be
+  doing this — the route is only called by the contracts dashboard page.
+- M449 self-check is now stricter: a post-migration `GRANT INSERT (col) ON whatsapp_channels
+  TO authenticated` (or `signed_waivers`) will cause the self-check to fail on next run.
+- M450 trigger now fires on INSERT events too — a direct `INSERT INTO contracts (...,
+  status='signed', signing_mode='parallel') VALUES (...)` with zero signers will be blocked.
+
+## 2026-10-15 — fix(admin): topup-packages editor fix pass #2 — P2 findings (PR #658)
+
+### What changed
+- **`admin/src/pages/PlatformSettings.tsx`:**
+  - (P2) `getTopupRowErrors`: replaced `parseFloat` with `/^\d+$/` regex — now rejects `'1e3'`, `'-5'`, `'1000.5'` (valid floats that bypassed the old check) as "Must be a valid whole number (digits only)".
+  - (P2) `serializeTopupPackages`: same regex fix — invalid input no longer silently produces a valid `amount_minor`; defaults to 0 for the validator to block.
+  - (P2) `parseTopupPackages`: added null/type guard before `Object.keys(pkg)` — null, string, number, array elements in stored packages no longer crash the editor. Each is replaced with a sentinel `_unknownFields` row, which triggers the data-loss banner and blocks Save.
+- **`app/api/admin/platform-settings/commercial/route.ts`:**
+  - (P2) Unexpected RPC errors no longer leak raw `error.message` to the client. Added `console.error('[COMMERCIAL_CONFIG]', ...)` and return generic `{ error: 'Internal server error', code: 'internal_error' }`. Version-conflict 409 path (authored message) unchanged.
+- **`admin/src/__tests__/topup-packages-editor.test.tsx`:**
+  - TC12: null/string/number/array elements in stored packages — no crash, data-loss warning, Save blocked.
+  - TC13 (8 cases via `it.each`): `'1e3'`, `'-5'`, `'1000.5'`, `'0'`, `''`, and JSDOM-sanitized inputs (`'1000abc'`, `'1,000'`, `' 1000'`) — each: error shown + Save disabled + fetch NOT called.
+- **`lib/__tests__/commercial-route-topup-packages.test.ts`:**
+  - Added: version conflict → 409 with authored message (unchanged). Unexpected PG error → 500 generic body, real message NOT in response.
+
+### What it affects / could break
+- Amount inputs that previously silently accepted `'1e3'` (= 1000) are now blocked. Admins who used scientific notation (unlikely but possible) will need to type plain integers.
+- Raw PG error text no longer surfaced to admin clients for unexpected route errors. Sentry/console.error receives the real message for debugging.
+
+## 2026-10-15 — fix(admin): topup-packages editor fix pass (PR #658)
+
+### What changed
+- **`shared/topup-packages.ts`:** Tightened validator with new caps: `TOPUP_LABEL_MAX_LEN=50`, `TOPUP_DESCRIPTION_MAX_LEN=200`, `TOPUP_AMOUNT_MINOR_MAX=10_000_000_000`, `TOPUP_MAX_PACKAGES_PER_CURRENCY=10`, `KNOWN_PACKAGE_KEYS`. Added validation: unknown package keys rejected, description must be string if present, label/description length caps, amount_minor max, max 10 packages per currency.
+- **`admin/src/pages/PlatformSettings.tsx`:** Fixed `serializeTopupPackages` bug: replaced `Math.round(major × 100)` with integer-only check — non-integer major now produces `amount_minor=0` so the validator catches it and disables Save. Added unknown-currency and unknown-field tracking in editor state; serializer re-injects them back into output so validator blocks save with a clear error. Added `data-loss-warning` banner in `TopupPackagesEditor`.
+- **`admin/src/__tests__/topup-packages-editor.test.tsx`:** Rewrote TC4 to click Save and inspect exact `fetch` body (major→minor conversion, blank description omitted). Rewrote TC7 to use `fireEvent.change('1000.5')` proving Save is disabled. Added TC11 for data-loss (unknown currency + unknown field). Added `useStepUp` and `StepUpDialog` mocks.
+- **`admin/src/__tests__/topup-packages-validator.test.ts`:** Added tests for: label length cap, description length cap, description type check, amount_minor max, max packages per currency, unknown package keys.
+- **`lib/__tests__/commercial-route-topup-packages.test.ts`:** New — 16 route tests: all invalid payload types return 400 and `consumeStepUp` is NOT called; valid payloads call both `consumeStepUp` and RPC.
+
+### What it affects / could break
+- Validator now rejects unknown package keys (`bonus`, etc.) and description non-strings. Any stored package data with unknown fields will block save until cleaned.
+- `serializeTopupPackages` fix makes TC7's behaviour correct — no functional change for integer amounts.
+
+## 2026-10-15 — feat(admin): structured editor for top-up packages
+
+### What changed
+- **New file `shared/topup-packages.ts`:** Framework-neutral validator for `messaging_topup_packages`. Exports `validateTopupPackages`, `isTopupPackagesKey`, currency constants (`TOPUP_ALLOWED_CURRENCIES`, `TOPUP_CURRENCY_SYMBOLS`, `TOPUP_CURRENCY_NAMES`, `TOPUP_MINOR_PER_MAJOR`). Allowed currencies: NGN, GHS, USD, GBP, CAD. Mirrors M416 write-time validation at the HTTP layer.
+- **`app/api/admin/platform-settings/commercial/route.ts`:** Added server-side HTTP-layer validation for `messaging_topup_packages` (alongside existing country-amount validation). The DB RPC already validated; this adds defense-in-depth at the route boundary, matching the existing pattern for `isCountryAmountKey`.
+- **`admin/src/pages/PlatformSettings.tsx`:** Added new "Messaging" group to GROUPS array containing `messaging_topup_packages`. Built `TopupPackagesEditor` component (per-currency rows with major-unit amount input → stored as minor units × 100, label, optional description). Added `hasTopupPackagesErrors` for Save button disabling. Updated unconfigured-key configure flow to show the structured editor. Imports `@shared/topup-packages`.
+- **Tests added:** `admin/src/__tests__/topup-packages-validator.test.ts` (25 tests: valid shapes, null/type errors, unknown currency, empty currency, negative, zero, decimal minor, duplicate amounts, missing/empty label, all allowed currencies) and `admin/src/__tests__/topup-packages-editor.test.tsx` (10 tests: Messaging tab visible, Not-configured placeholder, seeded value loads, valid save shape, negative/zero/decimal/empty-label/duplicate-amount client-side validation, source-code assertion).
+
+### What it affects / could break
+- PlatformSettings Messaging tab now shows `messaging_topup_packages`. If not yet seeded in DB, shows as "Not configured" placeholder with a structured Configure UI.
+- Saving `messaging_topup_packages` via the admin still routes through `saveCommercialViaStepUp` → `/api/admin/platform-settings/commercial` → `svc_save_commercial_config` RPC. Auth and step-up behavior unchanged.
+- Server validation added at the HTTP layer for `messaging_topup_packages`: invalid currency codes, negative/zero/decimal/duplicate amounts, missing labels now return 400 from the route before reaching the DB. Previously only the DB RPC rejected these. Existing valid payloads are unaffected.
+- No DB changes. No migrations. No user-facing changes outside the admin panel.
+
+## 2026-10-15 — fix(security): SELECT-side audit — add is_direct_transfer to payout balance queries (#628 follow-up)
+
+### What changed
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `is_direct_transfer` to `platform_fees` select; filter `=== false` before computing `totalEarned`. Prevents direct-transfer fees (platform never held) from inflating the available balance used in approval gate.
+- `app/api/payouts/balance/route.ts`: Same fix for merchant-facing balance display.
+- `app/api/cron/payout-nudge/route.ts`: Same fix for nudge balance calculation.
+- `app/dashboard/financials/page.tsx`: Same fix for financials dashboard (non-direct-split path).
+- `lib/__tests__/payout-select-audit.test.ts` (new): Static audit test — asserts all five payout routes include `is_direct_transfer` in their `platform_fees` `.select()` call. Fails if the field is removed.
+- `lib/__tests__/fin-002-atomic-payout.test.ts`, `lib/__tests__/payout-account-autolink-620.test.ts`: Added `is_direct_transfer: false` to 7 mock `platform_fees` rows that mirrored real selects but lacked the field.
+
+### Why the 5 mock rows in admin-bearer-route-handlers.test.ts lacked the field
+Those mocks mirrored the `cron/auto-payout/route.ts` query, which DID include `is_direct_transfer` in its real select. The mock data was written before the `=== false` filter was added — it was always semantically incomplete (it should have had `is_direct_transfer: false`) but the bug was dormant until the filter started excluding `null` values.
+
+### What it affects / could break
+- Approve route: `totalEarned` now excludes direct-transfer fees. If a business has BYO direct-transfer fees, their available balance for payout approval is lower (correct — platform never held those funds).
+- Balance display and nudge: same — balance now reflects only platform-held funds.
+- Financials page: `platformFees` display excludes direct-transfer rows (correct — no fee to show for pass-through funds).
+
+## 2026-10-15 — fix(tests): add is_direct_transfer: false to cron mock data (#628 follow-up)
+
+### What changed
+- `lib/__tests__/admin-bearer-route-handlers.test.ts`: Five `platform_fees` mock rows in cron auto-payout tests were missing `is_direct_transfer: false`. After the `=== false` fix these rows were excluded (null ≠ false), causing the cron to see no payable fees and return 500. Added the field to all five mock rows.
+
+### What it affects / could break
+- No production code changed. Test-only fix. 31/31 tests in affected suite pass; full suite 13,019 pass.
+
+## 2026-10-15 — fix(security): P1/P2 payment integrity hardening (#628 follow-up)
+
+### What changed
+- `lib/payments/payable-fees.ts`: `getPayableFeeRows` changed from `!f.is_direct_transfer` to strict `=== false` (fail-closed). NULL custody is now ineligible. Added `getUnclassifiedFeeRows` helper for monitoring unknown-custody rows.
+- `app/api/admin/payouts/generate/route.ts`: Added Sentry warning + `custody_warning` field in response when fee rows with unknown custody are excluded. Added `getUnclassifiedFeeRows` call after `getPayableFeeRows`.
+- `app/api/cron/auto-payout/route.ts`: Added Sentry warning for unclassified custody rows per business per run.
+- `app/api/payments/byo-webhook/[businessId]/route.ts`: Charge.success non-success path now splits on terminal vs integrity. Terminal provider failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark payment failed. Integrity/unverified outcomes (amount_mismatch, currency_mismatch, reference_mismatch, unknown status, HTTP 404, missing_transaction_id, unsupported_gateway) leave payment status unchanged, write `gateway_status` for reconciliation, fire Sentry error, write no dedup row. Dedup upsert errors now logged to Sentry (non-fatal).
+- `supabase/migrations/443_byo_webhook_secret_hash.sql`: Added explicit column-level `REVOKE INSERT/UPDATE` on all columns for `authenticated`. Self-check upgraded from `has_table_privilege` to `has_any_column_privilege` for INSERT/UPDATE, catching column-level grants that table-level check misses.
+- `lib/__tests__/payment-credentials-columns.pg.test.ts`: Added Finding 3 tests — column-level UPDATE grant escape (proves old table-level REVOKE did not remove it; new column-level REVOKE does) and self-check failure when sensitive-column SELECT grant is reintroduced.
+- `lib/__tests__/payment-integrity.test.ts`: Updated existing tests to match new behavior (integrity case ≠ failure). Added P1 behavioral tests: terminal vs integrity split, unknown status, HTTP 404, currency mismatch, transient 503, `getUnclassifiedFeeRows`.
+
+### What it affects / could break
+- Payout generation: fee rows where `is_direct_transfer IS NULL` are now excluded from payout gross (previously included). Column has `DEFAULT false`; no normal platform-held row should be NULL in production. Any row that slipped through as NULL will now be surfaced via Sentry warning.
+- BYO webhook: payments are no longer marked `failed` for amount/currency/reference mismatches, unknown statuses, or non-401/403/429 HTTP errors from the provider verify call. `gateway_status` is written instead for reconciliation. Only provider-confirmed terminal failures (Paystack: failed/reversed/abandoned; Flutterwave: failed) mark the payment failed.
+- Migration 443 now also revokes column-level INSERT/UPDATE on every column of `business_payment_credentials` for `authenticated`. Idempotent on re-run.
+
+## 2026-10-15 — fix(bot): ChatGPT P2 follow-up — version advance, persisted suggestions, retry-once ruling
+
+### What changed
+- **Finding 1 (P2) — version advance in in-place update (`bot.service.ts` ~L3890):** The non-expired 23505 in-place update inside `createNullBizSuggestionSession` now sets `version: (existing.version ?? 0) + 1` in the UPDATE payload alongside the existing `.eq('version', ...)` predicate. Without the payload advance, a second concurrent worker holding the same stale version could overwrite the newly written session data.
+- **Finding 2 (P2) — persisted suggestions for button construction:** All 6 callers of `createNullBizSuggestionSession` (covering `switch_biz`, no-session, returning-customer, 23505 recovery, and inline `handleMessage` recovery paths) now read `session.session_data.suggestions` from the returned session rather than their locally-generated `quickPick` arrays. If the persisted array is empty, each caller fails closed with a single platform-scoped "Something went wrong" reply. This prevents a race window where `biz_0` and `biz_1` resolve to different businesses than the picker labels show.
+- **Design Ruling — retry once after CAS success:** Previously, a successful CAS deactivation (non-zero rows) returned `null` immediately (fail-closed). Now both sites retry the insert exactly once after winning the CAS race. If the retry succeeds → continue normally. If the retry fails for any reason (including another 23505) → fail closed with exactly one "Something went wrong" reply, no loop. Zero-row deactivation is unchanged: re-read, resume if active+unexpired, never insert. Applied at BOTH sites: `createNullBizSuggestionSession` (~L3872) and the inline `handleMessage` 23505 recovery (~L1795).
+- **Tests updated:** Tests 1, 2, 10 (`stale-null-session.test.ts`) updated from `insertCount=1` (no retry) to `insertCount=2` (original + retry). New tests 20–23 added covering: (a) in-place version advance assertion, (b) persisted-suggestions button content assertion, (c) CAS success + retry succeeds → normal flow, (d) CAS success + retry fails → exactly one error reply, no buttons. `s1-botservice-real-handleMessage.test.ts` updated so `insertedSession.session_data.suggestions` is populated (Finding 2 fix). `session-resilience.test.ts` source-string tests updated to match new retry-once log messages.
+- **Note:** Corrects the prior CHANGELOG entry for commit 4ab7d8b5, which stated "CAS success → return null (fail closed). No retry insert." — the error reply now happens only when the single retry also fails.
+
+### What it affects / could break
+- Concurrent null-biz session creation: the winning worker now retries insert once instead of dropping the customer immediately; a customer who won the CAS race will usually get a working picker session instead of an error reply.
+- Button content during CAS recovery: if persisted suggestions are empty (edge case: very short-lived recovered session), user now sees "Something went wrong" instead of buttons built from a potentially stale local array.
+- No schema changes. No DB writes.
+
+## 2026-10-15 — fix(bot): CAS conditional deactivation for stale null-biz sessions (#645)
+
+### What changed
+- `bot.service.ts` site (a) — inline 23505 recovery in `handleMessage`: stale expired null-biz session deactivation now uses a CAS update guarded by `.eq('is_active', true).lt('expires_at', now).eq('version', existing.version)` plus `.select('id')`. If 0 rows updated (concurrent renewal by another worker), re-reads the session; resumes if now active+unexpired, fails closed otherwise. Does NOT retry insert on CAS success.
+- `bot.service.ts` site (b) — expiry deactivation in `createNullBizSuggestionSession`: same CAS pattern. 0 rows → re-read → return renewed session; CAS success → return null (fail closed). No retry insert.
+- Both sites explicitly bump `version: (existing.version ?? 0) + 1` in the update payload. No trigger auto-increments version on `bot_sessions`; it must be set explicitly. The `update_bot_sessions_updated_at` trigger only sets `updated_at`; `trg_bot_session_deactivate` only sets `last_active_at`.
+- `lib/__tests__/stale-null-session.test.ts`: updated tests 1, 2, 10 to assert fail-closed behavior (no retry insert; "Something went wrong" reply sent). Added tests 18 (site A CAS 0-rows race → resumed session) and 19 (site B CAS 0-rows race → resumed session returned, business-picker sent). 19/19 pass.
+- `lib/bot/__tests__/session-resilience.test.ts`: added 15 new tests covering version-trigger absence, CAS guards on both sites, 0-rows resume path, explicit version bump, and behavioral mock tests.
+
+### What it affects / could break
+- Concurrent WhatsApp messages to an expired null-biz session: second concurrent request that loses the CAS race now gets "Something went wrong; send Hi to start over" instead of potentially creating a duplicate session or crashing. Active, unexpired sessions are never incorrectly deactivated.
+- No schema changes. `bot_sessions.version` column was added in migration 236.
+
+## 2026-10-15 — fix(security): M449/450 ACL hardening rev 3 — column tightening, zero-signer trigger, signing-link server route
+
+### What changed (rev 3 additions over rev 2)
+- **M449 column tightening:**
+  - `contracts` authenticated INSERT/UPDATE: removed `status` and `signed_at`.
+    All status transitions (pending→expired→signed/declined) go through service_role routes only (send, submit, decline, [token]).
+  - `contract_signers` authenticated INSERT/UPDATE: removed `status`, `signed_at`, `otp_verified`, `otp_attempts`, `otp_expires_at`.
+    These are all set by otp/send, otp/verify, and submit routes using service_role.
+  - `contract_signers` authenticated SELECT: removed `token`.
+    Signing tokens are now served only via the new `/api/contracts/signing-link` route (service_role lookup).
+  - Self-check §7 extended with assertions for all newly-blocked columns.
+- **New migration 450** (`450_contracts_zero_signer_trigger.sql`):
+  - DB-level `BEFORE UPDATE` trigger `contracts_zero_signer_guard` on `contracts`.
+  - Fires when `NEW.status='signed'` AND `signing_mode='multi'` AND no `contract_signers` rows exist for the contract.
+  - Raises `integrity_constraint_violation` (SQLSTATE 23000). Fires for all roles including service_role (triggers are not bypassed by BYPASSRLS).
+  - Includes self-check DO block.
+- **New server route** `app/api/contracts/signing-link/route.ts`:
+  - `GET /api/contracts/signing-link?signer_id=<uuid>` — fetches `contract_signers.token` server-side via service_role, verifies business ownership, returns `{ url: "/sign/<token>" }`.
+  - The raw token never reaches the browser as part of a column-level SELECT response.
+- **Dashboard update** `app/dashboard/contracts/page.tsx`:
+  - Removed `token` from `contract_signers` sub-select and TypeScript interface.
+  - "Sign Now" in list view: changed `<a href>` to `<button onClick>` that calls `/api/contracts/signing-link` and opens the URL.
+  - "Share Signing Link" panel: signing URL now fetched via API effect on `selectedContract` change.
+  - "Sign Now" in detail panel: uses `ownerSignUrl` state populated by API call.
+- **Bug fix** `app/dashboard/waivers/page.tsx`:
+  - Changed `select('*')` on `waiver_templates` to explicit column list matching M449's authenticated SELECT grant.
+    `select('*')` with column-level-only grants causes a Postgres permission error (no table-level SELECT).
+- **PG test updates** (`contracts-whatsapp-channels-acl.pg.test.ts`):
+  - `contract_signers.token` SELECT test flipped to expect `'f'`.
+  - Added assertions: `contracts.status` and `contracts.signed_at` blocked from authenticated INSERT.
+  - Added assertions: `contract_signers.status`, `otp_verified`, `otp_attempts` blocked from authenticated INSERT.
+- **New behavioral PG test** (`contracts-zero-signer-behavioral.pg.test.ts`):
+  - Applies M450 trigger against a real Postgres instance.
+  - Verifies: multi-signer contract with zero signers cannot be UPDATEd to status='signed' by any role.
+  - Verifies: single-signer contracts (signing_mode='single') are exempt.
+  - Verifies: once a signer row is added, the UPDATE succeeds.
+
+### Write paths verified (no authenticated writes to removed columns)
+- `contracts.status`: written only by submit/route.ts (service_role), decline/route.ts (service_role), [token]/route.ts (service_role).
+- `contracts.signed_at`: written only by submit/route.ts (service_role).
+- `contract_signers.status`: same three service_role routes as above.
+- `contract_signers.signed_at`: written only by submit/route.ts (service_role).
+- `contract_signers.otp_verified`, `otp_attempts`, `otp_expires_at`: written only by otp/verify/route.ts and otp/send/route.ts (both service_role).
+
+### whatsapp_channels write paths (reconciled)
+- All writes are in API routes under `app/api/whatsapp/` (NOT `app/api/channels/`):
+  - `app/api/whatsapp/add-number/route.ts` (line 82): SELECT only; INSERT goes to `whatsapp_channel_candidates`. Client: service_role.
+  - `app/api/whatsapp/embedded-signup/route.ts` (lines 145, 153, 183): INSERT and UPDATE on whatsapp_channels. Client: service_role.
+  - `app/api/settings/whatsapp-channel/route.ts` (line 31): SELECT only for ownership check. Client: service_role.
+  - `app/api/channels/request/route.ts` (line 42): SELECT only. Client: service_role (checked).
+  - Cron, lib, bot service: all use service_role.
+- Browser/dashboard components: `.select('phone_number')`, `.select('id', { count: 'exact' })`, `.select('phone_number, provider, display_name, ...')` — all within the M449 column-level SELECT grant. No INSERT/UPDATE/DELETE from any browser client.
+
+### What it affects / could break
+- Any route that attempts to UPDATE `contracts.status` via an authenticated (SSR) client will now get a privilege error. Confirmed all status-writing routes use service_role.
+- Any route that attempts to INSERT `contract_signers.otp_verified` via authenticated client will fail. Confirmed all OTP routes use service_role.
+- `contract_signers.token` no longer readable via authenticated SELECT — dashboard UI now calls `/api/contracts/signing-link` to get signing URLs. The "Share Signing Link" panel requires the API to respond before showing the QR code.
+- `waiver_templates select('*')` in waivers dashboard was silently broken after M449 (returns 42501 for columns outside the grant); now uses explicit column list.
+
+## 2026-10-15 — fix(security): M449 least-privilege ACL for contracts, whatsapp_channels, and waivers (rev 2)
+
+### What changed (rev 2 additions over original)
+- M449 extended to cover `waiver_templates` and `signed_waivers` (same staging-vs-production asymmetry as contracts).
+  - `waiver_templates`: `authenticated` SELECT/INSERT/UPDATE granted (SSR routes use authenticated client for full CRUD). `anon` excluded.
+  - `signed_waivers`: `authenticated` SELECT-only granted (signing happens via service_role). `anon` excluded.
+- M449 `whatsapp_channels` UPDATE grant for `authenticated` removed — confirmed no authenticated-session write path exists (all channel mutations go through `createServiceClient()`).
+- M449 column lists hardened: `contracts.token` removed from `authenticated` SELECT (dashboard does not select it; signer tokens come from `contract_signers`); `otp_code` removed from `contract_signers` SELECT/INSERT/UPDATE (`authenticated` has no business seeing the raw OTP value); `token`, `token_expires_at`, `signature_data`, and `audit_trail` removed from contracts/contract_signers INSERT/UPDATE grants (all set server-side by service_role).
+- Self-check extended: checks `authenticated` has no UPDATE on `whatsapp_channels`; checks `otp_code` is blocked on `contract_signers`; checks waiver tables have correct grants.
+- PG test updated to match new shape (UPDATE removed from whatsapp_channels, new otp_code + waiver sections).
+- New unit test (`lib/__tests__/contracts-zero-signer-guard.test.ts`): documents the existing server-side guard that blocks sending a contract with zero signers and blocks finalizing a contract as signed when no `contract_signers` DB rows exist.
+- `app/dashboard/services/page.tsx` line ~496: fixed copy from "Members can give on a regular schedule" to "Customers book and pay for this service on a repeating schedule" (was copying from the giving/donation flow instead of the services recurring flow).
+
+### What it affects / could break
+- Any code attempting to UPDATE `whatsapp_channels` via the `authenticated` client will now get a privilege error — all channel mutations must use `createServiceClient()`.
+- `otp_code` is no longer readable via `authenticated` client; this is intentional — OTP delivery is server-side only.
+- Waiver templates on staging that previously showed empty lists due to missing `authenticated` grants will now work correctly.
+- No change to RLS policies; data isolation is unchanged.
+
+## 2026-10-15 — fix(payments): accurate gateway-neutral payment-link privacy notice (#653)
+
+### What changed
+- The public `/pay/[token]` page now explains that hosted payment providers process cards, Waaiio does not retain full card numbers or CVV, and merchants cannot see full card credentials.
+- The notice correctly discloses merchant visibility of transaction amount, status and customer-provided purchase information; it does not make absolute "no payment data" promises.
+- Shared copy is shown before redirect to the business's configured gateway; added copy regression tests.
+
+### What it affects / could break
+- Checkout disclosure text/visuals change; no payment initiation logic, gateway routing, database schema or settlement behavior is modified.
+
+## 2026-10-15 — fix(admin): guided admin onboarding and authoritative country options (#651)
+
+### What changed
+- Admin Customer Onboarding is now a guided owner → business/country → plan/capabilities/WhatsApp → review/invite workflow, matching the supported Get Started setup rules.
+- Active countries and categories are loaded from the canonical authenticated admin API. Errors/empty responses show a retry state and block submission instead of silently offering only Nigeria.
+- Post-invitation guidance preserves customer-owned activation, agreement to terms, plan payment, and Meta authorization. Coexistence is not selectable without eligibility.
+- Added regression coverage for supported selections, API failure and the guided owner/business review journey.
+
+### What it affects / could break
+- Admins must progress through separate guided steps instead of a single form.
+- Countries absent from the environment's active configuration cannot be submitted. No migration or entitlement change.
+
+## 2026-10-15 — fix(bot): 7-finding hardening (ChatGPT review on bd042ae9 + 6bbd280b)
+
+### What changed
+- **(1)** `bot.service.ts:3003-3058`: All sends in `select_business_suggestion` step handler → platform-scoped (`enterPlatformDiscovery` + `sendPlatformText`). No business is bound in this step.
+- **(2)** `bot.service.ts:1726-1734`: `session = (newSession || session)` with null guard — 23505 recovery path no longer overwrites with null. `newSession.id` ref at L1692 → `effectiveId` with null check.
+- **(3)** `bot.service.ts:3665`: In-place update adds `.eq('whatsapp_number', from).eq('version', existing.version)` — CAS concurrency protection. 0 rows → return null.
+- **(4)** `bot.service.ts:1246-1251`: Did-you-mean helper returns null → explicit `sendPlatformText` error + `return` — never falls through to generic session creation.
+- **(5)** `bot.service.ts:3633-3634`: Removed delete of inactive null-biz rows — no unique index makes them collide (only `idx_bot_sessions_unique_active_null_biz` is partial on `is_active=true`). Deactivate only.
+- **(6)** `lib/__tests__/stale-null-session.test.ts:813-853`: Real two-message test: msg1 "Hi" returning → picker stored, msg2 "biz_0" → step handler deactivates, recursive call binds business.
+- **(7)** `bot.service.ts:2477-2494`: In-session `switch_biz` now calls `enterPlatformDiscovery` before sends. All replies platform-scoped (`sendPlatformButtons`, `sendPlatformText`). Suspended previous business cannot block switching.
+
+## 2026-10-14 — fix(bot): confirm saved-card decline choices with navigation buttons
+
+### What changed
+- `lib/payments/saved-card-offer.ts` (~L253-319): `handleSavedCardOfferAction` decline paths (`save_decline`, `replace_decline`, `already_declined`) now send a confirmation message with [Main menu] [Done] buttons instead of silently returning. Added `sendButtons` parameter and `sendDeclineConfirmation` helper. replace_decline looks up saved card last4 for personalized copy; falls back to generic if unavailable.
+- `lib/bot/bot.service.ts` (~L1065-1118): Passes `sendButtons` to `handleSavedCardOfferAction`. Added routing for `savedcard_menu:{paymentId}` (resets session to capability selection, shows business menu) and `savedcard_done:{paymentId}` (deactivates session, sends goodbye).
+- `lib/bot/flows/flow-localization.ts`: Added 7 new `savedcard.*` keys across all 8 locales (en, pcm, yo, ig, ha, tw, fr, es): `decline_keep_last4`, `decline_keep_generic`, `decline_not_saved`, `btn_main_menu`, `btn_done`, `session_done`. Added `decline_keep_last4` to PLACEHOLDER_SCHEMA. Added `btn_main_menu` and `btn_done` to BUTTON_TITLE_KEYS.
+
+### What it affects / could break
+- Customers who tap "Not now" or "Keep current" on saved-card offers will now see a confirmation message instead of silence.
+- Duplicate taps send the same confirmation (idempotent — no second mutation).
+- Main menu button routes to the business's capability selection menu.
+- Done button deactivates the session with a goodbye message.
+- No change to accept paths (save_accept/replace_accept already confirm + enter PIN flow).
+
+## 2026-10-14 — fix(bot): DRY suggestion session creation via createNullBizSuggestionSession helper
+
+### What changed
+- `lib/bot/bot.service.ts:3664-3720`: New `createNullBizSuggestionSession(from, userId, sessionData, ttlMs)` helper. Deactivates expired active null-biz sessions, cleans up inactive rows, inserts new session. On 23505: if existing is expired, deactivates + retries once; if not expired, updates in place. Returns null on unrecoverable failure (log + Sentry).
+- All 6 call sites that created null-biz `select_business_suggestion` sessions now use the helper: `switch_biz` (L204), `home` (L228), switch-keyword suggestions (L852), did-you-mean (L1216), "Welcome back" quick-pick (L2170), in-session `switch_biz` (L2482). Buttons/suggestions only sent if helper returns a session; otherwise platform-scoped "Something went wrong" fallback.
+- Generic session-insert failure branch (L1688): only calls `enterPlatformDiscovery + sendPlatformText` when `!businessId`; when businessId is set, sends fallback business-scoped with guard (MessagingSuspendedError caught).
+- `lib/__tests__/stale-null-session.test.ts`: Added tests 8-11: returning customer picker via helper, did-you-mean via helper, 23505 in-place update, hard insert failure → fallback.
+
+### What it affects / could break
+- Session creation is now atomic per helper call — stale sessions cleaned up before insert. Prevents 23505 from silently dropping the session.
+- Buttons are only sent after session is confirmed stored — prevents orphaned buttons with no backing session.
+
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1627-1666`: 23505 null-biz recovery now checks if the recovered session is expired (`expires_at < now`). If expired: deactivates the stale row (`is_active=false`, scoped by id + `business_id IS NULL`), retries the insert once. If retry fails: logs, Sentry, sends fallback via platform path. Only resumes non-expired sessions.
+- `lib/bot/bot.service.ts:1659-1669`: 23505 fallback "Something went wrong" messages changed from `this.sendText` (business-scoped, crashes with MessagingSuspendedError when no business) to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2039-2041`: Added `enterPlatformDiscovery()` call at the start of the marketplace greeting section (no business bound).
+- `lib/bot/bot.service.ts:2053,2070-2076,2095,2110,2126`: Changed all no-business sends from `this.sendText` / `this.messageSender.sendButtons` to `this.sendPlatformText` / `this.sendPlatformButtons` — "Welcome back", quick-pick buttons, registration fallback, first-time greeting, "couldn't find a business".
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering stale session deactivation + retry, Hi with stale session, brand-new phone greeting, returning customer picker.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts:360-388`: Updated test 6 — no longer expects guard to block (sends are now platform-scoped), instead verifies "couldn't find" message is delivered.
+
+### What it affects / could break
+- The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
+- PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
+- The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
+## 2026-10-13 — #628 fix(payments): Flutterwave BYO webhook secret hash required at setup
+
+### What changed
+- `app/api/settings/payment-credentials/route.ts`: Flutterwave BYO setup now requires `webhook_secret_hash` — trimmed, max 256 chars, must differ from the secret key. Returns 400 with clear message if missing or invalid. Paystack/Stripe unchanged. No GET or response ever returns secret_key or webhook_secret_hash.
+- `app/dashboard/settings/tabs/PaymentsTab.tsx`: Flutterwave BYO form adds password-type input for webhook secret hash (autocomplete=off), read-only webhook URL with copy button, and disables "Verify & Connect" until both secret key and hash are filled. Sends `webhook_secret_hash` for Flutterwave only.
+- `lib/dashboard-i18n.ts`: Added en/pcm keys for webhook hash label, help text, and webhook URL label.
+
+### What could break
+- Existing Flutterwave BYO setups without a webhook_secret_hash will continue to work (credentials already saved). New setups require the hash. The BYO webhook handler already rejects Flutterwave webhooks without a configured hash (added in earlier commit).
+- If a merchant tries to set up Flutterwave BYO without configuring a webhook secret in their Flutterwave dashboard first, the setup will be rejected with a clear error message.
+
+## 2026-10-14 — fix(security): harden image source URL validation
+
+### What changed
+- `app/api/images/convert/route.ts`: Replaced string-prefix URL validation with parsed URL validation. Non-image input now returns 400 instead of 500. Fetch uses `redirect: 'error'` to reject redirects.
+
+### What it affects / could break
+- URLs that previously passed the prefix check but fail strict parsing will now be rejected (400). This is correct behavior.
+- Non-image bodies now return 400 (was 500).
+
+## 2026-10-14 — test(security): real route-handler test for images/convert + pdfjs-dist v6 smoke
+
+### What changed
+- `lib/security/__tests__/sanitize-image.test.ts`: Replaced test #10 ("images/convert route handler → converts a PNG buffer to JPEG") which tested sharp directly, with 4 tests that import the real GET handler from `app/api/images/convert/route.ts`, call it with a real `NextRequest`, mock only the outbound `fetch` (returns a real PNG buffer) and `@/lib/rate-limit`. Asserts: status 200, content-type image/jpeg, JPEG magic bytes (FF D8 FF), dimensions via sharp metadata. Added cases for missing URL (400), non-Supabase URL (400), and non-image input (500).
+- `lib/security/__tests__/pdfjs-dist-smoke.test.ts` (new): Smoke test for pdfjs-dist v6. Creates a real PDF via pdf-lib, parses with pdfjs-dist legacy build, verifies numPages, viewport dimensions, and text extraction.
+
+### What it affects / could break
+- Test-only changes. No production code modified.
+- pdfjs-dist smoke uses the `legacy` build for Node.js compatibility (the app uses the default browser build via dynamic import in `app/sign/[token]/page.tsx`).
+
+## 2026-10-14 — chore: upgrade Next.js 14.2.35 → 15.5.27 + React 18 → 19
+
+### What changed
+- `package.json`: next 14.2.35→15.5.27, react/react-dom ^18→^19, @types/react/react-dom ^18→^19, eslint-config-next ^14→^15.
+- `next.config.mjs`: removed `experimental.instrumentationHook` (built-in in Next 15), moved `experimental.serverComponentsExternalPackages` → top-level `serverExternalPackages`, added `experimental.staleTimes` to preserve Next 14 client router cache behaviour.
+- `app/api/payments/byo-webhook/[businessId]/route.ts`: params type → `Promise<…>` + `await` (Next 15 async request API).
+- `app/api/admin/onboarding/[id]/route.ts`: params type → `Promise<…>` + `await`, extracted `id` before use.
+- `app/checkin/[businessId]/page.tsx`: client component params → `Promise<…>` + `use()` (React 19).
+- `app/dashboard/products/components/ProductForm.tsx`: `RefObject<HTMLInputElement>` → `RefObject<HTMLInputElement | null>` (React 19 stricter ref types).
+- `app/dashboard/products/components/BulkUpload.tsx`: same RefObject fix.
+- `app/maintenance/page.tsx`: `<a href="/">` → `<Link href="/">` (eslint-config-next 15 now errors on internal `<a>` links).
+- `app/(marketing)/reseller-setup/SetupWizard.tsx`: same `<a>` → `<Link>` fix.
+- `lib/pdf/__tests__/pdfkit-packaging-config.test.ts`: updated assertion from `serverComponentsExternalPackages` → `serverExternalPackages` to match the config rename.
+- `instrumentation.ts`: added `onRequestError = Sentry.captureRequestError` (Next 15 hook for nested RSC errors), updated comment to reflect Next 15 built-in instrumentation.
+- `package.json`: pinned exact versions (no `^`) for next, react, react-dom, @types/react, @types/react-dom, eslint-config-next.
+
+### What it affects / could break
+- Client router cache now uses staleTimes {dynamic:30, static:180} matching Next 14 defaults. Remove after launch if we want Next 15's more aggressive invalidation.
+- All other dependencies (Sentry, framer-motion, Supabase SSR, PostHog, etc.) verified React 19 compatible at current versions — no upgrades needed.
+- Admin app (Vite, separate repo section) stays on React 18 — unaffected.
+
+## 2026-10-14 — chore(deps): upgrade sharp 0.34→0.35.5 and pdfjs-dist 5→6.4
+
+### What changed
+- `package.json`: `sharp` ^0.34.5 → ^0.35.5, `pdfjs-dist` ^5.6.205 → ^6.2.108.
+- `package-lock.json`: sharp 0.35.5 (fixes GHSA-wq5f/rgj7/f88m), pdfjs-dist 6.4.299 (fixes GHSA-hq66).
+
+### Why it's safe
+- **sharp 0.35**: All API calls used in `lib/security/sanitize-image.ts:22-78` (`sharp()`, `.rotate()`, `.resize()`, `.jpeg()`, `.png()`, `.webp()`, `.toBuffer()`, `.metadata()`) and `app/api/images/convert/route.ts:31` (`.jpeg()`, `.toBuffer()`) are unchanged in v0.35. Requires Node ≥20.9 (CI runs 24.11). Build verified.
+- **pdfjs-dist 6.x**: `app/sign/[token]/page.tsx:158-182` uses dynamic import, `GlobalWorkerOptions.workerSrc`, `getDocument({data})`, `page.getViewport()`, `page.render()` — all unchanged in v6. Worker CDN URL template (`pdf.js/${version}/pdf.worker.min.mjs`) resolves correctly for 6.4.299. `isEvalSupported` removed in v6 but was not used. Build verified.
+
+### What it affects / could break
+- **sharp**: Native binary rebuild. If Vercel build fails on sharp install, check platform compatibility (should auto-detect).
+- **pdfjs-dist**: Client-side only (contract signing page). No server-side rendering of PDFs. CDN worker URL changes with version.
+
+## 2026-10-14 — fix(bot): stale null-business session and platform-scoped no-business replies
+
+### What changed
+- `lib/bot/bot.service.ts:1627-1666`: 23505 null-biz recovery now checks if the recovered session is expired (`expires_at < now`). If expired: deactivates the stale row (`is_active=false`, scoped by id + `business_id IS NULL`), retries the insert once. If retry fails: logs, Sentry, sends fallback via platform path. Only resumes non-expired sessions.
+- `lib/bot/bot.service.ts:1659-1669`: 23505 fallback "Something went wrong" messages changed from `this.sendText` (business-scoped, crashes with MessagingSuspendedError when no business) to `this.sendPlatformText` with `enterPlatformDiscovery()`.
+- `lib/bot/bot.service.ts:2039-2041`: Added `enterPlatformDiscovery()` call at the start of the marketplace greeting section (no business bound).
+- `lib/bot/bot.service.ts:2053,2070-2076,2095,2110,2126`: Changed all no-business sends from `this.sendText` / `this.messageSender.sendButtons` to `this.sendPlatformText` / `this.sendPlatformButtons` — "Welcome back", quick-pick buttons, registration fallback, first-time greeting, "couldn't find a business".
+- `lib/__tests__/stale-null-session.test.ts` (new): 4 tests covering stale session deactivation + retry, Hi with stale session, brand-new phone greeting, returning customer picker.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts:360-388`: Updated test 6 — no longer expects guard to block (sends are now platform-scoped), instead verifies "couldn't find" message is delivered.
+
+### What it affects / could break
+- The S-1 guard (`assertMessagingAllowed`) is NOT weakened — business-scoped sends with no tenant still fail closed. Only the no-business code paths now use platform-scoped sends that bypass the guard.
+- PR #642 rewrites the no-business section; this fix is minimal and merge-compatible (only changes send call types, not structure).
+- The 23505 retry adds one extra DB round-trip in the stale-session edge case only; normal flow is unchanged.
+
+## 2026-10-14 — chore(deps): patch critical and high dependency advisories
+
+### What changed
+- `package.json`: Added scoped `overrides` to patch vulnerable transitive dependencies: `simple-git` 3.36.0→4.0.1 scoped to `@antiwork/shortest` (CRITICAL), `jsondiffpatch` 0.6.0→0.7.6 scoped to `ai` (HIGH), `source-map-js` 1.2.1→1.2.2 (HIGH), `fast-uri` 3.1.4→3.1.8 (HIGH), `js-yaml` 4.3.0→4.3.2 (HIGH), `dompurify` 3.4.12→3.4.16 (medium), `postcss` deduped to root 8.5.28 scoped to `next` (HIGH, fixes next@14 nested 8.4.31), `glob` 10.3.10→10.5.0 scoped to `@next/eslint-plugin-next` (HIGH).
+- `package-lock.json`: Updated transitive `brace-expansion` 5.0.7→5.0.12 and 2.1.2→2.1.7 (HIGH, within semver range of parents).
+- `admin/package.json`: Bumped `react-router` ^7.6.1→^7.18.2 (HIGH, 6 CVEs), `postcss` ^8.4.38→^8.5.23 (HIGH), `vite` 6.3.5→6.4.3 (HIGH). Added overrides for transitive deps: `ws` 8.21.0 (HIGH), `fast-uri` 3.1.8, `browserslist` 4.28.7, `source-map-js` 1.2.2, `undici` 7.29.1 (HIGH), `simple-git` 4.0.1 scoped to `@antiwork/shortest` (CRITICAL), `brace-expansion` 2.1.7, `baseline-browser-mapping` 2.11.0.
+- `admin/package-lock.json`: Regenerated with all bumps and overrides.
+
+### What it affects / could break
+- **simple-git 3→4** (scoped to @antiwork/shortest): Major version override, dev-only E2E tool. Compatibility verified: shortest calls `simpleGit()`, `.branch()`, `.revparse()` only (bin.js:5503-5519) — all stable in v4. If shortest E2E tests break, pin simple-git back to 3.x in overrides.
+- **react-router 7.14→7.18**: Minor bump but touches routing internals. Admin panel routing verified via vite build.
+- **jsondiffpatch 0.6→0.7** (scoped to ai): 0.x semver major, dev-only via shortest→ai. Compatibility verified: ai uses `patch()`, `clone()`, `diff()` only (rsc-shared.mjs:138,165,192,218; rsc-server.mjs:2,136) — all stable in v0.7.
+- **postcss override in next@14** (scoped to next): Forces next's nested postcss from 8.4.31 to root 8.5.28. Same major version, API-compatible. Verified via next build.
+- **nanoid override removed from admin**: postcss@8.5.30 declares ^3.3.20 which already satisfies the alert (>=3.3.12). The previous override to 3.3.12 was actively downgrading.
+- **Remaining unfixed** (need major bumps — decision cards pending): `next` 14→15 (2 CRITICAL + 16 HIGH).
+
+## 2026-10-14 — fix(bot): apply business overrides to language picker (#633)
+
+### What changed
+- `lib/bot/bot.service.ts`: Wrapped `sendLanguagePicker()` call (~L1806) and `lang.picker_confirmed` rendering (~L2388) inside `runWithTranslationOverrides` with the business's overrides. Previously these ran outside override context, so business overrides for `lang.picker_body`, `lang.picker_button`, and `lang.picker_confirmed` were silently ignored.
+
+### What it affects / could break
+- Businesses that set custom translations for picker keys will now see them applied.
+- No change for businesses without overrides (default text unchanged).
+
+## 2026-10-14 — fix(api): validate deletes before executing, CAS failure logging (#633)
+
+### What changed
+- `app/api/translations/route.ts` PUT: validation now runs BEFORE the delete/upsert branch. Deletes are validated for platform-only keys, non-editable keys, unknown keys, and disallowed languages — same checks as upserts. Any error → 400, no deletes and no upserts run (all-or-nothing).
+- `lib/bot/bot.service.ts` (~L1758): CAS failure during saved-language activation now logs `logger.warn` (with session id, no phone number) and `Sentry.captureMessage`. In-memory language is kept for the current message.
+
+### What it affects / could break
+- API consumers that relied on deletes bypassing key validation will now get 400 errors for invalid keys. This is the correct behavior.
+- No behavior change for valid delete/upsert requests.
+
+## 2026-10-14 — fix(bot): activate remembered language from customer_profiles (#633)
+
+### What changed
+- `lib/bot/bot.service.ts` (~L1735): When `customer_profiles.preferred_language` is set, verify it against the business's current allowed + certified languages before skipping the picker. If allowed, set `session_data._detected_language` and persist via CAS — greeting and flows now render in the saved language. If not allowed (business removed it or tier dropped), fall through to the picker instead of silently defaulting to English.
+
+### What it affects / could break
+- Returning customers who previously picked a language now get responses in that language immediately (no picker). Previously they got English despite having a saved preference.
+- If a business removes a language from its config, returning customers with that preference will see the picker again (correct behavior).
+
+## 2026-10-14 — feat(bot): business-editable greeting keys with platform-only deny list (#633)
+
+### Owner decision
+- Main greeting (welcome_default) is edited ONLY on the WhatsApp settings page (bot_greeting).
+- Away message (greeting.away) is edited ONLY in Settings > Features (away_message).
+- Both are platform-overridable by admins as fallbacks but NOT business-editable.
+- greeting.powered_by stays platform-only (branding).
+- Business-editable greeting keys: welcome_back, welcome_back_named, cancel_hint, chat_with_us.
+
+### What changed
+- `lib/bot/translations.ts`: Added PLATFORM_ONLY_KEYS deny list (powered_by, welcome_default, away). Exported createOverridesLoader factory keyed by business id (replaces single-promise memo). loadBusinessOverrides filters out non-editable keys.
+- `lib/bot/bot.service.ts`: All greeting send paths (new session, away, returning customer rebook/no-rebook, tier not allowed) render through getFlowCopy/fillFlowCopy inside runWithTranslationOverrides. Uses effective customer language (session._detected_language), not hardcoded 'en'. Override loader keyed by business id.
+- `lib/bot/customer-intelligence.ts`: buildReturnGreeting accepts optional welcomeLine parameter. New buildDefaultWelcomeLine function for exact-text fallback.
+- `lib/bot/flows/flow-localization.ts`: fillFlowCopy uses function replacer `() => String(v)` so names with $& render literally. Added greeting.cancel_hint to KEYS_WITH_COMMANDS.
+- `app/api/translations/route.ts`: Explicit PLATFORM_ONLY_KEYS check with "platform-only" error message.
+- `app/dashboard/translations/page.tsx`: Added "Greeting" category with note about where to edit main greeting and away message.
+
+### What it affects / could break
+- Businesses can now override welcome_back, welcome_back_named, cancel_hint, chat_with_us via dashboard translations page.
+- cancel_hint overrides must preserve *cancel* command token (API enforced).
+- Bot greeting text is unchanged with no overrides (byte-identical to main).
+- No DB schema changes.
+
+## 2026-10-14 — fix(admin): handle subscription read errors in tier change route
+
+### What changed
+- `app/api/admin/businesses/[id]/tier/route.ts:18-19`: `getSubscriptionInfo` now checks the Supabase query error. On error, GET and POST return 500 `{"error":"Could not check subscription status"}`. POST makes no write and no audit entry when the subscription read fails.
+- `admin/src/pages/Businesses.tsx:263-268`: If the GET pre-check fails (network error, non-OK status, or bad JSON), shows alert "Could not check whether this business has a paid plan. Tier not changed." and aborts without sending POST.
+- `admin/src/pages/Subscriptions.tsx:317-322`: Same pre-check failure handling.
+- `lib/__tests__/admin-tier-change.test.ts`: Added tests 14 (GET 500 on subscription read error) and 15 (POST 500 on subscription read error — no write, no audit). Total: 15 tests, 0 skips.
+- `admin/src/__tests__/tier-change-precheck.test.tsx`: 6 tests — renders real Businesses and Subscriptions pages with @testing-library/react; drives tier-change UI (select tier, click Save); asserts GET non-OK and network error abort with alert (no POST) for both pages; paying business confirm(false) blocks POST, confirm(true) proceeds with exactly one POST.
+
+### What it affects / could break
+- If the subscriptions table is unreachable, admin tier changes are blocked until it recovers. This is intentional — the route needs subscription status to populate the response and audit log.
+
+## 2026-10-14 — fix(admin): move tier change server-side (business-only override)
+
+### What changed
+- `app/api/admin/businesses/[id]/tier/route.ts`: New POST+GET route for admin tier changes. POST changes only `businesses.subscription_tier` (never writes subscriptions). GET returns `{ tier, paidPlan, revertsOn }` so the UI can warn before saving. For paying businesses (active subscription with plan growth/business), the response includes `paidPlan` and `revertsOn` (current_period_end). At next renewal, `activate_paid_subscription` (M418) resets the tier to the subscription's plan. Auth: `requirePlatformAdmin({ requiredRole: 'admin' })`.
+- `admin/src/pages/Businesses.tsx`: `handleTierChange()` calls GET before POST; if the business has a paid plan, shows a confirm dialog explaining the override is temporary and billing is unchanged.
+- `admin/src/pages/Subscriptions.tsx`: Same confirm dialog. Fixed `SubscriptionRecord` interface: `tier` (nonexistent column) → use `businesses.subscription_tier` joined as `business_tier`; `plan_name` (nonexistent) → `plan` (actual DB column, M001:272); `interval` → `billing_interval` (M172:4); `auto_renew`/`gateway_subscription_id` remain in interface but are not tier-related. Detail panel shows "Paid Plan" (subscriptions.plan) and "Current Tier" (businesses.subscription_tier). Table row shows override badge when business_tier differs from plan.
+- `lib/__tests__/admin-tier-change.test.ts`: 13 tests — POST: auth (2), validation (2), 404, business-only write (never subscriptions), paying biz response, non-paying biz response, no-op; GET: auth, validation, 404, response shape. 0 skips.
+
+### What it affects / could break
+- Previous head (96279b15) had a P0 bug: the route wrote `subscriptions.tier` which does not exist — PostgREST rejected it and every tier change returned 500. Unit tests passed because Supabase was mocked. This is now fixed.
+- Admin tier change is a business-only override. Non-paying businesses: permanent. Paying businesses: temporary until next renewal.
+- No changes to billing, payments, renewal logic, cron, or capabilities.
+
+## 2026-10-14 — fix(admin): replace JSON input with country-amount form for per-country settings
+
+### What changed
+- `shared/country-amounts.ts` (new): Shared validator for `minimum_bank_transfer` (NG, GH) and `minimum_payout` (NG, US, GB, CA, GH). All allowed countries are required — omitting one is a validation error. Validates: plain object, all allowed country codes present, no unknown countries, finite non-negative integers. Also exports country names, currency symbols, and help text.
+- `admin/src/pages/PlatformSettings.tsx`: Added `CountryAmountEditor` component showing one row per country with currency symbol (₦, GH₵, $, £, CA$) and number input. Replaces raw JSON text input for both the "Configure" (unconfigured) path and the existing editor path. Inline validation: blocks decimal, comma, letter-e keystrokes; shows "Required" for empty boxes; disables Save when invalid. Updated `KEY_DESCRIPTIONS` to plain-language help text, removed JSON placeholder/wording.
+- `app/api/admin/platform-settings/commercial/route.ts`: Server-side validation for `minimum_bank_transfer` and `minimum_payout` — rejects with 400 if value is not a plain object with all required country keys and non-negative integer values.
+- `admin/src/__tests__/platform-settings-discoverability.test.tsx`: Updated tests 3 and 5 for country-amount form (no JSON textbox). Added tests 6-8: existing minimum_payout renders number inputs; editing produces numeric values not strings; Save disabled when a country box is empty.
+- `lib/platformSettings.ts`: Fixed incorrect docstring on `minimum_payout` — was "minor units", corrected to "whole (major) currency units".
+- `lib/__tests__/country-amounts-validation.test.ts` (new): 29 unit tests for the shared validator (valid, missing countries, null, string "1000", -1, 1.5, NaN, Infinity, unknown country, nested objects, empty object, multiple errors).
+- `lib/__tests__/commercial-route-country-amounts.test.ts` (new): 15 route-level tests proving bad values get 400 (including missing countries) and valid values reach the RPC as numbers.
+
+### Units finding
+- `minimum_bank_transfer`: **whole (major) currency units** — naira, cedis. Evidence: `bank-transfer.ts:48` compares `amount >= minBankTransfer` where `amount` is in major units (line 93: `Math.round(params.amount * 100)` converts to minor for DB storage). `platformSettings.ts:67` docstring confirms "major currency units".
+- `minimum_payout`: **whole (major) currency units** — naira, dollars, pounds, cedis. Evidence: `auto-payout/route.ts:165-181` compares `netAmount < minPayout` where `netAmount` = sum of `platform_fees.transaction_amount` which = `payment.amount` (major units, proven by `paystack.ts:218`: `payment.amount * 100` = kobo). The docstring at `platformSettings.ts:44` says "minor units" but this is incorrect per the actual comparison chain.
+
+### What it affects / could break
+- Admin Platform Settings page only — the save path (step-up + `save_commercial_config` RPC) is unchanged.
+- If an admin has already saved a `minimum_bank_transfer` or `minimum_payout` value with string-typed amounts (e.g. `{"NG": "5000"}`), the editor will show them but the server will now reject re-saves unless values are actual numbers. This is the intended fix.
+
+## 2026-10-16 — fix(bot): stale directory results + connect fallback CAS safety (ChatGPT P1 findings)
+
+### What changed
+- **P1-A: `lib/bot/handlers/directory-search.ts`:** Every return path in `handleDirectorySearch()`, `handleNameSearch()`, and `sendFuzzySuggestions()` now includes ALL directory session fields explicitly. When results or suggestions are empty, `_directory_results: []`, `_directory_suggestions: []`, and `_directory_total: 0` are set instead of being omitted. Prevents stale results from a previous search persisting in session_data via spread merge.
+- **P1-B: `lib/bot/bot.service.ts` (connect/switch fallback ~L961-982):** Replaced raw `deactivateSession()` + `.delete()` + `.insert()` sequence with `createDirectorySession()`, the CAS-safe method that uses UPDATE-first, INSERT fallback, and 23505 recovery. If `createDirectorySession()` returns null, logs via Sentry and returns (no crash, no stale state).
+- **Tests:** Added 4 regression tests in `lib/bot/__tests__/directory-flow.test.ts`: (1) `handleDirectorySearch` returns explicit empty arrays on no-results, (2) stale `dir_result_0` tap after no-results search fails correctly, (3) source-code assertion that connect fallback uses `createDirectorySession` (no raw INSERT/DELETE), (4) connect fallback with null return does not crash.
+
+### What it affects / could break
+- P1-A: Searching for a term with no results now explicitly clears session_data directory fields. Previously, tapping a previous search's result after a no-results search could select a stale business.
+- P1-B: Connect/switch fallback on shared number no longer deletes inactive null-biz sessions. Session creation uses the same CAS lifecycle as the rest of the directory flow.
+- No schema changes.
+
+## 2026-10-15 — fix(bot): CAS retry must return before directory flow to prevent double session insert
+
+### What changed
+- `lib/bot/bot.service.ts` (line ~1875): Added `return;` after the `#266 R4` CAS deactivation + retry insert succeeds. Before this fix, the directory flow section ran immediately after the retry, attempting to insert a second active null-biz session (which would 23505 silently in production). Now the function exits cleanly; the fresh session is used on the user's next message.
+
+### What it affects / could break
+- Edge case only: affects users whose prior null-biz session expired but wasn't cleaned up. They now get no response on the first message (CAS recovery is silent); the next message works normally.
+- `stale-null-session.test.ts` tests 1 and 10 now pass (were failing with insertCount=3 instead of 2).
+- `session-resilience.test.ts` source-scan assertion for 1400-char window still passes (comment kept to 1 line to stay within window).
+
+## 2026-10-14 — fix(bot): sendPlatformList, provenance tests, s1 guard restoration
+
+### What changed
+- `lib/channels/message-sender.ts`: Added `sendPlatformList` to interface and `MetaCloudSender` with the same guard semantics as `sendPlatformText`/`sendPlatformButtons` (`platformScopeAllowed: true` — allowed only in platform discovery mode, refused with a business bound).
+- `lib/bot/bot.service.ts`: `sendPlatformList` now delegates to the sender's platform-scoped list method (real WhatsApp interactive list, not text fallback).
+- `lib/bot/__tests__/directory-flow.test.ts`: Replaced code-inspection provenance test with 6 real behavior tests (search result tap, suggestion tap, numeric pick, connect match, biz_N pick, typed bot code). List tests assert `type === 'list'` with ≤10 rows and ≤24 char titles.
+- `lib/__tests__/s1-botservice-real-handleMessage.test.ts`: Restored `totalBusinessScopedCalls === 0` assertion. Extended helper to subtract platform-scoped sends (`sendPlatformText`/`sendPlatformButtons`/`sendPlatformList` spies) from total cloud calls.
+
+### What it affects / could break
+- Directory results now use proper WhatsApp interactive list messages (not text fallback).
+- `sendPlatformList` on a sender with a bound business will throw (same as `sendPlatformText`).
+
+## 2026-10-14 — fix(bot): directory flow Part A — security, provenance, localization
+
+### What changed
+- `lib/bot/bot.service.ts`: switch/connect handler now looks up first, only deactivates session on match. No-match inside a business flow falls through to the flow. No-match outside a flow runs directory search. Directory handoffs pass correct resolution source: 'fuzzy' for search/suggestion/connect picks, 'returning_customer' for biz_N picks, 'bot_code' for typed codes. "directory" and "search" aliases only activate on the shared number (not dedicated channels).
+- `lib/bot/handlers/directory-search.ts`: Switched from sync `checkRateLimit` to async `checkRateLimitAsync` (same pattern as bot rate limiter). Localized hard-coded strings in `buildResultDescription` and `buildSearchDescription`.
+- `lib/bot/flows/flow-localization.ts`: Added 4 new keys (`directory.open_now`, `directory.desc_category_in_location`, `directory.desc_businesses_in`, `directory.desc_your_search`) to all 8 locales.
+- `lib/bot/__tests__/directory-flow.test.ts`: Rewrote tests — no either/or assertions, provenance verification, connect/switch command variants (outside flow, inside flow, no match), dedicated channel test, rate limit test.
+
+### What it affects / could break
+- "switch/connect <text>" inside an active business flow with no match no longer deactivates the session — the flow handles the text normally. Previously it would deactivate and show "no business found."
+- "search" and "directory" commands on a dedicated business number now reach the business flow instead of going to the directory.
+
+## 2026-10-14 — feat(bot): WhatsApp directory search on shared number
+
+### What changed
+- `lib/bot/handlers/directory-search.ts` (NEW): Directory search handler — greeting, search, fuzzy suggestions, result selection, "connect <name>" command.
+- `lib/bot/bot.service.ts`: Replaced no-business-found greeting with directory flow. Added `directory_search` and `directory_results` session steps. `home` command now shows directory. "connect <name>" works alongside "switch <name>". Added `sendPlatformList` and `buildDirectorySend` helpers.
+- `lib/bot/flows/flow-localization.ts`: Added 17 translation keys under `directory.*` prefix (en + pcm). Platform-owned, not business-editable.
+- `lib/bot/inbound-command-normalization.ts`: Added `directory` and `search` as aliases for the `home` navigation command.
+- `lib/bot/__tests__/directory-flow.test.ts` (NEW): 11 integration tests covering the full directory flow via handleMessage.
+
+### What it affects / could break
+- Shared-number customers now see a directory search prompt instead of "Send a business code". Returning customers get quick-pick buttons + search.
+- The `home`, `directory`, and `search` commands all return to the directory.
+- "connect <name>" is a new command alias for "switch <name>".
+- Dedicated-number messaging is unchanged — directory never shows.
+- Depends on #636 (marketplace search infrastructure). Depends on #633 (platform translation overrides) for admin-editable directory text.
+
+## 2026-10-13 — fix(security): move bank account writes server-side (M448)
+
+### What changed
+- `supabase/migrations/448_business_bank_accounts_server_only.sql`: Revokes INSERT/UPDATE/DELETE from `anon` and `authenticated` on `business_bank_accounts`. Revokes SELECT from `anon`. Authenticated keeps SELECT — required by the "Admin reads bank accounts" RLS policy (M439) used by the admin panel's browser client (`adminDb`). Drops the "Owners manage bank accounts" and "Resellers manage sub-account bank accounts" FOR ALL RLS policies. Adds a self-check DO block that fails if any write grant remains.
+- `lib/__tests__/bank-accounts-server-only.pg.test.ts`: Real-PG test that verifies authenticated CAN write before M448 (negative control), applies M448 from disk, then confirms authenticated gets 42501 on INSERT/UPDATE/DELETE, service_role still writes, and authenticated retains SELECT (admin panel compatibility).
+- `lib/__tests__/bank-accounts-route.test.ts`: Route handler test confirming non-owner gets 403 and owner write goes through the service client.
+
+### What it affects / could break
+- No behavior change for users — the dashboard already uses the API route (`/api/dashboard/bank-account`) which uses the service client for all reads and writes. The bot reads via service client. The admin panel reads via authenticated browser client + RLS.
+- If any future code tries to write `business_bank_accounts` through a browser-side Supabase client, it will fail with permission denied. Writes must go through API routes using the service client. Reads are only allowed for admin roles via the "Admin reads bank accounts" RLS policy.
+
+## 2026-10-13 — #620 fix(admin): make held payouts reviewable; date-only rendering
+
+### What changed
+- `admin/src/pages/Payouts.tsx`: Added "Needs Review" tab showing `status='held'` payouts with count badge. Each held payout displays its flags (type, message, severity). Approve/Reject actions available on review tab with same step-up flow as pending tab.
+- `admin/src/pages/Payouts.tsx`: `formatDate()` rewritten to parse YYYY-MM-DD strings directly without `new Date()` constructor, preventing timezone-induced day shifts. "2026-10-05" renders as "5 Oct 2026" in every browser timezone.
+- `admin/src/pages/Payouts.tsx`: Added error banner with retry button when `/api/admin/payouts` returns non-OK, instead of silently showing "No payouts found".
+- `app/api/admin/payouts/[id]/approve/route.ts`: When `payout_account_id` is null, resolves the business's single active+verified payout account read-only before step-up. All existing account checks (ownership, active, verified, gateway) run against the candidate. After step-up succeeds, writes the link with conditional update (`WHERE payout_account_id IS NULL`) and `.select('id')` requiring exactly 1 row. If 0 rows, re-reads: proceeds if same candidate was linked concurrently, returns 409 if a different account was linked. No DB writes occur when step-up fails.
+
+### What it affects / could break
+- Admin payouts page only — pending tab unchanged.
+- Approve route behavior for payouts that already have an account is unchanged.
+- Date display change affects all date-only fields on the payouts page (period_start, period_end).
+
+## 2026-10-11 — docs/claude-safety-rules: Standing safety rules, product decision protocol, .gitignore
+
+### What changed
+- `CLAUDE.md`: Replaced "Always commit and push" convention with scoped authorization rule: commit/push to feature branches within approved tasks, explicit Owner authorization required per action, stop on permission errors regardless of prior authorization.
+- `CLAUDE.md`: Added "Standing safety rules" section — main protection, permission-error stop behavior, worktree restrictions, public-repo security advisory rule, pre-push Codex review gate (sanitized branch-specific output file with `tr '/' '-'`, non-empty file check), invalid-finding disclosure rule, Codex-unavailable fallback to ChatGPT reviewer, two-reviewer gate for high-risk changes, per-test CI evidence rule (test file + job + step + counts + SHA), no-substitution rule, security-test fail-not-skip policy.
+- `CLAUDE.md`: Added "Product decisions" section — decision card protocol for business rules, edge cases, user-facing behavior, money handling, security tradeoffs, and deviations from Owner/CTO/reviewer instructions.
+- `AGENTS.md`: Added PRODUCT DECISION NEEDED label guidance, deviation-flagging rule, finding disclosure rule, and per-test CI evidence rule under review sections.
+- `.gitignore`: Added `.codex/`, `.mcp.json`, `.playwright-mcp/`.
+
+### What it affects / could break
+- Documentation and .gitignore only. No runtime, migration, or code behavior changes.
+
+## 2026-10-10 — #609 SEC-005: Admin native MFA enforcement (pre-merge)
+
+### What changed
+- `lib/admin-auth.ts`: `requirePlatformAdmin` now requires `aal2` from verified JWT claims. Bearer-to-cookie fallback is prohibited after an invalid explicit Bearer token. Denied auth events logged to `admin_audit_logs`.
+- `lib/admin-step-up.ts` (new): Operation-bound, single-use, concurrency-safe step-up authorization system. Uses Supabase GoTrue API for server-side MFA challenge/verify. Atomic consumption via `UPDATE ... WHERE consumed_at IS NULL`.
+- `app/api/admin/step-up/prepare/route.ts` (new): Prepare step-up with MFA challenge.
+- `app/api/admin/step-up/verify/route.ts` (new): Verify step-up with TOTP code.
+- `app/api/admin/otp/route.ts` **DELETED**: Custom HMAC-based OTP system removed.
+- `admin/src/pages/Login.tsx`: Replaced custom email/WhatsApp OTP with Supabase native TOTP MFA. Three steps: credentials → enrollment (if needed) → TOTP verify.
+- `admin/src/lib/stagingAuth.ts`: `shouldSkipAdminOtp()` now always returns false. Staging MFA skip removed per SEC-005.
+- `supabase/migrations/439_admin_mfa_enforcement.sql`: Creates `admin_step_up_authorizations` table, updates `is_admin()`/`is_support()` to require aal2, replaces 28 inline `profiles.role` RLS policies with canonical `has_admin_role()` checks.
+- `RELEASE_GATE_V2.md`: Added SEC-005 invariant with expected-deny/expected-allow evidence requirements.
+- Step-up added to: payouts/approve, payouts/generate, provider-config mutations, team grant/revoke, impersonate, refund.
+
+### What could break
+- Admin users without enrolled TOTP factor cannot sign in (by design — enrollment screen shown).
+- Any admin frontend page that makes direct Supabase queries will now require aal2 at the RLS level.
+- Staging admin accounts now also require TOTP (staging MFA skip removed).
+- Routes expecting body without `stepUpId` for sensitive operations will get 403.
+
+### Dependencies
+- Supabase project must have TOTP MFA enabled (`enroll_enabled = true`, `verify_enabled = true`).
+- Migration 436 must be applied before enforcement takes effect at the RLS layer.
+- Admin user(s) must enroll TOTP before enforcement deployment.
+
 ## 2026-10-09 — #598 Promo product/service and loyalty redemption fail-closed guards (pre-staging)
 
 - Added a shared eligibility check for WhatsApp order/booking entered promo codes: enforce owner business, active status, valid-from/until dates, allowed ordering/scheduling flows, exact product/service restrictions, capacity, minimum subtotal and bounded fixed/percentage discount. A restricted code is refused for a mixed cart rather than reducing unrelated merchandise.

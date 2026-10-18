@@ -3,6 +3,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
 import { validateSourceLabel } from '@/lib/platform-campaigns/validation';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -107,13 +108,13 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 
   if (error || !data) return NextResponse.json({ error: 'Failed to update asset' }, { status: 500, headers: cors });
 
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  await logAdminAudit({
+    actorId: admin.userId,
     action: updates.is_active === false ? 'platform_campaign_asset_deactivated' : 'platform_campaign_asset_updated',
-    entity_type: 'platform_campaign_asset',
-    entity_id: assetId,
+    entityType: 'platform_campaign_asset',
+    entityId: assetId,
     details: { campaign_id: campaignId, fields: Object.keys(updates) },
-  }).then(() => {}, () => {});
+  });
 
   return NextResponse.json({ data }, { headers: cors });
 }

@@ -12,9 +12,11 @@ export interface AdminSession {
 const ALLOWED_ROLES: AdminRole[] = ['admin', 'support', 'finance', 'operations'];
 
 /**
- * Require a platform admin session.
+ * Require a platform admin session with MFA assurance.
  *
  * Canonical authority: auth.users app_metadata.role
+ * SEC-005: Also checks aal2 assurance level (defense-in-depth;
+ * the server enforces this independently in requirePlatformAdmin).
  *
  * Does NOT trust profiles.role for admin authorization.
  * Does NOT fall back to profiles.role when app_metadata is absent.
@@ -35,6 +37,12 @@ export async function requireAdminSession(): Promise<AdminSession> {
 
   if (!appMetadataRole || !ALLOWED_ROLES.includes(appMetadataRole)) {
     throw new Error('Signed-in account does not have admin access.');
+  }
+
+  // SEC-005: Check MFA assurance level (client-side defense-in-depth)
+  const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (!aalData || aalData.currentLevel !== 'aal2') {
+    throw new Error('MFA verification required. Please complete two-factor authentication.');
   }
 
   return { userId: user.id, email: user.email || '', role: appMetadataRole };

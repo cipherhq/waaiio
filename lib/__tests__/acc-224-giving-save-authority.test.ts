@@ -127,7 +127,7 @@ const eligibleBusiness = {
   recurring_enabled: true,
   subscription_tier: 'growth',
   trial_ends_at: null,
-  capability_overrides: [],
+  category: 'church',
 };
 
 const recurringCapabilities = [
@@ -145,19 +145,64 @@ describe('#224 LAYER 1: real POST() handler with mocked Supabase transport', () 
     vi.restoreAllMocks();
   });
 
-  async function setupRoute(mockOpts: Parameters<typeof createMockSupabaseClient>[0]) {
+  async function setupRoute(mockOpts: Parameters<typeof createMockSupabaseClient>[0] & {
+    overrides?: string[];
+    overrideError?: { message: string } | null;
+    configOk?: boolean;
+  }) {
     const { client, calls } = createMockSupabaseClient(mockOpts);
+
+    // Service client mock for capability_overrides query
+    // Supabase builders are thenables — .eq() returns an object with .then()
+    const overrideRows = (mockOpts.overrides || []).map(c => ({ capability: c }));
+    function makeThenable(data: unknown, error: unknown) {
+      const obj: Record<string, unknown> = {
+        eq: () => obj,
+        single: () => Promise.resolve({ data, error }),
+        maybeSingle: () => Promise.resolve({ data, error }),
+        then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
+          Promise.resolve({ data, error }).then(resolve, reject),
+      };
+      return obj;
+    }
+    const serviceClient = {
+      from: (table: string) => ({
+        select: () => {
+          if (table === 'capability_overrides') {
+            return makeThenable(overrideRows, mockOpts.overrideError ?? null);
+          }
+          return makeThenable(null, null);
+        },
+      }),
+    };
 
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockResolvedValue(client),
     }));
 
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue(serviceClient),
+    }));
+
     // Mock getConfiguredCapabilities to return test capabilities
     vi.doMock('@/lib/capabilities/service', () => ({
       getConfiguredCapabilities: vi.fn().mockResolvedValue({
-        ok: true,
+        ok: mockOpts.configOk !== false,
         rows: mockOpts.capabilities,
       }),
+    }));
+
+    vi.doMock('@/lib/capabilities/legacy-defaults', () => ({
+      getLegacyDefaultCapabilities: vi.fn().mockReturnValue(['scheduling']),
+    }));
+
+    vi.doMock('@/lib/logger', () => ({
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }),
+      },
     }));
 
     const mod = await import('@/app/api/giving/save/route');
@@ -348,6 +393,108 @@ describe('#224 LAYER 1: real POST() handler with mocked Supabase transport', () 
 
     const inserts = calls.filter(c => c.table === 'services' && c.op === 'insert');
     expect(inserts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('business query DB failure returns 500, not 403 (Safeguard D)', async () => {
+    // Simulate business query returning error + null data
+    const { client } = createMockSupabaseClient({
+      user: { id: OWNER_ID },
+      business: null,
+      capabilities: [],
+    });
+    // Override the from().select()...maybeSingle() to return a genuine error
+    const origFrom = client.from.bind(client);
+    client.from = (table: string) => {
+      const chain = origFrom(table);
+      if (table === 'businesses') {
+        chain.select = () => {
+          const inner: Record<string, unknown> = {};
+          inner.eq = () => inner;
+          inner.maybeSingle = () => Promise.resolve({ data: null, error: { message: 'connection timeout' } });
+          return inner;
+        };
+      }
+      return chain;
+    };
+
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: vi.fn().mockResolvedValue(client),
+    }));
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({}),
+    }));
+    vi.doMock('@/lib/capabilities/service', () => ({
+      getConfiguredCapabilities: vi.fn().mockResolvedValue({ ok: true, rows: [] }),
+    }));
+    vi.doMock('@/lib/capabilities/legacy-defaults', () => ({
+      getLegacyDefaultCapabilities: vi.fn().mockReturnValue(['scheduling']),
+    }));
+    vi.doMock('@/lib/logger', () => ({
+      logger: {
+        info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+        withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }),
+      },
+    }));
+
+    const mod = await import('@/app/api/giving/save/route');
+    POST = mod.POST as unknown as (req: Request) => Promise<Response>;
+
+    const res = await POST(makeRequest({ businessId: BIZ_ID, name: 'Test' }));
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.reason).toBe('internal_error');
+  });
+
+  it('RLS-hidden business (zero rows, no error) returns 403, not 500', async () => {
+    // .maybeSingle() returns {data: null, error: null} when RLS hides the row
+    const { calls } = await setupRoute({
+      user: { id: OWNER_ID },
+      business: null, // zero rows — RLS-hidden or nonexistent
+      capabilities: [],
+    });
+
+    const res = await POST(makeRequest({ businessId: BIZ_ID, name: 'Test' }));
+    expect(res.status).toBe(403);
+    const json = await res.json();
+    expect(json.reason).toBe('unauthorized');
+
+    // ZERO persistence calls
+    const writes = calls.filter(c => c.op === 'insert' || c.op === 'update');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('override query failure returns 500 (Safeguard A)', async () => {
+    await setupRoute({
+      user: { id: OWNER_ID },
+      business: eligibleBusiness,
+      capabilities: recurringCapabilities,
+      overrideError: { message: 'permission denied' },
+    });
+
+    const res = await POST(makeRequest({
+      businessId: BIZ_ID, serviceId: SVC_ID,
+      name: 'Tithe', isRecurring: true, interval: 'monthly',
+    }));
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.reason).toBe('override_read_error');
+  });
+
+  it('recurring save with overrides present still reaches services.update', async () => {
+    await setupRoute({
+      user: { id: OWNER_ID },
+      business: eligibleBusiness,
+      capabilities: recurringCapabilities,
+      overrides: ['recurring'],
+    });
+
+    const res = await POST(makeRequest({
+      businessId: BIZ_ID, serviceId: SVC_ID,
+      name: 'Tithe', isRecurring: true, interval: 'monthly',
+    }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
   });
 });
 

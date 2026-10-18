@@ -162,12 +162,12 @@ describe('Shared Edge withEdgeAttemptRecording (actual production module)', () =
     }
   });
 
-  it('Structural: all 4 direct API routes use attempt recording', async () => {
+  it('Structural: all 3 direct API routes use attempt recording', async () => {
+    // admin/otp route removed by SEC-005 (#609) — replaced by native Supabase MFA
     const { readFileSync } = await import('fs');
     const checks: Array<[string, string]> = [
       ['app/api/cron/payout-nudge/route.ts', 'executePayoutNudgeSend'],
       ['app/api/recurring/verify/route.ts', 'withDirectRouteAttempt'],
-      ['app/api/admin/otp/route.ts', 'withDirectRouteAttempt'],
       ['app/api/auth/otp/send/route.ts', 'orchestrateOtpSend'],
     ];
     for (const [route, expected] of checks) {

@@ -28,7 +28,7 @@ interface ProductFormProps {
   saving: boolean;
   uploadingImage: boolean;
   imagePreview: string | null;
-  imageInputRef: React.RefObject<HTMLInputElement>;
+  imageInputRef: React.RefObject<HTMLInputElement | null>;
   handleImageSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleSave: () => void;
   handleDelete: (id: string) => void;

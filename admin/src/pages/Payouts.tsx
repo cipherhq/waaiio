@@ -4,6 +4,14 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { loadCountries, getCountryCurrencyDetailMap } from '@/lib/countries';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
+
+interface PayoutFlag {
+  type: string;
+  message: string;
+  severity?: string;
+}
 
 interface PayoutRecord {
   id: string;
@@ -18,6 +26,7 @@ interface PayoutRecord {
   gateway_fee: number;
   net_amount: number;
   status: string;
+  flags?: PayoutFlag[];
   approved_by: string | null;
   approved_at: string | null;
   rejected_reason: string | null;
@@ -31,6 +40,7 @@ interface PayoutRecord {
 
 const statusStyles: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-700',
+  held: 'bg-orange-100 text-orange-700',
   approved: 'bg-blue-100 text-blue-700',
   processing: 'bg-blue-100 text-blue-700',
   paid: 'bg-green-100 text-green-700',
@@ -38,13 +48,20 @@ const statusStyles: Record<string, string> = {
   rejected: 'bg-red-100 text-red-700',
 };
 
+const FLAG_SEVERITY_STYLES: Record<string, string> = {
+  critical: 'bg-red-50 border-red-200 text-red-700',
+  warning: 'bg-amber-50 border-amber-200 text-amber-700',
+  info: 'bg-blue-50 border-blue-200 text-blue-700',
+};
+
 export default function Payouts() {
   const session = useAdminSession();
   const hasAccess = session && ['admin', 'finance'].includes(session.role);
   const isAdmin = session?.role === 'admin';
-  const [tab, setTab] = useState<'pending' | 'history'>('pending');
+  const [tab, setTab] = useState<'pending' | 'review' | 'history'>('pending');
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -75,12 +92,16 @@ export default function Payouts() {
   } | null>(null);
   const [loadingAccount, setLoadingAccount] = useState(false);
 
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
+
   const loadingRef = useRef(false);
 
   async function loadData() {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
+    setLoadError(null);
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -101,7 +122,12 @@ export default function Payouts() {
         const res = await fetch(`${apiUrl}/api/admin/payouts?page=${currentPage}`, {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
-        if (!res.ok) break;
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          setLoadError(errBody.error || `Failed to load payouts (HTTP ${res.status})`);
+          setPayouts([]);
+          return;
+        }
         const data = await res.json();
         allPayouts.push(...(data.payouts || []));
         totalPages = data.total_pages || 1;
@@ -111,6 +137,7 @@ export default function Payouts() {
       setPayouts(allPayouts);
     } catch (error) {
       console.warn('Failed to load payouts:', error);
+      setLoadError('Failed to load payouts. Please check your connection and try again.');
     } finally {
       setLoading(false);
       loadingRef.current = false;
@@ -123,8 +150,10 @@ export default function Payouts() {
   }, []);
 
   // Filter payouts by tab, search, and date range
+  const heldCount = payouts.filter(p => p.status === 'held').length;
   const displayPayouts = payouts.filter(p => {
     if (tab === 'pending' && !['pending', 'approved'].includes(p.status)) return false;
+    if (tab === 'review' && p.status !== 'held') return false;
     if (tab === 'history') {
       if (statusFilter !== 'all' && p.status !== statusFilter) return false;
     }
@@ -168,136 +197,178 @@ export default function Payouts() {
     loadApproveAccount(p.payout_account_id, p.business_id);
   }
 
-  // Approve payout via API route
+  // Approve payout via API route — gated by step-up MFA
   async function handleApprove() {
     if (!approveTarget) return;
     setApproving(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        return;
-      }
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/payouts/${approveTarget.id}/approve`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          transfer_method: transferMethod,
-          reference: transferRef || null,
-          notes: approveNotes || null,
-        }),
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/${approveTarget.id}/approve`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            transfer_method: transferMethod,
+            reference: transferRef || null,
+            notes: approveNotes || null,
+            stepUpId,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to approve payout');
+          return;
+        }
+
+        setApproveTarget(null);
+        setApproveAccountInfo(null);
+        setTransferMethod('manual_bank');
+        setTransferRef('');
+        setApproveNotes('');
+        await loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'payout_approve',
+        targetId: approveTarget.id,
+        params: { transfer_method: transferMethod, reference: transferRef || null, notes: approveNotes || null },
+        description: `Approve payout for ${approveTarget.business_name} — ${formatMoney(approveTarget.net_amount, approveTarget.country_code)}`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to approve payout');
-        return;
-      }
-
-      setApproveTarget(null);
-      setApproveAccountInfo(null);
-      setTransferMethod('manual_bank');
-      setTransferRef('');
-      setApproveNotes('');
-      await loadData();
     } catch (error) {
       console.error('Approve error:', error);
       alert('Failed to approve payout');
+      stepUp.reset();
     } finally {
       setApproving(false);
     }
   }
 
-  // Reject payout via API route
+  // Reject payout via API route — gated by step-up MFA
   async function handleReject() {
     if (!rejectTarget || !rejectReason) return;
     setRejecting(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        return;
-      }
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/payouts/${rejectTarget.id}/reject`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ reason: rejectReason }),
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/${rejectTarget.id}/reject`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ reason: rejectReason, stepUpId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') {
+            alert('Step-up authorization failed — please try again');
+            return;
+          }
+          alert(data.error || 'Failed to reject payout');
+          return;
+        }
+
+        setRejectTarget(null);
+        setRejectReason('');
+        await loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'payout_reject',
+        targetId: rejectTarget.id,
+        params: { reason: rejectReason },
+        description: `Reject payout for ${rejectTarget.business_name} — ${formatMoney(rejectTarget.net_amount, rejectTarget.country_code)}`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to reject payout');
-        return;
-      }
-
-      setRejectTarget(null);
-      setRejectReason('');
-      await loadData();
     } catch (error) {
       console.error('Reject error:', error);
       alert('Failed to reject payout');
+      stepUp.reset();
     } finally {
       setRejecting(false);
     }
   }
 
-  // Generate weekly payouts via API route
+  // Generate weekly payouts via API route (SEC-005: requires step-up)
   async function handleGenerate() {
     if (!confirm('Generate pending payouts for all platform-managed businesses?')) return;
     setGenerating(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        setGenerating(false);
-        return;
-      }
+      stepUpCallbackRef.current = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/payouts/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/generate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ stepUpId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to generate payouts');
+          return;
+        }
+
+        const msg = [
+          `Created: ${data.created} payout(s)`,
+          data.held ? `Held: ${data.held} (flagged for review)` : null,
+          data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
+        ].filter(Boolean).join('\n');
+        alert(msg);
+
+        await loadData();
+      };
+
+      await stepUp.execute({
+        actionType: 'payout_generate',
+        targetId: null,
+        params: { action: 'generate' },
+        description: 'Generate pending payouts for all businesses',
+        onAuthorized: stepUpCallbackRef.current,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to generate payouts');
-        setGenerating(false);
-        return;
-      }
-
-      const msg = [
-        `Created: ${data.created} payout(s)`,
-        data.held ? `Held: ${data.held} (flagged for review)` : null,
-        data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
-      ].filter(Boolean).join('\n');
-      alert(msg);
-
-      await loadData();
     } catch (error) {
       console.error('Generate error:', error);
-      alert('Failed to generate payouts');
+      if (stepUp.state.phase !== 'awaiting-code') {
+        alert('Failed to generate payouts');
+      }
     } finally {
-      setGenerating(false);
+      if (stepUp.state.phase !== 'awaiting-code' && stepUp.state.phase !== 'verifying') {
+        setGenerating(false);
+      }
     }
   }
 
@@ -360,6 +431,19 @@ export default function Payouts() {
         </div>
       </div>
 
+      {/* Error banner */}
+      {loadError && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3" data-testid="load-error-banner">
+          <p className="text-sm font-medium text-red-800">{loadError}</p>
+          <button
+            onClick={() => { setLoadError(null); loadData(); }}
+            className="mt-1 text-sm text-red-600 underline hover:text-red-800"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="mt-6 flex gap-1 rounded-lg bg-gray-100 p-1 w-fit">
         <button
@@ -369,6 +453,19 @@ export default function Payouts() {
           }`}
         >
           Pending Approval ({payouts.filter(p => ['pending', 'approved'].includes(p.status)).length})
+        </button>
+        <button
+          onClick={() => { setTab('review'); setPage(1); }}
+          className={`relative rounded-md px-4 py-2 text-sm font-medium transition ${
+            tab === 'review' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Needs Review
+          {heldCount > 0 && (
+            <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-orange-500 px-1.5 py-0.5 text-xs font-bold text-white" data-testid="held-count-badge">
+              {heldCount}
+            </span>
+          )}
         </button>
         <button
           onClick={() => { setTab('history'); setPage(1); }}
@@ -432,7 +529,8 @@ export default function Payouts() {
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Gateway Fees</th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                {tab === 'pending' && <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>}
+                {tab === 'review' && <th className="px-4 py-3 text-left font-medium text-gray-500">Flags</th>}
+                {(tab === 'pending' || tab === 'review') && <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -454,7 +552,25 @@ export default function Payouts() {
                       {p.status}
                     </span>
                   </td>
-                  {tab === 'pending' && isAdmin && (
+                  {tab === 'review' && (
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1" data-testid="payout-flags">
+                        {(p.flags || []).map((f, i) => (
+                          <span
+                            key={i}
+                            className={`inline-flex items-center rounded border px-1.5 py-0.5 text-xs ${FLAG_SEVERITY_STYLES[f.severity || 'info'] || FLAG_SEVERITY_STYLES.info}`}
+                            title={f.message}
+                          >
+                            {f.type}
+                          </span>
+                        ))}
+                        {(!p.flags || p.flags.length === 0) && (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </div>
+                    </td>
+                  )}
+                  {(tab === 'pending' || tab === 'review') && isAdmin && (
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
@@ -617,12 +733,36 @@ export default function Payouts() {
           </div>
         </div>
       )}
+
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (stepUpCallbackRef.current) {
+            stepUp.submitCode(code, stepUpCallbackRef.current);
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }
 
-function formatDate(d: string) {
-  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+/**
+ * Format a date-only string (YYYY-MM-DD) as "5 Oct 2026" without timezone conversion.
+ * Parses the parts directly so "2026-10-05" renders as 5 Oct in every timezone.
+ */
+function formatDate(d: string): string {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  // Match YYYY-MM-DD at the start (ignore any trailing time component)
+  const match = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return d;
+  const day = parseInt(match[3], 10);
+  const month = MONTHS[parseInt(match[2], 10) - 1];
+  const year = match[1];
+  return `${day} ${month} ${year}`;
 }
 
 // Fallback currency map — overridden by getCountryCurrencyDetailMap() once countries load

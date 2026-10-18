@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { processRefund } from '@/lib/payments/refund-handler';
-import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,15 +26,29 @@ export async function POST(request: NextRequest) {
     );
 
     const body = await request.json();
-    const { paymentId, businessId, amount, reason } = body as {
+    const { paymentId, businessId, amount, reason, stepUpId } = body as {
       paymentId: string;
       businessId: string;
       amount: number;
       reason?: string;
+      stepUpId?: string;
     };
 
     if (!paymentId || !businessId || !amount) {
       return NextResponse.json({ error: 'Missing required fields: paymentId, businessId, amount' }, { status: 400 });
+    }
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    // Binds all submitted operation fields: businessId, amount, and reason.
+    try {
+      await consumeStepUp(admin, stepUpId!, 'refund', paymentId, {
+        businessId,
+        amount,
+        reason: reason ?? null,
+      });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
     }
 
     const result = await processRefund({
@@ -51,12 +66,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Audit log for refund approval
-    const serviceClient = createServiceClient();
-    await serviceClient.from('admin_audit_logs').insert({
-      actor_id: admin.id,
+    await logAdminAudit({
+      actorId: admin.id,
       action: 'refund_approved',
-      entity_type: 'payment',
-      entity_id: paymentId,
+      entityType: 'payment',
+      entityId: paymentId,
       details: {
         business_id: businessId,
         amount,

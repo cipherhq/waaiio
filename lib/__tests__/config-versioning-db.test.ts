@@ -54,14 +54,15 @@ function psqlAsync(sql: string): Promise<string> {
 }
 
 // Admin JWT claims for save_commercial_config()
-const ADMIN_CLAIMS = `{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}`;
+const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
+const ADMIN_CLAIMS = `{"sub":"${ADMIN_ID}","role":"admin","user_metadata":{"role":"admin"}}`;
 
 /** Helper: call save_commercial_config as admin (all in one psql session) */
 function adminSave(key: string, value: string): string {
+  // C6: After M439, authenticated EXECUTE is revoked. Use svc_ wrapper via service_role.
   return psql(`
-    SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
-    SET ROLE authenticated;
-    SELECT save_commercial_config('${key}', '${value}'::jsonb);
+    SET ROLE service_role;
+    SELECT svc_save_commercial_config('${ADMIN_ID}'::uuid, '${key}', '${value}'::jsonb);
     RESET ROLE;
   `);
 }
@@ -76,14 +77,24 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
 
-      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+      -- SEC-005: preserve MFA-aware admin authorization after M439.
+      -- Legacy stub only for isolated M359 fixtures without has_admin_role().
+      DO $stub$
       BEGIN
-        RETURN COALESCE(
-          current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
-          false
-        );
+        IF to_regprocedure('public.has_admin_role(text[])') IS NULL THEN
+          EXECUTE $sql$
+            CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+            BEGIN
+              RETURN COALESCE(
+                current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
+                false
+              );
+            END;
+            $fn$ LANGUAGE plpgsql STABLE
+          $sql$;
+        END IF;
       END;
-      $fn$ LANGUAGE plpgsql STABLE;
+      $stub$;
 
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$
@@ -152,6 +163,27 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       CREATE POLICY service_role_bypass_versions ON public.platform_config_versions FOR ALL TO service_role USING (true) WITH CHECK (true);
     `);
 
+    // M439's real is_admin() reads the canonical Auth app_metadata role,
+    // not an untrusted JWT role. Seed that authority for this disposable-PG
+    // fixture without weakening the production MFA helper.
+    if (psql("SELECT to_regprocedure('public.has_admin_role(text[])') IS NOT NULL;") === 't') {
+      psql(`
+        BEGIN;
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id, email, raw_app_meta_data)
+        VALUES (
+          '00000000-0000-0000-0000-000000000001',
+          'm359-admin@unit.invalid',
+          '{"role":"admin"}'::jsonb
+        )
+        ON CONFLICT (id) DO UPDATE
+          SET raw_app_meta_data = EXCLUDED.raw_app_meta_data;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
+        COMMIT;
+      `);
+      expect(psql("SELECT raw_app_meta_data->>'role' FROM auth.users WHERE id='00000000-0000-0000-0000-000000000001';")).toBe('admin');
+    }
+
     // Verify bootstrap succeeded
     const count = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
     expect(count).toBeGreaterThanOrEqual(1);
@@ -161,12 +193,24 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     return parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
   }
 
+  // ── 0. aal1 denial ──
+
+  it('0. Authenticated user cannot call save_commercial_config directly (EXECUTE revoked)', () => {
+    const err = psqlMayFail(`
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '14'::jsonb);
+      RESET ROLE;
+    `);
+    expect(err).toMatch(/permission denied/i);
+  });
+
   // ── 1-3. Direct DML on commercial keys → rejected ──
 
   it('1. Authenticated admin direct UPDATE of commercial key → rejected', () => {
     // SET ROLE + set_config in same session so RLS sees admin, but trigger blocks
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       UPDATE platform_settings SET value = '"999"'::jsonb WHERE key = 'trial_days';
       RESET ROLE;
@@ -252,8 +296,9 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       // Attempt a commercial save — should fail at version INSERT
       const err = psqlMayFail(`
         SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
-        SET ROLE authenticated;
-        SELECT save_commercial_config('trial_days', '99'::jsonb);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+        SET ROLE service_role;
+        SELECT svc_save_commercial_config('00000000-0000-0000-0000-000000000001'::uuid, 'trial_days', '99'::jsonb);
         RESET ROLE;
       `);
       expect(err).toContain('TEST_INJECTED_FAILURE');
@@ -279,6 +324,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   it('8. Admin rename commercial → non-commercial → rejected (OLD.key)', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       UPDATE platform_settings SET key = 'pricing_tiers_old' WHERE key = 'pricing_tiers';
       RESET ROLE;
@@ -388,7 +434,8 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   });
 
   it('18. Empty commercial source → fail closed (structural)', () => {
-    const src = psql("SELECT prosrc FROM pg_proc WHERE proname = 'save_commercial_config';");
+    // After Option B refactor, the error is in the _impl function
+    const src = psql("SELECT prosrc FROM pg_proc WHERE proname = '_save_commercial_config_impl';");
     expect(src).toContain('no commercial keys found');
   });
 
@@ -453,9 +500,10 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     // Session A: save trial_days=30, hold transaction for 1s via pg_sleep
     const sessionA = psqlAsync(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       BEGIN;
-      SET ROLE authenticated;
-      SELECT save_commercial_config('trial_days', '30'::jsonb);
+      SET ROLE service_role;
+      SELECT svc_save_commercial_config('00000000-0000-0000-0000-000000000001'::uuid, 'trial_days', '30'::jsonb);
       SELECT pg_sleep(1);
       COMMIT;
       RESET ROLE;
@@ -468,9 +516,10 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     // This will block on the advisory lock until A commits
     const sessionB = psqlAsync(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       BEGIN;
-      SET ROLE authenticated;
-      SELECT save_commercial_config('annual_discount_percentage', '25'::jsonb);
+      SET ROLE service_role;
+      SELECT svc_save_commercial_config('00000000-0000-0000-0000-000000000001'::uuid, 'annual_discount_percentage', '25'::jsonb);
       COMMIT;
       RESET ROLE;
     `);
@@ -514,9 +563,11 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
   // ── 24-27. Additional proofs ──
 
-  it('24. EXECUTE privilege: PUBLIC revoked, authenticated granted', () => {
-    const acl = psql("SELECT proacl::text FROM pg_proc WHERE proname = 'save_commercial_config';");
-    expect(acl).toContain('authenticated=X/');
+  it('24. EXECUTE privilege: authenticated revoked, service_role granted (C6)', () => {
+    const authExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
+    expect(authExec).toBe('f');
+    const svcExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
+    expect(svcExec).toBe('t');
   });
 
   it('25. save_commercial_config creates missing key via upsert', () => {
@@ -529,6 +580,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   it('26. Admin direct DELETE of commercial key → rejected', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       DELETE FROM platform_settings WHERE key = 'pricing_tiers';
       RESET ROLE;
@@ -539,8 +591,9 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   it('27. save_commercial_config rejects non-commercial key', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
-      SET ROLE authenticated;
-      SELECT save_commercial_config('maintenance_mode', 'true'::jsonb);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+      SET ROLE service_role;
+      SELECT svc_save_commercial_config('00000000-0000-0000-0000-000000000001'::uuid, 'maintenance_mode', 'true'::jsonb);
       RESET ROLE;
     `);
     expect(err).toContain('not a commercial config key');
@@ -601,6 +654,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     // Attempt admin delete → rejected
     const errAdmin = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       DELETE FROM platform_settings WHERE key = 'minimum_bank_transfer';
       RESET ROLE;
@@ -656,38 +710,31 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
   // ── 32. Authenticated non-admin cannot invoke save_commercial_config ──
 
-  it('32. Authenticated non-admin user is rejected by internal is_admin() check', () => {
-    const NON_ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
-    // Create the non-admin user + profile so auth.uid() resolves
-    // In CI with full schema, profiles.id references auth.users.id
-    // CI auth.users stub has only (id, email, raw_app_meta_data) — use minimal columns
-    psqlMayFail("INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-000000000002', 'nonadmin@test.com') ON CONFLICT DO NOTHING;");
-    psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;");
-
+  // C6: After M439, authenticated EXECUTE is revoked on financial RPCs.
+  it('32. Authenticated user denied EXECUTE on save_commercial_config (C6 REVOKE)', () => {
     const err = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${NON_ADMIN_CLAIMS}', false);
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '99'::jsonb);
       RESET ROLE;
     `);
-    expect(err).toContain('requires admin role');
+    expect(err).toContain('permission denied for function');
   });
 
-  // ── 33-35. Explicit RPC EXECUTE privilege assertions ──
+  // ── 33-35. Explicit RPC EXECUTE privilege assertions (post-M439) ──
 
   it('33. anon CANNOT execute save_commercial_config', () => {
     const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
-  it('34. authenticated CAN execute save_commercial_config', () => {
+  it('34. authenticated CANNOT execute save_commercial_config (C6 REVOKE)', () => {
     const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
-    expect(canExec).toBe('t');
+    expect(canExec).toBe('f');
   });
 
-  it('35. service_role CANNOT execute save_commercial_config', () => {
+  it('35. service_role CAN execute save_commercial_config (C6 GRANT)', () => {
     const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
-    expect(canExec).toBe('f');
+    expect(canExec).toBe('t');
   });
 
   // ── 36. Structural regression: guard functions use function-owner, not rolsuper ──
@@ -764,14 +811,24 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
       GRANT USAGE, CREATE ON SCHEMA public TO ${NSU_ROLE};
       GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
 
-      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+      -- SEC-005: preserve MFA-aware admin authorization after M439.
+      -- Legacy stub only for isolated M359 fixtures without has_admin_role().
+      DO $stub$
       BEGIN
-        RETURN COALESCE(
-          current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
-          false
-        );
+        IF to_regprocedure('public.has_admin_role(text[])') IS NULL THEN
+          EXECUTE $sql$
+            CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+            BEGIN
+              RETURN COALESCE(
+                current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
+                false
+              );
+            END;
+            $fn$ LANGUAGE plpgsql STABLE
+          $sql$;
+        END IF;
       END;
-      $fn$ LANGUAGE plpgsql STABLE;
+      $stub$;
 
       CREATE SCHEMA IF NOT EXISTS auth;
       GRANT USAGE ON SCHEMA auth TO ${NSU_ROLE};
@@ -842,8 +899,10 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   });
 
   function nsuAdminSave(key: string, value: string): string {
+    // NSU database uses M359's save_commercial_config (no M439 svc_ wrappers)
     return nsuPsql(`
       SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT save_commercial_config('${key}', '${value}'::jsonb);
       RESET ROLE;
@@ -892,9 +951,11 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   });
 
   it('NSU-5. Authenticated non-admin is rejected', () => {
+    // NSU database uses M359's save_commercial_config (no M439 svc_ wrappers)
     const NON_ADMIN = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
     const err = nsuPsqlMayFail(`
       SELECT set_config('request.jwt.claims', '${NON_ADMIN}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '99'::jsonb);
       RESET ROLE;

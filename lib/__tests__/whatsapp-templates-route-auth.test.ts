@@ -120,7 +120,7 @@ describe('GET /api/whatsapp/templates — authorization', () => {
   });
 
   it('platform admin can GET shared WABA templates', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', userId: 'admin-1', email: 'admin@test.com', role: 'admin' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', userId: 'admin-1', email: 'admin@test.com', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' });
     const { GET } = await import('@/app/api/whatsapp/templates/route');
     const res = await GET(makeGetRequest());
     expect(res.status).toBe(200);
@@ -294,7 +294,7 @@ describe('POST /api/whatsapp/templates — admin-only', () => {
   });
 
   it('platform admin can create templates', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', userId: 'admin-1', email: 'admin@test.com', role: 'admin' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', userId: 'admin-1', email: 'admin@test.com', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' });
     const { POST } = await import('@/app/api/whatsapp/templates/route');
     const res = await POST(makePostRequest({ template: { name: 'test_template', language: 'en_US', category: 'UTILITY', components: [{ type: 'BODY', text: 'hi {{1}}' }] } }));
     expect(res.status).toBe(200);
@@ -318,7 +318,7 @@ describe('DELETE /api/whatsapp/templates — admin-only', () => {
   });
 
   it('platform admin can delete templates', async () => {
-    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', userId: 'admin-1', email: 'admin@test.com', role: 'admin' });
+    mockRequirePlatformAdmin.mockResolvedValue({ id: 'admin-1', userId: 'admin-1', email: 'admin@test.com', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' });
     const { DELETE } = await import('@/app/api/whatsapp/templates/route');
     const res = await DELETE(makeDeleteRequest({ name: 'test_template' }));
     expect(res.status).toBe(200);

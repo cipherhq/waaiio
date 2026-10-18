@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { logAdminAudit } from '@/lib/admin-audit';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
@@ -41,11 +42,11 @@ export async function GET(request: NextRequest) {
     };
 
     // Store snapshot in a simple audit log
-    await supabase.from('admin_audit_logs').insert({
-      admin_id: null,
+    await logAdminAudit({
+      actorId: null,
       action: 'database_health_snapshot',
-      entity_type: 'system',
-      entity_id: null,
+      entityType: 'system',
+      entityId: null,
       details: snapshot,
     });
 

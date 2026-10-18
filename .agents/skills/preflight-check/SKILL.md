@@ -1,3 +1,8 @@
+---
+name: preflight-check
+description: "Pre-change impact analysis. MUST run before modifying any file. Traces all dependencies, callers, shared types, DB columns, flow steps, and downstream effects. Prevents breaking changes by verifying the full blast radius before any edit."
+---
+
 # Pre-Flight Check
 
 > **MANDATORY: Run this BEFORE making any code change.** No exceptions.

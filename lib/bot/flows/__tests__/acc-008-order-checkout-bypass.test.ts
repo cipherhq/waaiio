@@ -627,10 +627,12 @@ describe('ACC-008: automation lifecycle', () => {
 // ══════════════════════════════════════════════════════════
 
 describe('ACC-008: order spend exactly-once across all paths', () => {
-  it('sendProactiveConfirmation passes amountPaid=0 for order payments', () => {
+  it('sendProactiveConfirmation passes real amountPaid + skipCustomerSpend for orders (#630)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/send-confirmation.ts', 'utf-8');
-    expect(src).toContain('isOrderPayment ? 0 : payment.amount');
+    // Orders now get real payment.amount (for receipts) with skipCustomerSpend=true
+    expect(src).toMatch(/amountPaid:\s*payment\.amount/);
+    expect(src).toMatch(/skipCustomerSpend:.*isOrderPayment/);
   });
 
   it('free order handlePostCompletion gets the order total (which is 0)', () => {

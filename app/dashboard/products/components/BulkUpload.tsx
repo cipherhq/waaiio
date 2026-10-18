@@ -17,7 +17,7 @@ interface BulkUploadProps {
   handleFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleBulkTextChange: (text: string) => void;
   handleBulkImport: () => void;
-  fileInputRef: React.RefObject<HTMLInputElement>;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
 }
 
 export default function BulkUpload({

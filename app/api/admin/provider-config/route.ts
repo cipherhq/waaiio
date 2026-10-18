@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import {
@@ -53,8 +54,30 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { action } = body;
+  const { action, stepUpId } = body;
   const service = createServiceClient();
+
+  // SEC-005 Layer 4: Mutation actions require step-up with full parameter binding.
+  // Every security-relevant parameter is included in the hash so that a
+  // step-up for one provider config change cannot authorize a different one.
+  if (action === 'save_refs' || action === 'switch_provider' || action === 'update_country' || action === 'create_country' || action === 'delete_country') {
+    const stepUpParams: Record<string, unknown> = { action, country_code: body.country_code ?? null };
+    if (action === 'save_refs') {
+      stepUpParams.plan_refs = body.plan_refs ?? null;
+      stepUpParams.expected_version_id = body.expected_version_id ?? null;
+    } else if (action === 'switch_provider') {
+      stepUpParams.new_gateway = body.new_gateway ?? null;
+      stepUpParams.expected_version_id = body.expected_version_id ?? null;
+    } else if (action === 'update_country' || action === 'create_country') {
+      stepUpParams.fields = body.fields ?? null;
+    }
+    try {
+      await consumeStepUp(admin, stepUpId, 'provider_config', action, stepUpParams);
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return respond({ error: msg, code: 'step_up_required' }, 403);
+    }
+  }
 
   // ═══ get_version: return current CAS version UUID ═══
   if (action === 'get_version') {
@@ -201,6 +224,46 @@ export async function POST(request: NextRequest) {
     }
 
     return respond({ success: true, version_id: data });
+  }
+
+  // ═══ create_country/delete_country: server-only sensitive country mutations ═══
+  // SEC-005: These previously went directly from the browser to Supabase,
+  // bypassing action-bound verification. The M439 table grant removes that path.
+  if (action === 'create_country') {
+    const country_code = body.country_code;
+    const fields = body.fields;
+    if (typeof country_code !== 'string' || !/^[A-Z]{2}$/.test(country_code) ||
+        !fields || typeof fields !== 'object' || Array.isArray(fields) ||
+        fields.code !== country_code || typeof fields.name !== 'string' || !fields.name.trim() ||
+        typeof fields.currency_code !== 'string' || !/^[A-Z]{3}$/.test(fields.currency_code) ||
+        !['stripe', 'paystack', 'flutterwave'].includes(fields.payment_gateway)) {
+      return respond({ error: 'Invalid country configuration' }, { status: 400 });
+    }
+    const allowed = ['code', 'name', 'flag', 'dialing_code', 'currency_code', 'currency_symbol',
+      'currency_locale', 'payment_gateway', 'phone_digits', 'phone_pattern', 'phone_placeholder',
+      'is_active', 'sort_order', 'cities', 'pricing', 'verification_tiers', 'doc_types'];
+    if (Object.keys(fields).some(k => !allowed.includes(k))) {
+      return respond({ error: 'Unknown country configuration field' }, { status: 400 });
+    }
+    const { error } = await service.from('countries').insert({ ...fields, updated_by: admin.userId });
+    if (error) {
+      logger.error('[provider-config] create_country failed', { error: error.message, country_code });
+      return respond({ error: 'Failed to create country' }, { status: 500 });
+    }
+    return respond({ success: true });
+  }
+
+  if (action === 'delete_country') {
+    const country_code = body.country_code;
+    if (typeof country_code !== 'string' || !/^[A-Z]{2}$/.test(country_code)) {
+      return respond({ error: 'Invalid country code' }, { status: 400 });
+    }
+    const { error } = await service.from('countries').delete().eq('code', country_code);
+    if (error) {
+      logger.error('[provider-config] delete_country failed', { error: error.message, country_code });
+      return respond({ error: 'Failed to delete country' }, { status: 500 });
+    }
+    return respond({ success: true });
   }
 
   // ═══ update_country: narrow partial update for non-provider fields only ═══

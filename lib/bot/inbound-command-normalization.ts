@@ -47,7 +47,8 @@ const NAVIGATION_ALIASES: Record<NavigationCommand, ReadonlySet<string>> = {
     'afficher le menu', 'montre le menu', 'mostrar menu', 'muestra el menu',
   ]),
   home: aliasSet([
-    'home', 'go home', 'padà sí ilé', 'pada si ile', 'laghachi ụlọ', 'laghachi ulo',
+    'home', 'go home', 'directory', 'search',
+    'padà sí ilé', 'pada si ile', 'laghachi ụlọ', 'laghachi ulo',
     'koma gida', 'kɔ fie', 'ko fie', 'accueil', 'retour accueil', 'inicio', 'volver al inicio',
   ]),
   restart: aliasSet([

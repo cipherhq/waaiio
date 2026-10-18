@@ -1,9 +1,33 @@
-import { useEffect, useState } from 'react';
-import { adminDb } from '@/lib/supabase';
+import { useEffect, useState, useRef } from 'react';
+import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { adminApiPut, adminApiFetch, adminApiDelete } from '@/lib/adminApi';
 import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
+import {
+  isCountryAmountKey,
+  validateCountryAmounts,
+  COUNTRY_AMOUNT_COUNTRIES,
+  COUNTRY_CURRENCY_SYMBOLS,
+  COUNTRY_NAMES,
+  COUNTRY_AMOUNT_HELP,
+} from '@shared/country-amounts';
+import {
+  isTopupPackagesKey,
+  validateTopupPackages,
+  TOPUP_ALLOWED_CURRENCIES,
+  TOPUP_CURRENCY_SYMBOLS,
+  TOPUP_CURRENCY_NAMES,
+  TOPUP_MINOR_PER_MAJOR,
+  TOPUP_LABEL_MAX_LEN,
+  TOPUP_DESCRIPTION_MAX_LEN,
+  TOPUP_MAX_PACKAGES_PER_CURRENCY,
+  KNOWN_PACKAGE_KEYS,
+  type TopupCurrency,
+  type TopupPackage,
+} from '@shared/topup-packages';
 
 interface PlatformSetting {
   key: string;
@@ -27,6 +51,10 @@ const GROUPS: GroupDef[] = [
   {
     label: 'Fee Policy',
     keys: ['fee_policy_enabled', 'category_fee_rates', 'messaging_financial_gate', 'messaging_reservation_ttl_seconds'],
+  },
+  {
+    label: 'Messaging',
+    keys: ['messaging_topup_packages'],
   },
   {
     label: 'Payments & Payouts',
@@ -67,6 +95,472 @@ function formatValue(val: unknown): string {
   return JSON.stringify(val, null, 2);
 }
 
+/**
+ * Structured editor for country-amount settings (minimum_bank_transfer, minimum_payout).
+ * Shows one row per allowed country with currency symbol and number input.
+ */
+function CountryAmountEditor({
+  settingKey,
+  value,
+  changed,
+  onChange,
+}: {
+  settingKey: string;
+  value: Record<string, number>;
+  changed: boolean;
+  onChange: (val: string) => void;
+}) {
+  const countries = COUNTRY_AMOUNT_COUNTRIES[settingKey] || [];
+  const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+
+  function handleChange(cc: string, raw: string) {
+    // Allow empty while typing, but mark as required
+    const updated = { ...value };
+    if (raw === '') {
+      delete updated[cc];
+    } else {
+      const num = Number(raw);
+      updated[cc] = num;
+    }
+
+    // Validate — every allowed country must have a value
+    const errors: Record<string, string> = {};
+    for (const country of countries) {
+      if (!(country in updated)) {
+        errors[country] = 'Required';
+      }
+    }
+    for (const [country, val] of Object.entries(updated)) {
+      if (typeof val !== 'number' || !Number.isFinite(val)) {
+        errors[country] = 'Must be a number';
+      } else if (val < 0) {
+        errors[country] = 'Must be 0 or greater';
+      } else if (!Number.isInteger(val)) {
+        errors[country] = 'Must be a whole number';
+      }
+    }
+    setLocalErrors(errors);
+
+    onChange(JSON.stringify(updated, null, 2));
+  }
+
+  return (
+    <div className={`rounded-lg border p-3 space-y-2 ${borderClass}`}>
+      {countries.map(cc => {
+        const symbol = COUNTRY_CURRENCY_SYMBOLS[cc] || cc;
+        const name = COUNTRY_NAMES[cc] || cc;
+        const currentVal = value[cc];
+        const error = localErrors[cc];
+        return (
+          <div key={cc}>
+            <div className="flex items-center gap-2">
+              <label className="w-36 text-xs font-medium text-gray-500 shrink-0">
+                {name} ({symbol})
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={currentVal !== undefined ? currentVal : ''}
+                onChange={e => handleChange(cc, e.target.value)}
+                onKeyDown={e => {
+                  // Block decimal point, comma, letter e
+                  if (e.key === '.' || e.key === ',' || e.key === 'e' || e.key === 'E') {
+                    e.preventDefault();
+                  }
+                }}
+                placeholder="0"
+                className={`flex-1 rounded border px-2 py-1.5 text-sm outline-none focus:border-brand ${
+                  error ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                }`}
+              />
+            </div>
+            {error && <p className="ml-36 pl-2 text-[10px] text-red-500 mt-0.5">{error}</p>}
+          </div>
+        );
+      })}
+      {Object.keys(localErrors).length > 0 && (
+        <p className="text-[10px] text-red-500 font-medium">Fix errors above before saving.</p>
+      )}
+    </div>
+  );
+}
+
+/** Check if a country-amount value has validation errors (for disabling Save) */
+function hasCountryAmountErrors(key: string, jsonStr: string): boolean {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const errors = validateCountryAmounts(key, parsed);
+    return errors !== null;
+  } catch {
+    return true;
+  }
+}
+
+/** Check if a topup-packages value has validation errors (for disabling Save) */
+function hasTopupPackagesErrors(jsonStr: string): boolean {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const errors = validateTopupPackages(parsed);
+    return errors !== null;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Per-currency, per-package editor for messaging_topup_packages.
+ *
+ * UI contract:
+ * - Amounts are displayed and entered in MAJOR currency units (e.g. ₦1,000).
+ * - On change, converts to minor units (× 100) before calling onChange.
+ * - integer-only inputs; no decimals allowed.
+ * - Each currency section shows its packages; add / remove rows; label required.
+ */
+interface TopupPackageRow {
+  /** major-unit amount as typed by the admin (string to allow empty while typing) */
+  amountMajor: string;
+  label: string;
+  description: string;
+  /** Unknown fields from the stored package, preserved so the serializer can include
+   *  them back → validator rejects them → Save is blocked with a clear error. */
+  _unknownFields?: Record<string, unknown>;
+}
+
+type TopupEditorState = Record<TopupCurrency, TopupPackageRow[]> & {
+  /** Unknown currency keys from the stored value, preserved so the serializer can
+   *  include them back → validator rejects them → Save is blocked with a clear error. */
+  _unknownCurrencies?: Record<string, unknown[]>;
+};
+
+function parseTopupPackages(jsonStr: string): TopupEditorState {
+  const state: TopupEditorState = {} as TopupEditorState;
+  for (const c of TOPUP_ALLOWED_CURRENCIES) {
+    state[c] = [];
+  }
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return state;
+    const unknownCurrencies: Record<string, unknown[]> = {};
+    for (const [key, pkgs] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!(TOPUP_ALLOWED_CURRENCIES as readonly string[]).includes(key)) {
+        // Unknown currency — preserve original data so the serializer can include it
+        // back, allowing the validator to catch and block Save.
+        unknownCurrencies[key] = Array.isArray(pkgs) ? pkgs : [pkgs];
+        continue;
+      }
+      const c = key as TopupCurrency;
+      if (Array.isArray(pkgs)) {
+        state[c] = pkgs.map((p: unknown) => {
+          // Guard against non-object elements (null, primitive, nested array).
+          // Return a sentinel row so the serializer re-injects _unknownFields →
+          // validator rejects them → Save blocked with the data-loss banner.
+          if (p === null || typeof p !== 'object' || Array.isArray(p)) {
+            return {
+              amountMajor: '',
+              label: '',
+              description: '',
+              _unknownFields: { _invalidPackageType: true },
+            } as TopupPackageRow;
+          }
+          const pkg = p as Record<string, unknown>;
+          const minorPerMajor = TOPUP_MINOR_PER_MAJOR[c];
+          const am = pkg['amount_minor'];
+          const majorVal = typeof am === 'number' && minorPerMajor > 0
+            ? (am / minorPerMajor).toString()
+            : '';
+          // Detect unknown fields on the package object
+          const unknownFields: Record<string, unknown> = {};
+          for (const k of Object.keys(pkg)) {
+            if (!KNOWN_PACKAGE_KEYS.has(k)) {
+              unknownFields[k] = pkg[k];
+            }
+          }
+          const row: TopupPackageRow = {
+            amountMajor: majorVal,
+            label: typeof pkg['label'] === 'string' ? pkg['label'] : '',
+            description: typeof pkg['description'] === 'string' ? pkg['description'] : '',
+          };
+          if (Object.keys(unknownFields).length > 0) row._unknownFields = unknownFields;
+          return row;
+        });
+      }
+    }
+    if (Object.keys(unknownCurrencies).length > 0) {
+      state._unknownCurrencies = unknownCurrencies;
+    }
+  } catch {
+    // ignore — return empty state
+  }
+  return state;
+}
+
+function serializeTopupPackages(state: TopupEditorState): string {
+  const result: Record<string, unknown[]> = {};
+  for (const c of TOPUP_ALLOWED_CURRENCIES) {
+    const rows = state[c];
+    if (rows.length === 0) continue;
+    result[c] = rows.map(row => {
+      const minorPerMajor = TOPUP_MINOR_PER_MAJOR[c];
+      // Accept only digit-only strings to prevent parseFloat accepting '1e3',
+      // '1000abc', ' 1000', '1,000' etc. as valid numbers.
+      const majorNum = /^\d+$/.test(row.amountMajor) ? Number(row.amountMajor) : 0;
+      const amount_minor = majorNum > 0 ? majorNum * minorPerMajor : 0;
+      const pkg: Record<string, unknown> = { amount_minor, label: row.label };
+      if (row.description.trim()) pkg['description'] = row.description.trim();
+      // Re-inject unknown fields so the validator can reject them → Save blocked.
+      if (row._unknownFields) Object.assign(pkg, row._unknownFields);
+      return pkg;
+    });
+  }
+  // Re-inject unknown currencies so the validator can reject them → Save blocked.
+  if (state._unknownCurrencies) {
+    for (const [k, v] of Object.entries(state._unknownCurrencies)) {
+      result[k] = v;
+    }
+  }
+  return JSON.stringify(result, null, 2);
+}
+
+function getTopupRowErrors(currency: TopupCurrency, rows: TopupPackageRow[]): Record<number, Record<string, string>> {
+  const rowErrors: Record<number, Record<string, string>> = {};
+  const seenAmounts = new Set<number>();
+
+  rows.forEach((row, i) => {
+    const errs: Record<string, string> = {};
+    const minorPerMajor = TOPUP_MINOR_PER_MAJOR[currency];
+
+    if (row.amountMajor === '' || row.amountMajor === undefined) {
+      errs.amount = 'Amount is required';
+    } else if (!/^\d+$/.test(row.amountMajor)) {
+      // Reject scientific notation ('1e3'), trailing alpha ('1000abc'), commas,
+      // spaces, minus signs, and decimals — all bypass the onKeyDown blocker via paste.
+      errs.amount = 'Must be a valid whole number (digits only)';
+    } else {
+      const major = Number(row.amountMajor);
+      const minor = major * minorPerMajor;
+      if (major <= 0) {
+        errs.amount = 'Must be greater than 0';
+      } else if (!Number.isSafeInteger(minor)) {
+        errs.amount = 'Amount is too large';
+      } else if (seenAmounts.has(minor)) {
+        errs.amount = 'Duplicate amount in this currency';
+      } else {
+        seenAmounts.add(minor);
+      }
+    }
+
+    if (!row.label.trim()) {
+      errs.label = 'Label is required';
+    } else if (row.label.length > TOPUP_LABEL_MAX_LEN) {
+      errs.label = `Label must not exceed ${TOPUP_LABEL_MAX_LEN} characters`;
+    }
+
+    if (row.description.trim() && row.description.length > TOPUP_DESCRIPTION_MAX_LEN) {
+      errs.description = `Description must not exceed ${TOPUP_DESCRIPTION_MAX_LEN} characters`;
+    }
+
+    if (Object.keys(errs).length > 0) rowErrors[i] = errs;
+  });
+
+  return rowErrors;
+}
+
+function TopupPackagesEditor({
+  value,
+  changed,
+  onChange,
+}: {
+  value: string;
+  changed: boolean;
+  onChange: (val: string) => void;
+}) {
+  const [localState, setLocalState] = useState<TopupEditorState>(() => parseTopupPackages(value));
+
+  // Reparse when the value changes externally (e.g. after save + reload)
+  const prevValue = useRef(value);
+  if (prevValue.current !== value) {
+    prevValue.current = value;
+    const reparsed = parseTopupPackages(value);
+    // Only reset if it actually differs from what we'd serialize
+    if (serializeTopupPackages(reparsed) !== serializeTopupPackages(localState)) {
+      setLocalState(reparsed);
+    }
+  }
+
+  function update(newState: TopupEditorState) {
+    setLocalState(newState);
+    onChange(serializeTopupPackages(newState));
+  }
+
+  function addRow(currency: TopupCurrency) {
+    const newState = { ...localState, [currency]: [...localState[currency], { amountMajor: '', label: '', description: '' }] };
+    update(newState);
+  }
+
+  function removeRow(currency: TopupCurrency, idx: number) {
+    const rows = localState[currency].filter((_, i) => i !== idx);
+    update({ ...localState, [currency]: rows });
+  }
+
+  function updateRow(currency: TopupCurrency, idx: number, field: keyof TopupPackageRow, val: string) {
+    const rows = localState[currency].map((r, i) => i === idx ? { ...r, [field]: val } : r);
+    update({ ...localState, [currency]: rows });
+  }
+
+  const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-white';
+
+  // Detect data-loss conditions so the UI can warn the admin before Save is blocked.
+  const unknownCurrencyList = localState._unknownCurrencies
+    ? Object.keys(localState._unknownCurrencies)
+    : [];
+  const hasUnknownPkgFields = TOPUP_ALLOWED_CURRENCIES.some(c =>
+    localState[c].some(r => r._unknownFields && Object.keys(r._unknownFields).length > 0),
+  );
+
+  return (
+    <div className={`rounded-lg border p-4 space-y-5 ${borderClass}`} data-testid="topup-packages-editor">
+      {(unknownCurrencyList.length > 0 || hasUnknownPkgFields) && (
+        <div className="flex gap-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800" data-testid="data-loss-warning">
+          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-500" />
+          <div className="space-y-0.5">
+            <p className="font-medium">Stored data contains unsupported values — Save is blocked.</p>
+            {unknownCurrencyList.length > 0 && (
+              <p>Unknown currencies: <strong>{unknownCurrencyList.join(', ')}</strong>. Edit the raw JSON to remove them first.</p>
+            )}
+            {hasUnknownPkgFields && (
+              <p>Some packages have unrecognised fields. Edit the raw JSON to remove them first.</p>
+            )}
+          </div>
+        </div>
+      )}
+      {TOPUP_ALLOWED_CURRENCIES.map(currency => {
+        const rows = localState[currency];
+        const rowErrors = getTopupRowErrors(currency, rows);
+        const symbol = TOPUP_CURRENCY_SYMBOLS[currency];
+        const name = TOPUP_CURRENCY_NAMES[currency];
+
+        return (
+          <div key={currency} className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-700">
+                {name} ({symbol})
+              </span>
+              <button
+                type="button"
+                onClick={() => addRow(currency)}
+                className="flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-200"
+                data-testid={`add-row-${currency}`}
+              >
+                <Plus className="h-3 w-3" />
+                Add package
+              </button>
+            </div>
+
+            {rows.length === 0 && (
+              <p className="text-[11px] text-gray-400 italic">No packages — click "Add package" to create one.</p>
+            )}
+
+            {rows.length > TOPUP_MAX_PACKAGES_PER_CURRENCY && (
+              <p className="text-[11px] text-red-500">
+                Maximum {TOPUP_MAX_PACKAGES_PER_CURRENCY} packages per currency (currently {rows.length}).
+              </p>
+            )}
+
+            {rows.map((row, idx) => {
+              const errs = rowErrors[idx] || {};
+              return (
+                <div
+                  key={idx}
+                  className={`rounded border p-2 space-y-1.5 ${Object.keys(errs).length > 0 ? 'border-red-200 bg-red-50/30' : 'border-gray-100 bg-gray-50'}`}
+                  data-testid={`package-row-${currency}-${idx}`}
+                >
+                  <div className="flex items-start gap-2">
+                    {/* Amount (major units) */}
+                    <div className="w-28 shrink-0">
+                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
+                        Amount ({symbol})
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={row.amountMajor}
+                        onChange={e => updateRow(currency, idx, 'amountMajor', e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === '.' || e.key === ',' || e.key === 'e' || e.key === 'E') {
+                            e.preventDefault();
+                          }
+                        }}
+                        placeholder="e.g. 1000"
+                        className={`w-full rounded border px-2 py-1 text-sm outline-none focus:border-brand ${
+                          errs.amount ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                        }`}
+                        data-testid={`amount-input-${currency}-${idx}`}
+                      />
+                      {errs.amount && <p className="text-[10px] text-red-500 mt-0.5">{errs.amount}</p>}
+                    </div>
+
+                    {/* Label */}
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
+                        Label
+                      </label>
+                      <input
+                        type="text"
+                        value={row.label}
+                        onChange={e => updateRow(currency, idx, 'label', e.target.value)}
+                        placeholder={`e.g. ${symbol}1,000 credit`}
+                        className={`w-full rounded border px-2 py-1 text-sm outline-none focus:border-brand ${
+                          errs.label ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                        }`}
+                        data-testid={`label-input-${currency}-${idx}`}
+                      />
+                      {errs.label && <p className="text-[10px] text-red-500 mt-0.5">{errs.label}</p>}
+                    </div>
+
+                    {/* Description (optional) */}
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
+                        Description <span className="text-gray-400">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={row.description}
+                        onChange={e => updateRow(currency, idx, 'description', e.target.value)}
+                        placeholder="Optional note"
+                        className="w-full rounded border border-gray-200 px-2 py-1 text-sm outline-none focus:border-brand"
+                        data-testid={`description-input-${currency}-${idx}`}
+                      />
+                    </div>
+
+                    {/* Remove */}
+                    <button
+                      type="button"
+                      onClick={() => removeRow(currency, idx)}
+                      className="mt-5 rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 shrink-0"
+                      title="Remove package"
+                      data-testid={`remove-row-${currency}-${idx}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+
+      <p className="text-[10px] text-gray-400">
+        Amounts are entered in major currency units (e.g. ₦1,000) and stored as minor units (kobo/cents × 100).
+        Integer amounts only.
+      </p>
+    </div>
+  );
+}
+
 /** Render a friendly editor based on the setting's value type */
 function renderSettingEditor(
   setting: PlatformSetting,
@@ -75,6 +569,30 @@ function renderSettingEditor(
   onChange: (val: string) => void,
 ) {
   const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+
+  // Topup packages editor (messaging_topup_packages)
+  if (isTopupPackagesKey(setting.key)) {
+    return (
+      <TopupPackagesEditor
+        value={currentVal}
+        changed={changed}
+        onChange={onChange}
+      />
+    );
+  }
+
+  // Country-amount editor (minimum_bank_transfer, minimum_payout)
+  if (isCountryAmountKey(setting.key)) {
+    const parsed = (() => { try { return JSON.parse(currentVal); } catch { return {}; } })();
+    return (
+      <CountryAmountEditor
+        settingKey={setting.key}
+        value={typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {}}
+        changed={changed}
+        onChange={onChange}
+      />
+    );
+  }
 
   // Boolean toggle (maintenance_mode, etc.)
   if (setting.value === true || setting.value === false) {
@@ -342,6 +860,8 @@ export default function PlatformSettings() {
   const [newValue, setNewValue] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [adding, setAdding] = useState(false);
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // Delete state
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -389,9 +909,11 @@ export default function PlatformSettings() {
 
   // Human-readable descriptions for known unconfigured keys
   const KEY_DESCRIPTIONS: Record<string, string> = {
-    minimum_bank_transfer: 'Minimum amount (per country) for direct bank transfer payment option. JSON object keyed by country code, e.g. {"NG": 5000, "GH": 5000}.',
+    minimum_bank_transfer: COUNTRY_AMOUNT_HELP.minimum_bank_transfer,
+    minimum_payout: COUNTRY_AMOUNT_HELP.minimum_payout,
     fraud_velocity_threshold: 'Maximum number of payment attempts per time window before flagging.',
     invoice_expiry_days: 'Number of days before an unpaid invoice expires.',
+    messaging_topup_packages: 'Per-currency arrays of messaging credit top-up packages available to businesses. Each package has an amount (in major currency units) and a display label.',
   };
 
   // State for configuring unconfigured keys
@@ -415,7 +937,7 @@ export default function PlatformSettings() {
   const COMMERCIAL_KEYS = new Set([
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
-    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'payout_cooling_period_days', 'minimum_payout',
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
@@ -432,6 +954,39 @@ export default function PlatformSettings() {
 
   // Combined 19-key protected set (for display classification / badges)
   const ALL_PROTECTED_KEYS = new Set([...COMMERCIAL_KEYS, ...MESSAGING_BUNDLE_KEYS]);
+
+  // C6: Save commercial config via step-up-protected server route
+  async function saveCommercialViaStepUp(key: string, value: unknown, description?: string | null): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) { reject(new Error('Session expired')); return; }
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/platform-settings/commercial`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ key, value, description: description ?? null, stepUpId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.code === 'step_up_required') { reject(new Error('Step-up authorization failed')); return; }
+          if (data.code === 'version_conflict') { reject(new Error(data.error)); return; }
+          reject(new Error(data.error || 'Failed to save'));
+          return;
+        }
+        resolve();
+      };
+      stepUpCallbackRef.current = onAuthorized;
+      stepUp.execute({
+        actionType: 'commercial_config',
+        targetId: key,
+        params: { key, value, description: description ?? null, expected_version_id: null },
+        description: `Update commercial setting: ${key}`,
+        onAuthorized,
+      }).catch(reject);
+    });
+  }
 
   // Save a single setting
   async function handleSave(key: string) {
@@ -451,12 +1006,8 @@ export default function PlatformSettings() {
         alert('This key is managed through the Countries/Messaging configuration page. It cannot be edited individually here.');
         return;
       } else if (COMMERCIAL_KEYS.has(key)) {
-        // Individually writable commercial keys: versioned save RPC
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: key,
-          p_value: parsedValue,
-        });
-        if (error) throw error;
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(key, parsedValue);
       } else {
         // Non-commercial keys: server-authorized API route
         const res = await adminApiPut('/api/admin/platform-settings', { key, value: parsedValue });
@@ -498,13 +1049,8 @@ export default function PlatformSettings() {
         alert('This key is managed through the Countries/Messaging configuration page.');
         return;
       } else if (COMMERCIAL_KEYS.has(trimmedKey)) {
-        // Individually writable commercial keys: versioned save RPC
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: trimmedKey,
-          p_value: parsedValue,
-          p_description: newDescription.trim() || null,
-        });
-        if (error) throw error;
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(trimmedKey, parsedValue, newDescription.trim() || null);
       } else {
         // Non-commercial keys: server-authorized API route
         const res = await adminApiFetch('/api/admin/platform-settings', {
@@ -533,28 +1079,29 @@ export default function PlatformSettings() {
 
   // Configure an unconfigured key (create it for the first time)
   async function handleConfigure(key: string) {
-    if (!configValue.trim()) {
+    // Topup packages uses a structured editor that can produce valid empty JSON ({}).
+    // Skip the "value is required" check for that key; the button is already
+    // disabled when there are validation errors.
+    if (!isTopupPackagesKey(key) && !configValue.trim()) {
       alert('Value is required');
       return;
     }
     setSavingKey(key);
     try {
       let parsedValue: unknown;
+      const rawForParse = isTopupPackagesKey(key) ? (configValue || '{}') : configValue;
       try {
-        parsedValue = JSON.parse(configValue);
+        parsedValue = JSON.parse(rawForParse);
       } catch {
-        parsedValue = configValue;
+        parsedValue = rawForParse;
       }
 
       if (MESSAGING_BUNDLE_KEYS.has(key)) {
         alert('This key is managed through the Countries/Messaging configuration page.');
         return;
       } else if (COMMERCIAL_KEYS.has(key)) {
-        const { error } = await adminDb.rpc('save_commercial_config', {
-          p_key: key,
-          p_value: parsedValue,
-        });
-        if (error) throw error;
+        // C6: Commercial keys via step-up-protected server route
+        await saveCommercialViaStepUp(key, parsedValue);
       } else {
         // Non-commercial keys: server-authorized API route
         const res = await adminApiFetch('/api/admin/platform-settings', {
@@ -751,7 +1298,7 @@ export default function PlatformSettings() {
                                 <>
                                   <button
                                     onClick={() => handleSave(setting.key)}
-                                    disabled={isSaving}
+                                    disabled={isSaving || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val)) || (isTopupPackagesKey(setting.key) && hasTopupPackagesErrors(val))}
                                     className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                                   >
                                     {isSaving ? 'Saving...' : 'Save'}
@@ -842,33 +1389,67 @@ export default function PlatformSettings() {
                       )}
                       {isConfiguring && (
                         <div className="mt-2 ml-6 rounded-lg border border-amber-200 bg-white p-4 space-y-3">
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Value</label>
-                            <input
-                              type="text"
-                              value={configValue}
-                              onChange={e => setConfigValue(e.target.value)}
-                              placeholder={KEY_DESCRIPTIONS[key] ? 'e.g. {"NG": 5000, "GH": 5000}' : 'Enter value (JSON or plain text)'}
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
-                            <input
-                              type="text"
-                              value={configDescription}
-                              onChange={e => setConfigDescription(e.target.value)}
-                              placeholder="Human-readable description"
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-                            />
-                          </div>
+                          {isTopupPackagesKey(key) ? (
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">
+                                {KEY_DESCRIPTIONS[key] || 'Top-up packages per currency'}
+                              </label>
+                              <TopupPackagesEditor
+                                value={configValue || '{}'}
+                                changed={false}
+                                onChange={v => setConfigValue(v)}
+                              />
+                            </div>
+                          ) : isCountryAmountKey(key) ? (
+                            <>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                  {COUNTRY_AMOUNT_HELP[key] || 'Amount per country'}
+                                </label>
+                                <CountryAmountEditor
+                                  settingKey={key}
+                                  value={(() => { try { const p = JSON.parse(configValue); return typeof p === 'object' && p !== null && !Array.isArray(p) ? p : {}; } catch { return {}; } })()}
+                                  changed={false}
+                                  onChange={v => setConfigValue(v)}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Value</label>
+                              <input
+                                type="text"
+                                value={configValue}
+                                onChange={e => setConfigValue(e.target.value)}
+                                placeholder="Enter value (JSON or plain text)"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                              />
+                            </div>
+                          )}
+                          {!isCountryAmountKey(key) && !isTopupPackagesKey(key) && (
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
+                              <input
+                                type="text"
+                                value={configDescription}
+                                onChange={e => setConfigDescription(e.target.value)}
+                                placeholder="Human-readable description"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                              />
+                            </div>
+                          )}
                           {COMMERCIAL_KEYS.has(key) && (
                             <p className="text-[10px] text-gray-400">This is a commercial config key. It will be saved via the versioned save_commercial_config RPC.</p>
                           )}
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleConfigure(key)}
-                              disabled={isSaving || !configValue.trim()}
+                              disabled={
+                                isSaving ||
+                                (!isTopupPackagesKey(key) && !configValue.trim()) ||
+                                (isCountryAmountKey(key) && hasCountryAmountErrors(key, configValue)) ||
+                                (isTopupPackagesKey(key) && hasTopupPackagesErrors(configValue || '{}'))
+                              }
                               className="rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                             >
                               {isSaving ? 'Saving...' : 'Create Setting'}
@@ -898,6 +1479,14 @@ export default function PlatformSettings() {
           </div>
         )}
       </div>
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => { if (stepUpCallbackRef.current) stepUp.submitCode(code, stepUpCallbackRef.current); }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }

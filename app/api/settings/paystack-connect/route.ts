@@ -35,6 +35,17 @@ export async function POST(request: NextRequest) {
     const tier = PRICING_TIERS[(biz.subscription_tier || 'free') as SubscriptionTier];
     const platformFeePercentage = tier ? tier.feePercentage : 5;
 
+    // Production: reject test-mode platform keys and mock accounts
+    const isProduction = process.env.WAAIIO_ENVIRONMENT === 'production';
+    if (isProduction) {
+      if (!paystackSecretKey) {
+        return NextResponse.json({ error: 'Payment provider not configured for production' }, { status: 500 });
+      }
+      if (paystackSecretKey.startsWith('sk_test_')) {
+        return NextResponse.json({ error: 'Test-mode credentials are not allowed in production' }, { status: 400 });
+      }
+    }
+
     if (!paystackSecretKey) {
       // Mock mode for development
       const mockCode = `MOCK_SUBACCOUNT_${Date.now()}`;

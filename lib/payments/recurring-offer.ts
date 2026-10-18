@@ -12,8 +12,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
+import { getLegacyDefaultCapabilities } from '@/lib/capabilities/legacy-defaults';
 import { resolveTrialCredit } from '@/lib/trial-status';
 
 interface PaymentForRecurring {
@@ -67,12 +69,23 @@ export async function checkAndOfferRecurring(
 
     if (!booking || booking.flow_type !== 'payment') return;
 
+    // Safeguard B: cross-business validation
+    if (paymentFull.business_id !== businessId) {
+      logger.warn(`${logPrefix} Recurring offer skipped — payment business_id mismatch`);
+      return;
+    }
+    if (booking.business_id !== businessId) {
+      logger.warn(`${logPrefix} Recurring offer skipped — booking business_id mismatch`);
+      return;
+    }
+
     // Gate: service must be explicitly configured as recurring with a valid interval
     if (!booking.service_id) return;
     const { data: service } = await supabase
       .from('services')
-      .select('billing_type, recurring_interval, service_type, is_active')
+      .select('billing_type, recurring_interval, service_type, is_active, business_id')
       .eq('id', booking.service_id)
+      .eq('business_id', businessId)
       .single();
 
     if (!service) return;
@@ -97,22 +110,43 @@ export async function checkAndOfferRecurring(
     // ── 3. Check business eligibility ──
     const { data: business } = await supabase
       .from('businesses')
-      .select('id, name, recurring_enabled, country_code, subscription_tier, trial_ends_at, capability_overrides')
+      .select('id, name, recurring_enabled, country_code, subscription_tier, trial_ends_at, category')
       .eq('id', businessId)
       .single();
 
     if (!business?.recurring_enabled) return;
 
     // Check recurring capability is effective (policy-aware: tier + trial + overrides)
-    const configResult = await getConfiguredCapabilities(supabase, businessId);
+    const serviceClient = createServiceClient();
+
+    const configResult = await getConfiguredCapabilities(serviceClient, businessId);
     if (!configResult.ok) return;
 
-    const hasTrialCredit = await resolveTrialCredit(supabase, businessId);
+    // Safeguard A: fail closed on override query error
+    const { data: overrideRows, error: overrideError } = await serviceClient
+      .from('capability_overrides')
+      .select('capability')
+      .eq('business_id', businessId);
+    if (overrideError) {
+      logger.withContext({ op: 'recurring-offer.overrides' })
+        .error(`${logPrefix} Override query failed: ${overrideError.message}`);
+      return; // Fail closed — never affects payment finalization
+    }
+    const overrides = (overrideRows || []).map(r => r.capability as string);
+
+    // Safeguard C: legacy defaults for zero-row businesses
+    let configuredRows = configResult.rows;
+    if (configuredRows.length === 0) {
+      const defaultCaps = getLegacyDefaultCapabilities(business.category);
+      configuredRows = defaultCaps.map((cap, i) => ({ capability: cap, is_enabled: true, sort_order: i }));
+    }
+
+    const hasTrialCredit = await resolveTrialCredit(serviceClient, businessId);
     const effectiveCaps = getEffectiveCapabilities({
-      configuredCapabilities: configResult.rows,
+      configuredCapabilities: configuredRows,
       tier: business.subscription_tier || 'free',
       trialEndsAt: business.trial_ends_at || null,
-      overrides: (business.capability_overrides as string[]) || [],
+      overrides,
       hasTrialCredit,
     });
 
