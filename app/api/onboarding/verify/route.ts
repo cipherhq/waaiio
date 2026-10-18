@@ -602,14 +602,7 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (plan === 'free') {
-      // Attempt trial activation immediately
-      try {
-        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
-      } catch (trialErr) {
-        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
-      }
-
-      // Update business status and tier
+      // Update business status and tier first — trial RPC requires status = 'active'
       const { error: bizUpdateError } = await service
         .from('businesses')
         .update({
@@ -672,6 +665,13 @@ export async function POST(request: NextRequest) {
           },
           { status: 500 },
         );
+      }
+
+      // Trial activation after business is active — RPC requires status = 'active'
+      try {
+        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+      } catch (trialErr) {
+        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
       }
     }
 
