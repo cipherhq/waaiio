@@ -64,9 +64,11 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
       END $$;
     `);
 
-    // Minimal schema
+    // Minimal schema — match CI fixture (extensions schema + pgcrypto)
     await admin.query(`
       CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE SCHEMA IF NOT EXISTS extensions;
+      CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
       CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
       INSERT INTO auth.users (id) VALUES ('${OWNER}'), ('${ADMIN}') ON CONFLICT DO NOTHING;
     `);
@@ -83,10 +85,11 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
       CREATE TABLE IF NOT EXISTS public.businesses (
         id UUID PRIMARY KEY, status TEXT DEFAULT 'active', owner_id UUID,
         subscription_tier TEXT DEFAULT 'free', payout_mode TEXT DEFAULT 'platform_managed',
-        country_code TEXT DEFAULT 'NG', name TEXT DEFAULT 'Test Biz',
-        verification_level TEXT DEFAULT 'basic', created_at TIMESTAMPTZ DEFAULT now()
+        country_code TEXT DEFAULT 'NG', name TEXT NOT NULL DEFAULT 'Test Biz',
+        verification_level TEXT DEFAULT 'basic', created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
       );
-      INSERT INTO public.businesses (id, owner_id) VALUES ('${BIZ}', '${OWNER}') ON CONFLICT DO NOTHING;
+      INSERT INTO public.businesses (id, owner_id, name) VALUES ('${BIZ}', '${OWNER}', 'Test Biz') ON CONFLICT DO NOTHING;
     `);
 
     // Bookings
@@ -139,7 +142,7 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
         gross_amount NUMERIC DEFAULT 0, platform_fee NUMERIC DEFAULT 0,
         gateway_fee NUMERIC DEFAULT 0, net_amount NUMERIC DEFAULT 0,
         status TEXT DEFAULT 'pending', transfer_method TEXT,
-        transfer_reference TEXT, claim_token UUID,
+        transfer_reference TEXT, claim_token UUID, processing_started_at TIMESTAMPTZ,
         provider_idempotency_key TEXT, gateway_transfer_code TEXT,
         approved_by UUID, approved_at TIMESTAMPTZ,
         paid_at TIMESTAMPTZ, flags JSONB DEFAULT '[]',
@@ -174,8 +177,9 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
     await admin.query(`
       CREATE TABLE IF NOT EXISTS public.admin_audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), actor_id UUID,
-        action TEXT, entity_type TEXT, entity_id TEXT,
-        details JSONB, ip_address TEXT, created_at TIMESTAMPTZ DEFAULT now()
+        action VARCHAR(50) NOT NULL, entity_type VARCHAR(50),
+        entity_id UUID, details JSONB DEFAULT '{}',
+        ip_address VARCHAR(45), created_at TIMESTAMPTZ DEFAULT now()
       );
     `);
 
@@ -484,7 +488,7 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
     `);
     expect(result.rows.length).toBe(1);
     expect(result.rows[0].prosecdef).toBe(true);
-    expect(result.rows[0].proconfig).toContain('search_path=public');
+    expect(result.rows[0].proconfig).toContain('search_path=public, extensions');
   });
 
   // ═══════════════════════════════════════════════════════════

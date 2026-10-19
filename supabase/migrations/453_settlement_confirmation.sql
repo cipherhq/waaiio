@@ -173,7 +173,7 @@ BEGIN
     p_admin_id,
     'confirm_payout_settlement',
     'business_payout',
-    p_payout_id::text,
+    p_payout_id,
     jsonb_build_object(
       'business_id', v_payout.business_id,
       'amount', v_payout.net_amount,
@@ -287,25 +287,31 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_token UUID;
   v_key TEXT;
 BEGIN
+  -- Only automated transfer methods may claim
   IF p_transfer_method NOT IN ('paystack_transfer', 'stripe_transfer') THEN
     RAISE EXCEPTION 'Unsupported transfer method: %', p_transfer_method
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
 
+  -- Generate server-side values
   v_token := gen_random_uuid();
   v_key := 'payout_' || p_payout_id::text;
 
+  -- RETURN QUERY: returns zero rows when CAS predicate fails (M292 contract).
+  -- DO NOT use INTO + RETURN NEXT — that returns one NULL row on miss.
+  RETURN QUERY
   UPDATE public.business_payouts
   SET status = 'processing',
-    transfer_method = p_transfer_method,
     claim_token = v_token,
     provider_idempotency_key = v_key,
+    processing_started_at = NOW(),
+    transfer_method = p_transfer_method,
     approved_by = COALESCE(p_approved_by, approved_by),
     approved_at = COALESCE(approved_at, NOW()),
     updated_at = NOW()
@@ -315,10 +321,7 @@ BEGIN
   RETURNING
     id AS claimed_id,
     claim_token AS claimed_token,
-    provider_idempotency_key AS idempotency_key
-  INTO claimed_id, claimed_token, idempotency_key;
-
-  RETURN NEXT;
+    provider_idempotency_key AS idempotency_key;
 END;
 $$;
 
@@ -352,7 +355,7 @@ BEGIN
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
     AND p.proname = 'claim_payout_for_transfer';
-  IF NOT ('search_path=public' = ANY(v_config)) THEN
+  IF NOT ('search_path=public, extensions' = ANY(v_config)) THEN
     RAISE EXCEPTION 'claim_payout_for_transfer search_path incorrect: %', v_config;
   END IF;
 END $$;
