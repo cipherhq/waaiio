@@ -96,7 +96,7 @@ export default function DashboardOverview() {
       // Fire all 3 queries in parallel instead of sequential waterfall
       const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
         channelId
-          ? supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle()
+          ? supabase.from('whatsapp_channels').select('phone_number, channel_type').eq('id', channelId).eq('is_active', true).maybeSingle()
           : Promise.resolve({ data: null }),
         supabase.from('whatsapp_channels').select('phone_number')
           .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
@@ -112,7 +112,9 @@ export default function DashboardOverview() {
       setWhatsappDisplayNumber(num);
 
       // Shared channels need bot code prefix
-      const isShared = !assignedResult.data?.phone_number && !dedicatedResult.data?.phone_number;
+      const isShared = assignedResult.data?.phone_number
+        ? assignedResult.data.channel_type !== 'dedicated'
+        : !dedicatedResult.data?.phone_number;
       setWhatsappLink(isShared && business.bot_code
         ? `https://wa.me/${num}?text=${encodeURIComponent(business.bot_code)}`
         : `https://wa.me/${num}`);
