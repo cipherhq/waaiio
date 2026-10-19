@@ -169,8 +169,8 @@ export async function handleNativeFormSubmission(
     return { success: false, error: 'Missing nfm_reply response_json.' };
   }
 
-  // Raw JSON size guard before parsing
-  if (nfmReply.response_json.length > MAX_RESPONSE_JSON_BYTES) {
+  // Raw JSON size guard before parsing (byte length, not character count)
+  if (Buffer.byteLength(nfmReply.response_json, 'utf8') > MAX_RESPONSE_JSON_BYTES) {
     return { success: false, error: 'response_json exceeds maximum size.' };
   }
 

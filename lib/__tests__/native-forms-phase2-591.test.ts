@@ -264,6 +264,8 @@ describe('Native Form Submission Handler', () => {
   const CHANNEL_ID_2 = 'ch-002';
   const PHONE_NUMBER_ID = 'pn-001';
   const PHONE_NUMBER_ID_2 = 'pn-002';
+  /** Mirror of MAX_RESPONSE_JSON_BYTES from submission-handler.ts for test assertions. */
+  const MAX_RESPONSE_JSON_BYTES_FOR_TEST = 102400;
 
   const FORM_FIELDS = [
     { id: 'full_name', label: 'Full Name', type: 'text', required: true },
@@ -735,6 +737,27 @@ describe('Native Form Submission Handler', () => {
       interactive: {
         type: 'nfm_reply',
         nfm_reply: { response_json: bigJson },
+      },
+    };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('exceeds maximum size');
+  });
+
+  it('rejects multibyte UTF-8 response_json that exceeds 100KB in bytes but not characters', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    // 4-byte emoji repeated to produce >100KB in bytes but <100KB in character count
+    const emoji = '\u{1F600}'; // 😀 = 4 bytes in UTF-8, 2 chars in JS (surrogate pair)
+    // 26000 emoji × 4 bytes = 104,000 bytes > 100KB, but 26000 × 2 = 52,000 JS chars < 100KB chars
+    const payload = '{"flow_token":"x","data":"' + emoji.repeat(26000) + '"}';
+    expect(payload.length).toBeLessThan(MAX_RESPONSE_JSON_BYTES_FOR_TEST);
+    expect(Buffer.byteLength(payload, 'utf8')).toBeGreaterThan(MAX_RESPONSE_JSON_BYTES_FOR_TEST);
+
+    const message = {
+      interactive: {
+        type: 'nfm_reply',
+        nfm_reply: { response_json: payload },
       },
     };
 
