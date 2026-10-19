@@ -13,8 +13,9 @@
  * - Expired/forged/replayed tokens rejected before any INSERT
  * - No booking creation, no payment, no scheduling RPC
  */
+import { createHash } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
-import { verifyFlowToken, hashFlowToken } from './flow-token';
+import { verifyFlowToken, hashNonceForReplay } from './flow-token';
 import type { WaaiioFormField } from './native-flow';
 
 // ── Types ──
@@ -55,19 +56,24 @@ const MAX_ANSWER_SIZE_BYTES = 10 * 1024; // 10KB
 const MAX_TOTAL_ANSWERS_BYTES = 100 * 1024; // 100KB
 
 /**
- * Validate submitted answers against the form's field schema.
+ * Validate submitted answers against the form's field schema and normalize
+ * compiler-generated option IDs back to display titles.
  *
  * Rules:
  * - Reject unknown field IDs not in the schema
  * - Enforce required fields are present and non-empty
  * - For select/radio fields: validate value matches an allowed option
+ *   and normalize option_N IDs to their display titles
  * - Enforce max answer size (10KB per field, 100KB total)
  * - Type checking: number fields must be numeric, email must contain @
+ *
+ * Returns normalized answers where compiler option IDs are resolved to
+ * meaningful display titles, preserving historical query integrity.
  */
-function validateAnswersAgainstSchema(
+function validateAndNormalizeAnswers(
   answers: Record<string, unknown>,
   fields: WaaiioFormField[],
-): { valid: boolean; error?: string } {
+): { valid: boolean; error?: string; normalized?: Record<string, unknown> } {
   const fieldMap = new Map<string, WaaiioFormField>();
   for (const f of fields) {
     fieldMap.set(f.id, f);
@@ -85,6 +91,9 @@ function validateAnswersAgainstSchema(
       return { valid: false, error: `Unknown field ID: ${key}` };
     }
   }
+
+  // Build normalized copy
+  const normalized: Record<string, unknown> = { ...answers };
 
   // Validate each field
   for (const field of fields) {
@@ -121,26 +130,37 @@ function validateAnswersAgainstSchema(
       }
     }
 
-    // Select/radio option validation
+    // Select/radio option validation and normalization
     if (field.type === 'select' || field.type === 'radio') {
       if (Array.isArray(field.options) && field.options.length > 0) {
-        const allowedValues = new Set<string>();
+        // Build lookup: display titles and compiler option IDs → display title
+        const displayTitles = new Set<string>();
+        const optionIdToTitle = new Map<string, string>();
+
         field.options.forEach((opt: unknown, i: number) => {
-          // Accept original display values (web form submissions)
-          if (typeof opt === 'string') allowedValues.add(opt.trim());
-          else if (opt && typeof opt === 'object' && 'value' in opt) allowedValues.add(String((opt as { value: unknown }).value));
-          else if (opt && typeof opt === 'object' && 'id' in opt) allowedValues.add(String((opt as { id: unknown }).id));
-          // Accept compiler-generated option IDs (native WhatsApp submissions)
-          allowedValues.add('option_' + (i + 1));
+          let title: string | undefined;
+          if (typeof opt === 'string') title = opt.trim();
+          else if (opt && typeof opt === 'object' && 'value' in opt) title = String((opt as { value: unknown }).value);
+          else if (opt && typeof opt === 'object' && 'id' in opt) title = String((opt as { id: unknown }).id);
+          if (title) {
+            displayTitles.add(title);
+            optionIdToTitle.set('option_' + (i + 1), title);
+          }
         });
-        if (!allowedValues.has(strValue)) {
+
+        if (displayTitles.has(strValue)) {
+          // Already a display title (web submission) — keep as-is
+        } else if (optionIdToTitle.has(strValue)) {
+          // Compiler-generated option ID (native submission) — normalize to display title
+          normalized[field.id] = optionIdToTitle.get(strValue)!;
+        } else {
           return { valid: false, error: `Invalid option for field ${field.id}: ${strValue}` };
         }
       }
     }
   }
 
-  return { valid: true };
+  return { valid: true, normalized };
 }
 
 // ── Public API ──
@@ -215,7 +235,7 @@ export async function handleNativeFormSubmission(
   const supabase = createServiceClient({ noStore: true });
   const { data: form, error: formError } = await supabase
     .from('forms')
-    .select('id, business_id, is_active, fields')
+    .select('id, business_id, is_active, fields, settings')
     .eq('id', tokenFormId)
     .eq('business_id', businessId)
     .maybeSingle();
@@ -227,25 +247,45 @@ export async function handleNativeFormSubmission(
     return { success: false, error: 'Form is no longer active.' };
   }
 
-  // ── 6. Hash flow_token for replay prevention ──
-  const tokenHash = hashFlowToken(flowToken);
+  // ── 5b. Schema-version binding ──
+  // The token's fieldsHash was signed at send time against the form's fields.
+  // Reject if the merchant edited the form after delivery — the customer saw
+  // version A but we'd validate/normalize against version B.
+  const currentFieldsHash = createHash('sha256').update(JSON.stringify(form.fields)).digest('hex');
+  if (verification.fieldsHash !== currentFieldsHash) {
+    return { success: false, error: 'Form schema changed after this form was sent. Submission rejected.' };
+  }
+
+  // ── 6. Hash verified nonce for replay prevention ──
+  // Replay identity is the nonce (immutable signed claim), not the serialized
+  // token string. This ensures equivalent serializations cannot bypass replay.
+  const nonceHash = hashNonceForReplay(verification.nonce!);
 
   // ── 7. Separate consent from answer fields ──
   const { flow_token: _ft, _marketing_consent, ...answers } = responseData as Record<string, unknown>;
-  const consentGiven = _marketing_consent === true ? true :
-    _marketing_consent === false ? false : null;
 
-  // ── 8. Validate answers against form field schema ──
+  // Only accept marketing consent when the published Form version provably
+  // presented a consent prompt (settings.consent_label is set and non-empty).
+  const formSettings = form.settings as Record<string, unknown> | null;
+  const formHasConsentPrompt = typeof formSettings?.consent_label === 'string'
+    && (formSettings.consent_label as string).trim().length > 0;
+  const consentGiven = formHasConsentPrompt
+    ? (_marketing_consent === true ? true : _marketing_consent === false ? false : null)
+    : null; // No consent prompt → ignore any _marketing_consent value
+
+  // ── 8. Validate and normalize answers against form field schema ──
   // Native submissions require a valid field schema — the form must have compiled
   // successfully to be published. Reject if fields are empty/null/non-array/zero-length.
   const formFields = Array.isArray(form.fields) ? (form.fields as WaaiioFormField[]) : null;
   if (!formFields || formFields.length === 0) {
     return { success: false, error: 'Form has no valid field schema for native submission validation.' };
   }
-  const schemaCheck = validateAnswersAgainstSchema(answers, formFields);
+  const schemaCheck = validateAndNormalizeAnswers(answers, formFields);
   if (!schemaCheck.valid) {
     return { success: false, error: schemaCheck.error || 'Answer validation failed.' };
   }
+  // Use normalized answers (compiler option IDs resolved to display titles)
+  const normalizedAnswers = schemaCheck.normalized ?? answers;
 
   // ── 9. INSERT response (replay prevented by unique constraint on flow_token_hash) ──
   const { data: response, error: insertError } = await supabase
@@ -254,9 +294,9 @@ export async function handleNativeFormSubmission(
       form_id: tokenFormId,
       business_id: businessId,
       customer_phone: senderPhone,
-      answers,
+      answers: normalizedAnswers,
       submission_source: 'native',
-      flow_token_hash: tokenHash,
+      flow_token_hash: nonceHash,
       consent_given: consentGiven,
       metadata: {
         source: 'whatsapp_nfm_reply',

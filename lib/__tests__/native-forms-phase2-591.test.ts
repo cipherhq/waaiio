@@ -104,6 +104,7 @@ describe('Flow Token System', () => {
   const PHONE = '2348012345678';
   const PHONE_PLUS = '+2348012345678';
   const BIZ_ID = '00000000-0000-0000-0000-000000000002';
+  const FIELDS_HASH = 'a'.repeat(64); // 64-char hex SHA-256 placeholder
 
   beforeEach(() => {
     vi.stubEnv('FLOW_TOKEN_SECRET', VALID_SECRET);
@@ -116,7 +117,7 @@ describe('Flow Token System', () => {
 
   it('generates a token that can be verified', async () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const { token, expiresAt } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+    const { token, expiresAt } = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     expect(token).toBeTruthy();
     expect(typeof token).toBe('string');
@@ -131,7 +132,7 @@ describe('Flow Token System', () => {
 
   it('rejects expired tokens', async () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 60 * 1000);
 
@@ -142,7 +143,7 @@ describe('Flow Token System', () => {
 
   it('rejects token with wrong formId', async () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     const wrongFormId = '00000000-0000-0000-0000-000000000099';
     const result = verifyFlowToken(token, wrongFormId, PHONE, BIZ_ID);
@@ -152,7 +153,7 @@ describe('Flow Token System', () => {
 
   it('rejects token with wrong phone', async () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     const result = verifyFlowToken(token, FORM_ID, '1999999999', BIZ_ID);
     expect(result.valid).toBe(false);
@@ -161,7 +162,7 @@ describe('Flow Token System', () => {
 
   it('rejects token with wrong businessId', async () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     const wrongBizId = '00000000-0000-0000-0000-000000000088';
     const result = verifyFlowToken(token, FORM_ID, PHONE, wrongBizId);
@@ -171,7 +172,7 @@ describe('Flow Token System', () => {
 
   it('rejects tampered signature', async () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     const dotIdx = token.indexOf('.');
     const tampered = token.slice(0, dotIdx) + '.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA_';
@@ -181,15 +182,18 @@ describe('Flow Token System', () => {
     expect(result.error).toContain('signature');
   });
 
-  it('produces unique hashes for different tokens', async () => {
-    const { generateFlowToken, hashFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const t1 = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
-    const t2 = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+  it('produces unique replay hashes from verified nonces', async () => {
+    const { generateFlowToken, verifyFlowToken, hashNonceForReplay } = await import('@/lib/whatsapp-forms/flow-token');
+    const t1 = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
+    const t2 = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     expect(t1.token).not.toBe(t2.token);
 
-    const h1 = hashFlowToken(t1.token);
-    const h2 = hashFlowToken(t2.token);
+    const v1 = verifyFlowToken(t1.token, FORM_ID, PHONE, BIZ_ID);
+    const v2 = verifyFlowToken(t2.token, FORM_ID, PHONE, BIZ_ID);
+
+    const h1 = hashNonceForReplay(v1.nonce!);
+    const h2 = hashNonceForReplay(v2.nonce!);
     expect(h1).not.toBe(h2);
     expect(h1).toHaveLength(64); // SHA-256 hex
   });
@@ -203,19 +207,19 @@ describe('Flow Token System', () => {
   it('throws on missing FLOW_TOKEN_SECRET', async () => {
     vi.stubEnv('FLOW_TOKEN_SECRET', '');
     const mod = await import('@/lib/whatsapp-forms/flow-token');
-    expect(() => mod.generateFlowToken(FORM_ID, PHONE, BIZ_ID)).toThrow('FLOW_TOKEN_SECRET');
+    expect(() => mod.generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH)).toThrow('FLOW_TOKEN_SECRET');
   });
 
-  it('throws when hashing empty token', async () => {
-    const { hashFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    expect(() => hashFlowToken('')).toThrow('required');
+  it('throws when hashing empty nonce', async () => {
+    const { hashNonceForReplay } = await import('@/lib/whatsapp-forms/flow-token');
+    expect(() => hashNonceForReplay('')).toThrow('required');
   });
 
   // ── F2-2: Phone normalization tests ──
 
   it('token generated with +234... verifies when webhook returns 234...', async () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const { token } = generateFlowToken(FORM_ID, PHONE_PLUS, BIZ_ID);
+    const { token } = generateFlowToken(FORM_ID, PHONE_PLUS, BIZ_ID, FIELDS_HASH);
 
     // Webhook returns digits without +
     const result = verifyFlowToken(token, FORM_ID, PHONE, BIZ_ID);
@@ -224,7 +228,7 @@ describe('Flow Token System', () => {
 
   it('token generated with 234... verifies when checked with 234...', async () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     const result = verifyFlowToken(token, FORM_ID, PHONE, BIZ_ID);
     expect(result.valid).toBe(true);
@@ -232,8 +236,8 @@ describe('Flow Token System', () => {
 
   it('both +234 and 234 formats produce same token signature for same phone', async () => {
     const { generateFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    const t1 = generateFlowToken(FORM_ID, PHONE_PLUS, BIZ_ID);
-    const t2 = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+    const t1 = generateFlowToken(FORM_ID, PHONE_PLUS, BIZ_ID, FIELDS_HASH);
+    const t2 = generateFlowToken(FORM_ID, PHONE, BIZ_ID, FIELDS_HASH);
 
     // Both should have the normalized phone in payload, so payloads differ only by nonce/expiry
     // But we can verify both verify with either format
@@ -273,6 +277,8 @@ describe('Native Form Submission Handler', () => {
     { id: 'age', label: 'Age', type: 'number', required: false },
     { id: 'plan', label: 'Plan', type: 'select', required: false, options: ['basic', 'premium', 'enterprise'] },
   ];
+  // SHA-256 of FORM_FIELDS for schema-version binding in flow tokens
+  const FORM_FIELDS_HASH = require('crypto').createHash('sha256').update(JSON.stringify(FORM_FIELDS)).digest('hex');
 
   function makeChannel(overrides: Partial<{ businessId: string; channelId: string; phoneNumberId: string }> = {}) {
     return {
@@ -287,7 +293,7 @@ describe('Native Form Submission Handler', () => {
     serviceInsertedRows = [];
     mockInsertError = null;
     mockRpcCalls = [];
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS };
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS, settings: { consent_label: 'I agree to marketing' } };
   });
 
   afterEach(() => {
@@ -295,9 +301,9 @@ describe('Native Form Submission Handler', () => {
     vi.restoreAllMocks();
   });
 
-  async function makeToken(bizId?: string, phone?: string): Promise<string> {
+  async function makeToken(bizId?: string, phone?: string, fieldsHash?: string): Promise<string> {
     const { generateFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    return generateFlowToken(FORM_ID, phone ?? PHONE, bizId ?? BIZ_ID).token;
+    return generateFlowToken(FORM_ID, phone ?? PHONE, bizId ?? BIZ_ID, fieldsHash ?? FORM_FIELDS_HASH).token;
   }
 
   function makeMessage(token: string, extras: Record<string, unknown> = {}): Record<string, unknown> {
@@ -375,7 +381,7 @@ describe('Native Form Submission Handler', () => {
   });
 
   it('rejects when form is inactive', async () => {
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: false, fields: FORM_FIELDS };
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: false, fields: FORM_FIELDS, settings: { consent_label: 'I agree' } };
 
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken();
@@ -414,6 +420,107 @@ describe('Native Form Submission Handler', () => {
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(true);
     expect(serviceInsertedRows[0].consent_given).toBeNull();
+  });
+
+  // ── CTO R3-F1: Nonce-based replay identity ──
+
+  it('uses verified nonce (not token string) for replay hash', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    // The stored hash should be a SHA-256 of the nonce (64 hex chars), not the full token
+    const storedHash = serviceInsertedRows[0].flow_token_hash as string;
+    expect(storedHash).toHaveLength(64);
+    // Hash should NOT match SHA-256 of the full token (it's the nonce hash)
+    const { createHash } = await import('crypto');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    expect(storedHash).not.toBe(tokenHash);
+  });
+
+  // ── CTO R3-F2: Consent requires published consent prompt ──
+
+  it('ignores _marketing_consent when form has no consent_label in settings', async () => {
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS, settings: {} };
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { _marketing_consent: true });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    // consent_given should be null — form didn't present a consent prompt
+    expect(serviceInsertedRows[0].consent_given).toBeNull();
+  });
+
+  it('ignores _marketing_consent when settings is null', async () => {
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS, settings: null };
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { _marketing_consent: true });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    expect(serviceInsertedRows[0].consent_given).toBeNull();
+  });
+
+  // ── CTO R3-F3: Option ID normalization ──
+
+  it('normalizes compiler option_2 to display title "premium" in stored answers', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    // plan field options: ['basic', 'premium', 'enterprise']
+    // option_2 maps to 'premium'
+    const message = makeMessage(token, { plan: 'option_2' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    const storedAnswers = serviceInsertedRows[0].answers as Record<string, unknown>;
+    expect(storedAnswers.plan).toBe('premium');
+  });
+
+  it('preserves display title as-is when web submission sends "enterprise"', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { plan: 'enterprise' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    const storedAnswers = serviceInsertedRows[0].answers as Record<string, unknown>;
+    expect(storedAnswers.plan).toBe('enterprise');
+  });
+
+  // ── CTO R3-P1: Schema-version binding at submission time ──
+
+  it('rejects submission when form fields changed after token was generated (version drift)', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+
+    // Token was generated against FORM_FIELDS (version A)
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    // Merchant edits form to version B — different options
+    const versionBFields = [
+      { id: 'full_name', label: 'Full Name', type: 'text', required: true },
+      { id: 'plan', label: 'Plan', type: 'select', required: false, options: ['starter', 'pro'] },
+    ];
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: versionBFields, settings: { consent_label: 'I agree' } };
+
+    // Customer submits version A answers against version B schema → rejected
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('schema changed');
+  });
+
+  it('accepts submission when form fields match the token schema version', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { plan: 'premium' });
+
+    // Form fields unchanged — FORM_FIELDS matches token's fieldsHash
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
   });
 
   it('uses business_id from resolved channel, NOT from Flow payload', async () => {
@@ -474,7 +581,7 @@ describe('Native Form Submission Handler', () => {
 
   it('routes submission to different business for different phoneNumberId (channel B)', async () => {
     // Set up form for BIZ_ID_2
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID_2, is_active: true, fields: FORM_FIELDS };
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID_2, is_active: true, fields: FORM_FIELDS, settings: { consent_label: 'I agree' } };
 
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken(BIZ_ID_2);
@@ -663,9 +770,11 @@ describe('Native Form Submission Handler', () => {
   // ── R2-F1: Empty/null form fields rejected ──
 
   it('rejects submission when form has empty fields array', async () => {
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: [] };
+    const emptyFields: unknown[] = [];
+    const emptyHash = require('crypto').createHash('sha256').update(JSON.stringify(emptyFields)).digest('hex');
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: emptyFields, settings: {} };
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
-    const token = await makeToken();
+    const token = await makeToken(undefined, undefined, emptyHash);
     const message = makeMessage(token);
 
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
@@ -674,9 +783,10 @@ describe('Native Form Submission Handler', () => {
   });
 
   it('rejects submission when form has null fields', async () => {
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: null };
+    const nullHash = require('crypto').createHash('sha256').update(JSON.stringify(null)).digest('hex');
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: null, settings: {} };
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
-    const token = await makeToken();
+    const token = await makeToken(undefined, undefined, nullHash);
     const message = makeMessage(token);
 
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
@@ -835,9 +945,12 @@ describe('Native Flow Send API', () => {
       id: FORM_ID,
       business_id: BIZ_ID,
       title: 'Contact Us',
+      description: null,
+      fields: [{ id: 'name', label: 'Name', type: 'text', required: true }],
+      settings: {},
       meta_flow_id: 'flow_asset_789',
       meta_flow_status: 'published',
-      native_flow_json: {},
+      native_flow_json: null, // Schema drift check skipped when null
       is_active: true,
     };
   });
@@ -1038,6 +1151,7 @@ describe('Migration 437 contract', () => {
     expect(sql).toContain("'published'");
     expect(sql).toContain("'deprecated'");
     expect(sql).toContain("'blocked'");
+    expect(sql).toContain("'throttled'");
     expect(sql).toContain('native_flow_json');
     expect(sql).toContain('JSONB');
 

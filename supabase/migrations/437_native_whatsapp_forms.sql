@@ -25,7 +25,7 @@ BEGIN
   ) THEN
     ALTER TABLE forms
       ADD CONSTRAINT forms_meta_flow_status_check
-      CHECK (meta_flow_status IN ('draft', 'published', 'deprecated', 'blocked'));
+      CHECK (meta_flow_status IN ('draft', 'published', 'deprecated', 'blocked', 'throttled'));
   END IF;
 END $$;
 

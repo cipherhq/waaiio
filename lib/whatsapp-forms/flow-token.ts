@@ -28,6 +28,7 @@ export interface FlowTokenResult {
 export interface FlowTokenVerification {
   valid: boolean;
   nonce?: string;
+  fieldsHash?: string;
   error?: string;
 }
 
@@ -72,18 +73,28 @@ export function normalizePhone(phone: string): string {
 /**
  * Generate a signed flow token binding a form to a specific recipient.
  *
+ * The token embeds a SHA-256 hash of the form's fields at generation time,
+ * creating an immutable schema-version binding. At submission time the
+ * handler recomputes the hash from the current DB fields and rejects the
+ * submission if the schema changed after the form was delivered.
+ *
  * @param formId - UUID of the form being sent
  * @param recipientPhone - E.164 phone number of the recipient
  * @param businessId - UUID of the owning business
+ * @param fieldsHash - SHA-256 hex hash of JSON.stringify(form.fields) at send time
  * @returns Signed token string and expiry timestamp
  */
 export function generateFlowToken(
   formId: string,
   recipientPhone: string,
   businessId: string,
+  fieldsHash: string,
 ): FlowTokenResult {
   if (!formId || !recipientPhone || !businessId) {
     throw new FlowTokenError('formId, recipientPhone, and businessId are required.');
+  }
+  if (!fieldsHash || fieldsHash.length !== 64) {
+    throw new FlowTokenError('fieldsHash must be a 64-character SHA-256 hex string.');
   }
 
   const secret = getSecret();
@@ -91,7 +102,7 @@ export function generateFlowToken(
   const expiresAt = Date.now() + TOKEN_TTL_MS;
 
   const normalizedPhone = normalizePhone(recipientPhone);
-  const payload = [formId, normalizedPhone, businessId, nonce, String(expiresAt)].join(FIELD_SEP);
+  const payload = [formId, normalizedPhone, businessId, nonce, String(expiresAt), fieldsHash].join(FIELD_SEP);
   const payloadB64 = toBase64Url(Buffer.from(payload, 'utf8'));
   const signature = sign(payload, secret);
 
@@ -167,11 +178,11 @@ export function verifyFlowToken(
 
   // Parse payload fields
   const parts = payload.split(FIELD_SEP);
-  if (parts.length !== 5) {
+  if (parts.length !== 6) {
     return { valid: false, error: 'Malformed token payload.' };
   }
 
-  const [tokenFormId, tokenPhone, tokenBusinessId, nonce, expiresAtStr] = parts;
+  const [tokenFormId, tokenPhone, tokenBusinessId, nonce, expiresAtStr, fieldsHash] = parts;
   const expiresAt = Number(expiresAtStr);
 
   // Check expiry
@@ -189,17 +200,27 @@ export function verifyFlowToken(
   if (tokenBusinessId !== businessId) {
     return { valid: false, error: 'Token business mismatch.' };
   }
+  if (!fieldsHash || fieldsHash.length !== 64) {
+    return { valid: false, error: 'Token missing schema version binding.' };
+  }
 
-  return { valid: true, nonce };
+  return { valid: true, nonce, fieldsHash };
 }
 
 /**
- * Hash a flow token for database uniqueness constraint (replay prevention).
- * Uses SHA-256 to avoid storing the actual token in the database.
+ * Hash a verified nonce for database uniqueness constraint (replay prevention).
+ *
+ * The replay identity is the nonce — an immutable UUID embedded in the signed
+ * token payload — NOT the serialized token string. This ensures that equivalent
+ * serializations (e.g. padding differences) cannot bypass the uniqueness check.
+ * The nonce is only available after HMAC verification succeeds, so only
+ * authentically issued tokens can occupy a replay slot.
+ *
+ * Uses SHA-256 to avoid storing the raw nonce in the database.
  */
-export function hashFlowToken(token: string): string {
-  if (!token) {
-    throw new FlowTokenError('Token is required for hashing.');
+export function hashNonceForReplay(nonce: string): string {
+  if (!nonce) {
+    throw new FlowTokenError('Verified nonce is required for replay hashing.');
   }
-  return createHash('sha256').update(token).digest('hex');
+  return createHash('sha256').update(nonce).digest('hex');
 }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createHash } from 'crypto';
 import { generateFlowToken, normalizePhone } from '@/lib/whatsapp-forms/flow-token';
+import { compileNativeFormFlow } from '@/lib/whatsapp-forms/native-flow';
 
 /**
  * POST /api/forms/native-flow/send
@@ -59,7 +61,7 @@ export async function POST(request: NextRequest) {
   // ── Load form and verify status ──
   const { data: form, error: formError } = await supabase
     .from('forms')
-    .select('id, business_id, title, meta_flow_id, meta_flow_status, native_flow_json, is_active')
+    .select('id, business_id, title, description, fields, settings, meta_flow_id, meta_flow_status, native_flow_json, is_active')
     .eq('id', formId)
     .eq('business_id', businessId)
     .maybeSingle();
@@ -83,11 +85,41 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Form has no Meta Flow asset ID.' }, { status: 422 });
   }
 
-  // ── Generate signed flow token ──
+  // ── Schema drift detection ──
+  // Prevent published Flow assets from silently diverging from edited Form fields.
+  // Recompile the current fields and compare with the stored native_flow_json.
+  if (form.native_flow_json && form.fields) {
+    try {
+      const currentCompiled = compileNativeFormFlow({
+        title: form.title,
+        description: form.description,
+        fields: form.fields,
+        settings: form.settings as Record<string, unknown> | null,
+      });
+      const currentHash = createHash('sha256').update(JSON.stringify(currentCompiled)).digest('hex');
+      const storedHash = createHash('sha256').update(JSON.stringify(form.native_flow_json)).digest('hex');
+      if (currentHash !== storedHash) {
+        return NextResponse.json(
+          { error: 'Form fields have changed since the native Flow was compiled. Re-compile and re-publish required.' },
+          { status: 422 },
+        );
+      }
+    } catch {
+      // Compilation failure means the current fields can't produce a valid native Flow.
+      // This is expected if the form was edited to include unsupported field types.
+      return NextResponse.json(
+        { error: 'Current form fields cannot compile to a native Flow. Re-compile and re-publish required.' },
+        { status: 422 },
+      );
+    }
+  }
+
+  // ── Generate signed flow token (with immutable schema-version binding) ──
   const normalizedRecipient = normalizePhone(recipientPhone);
+  const fieldsHash = createHash('sha256').update(JSON.stringify(form.fields)).digest('hex');
   let flowToken: { token: string; expiresAt: number };
   try {
-    flowToken = generateFlowToken(formId, normalizedRecipient, businessId);
+    flowToken = generateFlowToken(formId, normalizedRecipient, businessId, fieldsHash);
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Token generation failed.';
     return NextResponse.json({ error: message }, { status: 500 });
