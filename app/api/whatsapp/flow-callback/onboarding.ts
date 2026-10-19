@@ -172,7 +172,21 @@ export async function handleOnboardingComplete(
           activateError?.message || `status=${activated?.status} assigned=${activated?.assigned_channel_id}`);
         // allocationSucceeded stays false — do not claim live
       } else {
-        allocationSucceeded = true;
+        // P1-1: Verify the assigned channel's connection_status before
+        // treating the business as live. M430 checks is_active but not
+        // connection_status — a provisioning channel must not be live.
+        const { data: verifiedCh } = await supabase
+          .from('whatsapp_channels')
+          .select('connection_status')
+          .eq('id', activated.assigned_channel_id)
+          .eq('is_active', true)
+          .eq('connection_status', 'active')
+          .maybeSingle();
+        if (verifiedCh) {
+          allocationSucceeded = true;
+        } else {
+          logger.warn('[WA-ONBOARD] Assigned channel not connection-ready:', biz.id, activated.assigned_channel_id);
+        }
       }
     }
 

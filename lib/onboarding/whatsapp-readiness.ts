@@ -134,11 +134,24 @@ export async function allocateSharedChannelWithFallback(
     if (result.allocated) {
       // If idempotent (business already had assigned_channel_id), optionally verify & repair stale channel
       if (result.idempotent && options?.repairStaleSharedChannel) {
-        const { data: currentChannel } = await service
+        // P2-1: Fail closed on stale channel lookup errors — do not attempt
+        // reassignment with uncertain state.
+        const { data: currentChannel, error: staleLookupErr } = await service
           .from('whatsapp_channels')
           .select('id, phone_number, channel_type, is_active, connection_status, country_code, business_id')
           .eq('id', result.channel_id ?? '')
           .maybeSingle();
+
+        if (staleLookupErr) {
+          return {
+            data: {
+              allocated: false,
+              channel_id: result.channel_id,
+              reason: `stale_channel_lookup_error: ${staleLookupErr.message}`,
+            },
+            error: null,
+          };
+        }
 
         const isReady = isAssignedWhatsAppChannelReady(
           { id: businessId, country_code: businessCountry },
@@ -179,11 +192,14 @@ export async function allocateSharedChannelWithFallback(
             return { data: null, error: { message: `Stale-repair candidate query failed: ${candidateErr.message}` } };
           }
 
-          const healthyTarget = (candidates ?? []).find(
+          // P2-2: Try ALL eligible candidates, not just the first. The
+          // reassign_shared_channel RPC enforces capacity — if the first
+          // candidate is at capacity, try the next one.
+          const eligibleCandidates = (candidates ?? []).filter(
             (c: { id: string }) => c.id !== result.channel_id,
           );
 
-          if (healthyTarget) {
+          for (const healthyTarget of eligibleCandidates) {
             const { data: reassignRaw, error: reassignErr } = await service.rpc('reassign_shared_channel', {
               p_business_id: businessId,
               p_new_channel_id: healthyTarget.id,
@@ -205,6 +221,7 @@ export async function allocateSharedChannelWithFallback(
                 error: null,
               };
             }
+            // This candidate rejected (likely at capacity) — try the next
           }
         }
 
@@ -218,6 +235,11 @@ export async function allocateSharedChannelWithFallback(
         };
       }
 
+      // P1-1: The M430 RPC selects channels with is_active=true but does NOT
+      // check connection_status. Callers MUST verify connection_status='active'
+      // via isAssignedWhatsAppChannelReady before treating the allocation as
+      // ready for business activation. This function reports the allocation
+      // result; the caller's post-allocation readiness check is the gate.
       return {
         data: {
           ...result,

@@ -209,15 +209,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       // The business stays in its previous state (pending/active without a
       // working shared channel). This prevents an unverified assignment from
       // being treated as live by the resolver or QR link generator.
+      // P2-3: Verify CAS compensation actually updated the expected row.
       const danglingId = updatedBusiness?.assigned_channel_id ?? allocation.channel_id ?? null;
       let compensated = false;
       if (danglingId) {
-        const { error: clearErr } = await service
+        const { data: cleared, error: clearErr } = await service
           .from('businesses')
           .update({ assigned_channel_id: null })
           .eq('id', business.id)
-          .eq('assigned_channel_id', danglingId); // CAS: only clear if still the same
-        compensated = !clearErr;
+          .eq('assigned_channel_id', danglingId) // CAS: only clear if still the same
+          .select('id');
+        compensated = !clearErr && Array.isArray(cleared) && cleared.length === 1;
       }
       await logAdminAudit({
         actorId: admin.userId,
@@ -239,12 +241,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       );
     }
 
-    // P1-3 (post-allocation): Verify no concurrent dedicated setup appeared during allocation
+    // P1-2/P1-3 (post-allocation): Verify no concurrent dedicated setup appeared.
+    // Fail closed on query errors — do not report successful allocation with uncertain state.
     {
-      const { data: postDedicated } = await service
+      const { data: postDedicated, error: postDedErr } = await service
         .from('whatsapp_channels').select('id')
         .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true)
         .limit(1).maybeSingle();
+      if (postDedErr) {
+        await logAdminAudit({
+          actorId: admin.userId,
+          action: 'admin_onboarding_shared_channel_post_conflict_query_failed',
+          entityType: 'admin_onboarding',
+          entityId: onboarding.id,
+          details: { business_id: business.id, error: postDedErr.message, allocated_channel_id: assignedChannel?.id },
+        });
+        return NextResponse.json(
+          { error: 'Unable to verify dedicated-channel state after allocation. Retry or reconcile manually.' },
+          { status: 500 },
+        );
+      }
       if (postDedicated) {
         await logAdminAudit({
           actorId: admin.userId,

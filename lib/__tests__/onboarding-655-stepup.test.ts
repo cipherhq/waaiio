@@ -311,4 +311,19 @@ describe('PR #655 CTO R2: ensure_shared_channel hardening', () => {
       action: 'admin_onboarding_shared_channel_concurrent_dedicated_conflict',
     }));
   });
+
+  // P1-2 (R4): Post-allocation dedicated-channel query error → 500 fail-closed + audit
+  it('returns 500 and audits when post-allocation dedicated query fails', async () => {
+    setupService({ postDedicatedResult: { data: null, error: { message: 'timeout' } } });
+    const { POST } = await import('@/app/api/admin/onboarding/[id]/route');
+    const res = await POST(makeRequest({ action: 'ensure_shared_channel', stepUpId: 'valid' }), { params: Promise.resolve({ id: 'onb-1' }) });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toContain('dedicated-channel state');
+    expect(mocks.logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'admin_onboarding_shared_channel_post_conflict_query_failed',
+    }));
+    // Must NOT report successful allocation
+    expect(body.success).toBeUndefined();
+  });
 });

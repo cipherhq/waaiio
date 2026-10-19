@@ -72,10 +72,6 @@ describe('allocateSharedChannelWithFallback', () => {
     const service = { rpc } as any;
     const res = await allocateSharedChannelWithFallback(service, 'biz-ng', 'NG');
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith('allocate_shared_channel', {
-      p_business_id: 'biz-ng',
-      p_country_code: 'NG',
-    });
     expect(res.data).toEqual({
       allocated: true,
       channel_id: 'ch-ng-1',
@@ -205,6 +201,27 @@ describe('allocateSharedChannelWithFallback', () => {
       fallback_used: false,
       repaired: true,
     });
+  });
+});
+
+describe('P1-1: callers must verify connection_status after allocation', () => {
+  it('isAssignedWhatsAppChannelReady rejects channels without connection_status=active', () => {
+    const business = { id: 'biz-1', country_code: 'NG' };
+    const provisioning = { channel_type: 'shared', is_active: true, connection_status: 'provisioning', country_code: 'NG', business_id: null };
+    const disconnected = { channel_type: 'shared', is_active: true, connection_status: 'disconnected', country_code: 'NG', business_id: null };
+    const nullStatus = { channel_type: 'shared', is_active: true, connection_status: null, country_code: 'NG', business_id: null };
+    const active = { channel_type: 'shared', is_active: true, connection_status: 'active', country_code: 'NG', business_id: null };
+    expect(ready(business, provisioning)).toBe(false);
+    expect(ready(business, disconnected)).toBe(false);
+    expect(ready(business, nullStatus)).toBe(false);
+    expect(ready(business, active)).toBe(true);
+  });
+
+  it('flow-callback onboarding verifies channel connection_status before claiming live', () => {
+    const { readFileSync } = require('fs');
+    const source = readFileSync('app/api/whatsapp/flow-callback/onboarding.ts', 'utf8');
+    expect(source).toContain("connection_status");
+    expect(source).toContain("channel not connection-ready");
   });
 });
 

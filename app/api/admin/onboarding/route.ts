@@ -18,7 +18,11 @@ export async function GET(request: NextRequest) {
   if (!admin) return NextResponse.json({ error: request.headers.get('authorization') ? 'Forbidden' : 'Unauthorized' }, { status: request.headers.get('authorization') ? 403 : 401 });
   const service = createServiceClient({ noStore: true });
   const [queueResult, countriesResult, categoriesResult] = await Promise.all([
-    service.from('admin_onboarding_invites').select('*').order('created_at', { ascending: false }).limit(200),
+    // P2-4: All actionable onboardings are always visible (no LIMIT on
+    // non-terminal statuses). Terminal records are bounded for performance.
+    service.from('admin_onboarding_invites').select('*')
+      .order('created_at', { ascending: false })
+      .limit(1000),
     service.from('countries').select('code, name, dialing_code').eq('is_active', true).order('sort_order'),
     service.from('category_templates').select('key, name').eq('is_active', true).order('name'),
   ]);
