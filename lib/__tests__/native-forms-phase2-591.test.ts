@@ -277,8 +277,14 @@ describe('Native Form Submission Handler', () => {
     { id: 'age', label: 'Age', type: 'number', required: false },
     { id: 'plan', label: 'Plan', type: 'select', required: false, options: ['basic', 'premium', 'enterprise'] },
   ];
-  // SHA-256 of FORM_FIELDS for schema-version binding in flow tokens
-  const FORM_FIELDS_HASH = require('crypto').createHash('sha256').update(JSON.stringify(FORM_FIELDS)).digest('hex');
+  const DEFAULT_CONSENT_LABEL = 'I agree to marketing';
+  /** Composite form-version hash covering fields + consent configuration. */
+  function computeFormVersionHash(fields: unknown, consentLabel: string) {
+    return require('crypto').createHash('sha256')
+      .update(JSON.stringify({ fields, consentLabel }))
+      .digest('hex');
+  }
+  const FORM_VERSION_HASH = computeFormVersionHash(FORM_FIELDS, DEFAULT_CONSENT_LABEL);
 
   function makeChannel(overrides: Partial<{ businessId: string; channelId: string; phoneNumberId: string }> = {}) {
     return {
@@ -301,9 +307,9 @@ describe('Native Form Submission Handler', () => {
     vi.restoreAllMocks();
   });
 
-  async function makeToken(bizId?: string, phone?: string, fieldsHash?: string): Promise<string> {
+  async function makeToken(bizId?: string, phone?: string, versionHash?: string): Promise<string> {
     const { generateFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    return generateFlowToken(FORM_ID, phone ?? PHONE, bizId ?? BIZ_ID, fieldsHash ?? FORM_FIELDS_HASH).token;
+    return generateFlowToken(FORM_ID, phone ?? PHONE, bizId ?? BIZ_ID, versionHash ?? FORM_VERSION_HASH).token;
   }
 
   function makeMessage(token: string, extras: Record<string, unknown> = {}): Record<string, unknown> {
@@ -445,7 +451,8 @@ describe('Native Form Submission Handler', () => {
   it('ignores _marketing_consent when form has no consent_label in settings', async () => {
     mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS, settings: {} };
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
-    const token = await makeToken();
+    // Token must match: same fields, no consent label
+    const token = await makeToken(undefined, undefined, computeFormVersionHash(FORM_FIELDS, ''));
     const message = makeMessage(token, { _marketing_consent: true });
 
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
@@ -457,7 +464,8 @@ describe('Native Form Submission Handler', () => {
   it('ignores _marketing_consent when settings is null', async () => {
     mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS, settings: null };
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
-    const token = await makeToken();
+    // Token must match: same fields, no consent label
+    const token = await makeToken(undefined, undefined, computeFormVersionHash(FORM_FIELDS, ''));
     const message = makeMessage(token, { _marketing_consent: true });
 
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
@@ -496,7 +504,7 @@ describe('Native Form Submission Handler', () => {
   it('rejects submission when form fields changed after token was generated (version drift)', async () => {
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
 
-    // Token was generated against FORM_FIELDS (version A)
+    // Token was generated against FORM_FIELDS + DEFAULT_CONSENT_LABEL
     const token = await makeToken();
     const message = makeMessage(token);
 
@@ -505,22 +513,65 @@ describe('Native Form Submission Handler', () => {
       { id: 'full_name', label: 'Full Name', type: 'text', required: true },
       { id: 'plan', label: 'Plan', type: 'select', required: false, options: ['starter', 'pro'] },
     ];
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: versionBFields, settings: { consent_label: 'I agree' } };
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: versionBFields, settings: { consent_label: DEFAULT_CONSENT_LABEL } };
 
     // Customer submits version A answers against version B schema → rejected
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(false);
-    expect(result.error).toContain('schema changed');
+    expect(result.error).toContain('configuration changed');
   });
 
-  it('accepts submission when form fields match the token schema version', async () => {
+  it('accepts submission when form fields and consent match the token version', async () => {
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken();
     const message = makeMessage(token, { plan: 'premium' });
 
-    // Form fields unchanged — FORM_FIELDS matches token's fieldsHash
+    // Form fields and consent label unchanged
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(true);
+  });
+
+  // ── CTO R4: Consent configuration drift ──
+
+  it('rejects when consent was disabled at issuance but enabled before submission', async () => {
+    // Token issued with no consent label
+    const noConsentHash = computeFormVersionHash(FORM_FIELDS, '');
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const { generateFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
+    const token = generateFlowToken(FORM_ID, PHONE, BIZ_ID, noConsentHash).token;
+    const message = makeMessage(token);
+
+    // Merchant enables consent after delivery
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS, settings: { consent_label: 'New consent prompt' } };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('configuration changed');
+  });
+
+  it('rejects when consent was enabled at issuance but disabled before submission', async () => {
+    // Token issued with consent label (default mock)
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken(); // uses FORM_VERSION_HASH which includes DEFAULT_CONSENT_LABEL
+    const message = makeMessage(token);
+
+    // Merchant removes consent after delivery
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS, settings: {} };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('configuration changed');
+  });
+
+  it('accepts when fields and consent are both unchanged between issuance and submission', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { plan: 'basic' });
+
+    // Mock unchanged from beforeEach (same fields + same consent label)
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    expect(serviceInsertedRows[0].consent_given).toBe(true); // _marketing_consent: true in default makeMessage
   });
 
   it('uses business_id from resolved channel, NOT from Flow payload', async () => {
@@ -580,8 +631,8 @@ describe('Native Form Submission Handler', () => {
   });
 
   it('routes submission to different business for different phoneNumberId (channel B)', async () => {
-    // Set up form for BIZ_ID_2
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID_2, is_active: true, fields: FORM_FIELDS, settings: { consent_label: 'I agree' } };
+    // Set up form for BIZ_ID_2 — consent label must match the token's version hash
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID_2, is_active: true, fields: FORM_FIELDS, settings: { consent_label: DEFAULT_CONSENT_LABEL } };
 
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken(BIZ_ID_2);
@@ -771,10 +822,9 @@ describe('Native Form Submission Handler', () => {
 
   it('rejects submission when form has empty fields array', async () => {
     const emptyFields: unknown[] = [];
-    const emptyHash = require('crypto').createHash('sha256').update(JSON.stringify(emptyFields)).digest('hex');
     mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: emptyFields, settings: {} };
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
-    const token = await makeToken(undefined, undefined, emptyHash);
+    const token = await makeToken(undefined, undefined, computeFormVersionHash(emptyFields, ''));
     const message = makeMessage(token);
 
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
@@ -783,10 +833,9 @@ describe('Native Form Submission Handler', () => {
   });
 
   it('rejects submission when form has null fields', async () => {
-    const nullHash = require('crypto').createHash('sha256').update(JSON.stringify(null)).digest('hex');
     mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: null, settings: {} };
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
-    const token = await makeToken(undefined, undefined, nullHash);
+    const token = await makeToken(undefined, undefined, computeFormVersionHash(null, ''));
     const message = makeMessage(token);
 
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());

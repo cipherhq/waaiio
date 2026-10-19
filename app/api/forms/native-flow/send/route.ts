@@ -114,12 +114,17 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // ── Generate signed flow token (with immutable schema-version binding) ──
+  // ── Generate signed flow token (with immutable version binding) ──
+  // The version fingerprint covers both field schema and consent configuration.
   const normalizedRecipient = normalizePhone(recipientPhone);
-  const fieldsHash = createHash('sha256').update(JSON.stringify(form.fields)).digest('hex');
+  const formSettings = form.settings as Record<string, unknown> | null;
+  const consentLabel = typeof formSettings?.consent_label === 'string' ? (formSettings.consent_label as string).trim() : '';
+  const formVersionHash = createHash('sha256')
+    .update(JSON.stringify({ fields: form.fields, consentLabel }))
+    .digest('hex');
   let flowToken: { token: string; expiresAt: number };
   try {
-    flowToken = generateFlowToken(formId, normalizedRecipient, businessId, fieldsHash);
+    flowToken = generateFlowToken(formId, normalizedRecipient, businessId, formVersionHash);
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Token generation failed.';
     return NextResponse.json({ error: message }, { status: 500 });

@@ -247,13 +247,19 @@ export async function handleNativeFormSubmission(
     return { success: false, error: 'Form is no longer active.' };
   }
 
-  // ── 5b. Schema-version binding ──
-  // The token's fieldsHash was signed at send time against the form's fields.
-  // Reject if the merchant edited the form after delivery — the customer saw
-  // version A but we'd validate/normalize against version B.
-  const currentFieldsHash = createHash('sha256').update(JSON.stringify(form.fields)).digest('hex');
-  if (verification.fieldsHash !== currentFieldsHash) {
-    return { success: false, error: 'Form schema changed after this form was sent. Submission rejected.' };
+  // ── 5b. Form-version binding ──
+  // The token's formVersionHash was signed at send time against the form's
+  // effective configuration (field schema + consent label). Reject if either
+  // changed after delivery — the customer saw version A but we'd validate,
+  // normalize, and record consent against version B.
+  const formSettings = form.settings as Record<string, unknown> | null;
+  const consentLabel = typeof formSettings?.consent_label === 'string'
+    ? (formSettings.consent_label as string).trim() : '';
+  const currentVersionHash = createHash('sha256')
+    .update(JSON.stringify({ fields: form.fields, consentLabel }))
+    .digest('hex');
+  if (verification.formVersionHash !== currentVersionHash) {
+    return { success: false, error: 'Form configuration changed after this form was sent. Submission rejected.' };
   }
 
   // ── 6. Hash verified nonce for replay prevention ──
@@ -266,9 +272,8 @@ export async function handleNativeFormSubmission(
 
   // Only accept marketing consent when the published Form version provably
   // presented a consent prompt (settings.consent_label is set and non-empty).
-  const formSettings = form.settings as Record<string, unknown> | null;
-  const formHasConsentPrompt = typeof formSettings?.consent_label === 'string'
-    && (formSettings.consent_label as string).trim().length > 0;
+  // consentLabel was already extracted and verified in the version-binding check.
+  const formHasConsentPrompt = consentLabel.length > 0;
   const consentGiven = formHasConsentPrompt
     ? (_marketing_consent === true ? true : _marketing_consent === false ? false : null)
     : null; // No consent prompt → ignore any _marketing_consent value
