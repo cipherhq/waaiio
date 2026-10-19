@@ -18,6 +18,15 @@ Read and follow both documents before any substantive work. The Operating Order 
 4. **No unauthorized merge/deploy/production mutation.** Deployment and production/database mutation are separate authorization phases. Testing authorization is not merge/deploy authorization.
 5. **GitHub-first.** Substantive audits, evidence, and handoffs go to GitHub issues/PRs, not chat. Chat is for short status and owner decisions only.
 
+## Owner-approved payment custody and settlement model — MUST NOT CHANGE
+
+Read [`docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`](./docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md) before any payment, payout, fee, provider integration, admin finance, refund, migration, bot checkout or settlement change. This is a **standing Owner product decision**, not an implementation suggestion:
+
+- **Merchant-connected Stripe/Paystack:** Customer payment is routed through the merchant's connected provider, with Waaiio's supported fee/split routing. The provider pays the merchant; Waaiio must not manually settle that same payment.
+- **Waaiio-owned Stripe/Paystack:** Customer pays Waaiio, Waaiio owes the merchant their net balance, and an authorized admin must be able to pay the merchant externally and then mark the payout paid with transfer reference and auditable confirmation. Approval alone never means paid.
+- These two routes must keep working independently. Removing `manual_cash` does **not** remove the manual settlement workflow. Disabling Stripe *automatic platform-managed payouts* must **not** disable Stripe Connect splits or admin settlement of Stripe-held funds.
+- For all payment-related work, show regression evidence for both routes and duplicate-payment, fee, refund and cross-business safety. Do not change these business rules, silently reroute money, or remove a route without a **new explicit Owner decision**. CI green is not a substitute.
+
 ## Standing safety rules
 
 - `main` is protected by the ruleset **protect-main** (PR plus 11 passing checks). If GitHub rejects a push or merge, stop and report it. Never attempt a workaround.
