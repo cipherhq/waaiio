@@ -88,6 +88,8 @@ export async function POST(request: NextRequest) {
   // ── Schema drift detection ──
   // Prevent published Flow assets from silently diverging from edited Form fields.
   // Recompile the current fields and compare with the stored native_flow_json.
+  // Uses sorted-key JSON serialization because PostgreSQL JSONB does not preserve
+  // key insertion order — a round-tripped object may have reordered keys.
   if (form.native_flow_json && form.fields) {
     try {
       const currentCompiled = compileNativeFormFlow({
@@ -96,8 +98,14 @@ export async function POST(request: NextRequest) {
         fields: form.fields,
         settings: form.settings as Record<string, unknown> | null,
       });
-      const currentHash = createHash('sha256').update(JSON.stringify(currentCompiled)).digest('hex');
-      const storedHash = createHash('sha256').update(JSON.stringify(form.native_flow_json)).digest('hex');
+      // Recursive sorted-key serialization for JSONB round-trip safety
+      const stableStringify = (v: unknown): string => JSON.stringify(v, (_key, val) =>
+        val && typeof val === 'object' && !Array.isArray(val)
+          ? Object.keys(val).sort().reduce<Record<string, unknown>>((o, k) => { o[k] = val[k]; return o; }, {})
+          : val
+      );
+      const currentHash = createHash('sha256').update(stableStringify(currentCompiled)).digest('hex');
+      const storedHash = createHash('sha256').update(stableStringify(form.native_flow_json)).digest('hex');
       if (currentHash !== storedHash) {
         return NextResponse.json(
           { error: 'Form fields have changed since the native Flow was compiled. Re-compile and re-publish required.' },

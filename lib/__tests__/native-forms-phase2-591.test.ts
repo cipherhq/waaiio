@@ -1082,6 +1082,42 @@ describe('Native Flow Send API', () => {
     const res = await POST(makeRequest({ businessId: BIZ_ID, formId: FORM_ID, recipientPhone: PHONE }));
     expect(res.status).toBe(422);
   });
+
+  // ── CTO R5-F1: JSONB key reordering resilience ──
+
+  it('does not false-alarm on JSONB key reordering of stored native_flow_json', async () => {
+    // Compile the expected Flow JSON from the form's fields
+    const { compileNativeFormFlow } = await import('@/lib/whatsapp-forms/native-flow');
+    const compiled = compileNativeFormFlow({
+      title: 'Contact Us',
+      description: null,
+      fields: [{ id: 'name', label: 'Name', type: 'text', required: true }],
+      settings: {},
+    });
+
+    // Simulate JSONB round-trip: reverse the top-level key order
+    const keys = Object.keys(compiled);
+    const reordered: Record<string, unknown> = {};
+    for (const k of keys.reverse()) {
+      reordered[k] = compiled[k];
+    }
+    // Verify they produce different naive JSON.stringify
+    expect(JSON.stringify(compiled)).not.toBe(JSON.stringify(reordered));
+
+    // Set the reordered object as native_flow_json (simulates PostgreSQL JSONB)
+    mockServerForm = {
+      ...mockServerForm,
+      native_flow_json: reordered,
+    } as Record<string, unknown>;
+
+    const { POST } = await import('@/app/api/forms/native-flow/send/route');
+    const res = await POST(makeRequest({ businessId: BIZ_ID, formId: FORM_ID, recipientPhone: PHONE }));
+    const json = await res.json();
+    // Should succeed (200), not false-alarm as schema drift
+    expect(res.status).toBe(200);
+    expect(json.queued).toBe(false);
+    expect(json.payload).toBeTruthy();
+  });
 });
 
 // ═══════════════════════════════════════════════════════
