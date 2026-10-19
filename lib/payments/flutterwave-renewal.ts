@@ -88,8 +88,22 @@ export async function processFlutterwaveRenewal(
       providerSucceeded = true;
     }
 
-    // Step 3: Charge if needed
+    // Step 3: Charge if needed.
     if (!providerSucceeded) {
+      // #605: Check cancellation immediately before a new provider charge.
+      // Existing provider-success claims continue through reconciliation.
+      // Not atomic with the network call: the durable claim is the start
+      // boundary for resolving in-flight payments.
+      const { data: preChargeSub, error: preChargeError } = await supabase
+        .from('customer_subscriptions')
+        .select('status, cancellation_requested_at')
+        .eq('id', sub.id)
+        .maybeSingle();
+      if (preChargeError || !preChargeSub ||
+          preChargeSub.cancellation_requested_at ||
+          !['active', 'past_due'].includes(preChargeSub.status)) {
+        return { action: 'skipped', reason: 'precharge_cancellation_or_lookup_failed' };
+      }
       const result = await charge(
         sub.authorization_code, sub.amount,
         sub.customer_email, attemptRef,

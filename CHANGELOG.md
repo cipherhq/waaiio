@@ -1,3 +1,13 @@
+### PR #605 offline payment cancellation gate candidate (2026-10-19)
+- Proposed M452 (NOT applied): cancellation intent + Paystack/Flutterwave claim and dispatch gates with subscription-first locking.
+- Retry cron: executable Paystack pre-provider guard and bounded post-cancellation reconciliation of in-flight attempts using existing verify_attempts CAS rotation.
+- Flutterwave post-cancellation reconciliation: read-only work queue via `list_cancelled_flutterwave_claims` RPC + verification-only recovery in `flutterwave-cancellation-reconciliation.ts`.
+- Tests: Paystack provider-boundary executable regressions, Flutterwave renewal pre-charge cancellation checks, Flutterwave cancelled-claim reconciliation, disposable-PG race harness.
+- Fix: `tests/run-605-complete-migration.mjs` line 121 used single quotes instead of backticks for `stableRef`, causing literal `${FLW}` in SQL instead of the UUID constant — broke Flutterwave reconciliation queue tests.
+- Fix: `lib/__tests__/paystack-split-recurring.test.ts` source-string test referenced removed `chargeResult.status` marker; updated to `chargeDecision.action` matching refactored cron route.
+- Fix: `app/api/cron/retry-failed-charges/route.ts:163` — added `async` to `rereadSubscription` lambda to satisfy TypeScript's Promise type constraint for the Supabase builder chain.
+- Risk: provider network calls are non-atomic with Postgres; already-dispatched charges may settle and must reconcile. Owner approval required before migration/deploy.
+
 # Changelog
 
 All notable bot flow, security, and infrastructure changes are tracked here.
@@ -54,6 +64,31 @@ If something breaks, check this log to find what changed and when.
 ### What it affects / could break
 - Manual admin-created "active" channel records are no longer available; new channels require legitimate provider verification. Shared allocation requires an eligible existing active channel.
 - No migration or live Meta action. Dedicated WABA authorization and staging messaging/financial gate acceptance remain owner-controlled and release-gated.
+
+## 2026-10-10 — #597 F3: OTP-bound recurring cancellation authority
+
+### What changed
+- `app/api/recurring/cancel/route.ts`: Rewritten to require HMAC-signed cancellation proof issued by `/api/recurring/verify` after successful OTP verification. Previously accepted only phone + subscription UUID (both public identifiers) with no authentication.
+  - Rejects missing/expired/forged/cross-subscription proofs (HTTP 403)
+  - Checks provider cancellation result before DB update (was: silently swallowed)
+  - Returns 503 if provider refuses cancellation (was: returned success regardless)
+  - CAS-guarded DB update with error checking (was: fire-and-forget)
+  - Handles ambiguous provider-cancel-success/DB-failure case explicitly
+  - Paystack/Stripe subscriptions missing provider code/credentials return 422 (not silent DB-only cancel)
+  - Only Flutterwave (cron-managed) may do DB-only cancellation
+  - Re-read after zero-row CAS checks actual state; fail-closed on DB errors
+  - Validates JSON body is object, UUID format, input types before processing
+- `app/recurring/manage/page.tsx`: Updated to send `cancellationProof` from the verified subscription data. Added error display in list view with re-verify link for expired proofs.
+- `lib/payments/paystack-recurring.ts`: Added `getSubscriptionStatus` for provider-state verification on cancel retry.
+- `lib/payments/stripe-recurring.ts`: Added `getSubscriptionStatus` and GET method support for provider verification.
+- `lib/__tests__/recurring-cancel-auth-597.test.ts`: 40 tests — 7 proof helper tests + 33 executable handler tests covering: authorization (403), input validation, gateway classification (unknown/missing-code/missing-token→422), provider failures (refuses/throws→503), DB failures (lookup/update→503), CAS (zero-row re-read), provider-success/DB-failure→503, Paystack/Stripe/Flutterwave convergence via provider status verification, two-request stateful recovery, and Paystack `completed` terminal status.
+- **KNOWN LIMITATION:** If provider cancellation succeeds but local DB update fails and the customer does not retry, the subscription may remain locally `active`/`past_due` while the provider subscription is disabled. The billing cron charges via `chargeAuthorization` (Transaction API), which is independent of subscription status — charges may still succeed. A durable `cancellation_requested_at` intent column and billing-claim gate is proposed but requires a forward-only migration coordinated with #597.
+
+### What it affects / could break
+- Public recurring cancellation now requires OTP verification first. Customers must go through the verify flow before cancelling.
+- Existing authenticated business-owner cancellation via `/api/recurring/manage` is NOT affected (separate route with Supabase auth).
+- WhatsApp bot cancellation via `recurring-manage.flow.ts` is NOT affected (separate code path).
+- No migration. No provider calls during implementation.
 
 ## 2026-10-18 — fix(ticketing): race-loss error handling — DB errors and cancellation race
 
