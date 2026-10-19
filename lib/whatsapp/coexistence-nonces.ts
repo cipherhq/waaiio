@@ -20,7 +20,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 const NONCE_TTL_MS = 15 * 60 * 1000;
 
 /** How long after expiry before cron deletes the nonce row (for audit trail) */
-const CLEANUP_GRACE_INTERVAL = '1 hour';
+const CLEANUP_GRACE_MS = 60 * 60 * 1000; // 1 hour
 
 export interface GenerateNonceResult {
   nonce: string;
@@ -146,7 +146,7 @@ export async function cleanExpiredNonces(): Promise<CleanupResult> {
   const service = createServiceClient();
 
   // Delete nonces that expired more than 1 hour ago
-  const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const cutoff = new Date(Date.now() - CLEANUP_GRACE_MS).toISOString();
 
   const { data, error } = await service
     .from('coexistence_signup_nonces')
