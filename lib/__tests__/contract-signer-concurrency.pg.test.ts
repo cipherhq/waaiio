@@ -75,8 +75,10 @@ describeDb('M451: FOR UPDATE concurrency — signer mutations serialized against
           CREATE ROLE anon NOLOGIN;
         END IF;
       END $$;
-      ALTER ROLE service_role BYPASSRLS;
     `);
+    // Note: ALTER ROLE service_role BYPASSRLS was removed because it races
+    // with parallel .pg.test.ts files on the shared pg_authid catalog.
+    // The CREATE ROLE above already sets BYPASSRLS; CI setup does too.
 
     // Minimal schema — CREATE TABLE IF NOT EXISTS so this is idempotent
     await admin.query(`
