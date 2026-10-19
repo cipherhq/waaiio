@@ -202,6 +202,9 @@ describe('FIN-001: Payout kill switch (auto-payout cron)', () => {
     vi.doMock('@/lib/email/templates', () => ({ payoutFailedEmail: vi.fn() }));
     vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
     vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
+    vi.doMock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('@/lib/constants', () => ({ getCurrencyCode: vi.fn(() => 'NGN'), getPaymentGatewayForCountry: vi.fn(() => 'paystack'), CountryCode: {} }));
+    vi.doMock('@/lib/errors', () => ({ safeLogErrorContext: vi.fn(() => ({})) }));
     return import('@/app/api/cron/auto-payout/route');
   }
 

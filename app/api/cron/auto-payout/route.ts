@@ -11,7 +11,7 @@ import { loadCountries } from '@/lib/countries';
 import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
-import { classifyPaystackError, classifyStripeError, isEligiblePaystackAccount, isEligibleStripeAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
+import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
 import { computePlatformHeldTotals, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
@@ -38,8 +38,8 @@ const AUTO_APPROVE_LIMIT_NGN = 500_000; // ₦500,000 max auto-approve
 const AUTO_APPROVE_LIMIT_USD = 1_000;   // $1,000 max auto-approve
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
-const stripeConnectEnabled = process.env.ENABLE_STRIPE_CONNECT === 'true';
+// Stripe auto-payout is disabled in this PR — requires a reconciliation webhook
+// to transition processing → paid. Stripe businesses get pending for manual review.
 
 /**
  * Execute an automated payout transfer via the appropriate provider.
@@ -65,14 +65,15 @@ async function executeAutoTransfer(
     return 'held';
   }
 
+  // Only Paystack auto-transfers are supported in this PR.
+  // Stripe auto-payout requires a reconciliation webhook (transfer → paid)
+  // that does not exist yet — Stripe businesses get pending for manual review.
   const usePaystack = countryGateway === 'paystack'
     && isEligiblePaystackAccount(payoutAccount) && paystackSecretKey;
-  const useStripe = countryGateway === 'stripe'
-    && isEligibleStripeAccount(payoutAccount) && stripeSecretKey && stripeConnectEnabled;
 
-  if (!usePaystack && !useStripe) return 'held';
+  if (!usePaystack) return 'held';
 
-  const transferMethod = usePaystack ? 'paystack_transfer' : 'stripe_transfer';
+  const transferMethod = 'paystack_transfer' as const;
 
   // Atomic claim — PostgreSQL generates token and provider key
   const { data: claimResult, error: claimErr } = await supabase.rpc('claim_payout_for_transfer', {
@@ -173,42 +174,6 @@ async function executeAutoTransfer(
       }
 
       gatewayTransferCode = (transferData.data as Record<string, unknown>).transfer_code as string;
-
-    } else if (useStripe) {
-      // ── Stripe Connect transfer ──
-      const currency = getCurrencyCode(biz.country_code as CountryCode);
-
-      const stripeRes = await fetch('https://api.stripe.com/v1/transfers', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${stripeSecretKey}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Idempotency-Key': providerKey,
-        },
-        body: new URLSearchParams({
-          amount: String(Math.round(net * 100)),
-          currency: currency.toLowerCase(),
-          destination: payoutAccount.stripe_account_id!,
-          description: `Waaiio payout: ${periodStartStr} to ${periodEndStr}`,
-        }),
-      });
-
-      if (!stripeRes.ok) {
-        const classification = await classifyStripeError(stripeRes);
-        if (classification === 'conclusive_rejection') await markFailed(); else await markReview();
-        return 'held';
-      }
-
-      let stripeData: Record<string, unknown>;
-      try { stripeData = await stripeRes.json(); }
-      catch { await markReview(); return 'held'; }
-
-      if (!stripeData.id) {
-        await markReview();
-        return 'held';
-      }
-
-      gatewayTransferCode = stripeData.id as string;
     }
 
     // Token-guarded submission
@@ -228,8 +193,8 @@ async function executeAutoTransfer(
     return 'transferred';
 
   } catch (err) {
-    logger.withContext({ op: `auto-payout.${usePaystack ? 'paystack' : 'stripe'}`, businessId: biz.id, ...safeLogErrorContext(err) })
-      .error(`[AUTO-PAYOUT] ${usePaystack ? 'Paystack' : 'Stripe'} error — uncertain outcome`);
+    logger.withContext({ op: 'auto-payout.paystack', businessId: biz.id, ...safeLogErrorContext(err) })
+      .error('[AUTO-PAYOUT] Paystack error — uncertain outcome');
     await markReview();
     return 'held';
   }
@@ -387,15 +352,13 @@ export async function GET(request: NextRequest) {
       // Look up payout account from pre-fetched batch data
       const payoutAccount = payoutAccountByBiz.get(biz.id) ?? null;
 
-      // FIN-002: Check provider eligibility using country-authoritative gateway
+      // FIN-002: Check Paystack eligibility using country-authoritative gateway.
+      // Stripe auto-payout is disabled — no reconciliation webhook yet.
       let bizGateway: string | null = null;
       try { bizGateway = getPaymentGatewayForCountry(biz.country_code as CountryCode); } catch { /* unknown country */ }
 
       const hasEligiblePaystackAccount = bizGateway === 'paystack'
         && payoutAccount != null && isEligiblePaystackAccount(payoutAccount);
-      const hasEligibleStripeAcct = bizGateway === 'stripe'
-        && payoutAccount != null && isEligibleStripeAccount(payoutAccount);
-      const isStripeEligible = hasEligibleStripeAcct && stripeSecretKey !== '' && stripeConnectEnabled;
 
       // Safety checks
       const bizAge = (Date.now() - new Date(biz.created_at).getTime()) / (1000 * 60 * 60 * 24);
@@ -409,10 +372,9 @@ export async function GET(request: NextRequest) {
       const limitCheck = await checkVerificationLimit(supabase, biz.id, payoutMinor);
       const withinLimit = limitCheck.allowed;
 
-      // Determine which provider can execute the transfer
+      // Paystack-only auto-approval (Stripe disabled — no reconciliation webhook)
       const hasEligibleProvider =
-        (isPaystackCountry && hasEligiblePaystackAccount && paystackSecretKey !== '') ||
-        isStripeEligible;
+        isPaystackCountry && hasEligiblePaystackAccount && paystackSecretKey !== '';
 
       // FIN-002: Auto-approval requires ALL conditions — eligible provider
       // account with configured keys + safety checks.
@@ -425,10 +387,7 @@ export async function GET(request: NextRequest) {
 
       const holdReasons: string[] = [];
       if (!payoutAccount) holdReasons.push('No payout account configured');
-      if (payoutAccount && !hasEligiblePaystackAccount && !hasEligibleStripeAcct) holdReasons.push('Payout account not eligible for automated transfer');
-      if (payoutAccount && hasEligiblePaystackAccount && !paystackSecretKey) holdReasons.push('PAYSTACK_SECRET_KEY not configured');
-      if (payoutAccount && hasEligibleStripeAcct && !stripeSecretKey) holdReasons.push('STRIPE_SECRET_KEY not configured');
-      if (payoutAccount && hasEligibleStripeAcct && !stripeConnectEnabled) holdReasons.push('ENABLE_STRIPE_CONNECT not enabled');
+      if (payoutAccount && !hasEligiblePaystackAccount) holdReasons.push('Payout account not eligible for Paystack transfer');
       if (!hasEligibleProvider) holdReasons.push('No eligible provider for automated transfer');
       if (bizAge < COOLING_PERIOD_DAYS) holdReasons.push('Business too new (cooling period)');
       if (avgPerDay >= VELOCITY_THRESHOLD) holdReasons.push('High transaction velocity');

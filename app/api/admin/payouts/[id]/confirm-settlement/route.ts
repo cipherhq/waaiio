@@ -40,12 +40,19 @@ export async function POST(
 
   const serviceClient = createServiceClient();
   const body = await request.json();
-  const { transfer_reference, notes, stepUpId } = body;
+  const { transfer_reference, attestation, notes, stepUpId } = body;
 
   // ── Require non-empty transfer reference ──
   if (!transfer_reference || typeof transfer_reference !== 'string' || transfer_reference.trim().length === 0) {
     return NextResponse.json({
       error: 'transfer_reference is required to confirm settlement',
+    }, { status: 400 });
+  }
+
+  // ── Require explicit attestation ──
+  if (attestation !== true) {
+    return NextResponse.json({
+      error: 'Explicit attestation (attestation: true) is required to confirm that the bank transfer has been completed',
     }, { status: 400 });
   }
 
@@ -95,47 +102,60 @@ export async function POST(
   try {
     await consumeStepUp(admin, stepUpId, 'payout_confirm_settlement', id, {
       transfer_reference: transfer_reference.trim(),
-      notes: notes ?? null,
+      attestation: true,
     });
   } catch (err) {
     const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
-  // ── Atomic CAS transition: approved → paid ──
-  const { data: confirmResult } = await serviceClient
-    .from('business_payouts')
-    .update({
-      status: 'paid',
-      transfer_reference: transfer_reference.trim(),
-      notes: notes || payout.notes || null,
-      paid_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id)
-    .eq('status', 'approved')
-    .eq('transfer_method', 'manual_bank')
-    .select('id');
+  // ── Atomic settlement: advisory lock + balance check + CAS + audit ──
+  // Uses confirm_manual_settlement RPC which:
+  // 1. Acquires advisory lock (serializes against finalize_refund_execution)
+  // 2. Computes authoritative balance from platform_fees UNDER the lock
+  // 3. Verifies balance sufficiency
+  // 4. Transitions approved → paid
+  // 5. Inserts audit log
+  // All in one transaction — if any step fails, everything rolls back.
+  const { data: rpcResult, error: rpcError } = await serviceClient.rpc(
+    'confirm_manual_settlement',
+    {
+      p_payout_id: id,
+      p_transfer_ref: transfer_reference.trim(),
+      p_attestation: true,
+      p_admin_id: admin.id,
+    },
+  );
 
-  if (!confirmResult || confirmResult.length === 0) {
+  if (rpcError) {
+    const msg: string = rpcError.message || '';
+    if (msg.includes('payout_not_found')) {
+      return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
+    }
+    if (msg.includes('ineligible_status') || msg.includes('ineligible_method') || msg.includes('cas_conflict')) {
+      return NextResponse.json({
+        error: 'Payout status has changed — cannot confirm settlement. Refresh and try again.',
+      }, { status: 409 });
+    }
+    if (msg.includes('attestation_required')) {
+      return NextResponse.json({ error: 'Attestation is required' }, { status: 400 });
+    }
+    if (msg.includes('transfer_reference_required')) {
+      return NextResponse.json({ error: 'Transfer reference is required' }, { status: 400 });
+    }
+    if (msg.includes('insufficient_balance')) {
+      return NextResponse.json({ error: msg }, { status: 409 });
+    }
     return NextResponse.json({
-      error: 'Payout status has changed — cannot confirm settlement. Refresh and try again.',
-    }, { status: 409 });
+      error: 'Settlement confirmation failed. The payout remains approved. Please retry.',
+    }, { status: 500 });
   }
 
-  // ── Audit log — records admin attestation, not independent bank verification ──
-  await logAdminAudit({
-    actorId: admin.id,
-    action: 'confirm_payout_settlement',
-    entityType: 'business_payout',
-    entityId: id,
-    details: {
-      business_id: payout.business_id,
-      amount: payout.net_amount,
-      transfer_reference: transfer_reference.trim(),
-      attestation: 'Admin attested that the bank transfer has been completed',
-    },
-  });
+  if (!rpcResult || (Array.isArray(rpcResult) && rpcResult.length === 0)) {
+    return NextResponse.json({
+      error: 'Settlement confirmation returned no result. Please check payout status.',
+    }, { status: 500 });
+  }
 
   // ── Notification (non-blocking) ──
   const { data: biz } = await serviceClient

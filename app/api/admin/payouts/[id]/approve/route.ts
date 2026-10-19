@@ -67,6 +67,14 @@ export async function POST(
     return NextResponse.json({ error: 'Payout cannot be approved in current status' }, { status: 400 });
   }
 
+  // Prevent automated claims of manually-approved payouts:
+  // A manual_bank payout that is already approved must use confirm-settlement, not re-approve with an automated method.
+  if (payout.status === 'approved' && payout.transfer_method === 'manual_bank' && AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
+    return NextResponse.json({
+      error: 'This payout was approved for manual bank transfer. Use confirm-settlement to complete it, or reject and re-create for automated transfer.',
+    }, { status: 409 });
+  }
+
   // Block payouts with adjustment linkage flags that require resolution
   const payoutFlags = Array.isArray(payout.flags) ? payout.flags : [];
   const hasLinkageFlag = payoutFlags.some(
@@ -325,10 +333,19 @@ export async function POST(
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
-      .in('status', ['pending', 'approved', 'held'])
+      .in('status', ['pending', 'held'])
       .select('id');
 
     if (!manualResult || manualResult.length === 0) {
+      // Check if already approved with manual_bank — idempotent no-op
+      const { data: reread } = await serviceClient
+        .from('business_payouts')
+        .select('status, transfer_method')
+        .eq('id', id)
+        .single();
+      if (reread?.status === 'approved' && reread?.transfer_method === 'manual_bank') {
+        return NextResponse.json({ success: true, status: 'approved', already_approved: true });
+      }
       return NextResponse.json({
         error: 'Payout status has changed — cannot approve manual payout',
       }, { status: 409 });

@@ -1544,9 +1544,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
     cronPaystackEligible = false;
     vi.doMock('@/lib/payments/payout-classification', () => ({
       classifyPaystackError: vi.fn(),
-      classifyStripeError: vi.fn(),
       isEligiblePaystackAccount: vi.fn(() => cronPaystackEligible),
-      isEligibleStripeAccount: vi.fn(() => false),
     }));
     vi.doMock('@/lib/logger', () => ({
       logger: {

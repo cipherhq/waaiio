@@ -344,6 +344,7 @@ export default function Payouts() {
           },
           body: JSON.stringify({
             transfer_reference: confirmRef.trim(),
+            attestation: true,
             stepUpId,
           }),
         });
@@ -369,7 +370,7 @@ export default function Payouts() {
       await stepUp.execute({
         actionType: 'payout_confirm_settlement',
         targetId: confirmTarget.id,
-        params: { transfer_reference: confirmRef.trim() },
+        params: { transfer_reference: confirmRef.trim(), attestation: true },
         description: `Confirm settlement for ${confirmTarget.business_name} — ${formatMoney(confirmTarget.net_amount, confirmTarget.country_code)}`,
         onAuthorized,
       });

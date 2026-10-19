@@ -69,7 +69,7 @@ describe('Manual payout: approve sets approved status', () => {
       consumeStepUp: vi.fn().mockResolvedValue(undefined),
       StepUpError: class extends Error {},
     }));
-    vi.doMock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn().mockResolvedValue({}) }));
     vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     vi.doMock('@/lib/errors', () => ({ safeLogErrorContext: (e: unknown) => ({ error: String(e) }) }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
@@ -212,7 +212,7 @@ describe('Manual payout: confirm-settlement', () => {
       consumeStepUp: vi.fn().mockResolvedValue(undefined),
       StepUpError: class extends Error {},
     }));
-    vi.doMock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn().mockResolvedValue({}) }));
     vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('@/lib/email/templates', () => ({
@@ -225,20 +225,16 @@ describe('Manual payout: confirm-settlement', () => {
 
     const mockFrom = vi.fn().mockImplementation((table: string) => {
       const chain: Record<string, unknown> = {};
-      ['select', 'eq', 'in', 'is', 'single', 'maybeSingle', 'insert'].forEach(m => {
+      ['select', 'eq', 'neq', 'in', 'is', 'single', 'maybeSingle', 'insert'].forEach(m => {
         chain[m] = vi.fn().mockReturnValue(chain);
       });
       if (table === 'business_payouts') {
         chain.single = vi.fn().mockResolvedValue({
           data: {
             id: 'p1', business_id: payoutBusinessId, net_amount: 100,
-            status: payoutStatus, transfer_method: payoutMethod, payout_account_id: 'pa1',
+            status: payoutStatus, transfer_method: payoutMethod, payout_account_id: 'pa1', notes: null,
           },
         });
-        const updateChain: Record<string, unknown> = {};
-        ['eq', 'in', 'select'].forEach(m => { updateChain[m] = vi.fn().mockReturnValue(updateChain); });
-        updateChain.select = vi.fn().mockResolvedValue({ data: confirmResult });
-        chain.update = vi.fn().mockReturnValue(updateChain);
       } else if (table === 'businesses') {
         chain.single = vi.fn().mockResolvedValue({
           data: { id: payoutBusinessId, verification_level: bizVerification, name: 'Test Biz', owner_id: 'u1', country_code: 'NG' },
@@ -251,8 +247,17 @@ describe('Manual payout: confirm-settlement', () => {
       return chain;
     });
 
+    // Settlement uses atomic RPC: confirm_manual_settlement
     vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn(() => ({ from: mockFrom })),
+      createServiceClient: vi.fn(() => ({
+        from: mockFrom,
+        rpc: vi.fn().mockImplementation((_name: string, _params: unknown) => {
+          if (confirmResult === null || (Array.isArray(confirmResult) && confirmResult.length === 0)) {
+            return Promise.resolve({ data: [], error: { message: 'cas_conflict', code: 'P0001' } });
+          }
+          return Promise.resolve({ data: confirmResult, error: null });
+        }),
+      })),
     }));
   }
 
@@ -261,17 +266,30 @@ describe('Manual payout: confirm-settlement', () => {
     setupConfirmMocks();
     const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
     const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
-      transfer_reference: 'REF-123',
+      transfer_reference: 'REF-123', attestation: true,
     });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(503);
+  });
+
+  it('missing attestation → 400', async () => {
+    setupConfirmMocks();
+    const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
+    const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
+      transfer_reference: 'REF-123',
+      // attestation: true is missing
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('attestation');
   });
 
   it('valid confirmation: approved manual_bank with reference → paid', async () => {
     setupConfirmMocks();
     const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
     const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
-      transfer_reference: 'NIP-20261019-123456',
+      transfer_reference: 'NIP-20261019-123456', attestation: true,
     });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(200);
@@ -303,7 +321,7 @@ describe('Manual payout: confirm-settlement', () => {
     setupConfirmMocks({ payoutStatus: 'pending' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
     const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
-      transfer_reference: 'REF-123',
+      transfer_reference: 'REF-123', attestation: true,
     });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(400);
@@ -315,7 +333,7 @@ describe('Manual payout: confirm-settlement', () => {
     setupConfirmMocks({ payoutStatus: 'paid' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
     const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
-      transfer_reference: 'REF-123',
+      transfer_reference: 'REF-123', attestation: true,
     });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(400);
@@ -327,7 +345,7 @@ describe('Manual payout: confirm-settlement', () => {
     setupConfirmMocks({ payoutMethod: 'paystack_transfer' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
     const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
-      transfer_reference: 'REF-123',
+      transfer_reference: 'REF-123', attestation: true,
     });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(400);
@@ -339,7 +357,7 @@ describe('Manual payout: confirm-settlement', () => {
     setupConfirmMocks({ confirmResult: [] }); // CAS returns 0 rows
     const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
     const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
-      transfer_reference: 'REF-123',
+      transfer_reference: 'REF-123', attestation: true,
     });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(409);
@@ -349,7 +367,7 @@ describe('Manual payout: confirm-settlement', () => {
     setupConfirmMocks({ bizVerification: 'unverified' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
     const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
-      transfer_reference: 'REF-123',
+      transfer_reference: 'REF-123', attestation: true,
     });
     const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
     expect(res.status).toBe(400);
@@ -392,30 +410,44 @@ describe('Manual payout: source contract', () => {
     expect(manualBlock).not.toContain('paid_at');
   });
 
-  it('confirm-settlement audit log records attestation, not bank verification', async () => {
+  it('confirm-settlement uses atomic RPC for settlement + audit', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/admin/payouts/[id]/confirm-settlement/route.ts'), 'utf-8',
     );
-    // Must include attestation language, never "verified" or "bank-confirmed"
-    expect(source).toContain('attestation');
-    expect(source).toContain('Admin attested');
-    expect(source).not.toContain('bank-verified');
-    expect(source).not.toContain('independently verified');
+    // Must use the atomic RPC, not application-level CAS + separate audit
+    expect(source).toContain('confirm_manual_settlement');
+    expect(source).toContain('p_attestation');
+    expect(source).toContain('p_transfer_ref');
+    // Balance check is inside the RPC — no application-level computePlatformHeldTotals
+    expect(source).not.toContain('computePlatformHeldTotals');
+    expect(source).not.toContain('p_net_available');
+    // Never uses non-atomic paid→approved rollback
+    expect(source).not.toContain("status: 'approved', paid_at: null");
   });
 
-  it('admin UI source requires acknowledgement checkbox', async () => {
+  it('confirm-settlement route requires attestation before RPC call', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/confirm-settlement/route.ts'), 'utf-8',
+    );
+    // attestation check appears before RPC call
+    const attestPos = source.indexOf('attestation !== true');
+    const rpcPos = source.indexOf('confirm_manual_settlement');
+    expect(attestPos).toBeGreaterThan(0);
+    expect(rpcPos).toBeGreaterThan(attestPos);
+  });
+
+  it('admin UI sends attestation: true and binds it in step-up params', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('admin/src/pages/Payouts.tsx'), 'utf-8',
     );
-    // Confirm settlement requires the acknowledgement checkbox
     expect(source).toContain('confirmAcknowledged');
-    expect(source).toContain('I confirm that the bank transfer');
-    expect(source).toContain('attestation will be recorded in the audit log');
-    // Button is disabled without acknowledgement
+    expect(source).toContain('attestation: true');
     expect(source).toContain('!confirmAcknowledged');
   });
 
@@ -425,10 +457,36 @@ describe('Manual payout: source contract', () => {
     const source = fs.readFileSync(
       path.resolve('app/api/admin/payouts/[id]/confirm-settlement/route.ts'), 'utf-8',
     );
-    // transfer_reference validation appears before CAS update
     const refCheckPos = source.indexOf('transfer_reference is required');
-    const casUpdatePos = source.indexOf("eq('status', 'approved')");
+    const rpcPos = source.indexOf('confirm_manual_settlement');
     expect(refCheckPos).toBeGreaterThan(0);
-    expect(casUpdatePos).toBeGreaterThan(refCheckPos);
+    expect(rpcPos).toBeGreaterThan(refCheckPos);
+  });
+
+  it('M453 uses advisory lock in both settlement and refund RPCs', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('supabase/migrations/453_settlement_confirmation.sql'), 'utf-8',
+    );
+    // Both RPCs must use the same advisory lock key pattern (PERFORM calls, not comments)
+    const lockCalls = (source.match(/PERFORM pg_advisory_xact_lock\(hashtext\('payout_settle:/g) || []);
+    expect(lockCalls.length).toBe(2); // one in confirm_manual_settlement, one in finalize_refund_execution
+    // Balance check is inside the RPC, not application code
+    expect(source).toContain('SUM(transaction_amount)');
+    expect(source).toContain('refunded_at IS NULL');
+    // Verification blocks exist
+    expect(source).toContain("confirm_manual_settlement search_path incorrect");
+    expect(source).toContain("claim_payout_for_transfer search_path incorrect");
+  });
+
+  it('claim_payout_for_transfer migration guards against manual_bank', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('supabase/migrations/453_settlement_confirmation.sql'), 'utf-8',
+    );
+    expect(source).toContain("transfer_method IS DISTINCT FROM 'manual_bank'");
+    expect(source).toContain('claim_payout_for_transfer');
   });
 });
