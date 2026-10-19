@@ -59,15 +59,16 @@ describe('PR #655: admin onboarding queue pagination', () => {
       if (table === 'admin_onboarding_invites') {
         return {
           select: () => ({
-            not: () => ({
-              order: () => ({
-                range: (fromIdx: number, toIdx: number) => {
-                  actionableCallCount++;
-                  const page = allActionable.slice(fromIdx, toIdx + 1);
-                  return Promise.resolve({ data: page, error: null });
-                },
-              }),
-            }),
+            not: () => {
+              const orderChain: Record<string, unknown> = {};
+              orderChain.order = () => orderChain; // chainable for secondary sort
+              orderChain.range = (fromIdx: number, toIdx: number) => {
+                actionableCallCount++;
+                const page = allActionable.slice(fromIdx, toIdx + 1);
+                return Promise.resolve({ data: page, error: null });
+              };
+              return { order: () => orderChain };
+            },
             in: () => ({
               order: () => ({
                 limit: () => Promise.resolve({ data: terminalRows, error: null }),
@@ -145,14 +146,15 @@ describe('PR #655: admin onboarding queue pagination', () => {
       if (table === 'admin_onboarding_invites') {
         return {
           select: () => ({
-            not: () => ({
-              order: () => ({
-                range: () => {
-                  actionableCallCount++;
-                  return Promise.resolve({ data: actionable, error: null });
-                },
-              }),
-            }),
+            not: () => {
+              const orderChain: Record<string, unknown> = {};
+              orderChain.order = () => orderChain;
+              orderChain.range = () => {
+                actionableCallCount++;
+                return Promise.resolve({ data: actionable, error: null });
+              };
+              return { order: () => orderChain };
+            },
             in: () => ({
               order: () => ({
                 limit: () => Promise.resolve({ data: [], error: null }),
@@ -195,5 +197,75 @@ describe('PR #655: admin onboarding queue pagination', () => {
     expect(source).toContain('.limit(100)');
     // Pagination uses .range()
     expect(source).toContain('.range(from, to)');
+    // Deterministic ordering: secondary key prevents lost/duplicated rows
+    // when created_at values are identical across a page boundary
+    expect(source).toContain(".order('id', { ascending: false })");
+  });
+
+  it('identical created_at across page boundary: no lost or duplicated records', async () => {
+    // 1002 records with the SAME timestamp. Without a secondary sort key,
+    // rows 999-1001 could appear on both pages or be skipped entirely.
+    const SAME_TS = '2026-06-15T12:00:00.000Z';
+    const allRows = Array.from({ length: 1002 }, (_, i) => ({
+      id: `onb-dup-${String(i).padStart(4, '0')}`,
+      target_email: `dup${i}@test.com`,
+      business_id: null,
+      status: 'customer_action_required',
+      created_at: SAME_TS,
+    }));
+
+    // Simulate server-side deterministic ordering by id DESC.
+    // The mock returns rows pre-sorted, as PostgREST would with the
+    // ORDER BY created_at DESC, id DESC clause.
+    const sorted = [...allRows].sort((a, b) => b.id.localeCompare(a.id));
+
+    let callCount = 0;
+    const PAGE_SIZE = 1000;
+
+    const from = vi.fn((table: string) => {
+      if (table === 'admin_onboarding_invites') {
+        return {
+          select: () => ({
+            not: () => {
+              const chain: Record<string, unknown> = {};
+              chain.order = () => chain;
+              chain.range = (fromIdx: number, toIdx: number) => {
+                callCount++;
+                return Promise.resolve({ data: sorted.slice(fromIdx, toIdx + 1), error: null });
+              };
+              return { order: () => chain };
+            },
+            in: () => ({
+              order: () => ({
+                limit: () => Promise.resolve({ data: [], error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'countries') {
+        return { select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: [], error: null }) }) }) };
+      }
+      if (table === 'category_templates') {
+        return { select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: [], error: null }) }) }) };
+      }
+      return { select: () => ({ in: () => Promise.resolve({ data: [], error: null }) }) };
+    });
+
+    mocks.serviceClient.mockReturnValue({ from });
+
+    const { GET } = await import('@/app/api/admin/onboarding/route');
+    const res = await GET(new NextRequest('http://localhost/api/admin/onboarding'));
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    const ids = (body.onboardings as Array<{ id: string }>).map(r => r.id);
+
+    // All 1002 records present — none lost at the page boundary
+    expect(ids.length).toBe(1002);
+    // No duplicates
+    expect(new Set(ids).size).toBe(1002);
+    // 2 pages fetched
+    expect(callCount).toBe(2);
   });
 });

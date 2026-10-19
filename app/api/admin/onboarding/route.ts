@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
     const { data, error } = await service.from('admin_onboarding_invites').select('*')
       .not('status', 'in', '("active","cancelled","completed")')
       .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
       .range(from, to);
     if (error) { actionableError = error; break; }
     if (data) actionableRows.push(...data);
