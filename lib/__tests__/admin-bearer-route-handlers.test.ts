@@ -1524,6 +1524,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
     }));
     vi.doMock('@/lib/constants', () => ({
       getCurrencyCode: vi.fn(() => 'NGN'),
+      getPaymentGatewayForCountry: vi.fn(() => 'paystack'),
       CountryCode: {},
     }));
     vi.doMock('@/lib/platformSettings', () => ({

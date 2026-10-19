@@ -1220,7 +1220,6 @@ describe('FIN-002: Cron auto-approval requires eligible Paystack account', () =>
       source.indexOf('const hasEligibleProvider'),
       source.indexOf('const canAutoApprove'),
     );
-    expect(providerBlock).toContain('isPaystackCountry');
     expect(providerBlock).toContain('hasEligiblePaystackAccount');
     expect(providerBlock).toContain("paystackSecretKey !== ''");
     expect(providerBlock).toContain('isStripeEligible');
@@ -1284,15 +1283,17 @@ describe('FIN-002: Cron auto-approval requires eligible Paystack account', () =>
     })).toBe(false);
   });
 
-  it('Paystack country check uses NG/GH', async () => {
+  it('provider selection uses country-authoritative gateway', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
-    // isPaystackCountry only true for NG/GH
-    expect(source).toContain("biz.country_code === 'NG' || biz.country_code === 'GH'");
-    expect(source).toContain('isPaystackCountry');
+    // Must use getPaymentGatewayForCountry for authoritative routing
+    expect(source).toContain('getPaymentGatewayForCountry');
+    // Both helper and main loop resolve gateway from the DB-backed country config
+    expect(source).toContain("bizGateway === 'paystack'");
+    expect(source).toContain("countryGateway === 'paystack'");
   });
 
   it('missing provider keys produce hold reasons', async () => {

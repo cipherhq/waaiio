@@ -6,7 +6,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { createCronLogger } from '@/lib/observability/cron';
-import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { getCurrencyCode, getPaymentGatewayForCountry, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
@@ -55,9 +55,20 @@ async function executeAutoTransfer(
   periodStartStr: string,
   periodEndStr: string,
 ): Promise<'transferred' | 'held'> {
-  const isPaystackCountry = biz.country_code === 'NG' || biz.country_code === 'GH';
-  const usePaystack = isPaystackCountry && isEligiblePaystackAccount(payoutAccount) && paystackSecretKey;
-  const useStripe = !usePaystack && isEligibleStripeAccount(payoutAccount) && stripeSecretKey && stripeConnectEnabled;
+  // Resolve the authoritative gateway for this country (DB-backed via loadCountries).
+  // The payout account's gateway must match the country's authoritative provider.
+  let countryGateway: string;
+  try {
+    countryGateway = getPaymentGatewayForCountry(biz.country_code as CountryCode);
+  } catch {
+    // loadCountries() not loaded or country unknown — cannot determine provider
+    return 'held';
+  }
+
+  const usePaystack = countryGateway === 'paystack'
+    && isEligiblePaystackAccount(payoutAccount) && paystackSecretKey;
+  const useStripe = countryGateway === 'stripe'
+    && isEligibleStripeAccount(payoutAccount) && stripeSecretKey && stripeConnectEnabled;
 
   if (!usePaystack && !useStripe) return 'held';
 
@@ -84,12 +95,18 @@ async function executeAutoTransfer(
   const providerKey: string = claimResult[0].idempotency_key;
 
   const markFailed = async () => {
-    const { error } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payoutId, p_claim_token: claimToken });
-    if (error) logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id }).error('[AUTO-PAYOUT] Failed to mark transfer failed');
+    const { data, error } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payoutId, p_claim_token: claimToken });
+    if (error || !data?.length) {
+      logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id, rpcError: error?.message, rows: data?.length ?? 0 })
+        .error('[AUTO-PAYOUT] Failed to mark transfer failed — payout may remain in processing');
+    }
   };
   const markReview = async () => {
-    const { error } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payoutId, p_claim_token: claimToken });
-    if (error) logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id }).error('[AUTO-PAYOUT] Failed to mark review_required');
+    const { data, error } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payoutId, p_claim_token: claimToken });
+    if (error || !data?.length) {
+      logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id, rpcError: error?.message, rows: data?.length ?? 0 })
+        .error('[AUTO-PAYOUT] Failed to mark review_required — payout may remain in processing');
+    }
   };
 
   try {
@@ -370,16 +387,21 @@ export async function GET(request: NextRequest) {
       // Look up payout account from pre-fetched batch data
       const payoutAccount = payoutAccountByBiz.get(biz.id) ?? null;
 
-      // FIN-002: Check provider eligibility for automated transfers
-      const isPaystackCountry = biz.country_code === 'NG' || biz.country_code === 'GH';
-      const hasEligiblePaystackAccount = payoutAccount != null && isEligiblePaystackAccount(payoutAccount);
-      const hasEligibleStripeAcct = payoutAccount != null && isEligibleStripeAccount(payoutAccount);
+      // FIN-002: Check provider eligibility using country-authoritative gateway
+      let bizGateway: string | null = null;
+      try { bizGateway = getPaymentGatewayForCountry(biz.country_code as CountryCode); } catch { /* unknown country */ }
+
+      const hasEligiblePaystackAccount = bizGateway === 'paystack'
+        && payoutAccount != null && isEligiblePaystackAccount(payoutAccount);
+      const hasEligibleStripeAcct = bizGateway === 'stripe'
+        && payoutAccount != null && isEligibleStripeAccount(payoutAccount);
       const isStripeEligible = hasEligibleStripeAcct && stripeSecretKey !== '' && stripeConnectEnabled;
 
       // Safety checks
       const bizAge = (Date.now() - new Date(biz.created_at).getTime()) / (1000 * 60 * 60 * 24);
       const transactionCount = (fees || []).length;
       const avgPerDay = transactionCount / 7;
+      const isPaystackCountry = bizGateway === 'paystack';
       const autoApproveLimit = isPaystackCountry ? AUTO_APPROVE_LIMIT_NGN : AUTO_APPROVE_LIMIT_USD;
 
       // Check monthly verification-tier limit

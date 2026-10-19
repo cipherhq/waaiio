@@ -184,9 +184,11 @@ describe('Manual payout: confirm-settlement', () => {
     capturedLogs = [];
     vi.restoreAllMocks();
     vi.resetModules();
+    process.env.ENABLE_PAYOUTS = 'true';
   });
 
   afterEach(() => {
+    delete process.env.ENABLE_PAYOUTS;
     vi.restoreAllMocks();
   });
 
@@ -253,6 +255,17 @@ describe('Manual payout: confirm-settlement', () => {
       createServiceClient: vi.fn(() => ({ from: mockFrom })),
     }));
   }
+
+  it('confirm-settlement blocked when ENABLE_PAYOUTS is not true', async () => {
+    delete process.env.ENABLE_PAYOUTS;
+    setupConfirmMocks();
+    const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
+    const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
+      transfer_reference: 'REF-123',
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(503);
+  });
 
   it('valid confirmation: approved manual_bank with reference → paid', async () => {
     setupConfirmMocks();
