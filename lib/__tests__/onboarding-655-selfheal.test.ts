@@ -83,7 +83,8 @@ describe('PR #655 regression: free-plan self-healing success path', () => {
     });
   });
 
-  function setupServiceFrom(firstUpdateFails: boolean, secondUpdateFails: boolean) {
+  function setupServiceFrom(firstUpdateFails: boolean, secondUpdateFails: boolean, channelConnectionReady = true) {
+    let bizSelectCount = 0;
     mockServiceFrom.mockImplementation((table: string) => {
       if (table === 'business_capabilities') {
         return {
@@ -116,11 +117,33 @@ describe('PR #655 regression: free-plan self-healing success path', () => {
           },
           select: () => ({
             eq: () => ({
-              maybeSingle: () => Promise.resolve({
-                data: { country_code: 'NG', wa_method: 'shared', assigned_channel_id: null },
-                error: null,
-              }),
+              maybeSingle: () => {
+                const callNum = bizSelectCount++;
+                if (callNum === 0) {
+                  // Self-heal query: business country/method
+                  return Promise.resolve({ data: { country_code: 'NG', wa_method: 'shared', assigned_channel_id: null }, error: null });
+                }
+                // Post-allocation: business with assigned channel
+                return Promise.resolve({ data: { assigned_channel_id: 'ch-healed' }, error: null });
+              },
               single: () => Promise.resolve({ data: { bot_code: 'TEST', slug: 'test' }, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'whatsapp_channels') {
+        // Post-allocation channel readiness check
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({
+                    data: channelConnectionReady ? { connection_status: 'active' } : null,
+                    error: null,
+                  }),
+                }),
+              }),
             }),
           }),
         };
@@ -225,6 +248,84 @@ describe('PR #655 regression: free-plan self-healing success path', () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Trial not activated'),
       expect.stringContaining('no_config_version'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('TEST 10: self-heal allocates but channel not connection-ready → business NOT activated', async () => {
+    // First business update fails (CHECK), allocation succeeds, but the
+    // assigned channel has connection_status='provisioning'. The code must
+    // NOT retry the status update.
+    let bizSelectCount = 0;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'business_capabilities') {
+        return { select: () => ({ eq: () => Promise.resolve({ data: [{ capability: 'scheduling', is_enabled: true }], error: null }) }) };
+      }
+      if (table === 'subscriptions') {
+        return { upsert: () => ({ select: () => ({ single: () => Promise.resolve({ data: { id: 'sub-1' }, error: null }) }) }) };
+      }
+      if (table === 'businesses') {
+        return {
+          update: () => ({
+            eq: () => Promise.resolve({
+              error: { code: '23514', message: 'chk_shared_requires_channel' },
+            }),
+          }),
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => {
+                const callNum = bizSelectCount++;
+                if (callNum === 0) {
+                  // First: self-heal query for country/method
+                  return Promise.resolve({ data: { country_code: 'NG', wa_method: 'shared', assigned_channel_id: null }, error: null });
+                }
+                // Second: post-allocation assigned_channel_id lookup
+                return Promise.resolve({ data: { assigned_channel_id: 'ch-prov' }, error: null });
+              },
+              single: () => Promise.resolve({ data: { bot_code: 'TEST', slug: 'test' }, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'whatsapp_channels') {
+        // Channel is NOT connection-ready (provisioning, not active)
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: null, error: null }), // no match for connection_status='active'
+                }),
+              }),
+              maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'admin_onboarding_invites') {
+        return { select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }) }) }) };
+      }
+      return {
+        select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }),
+        upsert: () => ({ select: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }),
+        update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+      };
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { POST } = await import('@/app/api/onboarding/verify/route');
+    const res = await POST(makeRequest({ business_id: 'biz-1', plan: 'free' }));
+
+    // The business must NOT be activated — channel is not ready
+    // The original bizUpdateError (CHECK) persists → 500
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.recoverable).toBe(true);
+    // Self-heal allocation was called but readiness check prevented activation
+    expect(mockAllocate).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Self-healed channel not connection-ready'),
+      expect.anything(),
     );
     warnSpy.mockRestore();
   });

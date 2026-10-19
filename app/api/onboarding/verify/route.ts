@@ -629,25 +629,48 @@ export async function POST(request: NextRequest) {
               { repairStaleSharedChannel: true },
             );
             if (healed?.allocated) {
-              const retry = await service
+              // Verify the assigned channel is connection-ready before activating.
+              // M430 checks is_active but not connection_status.
+              const { data: healedBiz } = await service
                 .from('businesses')
-                .update({
-                  status: 'active',
-                  subscription_tier: plan,
-                })
-                .eq('id', businessId);
-              if (retry.error) {
-                console.warn('[ONBOARDING-VERIFY] Free business status update retry failed (retryable):', retry.error);
-                return NextResponse.json(
-                  {
-                    status: 'error',
-                    message: 'Business activation failed because WhatsApp channel routing is not yet ready. Please retry or contact support.',
-                    recoverable: true,
-                  },
-                  { status: 500 },
-                );
+                .select('assigned_channel_id')
+                .eq('id', businessId)
+                .maybeSingle();
+              let channelReady = false;
+              if (healedBiz?.assigned_channel_id) {
+                const { data: healedCh } = await service
+                  .from('whatsapp_channels')
+                  .select('connection_status')
+                  .eq('id', healedBiz.assigned_channel_id)
+                  .eq('is_active', true)
+                  .eq('connection_status', 'active')
+                  .maybeSingle();
+                channelReady = !!healedCh;
               }
-              selfHealed = true;
+              if (!channelReady) {
+                console.warn('[ONBOARDING-VERIFY] Self-healed channel not connection-ready:', businessId);
+                // Do not activate — channel was allocated but isn't ready
+              } else {
+                const retry = await service
+                  .from('businesses')
+                  .update({
+                    status: 'active',
+                    subscription_tier: plan,
+                  })
+                  .eq('id', businessId);
+                if (retry.error) {
+                  console.warn('[ONBOARDING-VERIFY] Free business status update retry failed (retryable):', retry.error);
+                  return NextResponse.json(
+                    {
+                      status: 'error',
+                      message: 'Business activation failed because WhatsApp channel routing is not yet ready. Please retry or contact support.',
+                      recoverable: true,
+                    },
+                    { status: 500 },
+                  );
+                }
+                selfHealed = true;
+              }
             }
           }
         } catch (healErr) {
