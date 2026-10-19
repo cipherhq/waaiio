@@ -78,7 +78,6 @@ describeDb('Migration 449: least-privilege ACL — contracts + whatsapp_channels
           CREATE ROLE authenticated NOLOGIN;
         END IF;
       END $$;
-      ALTER ROLE service_role BYPASSRLS;
     `);
 
     // Minimal auth schema

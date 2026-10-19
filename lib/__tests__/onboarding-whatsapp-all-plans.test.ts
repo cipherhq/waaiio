@@ -402,11 +402,12 @@ describe('#346 Part C — Free register → verify → trial activation invarian
     );
     // Verify route calls activate_trial_if_eligible for free plan
     expect(verifySource).toContain('activate_trial_if_eligible');
-    // It's called in the plan === 'free' branch
-    const freeBlock = verifySource.slice(
-      verifySource.indexOf("plan === 'free'"),
-      verifySource.indexOf("plan === 'free'") + 500
-    );
+    // It's called in the plan === 'free' branch (after business status update,
+    // which requires more source distance — use full block to closing brace)
+    const freeStart = verifySource.indexOf("plan === 'free'");
+    // Trial activation runs after business status update, self-healing, and
+    // channel readiness verification (~4100 chars from plan==='free')
+    const freeBlock = verifySource.slice(freeStart, freeStart + 5000);
     expect(freeBlock).toContain('activate_trial_if_eligible');
   });
 

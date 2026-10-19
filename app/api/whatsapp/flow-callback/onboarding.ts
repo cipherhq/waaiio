@@ -6,6 +6,7 @@ import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { allocateSharedChannelWithFallback, SHARED_CHANNEL_FALLBACK_COUNTRIES } from '@/lib/onboarding/whatsapp-readiness';
 
 /**
  * Process a completed WhatsApp Flows onboarding submission.
@@ -149,14 +150,15 @@ export async function handleOnboardingComplete(
       return { success: false, error: 'Failed to create business' };
     }
 
-    // #266 R7/R10: Allocate shared channel then activate
+    // #266 R7/R10: Allocate shared channel then activate (with GH→NG fallback)
     let allocationSucceeded = false;
-    const { data: allocation, error: allocError } = await supabase.rpc('allocate_shared_channel', {
-      p_business_id: biz.id,
-      p_country_code: country,
-    });
-    if (allocError || !allocation || !(allocation as any).allocated) {
-      logger.warn('[WA-ONBOARD] Shared channel allocation failed for business:', biz.id, allocError?.message || (allocation as any)?.reason || 'unknown');
+    const { data: allocation, error: allocError } = await allocateSharedChannelWithFallback(
+      supabase,
+      biz.id,
+      country,
+    );
+    if (allocError || !allocation || !allocation.allocated) {
+      logger.warn('[WA-ONBOARD] Shared channel allocation failed for business:', biz.id, allocError?.message || allocation?.reason || 'unknown');
     } else {
       // Allocation succeeded — activate the business and verify the row
       const { data: activated, error: activateError } = await supabase
@@ -170,7 +172,21 @@ export async function handleOnboardingComplete(
           activateError?.message || `status=${activated?.status} assigned=${activated?.assigned_channel_id}`);
         // allocationSucceeded stays false — do not claim live
       } else {
-        allocationSucceeded = true;
+        // P1-1: Verify the assigned channel's connection_status before
+        // treating the business as live. M430 checks is_active but not
+        // connection_status — a provisioning channel must not be live.
+        const { data: verifiedCh } = await supabase
+          .from('whatsapp_channels')
+          .select('connection_status')
+          .eq('id', activated.assigned_channel_id)
+          .eq('is_active', true)
+          .eq('connection_status', 'active')
+          .maybeSingle();
+        if (verifiedCh) {
+          allocationSucceeded = true;
+        } else {
+          logger.warn('[WA-ONBOARD] Assigned channel not connection-ready:', biz.id, activated.assigned_channel_id);
+        }
       }
     }
 
@@ -235,10 +251,20 @@ export async function handleOnboardingComplete(
       }
     }
 
-    // 10. Send WhatsApp confirmation (non-blocking)
+    // 10. Send WhatsApp confirmation (non-blocking) — use fallback-aware routing
     try {
       const resolver = new ChannelResolver(supabase);
-      const resolved = await resolver.getSharedChannelForCountry(country);
+      // Try exact country first, then approved fallbacks (e.g. GH→NG)
+      let resolved = await resolver.getSharedChannelForCountry(country);
+      if (!resolved) {
+        const fallbacks = SHARED_CHANNEL_FALLBACK_COUNTRIES[country];
+        if (fallbacks) {
+          for (const fb of fallbacks) {
+            resolved = await resolver.getSharedChannelForCountry(fb as CountryCode);
+            if (resolved) break;
+          }
+        }
+      }
       if (resolved) {
         const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
         // #266: Only say "is live" if allocation succeeded. Pending businesses are not live.
