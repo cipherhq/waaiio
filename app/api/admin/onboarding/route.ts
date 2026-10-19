@@ -17,13 +17,27 @@ export async function GET(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: request.headers.get('authorization') ? 'Forbidden' : 'Unauthorized' }, { status: request.headers.get('authorization') ? 403 : 401 });
   const service = createServiceClient({ noStore: true });
-  // Actionable-first queue: all non-terminal onboardings (no limit) plus
-  // recent terminal records for context (bounded). This ensures no actionable
-  // onboarding is hidden regardless of total volume.
-  const [actionableResult, terminalResult, countriesResult, categoriesResult] = await Promise.all([
-    service.from('admin_onboarding_invites').select('*')
+
+  // Actionable-first queue with deterministic pagination.
+  // PostgREST caps results at max-rows (typically 1000). We paginate
+  // actionable records so none are silently dropped. Terminal records
+  // are bounded to 100 for performance.
+  const PAGE_SIZE = 1000;
+  const actionableRows: Array<Record<string, unknown>> = [];
+  let actionableError: { message: string } | null = null;
+  for (let page = 0; ; page++) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    const { data, error } = await service.from('admin_onboarding_invites').select('*')
       .not('status', 'in', '("active","cancelled","completed")')
-      .order('created_at', { ascending: false }),
+      .order('created_at', { ascending: false })
+      .range(from, to);
+    if (error) { actionableError = error; break; }
+    if (data) actionableRows.push(...data);
+    if (!data || data.length < PAGE_SIZE) break; // last page
+  }
+
+  const [terminalResult, countriesResult, categoriesResult] = await Promise.all([
     service.from('admin_onboarding_invites').select('*')
       .in('status', ['active', 'cancelled', 'completed'])
       .order('created_at', { ascending: false })
@@ -31,13 +45,13 @@ export async function GET(request: NextRequest) {
     service.from('countries').select('code, name, dialing_code').eq('is_active', true).order('sort_order'),
     service.from('category_templates').select('key, name').eq('is_active', true).order('name'),
   ]);
-  if (actionableResult.error || terminalResult.error || countriesResult.error || categoriesResult.error) {
+  if (actionableError || terminalResult.error || countriesResult.error || categoriesResult.error) {
     return NextResponse.json({ error: 'Unable to load onboarding queue and authority options' }, { status: 500 });
   }
 
   // Read-only connection readiness. Never expose WhatsApp access tokens or assume
   // country availability implies an allocated, active shared channel.
-  const queued = [...(actionableResult.data || []), ...(terminalResult.data || [])];
+  const queued = [...actionableRows, ...(terminalResult.data || [])];
   const businessIds = [...new Set(queued.map(row => row.business_id).filter((id): id is string => typeof id === 'string' && !!id))];
   let businesses: Array<{ id: string; status: string; wa_method: string | null; assigned_channel_id: string | null; whatsapp_channel_id: string | null; bot_code: string | null; country_code: string | null; messaging_suspended: boolean | null }> = [];
   let channels: Array<{ id: string; channel_type: string | null; is_active: boolean; connection_status: string | null; country_code: string | null; business_id: string | null; phone_number: string | null }> = [];
