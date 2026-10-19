@@ -16,7 +16,7 @@ import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
-const ALLOWED_TRANSFER_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank', 'manual_cash'] as const;
+const ALLOWED_TRANSFER_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank'] as const;
 type TransferMethod = typeof ALLOWED_TRANSFER_METHODS[number];
 
 // FIN-002: Only these methods initiate automated provider transfers.
@@ -310,18 +310,18 @@ export async function POST(
   // ═══════════════════════════════════════════════════════════
 
   if (!AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
-    // Atomic conditional update — verifies exactly one row transitions
+    // Manual bank transfer: approve only — settlement confirmed separately
+    // via /api/admin/payouts/[id]/confirm-settlement with required transfer_reference.
     // SEC-005: uses service client — authenticated DML revoked on business_payouts.
     const { data: manualResult } = await serviceClient
       .from('business_payouts')
       .update({
-        status: 'paid',
+        status: 'approved',
         approved_by: admin.id,
         approved_at: new Date().toISOString(),
         transfer_method,
         transfer_reference: reference || null,
         notes: notes || null,
-        paid_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -330,12 +330,12 @@ export async function POST(
 
     if (!manualResult || manualResult.length === 0) {
       return NextResponse.json({
-        error: 'Payout status has changed — cannot complete manual payout',
+        error: 'Payout status has changed — cannot approve manual payout',
       }, { status: 409 });
     }
 
-    await logAndNotify(serviceClient, id, payout, admin, 'paid', transfer_method, null, reference);
-    return NextResponse.json({ success: true, status: 'paid' });
+    await logAndNotify(serviceClient, id, payout, admin, 'approved', transfer_method, null, reference);
+    return NextResponse.json({ success: true, status: 'approved' });
   }
 
   // ═══════════════════════════════════════════════════════════

@@ -82,6 +82,13 @@ export default function Payouts() {
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
 
+  // Confirm Settlement modal state (manual_bank two-step)
+  const [confirmTarget, setConfirmTarget] = useState<PayoutRecord | null>(null);
+  const [confirmRef, setConfirmRef] = useState('');
+  const [confirmAcknowledged, setConfirmAcknowledged] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+
   // Payout account details for approve modal
   const [approveAccountInfo, setApproveAccountInfo] = useState<{
     bank_name: string | null;
@@ -310,6 +317,68 @@ export default function Payouts() {
       stepUp.reset();
     } finally {
       setRejecting(false);
+    }
+  }
+
+  // Confirm Settlement — manual_bank two-step (SEC-005: requires step-up)
+  async function handleConfirmSettlement() {
+    if (!confirmTarget || !confirmRef.trim() || !confirmAcknowledged) return;
+    setConfirming(true);
+    setConfirmError(null);
+
+    try {
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          setConfirmError('Session expired — please re-login');
+          return;
+        }
+
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/${confirmTarget.id}/confirm-settlement`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            transfer_reference: confirmRef.trim(),
+            stepUpId,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (res.status === 409) {
+            setConfirmError('This payout has already been confirmed or its status changed. Please refresh.');
+          } else {
+            setConfirmError(data.error || 'Failed to confirm settlement');
+          }
+          return;
+        }
+
+        setConfirmTarget(null);
+        setConfirmRef('');
+        setConfirmAcknowledged(false);
+        setConfirmError(null);
+        await loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'payout_confirm_settlement',
+        targetId: confirmTarget.id,
+        params: { transfer_reference: confirmRef.trim() },
+        description: `Confirm settlement for ${confirmTarget.business_name} — ${formatMoney(confirmTarget.net_amount, confirmTarget.country_code)}`,
+        onAuthorized,
+      });
+    } catch (error) {
+      console.error('Confirm settlement error:', error);
+      setConfirmError('Failed to confirm settlement');
+      stepUp.reset();
+    } finally {
+      setConfirming(false);
     }
   }
 
@@ -573,12 +642,21 @@ export default function Payouts() {
                   {(tab === 'pending' || tab === 'review') && isAdmin && (
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => openApproveModal(p)}
-                          className="rounded-lg bg-green-100 px-3 py-1.5 text-xs font-medium text-green-700 transition hover:bg-green-200"
-                        >
-                          Approve
-                        </button>
+                        {p.status === 'approved' && p.transfer_method === 'manual_bank' ? (
+                          <button
+                            onClick={() => { setConfirmTarget(p); setConfirmRef(p.transfer_reference || ''); setConfirmAcknowledged(false); setConfirmError(null); }}
+                            className="rounded-lg bg-purple-100 px-3 py-1.5 text-xs font-medium text-purple-700 transition hover:bg-purple-200"
+                          >
+                            Confirm Settlement
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => openApproveModal(p)}
+                            className="rounded-lg bg-green-100 px-3 py-1.5 text-xs font-medium text-green-700 transition hover:bg-green-200"
+                          >
+                            Approve
+                          </button>
+                        )}
                         <button
                           onClick={() => setRejectTarget(p)}
                           className="rounded-lg bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-200"
@@ -645,7 +723,6 @@ export default function Payouts() {
                   className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
                 >
                   <option value="manual_bank">Manual Bank Transfer</option>
-                  <option value="manual_cash">Manual Cash</option>
                   <option value="paystack_transfer">Paystack Transfer (API)</option>
                   <option value="stripe_transfer">Stripe Transfer (API)</option>
                   <option value="flutterwave_transfer">Flutterwave Transfer (API)</option>
@@ -682,7 +759,7 @@ export default function Payouts() {
                 disabled={approving}
                 className="flex-1 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-green-700 disabled:opacity-50"
               >
-                {approving ? 'Processing...' : 'Approve & Mark Paid'}
+                {approving ? 'Processing...' : transferMethod === 'manual_bank' ? 'Approve Payout' : 'Approve & Transfer'}
               </button>
               <button
                 onClick={() => { setApproveTarget(null); setApproveAccountInfo(null); }}
@@ -725,6 +802,70 @@ export default function Payouts() {
               </button>
               <button
                 onClick={() => setRejectTarget(null)}
+                className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Settlement Modal (manual_bank two-step) */}
+      {confirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900">Confirm Bank Transfer Settlement</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              {confirmTarget.business_name} — {formatMoney(confirmTarget.net_amount, confirmTarget.country_code)}
+            </p>
+
+            {confirmError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {confirmError}
+              </div>
+            )}
+
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Bank Transfer Reference <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={confirmRef}
+                  onChange={e => setConfirmRef(e.target.value)}
+                  placeholder="e.g. NIP/SESSION-ID/RECEIPT-NUMBER"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Enter the bank transfer reference, session ID, or receipt number from your bank.
+                </p>
+              </div>
+
+              <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <input
+                  type="checkbox"
+                  checked={confirmAcknowledged}
+                  onChange={e => setConfirmAcknowledged(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                />
+                <span className="text-sm text-gray-700">
+                  I confirm that the bank transfer for this payout has been completed and the funds have left the platform account. This attestation will be recorded in the audit log.
+                </span>
+              </label>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={handleConfirmSettlement}
+                disabled={confirming || !confirmRef.trim() || !confirmAcknowledged}
+                className="flex-1 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-purple-700 disabled:opacity-50"
+              >
+                {confirming ? 'Confirming...' : 'Confirm Settlement'}
+              </button>
+              <button
+                onClick={() => { setConfirmTarget(null); setConfirmError(null); }}
                 className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
               >
                 Cancel

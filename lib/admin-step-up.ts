@@ -38,7 +38,8 @@ export type StepUpAction =
   | 'reseller_payout_generate'
   | 'commercial_config'
   | 'messaging_config'
-  | 'messaging_suspension';
+  | 'messaging_suspension'
+  | 'payout_confirm_settlement';
 
 const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 

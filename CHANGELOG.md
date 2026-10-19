@@ -3,6 +3,28 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-19 — feat(payouts): Stripe auto-payout support + settlement lifecycle tests
+
+### What changed
+- **`lib/payments/payout-classification.ts`:** Added `isEligibleStripeAccount()` function and `stripe_account_id` field to `PayoutAccountRow` interface. Mirrors `isEligiblePaystackAccount` pattern — checks `is_active`, `gateway === 'stripe'`, `verified_at`, and `stripe_account_id`.
+- **`app/api/cron/auto-payout/route.ts`:** Added Stripe Connect transfer support alongside existing Paystack transfers. Extracted duplicated Paystack transfer logic into shared `executeAutoTransfer()` helper that handles both providers. Gated by `ENABLE_STRIPE_CONNECT` and `STRIPE_SECRET_KEY`. Uses same FIN-002 atomic claim/classify/submit pattern as admin approve route.
+- **`lib/__tests__/settlement-lifecycle.test.ts`:** New test file with 36 tests covering the full payment→fee→payout→transfer→paid chain: fee calculation, custody classification, balance verification, provider eligibility (Paystack + Stripe), auto-payout decisions, direct-split model, multi-period isolation, and refund impact.
+- **`lib/__tests__/fin-002-atomic-payout.test.ts`:** Updated 6 source-string tests to match refactored auto-payout structure (extracted helper, renamed `isNG` → `isPaystackCountry`, `hasEligibleProvider` replacing individual provider checks in `canAutoApprove`).
+
+- **`app/api/admin/payouts/[id]/approve/route.ts`:** `manual_cash` removed from `ALLOWED_TRANSFER_METHODS`. `manual_bank` approval now sets status `approved` (not `paid`) — settlement confirmed separately via the new confirm-settlement endpoint.
+- **`app/api/admin/payouts/[id]/confirm-settlement/route.ts`:** New endpoint. Transitions manual_bank payouts from `approved` → `paid` only with a non-empty `transfer_reference`. Rejects automated transfer methods, non-approved statuses, unverified businesses, and concurrent duplicates (CAS guard). Requires SEC-005 step-up. Includes audit log and business notification.
+- **`admin/src/pages/Payouts.tsx`:** Removed `manual_cash` option from transfer method dropdown.
+- **`lib/__tests__/manual-settlement-confirmation.test.ts`:** 13 new tests for the two-step manual settlement flow.
+- **`lib/__tests__/fin-001-containment.test.ts`:** Updated `VALID_METHODS` (removed `manual_cash`) and manual path assertion (`approved` not `paid`).
+
+### What it affects / could break
+- Auto-payout cron now supports Stripe-country businesses (US/GB/CA) — previously these accumulated as pending, requiring manual admin approval.
+- Paystack auto-payout behavior is functionally identical (extracted to shared helper, not changed).
+- `canAutoApprove` now uses `hasEligibleProvider` (Paystack OR Stripe) instead of `isNG && hasEligiblePaystackAccount` — strictly more permissive (enables Stripe).
+- New `stripe_account_id` field on `PayoutAccountRow` is optional, so existing callers are unaffected.
+- **Breaking (admin workflow):** `manual_bank` approval no longer immediately marks payout as `paid`. Admin must call confirm-settlement with a bank transfer reference. The admin panel needs a "Confirm Settlement" button for approved manual_bank payouts (UI work not included in this PR).
+- **Breaking (admin):** `manual_cash` is no longer an accepted transfer method. Any existing manual_cash payouts already in `paid` status are unaffected.
+
 ## 2026-10-18 — fix(ticketing): race-loss error handling — DB errors and cancellation race
 
 ### What changed
