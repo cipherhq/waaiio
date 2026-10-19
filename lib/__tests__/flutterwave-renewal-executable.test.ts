@@ -27,6 +27,8 @@ function mockDeps(opts: {
   verifyTxRef?: string; // providerTxRef returned by verify mock
   finalizeResult?: Record<string, unknown>;
   failureResult?: Record<string, unknown>;
+  prechargeState?: { status: string; cancellation_requested_at: string | null } | null;
+  prechargeError?: unknown;
 }): FlwRenewalDeps {
   const rpcMock = vi.fn().mockImplementation((name: string) => {
     if (name === 'claim_recurring_billing_cycle') {
@@ -45,7 +47,15 @@ function mockDeps(opts: {
   });
 
   const updateMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: null, error: null }) });
-  const fromMock = vi.fn().mockReturnValue({ update: updateMock });
+  const fromMock = vi.fn().mockImplementation((table: string) => {
+    if (table === 'customer_subscriptions') {
+      return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({
+        data: opts.prechargeState === undefined ? { status: 'active', cancellation_requested_at: null } : opts.prechargeState,
+        error: opts.prechargeError ?? null,
+      }) }) }) };
+    }
+    return { update: updateMock };
+  });
 
   return {
     supabase: { rpc: rpcMock, from: fromMock } as any,
@@ -63,6 +73,49 @@ function mockDeps(opts: {
 }
 
 describe('Flutterwave renewal — executable production tests', () => {
+  // #605: Exercises real pre-provider cancellation and reconciliation branches.
+  it('605-A. cancellation intent prevents a new provider call', async () => {
+    const deps = mockDeps({ prechargeState: { status: 'active', cancellation_requested_at: '2026-10-19T00:00:00Z' } });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+    expect(result).toEqual({ action: 'skipped', reason: 'precharge_cancellation_or_lookup_failed' });
+    expect(deps.chargeTokenFn).not.toHaveBeenCalled();
+    expect((deps.supabase as any).rpc).not.toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
+  });
+
+  it('605-B. precharge lookup error or missing row prevents provider calls', async () => {
+    for (const opts of [{ prechargeError: { message: 'offline' } }, { prechargeState: null }]) {
+      const deps = mockDeps(opts);
+      const result = await processFlutterwaveRenewal(deps, mockSub());
+      expect(result.action).toBe('skipped');
+      expect(deps.chargeTokenFn).not.toHaveBeenCalled();
+    }
+  });
+
+  it('605-C. canceled state without intent prevents a provider call', async () => {
+    const deps = mockDeps({ prechargeState: { status: 'cancelled', cancellation_requested_at: null } });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+    expect(result.action).toBe('skipped');
+    expect(deps.chargeTokenFn).not.toHaveBeenCalled();
+  });
+
+  it('605-D. verified in-flight provider success finalizes even after intent', async () => {
+    const deps = mockDeps({
+      prechargeState: { status: 'cancelled', cancellation_requested_at: '2026-10-19T00:00:00Z' },
+      claimResult: { claimed: true, stable_ref: 'flw-sub-001-2026-08-04', attempt_ref: 'flw-sub-001-2026-08-04-a1', reconcile_required: false, provider_verified: true },
+    });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+    expect(result.action).toBe('finalized');
+    expect(deps.chargeTokenFn).not.toHaveBeenCalled();
+  });
+
+  it('605-E. unknown outcome does not mark customer failure or initiate retry', async () => {
+    const deps = mockDeps({ chargeOutcome: 'unknown' });
+    const result = await processFlutterwaveRenewal(deps, mockSub());
+    expect(result).toEqual({ action: 'skipped', reason: 'charge_unknown' });
+    expect(deps.chargeTokenFn).toHaveBeenCalledTimes(1);
+    expect((deps.supabase as any).rpc).not.toHaveBeenCalledWith('record_flutterwave_definitive_failure', expect.anything());
+  });
+
   it('1. fresh cycle: charge called with attempt ref a1', async () => {
     const deps = mockDeps({ chargeOutcome: 'successful' });
     const result = await processFlutterwaveRenewal(deps, mockSub());

@@ -108,7 +108,7 @@ describe('retry-failed-charges cron split support', () => {
   it('resolves split before calling chargeAuthorization', () => {
     const chargeSection = cronCode.substring(
       cronCode.indexOf('sub.gateway === \'paystack\' && sub.authorization_code'),
-      cronCode.indexOf('chargeResult.status'),
+      cronCode.indexOf('chargeDecision.action'),
     );
     // resolvePaystackSplit must appear before chargeAuthorization
     const splitIdx = chargeSection.indexOf('resolvePaystackSplit');

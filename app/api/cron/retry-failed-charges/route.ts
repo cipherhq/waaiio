@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { chargeAuthorization } from '@/lib/payments/paystack-recurring';
+import { executePaystackDispatchedCharge, reconcilePaystackDispatchedAttempt } from '@/lib/payments/paystack-cancellation-boundary';
 import { chargeToken as chargeFlutterwaveToken } from '@/lib/payments/flutterwave-recurring';
 import { resolvePaystackSplit, resolveGatewaySplit } from '@/lib/payments/charge-saved';
 import { createAlert } from '@/lib/alerts/create-alert';
@@ -154,37 +155,50 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // Step 4: Call Paystack (AFTER dispatch is durable)
-        const chargeResult = await chargeAuthorization(
-          sub.authorization_code,
-          claim.intended_amount_minor as number,
-          sub.customer_email || '',
-          claim.provider_reference as string,
-          splitParams,
-        );
-
-        if (chargeResult.status === 'success') {
-          // Synchronous success — mark charged with transaction ID (webhook will finalize)
-          await supabase.from('paystack_billing_attempts')
-            .update({
-              status: 'charged',
-              charged_at: new Date().toISOString(),
-              provider_transaction_id: chargeResult.transactionId || null,
-            })
-            .eq('id', claim.attempt_id)
-            .in('status', ['dispatched']);
+        // #605: The real, executable pre-provider boundary. Dispatch is durable;
+        // if cancellation is now visible or the read fails, NEVER call Paystack.
+        // Unresolved dispatches are reconciled independently below, including
+        // subscriptions that became cancelled after the dispatch transaction.
+        const chargeDecision = await executePaystackDispatchedCharge({
+          rereadSubscription: async () => supabase
+            .from('customer_subscriptions')
+            .select('status, cancellation_requested_at')
+            .eq('id', sub.id)
+            .maybeSingle(),
+          charge: () => chargeAuthorization(
+            sub.authorization_code,
+            claim.intended_amount_minor as number,
+            sub.customer_email || '',
+            claim.provider_reference as string,
+            splitParams,
+          ),
+          recordCharged: async (transactionId) => {
+            const { error } = await supabase.from('paystack_billing_attempts')
+              .update({ status: 'charged', charged_at: new Date().toISOString(), provider_transaction_id: transactionId || null })
+              .eq('id', claim.attempt_id)
+              .eq('status', 'dispatched');
+            return { error };
+          },
+          recordDefinitiveFailure: async (reason) => {
+            const { error } = await supabase.from('paystack_billing_attempts')
+              .update({ status: 'failed', failure_reason: reason })
+              .eq('id', claim.attempt_id)
+              .eq('status', 'dispatched');
+            return { error };
+          },
+        });
+        if (chargeDecision.action === 'charged') {
           cron.itemCompleted({ gateway: 'paystack', subscriptionId: sub.id, providerReference: claim.provider_reference });
           retried++;
-        } else if (chargeResult.status === 'terminal_failure') {
-          // Definitive failure — mark attempt failed, increment subscription failure_count
-          await supabase.from('paystack_billing_attempts')
-            .update({ status: 'failed', failure_reason: chargeResult.reason })
-            .eq('id', claim.attempt_id)
-            .in('status', ['dispatched']);
-          cron.itemFailed(chargeResult.reason, { gateway: 'paystack', subscriptionId: sub.id });
+        } else if (chargeDecision.action === 'definitive_failure') {
+          cron.itemFailed(chargeDecision.reason, { gateway: 'paystack', subscriptionId: sub.id });
+        } else {
+          cron.itemSkipped({ gateway: 'paystack', subscriptionId: sub.id,
+            providerReference: claim.provider_reference, reason: chargeDecision.reason });
+          skipped++;
         }
-        // pending/indeterminate → leave as 'dispatched', reconcile next run via verification
-        // Do NOT mark as failed from ambiguous result (#168/#172)
+        // pending/indeterminate/throw/DB update errors: leave `dispatched`.
+        // NEVER automatically authorize a replacement transaction.
       }
 
       // Flutterwave past_due retries use the same claim/reconcile/finalize path below.
@@ -286,6 +300,124 @@ export async function GET(request: NextRequest) {
         cron.itemFailed(result.reason || 'error', { gateway: 'flutterwave', subscriptionId: sub.id });
       }
     }
+
+    // ── #605: reconcile Flutterwave attempts initiated before cancellation ──
+    // This queue queries existing claims (including cancelled subscriptions),
+    // never issues a fresh claim, and NEVER calls chargeToken.
+    const { data: cancelledFlwClaims, error: cancelledFlwClaimsError } = await supabase
+      .rpc('list_cancelled_flutterwave_claims', { p_limit: 6 });
+    if (cancelledFlwClaimsError) {
+      logger.error('[RETRY-CHARGES] Flutterwave cancelled-claim lookup failed', cancelledFlwClaimsError);
+      cron.itemFailed('flutterwave_cancelled_reconciliation_lookup_failed', { gateway: 'flutterwave' });
+    } else {
+      const { reconcileCancelledFlutterwaveClaim } = await import(
+        '@/lib/payments/flutterwave-cancellation-reconciliation'
+      );
+      // Verify at most six records in parallel to stay within maxDuration=60.
+      await Promise.all((cancelledFlwClaims || []).map(async (claim: any) => {
+        const outcome = await reconcileCancelledFlutterwaveClaim({ supabase }, claim);
+        if (outcome.action === 'finalized') {
+          cron.itemCompleted({ gateway: 'flutterwave', type: 'post_cancellation_reconciliation',
+            subscriptionId: claim.subscription_id });
+          retried++;
+        } else if (outcome.action === 'error') {
+          cron.itemFailed(outcome.reason, { gateway: 'flutterwave',
+            subscriptionId: claim.subscription_id, type: 'post_cancellation_reconciliation' });
+        } else {
+          cron.itemSkipped({ gateway: 'flutterwave', subscriptionId: claim.subscription_id,
+            reason: outcome.reason, type: 'post_cancellation_reconciliation' });
+          skipped++;
+        }
+      }));
+    }
+
+    // ── #605: reconcile already-dispatched Paystack attempts independently ──
+    // Cancellation changes subscription.status to 'cancelled', so the normal
+    // past_due retry query above cannot be the sole reconciliation worker.
+    // This bounded read scans only existing attempts. NO new charge is issued.
+    // M337 verify_attempts already exists and is not otherwise used.
+    // Selecting the least-checked attempts rotates the bounded queue instead
+    // of permanently starving attempts behind the oldest unresolved record.
+    const { data: outstandingPaystack, error: outstandingError } = await supabase
+      .from('paystack_billing_attempts')
+      .select('id, customer_subscription_id, provider_reference, status, verify_attempts, created_at')
+      .in('status', ['dispatched', 'charged'])
+      .order('verify_attempts', { ascending: true })
+      .order('created_at', { ascending: true })
+      .limit(6);
+    if (outstandingError) {
+      logger.error('[RETRY-CHARGES] Paystack in-flight reconciliation lookup failed', outstandingError);
+      cron.itemFailed('paystack_inflight_lookup_failed', { gateway: 'paystack' });
+    }
+
+    // Bounded parallelism: each Paystack verify can take 15 seconds and this
+    // cron's maxDuration is 60 seconds. The CAS below prevents multiple
+    // workers selecting the same attempt from independently verifying it.
+    await Promise.all((outstandingPaystack || []).map(async (attempt) => {
+      try {
+        const checks = attempt.verify_attempts ?? 0;
+        const { data: claimed, error: claimError } = await supabase
+          .from('paystack_billing_attempts')
+          .update({ verify_attempts: checks + 1 })
+          .eq('id', attempt.id)
+          .eq('verify_attempts', checks)
+          .in('status', ['dispatched', 'charged'])
+          .select('id');
+        if (claimError || !claimed || claimed.length !== 1) {
+          if (claimError) logger.error('[RETRY-CHARGES] Paystack verify attempt CAS failed', claimError);
+          return;
+        }
+        const result = await reconcilePaystackDispatchedAttempt({
+          verify: async (reference) => {
+            const { verifyPaystackTransaction } = await import('@/lib/payments/paystack-recurring');
+            return verifyPaystackTransaction(reference);
+          },
+          finalize: async (attemptId, evidence) => {
+            const { data, error } = await supabase.rpc('finalize_paystack_recurring_charge', {
+              p_attempt_id: attemptId,
+              p_provider_amount_minor: evidence.amountMinor,
+              p_provider_currency: evidence.currency,
+              p_provider_transaction_id: evidence.transactionId || null,
+              p_provider_invoice_code: null,
+            });
+            return { data, error };
+          },
+          markDefinitiveFailure: async (attemptId, reason) => {
+            const { error } = await supabase.from('paystack_billing_attempts')
+              .update({ status: 'failed', failure_reason: reason })
+              .eq('id', attemptId)
+              .eq('status', 'dispatched');
+            return { error };
+          },
+        }, { id: attempt.id, provider_reference: attempt.provider_reference, status: attempt.status as 'dispatched' | 'charged' });
+        if (result.action === 'finalized') {
+          cron.itemCompleted({ gateway: 'paystack', subscriptionId: attempt.customer_subscription_id, type: 'post_cancel_reconciliation' });
+          retried++;
+        } else if (result.action === 'definitive_failure') {
+          cron.itemCompleted({ gateway: 'paystack', subscriptionId: attempt.customer_subscription_id, type: 'provider_verified_failure' });
+        } else {
+          // A verification 404 or timeout is not authority to recharge.
+          logger.warn('[RETRY-CHARGES] Paystack attempt remains unresolved', {
+            attemptId: attempt.id, subscriptionId: attempt.customer_subscription_id,
+            reason: result.reason, verifyAttempts: checks + 1,
+          });
+          cron.itemSkipped({ gateway: 'paystack', subscriptionId: attempt.customer_subscription_id,
+            reason: result.reason, type: 'requires_reconciliation' });
+          skipped++;
+          // Escalate persistent unknown outcomes without auto-refunding or
+          // recharging. Event fingerprint groups subsequent observations.
+          if (checks + 1 >= 6 && (checks + 1) % 6 === 0) {
+            Sentry.captureMessage('Paystack recurring billing attempt requires manual reconciliation', {
+              level: 'warning', fingerprint: ['paystack-recurring-unresolved', attempt.id],
+              extra: { attemptId: attempt.id, subscriptionId: attempt.customer_subscription_id, reason: result.reason },
+            });
+          }
+        }
+      } catch (error) {
+        logger.error('[RETRY-CHARGES] Paystack reconciliation worker error', error);
+        cron.itemFailed('paystack_reconciliation_worker_error', { attemptId: attempt.id });
+      }
+    }));
 
     // ── Paystack provider-managed reconciliation (#176) ──
     // Consumes parked webhook evidence where invoice identity was unresolved
