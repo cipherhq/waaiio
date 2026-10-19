@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { finalizeOnboarding } from '@/lib/onboarding/finalize';
+import { allocateSharedChannelWithFallback } from '@/lib/onboarding/whatsapp-readiness';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { initCapabilities } from '@/lib/capabilities/service';
@@ -601,7 +602,7 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (plan === 'free') {
-      // Free path: set status + tier directly, then attempt trial activation
+      // Update business status and tier first — trial RPC requires status = 'active'
       const { error: bizUpdateError } = await service
         .from('businesses')
         .update({
@@ -610,12 +611,98 @@ export async function POST(request: NextRequest) {
         })
         .eq('id', businessId);
 
-      if (!bizUpdateError) {
+      // If activation was blocked by shared-channel requirement, attempt self-healing once
+      let selfHealed = false;
+      if (bizUpdateError) {
         try {
-          await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
-        } catch (trialErr) {
-          console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+          const { data: pendingBiz } = await service
+            .from('businesses')
+            .select('country_code, wa_method, assigned_channel_id')
+            .eq('id', businessId)
+            .maybeSingle();
+
+          if (pendingBiz && (!pendingBiz.wa_method || pendingBiz.wa_method === 'shared') && !pendingBiz.assigned_channel_id) {
+            const { data: healed } = await allocateSharedChannelWithFallback(
+              service,
+              businessId,
+              pendingBiz.country_code,
+              { repairStaleSharedChannel: true },
+            );
+            if (healed?.allocated) {
+              // Verify the assigned channel is connection-ready before activating.
+              // M430 checks is_active but not connection_status.
+              const { data: healedBiz } = await service
+                .from('businesses')
+                .select('assigned_channel_id')
+                .eq('id', businessId)
+                .maybeSingle();
+              let channelReady = false;
+              if (healedBiz?.assigned_channel_id) {
+                const { data: healedCh } = await service
+                  .from('whatsapp_channels')
+                  .select('connection_status')
+                  .eq('id', healedBiz.assigned_channel_id)
+                  .eq('is_active', true)
+                  .eq('connection_status', 'active')
+                  .maybeSingle();
+                channelReady = !!healedCh;
+              }
+              if (!channelReady) {
+                console.warn('[ONBOARDING-VERIFY] Self-healed channel not connection-ready:', businessId);
+                // Do not activate — channel was allocated but isn't ready
+              } else {
+                const retry = await service
+                  .from('businesses')
+                  .update({
+                    status: 'active',
+                    subscription_tier: plan,
+                  })
+                  .eq('id', businessId);
+                if (retry.error) {
+                  console.warn('[ONBOARDING-VERIFY] Free business status update retry failed (retryable):', retry.error);
+                  return NextResponse.json(
+                    {
+                      status: 'error',
+                      message: 'Business activation failed because WhatsApp channel routing is not yet ready. Please retry or contact support.',
+                      recoverable: true,
+                    },
+                    { status: 500 },
+                  );
+                }
+                selfHealed = true;
+              }
+            }
+          }
+        } catch (healErr) {
+          console.warn('[ONBOARDING-VERIFY] Shared channel self‑heal attempt failed:', healErr);
         }
+      }
+
+      if (bizUpdateError && !selfHealed) {
+        console.warn('[ONBOARDING-VERIFY] Free business status update failed (retryable):', bizUpdateError);
+        return NextResponse.json(
+          {
+            status: 'error',
+            message: 'Business activation failed because WhatsApp channel routing is not yet ready. Please retry or contact support.',
+            recoverable: true,
+          },
+          { status: 500 },
+        );
+      }
+
+      // Trial activation after business is active — RPC requires status = 'active'.
+      // A failed trial grant must not block free-tier activation (the business is
+      // still usable), but the result must be inspected so missing config or
+      // financial-integrity failures are surfaced rather than silently swallowed.
+      try {
+        const { data: trialResult, error: trialRpcError } = await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+        if (trialRpcError) {
+          console.warn('[ONBOARDING-VERIFY] Trial activation RPC error (non-fatal):', trialRpcError);
+        } else if (trialResult && trialResult.activated !== true) {
+          console.warn('[ONBOARDING-VERIFY] Trial not activated (non-fatal):', trialResult.reason || 'unknown');
+        }
+      } catch (trialErr) {
+        console.warn('[ONBOARDING-VERIFY] Trial activation transport error (non-fatal):', trialErr);
       }
     }
 
@@ -641,23 +728,23 @@ export async function POST(request: NextRequest) {
         }
       }
       if (assisted?.whatsapp_method === 'shared') {
-      const activatedAt = new Date().toISOString();
-      const { data: completed } = await service.from('admin_onboarding_invites')
-        .update({ status: 'active', activated_at: activatedAt, last_error: null })
-        .eq('id', assisted.id).eq('status', 'customer_action_required').select('id').maybeSingle();
-      if (completed) {
-        const { error: assistedAuditError } = await logAdminAudit({
-          actorId: assisted.created_by_admin_id,
-          action: 'admin_onboarding_activated',
-          entityType: 'admin_onboarding',
-          entityId: assisted.id,
-          details: { target_user_id: user.id, business_id: businessId, plan, completed_by_customer: true },
-        });
-        if (assistedAuditError) {
-          await service.from('admin_onboarding_invites').update({ status: 'customer_action_required', activated_at: null, last_error: 'Completion audit failed' }).eq('id', assisted.id).eq('status', 'active');
-          return NextResponse.json({ message: 'Activation completed, but onboarding audit failed. Contact support.', recoverable: true }, { status: 500 });
+        const activatedAt = new Date().toISOString();
+        const { data: completed } = await service.from('admin_onboarding_invites')
+          .update({ status: 'active', activated_at: activatedAt, last_error: null })
+          .eq('id', assisted.id).eq('status', 'customer_action_required').select('id').maybeSingle();
+        if (completed) {
+          const { error: assistedAuditError } = await logAdminAudit({
+            actorId: assisted.created_by_admin_id,
+            action: 'admin_onboarding_activated',
+            entityType: 'admin_onboarding',
+            entityId: assisted.id,
+            details: { target_user_id: user.id, business_id: businessId, plan, completed_by_customer: true },
+          });
+          if (assistedAuditError) {
+            await service.from('admin_onboarding_invites').update({ status: 'customer_action_required', activated_at: null, last_error: 'Completion audit failed' }).eq('id', assisted.id).eq('status', 'active');
+            return NextResponse.json({ message: 'Activation completed, but onboarding audit failed. Contact support.', recoverable: true }, { status: 500 });
+          }
         }
-      }
       }
     } catch (assistedError) {
       // Completion tracking is ancillary to the canonical activation authority.

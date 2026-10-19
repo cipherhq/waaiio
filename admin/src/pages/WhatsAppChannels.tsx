@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
+import { hasAccess } from '@/lib/permissions';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -69,21 +70,6 @@ export default function WhatsAppChannels() {
   const [loading, setLoading] = useState(true);
   const perPage = 20;
 
-  // Add channel form
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState({
-    phone_number: '',
-    phone_number_id: '',
-    waba_id: '',
-    display_name: '',
-    country_code: 'US',
-    channel_type: 'dedicated' as 'dedicated' | 'shared',
-    business_id: '',
-  });
-  const [addSaving, setAddSaving] = useState(false);
-  const [addError, setAddError] = useState('');
-  const [allBusinesses, setAllBusinesses] = useState<BusinessOption[]>([]);
-
   const loadingRef = useRef(false);
 
   async function loadData() {
@@ -93,7 +79,9 @@ export default function WhatsAppChannels() {
 
     try {
       const [channelRes, configRes] = await Promise.all([
-        adminDb.from('whatsapp_channels').select('*').order('created_at', { ascending: false }),
+        adminDb.from('whatsapp_channels')
+          .select('id, phone_number, country_code, display_name, channel_type, connection_status, provider, is_active, created_at, updated_at')
+          .order('created_at', { ascending: false }),
         adminDb.from('whatsapp_config').select('*').order('created_at', { ascending: false }),
       ]);
 
@@ -120,90 +108,11 @@ export default function WhatsAppChannels() {
 
       setConfigs(enrichedConfigs);
 
-      // Load all businesses for the add channel form
-      const { data: allBiz } = await adminDb.from('businesses').select('id, name').eq('status', 'active').order('name');
-      setAllBusinesses((allBiz || []).map(b => ({ id: b.id, name: b.name })));
     } catch (error) {
       console.warn('Failed to load WhatsApp data:', error);
     } finally {
       setLoading(false);
       loadingRef.current = false;
-    }
-  }
-
-  async function handleAddChannel() {
-    if (!addForm.phone_number.trim() || !addForm.phone_number_id.trim()) {
-      setAddError('Phone number and Phone Number ID are required');
-      return;
-    }
-    setAddSaving(true);
-    setAddError('');
-
-    try {
-      // Get the Meta access token from the existing shared channel (reuse platform token)
-      const { data: existingChannel } = await adminDb
-        .from('whatsapp_channels')
-        .select('meta_access_token, waba_id')
-        .eq('channel_type', 'shared')
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
-
-      const { error } = await adminDb.from('whatsapp_channels').insert({
-        phone_number: addForm.phone_number.replace(/[^0-9]/g, ''),
-        phone_number_id: addForm.phone_number_id.trim(),
-        waba_id: addForm.waba_id.trim() || existingChannel?.waba_id || null,
-        meta_access_token: existingChannel?.meta_access_token || null,
-        display_name: addForm.display_name.trim() || null,
-        country_code: addForm.country_code,
-        channel_type: addForm.channel_type,
-        business_id: addForm.channel_type === 'dedicated' && addForm.business_id ? addForm.business_id : null,
-        provider: 'meta_cloud',
-        is_active: true,
-        connection_status: 'active',
-      });
-
-      if (error) {
-        setAddError(error.message || 'Failed to add channel');
-        setAddSaving(false);
-        return;
-      }
-
-      // Auto-subscribe the WABA to webhooks
-      const wabaId = addForm.waba_id.trim() || existingChannel?.waba_id;
-      const token = existingChannel?.meta_access_token;
-      if (wabaId && token) {
-        try {
-          await fetch(`https://graph.facebook.com/v22.0/${wabaId}/subscribed_apps`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-          });
-        } catch { /* non-critical */ }
-      }
-
-      // If dedicated, also assign to the business
-      if (addForm.channel_type === 'dedicated' && addForm.business_id) {
-        const { data: newChannel } = await adminDb
-          .from('whatsapp_channels')
-          .select('id')
-          .eq('phone_number', addForm.phone_number.replace(/[^0-9]/g, ''))
-          .maybeSingle();
-
-        if (newChannel) {
-          await adminDb.from('businesses').update({
-            assigned_channel_id: newChannel.id,
-            wa_method: 'transfer',
-          }).eq('id', addForm.business_id);
-        }
-      }
-
-      setShowAddForm(false);
-      setAddForm({ phone_number: '', phone_number_id: '', waba_id: '', display_name: '', country_code: 'US', channel_type: 'dedicated', business_id: '' });
-      await loadData();
-    } catch (err) {
-      setAddError('Something went wrong');
-    } finally {
-      setAddSaving(false);
     }
   }
 
@@ -291,88 +200,17 @@ export default function WhatsAppChannels() {
           <h1 className="text-2xl font-bold text-gray-900">WhatsApp Channels</h1>
           <p className="mt-1 text-sm text-gray-500">Manage WhatsApp channels and business configurations</p>
         </div>
-        <button onClick={() => setShowAddForm(!showAddForm)}
-          className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600">
-          + Add Channel
-        </button>
+        {adminSession?.role && hasAccess('customer-onboarding', adminSession.role) && <a href="/whatsapp-assistance" className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600">
+          Help Business Connect WhatsApp
+        </a>}
       </div>
+      <p className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">
+        Customer-owned WABA numbers must be connected through the owner's authenticated Meta flow.
+        New shared platform channels must be provisioned using a verified platform process; copying access tokens
+        or manually marking an unverified number active is not supported in the admin console.
+      </p>
 
-      {/* Add Channel Form */}
-      {showAddForm && (
-        <div className="mt-4 rounded-xl border border-brand-100 bg-brand-50/30 p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-4">Add WhatsApp Channel</h3>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Phone Number *</label>
-              <input type="text" value={addForm.phone_number} onChange={e => setAddForm({ ...addForm, phone_number: e.target.value })}
-                placeholder="e.g. +12029226251"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Meta Phone Number ID *</label>
-              <input type="text" value={addForm.phone_number_id} onChange={e => setAddForm({ ...addForm, phone_number_id: e.target.value })}
-                placeholder="From Meta WhatsApp Manager"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">WABA ID</label>
-              <input type="text" value={addForm.waba_id} onChange={e => setAddForm({ ...addForm, waba_id: e.target.value })}
-                placeholder="Optional — reuses platform WABA"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Display Name</label>
-              <input type="text" value={addForm.display_name} onChange={e => setAddForm({ ...addForm, display_name: e.target.value })}
-                placeholder="e.g. Dee Interiors"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
-              <select value={addForm.country_code} onChange={e => setAddForm({ ...addForm, country_code: e.target.value })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
-                <option value="US">US</option>
-                <option value="NG">Nigeria</option>
-                <option value="GB">UK</option>
-                <option value="CA">Canada</option>
-                <option value="GH">Ghana</option>
-                <option value="KE">Kenya</option>
-                <option value="ZA">South Africa</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Channel Type</label>
-              <select value={addForm.channel_type} onChange={e => setAddForm({ ...addForm, channel_type: e.target.value as 'dedicated' | 'shared' })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
-                <option value="dedicated">Dedicated (for one business)</option>
-                <option value="shared">Shared (platform number)</option>
-              </select>
-            </div>
-            {addForm.channel_type === 'dedicated' && (
-              <div className="sm:col-span-2 lg:col-span-3">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Assign to Business</label>
-                <select value={addForm.business_id} onChange={e => setAddForm({ ...addForm, business_id: e.target.value })}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
-                  <option value="">Select a business...</option>
-                  {allBusinesses.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
-              </div>
-            )}
-          </div>
-          {addError && <p className="mt-2 text-xs text-red-600">{addError}</p>}
-          <div className="mt-4 flex gap-2">
-            <button onClick={handleAddChannel} disabled={addSaving}
-              className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
-              {addSaving ? 'Adding...' : 'Add Channel'}
-            </button>
-            <button onClick={() => setShowAddForm(false)}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Stats Cards */}
+            {/* Stats Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Total Channels" value={totalChannels} icon={Phone} color="green" />
         <SummaryCard label="Active Channels" value={activeChannels} icon={Radio} color="blue" />

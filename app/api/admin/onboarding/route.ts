@@ -7,6 +7,7 @@ import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboard
 import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
+import { buildVerifiedWhatsAppLink, isAssignedWhatsAppChannelReady } from '@/lib/onboarding/whatsapp-readiness';
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
@@ -16,13 +17,92 @@ export async function GET(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: request.headers.get('authorization') ? 'Forbidden' : 'Unauthorized' }, { status: request.headers.get('authorization') ? 403 : 401 });
   const service = createServiceClient({ noStore: true });
-  const [queueResult, countriesResult, categoriesResult] = await Promise.all([
-    service.from('admin_onboarding_invites').select('*').order('created_at', { ascending: false }),
+
+  // Actionable-first queue with deterministic pagination.
+  // PostgREST caps results at max-rows (typically 1000). We paginate
+  // actionable records so none are silently dropped. Terminal records
+  // are bounded to 100 for performance.
+  const PAGE_SIZE = 1000;
+  const actionableRows: Array<Record<string, unknown>> = [];
+  let actionableError: { message: string } | null = null;
+  for (let page = 0; ; page++) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    const { data, error } = await service.from('admin_onboarding_invites').select('*')
+      .not('status', 'in', '("active","cancelled","completed")')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to);
+    if (error) { actionableError = error; break; }
+    if (data) actionableRows.push(...data);
+    if (!data || data.length < PAGE_SIZE) break; // last page
+  }
+
+  const [terminalResult, countriesResult, categoriesResult] = await Promise.all([
+    service.from('admin_onboarding_invites').select('*')
+      .in('status', ['active', 'cancelled', 'completed'])
+      .order('created_at', { ascending: false })
+      .limit(100),
     service.from('countries').select('code, name, dialing_code').eq('is_active', true).order('sort_order'),
     service.from('category_templates').select('key, name').eq('is_active', true).order('name'),
   ]);
-  if (queueResult.error || countriesResult.error || categoriesResult.error) return NextResponse.json({ error: 'Unable to load onboarding queue and authority options' }, { status: 500 });
-  return NextResponse.json({ onboardings: queueResult.data || [], options: { countries: countriesResult.data || [], categories: categoriesResult.data || [] } });
+  if (actionableError || terminalResult.error || countriesResult.error || categoriesResult.error) {
+    return NextResponse.json({ error: 'Unable to load onboarding queue and authority options' }, { status: 500 });
+  }
+
+  // Read-only connection readiness. Never expose WhatsApp access tokens or assume
+  // country availability implies an allocated, active shared channel.
+  const queued = [...actionableRows, ...(terminalResult.data || [])];
+  const businessIds = [...new Set(queued.map(row => row.business_id).filter((id): id is string => typeof id === 'string' && !!id))];
+  let businesses: Array<{ id: string; status: string; wa_method: string | null; assigned_channel_id: string | null; whatsapp_channel_id: string | null; bot_code: string | null; country_code: string | null; messaging_suspended: boolean | null }> = [];
+  let channels: Array<{ id: string; channel_type: string | null; is_active: boolean; connection_status: string | null; country_code: string | null; business_id: string | null; phone_number: string | null }> = [];
+  // Fetch businesses and channels in bounded chunks to avoid URL-length overflow
+  // when the .in() UUID array is serialized into the PostgREST query string.
+  const CHUNK = 200;
+  for (let i = 0; i < businessIds.length; i += CHUNK) {
+    const chunk = businessIds.slice(i, i + CHUNK);
+    const { data, error: businessError } = await service.from('businesses')
+      .select('id, status, wa_method, assigned_channel_id, whatsapp_channel_id, bot_code, country_code, messaging_suspended')
+      .in('id', chunk);
+    if (businessError) return NextResponse.json({ error: 'Unable to verify WhatsApp readiness' }, { status: 500 });
+    if (data) businesses.push(...data);
+  }
+  if (businesses.length) {
+    const channelIds = [...new Set(businesses.flatMap(b => [b.assigned_channel_id, b.whatsapp_channel_id]).filter((id): id is string => !!id))];
+    for (let i = 0; i < channelIds.length; i += CHUNK) {
+      const chunk = channelIds.slice(i, i + CHUNK);
+      const { data: channelRows, error: channelsError } = await service.from('whatsapp_channels')
+        .select('id, channel_type, is_active, connection_status, country_code, business_id, phone_number')
+        .in('id', chunk);
+      if (channelsError) return NextResponse.json({ error: 'Unable to verify WhatsApp channel status' }, { status: 500 });
+      if (channelRows) channels.push(...channelRows);
+    }
+  }
+  const byBusiness = new Map(businesses.map(b => [b.id, b]));
+  const byChannel = new Map(channels.map(c => [c.id, c]));
+  const onboardings = queued.map(row => {
+    const biz = row.business_id ? byBusiness.get(row.business_id) : null;
+    const ch = biz ? byChannel.get(biz.assigned_channel_id || biz.whatsapp_channel_id || '') : null;
+    const channelReady = isAssignedWhatsAppChannelReady(biz, ch);
+    const requested = String(row.whatsapp_method || 'shared');
+    return {
+      ...row,
+      whatsapp_setup: {
+        requested_method: requested,
+        current_method: biz?.wa_method || null,
+        business_status: biz?.status || null,
+        messaging_suspended: biz?.messaging_suspended === true,
+        country_code: biz?.country_code || null,
+        bot_code: biz?.bot_code || null,
+        channel_ready: channelReady,
+        whatsapp_link: buildVerifiedWhatsAppLink(biz, ch),
+        channel_type: ch?.channel_type || null,
+        connection_status: ch?.connection_status || null,
+        owner_connection_required: requested !== 'shared' && !(channelReady && ch?.channel_type === 'dedicated'),
+      },
+    };
+  });
+  return NextResponse.json({ onboardings, options: { countries: countriesResult.data || [], categories: categoriesResult.data || [] } });
 }
 
 export async function POST(request: NextRequest) {
