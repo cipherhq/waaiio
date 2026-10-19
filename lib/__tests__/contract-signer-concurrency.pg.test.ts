@@ -80,6 +80,14 @@ describeDb('M451: FOR UPDATE concurrency — signer mutations serialized against
     // with parallel .pg.test.ts files on the shared pg_authid catalog.
     // The CREATE ROLE above already sets BYPASSRLS; CI setup does too.
 
+    // Verify the security-critical attribute is set (read-only check, no write race)
+    const { rows } = await admin.query(
+      `SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role'`,
+    );
+    if (!rows[0]?.rolbypassrls) {
+      throw new Error('service_role must have BYPASSRLS — setup incomplete');
+    }
+
     // Minimal schema — CREATE TABLE IF NOT EXISTS so this is idempotent
     await admin.query(`
       GRANT USAGE ON SCHEMA public TO service_role, authenticated, anon;
