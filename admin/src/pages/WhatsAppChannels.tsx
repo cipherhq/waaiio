@@ -200,7 +200,7 @@ export default function WhatsAppChannels() {
           <h1 className="text-2xl font-bold text-gray-900">WhatsApp Channels</h1>
           <p className="mt-1 text-sm text-gray-500">Manage WhatsApp channels and business configurations</p>
         </div>
-        {session?.role && hasAccess('customer-onboarding', session.role) && <a href="/whatsapp-assistance" className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600">
+        {adminSession?.role && hasAccess('customer-onboarding', adminSession.role) && <a href="/whatsapp-assistance" className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600">
           Help Business Connect WhatsApp
         </a>}
       </div>

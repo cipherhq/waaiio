@@ -205,14 +205,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       : { data: null, error: null };
 
     if (postBizErr || postChErr || !isAssignedWhatsAppChannelReady(updatedBusiness, assignedChannel)) {
-      // Readiness failed — compensate by clearing the unusable assignment.
-      // The business stays in its previous state (pending/active without a
-      // working shared channel). This prevents an unverified assignment from
-      // being treated as live by the resolver or QR link generator.
-      // P2-3: Verify CAS compensation actually updated the expected row.
+      // Readiness failed — compensate ONLY if this operation created a new
+      // assignment. An idempotent result means the assignment was pre-existing
+      // and must not be cleared by this request.
       const danglingId = updatedBusiness?.assigned_channel_id ?? allocation.channel_id ?? null;
       let compensated = false;
-      if (danglingId) {
+      if (danglingId && !allocation.idempotent) {
         const { data: cleared, error: clearErr } = await service
           .from('businesses')
           .update({ assigned_channel_id: null })

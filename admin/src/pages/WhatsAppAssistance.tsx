@@ -109,12 +109,14 @@ export default function WhatsAppAssistance() {
       await performEnsureSharedChannel(row, stepUpId);
     };
     setPendingStepUpAction(() => action);
-    void stepUp.execute({
+    stepUp.execute({
       actionType: 'messaging_config',
       targetId: String(row.id),
       params: stepUpParams,
       description: `Verify MFA to allocate a shared WhatsApp channel for ${row.target_email}`,
       onAuthorized: action,
+    }).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : 'MFA preparation failed. Please retry.');
     });
   }
 

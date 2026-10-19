@@ -162,32 +162,51 @@ describe('PR #655: shared allocation vs WABA candidate promotion (real PG)', () 
       );
     `);
 
-    // Use pg_advisory_lock to synchronize two REAL parallel psql sessions.
-    // Both sessions acquire the lock inside a transaction, then release and
-    // immediately call their RPC — ensuring both are in-flight simultaneously.
-    runSQL(`SELECT pg_advisory_lock(655001);`);
+    // Synchronization: a persistent psql session holds an advisory lock via
+    // stdin pipe. Two worker sessions block on acquiring the same lock.
+    // When we close the holder's stdin, psql exits, the session ends, and
+    // the lock is released — both workers unblock simultaneously.
+    const { spawn } = await import('child_process');
 
+    // 1. Start persistent lock holder
+    const holder = spawn('psql', [TEST_DB!, '-v', 'ON_ERROR_STOP=1', '-t', '-A'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const holderReady = new Promise<void>((resolve) => {
+      holder.stdout!.once('data', () => resolve()); // lock acquired
+    });
+    holder.stdin!.write('SELECT pg_advisory_lock(655001);\n');
+    await holderReady;
+
+    // 2. Launch both workers — they block on the lock
     const allocatePromise = runSQLAsync(`
-      BEGIN;
       SELECT pg_advisory_lock(655001);
       SELECT pg_advisory_unlock(655001);
       SELECT allocate_shared_channel('${BIZ_ID}', 'NG') AS alloc_result;
-      COMMIT;
     `);
-
     const promotePromise = runSQLAsync(`
-      BEGIN;
       SELECT pg_advisory_lock(655001);
       SELECT pg_advisory_unlock(655001);
       SELECT promote_channel_candidate('${CAND_ID}', '${BIZ_ID}') AS promote_result;
-      COMMIT;
     `);
 
-    // Small delay then release the lock — both sessions proceed simultaneously
-    await new Promise(r => setTimeout(r, 200));
-    runSQL(`SELECT pg_advisory_unlock(655001);`);
+    // 3. Wait until both workers are waiting on the lock
+    await new Promise(r => setTimeout(r, 300));
+    const waiters = runSQL(`
+      SELECT count(*) FROM pg_stat_activity
+      WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'
+        AND state = 'active' AND pid != pg_backend_pid();
+    `);
+    const waiterCount = parseInt(waiters, 10);
+
+    // 4. Release: close the holder session — both workers unblock
+    holder.stdin!.end();
+    holder.kill();
 
     const [allocResult, promoteResult] = await Promise.all([allocatePromise, promotePromise]);
+
+    // Assert contention actually occurred (at least 1 worker was waiting)
+    expect(waiterCount).toBeGreaterThanOrEqual(1);
 
     // Neither should have a transport/connection ERROR
     expect(allocResult).not.toContain('ERROR');
@@ -201,16 +220,12 @@ describe('PR #655: shared allocation vs WABA candidate promotion (real PG)', () 
     // The invariant: at least one of these holds:
     // A) allocate won → assigned_channel_id = CHANNEL_ID, promote got cas_conflict
     // B) promote won → candidate promoted, wa_method changed
-    // C) promote failed for other reason → business has shared assignment
     const allocateWon = finalAssigned === CHANNEL_ID;
     const promoteGotCasConflict = promoteResult.includes('cas_conflict');
     const promoteWon = finalWaMethod !== 'shared' || candidateStatus === 'promoted';
 
-    // At least one path must have prevented conflict
     expect(allocateWon || promoteGotCasConflict || promoteWon).toBe(true);
 
-    // The business must never have BOTH a shared assignment AND a promoted dedicated candidate
-    // that expects a different state
     if (allocateWon) {
       expect(promoteGotCasConflict || candidateStatus === 'ready').toBe(true);
     }

@@ -56,19 +56,26 @@ export async function GET(request: NextRequest) {
   const businessIds = [...new Set(queued.map(row => row.business_id).filter((id): id is string => typeof id === 'string' && !!id))];
   let businesses: Array<{ id: string; status: string; wa_method: string | null; assigned_channel_id: string | null; whatsapp_channel_id: string | null; bot_code: string | null; country_code: string | null; messaging_suspended: boolean | null }> = [];
   let channels: Array<{ id: string; channel_type: string | null; is_active: boolean; connection_status: string | null; country_code: string | null; business_id: string | null; phone_number: string | null }> = [];
-  if (businessIds.length) {
+  // Fetch businesses and channels in bounded chunks to avoid URL-length overflow
+  // when the .in() UUID array is serialized into the PostgREST query string.
+  const CHUNK = 200;
+  for (let i = 0; i < businessIds.length; i += CHUNK) {
+    const chunk = businessIds.slice(i, i + CHUNK);
     const { data, error: businessError } = await service.from('businesses')
       .select('id, status, wa_method, assigned_channel_id, whatsapp_channel_id, bot_code, country_code, messaging_suspended')
-      .in('id', businessIds);
+      .in('id', chunk);
     if (businessError) return NextResponse.json({ error: 'Unable to verify WhatsApp readiness' }, { status: 500 });
-    businesses = data || [];
+    if (data) businesses.push(...data);
+  }
+  if (businesses.length) {
     const channelIds = [...new Set(businesses.flatMap(b => [b.assigned_channel_id, b.whatsapp_channel_id]).filter((id): id is string => !!id))];
-    if (channelIds.length) {
+    for (let i = 0; i < channelIds.length; i += CHUNK) {
+      const chunk = channelIds.slice(i, i + CHUNK);
       const { data: channelRows, error: channelsError } = await service.from('whatsapp_channels')
         .select('id, channel_type, is_active, connection_status, country_code, business_id, phone_number')
-        .in('id', channelIds);
+        .in('id', chunk);
       if (channelsError) return NextResponse.json({ error: 'Unable to verify WhatsApp channel status' }, { status: 500 });
-      channels = channelRows || [];
+      if (channelRows) channels.push(...channelRows);
     }
   }
   const byBusiness = new Map(businesses.map(b => [b.id, b]));
