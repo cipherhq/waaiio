@@ -149,14 +149,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── M439: Set durable cancellation intent BEFORE provider call ──
+    // ── M452: Set durable cancellation intent BEFORE provider call ──
     // This blocks all future billing claim/dispatch RPCs even if the
     // subsequent provider call or DB status update fails.
     // CAS: exact subscription + phone + original status, and only if no intent
     // has been recorded yet.
     // DEPENDENCY: requires customer_subscriptions.cancellation_requested_at
-    // (M439). That column does not exist in staging/production as of this
-    // change; until it does, this write errors and the handler returns 503.
+    // (M452). That column does not exist in staging/production until M452 is
+    // applied; deploying this code before the migration causes the UPDATE to
+    // error on the unknown column and the handler returns 503.
+    // STAGING RELEASE ORDER: M452 migration MUST precede application deployment.
     const { data: intentRows, error: intentError } = await supabase
       .from('customer_subscriptions')
       .update({ cancellation_requested_at: new Date().toISOString() })
