@@ -1,3 +1,8 @@
+---
+name: financial-integrity
+description: "Verify that every payment path correctly records platform fees, payout calculations are accurate, and refunds properly reverse fees. Run after any change to payment flows, fee calculations, or webhook handlers."
+---
+
 # Financial Integrity Checker
 
 > **MANDATORY: Run this AFTER any change to payment flows, fee calculations, payout logic, or webhook handlers.** Catches money leaks before they cost real revenue.

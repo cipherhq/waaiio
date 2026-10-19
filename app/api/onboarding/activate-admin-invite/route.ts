@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export async function POST(_request: NextRequest) {
   const supabase = await createClient();
@@ -21,11 +22,11 @@ export async function POST(_request: NextRequest) {
   if (!business || business.status !== 'pending' || business.subscription_tier !== 'free') {
     return NextResponse.json({ error: 'Pending business is not eligible for activation' }, { status: 409 });
   }
-  const { error: auditError } = await service.from('admin_audit_logs').insert({
-    actor_id: user.id,
+  const { error: auditError } = await logAdminAudit({
+    actorId: user.id,
     action: 'admin_onboarding_customer_accepted',
-    entity_type: 'admin_onboarding',
-    entity_id: onboarding.id,
+    entityType: 'admin_onboarding',
+    entityId: onboarding.id,
     details: { target_user_id: user.id, target_email: onboarding.target_email, business_id: onboarding.business_id, customer_accepted: true },
   });
   if (auditError) return NextResponse.json({ error: 'Customer acceptance could not be audited' }, { status: 500 });

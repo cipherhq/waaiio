@@ -7,14 +7,16 @@ import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboard
 import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { CAPABILITY_TIER_REQUIREMENTS, tierMeetsRequirement, type CapabilityId, type SubscriptionTier } from '@/shared/capabilities';
 import { authUserExists } from '@/lib/onboarding/auth-user';
+import { logAdminAudit } from '@/lib/admin-audit';
 
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: request.headers.get('authorization') ? 'Forbidden' : 'Unauthorized' }, { status: request.headers.get('authorization') ? 403 : 401 });
   const service = createServiceClient({ noStore: true });
   const body = await request.json();
   const action = String(body.action || '');
-  const { data: onboarding, error } = await service.from('admin_onboarding_invites').select('*').eq('id', params.id).maybeSingle();
+  const { id } = await params;
+  const { data: onboarding, error } = await service.from('admin_onboarding_invites').select('*').eq('id', id).maybeSingle();
   if (error || !onboarding) return NextResponse.json({ error: 'Onboarding not found' }, { status: 404 });
 
   if (action === 'resend') {
@@ -35,7 +37,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     });
     if (!sent.success) return NextResponse.json({ error: 'Activation email delivery failed' }, { status: 502 });
     await service.from('admin_onboarding_invites').update({ invite_sent_at: new Date().toISOString(), last_error: null }).eq('id', onboarding.id);
-    const { error: auditError } = await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_invite_resend', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { target_email: onboarding.target_email, business_id: onboarding.business_id } });
+    const { error: auditError } = await logAdminAudit({ actorId: admin.userId, action: 'admin_onboarding_invite_resend', entityType: 'admin_onboarding', entityId: onboarding.id, details: { target_email: onboarding.target_email, business_id: onboarding.business_id } });
     if (auditError) {
       await service.from('admin_onboarding_invites').update({ last_error: 'Invite sent but audit write failed; reconcile before resending.' }).eq('id', onboarding.id);
       return NextResponse.json({ error: 'Invite sent, but the audit record failed. Reconcile before continuing.', mutationApplied: true, auditRecorded: false }, { status: 207 });
@@ -71,16 +73,16 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           business_id: bizCleaned ? null : onboarding.business_id,
           last_error: partialError,
         }).eq('id', onboarding.id);
-        await service.from('admin_audit_logs').insert({
-          actor_id: admin.userId, action: 'admin_onboarding_cancel_partial',
-          entity_type: 'admin_onboarding', entity_id: onboarding.id,
+        await logAdminAudit({
+          actorId: admin.userId, action: 'admin_onboarding_cancel_partial',
+          entityType: 'admin_onboarding', entityId: onboarding.id,
           details: { target_email: onboarding.target_email, business_deleted: bizCleaned, user_deleted: false, orphaned_user_id: onboarding.target_user_id },
         });
         return NextResponse.json({ error: partialError, partiallyApplied: true }, { status: 500 });
       }
     }
     await service.from('admin_onboarding_invites').update({ status: 'cancelled', cancelled_at: new Date().toISOString(), target_user_id: null, business_id: null }).eq('id', onboarding.id);
-    const { error: auditError } = await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_cancel', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { target_email: onboarding.target_email } });
+    const { error: auditError } = await logAdminAudit({ actorId: admin.userId, action: 'admin_onboarding_cancel', entityType: 'admin_onboarding', entityId: onboarding.id, details: { target_email: onboarding.target_email } });
     if (auditError) return NextResponse.json({ error: 'Cancellation applied, but audit write failed. Reconcile before continuing.', mutationApplied: true, auditRecorded: false }, { status: 207 });
     return NextResponse.json({ success: true });
   }
@@ -100,7 +102,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const { error: updateError } = await service.from('admin_onboarding_invites').update({ intended_plan: intendedPlan, metadata })
       .eq('id', onboarding.id).eq('status', onboarding.status);
     if (updateError) return NextResponse.json({ error: 'Unable to change intended plan' }, { status: 500 });
-    const { error: auditError } = await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_intended_plan_changed', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { from: onboarding.intended_plan, to: intendedPlan, target_user_id: onboarding.target_user_id, business_id: onboarding.business_id } });
+    const { error: auditError } = await logAdminAudit({ actorId: admin.userId, action: 'admin_onboarding_intended_plan_changed', entityType: 'admin_onboarding', entityId: onboarding.id, details: { from: onboarding.intended_plan, to: intendedPlan, target_user_id: onboarding.target_user_id, business_id: onboarding.business_id } });
     if (auditError) return NextResponse.json({ error: 'Plan intent changed, but audit write failed. Reconcile before continuing.', mutationApplied: true, auditRecorded: false }, { status: 207 });
     return NextResponse.json({ success: true });
   }
@@ -129,8 +131,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       const sent = await sendEmail({ to: input.owner_email, subject: `Activate your Waaiio account for ${input.business_name}`, html: `<h1>Your business is ready to activate</h1><p>Set your password and complete customer-owned authorization.</p><p><a href="${linkData.properties.action_link}">Activate my account</a></p>` });
       if (!sent.success) throw new Error('Activation email delivery failed');
       await service.from('admin_onboarding_invites').update({ target_user_id: userId, business_id: businessId, status: 'customer_action_required', invite_sent_at: new Date().toISOString(), last_error: null }).eq('id', onboarding.id).eq('status', 'provisioning');
-      const { error: auditError } = await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_retry', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { target_email: input.owner_email, target_user_id: userId, business_id: businessId } });
-      if (auditError) throw new Error(`Audit write failed: ${auditError.message}`);
+      const { error: auditError } = await logAdminAudit({ actorId: admin.userId, action: 'admin_onboarding_retry', entityType: 'admin_onboarding', entityId: onboarding.id, details: { target_email: input.owner_email, target_user_id: userId, business_id: businessId } });
+      if (auditError) throw new Error(`Audit write failed: ${auditError}`);
       return NextResponse.json({ success: true });
     } catch (retryError) {
       if (!businessId && retryError instanceof OnboardingProvisionError && retryError.businessId) {

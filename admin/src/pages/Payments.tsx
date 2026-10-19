@@ -8,6 +8,8 @@ import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 
 // Categories handled by the Giving page — excluded here
 const GIVING_CATEGORIES = ['church', 'mosque', 'ngo', 'crowdfunding_org'];
@@ -53,6 +55,9 @@ export default function Payments() {
   const [refundError, setRefundError] = useState('');
   const [refundSuccess, setRefundSuccess] = useState('');
   const perPage = 20;
+
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   const loadingRef = useRef(false);
 
@@ -187,48 +192,64 @@ export default function Payments() {
     setRefundSuccess('');
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-      if (!token) { setRefundError('Not authenticated'); setRefundLoading(false); return; }
+      const paymentId = selected.id;
+      const businessId = selected.business_id;
+      const reason = refundReason.trim();
 
-      const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          paymentId: selected.id,
-          businessId: selected.business_id,
-          amount: amt,
-          reason: refundReason.trim() || undefined,
-        }),
+      const onAuthorized = async (stepUpId: string) => {
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) { setRefundError('Not authenticated'); return; }
+
+        const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            paymentId,
+            businessId,
+            amount: amt,
+            reason: reason || undefined,
+            stepUpId,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          setRefundError(data.error || 'Refund failed');
+          return;
+        }
+
+        await logAudit({
+          action: 'refund_payment',
+          entity_type: 'payment',
+          entity_id: paymentId,
+          details: { amount: amt, reason, refundId: data.refundId, isDirectSplit: data.isDirectSplit },
+        });
+
+        setRefundSuccess(data.isDirectSplit
+          ? 'Refund recorded (direct split — please return funds manually)'
+          : 'Refund processed successfully');
+        setRefundAmount('');
+        setRefundReason('');
+        loadData();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'refund',
+        targetId: paymentId,
+        params: { businessId, amount: amt, reason: reason || null },
+        description: `Refund ${fmtCurrency(amt, selected.currency || undefined)} for payment ${paymentId.slice(0, 8)}...`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setRefundError(data.error || 'Refund failed');
-        setRefundLoading(false);
-        return;
-      }
-
-      await logAudit({
-        action: 'refund_payment',
-        entity_type: 'payment',
-        entity_id: selected.id,
-        details: { amount: amt, reason: refundReason.trim(), refundId: data.refundId, isDirectSplit: data.isDirectSplit },
-      });
-
-      setRefundSuccess(data.isDirectSplit
-        ? 'Refund recorded (direct split — please return funds manually)'
-        : 'Refund processed successfully');
-      setRefundAmount('');
-      setRefundReason('');
-      loadData();
     } catch {
       setRefundError('Network error — please try again');
+      stepUp.reset();
     } finally {
       setRefundLoading(false);
     }
@@ -289,21 +310,37 @@ export default function Payments() {
                     onClick={async () => {
                       if (!canMutate || !confirm(`Approve and process refund of ${fmtCurrency(req.amount, req.currency || undefined)} to ${req.customer_name || req.customer_phone}?`)) return;
                       try {
-                        // Call the actual refund API to process the gateway refund
-                        const apiUrl = import.meta.env.VITE_API_URL || '';
-                        const { data: session } = await supabase.auth.getSession();
-                        const token = session?.session?.access_token;
-                        const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({ paymentId: req.payment_id, businessId: req.business_id, amount: req.amount, reason: req.reason || 'Approved refund request' }),
+                        const reqId = req.id;
+                        const paymentId = req.payment_id;
+                        const businessId = req.business_id;
+                        const amount = req.amount;
+                        const reason = req.reason || 'Approved refund request';
+
+                        const onAuthorized = async (stepUpId: string) => {
+                          const apiUrl = import.meta.env.VITE_API_URL || '';
+                          const { data: session } = await supabase.auth.getSession();
+                          const token = session?.session?.access_token;
+                          const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                            body: JSON.stringify({ paymentId, businessId, amount, reason, stepUpId }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) { alert(data.error || 'Refund failed'); return; }
+                          // Mark request as approved
+                          await adminDb.from('refund_requests').update({ status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: session?.session?.user?.id }).eq('id', reqId);
+                          await logAudit({ action: 'approve_refund_request', entity_type: 'refund_request', entity_id: reqId, details: { payment_id: paymentId, amount } });
+                          await loadData();
+                        };
+
+                        stepUpCallbackRef.current = onAuthorized;
+                        await stepUp.execute({
+                          actionType: 'refund',
+                          targetId: paymentId,
+                          params: { businessId, amount, reason },
+                          description: `Approve refund request of ${fmtCurrency(amount, req.currency || undefined)} for ${req.customer_name || req.customer_phone}`,
+                          onAuthorized,
                         });
-                        const data = await res.json();
-                        if (!res.ok) { alert(data.error || 'Refund failed'); return; }
-                        // Mark request as approved
-                        await adminDb.from('refund_requests').update({ status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: session?.session?.user?.id }).eq('id', req.id);
-                        await logAudit({ action: 'approve_refund_request', entity_type: 'refund_request', entity_id: req.id, details: { payment_id: req.payment_id, amount: req.amount } });
-                        await loadData();
                       } catch { alert('Failed to process refund'); }
                     }}
                     className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-100 hover:bg-green-200"
@@ -450,6 +487,19 @@ export default function Payments() {
       </div>
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (stepUpCallbackRef.current) {
+            stepUp.submitCode(code, stepUpCallbackRef.current);
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
 
       {/* Detail Modal */}
       <DetailModal

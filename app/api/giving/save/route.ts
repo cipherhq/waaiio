@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
+import { getLegacyDefaultCapabilities } from '@/lib/capabilities/legacy-defaults';
 import { resolveTrialCredit } from '@/lib/trial-status';
 import { buildGivingServicePayload, type GivingServiceInput } from '@/lib/services/payload-builders';
+import { logger } from '@/lib/logger';
 
 const SUPPORTED_INTERVALS = new Set(['weekly', 'monthly']);
 
@@ -50,15 +53,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, reason: 'missing_required_fields' }, { status: 400 });
   }
 
-  // Verify business ownership
-  const { data: business } = await supabase
+  // Verify business ownership (Safeguard D: distinguish DB errors from auth failures)
+  // Use .maybeSingle() so an RLS-hidden zero-row result yields {data: null, error: null}
+  // instead of a PGRST116 error that would be misclassified as a 500.
+  const { data: business, error: bizError } = await supabase
     .from('businesses')
-    .select('id, owner_id, recurring_enabled, subscription_tier, trial_ends_at, capability_overrides')
+    .select('id, owner_id, recurring_enabled, subscription_tier, trial_ends_at, category')
     .eq('id', businessId)
-    .single();
+    .maybeSingle();
 
+  if (bizError) {
+    // Genuine query error (connection failure, syntax error, etc.) — 500
+    logger.withContext({ op: 'giving.save' })
+      .error(`Business query failed for ${businessId}: ${bizError.message}`);
+    return NextResponse.json(
+      { success: false, reason: 'internal_error', message: 'An unexpected error occurred.' },
+      { status: 500 },
+    );
+  }
+
+  // No row (RLS-hidden or nonexistent) or row belongs to another user — 403.
+  // Do not distinguish hidden from nonexistent to avoid existence leaks.
   if (!business || business.owner_id !== user.id) {
-    return NextResponse.json({ success: false, reason: 'unauthorized', message: 'You do not have write access to this business.' }, { status: 403 });
+    return NextResponse.json(
+      { success: false, reason: 'unauthorized', message: 'You do not have write access to this business.' },
+      { status: 403 },
+    );
   }
 
   // If recurring is requested, enforce the effective recurring eligibility
@@ -73,17 +93,38 @@ export async function POST(request: NextRequest) {
     }
 
     // Gate 2: effective recurring capability (policy-aware: tier + trial + overrides)
-    const configResult = await getConfiguredCapabilities(supabase, businessId);
+    const service = createServiceClient();
+
+    const configResult = await getConfiguredCapabilities(service, businessId);
     if (!configResult.ok) {
       return NextResponse.json({ success: false, reason: 'capability_check_failed' }, { status: 500 });
     }
 
-    const hasTrialCredit = await resolveTrialCredit(supabase, businessId);
+    // Safeguard A: fail closed on override query error
+    const { data: overrideRows, error: overrideError } = await service
+      .from('capability_overrides')
+      .select('capability')
+      .eq('business_id', businessId);
+    if (overrideError) {
+      logger.withContext({ op: 'giving.save' })
+        .error(`Override query failed for ${businessId}: ${overrideError.message}`);
+      return NextResponse.json({ success: false, reason: 'override_read_error' }, { status: 500 });
+    }
+    const overrides = (overrideRows || []).map(r => r.capability as string);
+
+    // Safeguard C: legacy defaults for zero-row businesses
+    let configuredRows = configResult.rows;
+    if (configuredRows.length === 0) {
+      const defaultCaps = getLegacyDefaultCapabilities(business.category);
+      configuredRows = defaultCaps.map((cap, i) => ({ capability: cap, is_enabled: true, sort_order: i }));
+    }
+
+    const hasTrialCredit = await resolveTrialCredit(service, businessId);
     const effectiveCaps = getEffectiveCapabilities({
-      configuredCapabilities: configResult.rows,
+      configuredCapabilities: configuredRows,
       tier: business.subscription_tier || 'free',
       trialEndsAt: business.trial_ends_at || null,
-      overrides: (business.capability_overrides as string[]) || [],
+      overrides,
       hasTrialCredit,
     });
 

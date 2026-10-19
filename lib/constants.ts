@@ -5,7 +5,7 @@
 export const APP_NAME = 'Waaiio';
 export const APP_TAGLINE = 'WhatsApp Automation for Every Business';
 export const BOOKING_REF_PREFIX = 'BW';
-export const TRIAL_DAYS = 30;
+export const TRIAL_DAYS = 14;
 
 // ── Flow Types ──
 export type FlowType = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'queue';
@@ -216,17 +216,16 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 
 // ── Per-Country Pricing ──
 
-// Waaiio fee: 2.5% (free) / 1.5% (growth) / 1.5%+₦75 (business/premium)
+// Waaiio fee: 3% (free) / 1.5% (growth/pro) / 1% (business/premium)
 // Gateway fees are separate (Stripe: 2.9%+$0.30, Paystack: 1.5%+₦100)
 // Total cost to business = waaiio fee + gateway fee
-// Flat fees below are LEGACY and set to 0 in PRICING_TIERS — kept for COUNTRY_PRICING only
+// No flat fee component — percentage only
 const COUNTRY_PRICING: Record<string, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 20_000, feeFlat: 50 }, business: { price: 60_000, feeFlat: 75 } },
-  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 20, feeFlat: 0.25 }, business: { price: 45, feeFlat: 0.35 } },
-  GB: { free: { price: 0, feeFlat: 0.35 }, growth: { price: 16, feeFlat: 0.20 }, business: { price: 35, feeFlat: 0.25 } },
-  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 25, feeFlat: 0.25 }, business: { price: 55, feeFlat: 0.35 } },
-  GH: { free: { price: 0, feeFlat: 3 }, growth: { price: 199, feeFlat: 2 }, business: { price: 499, feeFlat: 1.50 } },
-  IN: { free: { price: 0, feeFlat: 10 }, growth: { price: 1_499, feeFlat: 5 }, business: { price: 3_999, feeFlat: 3 } },
+  NG: { free: { price: 0, feeFlat: 0 }, growth: { price: 15_000, feeFlat: 0 }, business: { price: 45_000, feeFlat: 0 } },
+  US: { free: { price: 0, feeFlat: 0 }, growth: { price: 15, feeFlat: 0 }, business: { price: 40, feeFlat: 0 } },
+  GB: { free: { price: 0, feeFlat: 0 }, growth: { price: 12, feeFlat: 0 }, business: { price: 32, feeFlat: 0 } },
+  CA: { free: { price: 0, feeFlat: 0 }, growth: { price: 20, feeFlat: 0 }, business: { price: 50, feeFlat: 0 } },
+  GH: { free: { price: 0, feeFlat: 0 }, growth: { price: 150, feeFlat: 0 }, business: { price: 400, feeFlat: 0 } },
 };
 
 // ── Business Categories ──
@@ -505,50 +504,50 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   free: {
     name: 'Starter',
     price: 0,
-    feePercentage: 2.5,
+    feePercentage: 3,
     feeFlat: 0,
-    maxBookings: 50,
+    maxBookings: 100,
     whitelabel: false,
     features: [
       'Free trial (no fees)',
-      'Up to 50 bookings/month',
+      'Up to 100 activities/month',
       'WhatsApp automation',
       'Dashboard & analytics',
-      '2.5% per transaction after trial',
+      '3% per transaction after trial',
     ],
   },
   growth: {
     name: 'Pro',
-    price: 20_000,
+    price: 15_000,
     feePercentage: 1.5,
-    feeFlat: 50,
-    maxBookings: 500,
+    feeFlat: 0,
+    maxBookings: 1000,
     whitelabel: false,
     features: [
-      'Up to 500 bookings/month',
+      'Up to 1,000 activities/month',
       'WhatsApp automation',
       'WhatsApp reminders',
       'Recurring payments',
       'Broadcast messages',
       'Direct bank transfer (zero fees)',
-      '1.5% + ₦50 per gateway transaction',
+      '1.5% per transaction',
     ],
   },
   business: {
     name: 'Premium',
-    price: 60_000,
-    feePercentage: 1.5,
-    feeFlat: 75,
+    price: 45_000,
+    feePercentage: 1,
+    feeFlat: 0,
     maxBookings: Infinity,
-    whitelabel: true,
+    whitelabel: false,
     features: [
-      'Unlimited bookings',
+      'Unlimited activities',
       'Custom bot persona & greeting',
       'Loyalty & referral programs',
       'Queue & waitlist management',
       'Customer feedback & reviews',
       'Direct bank transfer (zero fees)',
-      '1.5% + ₦75 per gateway transaction',
+      '1% per transaction',
     ],
   },
 };
@@ -611,14 +610,14 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
   free: {
     marketingName: 'Starter',
     description: 'Perfect for trying out Waaiio with zero risk.',
-    feePercentage: 2.5,
-    maxBookings: 50,
+    feePercentage: 3,
+    maxBookings: 100,
     whitelabel: false,
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],
     broadcastLimits: { maxBroadcasts: 0, maxRecipients: 0 },
     highlights: [
       'Free trial (no fees)',
-      'Up to 50 bookings/month',
+      'Up to 100 activities/month',
       'WhatsApp automation',
       'Dashboard & analytics',
     ],
@@ -627,13 +626,13 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
     marketingName: 'Pro',
     description: 'For growing businesses that need more volume and features.',
     feePercentage: 1.5,
-    maxBookings: 500,
+    maxBookings: 1000,
     whitelabel: false,
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat', 'reservation', 'reminders', 'loyalty', 'referral'],
     broadcastLimits: { maxBroadcasts: 10, maxRecipients: 500 },
     highlights: [
       'Everything in Starter, plus:',
-      'Up to 500 bookings/month',
+      'Up to 1,000 activities/month',
       'WhatsApp reminders',
       'Recurring payments',
       'Direct bank transfer (zero gateway fees)',
@@ -643,20 +642,19 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
   business: {
     marketingName: 'Premium',
     description: 'For established businesses that want full control and branding.',
-    feePercentage: 1.5,
+    feePercentage: 1,
     maxBookings: Infinity,
-    whitelabel: true,
+    whitelabel: false,
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat', 'reservation', 'reminders', 'loyalty', 'referral', 'whatsapp_sign', 'queue', 'waitlist', 'reports', 'staff', 'crowdfunding'],
     broadcastLimits: { maxBroadcasts: Infinity, maxRecipients: Infinity },
     highlights: [
       'Everything in Pro, plus:',
-      'Unlimited bookings',
+      'Unlimited activities',
       'Custom bot persona & greeting',
       'Loyalty & referral programs',
       'Queue & waitlist management',
       'Customer feedback & reviews',
       'Direct bank transfer (zero gateway fees)',
-      'Whitelabel branding',
       'Unlimited broadcasts',
     ],
   },
@@ -1266,7 +1264,7 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
       feeFlat: cp.free.feeFlat,
       features: [
         ...TIER_FEATURES.free.highlights,
-        `${TIER_FEATURES.free.feePercentage}% + ${fmt(cp.free.feeFlat)} per transaction after trial`,
+        `${TIER_FEATURES.free.feePercentage}% per transaction after trial`,
       ],
     },
     growth: {
@@ -1275,7 +1273,7 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
       feeFlat: cp.growth.feeFlat,
       features: [
         ...TIER_FEATURES.growth.highlights,
-        `${TIER_FEATURES.growth.feePercentage}% + ${fmt(cp.growth.feeFlat)} per transaction`,
+        `${TIER_FEATURES.growth.feePercentage}% per transaction`,
       ],
     },
     business: {
@@ -1284,7 +1282,7 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
       feeFlat: cp.business.feeFlat,
       features: [
         ...TIER_FEATURES.business.highlights,
-        `${TIER_FEATURES.business.feePercentage}% + ${fmt(cp.business.feeFlat)} per transaction`,
+        `${TIER_FEATURES.business.feePercentage}% per transaction`,
       ],
     },
   };

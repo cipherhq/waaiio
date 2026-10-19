@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
@@ -13,13 +16,41 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { business_id, gateway, bank_code, bank_name, account_number, account_name } = body;
+  const { business_id, gateway, bank_code, bank_name, account_number, account_name, password } = body;
 
-  if (!business_id || !gateway || !bank_code || !account_number || !account_name) {
+  if (!business_id || !gateway || !bank_code || !account_number) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
-  // Verify the user owns this business
+  // Reject test bank code in production
+  if (bank_code === '001' && (process.env.WAAIIO_ENVIRONMENT === 'production' || !(process.env.PAYSTACK_SECRET_KEY || '').startsWith('sk_test_'))) {
+    return NextResponse.json({ error: 'Invalid bank' }, { status: 400 });
+  }
+
+  // Re-authentication required
+  if (!password || typeof password !== 'string') {
+    return NextResponse.json({ error: 'Password required for payout account changes' }, { status: 403 });
+  }
+
+  if (!user.email) {
+    return NextResponse.json({ error: 'User email not found' }, { status: 400 });
+  }
+
+  // Verify password with a throwaway client so the session cookies are not rotated
+  const authCheck = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  );
+  const { error: authError } = await authCheck.auth.signInWithPassword({
+    email: user.email,
+    password,
+  });
+  if (authError) {
+    return NextResponse.json({ error: 'Incorrect password' }, { status: 403 });
+  }
+
+  // Verify the user owns this business (session client enforces RLS)
   const { data: biz } = await supabase
     .from('businesses')
     .select('id, name, payout_mode, country_code')
@@ -31,50 +62,61 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Business not found' }, { status: 404 });
   }
 
+  const service = createServiceClient();
+
   try {
-    let subaccountCode = '';
-    const isDirectSplit = biz.payout_mode === 'direct_split';
+    // Provider verification: resolve account name from the payment provider
+    let verifiedAccountName: string | null = null;
+    let verifiedAt: string | null = null;
 
-    // Platform-managed mode: save bank details only, skip gateway subaccount creation
-    if (!isDirectSplit) {
-      // Deactivate any existing payout accounts for this business
-      await supabase
-        .from('payout_accounts')
-        .update({ is_active: false, updated_at: new Date().toISOString() })
-        .eq('business_id', business_id)
-        .eq('is_active', true);
-
-      // Insert payout account with bank details only (no subaccount)
-      const { data: payout, error: insertError } = await supabase
-        .from('payout_accounts')
-        .insert({
-          business_id,
-          gateway,
-          subaccount_code: null,
-          bank_code,
-          bank_name: bank_name || '',
-          account_number,
-          account_name,
-          platform_percentage: 2.5,
-          is_active: true,
-          verified_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single();
-
-      if (insertError) {
-        logger.error('Insert payout account error:', insertError);
-        return NextResponse.json({ error: 'Failed to save payout account' }, { status: 500 });
+    if (gateway === 'paystack') {
+      if (paystackSecretKey) {
+        const res = await fetch(
+          `https://api.paystack.co/bank/resolve?account_number=${encodeURIComponent(account_number)}&bank_code=${encodeURIComponent(bank_code)}`,
+          { headers: { Authorization: `Bearer ${paystackSecretKey}` } },
+        );
+        const data = await res.json();
+        if (!data.status) {
+          return NextResponse.json(
+            { error: data.message || 'Account verification failed' },
+            { status: 400 },
+          );
+        }
+        verifiedAccountName = data.data.account_name;
+        verifiedAt = new Date().toISOString();
       }
-
-      return NextResponse.json({ success: true, payout_account_id: payout.id });
+      // No key: save unverified (verified_at = null)
+    } else if (gateway === 'flutterwave') {
+      if (flutterwaveSecretKey) {
+        const res = await fetch('https://api.flutterwave.com/v3/accounts/resolve', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${flutterwaveSecretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ account_number, account_bank: bank_code }),
+        });
+        const data = await res.json();
+        if (data.status !== 'success') {
+          return NextResponse.json(
+            { error: data.message || 'Account verification failed' },
+            { status: 400 },
+          );
+        }
+        verifiedAccountName = data.data.account_name;
+        verifiedAt = new Date().toISOString();
+      }
+      // No key: save unverified (verified_at = null)
+    } else {
+      return NextResponse.json({ error: 'Unsupported gateway for bank setup' }, { status: 400 });
     }
 
-    // Direct split mode: create gateway subaccount
-    if (gateway === 'paystack') {
-      if (!paystackSecretKey) {
-        subaccountCode = `ACCT_mock_${Date.now()}`;
-      } else {
+    // Subaccount creation for direct_split mode
+    let subaccountCode: string | null = null;
+    const isDirectSplit = biz.payout_mode === 'direct_split';
+
+    if (isDirectSplit) {
+      if (gateway === 'paystack' && paystackSecretKey) {
         const res = await fetch('https://api.paystack.co/subaccount', {
           method: 'POST',
           headers: {
@@ -85,19 +127,18 @@ export async function POST(request: NextRequest) {
             business_name: biz.name,
             settlement_bank: bank_code,
             account_number,
-            percentage_charge: 2.5, // Platform's cut
+            percentage_charge: 2.5,
           }),
         });
         const data = await res.json();
         if (!data.status) {
-          return NextResponse.json({ error: data.message || 'Failed to create subaccount' }, { status: 400 });
+          return NextResponse.json(
+            { error: data.message || 'Failed to create subaccount' },
+            { status: 400 },
+          );
         }
         subaccountCode = data.data.subaccount_code;
-      }
-    } else if (gateway === 'flutterwave') {
-      if (!flutterwaveSecretKey) {
-        subaccountCode = `FLW_mock_${Date.now()}`;
-      } else {
+      } else if (gateway === 'flutterwave' && flutterwaveSecretKey) {
         const res = await fetch('https://api.flutterwave.com/v3/subaccounts', {
           method: 'POST',
           headers: {
@@ -116,45 +157,49 @@ export async function POST(request: NextRequest) {
         });
         const data = await res.json();
         if (data.status !== 'success') {
-          return NextResponse.json({ error: data.message || 'Failed to create subaccount' }, { status: 400 });
+          return NextResponse.json(
+            { error: data.message || 'Failed to create subaccount' },
+            { status: 400 },
+          );
         }
         subaccountCode = String(data.data.id);
       }
-    } else {
-      return NextResponse.json({ error: 'Unsupported gateway for bank setup' }, { status: 400 });
+      // No key in direct_split: subaccountCode stays null
     }
 
-    // Deactivate any existing payout accounts for this business
-    await supabase
-      .from('payout_accounts')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('business_id', business_id)
-      .eq('is_active', true);
+    // Use provider-returned name when available, client-sent name as fallback
+    const storedAccountName = verifiedAccountName || account_name || account_number;
 
-    // Insert new payout account
-    const { data: payout, error: insertError } = await supabase
-      .from('payout_accounts')
-      .insert({
-        business_id,
-        gateway,
-        subaccount_code: subaccountCode,
-        bank_code,
-        bank_name: bank_name || '',
-        account_number,
-        account_name,
-        platform_percentage: 2.5,
-        is_active: true,
-        verified_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
+    // Atomic swap: deactivate old account + insert new one in a single transaction
+    const { data: newId, error: rpcError } = await service.rpc('swap_payout_account', {
+      p_business_id: business_id,
+      p_gateway: gateway,
+      p_bank_code: bank_code,
+      p_bank_name: bank_name || '',
+      p_account_number: account_number,
+      p_account_name: storedAccountName,
+      p_subaccount_code: subaccountCode,
+      p_verified_at: verifiedAt,
+    });
 
-    if (insertError) {
-      logger.error('Insert payout account error:', insertError);
+    if (rpcError || !newId) {
+      logger.error('swap_payout_account RPC error:', rpcError || 'no id returned');
       return NextResponse.json({ error: 'Failed to save payout account' }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, payout_account_id: payout.id });
+    // Send notification email
+    sendEmail({
+      to: user.email!,
+      subject: `Payout account updated — ${biz.name}`,
+      html: `<p>The payout account for <strong>${biz.name}</strong> has been updated.</p><p>If this wasn't you, contact support immediately.</p>`,
+    }).catch(e => logger.error('Failed to send payout notification:', e));
+
+    return NextResponse.json({
+      success: true,
+      payout_account_id: newId,
+      verified: !!verifiedAt,
+      account_name: storedAccountName,
+    });
   } catch (error) {
     logger.error('Setup payout error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to create payout account' }, { status: 500 });

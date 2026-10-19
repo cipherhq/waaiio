@@ -138,67 +138,41 @@ export default function Verification() {
     }
 
     const level = selected.requested_level as VerificationLevel;
-    const cc = (selected.businesses?.country_code || 'NG') as CountryCode;
-    const limit = getPayoutLimit(cc, level);
 
-    // Update business
-    const { error } = await adminDb
-      .from('businesses')
-      .update({
-        verification_level: level,
-        verification_status: 'verified',
-        verification_notes: reviewNotes || null,
-        verified_at: new Date().toISOString(),
-        payout_limit_monthly: limit,
-      })
-      .eq('id', selected.business_id);
+    // Collect pending document IDs for this business
+    const { data: pendingDocs } = await adminDb
+      .from('business_documents')
+      .select('id')
+      .eq('business_id', selected.business_id)
+      .eq('status', 'pending');
+    const docIds = (pendingDocs || []).map(d => d.id);
 
-    if (error) {
-      alert('Failed to approve: ' + error.message);
+    // Route through server API — handles business update, docs, requests, email, audit
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) {
+      alert('Session expired');
       setProcessing(false);
       return;
     }
-
-    // Mark request completed
-    await adminDb
-      .from('verification_requests')
-      .update({ status: 'completed', completed_at: new Date().toISOString() })
-      .eq('id', selected.id);
-
-    // Approve all pending docs for this business
-    await adminDb
-      .from('business_documents')
-      .update({ status: 'approved', reviewed_at: new Date().toISOString() })
-      .eq('business_id', selected.business_id)
-      .eq('status', 'pending');
-
-    // Send KYC approved email via API
-    if (selected.businesses?.owner_id) {
-      const { data: owner } = await adminDb
-        .from('profiles')
-        .select('email')
-        .eq('id', selected.businesses.owner_id)
-        .single();
-      if (owner?.email) {
-        const limitStr = formatPayoutLimit(cc, level);
-        fetch(`${import.meta.env.VITE_API_URL}/api/email/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: owner.email,
-            subject: `Verification approved — ${selected.businesses.name}`,
-            html: `<p>Your business <strong>${selected.businesses.name}</strong> has been verified at the <strong>${LEVEL_LABELS[level]}</strong> level. Monthly payout limit: <strong>${limitStr}</strong>.</p>`,
-          }),
-        }).catch(() => {});
-      }
-    }
-
-    await logAudit({
-      action: 'approve_verification',
-      entity_type: 'business',
-      entity_id: selected.business_id,
-      details: { level, limit, request_id: selected.id },
+    const apiUrl = import.meta.env.VITE_API_URL || '';
+    const res = await fetch(`${apiUrl}/api/verification/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        business_id: selected.business_id,
+        action: 'approve',
+        level,
+        notes: reviewNotes || null,
+        document_ids: docIds,
+      }),
     });
+    const data = await res.json();
+    if (!res.ok) {
+      alert('Failed to approve: ' + (data.error || 'Unknown error'));
+      setProcessing(false);
+      return;
+    }
 
     setSelected(null);
     setReviewNotes('');
@@ -224,45 +198,41 @@ export default function Verification() {
       return;
     }
 
-    await adminDb
-      .from('businesses')
-      .update({
-        verification_status: 'rejected',
-        verification_notes: rejectionReason,
-      })
-      .eq('id', selected.business_id);
+    // Collect pending document IDs for this business
+    const { data: pendingDocs } = await adminDb
+      .from('business_documents')
+      .select('id')
+      .eq('business_id', selected.business_id)
+      .eq('status', 'pending');
+    const docIds = (pendingDocs || []).map(d => d.id);
 
-    await adminDb
-      .from('verification_requests')
-      .update({ status: 'completed', completed_at: new Date().toISOString() })
-      .eq('id', selected.id);
-
-    // Send KYC rejected email
-    if (selected.businesses?.owner_id) {
-      const { data: owner } = await adminDb
-        .from('profiles')
-        .select('email')
-        .eq('id', selected.businesses.owner_id)
-        .single();
-      if (owner?.email) {
-        fetch(`${import.meta.env.VITE_API_URL}/api/email/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: owner.email,
-            subject: `Verification update — ${selected.businesses.name}`,
-            html: `<p>Verification for <strong>${selected.businesses.name}</strong> was not approved. Reason: ${rejectionReason}</p>`,
-          }),
-        }).catch(() => {});
-      }
+    // Route through server API — handles business update, docs, requests, email, audit
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) {
+      alert('Session expired');
+      setProcessing(false);
+      return;
+    }
+    const apiUrl = import.meta.env.VITE_API_URL || '';
+    const res = await fetch(`${apiUrl}/api/verification/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        business_id: selected.business_id,
+        action: 'reject',
+        reason: rejectionReason,
+        document_ids: docIds,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert('Failed to reject: ' + (data.error || 'Unknown error'));
+      setProcessing(false);
+      return;
     }
 
-    await logAudit({
-      action: 'reject_verification',
-      entity_type: 'business',
-      entity_id: selected.business_id,
-      details: { reason: rejectionReason, request_id: selected.id },
-    });
+    // Server route handles email and audit logging.
 
     setSelected(null);
     setRejectionReason('');

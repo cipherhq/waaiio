@@ -83,6 +83,7 @@ describe('applyDirectoryEligibility', () => {
       { method: 'eq', args: ['status', 'active'] },
       { method: 'not', args: ['bot_code', 'is', null] },
       { method: 'or', args: ['discovery_enabled.is.null,discovery_enabled.eq.true'] },
+      { method: 'eq', args: ['messaging_suspended', false] },
     ]);
   });
 });
@@ -307,7 +308,7 @@ describe('bot marketplace search failure handling', () => {
     const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
     // Find the marketplace search handler section (needs ~1200 chars to capture the full block)
     const startIdx = src.indexOf("'search_marketplace'");
-    const searchSection = src.substring(startIdx, startIdx + 1200);
+    const searchSection = src.substring(startIdx, startIdx + 1600);
     // Must check ok before calling formatMarketplaceResults
     const okCheckIdx = searchSection.indexOf('searchResult.ok');
     const formatIdx = searchSection.indexOf('formatMarketplaceResults');
@@ -319,7 +320,7 @@ describe('bot marketplace search failure handling', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
     const startIdx = src.indexOf("'search_marketplace'");
-    const searchSection = src.substring(startIdx, startIdx + 1200);
+    const searchSection = src.substring(startIdx, startIdx + 1600);
     expect(searchSection).toContain('temporarily unavailable');
     // The unavailable message must be sent BEFORE formatMarketplaceResults
     const unavailIdx = searchSection.indexOf('temporarily unavailable');

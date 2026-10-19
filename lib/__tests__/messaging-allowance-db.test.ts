@@ -32,14 +32,34 @@ function psqlMayFail(sql: string): string {
 
 const BIZ_ID   = 'b0000000-0000-0000-0000-000000000258';
 const BIZ_ID_B = 'b0000000-0000-0000-0000-000000000259'; // second tenant
-const OWNER_A  = '00000000-0000-0000-0000-000000000001';
-const OWNER_B  = '00000000-0000-0000-0000-000000000099';
+const OWNER_A  = '00000000-0000-0000-0258-000000000001';
+const OWNER_B  = '00000000-0000-0000-0258-000000000002';
 
 describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 368)', () => {
   let allowanceId: string;
   let attemptId: string;
 
   beforeAll(() => {
+    // The shared DB has unrelated fixture IDs 000...001 and 000...099
+    // promoted to Admin by other suites. These MUST be independent tenant
+    // owners with no platform role, otherwise cross-tenant RLS can be bypassed
+    // through the legitimate Admin SELECT policy.
+    psql(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES
+        ('${OWNER_A}', 'owner-a-0258@unit.invalid', '{}'::jsonb),
+        ('${OWNER_B}', 'owner-b-0258@unit.invalid', '{}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{}'::jsonb;
+      INSERT INTO profiles (id, email, role)
+      VALUES
+        ('${OWNER_A}', 'owner-a-0258@unit.invalid', 'restaurant_owner'),
+        ('${OWNER_B}', 'owner-b-0258@unit.invalid', 'restaurant_owner')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    expect(psql(`
+      SELECT COALESCE(raw_app_meta_data->>'role', 'none')
+      FROM auth.users WHERE id IN ('${OWNER_A}', '${OWNER_B}') ORDER BY id;
+    `)).toBe('none\nnone');
     // Seed test businesses (two tenants)
     for (const [bizId, name, slug, owner] of [
       [BIZ_ID, 'Test258A', 'test258-ma-a', OWNER_A],
@@ -403,44 +423,74 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
     const CLAIMS = `{"sub":"${OWNER_A}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      -- Business ownership remains valid with the requested assurance level;
+      -- admin-only policies must never grant a cross-tenant read.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal1"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM messaging_allowances WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
+    const lines = count.split('\n').filter(Boolean);
+    expect(lines[lines.length - 2]).toBe('f');
+    expect(parseInt(lines[lines.length - 1])).toBeGreaterThan(0);
   });
 
   it('27. Cross-tenant SELECT denied (allowances)', () => {
     const CLAIMS = `{"sub":"${OWNER_B}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      -- Business ownership remains valid with the requested assurance level;
+      -- admin-only policies must never grant a cross-tenant read.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal2"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM messaging_allowances WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    expect(count.split('\n').pop()).toBe('0');
+    const lines = count.split('\n').filter(Boolean);
+    expect(lines.slice(-2)).toEqual(['f', '0']);
   });
 
   it('28. Own-tenant SELECT succeeds (events)', () => {
     const CLAIMS = `{"sub":"${OWNER_A}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      -- Business ownership remains valid with the requested assurance level;
+      -- admin-only policies must never grant a cross-tenant read.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal1"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM messaging_allowance_events WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
+    const lines = count.split('\n').filter(Boolean);
+    expect(lines[lines.length - 2]).toBe('f');
+    expect(parseInt(lines[lines.length - 1])).toBeGreaterThan(0);
   });
 
   it('29. Cross-tenant SELECT denied (events)', () => {
     const CLAIMS = `{"sub":"${OWNER_B}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      -- Business ownership remains valid with the requested assurance level;
+      -- admin-only policies must never grant a cross-tenant read.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal2"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM messaging_allowance_events WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    expect(count.split('\n').pop()).toBe('0');
+    const lines = count.split('\n').filter(Boolean);
+    expect(lines.slice(-2)).toEqual(['f', '0']);
   });
 
   // ═══════════════════════════════════════════════════════

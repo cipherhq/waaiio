@@ -6,6 +6,7 @@ import { encryptToken } from '@/lib/encryption';
 import { randomInt } from 'crypto';
 import { logger } from '@/lib/logger';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 /**
  * POST /api/auth/facebook/callback
@@ -399,7 +400,7 @@ export async function POST(request: NextRequest) {
         .eq('status', 'customer_action_required').in('whatsapp_method', ['dedicated', 'coexistence']).maybeSingle();
       if (assisted) {
         const activatedAt = new Date().toISOString();
-        const { error: auditError } = await service.from('admin_audit_logs').insert({ actor_id: assisted.created_by_admin_id, action: 'admin_onboarding_activated', entity_type: 'admin_onboarding', entity_id: assisted.id, details: { target_user_id: assisted.target_user_id, business_id, meta_authorized_by_customer: true, channel_id: channelId } });
+        const { error: auditError } = await logAdminAudit({ actorId: assisted.created_by_admin_id, action: 'admin_onboarding_activated', entityType: 'admin_onboarding', entityId: assisted.id, details: { target_user_id: assisted.target_user_id, business_id, meta_authorized_by_customer: true, channel_id: channelId } });
         if (auditError) {
           logger.error('[FB-CALLBACK] Assisted onboarding completion audit failed:', auditError);
         } else {

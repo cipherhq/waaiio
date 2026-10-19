@@ -89,7 +89,7 @@ export default function FinancialsPage() {
         }),
         supabase
           .from('platform_fees')
-          .select('fee_total')
+          .select('fee_total, is_direct_transfer')
           .eq('business_id', business.id)
           .eq('waived', false)
           .is('refunded_at', null),
@@ -127,7 +127,8 @@ export default function FinancialsPage() {
       if (isDirectSplit) {
         setPlatformPct(payoutAccountRes.data?.platform_percentage ?? 2.5);
       } else {
-        setPlatformFees((feesRes.data || []).reduce((s, f) => s + Number(f.fee_total || 0), 0));
+        // Exclude direct-transfer fees: platform never held those funds (fail-closed: null excluded)
+        setPlatformFees((feesRes.data || []).filter(f => f.is_direct_transfer === false).reduce((s, f) => s + Number(f.fee_total || 0), 0));
       }
       setPendingPayouts((payoutsRes.data || []).reduce((s, p) => s + Number(p.net_amount || 0), 0));
       setTotalRefunds((refundsRes.data || []).reduce((s, r) => s + Number(r.amount || 0), 0));

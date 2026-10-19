@@ -511,7 +511,7 @@ describe('Admin platform-settings route: commercial key rejection', () => {
   const COMMERCIAL_KEYS = [
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
-    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'payout_cooling_period_days', 'minimum_payout',
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
@@ -523,7 +523,7 @@ describe('Admin platform-settings route: commercial key rejection', () => {
       id: 'admin-uuid',
       userId: 'admin-uuid',
       email: 'admin@test.com',
-      role: 'admin',
+      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
     });
   }
 
@@ -747,13 +747,13 @@ describe('Middleware signup_open readability contract', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// B3: Commercial key classification — 19-key server protection + client routing
+// B3: Commercial key classification — 18-key server protection + client routing
 // ════════════════════════════════════════════════════════════
 describe('B3: commercial key classification and client routing contract', () => {
-  const CANONICAL_19 = [
+  const CANONICAL_18 = [
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
-    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'payout_cooling_period_days', 'minimum_payout',
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
@@ -763,10 +763,10 @@ describe('B3: commercial key classification and client routing contract', () => 
     'subscription_included_minor_by_tier_currency',
   ];
 
-  const INDIVIDUALLY_WRITABLE_16 = [
+  const INDIVIDUALLY_WRITABLE_15 = [
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
-    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'payout_cooling_period_days', 'minimum_payout',
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
@@ -779,22 +779,22 @@ describe('B3: commercial key classification and client routing contract', () => 
     'subscription_included_minor_by_tier_currency',
   ];
 
-  it('server route protects all 19 canonical keys from generic CRUD', async () => {
+  it('server route protects all 18 canonical keys from generic CRUD', async () => {
     const fs = await import('fs');
     const routeSrc = fs.readFileSync(
       new URL('../../app/api/admin/platform-settings/route.ts', import.meta.url), 'utf-8',
     );
-    for (const key of CANONICAL_19) {
+    for (const key of CANONICAL_18) {
       expect(routeSrc).toContain(`'${key}'`);
     }
   });
 
-  it('admin client COMMERCIAL_KEYS has exactly 16 individually writable keys', async () => {
+  it('admin client COMMERCIAL_KEYS has exactly 15 individually writable keys', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
       new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
     );
-    for (const key of INDIVIDUALLY_WRITABLE_16) {
+    for (const key of INDIVIDUALLY_WRITABLE_15) {
       expect(src).toContain(`'${key}'`);
     }
   });
@@ -898,25 +898,28 @@ describe('B3: commercial key classification and client routing contract', () => 
     expect(keyMatches.length).toBe(6); // 3 keys × 2 quotes each
   });
 
-  it('16 individually writable commercial keys use save_commercial_config in handleSave', async () => {
+  it('15 individually writable commercial keys use step-up-protected server route in handleSave', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
       new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
     );
-    // handleSave routes COMMERCIAL_KEYS to save_commercial_config RPC
-    expect(src).toContain("adminDb.rpc('save_commercial_config'");
+    // C6: handleSave routes COMMERCIAL_KEYS through step-up-protected server route
+    expect(src).toContain('saveCommercialViaStepUp');
+    expect(src).toContain('/api/admin/platform-settings/commercial');
+    // No direct adminDb.rpc('save_commercial_config') remaining
+    expect(src).not.toContain("adminDb.rpc('save_commercial_config'");
     // COMMERCIAL_KEYS contains messaging_topup_packages (individually writable)
     const commercialMatch = src.match(/const COMMERCIAL_KEYS\s*=\s*new\s+Set\(\[([^\]]+)\]\)/s);
     expect(commercialMatch).toBeTruthy();
     expect(commercialMatch![1]).toContain("'messaging_topup_packages'");
   });
 
-  it('server route still protects all 19 keys from generic CRUD', async () => {
+  it('server route still protects all 18 keys from generic CRUD', async () => {
     const fs = await import('fs');
     const routeSrc = fs.readFileSync(
       new URL('../../app/api/admin/platform-settings/route.ts', import.meta.url), 'utf-8',
     );
-    for (const key of CANONICAL_19) {
+    for (const key of CANONICAL_18) {
       expect(routeSrc).toContain(`'${key}'`);
     }
   });

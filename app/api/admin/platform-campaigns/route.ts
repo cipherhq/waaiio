@@ -3,6 +3,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
 import { validateISODate, validateDateOrdering, validateMarketScope } from '@/lib/platform-campaigns/validation';
+import { logAdminAudit } from '@/lib/admin-audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,13 +104,13 @@ export async function POST(request: NextRequest) {
   if (error) return NextResponse.json({ error: 'Failed to create campaign' }, { status: 500, headers: cors });
 
   // Audit log
-  await supabase.from('admin_audit_logs').insert({
-    actor_id: admin.userId,
+  await logAdminAudit({
+    actorId: admin.userId,
     action: 'platform_campaign_created',
-    entity_type: 'platform_campaign',
-    entity_id: data.id,
+    entityType: 'platform_campaign',
+    entityId: data.id,
     details: { name: data.name, campaign_type: data.campaign_type },
-  }).then(() => {}, () => {});
+  });
 
   return NextResponse.json({ data }, { status: 201, headers: cors });
 }

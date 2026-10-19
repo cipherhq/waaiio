@@ -173,7 +173,7 @@ describe('PlatformSettings — absent setting discoverability (#218)', () => {
     expect(within(row!).getByText('Minimum Bank Transfer')).toBeInTheDocument();
   });
 
-  it('3. Clicking Configure exposes the configuration UI with value input', async () => {
+  it('3. Clicking Configure exposes per-country number inputs (not JSON text box)', async () => {
     await navigateToPaymentsTab();
 
     const row = findUnconfiguredRow('minimum_bank_transfer');
@@ -182,67 +182,148 @@ describe('PlatformSettings — absent setting discoverability (#218)', () => {
     // Click the Configure button within THIS row
     await user.click(within(row!).getByRole('button', { name: /Configure/i }));
 
-    // Configuration UI should appear with value input and Create Setting button
-    expect(screen.getByPlaceholderText(/\{"NG": 5000/)).toBeInTheDocument();
+    // Country-amount form: one number input per country, no JSON text box
+    expect(screen.getByText(/Nigeria/)).toBeInTheDocument();
+    expect(screen.getByText(/Ghana/)).toBeInTheDocument();
+    const numberInputs = screen.getAllByRole('spinbutton');
+    expect(numberInputs.length).toBeGreaterThanOrEqual(2); // NG + GH
+    // No JSON placeholder
+    expect(screen.queryByPlaceholderText(/\{"NG"/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Create Setting/i })).toBeInTheDocument();
   });
 
-  it('4. Submitting uses save_commercial_config RPC for minimum_bank_transfer, not direct insert', async () => {
-    await navigateToPaymentsTab();
-
-    const row = findUnconfiguredRow('minimum_bank_transfer');
-    expect(row).not.toBeNull();
-    await user.click(within(row!).getByRole('button', { name: /Configure/i }));
-
-    const valueInput = screen.getByPlaceholderText(/\{"NG": 5000/);
-    await user.clear(valueInput);
-    await user.type(valueInput, '{{"NG": 5000, "GH": 5000}');
-
-    await user.click(screen.getByRole('button', { name: /Create Setting/i }));
-
-    // Verify save_commercial_config was called
-    await waitFor(() => {
-      const commercialCall = rpcCalls.find(c => c.fn === 'save_commercial_config');
-      expect(commercialCall).toBeDefined();
-      expect(commercialCall!.args.p_key).toBe('minimum_bank_transfer');
-    });
-
-    // No direct platform_settings insert for this key
-    const directInserts = insertCalls.filter(
-      c => c.table === 'platform_settings' && JSON.stringify(c.data).includes('minimum_bank_transfer'),
-    );
-    expect(directInserts).toHaveLength(0);
+  it('4. Commercial config uses step-up-protected server route (C6), not direct RPC', async () => {
+    // C6: PlatformSettings no longer calls adminDb.rpc('save_commercial_config').
+    // It uses saveCommercialViaStepUp which calls the step-up-protected server route.
+    const { readFileSync } = await import('fs');
+    const { resolve } = await import('path');
+    const src = readFileSync(resolve('src/pages/PlatformSettings.tsx'), 'utf-8');
+    // No direct RPC call
+    expect(src).not.toContain("adminDb.rpc('save_commercial_config'");
+    // Uses step-up-protected server route
+    expect(src).toContain('saveCommercialViaStepUp');
+    expect(src).toContain('/api/admin/platform-settings/commercial');
+    expect(src).toContain("actionType: 'commercial_config'");
   });
 
-  it('5. After creation, placeholder is gone and configured setting renders', async () => {
+  it('5. Configuration UI shows country-amount form for unconfigured commercial keys', async () => {
+    // C6: Full save flow requires step-up MFA (staging acceptance test).
+    // This test verifies the Configure UI is accessible with per-country inputs.
     await navigateToPaymentsTab();
 
     const row = findUnconfiguredRow('minimum_bank_transfer');
     expect(row).not.toBeNull();
     await user.click(within(row!).getByRole('button', { name: /Configure/i }));
 
-    const valueInput = screen.getByPlaceholderText(/\{"NG": 5000/);
-    await user.clear(valueInput);
-    await user.type(valueInput, '{{"NG": 10000}');
+    // Should show country labels and number inputs, not a JSON text box
+    expect(screen.getByText(/Nigeria/)).toBeInTheDocument();
+    expect(screen.getByText(/Ghana/)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/\{"NG"/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Create Setting/i })).toBeInTheDocument();
+  });
+});
 
-    await user.click(screen.getByRole('button', { name: /Create Setting/i }));
+describe('PlatformSettings — country-amount editor behavior', () => {
+  const user = userEvent.setup();
 
-    // After save, loadData re-runs. The mock adds minimum_bank_transfer to mockSettings.
-    // The unconfigured placeholder should be gone; the setting should render as configured.
-    await waitFor(() => {
-      const unconfiguredRow = findUnconfiguredRow('minimum_bank_transfer');
-      expect(unconfiguredRow).toBeNull();
+  beforeEach(() => {
+    rpcCalls.length = 0;
+    insertCalls.length = 0;
+    mockSettings.length = 0;
+    vi.clearAllMocks();
+
+    mockSupabase.auth.getSession.mockResolvedValue({
+      data: { session: { user: { id: 'test-user-id' }, access_token: 'mock-tok' } },
+    });
+  });
+
+  it('6. Editing existing minimum_payout renders number inputs per country', async () => {
+    mockSettings.push({
+      key: 'minimum_payout',
+      value: { NG: 5000, US: 2500, GB: 2000, CA: 2500, GH: 50 },
+      description: 'Min payout',
+      updated_by: null,
+      updated_at: null,
+      created_at: '2026-01-01T00:00:00Z',
     });
 
-    // The key should now appear as a configured setting (mono font key label, no amber bg)
+    render(<PlatformSettings />);
     await waitFor(() => {
-      const allKeyLabels = screen.getAllByText('minimum_bank_transfer');
-      // At least one should be in a configured (non-amber) row
-      const configuredLabel = allKeyLabels.find(el => {
-        const container = el.closest('[class*="px-5"]');
-        return container && !container.className.includes('bg-amber');
-      });
-      expect(configuredLabel).toBeDefined();
+      expect(screen.getByRole('button', { name: /Payments & Payouts/i })).toBeInTheDocument();
     });
+    await user.click(screen.getByRole('button', { name: /Payments & Payouts/i }));
+
+    // Should show per-country labels for minimum_payout
+    expect(screen.getByText(/Nigeria/)).toBeInTheDocument();
+    expect(screen.getByText(/United States/)).toBeInTheDocument();
+    expect(screen.getByText(/United Kingdom/)).toBeInTheDocument();
+    expect(screen.getByText(/Canada/)).toBeInTheDocument();
+    expect(screen.getByText(/Ghana/)).toBeInTheDocument();
+
+    // Should have number inputs (spinbuttons), not a JSON textarea
+    const inputs = screen.getAllByRole('spinbutton');
+    expect(inputs.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('7. Country-amount editor produces numbers not strings in edit state', async () => {
+    mockSettings.push({
+      key: 'minimum_payout',
+      value: { NG: 5000, US: 2500, GB: 2000, CA: 2500, GH: 50 },
+      description: 'Min payout',
+      updated_by: null,
+      updated_at: null,
+      created_at: '2026-01-01T00:00:00Z',
+    });
+
+    render(<PlatformSettings />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Payments & Payouts/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /Payments & Payouts/i }));
+
+    // Find the US input and change its value
+    const inputs = screen.getAllByRole('spinbutton');
+    // Inputs are ordered by country list: NG, US, GB, CA, GH
+    const usInput = inputs[1]; // Second input = US
+    await user.clear(usInput);
+    await user.type(usInput, '3000');
+
+    // The Save button should appear (change detected)
+    expect(screen.getByRole('button', { name: /^Save$/ })).toBeInTheDocument();
+
+    // Verify the internal JSON state has numbers, not strings.
+    // The CountryAmountEditor uses JSON.stringify, so the displayed value
+    // will be parsed by handleSave via JSON.parse. We verify the input
+    // value is a number type by checking the spinbutton's value attribute.
+    expect(usInput).toHaveValue(3000); // numeric value, not "3000" string
+  });
+
+  it('8. Save is disabled when a country box is empty (all countries required)', async () => {
+    mockSettings.push({
+      key: 'minimum_bank_transfer',
+      value: { NG: 5000, GH: 5000 },
+      description: 'Min bank transfer',
+      updated_by: null,
+      updated_at: null,
+      created_at: '2026-01-01T00:00:00Z',
+    });
+
+    render(<PlatformSettings />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Payments & Payouts/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /Payments & Payouts/i }));
+
+    // Clear the GH input (second input)
+    const inputs = screen.getAllByRole('spinbutton');
+    const ghInput = inputs[1]; // Second input = GH
+    await user.clear(ghInput);
+
+    // Save button should appear but be disabled
+    const saveBtn = screen.getByRole('button', { name: /^Save$/ });
+    expect(saveBtn).toBeDisabled();
+
+    // "Required" error should appear
+    expect(screen.getByText('Required')).toBeInTheDocument();
   });
 });

@@ -106,6 +106,7 @@ describe.skipIf(!canRun)('authenticated RLS behavior', () => {
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT '${ADMIN_ID}'::UUID;
       $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT count(*) FROM public.platform_config_versions;
     `);
@@ -113,11 +114,25 @@ describe.skipIf(!canRun)('authenticated RLS behavior', () => {
     expect(parseInt(count)).toBeGreaterThan(0);
   });
 
+  it('admin with aal1 JWT sees 0 rows in platform_config_versions (aal2 required)', () => {
+    const count = psql(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+        SELECT '${ADMIN_ID}'::UUID;
+      $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT count(*) FROM public.platform_config_versions;
+    `);
+    psql(`RESET ROLE`);
+    expect(parseInt(count)).toBe(0);
+  });
+
   it('non-admin sees 0 rows in platform_config_versions', () => {
     const count = psql(`
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT '${USER_ID}'::UUID;
       $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT count(*) FROM public.platform_config_versions;
     `);
@@ -144,51 +159,47 @@ describe.skipIf(!canRun)('SECURITY DEFINER RPC authorization', () => {
     `);
   });
 
-  it('save_commercial_config succeeds as authenticated admin', () => {
-    const result = psql(`
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-        SELECT '${ADMIN_ID}'::UUID;
-      $$ LANGUAGE SQL STABLE;
-      SET ROLE authenticated;
-      SELECT public.save_commercial_config('trial_days', '30'::jsonb, 'acl-test');
-    `);
-    psql(`RESET ROLE`);
-    // Should return a UUID (config version ID)
-    expect(result).toMatch(/^[0-9a-f]{8}-/);
-  });
-
-  it('save_commercial_config rejected as authenticated non-admin', () => {
+  // C6: After M439, authenticated EXECUTE is revoked on financial RPCs.
+  // Direct calls are denied at the ACL level, not the function's internal check.
+  it('save_commercial_config direct authenticated call denied (EXECUTE revoked)', () => {
     const result = psqlMayFail(`
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-        SELECT '${USER_ID}'::UUID;
-      $$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT public.save_commercial_config('trial_days', '30'::jsonb, 'acl-test');
     `);
-    expect(result).toContain('requires admin role');
+    expect(result).toContain('permission denied for function');
   });
 
-  it('toggle_messaging_suspension succeeds as authenticated admin', () => {
-    const result = psql(`
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-        SELECT '${ADMIN_ID}'::UUID;
-      $$ LANGUAGE SQL STABLE;
+  it('toggle_messaging_suspension direct authenticated call denied (EXECUTE revoked)', () => {
+    const result = psqlMayFail(`
       SET ROLE authenticated;
       SELECT public.toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'acl-test');
+    `);
+    expect(result).toContain('permission denied for function');
+  });
+
+  it('svc_toggle_messaging_suspension succeeds as service_role with admin actor', () => {
+    const result = psql(`
+      SET ROLE service_role;
+      SELECT public.svc_toggle_messaging_suspension('${ADMIN_ID}'::uuid, '${BIZ_ID}'::uuid, true, 'acl-test');
     `);
     psql(`RESET ROLE`);
     expect(result).toContain('"success": true');
   });
 
-  it('toggle_messaging_suspension rejected as authenticated non-admin', () => {
+  it('svc_toggle_messaging_suspension rejected for non-admin actor', () => {
     const result = psqlMayFail(`
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-        SELECT '${USER_ID}'::UUID;
-      $$ LANGUAGE SQL STABLE;
-      SET ROLE authenticated;
-      SELECT public.toggle_messaging_suspension('${BIZ_ID}'::uuid, false, 'acl-test');
+      SET ROLE service_role;
+      SELECT public.svc_toggle_messaging_suspension('${USER_ID}'::uuid, '${BIZ_ID}'::uuid, false, 'acl-test');
     `);
     expect(result).toContain('requires admin role');
+  });
+
+  it('svc_toggle_messaging_suspension not callable by authenticated', () => {
+    const result = psqlMayFail(`
+      SET ROLE authenticated;
+      SELECT public.svc_toggle_messaging_suspension('${ADMIN_ID}'::uuid, '${BIZ_ID}'::uuid, true, 'test');
+    `);
+    expect(result).toContain('permission denied for function');
   });
 });
 
@@ -231,4 +242,20 @@ describe.skipIf(!canRun)('helper definitions canonical', () => {
       expect(config).toContain('search_path=');
     }
   });
+});
+
+
+// SEC-005: moving Country mutations behind the server MFA boundary must also
+// eliminate the direct authenticated Supabase DML path (not only hide UI links).
+describe.skipIf(!canRun)('SEC-005 direct country mutation isolation', () => {
+  for (const dbRole of ['authenticated', 'anon'] as const) {
+    for (const privilege of ['INSERT', 'UPDATE', 'DELETE'] as const) {
+      it(`${dbRole} CANNOT ${privilege} countries directly after M439`, () => {
+        const result = psql(
+          `SELECT has_table_privilege('${dbRole}', 'public.countries', '${privilege}');`,
+        );
+        expect(result).toBe('f');
+      });
+    }
+  }
 });

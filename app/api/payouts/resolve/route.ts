@@ -19,12 +19,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
+  // Reject test bank code in production
+  if (bank_code === '001' && (process.env.WAAIIO_ENVIRONMENT === 'production' || !paystackSecretKey.startsWith('sk_test_'))) {
+    return NextResponse.json({ error: 'Invalid bank' }, { status: 400 });
+  }
+
   try {
     let accountName = '';
 
     if (gateway === 'paystack') {
       if (!paystackSecretKey) {
-        return NextResponse.json({ account_name: 'JOHN DOE (Mock)' });
+        return NextResponse.json(
+          { error: 'Payment provider not configured' },
+          { status: 503 },
+        );
       }
       const res = await fetch(
         `https://api.paystack.co/bank/resolve?account_number=${encodeURIComponent(account_number)}&bank_code=${encodeURIComponent(bank_code)}`,
@@ -37,7 +45,10 @@ export async function POST(request: NextRequest) {
       accountName = data.data.account_name;
     } else if (gateway === 'flutterwave') {
       if (!flutterwaveSecretKey) {
-        return NextResponse.json({ account_name: 'JOHN DOE (Mock)' });
+        return NextResponse.json(
+          { error: 'Payment provider not configured' },
+          { status: 503 },
+        );
       }
       const res = await fetch('https://api.flutterwave.com/v3/accounts/resolve', {
         method: 'POST',

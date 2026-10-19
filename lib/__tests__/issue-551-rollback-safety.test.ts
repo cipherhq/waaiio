@@ -24,7 +24,7 @@ vi.mock('@/lib/constants', async (importOriginal) => {
 
 // ── Route-level mocks ──
 
-const mockAdminUser = { userId: 'admin-1' };
+const mockAdminUser = { userId: 'admin-1', aal: 'aal2', bearerToken: 'test-bearer' };
 vi.mock('@/lib/admin-auth', () => ({
   requirePlatformAdmin: vi.fn().mockResolvedValue(mockAdminUser),
 }));
