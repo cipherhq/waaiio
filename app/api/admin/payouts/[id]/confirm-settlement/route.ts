@@ -49,6 +49,13 @@ export async function POST(
     }, { status: 400 });
   }
 
+  // DB column: business_payouts.transfer_reference VARCHAR(100)
+  if (transfer_reference.trim().length > 100) {
+    return NextResponse.json({
+      error: 'transfer_reference must be 100 characters or fewer',
+    }, { status: 400 });
+  }
+
   // ── Require explicit attestation ──
   if (attestation !== true) {
     return NextResponse.json({
