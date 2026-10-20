@@ -568,10 +568,8 @@ export default function AudiencesPage() {
     if (!business?.id) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/engage/segments/${id}`, {
+      const res = await fetch(`/api/engage/segments/${id}?businessId=${business.id}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessId: business.id }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
