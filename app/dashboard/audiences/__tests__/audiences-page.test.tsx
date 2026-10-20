@@ -978,3 +978,127 @@ describe('Multi-condition validation independence', () => {
     });
   });
 });
+
+/* ── 15. Stable validation identity under sibling removal ── */
+
+describe('Stable validation identity', () => {
+  it('removing a valid sibling does not clear an invalid condition error', async () => {
+    const threeConditions = {
+      type: 'all' as const,
+      children: [
+        { type: 'predicate' as const, source: 'contact' as const, field: 'name', operator: 'eq' as const, value: 'Alice' },
+        { type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [100] },
+        { type: 'predicate' as const, source: 'contact' as const, field: 'email', operator: 'eq' as const, value: 'test@example.com' },
+      ],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-stable', name: 'Stable Test', description: null, expression: threeConditions, is_dynamic: true, created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Stable Test')).toBeTruthy());
+    fireEvent.click(screen.getByText('Edit'));
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInput, { target: { value: '100, bad' } });
+    fireEvent.blur(arrayInput);
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+
+    // Remove Condition A (Alice) — the first valid sibling
+    const removeButtons = screen.getAllByLabelText('Remove condition');
+    fireEvent.click(removeButtons[0]);
+
+    // Condition B's error should STILL be present — save should still be blocked
+    expect(screen.getByRole('alert')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Update Audience'));
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    const putCall = fetchMock.mock.calls.find(
+      (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+    );
+    expect(putCall).toBeUndefined();
+  });
+
+  it('removing an invalid condition clears its error and allows save', async () => {
+    const twoConditions = {
+      type: 'all' as const,
+      children: [
+        { type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [100] },
+        { type: 'predicate' as const, source: 'contact' as const, field: 'name', operator: 'eq' as const, value: 'Alice' },
+      ],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-rm-inv', name: 'Remove Invalid', description: null, expression: twoConditions, is_dynamic: true, created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Remove Invalid')).toBeTruthy());
+    fireEvent.click(screen.getByText('Edit'));
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInput, { target: { value: '100, xyz' } });
+    fireEvent.blur(arrayInput);
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+
+    // Remove the invalid Condition A
+    const removeButtons = screen.getAllByLabelText('Remove condition');
+    fireEvent.click(removeButtons[0]);
+
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-rm-inv' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(
+        (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+      );
+      expect(putCall).toBeTruthy();
+    });
+  });
+
+  it('resetting the editor clears all validation state', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-reset', name: 'Reset Test', description: null, expression: {
+        type: 'all', children: [{ type: 'predicate', source: 'payment', field: 'amount', operator: 'in', value: [100] }],
+      }, is_dynamic: true, created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Reset Test')).toBeTruthy());
+    fireEvent.click(screen.getByText('Edit'));
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInput, { target: { value: 'bad' } });
+    fireEvent.blur(arrayInput);
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+
+    // Cancel → list. resetBuilder clears all state.
+    fireEvent.click(screen.getByText('Cancel'));
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+    await waitFor(() => expect(screen.getByText('+ New Audience')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('+ New Audience'));
+    fireEvent.change(screen.getByPlaceholderText(/Active Customers/i), { target: { value: 'Fresh' } });
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(201, { success: true, segment: { id: 'new' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Save Audience'));
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(
+        (c: [string, RequestInit?]) => c[1]?.method === 'POST',
+      );
+      expect(postCall).toBeTruthy();
+    });
+  });
+});

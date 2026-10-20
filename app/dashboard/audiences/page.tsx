@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useId, useRef } from 'react';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -124,16 +124,16 @@ function PredicateEditor({
   onChange,
   onRemove,
   onValidationChange,
-  validationKey,
 }: {
   predicate: Predicate;
   onChange: (p: Predicate) => void;
   onRemove: () => void;
   /** Reports whether this editor has uncommitted or invalid input, keyed by stable identity */
   onValidationChange?: (key: string, hasError: boolean) => void;
-  /** Stable identity for per-condition error tracking */
-  validationKey: string;
 }) {
+  // Stable identity for validation tracking — survives sibling add/remove
+  const stableKey = useId();
+
   const fields = FIELD_ALLOWLIST[predicate.source];
   const fieldNames = Object.keys(fields);
   const currentFieldDef = fields[predicate.field];
@@ -147,6 +147,12 @@ function PredicateEditor({
   // Validation errors for array tokens
   const [arrayErrors, setArrayErrors] = useState<string[]>([]);
 
+  // Clear this editor's validation error on unmount (condition removed)
+  useEffect(() => {
+    return () => { onValidationChange?.(stableKey, false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stableKey]);
+
   const handleSourceChange = (source: SourceFamily) => {
     const newFields = FIELD_ALLOWLIST[source];
     const firstField = Object.keys(newFields)[0];
@@ -154,7 +160,7 @@ function PredicateEditor({
     const firstOp = OPERATOR_TYPE_COMPAT[firstFieldType][0];
     setArrayDraft(null);
     setArrayErrors([]);
-    onValidationChange?.(validationKey, false);
+    onValidationChange?.(stableKey, false);
     onChange({ type: 'predicate', source, field: firstField, operator: firstOp, value: '' });
   };
 
@@ -164,7 +170,7 @@ function PredicateEditor({
     const op = ops.includes(predicate.operator) ? predicate.operator : ops[0];
     setArrayDraft(null);
     setArrayErrors([]);
-    onValidationChange?.(validationKey, false);
+    onValidationChange?.(stableKey, false);
     onChange({ ...predicate, field, operator: op, value: VALUE_FREE_OPS.has(op) ? undefined : '' });
   };
 
@@ -191,7 +197,7 @@ function PredicateEditor({
         if (ft === 'number') {
           // Numeric arrays cannot join to a valid scalar number — block and explain
           setArrayErrors([`Remove values until one remains before switching to "${OPERATOR_LABELS[operator]}"`]);
-          onValidationChange?.(validationKey, true);
+          onValidationChange?.(stableKey, true);
           return; // Do NOT change operator
         }
         // String arrays: join as comma-separated string for user to edit
@@ -203,7 +209,7 @@ function PredicateEditor({
         onChange({ ...predicate, operator, value: existing ?? '' });
       }
       setArrayErrors([]);
-      onValidationChange?.(validationKey, false);
+      onValidationChange?.(stableKey, false);
     }
   };
 
@@ -230,16 +236,16 @@ function PredicateEditor({
       if (errors.length === 0) {
         onChange({ ...predicate, value: result as unknown as string[] });
         setArrayDraft(null); // Clear draft only on successful commit
-        onValidationChange?.(validationKey, false);
+        onValidationChange?.(stableKey, false);
       } else {
         // Keep draft visible so the user can fix it — do NOT setArrayDraft(null)
-        onValidationChange?.(validationKey, true);
+        onValidationChange?.(stableKey, true);
       }
     } else {
       setArrayErrors([]);
       onChange({ ...predicate, value: tokens });
       setArrayDraft(null);
-      onValidationChange?.(validationKey, false);
+      onValidationChange?.(stableKey, false);
     }
   };
 
@@ -390,17 +396,20 @@ function GroupEditor({
   onRemove,
   depth,
   onValidationChange,
-  pathPrefix,
 }: {
   group: GroupExpression;
   onChange: (g: GroupExpression) => void;
   onRemove?: () => void;
   depth: number;
   onValidationChange?: (key: string, hasError: boolean) => void;
-  /** Path prefix for generating stable validation keys */
-  pathPrefix?: string;
 }) {
-  const prefix = pathPrefix || 'root';
+  // Stable React keys for children — survives sibling add/remove
+  const keyCounterRef = useRef(0);
+  const childKeysRef = useRef<string[]>([]);
+  // Ensure we have a stable key for each child
+  while (childKeysRef.current.length < group.children.length) {
+    childKeysRef.current.push(`ck-${keyCounterRef.current++}`);
+  }
 
   const updateChild = (index: number, child: AudienceExpression) => {
     const newChildren = [...group.children];
@@ -410,9 +419,9 @@ function GroupEditor({
 
   const removeChild = (index: number) => {
     if (group.children.length <= 1) return;
-    // Clear the removed child's validation error
-    const removedKey = `${prefix}.${index}`;
-    onValidationChange?.(removedKey, false);
+    // Remove the stable key for this index so React unmounts the correct component
+    childKeysRef.current.splice(index, 1);
+    // The removed PredicateEditor's useEffect cleanup will clear its own error
     const newChildren = group.children.filter((_, i) => i !== index);
     onChange({ ...group, children: newChildren });
   };
@@ -462,7 +471,7 @@ function GroupEditor({
 
       <div className="space-y-2">
         {group.children.map((child, i) => (
-          <div key={i}>
+          <div key={childKeysRef.current[i]}>
             {i > 0 && (
               <div className="my-1 flex items-center gap-2 px-3">
                 <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
@@ -476,7 +485,6 @@ function GroupEditor({
                 onChange={(p) => updateChild(i, p)}
                 onRemove={() => removeChild(i)}
                 onValidationChange={onValidationChange}
-                validationKey={`${prefix}.${i}`}
               />
             ) : (
               <GroupEditor
@@ -485,7 +493,6 @@ function GroupEditor({
                 onRemove={() => removeChild(i)}
                 depth={depth + 1}
                 onValidationChange={onValidationChange}
-                pathPrefix={`${prefix}.${i}`}
               />
             )}
           </div>
