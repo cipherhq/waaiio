@@ -101,4 +101,37 @@ describe('#551 admin-assisted onboarding authority contract', () => {
     expect(adminUi).toContain("'resend'");
     expect(adminUi).toContain("'cancel'");
   });
+
+  it('enforces operation-bound single-use step-up MFA and dedicated-channel protection on ensure_shared_channel', () => {
+    const waAssistanceUi = readFileSync('admin/src/pages/WhatsAppAssistance.tsx', 'utf8');
+    expect(actionRoute).toContain('consumeStepUp');
+    expect(actionRoute).toContain("'messaging_config'");
+    expect(actionRoute).toContain('STEP_UP_REQUIRED');
+    expect(actionRoute).toContain('allocateSharedChannelWithFallback');
+    expect(actionRoute).toContain('whatsapp_channel_candidates');
+    // stepUpId must be extracted from request body and passed as first positional arg
+    expect(actionRoute).toContain("body.stepUpId");
+    expect(actionRoute).toContain("stepUpId, 'messaging_config'");
+    // P1-1: Must use actual M391 candidate states, not invented ones
+    expect(actionRoute).toContain("'pending', 'validating', 'ready'");
+    expect(actionRoute).not.toContain("'discovered'");
+    expect(actionRoute).not.toContain("'verifying'");
+    expect(actionRoute).not.toContain("'verified'");
+    // P1-2: Must check errors on both dedicated-channel and candidate queries
+    expect(actionRoute).toContain('dedicatedErr');
+    expect(actionRoute).toContain('candidateErr');
+    // P2-2: Must use whatsapp_method (M429 column), not wa_method
+    expect(actionRoute).toContain('onboarding.whatsapp_method');
+    expect(actionRoute).not.toContain('onboarding.wa_method');
+    // P1-3: Race re-verification after step-up
+    expect(actionRoute).toContain('raceDedicated');
+    expect(actionRoute).toContain('raceCandidate');
+    // Client
+    expect(waAssistanceUi).toContain('useStepUp');
+    expect(waAssistanceUi).toContain('StepUpDialog');
+    expect(waAssistanceUi).toContain("actionType: 'messaging_config'");
+    expect(waAssistanceUi).toContain("operation: 'ensure_shared_channel'");
+    expect(waAssistanceUi).toContain('stepUpId');
+  });
 });
+

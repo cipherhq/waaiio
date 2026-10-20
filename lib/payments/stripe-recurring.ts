@@ -10,7 +10,7 @@ const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
 async function stripeRequest(
   path: string,
-  method: 'POST' | 'DELETE' = 'POST',
+  method: 'GET' | 'POST' | 'DELETE' = 'POST',
   body?: Record<string, string>,
 ): Promise<Record<string, unknown>> {
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
@@ -108,6 +108,21 @@ export async function createRecurringCheckout(opts: {
 /**
  * Cancel a Stripe subscription immediately.
  */
+/**
+ * Retrieve a Stripe subscription's current status.
+ * Returns the status string ('active', 'canceled', 'past_due', etc.) or null on error.
+ * Used for provider-state verification during ambiguous cancel recovery.
+ */
+export async function getSubscriptionStatus(subscriptionId: string): Promise<string | null> {
+  if (!stripeSecretKey) return null;
+  try {
+    const data = await stripeRequest(`/subscriptions/${encodeURIComponent(subscriptionId)}`, 'GET');
+    return (data.status as string) || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function cancelSubscription(subscriptionId: string): Promise<boolean> {
   if (!stripeSecretKey) {
     if (process.env.NODE_ENV === 'production') {

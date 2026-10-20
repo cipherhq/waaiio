@@ -1611,6 +1611,64 @@ jobs:
           fi
           echo "✅ M443 payment credentials least-privilege grant tests complete."
 
+      - name: "M452 cancellation intent + charge gate (disposable PG)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+
+          # ── Complete migration: 16 checks (RPCs, permissions, claim/dispatch/finalize lifecycle) ──
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_migration
+          createdb --maintenance-db=waaiio_test waaiio_pr605_migration
+          echo "Running M452 complete migration tests..."
+          set +e
+          OUTPUT_MIG=$(TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_pr605_migration node tests/run-605-complete-migration.mjs 2>&1)
+          MIG_EXIT=$?
+          set -e
+          echo "$OUTPUT_MIG"
+          if [ $MIG_EXIT -ne 0 ]; then echo "❌ M452 migration tests failed."; exit $MIG_EXIT; fi
+          PASS_MIG=$(echo "$OUTPUT_MIG" | grep -c "^PASS ")
+          echo "✅ M452 migration: $PASS_MIG checks passed."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_migration
+
+          # ── Concurrency: cancel-vs-dispatch races (6 checks) ──
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_race
+          createdb --maintenance-db=waaiio_test waaiio_pr605_race
+          echo "Running M452 concurrency race tests..."
+          set +e
+          OUTPUT_RACE=$(TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_pr605_race node tests/run-605-concurrency.mjs 2>&1)
+          RACE_EXIT=$?
+          set -e
+          echo "$OUTPUT_RACE"
+          if [ $RACE_EXIT -ne 0 ]; then echo "❌ M452 concurrency tests failed."; exit $RACE_EXIT; fi
+          PASS_RACE=$(echo "$OUTPUT_RACE" | grep -c "^PASS ")
+          echo "✅ M452 concurrency: $PASS_RACE checks passed."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_race
+
+          # ── Finalizer: idempotency + deadlock safety (8 checks) ──
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_finalizer
+          createdb --maintenance-db=waaiio_test waaiio_pr605_finalizer
+          echo "Running M452 finalizer idempotency + concurrency tests..."
+          set +e
+          OUTPUT_FIN=$(TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_pr605_finalizer node tests/run-605-finalizer.mjs 2>&1)
+          FIN_EXIT=$?
+          set -e
+          echo "$OUTPUT_FIN"
+          if [ $FIN_EXIT -ne 0 ]; then echo "❌ M452 finalizer tests failed."; exit $FIN_EXIT; fi
+          PASS_FIN=$(echo "$OUTPUT_FIN" | grep -c "^PASS ")
+          echo "✅ M452 finalizer: $PASS_FIN checks passed."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_finalizer
+
+          # ── Static + lock-order + provider-boundary (33 checks, no DB) ──
+          echo "Running M452 static and provider-boundary checks..."
+          node tests/verify-605-static.mjs
+          node tests/verify-finalizer-lock-order.mjs
+          node tests/verify-605-provider-boundary.mjs
+          echo "✅ M452 all disposable-PG and static checks complete."
+
       - name: "DB delta analysis (advisory)"
         env:
           PGHOST: localhost
@@ -3172,6 +3230,38 @@ jobs:
             exit 1
           fi
           echo "✅ Migration 430 shared-number tenant isolation tests complete — zero skips, zero failures."
+
+      - name: "PR #655 shared-vs-WABA concurrency tests (real PG)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running PR #655 shared allocation vs WABA candidate promotion concurrency tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/onboarding-655-concurrency-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ PR #655 concurrency tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ PR #655 concurrency tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No PR #655 concurrency tests passed."
+            exit 1
+          fi
+          echo "✅ PR #655 shared-vs-WABA concurrency tests complete — zero skips, zero failures."
 
       - name: "Migration 372 trial lifecycle tests"
         env:

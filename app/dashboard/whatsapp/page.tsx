@@ -275,12 +275,16 @@ export default function WhatsAppPage() {
       if (channelId) {
         const { data: ch } = await supabase
           .from('whatsapp_channels')
-          .select('phone_number')
+          .select('phone_number, channel_type')
           .eq('id', channelId)
           .maybeSingle();
         if (ch?.phone_number) {
           const num = ch.phone_number.replace(/[^0-9]/g, '');
-          setWhatsappLink(`https://wa.me/${num}`);
+          setWhatsappLink(
+            ch.channel_type !== 'dedicated' && business.bot_code
+              ? `https://wa.me/${num}?text=${encodeURIComponent(business.bot_code)}`
+              : `https://wa.me/${num}`,
+          );
           return;
         }
       }

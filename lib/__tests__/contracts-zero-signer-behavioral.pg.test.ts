@@ -62,7 +62,6 @@ describeDb('Migration 450: DB-level zero-signer trigger — behavioral', () => {
           CREATE ROLE authenticated NOLOGIN;
         END IF;
       END $$;
-      ALTER ROLE service_role BYPASSRLS;
     `);
 
     // Minimal auth schema
