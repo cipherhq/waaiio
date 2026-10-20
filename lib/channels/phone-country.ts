@@ -10,7 +10,10 @@ import { parsePhoneNumber } from 'libphonenumber-js';
 
 export function resolveRecipientCountry(e164Phone: string): string | null {
   try {
-    const parsed = parsePhoneNumber(e164Phone);
+    const normalized = e164Phone.trim();
+    // WhatsApp webhook payloads commonly omit the leading + from E.164 digits.
+    // Normalize only the prefix; never infer country from business/channel identity.
+    const parsed = parsePhoneNumber(normalized.startsWith('+') ? normalized : `+${normalized}`);
     if (!parsed || !parsed.country) return null;
     if (!parsed.isValid()) return null;
     return parsed.country;
