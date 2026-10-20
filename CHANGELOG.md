@@ -1,3 +1,32 @@
+## 2026-10-21 — Parties Phase B1: slug fix, guest tags, table seating (#661)
+
+### What changed
+- **M455**: Added `slug` VARCHAR(100) UNIQUE and `updated_at` TIMESTAMPTZ with auto-update trigger to `parties` table. Backfills existing rows with auto-generated slugs. Fixes P2 bug where dashboard generated share URLs referencing a non-existent `slug` column.
+- **M456**: Added `tags TEXT[] DEFAULT '{}'` to `event_invites` with partial GIN index for efficient tag-based filtering.
+- **M457**: Created `party_tables` table (RLS, capacity CHECK 1-500, UNIQUE party_id+name, admin read policy via `has_admin_role`). Added `table_id` and `seat_number` to `event_invites` (ON DELETE SET NULL).
+- **`lib/parties/slug.ts`**: Slug generation utility — `slugify(name)-random6` format with collision retry.
+- **`lib/parties/table-assignment.ts`**: Manual assign, unassign, reassign, bulk-assign-by-tag, and auto-assign (capacity-aware, fills by sort_order).
+- **`lib/actions/party-persistence.ts`**: `createParty` now auto-generates slug and returns `id`/`slug`. `updateParty` strips slug from payload (immutable once set).
+- **`app/api/events/invite/route.ts`**: Added `max_guests` capacity enforcement — rejects new invites with 409 when party is at capacity.
+- **`app/dashboard/parties/page.tsx`**: Guest tag management (inline editor, bulk tag, filter-by-tag), table CRUD, per-guest table assignment dropdown, auto-assign button, capacity indicators, CSV export includes tags.
+- **`lib/__tests__/issue-493-staging-readiness.test.ts`**: Updated `createParty` mock to match new `.insert().select().single()` chain.
+
+### Tests
+- 37 new tests in 3 files: `party-b1-foundation.test.ts` (14), `party-b1-tags.test.ts` (14), `party-b1-tables.test.ts` (9)
+- 78/78 affected tests pass. Build clean (0 type errors).
+
+### What could break
+- Code that calls `createParty` without handling the new `id`/`slug` return fields (backward compatible — old code just ignores them).
+- Queries on `event_invites` that `SELECT *` will now include `tags`, `table_id`, `seat_number` — existing code handles unknown columns gracefully.
+- Dashboard code references `party.slug` which now exists — share URLs will use slugs instead of UUIDs for new parties.
+- **Migrations not yet applied.** Until M455-457 are applied, `slug`/`tags`/`table_id`/`seat_number` columns don't exist and new features won't work.
+
+### Not included (deferred to B2)
+- Named plus-ones with individual QR passes
+- Check-in system with HMAC-signed tokens
+- Custom RSVP questions
+- Party messaging/broadcasting
+
 ### PR #605 offline payment cancellation gate candidate (2026-10-19)
 - Proposed M452 (NOT applied): cancellation intent + Paystack/Flutterwave claim and dispatch gates with subscription-first locking.
 - Retry cron: executable Paystack pre-provider guard and bounded post-cancellation reconciliation of in-flight attempts using existing verify_attempts CAS rotation.
