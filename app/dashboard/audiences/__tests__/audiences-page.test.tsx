@@ -508,8 +508,9 @@ describe('Array operator (in/not_in) handling', () => {
     const arrayInput = screen.getByLabelText('List values (comma-separated)');
     expect((arrayInput as HTMLInputElement).value).toBe('100, 200, 500');
 
-    // Edit the values
+    // Edit the values — change triggers draft, blur commits
     fireEvent.change(arrayInput, { target: { value: '100, 300, 700' } });
+    fireEvent.blur(arrayInput);
 
     // Save and verify number types are preserved
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-num-arr' } }));
@@ -573,11 +574,11 @@ describe('Array operator (in/not_in) handling', () => {
 
     fireEvent.click(screen.getByText('Edit'));
 
-    // Switch from 'in' to 'eq'
+    // Switch from 'in' to 'eq' — all values preserved as joined string
     const operatorSelect = screen.getByDisplayValue('is one of');
     fireEvent.change(operatorSelect, { target: { value: 'eq' } });
 
-    // Save — should take first element from array
+    // Save — should preserve all values as joined string, not silently truncate
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-back' } }));
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
 
@@ -587,8 +588,120 @@ describe('Array operator (in/not_in) handling', () => {
       const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
       const body = JSON.parse(putCall![1]!.body as string);
       expect(body.expression.children[0].operator).toBe('eq');
-      expect(body.expression.children[0].value).toBe('completed');
+      // All values preserved as joined string — user can see and edit
+      expect(body.expression.children[0].value).toBe('completed, delivered');
       expect(Array.isArray(body.expression.children[0].value)).toBe(false);
+    });
+  });
+});
+
+/* ── 11. Draft input preservation and validation ── */
+
+describe('Array draft input behavior', () => {
+  it('preserves commas during typing — draft is not immediately committed', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByTestId('empty-state')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('empty-action'));
+
+    // Switch to 'in' operator
+    const operatorSelect = screen.getByDisplayValue('equals');
+    fireEvent.change(operatorSelect, { target: { value: 'in' } });
+
+    // Type incrementally including a trailing comma
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInput, { target: { value: 'hello,' } });
+
+    // The trailing comma should be preserved in the input (draft mode)
+    expect((arrayInput as HTMLInputElement).value).toBe('hello,');
+  });
+
+  it('commits values on blur, stripping empty tokens', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByTestId('empty-state')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('empty-action'));
+    fireEvent.change(screen.getByPlaceholderText(/Active Customers/i), { target: { value: 'Blur Test' } });
+
+    const operatorSelect = screen.getByDisplayValue('equals');
+    fireEvent.change(operatorSelect, { target: { value: 'in' } });
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInput, { target: { value: 'alpha, beta, gamma' } });
+    fireEvent.blur(arrayInput);
+
+    // After blur, save and verify the committed array
+    fetchMock.mockResolvedValueOnce(jsonResponse(201, { success: true, segment: { id: 'new' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Save Audience'));
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(
+        (c: [string, RequestInit?]) => c[1]?.method === 'POST',
+      );
+      const body = JSON.parse(postCall![1]!.body as string);
+      expect(body.expression.children[0].value).toEqual(['alpha', 'beta', 'gamma']);
+    });
+  });
+
+  it('shows validation error for invalid numeric tokens instead of silently dropping', async () => {
+    const numExpression = {
+      type: 'all' as const,
+      children: [{ type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [100, 200] }],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-num', name: 'Num Validate', description: null, expression: numExpression, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Num Validate')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    // Type an invalid number
+    fireEvent.change(arrayInput, { target: { value: '100, abc, 300' } });
+    fireEvent.blur(arrayInput);
+
+    // Should show an error for "abc"
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeTruthy();
+      expect(screen.getByText(/not a valid number/i)).toBeTruthy();
+    });
+  });
+
+  it('commits on Enter key press', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByTestId('empty-state')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('empty-action'));
+    fireEvent.change(screen.getByPlaceholderText(/Active Customers/i), { target: { value: 'Enter Test' } });
+
+    const operatorSelect = screen.getByDisplayValue('equals');
+    fireEvent.change(operatorSelect, { target: { value: 'in' } });
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInput, { target: { value: 'one, two, three' } });
+    fireEvent.keyDown(arrayInput, { key: 'Enter' });
+
+    // Save and verify committed values
+    fetchMock.mockResolvedValueOnce(jsonResponse(201, { success: true, segment: { id: 'new' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Save Audience'));
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(
+        (c: [string, RequestInit?]) => c[1]?.method === 'POST',
+      );
+      const body = JSON.parse(postCall![1]!.body as string);
+      expect(body.expression.children[0].value).toEqual(['one', 'two', 'three']);
     });
   });
 });

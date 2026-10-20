@@ -135,22 +135,34 @@ function PredicateEditor({
     ? OPERATOR_TYPE_COMPAT[currentFieldDef.type]
     : OPERATOR_TYPE_COMPAT.string;
 
+  // Draft string for array input — prevents comma loss during typing.
+  // null means "not editing, display from predicate.value"
+  const [arrayDraft, setArrayDraft] = useState<string | null>(null);
+  // Validation errors for array tokens
+  const [arrayErrors, setArrayErrors] = useState<string[]>([]);
+
   const handleSourceChange = (source: SourceFamily) => {
     const newFields = FIELD_ALLOWLIST[source];
     const firstField = Object.keys(newFields)[0];
     const firstFieldType = newFields[firstField].type;
     const firstOp = OPERATOR_TYPE_COMPAT[firstFieldType][0];
+    setArrayDraft(null);
+    setArrayErrors([]);
     onChange({ type: 'predicate', source, field: firstField, operator: firstOp, value: '' });
   };
 
   const handleFieldChange = (field: string) => {
-    const fieldType = fields[field]?.type || 'string';
-    const ops = OPERATOR_TYPE_COMPAT[fieldType];
+    const ft = fields[field]?.type || 'string';
+    const ops = OPERATOR_TYPE_COMPAT[ft];
     const op = ops.includes(predicate.operator) ? predicate.operator : ops[0];
+    setArrayDraft(null);
+    setArrayErrors([]);
     onChange({ ...predicate, field, operator: op, value: VALUE_FREE_OPS.has(op) ? undefined : '' });
   };
 
   const handleOperatorChange = (operator: Operator) => {
+    setArrayDraft(null);
+    setArrayErrors([]);
     if (VALUE_FREE_OPS.has(operator)) {
       onChange({ ...predicate, operator, value: undefined });
     } else if (ARRAY_OPS.has(operator)) {
@@ -164,10 +176,11 @@ function PredicateEditor({
         onChange({ ...predicate, operator, value: [] as string[] });
       }
     } else {
-      // Switching FROM array operator to scalar: take first element
+      // Switching FROM array operator to scalar: preserve all values as joined string
+      // so the user can see what they had and edit down, instead of silent truncation
       const existing = predicate.value;
-      if (Array.isArray(existing)) {
-        onChange({ ...predicate, operator, value: existing[0] ?? '' });
+      if (Array.isArray(existing) && existing.length > 0) {
+        onChange({ ...predicate, operator, value: existing.join(', ') });
       } else {
         onChange({ ...predicate, operator, value: existing ?? '' });
       }
@@ -175,37 +188,50 @@ function PredicateEditor({
   };
 
   /**
-   * Parse a comma-separated input string into a typed array for in/not_in.
-   * The DSL validator requires typeof===number for number fields, so we
-   * parse numeric values. The Predicate.value type only includes string[],
-   * not number[], so we cast through unknown for numeric arrays.
+   * Commit the draft string into a typed array on blur.
+   * Invalid numeric tokens produce validation errors instead of being silently dropped.
    */
-  const parseArrayInput = (raw: string): string[] => {
+  const commitArrayDraft = (raw: string) => {
     const ft = currentFieldDef?.type || 'string';
-    const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+    const tokens = raw.split(',').map(s => s.trim()).filter(Boolean);
+    const errors: string[] = [];
+
     if (ft === 'number') {
-      return parts.map(Number).filter(n => isFinite(n)) as unknown as string[];
+      const result: number[] = [];
+      for (const t of tokens) {
+        const n = Number(t);
+        if (!isFinite(n)) {
+          errors.push(`"${t}" is not a valid number`);
+        } else {
+          result.push(n);
+        }
+      }
+      setArrayErrors(errors);
+      if (errors.length === 0) {
+        onChange({ ...predicate, value: result as unknown as string[] });
+      }
+      // When there are errors, do NOT update predicate.value — keep the draft
+      // visible so the user can fix it. The save/preview button checks arrayErrors.
+    } else {
+      setArrayErrors([]);
+      onChange({ ...predicate, value: tokens });
     }
-    return parts;
+    setArrayDraft(null);
   };
 
   const handleScalarValueChange = (value: string) => {
-    const fieldType = currentFieldDef?.type || 'string';
-    if (fieldType === 'number') {
+    const ft = currentFieldDef?.type || 'string';
+    if (ft === 'number') {
       const num = parseFloat(value);
       onChange({ ...predicate, value: isNaN(num) ? value : num });
-    } else if (fieldType === 'boolean') {
+    } else if (ft === 'boolean') {
       onChange({ ...predicate, value: value === 'true' });
     } else {
       onChange({ ...predicate, value });
     }
   };
 
-  const handleArrayInputChange = (raw: string) => {
-    onChange({ ...predicate, value: parseArrayInput(raw) });
-  };
-
-  /** Display value for array fields — join for editing */
+  /** Display value for array fields — used when NOT actively editing */
   const arrayDisplayValue = (): string => {
     const val = predicate.value;
     if (Array.isArray(val)) return val.join(', ');
@@ -216,6 +242,7 @@ function PredicateEditor({
   const needsValue = !VALUE_FREE_OPS.has(predicate.operator);
   const isArrayOp = ARRAY_OPS.has(predicate.operator);
   const fieldType = currentFieldDef?.type || 'string';
+  const hasArrayErrors = arrayErrors.length > 0;
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
@@ -257,13 +284,24 @@ function PredicateEditor({
         <div className="min-w-[180px] flex-1">
           <input
             type="text"
-            value={arrayDisplayValue()}
-            onChange={(e) => handleArrayInputChange(e.target.value)}
+            value={arrayDraft !== null ? arrayDraft : arrayDisplayValue()}
+            onChange={(e) => setArrayDraft(e.target.value)}
+            onBlur={(e) => commitArrayDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitArrayDraft((e.target as HTMLInputElement).value); } }}
             placeholder={fieldType === 'number' ? 'e.g. 100, 200, 300' : fieldType === 'uuid' ? 'UUID, UUID, ...' : 'value1, value2, value3'}
-            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+            className={`w-full rounded-md border px-2 py-1.5 text-sm ${
+              hasArrayErrors
+                ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/10'
+                : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
+            }`}
             aria-label="List values (comma-separated)"
           />
-          {Array.isArray(predicate.value) && predicate.value.length > 0 && (
+          {hasArrayErrors && (
+            <div className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">
+              {arrayErrors.map((err, i) => <div key={i}>{err}</div>)}
+            </div>
+          )}
+          {!hasArrayErrors && Array.isArray(predicate.value) && predicate.value.length > 0 && arrayDraft === null && (
             <div className="mt-1 flex flex-wrap gap-1">
               {(predicate.value as (string | number)[]).map((v, i) => (
                 <span
