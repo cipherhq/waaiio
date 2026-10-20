@@ -645,6 +645,53 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
     await admin.query(`DELETE FROM public.admin_step_up_authorizations WHERE session_id = 'test-force'`);
   });
 
+  it('force-settle adjustment is negative and does not inflate future available balance', async () => {
+    await seedScenario();
+
+    // Refund payment1 to create shortfall
+    await admin.query(`
+      INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, initiated_by, dispatched_at, gateway_refund_reference)
+      VALUES ('${REFUND1}', '${PAYMENT1}', '${BIZ}', 5000, 'provider_success_unfinalized', 'paystack', '${ADMIN}', now(), 'gw-ref-1');
+    `);
+    await admin.query(`SELECT finalize_refund_execution('${REFUND1}')`);
+
+    // Force-settle creates a negative adjustment
+    await admin.query(`
+      SELECT * FROM force_settle_executed_transfer('${PAYOUT1}', 'NIP-BAL', 'Refund after transfer', true, '${ADMIN}')
+    `);
+
+    // Now compute available balance for a SECOND payout in the next period.
+    // The negative adjustment must reduce the pool, not inflate it.
+    const bal = await admin.query(`
+      SELECT
+        COALESCE(SUM(transaction_amount), 0) AS gross,
+        COALESCE(SUM(CASE WHEN NOT waived THEN fee_total ELSE 0 END), 0) AS fees,
+        COALESCE(SUM(gateway_fee), 0) AS gw
+      FROM public.platform_fees
+      WHERE business_id = '${BIZ}' AND is_direct_transfer = false AND refunded_at IS NULL
+    `);
+    const adj = await admin.query(`
+      SELECT COALESCE(SUM(amount), 0) AS adj FROM public.payout_adjustments WHERE business_id = '${BIZ}'
+    `);
+    const prior = await admin.query(`
+      SELECT COALESCE(SUM(net_amount), 0) AS paid FROM public.business_payouts
+      WHERE business_id = '${BIZ}' AND status IN ('paid', 'processing', 'review_required')
+    `);
+
+    const gross = parseFloat(bal.rows[0].gross);    // 8000 (only fee2 after refund)
+    const fees = parseFloat(bal.rows[0].fees);       // 240
+    const gw = parseFloat(bal.rows[0].gw);           // 80
+    const adjSum = parseFloat(adj.rows[0].adj);      // negative (force-settle adjustment)
+    const priorPaid = parseFloat(prior.rows[0].paid); // 12480 (the force-settled payout)
+
+    const available = Math.max(0, gross - fees - gw + adjSum - priorPaid);
+
+    // The adjustment is NEGATIVE — it makes the pool smaller, not larger
+    expect(adjSum).toBeLessThan(0);
+    // Available balance for next payout must be 0 (pool exhausted)
+    expect(available).toBe(0);
+  });
+
   it('force_settle_executed_transfer: SECURITY DEFINER + service_role only', async () => {
     const cfg = await admin.query(`
       SELECT p.proconfig, p.prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
