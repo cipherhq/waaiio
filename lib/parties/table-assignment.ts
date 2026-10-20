@@ -1,18 +1,15 @@
 /**
  * Party table assignment logic — Phase B1-2 (#661)
- * Handles manual, bulk (by tag), and auto seat assignments
- * with capacity enforcement and concurrency protection.
+ *
+ * All assignments go through database RPCs that enforce:
+ *   - Party membership (guest.party_id = table.party_id)
+ *   - Business isolation (guest.business_id = table.business_id)
+ *   - Capacity limits (FOR UPDATE serialization on party_tables row)
+ *   - All-or-nothing bulk operations
+ *
+ * Direct UPDATE of event_invites.table_id is also protected by triggers.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-
-export interface PartyTable {
-  id: string;
-  party_id: string;
-  business_id: string;
-  name: string;
-  capacity: number;
-  sort_order: number;
-}
 
 export interface AssignmentResult {
   success: boolean;
@@ -22,23 +19,8 @@ export interface AssignmentResult {
 }
 
 /**
- * Get the current seat count for a table.
- * Uses a count query (not SELECT *) for efficiency.
- */
-export async function getTableSeatCount(
-  supabase: SupabaseClient,
-  tableId: string,
-): Promise<number> {
-  const { count } = await supabase
-    .from('event_invites')
-    .select('*', { count: 'exact', head: true })
-    .eq('table_id', tableId);
-  return count ?? 0;
-}
-
-/**
- * Manual assign: assign a single guest to a specific table + optional seat.
- * Enforces capacity. Rejects if table is full.
+ * Assign a single guest to a table via RPC.
+ * The database trigger enforces capacity, party membership, and business isolation.
  */
 export async function assignGuest(
   supabase: SupabaseClient,
@@ -46,60 +28,52 @@ export async function assignGuest(
   tableId: string,
   seatNumber?: number,
 ): Promise<AssignmentResult> {
-  // Fetch table to check capacity
-  const { data: table, error: tableErr } = await supabase
-    .from('party_tables')
-    .select('id, capacity, party_id')
-    .eq('id', tableId)
-    .single();
-
-  if (tableErr || !table) {
-    return { success: false, error: 'Table not found' };
-  }
-
-  // Count current occupancy
-  const currentCount = await getTableSeatCount(supabase, tableId);
-  if (currentCount >= table.capacity) {
-    return { success: false, error: `Table is full (${currentCount}/${table.capacity})` };
-  }
-
-  // Assign — conditional on capacity not being exceeded
-  const update: Record<string, unknown> = { table_id: tableId };
-  if (seatNumber !== undefined) update.seat_number = seatNumber;
-
-  const { error } = await supabase
-    .from('event_invites')
-    .update(update)
-    .eq('id', inviteId);
+  const { data, error } = await supabase.rpc('assign_guest_to_table', {
+    p_invite_id: inviteId,
+    p_table_id: tableId,
+    p_seat_number: seatNumber ?? null,
+  });
 
   if (error) {
     return { success: false, error: `Assignment failed: ${error.message}` };
+  }
+
+  const result = data as { success: boolean; error?: string };
+  if (!result.success) {
+    return { success: false, error: result.error || 'Assignment denied' };
   }
 
   return { success: true, assigned: 1 };
 }
 
 /**
- * Unassign: remove a guest from their table.
+ * Unassign a guest from their table via RPC (pass null table_id).
  */
 export async function unassignGuest(
   supabase: SupabaseClient,
   inviteId: string,
 ): Promise<AssignmentResult> {
-  const { error } = await supabase
-    .from('event_invites')
-    .update({ table_id: null, seat_number: null })
-    .eq('id', inviteId);
+  const { data, error } = await supabase.rpc('assign_guest_to_table', {
+    p_invite_id: inviteId,
+    p_table_id: null,
+    p_seat_number: null,
+  });
 
   if (error) {
     return { success: false, error: `Unassignment failed: ${error.message}` };
   }
+
+  const result = data as { success: boolean; error?: string };
+  if (!result.success) {
+    return { success: false, error: result.error || 'Unassignment failed' };
+  }
+
   return { success: true };
 }
 
 /**
- * Reassign: move a guest from one table to another.
- * Checks capacity on the destination table.
+ * Reassign a guest to a different table.
+ * Capacity check on destination is enforced by the database trigger.
  */
 export async function reassignGuest(
   supabase: SupabaseClient,
@@ -107,13 +81,12 @@ export async function reassignGuest(
   newTableId: string,
   newSeatNumber?: number,
 ): Promise<AssignmentResult> {
-  // Just assign to new table — capacity check is in assignGuest
   return assignGuest(supabase, inviteId, newTableId, newSeatNumber);
 }
 
 /**
- * Bulk assign by tag: assign all guests with a specific tag to a table.
- * Skips guests already assigned to any table. Respects capacity.
+ * Bulk assign guests to a table via RPC.
+ * All-or-nothing: if any guest violates constraints, entire batch rolls back.
  */
 export async function bulkAssignByTag(
   supabase: SupabaseClient,
@@ -121,25 +94,6 @@ export async function bulkAssignByTag(
   tag: string,
   tableId: string,
 ): Promise<AssignmentResult> {
-  // Fetch table capacity
-  const { data: table, error: tableErr } = await supabase
-    .from('party_tables')
-    .select('id, capacity')
-    .eq('id', tableId)
-    .single();
-
-  if (tableErr || !table) {
-    return { success: false, error: 'Table not found' };
-  }
-
-  // Get current occupancy
-  const currentCount = await getTableSeatCount(supabase, tableId);
-  const available = table.capacity - currentCount;
-
-  if (available <= 0) {
-    return { success: false, error: 'Table is already full' };
-  }
-
   // Fetch unassigned guests with this tag
   const { data: candidates } = await supabase
     .from('event_invites')
@@ -152,24 +106,30 @@ export async function bulkAssignByTag(
     return { success: true, assigned: 0, skipped: 0 };
   }
 
-  // Assign up to available capacity
-  const toAssign = candidates.slice(0, available);
-  const skipped = candidates.length - toAssign.length;
+  const inviteIds = candidates.map(c => c.id);
 
-  for (const guest of toAssign) {
-    await supabase
-      .from('event_invites')
-      .update({ table_id: tableId })
-      .eq('id', guest.id);
+  // Use bulk RPC — all-or-nothing with capacity enforcement
+  const { data, error } = await supabase.rpc('bulk_assign_guests_to_table', {
+    p_invite_ids: inviteIds,
+    p_table_id: tableId,
+  });
+
+  if (error) {
+    return { success: false, error: `Bulk assignment failed: ${error.message}` };
   }
 
-  return { success: true, assigned: toAssign.length, skipped };
+  const result = data as { success: boolean; assigned?: number; error?: string };
+  if (!result.success) {
+    return { success: false, error: result.error || 'Bulk assignment denied' };
+  }
+
+  return { success: true, assigned: result.assigned ?? inviteIds.length, skipped: 0 };
 }
 
 /**
  * Auto-assign: distribute unassigned guests across tables with available capacity.
- * Fills tables in sort_order, respecting capacity limits.
- * Only assigns guests for the specified party.
+ * Each table assignment is a separate bulk RPC call.
+ * Fills tables in sort_order.
  */
 export async function autoAssign(
   supabase: SupabaseClient,
@@ -201,32 +161,37 @@ export async function autoAssign(
     return { success: true, assigned: 0, skipped: 0 };
   }
 
-  // Build availability map
-  const availability: { tableId: string; available: number }[] = [];
-  for (const table of tables) {
-    const count = await getTableSeatCount(supabase, table.id);
-    const avail = table.capacity - count;
-    if (avail > 0) {
-      availability.push({ tableId: table.id, available: avail });
-    }
-  }
-
-  let assigned = 0;
+  // Get current occupancy per table
+  let totalAssigned = 0;
   let guestIdx = 0;
 
-  for (const slot of availability) {
-    let filled = 0;
-    while (filled < slot.available && guestIdx < unassigned.length) {
-      await supabase
-        .from('event_invites')
-        .update({ table_id: slot.tableId })
-        .eq('id', unassigned[guestIdx].id);
-      filled++;
-      assigned++;
-      guestIdx++;
+  for (const table of tables) {
+    if (guestIdx >= unassigned.length) break;
+
+    const { count } = await supabase
+      .from('event_invites')
+      .select('*', { count: 'exact', head: true })
+      .eq('table_id', table.id);
+
+    const available = table.capacity - (count ?? 0);
+    if (available <= 0) continue;
+
+    // Take up to 'available' guests
+    const batch = unassigned.slice(guestIdx, guestIdx + available).map(g => g.id);
+
+    // Use bulk RPC for atomic assignment
+    const { data, error } = await supabase.rpc('bulk_assign_guests_to_table', {
+      p_invite_ids: batch,
+      p_table_id: table.id,
+    });
+
+    if (!error && data?.success) {
+      totalAssigned += data.assigned ?? batch.length;
+      guestIdx += batch.length;
     }
+    // If a table fails, skip it and try the next one
   }
 
-  const skipped = unassigned.length - assigned;
-  return { success: true, assigned, skipped };
+  const skipped = unassigned.length - totalAssigned;
+  return { success: true, assigned: totalAssigned, skipped };
 }
