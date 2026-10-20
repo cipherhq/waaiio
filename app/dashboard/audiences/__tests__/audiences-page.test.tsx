@@ -873,3 +873,108 @@ describe('Numeric array-to-scalar operator conversion', () => {
     });
   });
 });
+
+/* ── 14. Multi-condition independent error tracking ── */
+
+describe('Multi-condition validation independence', () => {
+  it('valid edit on Condition B does NOT clear invalid Condition A — save blocked', async () => {
+    // Two conditions: one numeric in (will be made invalid), one string eq (valid)
+    const twoConditionExpression = {
+      type: 'all' as const,
+      children: [
+        { type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [100] },
+        { type: 'predicate' as const, source: 'contact' as const, field: 'name', operator: 'eq' as const, value: 'Alice' },
+      ],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-multi', name: 'Multi Test', description: null, expression: twoConditionExpression, is_dynamic: true, created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Multi Test')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    // Make Condition A invalid: type bad numeric data and blur
+    const arrayInputs = screen.getAllByLabelText('List values (comma-separated)');
+    expect(arrayInputs.length).toBe(1); // Only the in/not_in condition has this label
+    fireEvent.change(arrayInputs[0], { target: { value: '100, bad' } });
+    fireEvent.blur(arrayInputs[0]);
+
+    // Confirm error appears
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+
+    // Now edit Condition B (the valid string eq) — change value
+    const textInputs = screen.getAllByPlaceholderText('Value');
+    // Find the one showing 'Alice'
+    const aliceInput = textInputs.find(el => (el as HTMLInputElement).value === 'Alice');
+    expect(aliceInput).toBeTruthy();
+    fireEvent.change(aliceInput!, { target: { value: 'Bob' } });
+
+    // Condition A's error should STILL be present
+    expect(screen.getByRole('alert')).toBeTruthy();
+
+    // Try to save — should be BLOCKED because Condition A is still invalid
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    const putCall = fetchMock.mock.calls.find(
+      (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+    );
+    expect(putCall).toBeUndefined();
+
+    // User should see the blocking message
+    expect(screen.getByText(/Fix invalid values/i)).toBeTruthy();
+  });
+
+  it('fixing the invalid condition then allows save', async () => {
+    const twoConditionExpression = {
+      type: 'all' as const,
+      children: [
+        { type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [100] },
+        { type: 'predicate' as const, source: 'contact' as const, field: 'name', operator: 'eq' as const, value: 'Alice' },
+      ],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-fix', name: 'Fix Test', description: null, expression: twoConditionExpression, is_dynamic: true, created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Fix Test')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    // Make Condition A invalid
+    const arrayInputs = screen.getAllByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInputs[0], { target: { value: '100, bad' } });
+    fireEvent.blur(arrayInputs[0]);
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+
+    // Now fix Condition A
+    fireEvent.change(arrayInputs[0], { target: { value: '100, 200' } });
+    fireEvent.blur(arrayInputs[0]);
+
+    // Error should clear
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+
+    // Save should now succeed
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-fix' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(
+        (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+      );
+      expect(putCall).toBeTruthy();
+      const body = JSON.parse(putCall![1]!.body as string);
+      expect(body.expression.children[0].value).toEqual([100, 200]);
+      expect(body.expression.children[1].value).toBe('Alice');
+    });
+  });
+});

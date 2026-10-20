@@ -124,12 +124,15 @@ function PredicateEditor({
   onChange,
   onRemove,
   onValidationChange,
+  validationKey,
 }: {
   predicate: Predicate;
   onChange: (p: Predicate) => void;
   onRemove: () => void;
-  /** Reports whether this editor has uncommitted or invalid input */
-  onValidationChange?: (hasError: boolean) => void;
+  /** Reports whether this editor has uncommitted or invalid input, keyed by stable identity */
+  onValidationChange?: (key: string, hasError: boolean) => void;
+  /** Stable identity for per-condition error tracking */
+  validationKey: string;
 }) {
   const fields = FIELD_ALLOWLIST[predicate.source];
   const fieldNames = Object.keys(fields);
@@ -151,7 +154,7 @@ function PredicateEditor({
     const firstOp = OPERATOR_TYPE_COMPAT[firstFieldType][0];
     setArrayDraft(null);
     setArrayErrors([]);
-    onValidationChange?.(false);
+    onValidationChange?.(validationKey, false);
     onChange({ type: 'predicate', source, field: firstField, operator: firstOp, value: '' });
   };
 
@@ -161,7 +164,7 @@ function PredicateEditor({
     const op = ops.includes(predicate.operator) ? predicate.operator : ops[0];
     setArrayDraft(null);
     setArrayErrors([]);
-    onValidationChange?.(false);
+    onValidationChange?.(validationKey, false);
     onChange({ ...predicate, field, operator: op, value: VALUE_FREE_OPS.has(op) ? undefined : '' });
   };
 
@@ -188,7 +191,7 @@ function PredicateEditor({
         if (ft === 'number') {
           // Numeric arrays cannot join to a valid scalar number — block and explain
           setArrayErrors([`Remove values until one remains before switching to "${OPERATOR_LABELS[operator]}"`]);
-          onValidationChange?.(true);
+          onValidationChange?.(validationKey, true);
           return; // Do NOT change operator
         }
         // String arrays: join as comma-separated string for user to edit
@@ -200,7 +203,7 @@ function PredicateEditor({
         onChange({ ...predicate, operator, value: existing ?? '' });
       }
       setArrayErrors([]);
-      onValidationChange?.(false);
+      onValidationChange?.(validationKey, false);
     }
   };
 
@@ -227,16 +230,16 @@ function PredicateEditor({
       if (errors.length === 0) {
         onChange({ ...predicate, value: result as unknown as string[] });
         setArrayDraft(null); // Clear draft only on successful commit
-        onValidationChange?.(false);
+        onValidationChange?.(validationKey, false);
       } else {
         // Keep draft visible so the user can fix it — do NOT setArrayDraft(null)
-        onValidationChange?.(true);
+        onValidationChange?.(validationKey, true);
       }
     } else {
       setArrayErrors([]);
       onChange({ ...predicate, value: tokens });
       setArrayDraft(null);
-      onValidationChange?.(false);
+      onValidationChange?.(validationKey, false);
     }
   };
 
@@ -387,13 +390,18 @@ function GroupEditor({
   onRemove,
   depth,
   onValidationChange,
+  pathPrefix,
 }: {
   group: GroupExpression;
   onChange: (g: GroupExpression) => void;
   onRemove?: () => void;
   depth: number;
-  onValidationChange?: (hasError: boolean) => void;
+  onValidationChange?: (key: string, hasError: boolean) => void;
+  /** Path prefix for generating stable validation keys */
+  pathPrefix?: string;
 }) {
+  const prefix = pathPrefix || 'root';
+
   const updateChild = (index: number, child: AudienceExpression) => {
     const newChildren = [...group.children];
     newChildren[index] = child;
@@ -402,6 +410,9 @@ function GroupEditor({
 
   const removeChild = (index: number) => {
     if (group.children.length <= 1) return;
+    // Clear the removed child's validation error
+    const removedKey = `${prefix}.${index}`;
+    onValidationChange?.(removedKey, false);
     const newChildren = group.children.filter((_, i) => i !== index);
     onChange({ ...group, children: newChildren });
   };
@@ -465,6 +476,7 @@ function GroupEditor({
                 onChange={(p) => updateChild(i, p)}
                 onRemove={() => removeChild(i)}
                 onValidationChange={onValidationChange}
+                validationKey={`${prefix}.${i}`}
               />
             ) : (
               <GroupEditor
@@ -473,6 +485,7 @@ function GroupEditor({
                 onRemove={() => removeChild(i)}
                 depth={depth + 1}
                 onValidationChange={onValidationChange}
+                pathPrefix={`${prefix}.${i}`}
               />
             )}
           </div>
@@ -606,8 +619,21 @@ export default function AudiencesPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  // Tracks whether any child predicate editor has invalid/uncommitted input
-  const [hasEditorErrors, setHasEditorErrors] = useState(false);
+  // Tracks which predicate editors have invalid/uncommitted input (keyed by path)
+  const [editorErrorKeys, setEditorErrorKeys] = useState<Set<string>>(new Set());
+  const hasEditorErrors = editorErrorKeys.size > 0;
+
+  const handleEditorValidation = useCallback((key: string, hasError: boolean) => {
+    setEditorErrorKeys(prev => {
+      const next = new Set(prev);
+      if (hasError) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }, []);
 
   // Preview state
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -797,7 +823,7 @@ export default function AudiencesPage() {
     setPreviewError(null);
     setValidationErrors([]);
     setSaveError(null);
-    setHasEditorErrors(false);
+    setEditorErrorKeys(new Set());
   };
 
   /* ── Loading / capability gate ── */
@@ -974,7 +1000,7 @@ export default function AudiencesPage() {
               group={expression}
               onChange={setExpression}
               depth={0}
-              onValidationChange={setHasEditorErrors}
+              onValidationChange={handleEditorValidation}
             />
           </div>
 
