@@ -109,6 +109,12 @@ function validateAndNormalizeAnswers(
     // Skip further checks if value is absent (optional field)
     if (value === undefined || value === null) continue;
 
+    // Reject object/array values for scalar fields before any string conversion.
+    // String({}) → "[object Object]", String([1,2]) → "1,2" — both nonsensical.
+    if (typeof value === 'object') {
+      return { valid: false, error: `Field ${field.id} must be a scalar value, not ${Array.isArray(value) ? 'array' : 'object'}.` };
+    }
+
     // Per-field size check
     const valueJson = JSON.stringify(value);
     if (Buffer.byteLength(valueJson, 'utf8') > MAX_ANSWER_SIZE_BYTES) {
@@ -267,7 +273,8 @@ export async function handleNativeFormSubmission(
   // token string. This ensures equivalent serializations cannot bypass replay.
   const nonceHash = hashNonceForReplay(verification.nonce!);
 
-  // ── 7. Separate consent from answer fields ──
+  // ── 7. Separate reserved keys from answer fields ──
+  // flow_token is the signed token; _marketing_consent is the OptIn value.
   const { flow_token: _ft, _marketing_consent, ...answers } = responseData as Record<string, unknown>;
 
   // Only accept marketing consent when the published Form version provably
@@ -284,6 +291,11 @@ export async function handleNativeFormSubmission(
   const formFields = Array.isArray(form.fields) ? (form.fields as WaaiioFormField[]) : null;
   if (!formFields || formFields.length === 0) {
     return { success: false, error: 'Form has no valid field schema for native submission validation.' };
+  }
+  // Reject if form schema uses a reserved field ID that would collide with
+  // the signed token or consent key during answer extraction.
+  if (formFields.some(f => f.id === 'flow_token')) {
+    return { success: false, error: 'Form contains a reserved field ID (flow_token). Native submissions cannot use this field name.' };
   }
   const schemaCheck = validateAndNormalizeAnswers(answers, formFields);
   if (!schemaCheck.valid) {

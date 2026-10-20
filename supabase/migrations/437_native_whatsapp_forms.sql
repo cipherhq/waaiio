@@ -66,8 +66,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_form_responses_flow_token_hash
 -- Existing M119 table-level grants (via ALTER DEFAULT PRIVILEGES) give
 -- authenticated ALL on public tables. We narrow UPDATE to owner-writable columns.
 -- SELECT, INSERT, DELETE remain at table level (RLS filters rows).
+-- UPDATE: restrict to owner-writable columns.
 REVOKE UPDATE ON public.forms FROM authenticated;
 GRANT UPDATE (
   title, description, fields, settings, is_active, token,
   response_count, updated_at
+) ON public.forms TO authenticated;
+
+-- INSERT: restrict to owner-writable columns.
+-- Provider-lifecycle columns (meta_flow_id, meta_flow_status, native_flow_json)
+-- use server-safe DEFAULTs (NULL, 'draft', NULL) and must not be set by the
+-- client during form creation.
+REVOKE INSERT ON public.forms FROM authenticated;
+GRANT INSERT (
+  id, business_id, title, description, fields, settings, is_active, token,
+  response_count, created_at, updated_at
 ) ON public.forms TO authenticated;

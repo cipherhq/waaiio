@@ -1005,6 +1005,67 @@ describe('Native Form Submission Handler', () => {
     expect(serviceInsertedRows[0].customer_email).toBeNull();
   });
 
+  // ── CTO R7-F3: Reject object/array values for scalar fields ──
+
+  it('rejects object value for text field', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { full_name: { injected: true } });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('scalar');
+    expect(result.error).toContain('object');
+  });
+
+  it('rejects array value for text field', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { full_name: ['a', 'b'] });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('scalar');
+    expect(result.error).toContain('array');
+  });
+
+  // ── CTO R7-F4: Reserved field ID collision ──
+
+  it('rejects native submission when form has a field named flow_token', async () => {
+    const conflictFields = [
+      { id: 'flow_token', label: 'Token', type: 'text', required: true },
+      { id: 'name', label: 'Name', type: 'text', required: false },
+    ];
+    const conflictHash = computeFormVersionHash(conflictFields, DEFAULT_CONSENT_LABEL);
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: conflictFields, settings: { consent_label: DEFAULT_CONSENT_LABEL } };
+
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken(undefined, undefined, conflictHash);
+    const message = makeMessage(token);
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('reserved field ID');
+    expect(result.error).toContain('flow_token');
+  });
+
+  it('compiler rejects flow_token as a field ID', async () => {
+    const { compileNativeFormFlow, NativeFlowValidationError } = await import('@/lib/whatsapp-forms/native-flow');
+    expect(() => compileNativeFormFlow({
+      title: 'Test',
+      fields: [{ id: 'flow_token', label: 'Token', type: 'text', required: true }],
+    })).toThrow('unique, safe identifiers');
+  });
+
+  it('compiler rejects _marketing_consent as a field ID (fails FIELD_ID regex)', async () => {
+    const { compileNativeFormFlow } = await import('@/lib/whatsapp-forms/native-flow');
+    // _marketing_consent starts with underscore — fails ^[A-Za-z] regex check
+    expect(() => compileNativeFormFlow({
+      title: 'Test',
+      fields: [{ id: '_marketing_consent', label: 'MC', type: 'text', required: false }],
+    })).toThrow('unique, safe identifiers');
+  });
+
   // ── F2-4: Atomic response count RPC test ──
 
   it('calls increment_form_response_count RPC after successful insert', async () => {
@@ -1321,6 +1382,18 @@ describe('Migration 437 contract', () => {
     const grantMatch = sql.match(/GRANT UPDATE[\s\S]*?TO authenticated/);
     expect(grantMatch).toBeTruthy();
     const grantBlock = grantMatch![0];
+    expect(grantBlock).not.toContain('meta_flow_id');
+    expect(grantBlock).not.toContain('meta_flow_status');
+    expect(grantBlock).not.toContain('native_flow_json');
+  });
+
+  it('restricts authenticated INSERT to owner-writable columns (provider columns excluded)', () => {
+    expect(sql).toContain('REVOKE INSERT ON public.forms FROM authenticated');
+    const grantInsertMatch = sql.match(/GRANT INSERT[\s\S]*?TO authenticated/);
+    expect(grantInsertMatch).toBeTruthy();
+    const grantBlock = grantInsertMatch![0];
+    expect(grantBlock).toContain('business_id'); // Needed for INSERT (immutable after creation)
+    expect(grantBlock).toContain('title');
     expect(grantBlock).not.toContain('meta_flow_id');
     expect(grantBlock).not.toContain('meta_flow_status');
     expect(grantBlock).not.toContain('native_flow_json');
