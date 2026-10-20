@@ -69,19 +69,21 @@ function createDeadlineGuardedSender(
     return fn();
   }
 
+  // Customer-initiated inbound webhook replies are service messages.
+  // Keep templates explicitly classified and platform sends unchanged.
   return {
-    sendText: (msg) => guardedCall(() => inner.sendText(msg)),
-    sendList: (msg) => guardedCall(() => inner.sendList(msg)),
-    sendButtons: (msg) => guardedCall(() => inner.sendButtons(msg)),
-    sendImage: (msg) => guardedCall(() => inner.sendImage(msg)),
-    sendDocument: (msg) => guardedCall(() => inner.sendDocument(msg)),
-    sendAudio: (msg) => guardedCall(() => inner.sendAudio(msg)),
+    sendText: (msg) => guardedCall(() => inner.sendText({ ...msg, messageCategory: msg.messageCategory ?? 'service' })),
+    sendList: (msg) => guardedCall(() => inner.sendList({ ...msg, messageCategory: msg.messageCategory ?? 'service' })),
+    sendButtons: (msg) => guardedCall(() => inner.sendButtons({ ...msg, messageCategory: msg.messageCategory ?? 'service' })),
+    sendImage: (msg) => guardedCall(() => inner.sendImage({ ...msg, messageCategory: msg.messageCategory ?? 'service' })),
+    sendDocument: (msg) => guardedCall(() => inner.sendDocument({ ...msg, messageCategory: msg.messageCategory ?? 'service' })),
+    sendAudio: (msg) => guardedCall(() => inner.sendAudio({ ...msg, messageCategory: msg.messageCategory ?? 'service' })),
     sendTemplate: inner.sendTemplate ? (msg) => guardedCall(() => inner.sendTemplate!(msg)) : undefined,
-    sendFlow: inner.sendFlow ? (msg) => guardedCall(() => inner.sendFlow!(msg)) : undefined,
-    sendReaction: inner.sendReaction ? (msg) => guardedCall(() => inner.sendReaction!(msg)) : undefined,
-    sendLocation: inner.sendLocation ? (msg) => guardedCall(() => inner.sendLocation!(msg)) : undefined,
-    sendProduct: inner.sendProduct ? (msg) => guardedCall(() => inner.sendProduct!(msg)) : undefined,
-    sendProductList: inner.sendProductList ? (msg) => guardedCall(() => inner.sendProductList!(msg)) : undefined,
+    sendFlow: inner.sendFlow ? (msg) => guardedCall(() => inner.sendFlow!({ ...msg, messageCategory: msg.messageCategory ?? 'service' })) : undefined,
+    sendReaction: inner.sendReaction ? (msg) => guardedCall(() => inner.sendReaction!({ ...msg, messageCategory: msg.messageCategory ?? 'service' })) : undefined,
+    sendLocation: inner.sendLocation ? (msg) => guardedCall(() => inner.sendLocation!({ ...msg, messageCategory: msg.messageCategory ?? 'service' })) : undefined,
+    sendProduct: inner.sendProduct ? (msg) => guardedCall(() => inner.sendProduct!({ ...msg, messageCategory: msg.messageCategory ?? 'service' })) : undefined,
+    sendProductList: inner.sendProductList ? (msg) => guardedCall(() => inner.sendProductList!({ ...msg, messageCategory: msg.messageCategory ?? 'service' })) : undefined,
     // S-1 (#256): Forward business identity + platform-scoped sends through deadline guard
     sendPlatformText: inner.sendPlatformText ? (msg) => guardedCall(() => inner.sendPlatformText!(msg)) : undefined,
     sendPlatformButtons: inner.sendPlatformButtons ? (msg) => guardedCall(() => inner.sendPlatformButtons!(msg)) : undefined,
