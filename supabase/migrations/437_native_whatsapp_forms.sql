@@ -55,3 +55,19 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_form_responses_flow_token_hash
   ON form_responses (flow_token_hash)
   WHERE flow_token_hash IS NOT NULL;
+
+-- ── Column-level UPDATE restriction on provider-lifecycle columns ──
+-- meta_flow_id, meta_flow_status, native_flow_json are server-authoritative:
+-- only the publish/deprecate lifecycle (service_role) should write them.
+-- Merchants UPDATE title, description, fields, settings, is_active, token, updated_at
+-- via the dashboard (authenticated session). This REVOKE + re-GRANT pattern
+-- matches M449's approach for whatsapp_channels and contracts.
+--
+-- Existing M119 table-level grants (via ALTER DEFAULT PRIVILEGES) give
+-- authenticated ALL on public tables. We narrow UPDATE to owner-writable columns.
+-- SELECT, INSERT, DELETE remain at table level (RLS filters rows).
+REVOKE UPDATE ON public.forms FROM authenticated;
+GRANT UPDATE (
+  title, description, fields, settings, is_active, token,
+  response_count, updated_at
+) ON public.forms TO authenticated;

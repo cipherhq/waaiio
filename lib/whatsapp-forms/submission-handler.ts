@@ -292,13 +292,36 @@ export async function handleNativeFormSubmission(
   // Use normalized answers (compiler option IDs resolved to display titles)
   const normalizedAnswers = schemaCheck.normalized ?? answers;
 
-  // ── 9. INSERT response (replay prevented by unique constraint on flow_token_hash) ──
+  // ── 9. Extract customer_name and customer_email from validated answers ──
+  // Preserves the web-form convention where these are stored as top-level
+  // response columns for dashboard display. Uses field type (email) and
+  // conventional field IDs (name, full_name) — does not invent identities.
+  let customerName: string | null = null;
+  let customerEmail: string | null = null;
+  for (const field of formFields) {
+    const val = normalizedAnswers[field.id];
+    if (typeof val !== 'string' || !val.trim()) continue;
+    if (field.type === 'email' && !customerEmail) {
+      customerEmail = val.trim().slice(0, 200);
+    }
+    if (!customerName && (field.id === 'name' || field.id === 'full_name' || field.id === 'customer_name')) {
+      customerName = val.trim().slice(0, 200);
+    }
+  }
+
+  // ── 10. INSERT response (replay prevented by unique constraint on flow_token_hash) ──
+  // Note: response_count increment (step 11) is best-effort, matching the
+  // existing web form route (app/api/forms/submit/route.ts:126). Both paths
+  // use a separate RPC call after INSERT. A broader atomic-counter correction
+  // is tracked separately.
   const { data: response, error: insertError } = await supabase
     .from('form_responses')
     .insert({
       form_id: tokenFormId,
       business_id: businessId,
       customer_phone: senderPhone,
+      customer_name: customerName,
+      customer_email: customerEmail,
       answers: normalizedAnswers,
       submission_source: 'native',
       flow_token_hash: nonceHash,
@@ -320,7 +343,7 @@ export async function handleNativeFormSubmission(
     return { success: false, error: 'Failed to save submission.' };
   }
 
-  // ── 10. Increment response count atomically (best-effort) ──
+  // ── 11. Increment response count (best-effort) ──
   await supabase.rpc('increment_form_response_count', { p_form_id: tokenFormId });
 
   return { success: true, responseId: response?.id };

@@ -960,6 +960,51 @@ describe('Native Form Submission Handler', () => {
     expect(result.error).toContain('Fully resolved dedicated channel required');
   });
 
+  // ── CTO R6-F4: Customer identity extraction from form answers ──
+
+  it('extracts customer_email from email-typed field and customer_name from full_name field', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    // Default makeMessage includes full_name: 'Ada Lovelace' and email: 'ada@example.com'
+    expect(serviceInsertedRows[0].customer_name).toBe('Ada Lovelace');
+    expect(serviceInsertedRows[0].customer_email).toBe('ada@example.com');
+  });
+
+  it('leaves customer_name/email null when form has no recognizable name/email fields', async () => {
+    // Form with only number and select fields — no name or email type
+    const noIdentityFields = [
+      { id: 'age', label: 'Age', type: 'number', required: true },
+      { id: 'plan', label: 'Plan', type: 'select', required: false, options: ['basic', 'premium', 'enterprise'] },
+    ];
+    const noIdentityHash = computeFormVersionHash(noIdentityFields, DEFAULT_CONSENT_LABEL);
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: noIdentityFields, settings: { consent_label: DEFAULT_CONSENT_LABEL } };
+
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken(undefined, undefined, noIdentityHash);
+    const message = {
+      interactive: {
+        type: 'nfm_reply',
+        nfm_reply: {
+          response_json: JSON.stringify({
+            flow_token: token,
+            age: '25',
+            plan: 'basic',
+            _marketing_consent: true,
+          }),
+        },
+      },
+    };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    expect(serviceInsertedRows[0].customer_name).toBeNull();
+    expect(serviceInsertedRows[0].customer_email).toBeNull();
+  });
+
   // ── F2-4: Atomic response count RPC test ──
 
   it('calls increment_form_response_count RPC after successful insert', async () => {
@@ -1261,6 +1306,24 @@ describe('Migration 437 contract', () => {
   it('migration does not create new RLS policies (existing coverage)', () => {
     expect(sql.toLowerCase()).not.toContain('create policy');
     expect(sql.toLowerCase()).not.toContain('alter policy');
+  });
+
+  it('restricts authenticated UPDATE to owner-writable columns (provider columns excluded)', () => {
+    // REVOKE table-level UPDATE from authenticated
+    expect(sql).toContain('REVOKE UPDATE ON public.forms FROM authenticated');
+    // Re-GRANT only owner-writable columns
+    expect(sql).toContain('GRANT UPDATE');
+    expect(sql).toContain('title');
+    expect(sql).toContain('description');
+    expect(sql).toContain('fields');
+    expect(sql).toContain('is_active');
+    // Provider-lifecycle columns must NOT appear in the GRANT UPDATE
+    const grantMatch = sql.match(/GRANT UPDATE[\s\S]*?TO authenticated/);
+    expect(grantMatch).toBeTruthy();
+    const grantBlock = grantMatch![0];
+    expect(grantBlock).not.toContain('meta_flow_id');
+    expect(grantBlock).not.toContain('meta_flow_status');
+    expect(grantBlock).not.toContain('native_flow_json');
   });
 
   it('migration uses IF NOT EXISTS for idempotent re-application', () => {
