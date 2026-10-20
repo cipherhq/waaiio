@@ -1,5 +1,11 @@
 ## 2026-10-21 — Parties Phase B1: slug fix, guest tags, table seating (#661)
 
+### CTO corrections (b7e4b349)
+- **M457 rewritten**: Added ROW trigger (`trg_validate_invite_table`) for party membership + business isolation on ALL write paths. Added STATEMENT trigger (`trg_enforce_table_capacity`) with `FOR UPDATE` on `party_tables` to serialize concurrent assignments (M451 pattern). RPCs `assign_guest_to_table` and `bulk_assign_guests_to_table` (SECURITY INVOKER) provide clean JSON API. Self-check block validates all components.
+- **`table-assignment.ts` rewritten**: All assignment operations now go through RPCs. No direct UPDATE of `table_id` from application code.
+- **28 lifecycle tests** (`party-b1-lifecycle.test.ts`): slug lifecycle, required fields, ownership, error handling, guest preservation, URL validity, capacity, backward compat.
+- **14 disposable PG tests** (`party-b1-seat-authority.pg.test.ts`): concurrent seat race, cross-business denial, cross-party denial, bulk all-or-nothing, direct SQL bypass caught by triggers.
+
 ### What changed
 - **M455**: Added `slug` VARCHAR(100) UNIQUE and `updated_at` TIMESTAMPTZ with auto-update trigger to `parties` table. Backfills existing rows with auto-generated slugs. Fixes P2 bug where dashboard generated share URLs referencing a non-existent `slug` column.
 - **M456**: Added `tags TEXT[] DEFAULT '{}'` to `event_invites` with partial GIN index for efficient tag-based filtering.
