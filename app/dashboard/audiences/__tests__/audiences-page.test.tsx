@@ -438,3 +438,157 @@ describe('Unsupported expression handling', () => {
     });
   });
 });
+
+/* ── 10. in/not_in array value handling ── */
+
+describe('Array operator (in/not_in) handling', () => {
+  it('preserves saved array values when loading a segment with in operator', async () => {
+    const arrayExpression = {
+      type: 'all' as const,
+      children: [{
+        type: 'predicate' as const,
+        source: 'order' as const,
+        field: 'status',
+        operator: 'in' as const,
+        value: ['completed', 'delivered', 'shipped'],
+      }],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-arr', name: 'Array Test', description: null, expression: arrayExpression, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Array Test')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    // The array input should show the values as comma-separated
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    expect(arrayInput).toBeTruthy();
+    expect((arrayInput as HTMLInputElement).value).toBe('completed, delivered, shipped');
+
+    // Save without changes — round-trip must preserve the array
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-arr' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const body = JSON.parse(putCall![1]!.body as string);
+      expect(body.expression.children[0].operator).toBe('in');
+      expect(body.expression.children[0].value).toEqual(['completed', 'delivered', 'shipped']);
+    });
+  });
+
+  it('produces valid number arrays for numeric in operator', async () => {
+    const numArrayExpression = {
+      type: 'all' as const,
+      children: [{
+        type: 'predicate' as const,
+        source: 'payment' as const,
+        field: 'amount',
+        operator: 'not_in' as const,
+        value: [100, 200, 500],
+      }],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-num-arr', name: 'Num Array', description: null, expression: numArrayExpression, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Num Array')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    expect((arrayInput as HTMLInputElement).value).toBe('100, 200, 500');
+
+    // Edit the values
+    fireEvent.change(arrayInput, { target: { value: '100, 300, 700' } });
+
+    // Save and verify number types are preserved
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-num-arr' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const body = JSON.parse(putCall![1]!.body as string);
+      expect(body.expression.children[0].value).toEqual([100, 300, 700]);
+      // Verify they are actual numbers, not strings
+      expect(typeof body.expression.children[0].value[0]).toBe('number');
+    });
+  });
+
+  it('switching from eq to in converts scalar to array', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-switch', name: 'Switch Test', description: null, expression: {
+        type: 'all',
+        children: [{ type: 'predicate', source: 'order', field: 'status', operator: 'eq', value: 'completed' }],
+      }, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Switch Test')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    // Find the operator dropdown and switch to 'in'
+    const operatorSelect = screen.getByDisplayValue('equals');
+    fireEvent.change(operatorSelect, { target: { value: 'in' } });
+
+    // Save — the scalar 'completed' should now be array ['completed']
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-switch' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const body = JSON.parse(putCall![1]!.body as string);
+      expect(body.expression.children[0].operator).toBe('in');
+      expect(Array.isArray(body.expression.children[0].value)).toBe(true);
+      expect(body.expression.children[0].value).toContain('completed');
+    });
+  });
+
+  it('switching from in to eq converts array to first element', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-back', name: 'Back Test', description: null, expression: {
+        type: 'all',
+        children: [{ type: 'predicate', source: 'order', field: 'status', operator: 'in', value: ['completed', 'delivered'] }],
+      }, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Back Test')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    // Switch from 'in' to 'eq'
+    const operatorSelect = screen.getByDisplayValue('is one of');
+    fireEvent.change(operatorSelect, { target: { value: 'eq' } });
+
+    // Save — should take first element from array
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-back' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const body = JSON.parse(putCall![1]!.body as string);
+      expect(body.expression.children[0].operator).toBe('eq');
+      expect(body.expression.children[0].value).toBe('completed');
+      expect(Array.isArray(body.expression.children[0].value)).toBe(false);
+    });
+  });
+});

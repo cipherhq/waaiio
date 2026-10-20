@@ -99,6 +99,13 @@ const OPERATOR_TYPE_COMPAT: Record<FieldType, readonly Operator[]> = {
 /* ── Value-free operators ── */
 
 const VALUE_FREE_OPS: Set<string> = new Set(['is_null', 'is_not_null']);
+const ARRAY_OPS: Set<string> = new Set(['in', 'not_in']);
+
+/**
+ * PostgREST filter-unsafe characters — must match the DSL validator's rejection set.
+ * Commas, parens, quotes, backslashes, and control characters.
+ */
+const POSTGREST_UNSAFE_RE = /[,()"\\\x00-\x1f]/;
 
 /* ── Helper: create a blank predicate ── */
 
@@ -144,24 +151,71 @@ function PredicateEditor({
   };
 
   const handleOperatorChange = (operator: Operator) => {
-    onChange({
-      ...predicate,
-      operator,
-      value: VALUE_FREE_OPS.has(operator) ? undefined : (predicate.value ?? ''),
-    });
+    if (VALUE_FREE_OPS.has(operator)) {
+      onChange({ ...predicate, operator, value: undefined });
+    } else if (ARRAY_OPS.has(operator)) {
+      // Switching TO array operator: convert existing scalar to single-element array
+      const existing = predicate.value;
+      if (Array.isArray(existing)) {
+        onChange({ ...predicate, operator });
+      } else if (existing !== undefined && existing !== null && existing !== '') {
+        onChange({ ...predicate, operator, value: [existing] as string[] });
+      } else {
+        onChange({ ...predicate, operator, value: [] as string[] });
+      }
+    } else {
+      // Switching FROM array operator to scalar: take first element
+      const existing = predicate.value;
+      if (Array.isArray(existing)) {
+        onChange({ ...predicate, operator, value: existing[0] ?? '' });
+      } else {
+        onChange({ ...predicate, operator, value: existing ?? '' });
+      }
+    }
   };
 
-  const handleValueChange = (value: string) => {
+  /**
+   * Parse a comma-separated input string into a typed array for in/not_in.
+   * The DSL validator requires typeof===number for number fields, so we
+   * parse numeric values. The Predicate.value type only includes string[],
+   * not number[], so we cast through unknown for numeric arrays.
+   */
+  const parseArrayInput = (raw: string): string[] => {
+    const ft = currentFieldDef?.type || 'string';
+    const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+    if (ft === 'number') {
+      return parts.map(Number).filter(n => isFinite(n)) as unknown as string[];
+    }
+    return parts;
+  };
+
+  const handleScalarValueChange = (value: string) => {
     const fieldType = currentFieldDef?.type || 'string';
     if (fieldType === 'number') {
       const num = parseFloat(value);
       onChange({ ...predicate, value: isNaN(num) ? value : num });
+    } else if (fieldType === 'boolean') {
+      onChange({ ...predicate, value: value === 'true' });
     } else {
       onChange({ ...predicate, value });
     }
   };
 
+  const handleArrayInputChange = (raw: string) => {
+    onChange({ ...predicate, value: parseArrayInput(raw) });
+  };
+
+  /** Display value for array fields — join for editing */
+  const arrayDisplayValue = (): string => {
+    const val = predicate.value;
+    if (Array.isArray(val)) return val.join(', ');
+    if (val !== undefined && val !== null) return String(val);
+    return '';
+  };
+
   const needsValue = !VALUE_FREE_OPS.has(predicate.operator);
+  const isArrayOp = ARRAY_OPS.has(predicate.operator);
+  const fieldType = currentFieldDef?.type || 'string';
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
@@ -198,12 +252,54 @@ function PredicateEditor({
         ))}
       </select>
 
-      {/* Value input */}
-      {needsValue && (
+      {/* Value input — array for in/not_in, scalar for others */}
+      {needsValue && isArrayOp && (
+        <div className="min-w-[180px] flex-1">
+          <input
+            type="text"
+            value={arrayDisplayValue()}
+            onChange={(e) => handleArrayInputChange(e.target.value)}
+            placeholder={fieldType === 'number' ? 'e.g. 100, 200, 300' : fieldType === 'uuid' ? 'UUID, UUID, ...' : 'value1, value2, value3'}
+            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+            aria-label="List values (comma-separated)"
+          />
+          {Array.isArray(predicate.value) && predicate.value.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {(predicate.value as (string | number)[]).map((v, i) => (
+                <span
+                  key={i}
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                    typeof v === 'string' && POSTGREST_UNSAFE_RE.test(v)
+                      ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                  }`}
+                >
+                  {String(v)}
+                  {typeof v === 'string' && POSTGREST_UNSAFE_RE.test(v) && (
+                    <span className="ml-1" title="Contains unsafe characters">!</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {needsValue && !isArrayOp && fieldType === 'boolean' && (
+        <select
+          value={predicate.value === true ? 'true' : predicate.value === false ? 'false' : ''}
+          onChange={(e) => handleScalarValueChange(e.target.value)}
+          className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+        >
+          <option value="">Select...</option>
+          <option value="true">Yes</option>
+          <option value="false">No</option>
+        </select>
+      )}
+      {needsValue && !isArrayOp && fieldType !== 'boolean' && (
         <input
-          type={currentFieldDef?.type === 'number' ? 'number' : currentFieldDef?.type === 'date' ? 'date' : 'text'}
+          type={fieldType === 'number' ? 'number' : fieldType === 'date' ? 'date' : 'text'}
           value={typeof predicate.value === 'string' || typeof predicate.value === 'number' ? predicate.value : ''}
-          onChange={(e) => handleValueChange(e.target.value)}
+          onChange={(e) => handleScalarValueChange(e.target.value)}
           placeholder="Value"
           className="min-w-[120px] flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
         />
