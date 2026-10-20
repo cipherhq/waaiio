@@ -1,3 +1,12 @@
+### #596 Finance UI reconciliation — fix schema mismatch, error handling, currency safety (2026-10-20)
+
+- **`admin/src/pages/Finance.tsx`**: (1) Fixed `business_payouts` query selecting nonexistent `currency` column — now selects real columns (`business_id, net_amount, platform_fee, gateway_fee, status, created_at`) with currency inferred from business country_code via `bizCurrencyMap`. (2) Added `Promise.allSettled` error handling with degraded-state banner and retry — prevents indefinite loading spinner or silent zeros on query failure. (3) Applied country filter to payout metrics (previously ignored). (4) Payout metric cards now use business-inferred currency (same pattern as Admin Payouts page) instead of reading nonexistent column. (5) Changed category ranking from cross-currency sum to transaction count. (6) Monthly rollup now uses filtered data and removes unverifiable payout column (no business_id to infer currency in rollup). (7) Country breakdown uses per-currency `formatMultiCurrency()` instead of single-currency assumption. (8) CSV export disabled pending server-side complete export implementation. (9) Labels corrected: "Revenue" → "Payment Volume" where appropriate.
+- **`admin/src/pages/Dashboard.tsx`**: Removed intermediate cross-currency `revenue` sum field from category breakdown state. Added exported `CategoryPaymentValue` component for per-currency display. Table header "Revenue" → "Payment Volume". Subtitle updated with unreconciled caveat.
+- **`admin/src/pages/Payouts.tsx`**: Removed `flutterwave_transfer` from transfer method dropdown — option always fails server-side (`ALLOWED_TRANSFER_METHODS` excludes it).
+- **Not changed**: Settlement engine from PR #665 (confirm-settlement, approve, atomic RPCs, M453/M454) — verified as fully satisfying Owner-approved merchant settlement workflow. `manual_cash` correctly absent per #665.
+- Affects: Admin Finance dashboard display, admin Payouts approval dropdown. Does NOT affect settlement logic, payment processing, or payout calculations.
+- Could break: Category chart now ranks by tx count not mixed-currency sum. CSV is temporarily disabled. Monthly rollup excludes payout column.
+
 ### PR #605 offline payment cancellation gate candidate (2026-10-19)
 - Proposed M452 (NOT applied): cancellation intent + Paystack/Flutterwave claim and dispatch gates with subscription-first locking.
 - Retry cron: executable Paystack pre-provider guard and bounded post-cancellation reconciliation of in-flight attempts using existing verify_attempts CAS rotation.

@@ -40,7 +40,7 @@ export default function Dashboard() {
   const [featureAdoption, setFeatureAdoption] = useState<Array<{ capability: string; count: number }>>([]);
   const [topBusinesses, setTopBusinesses] = useState<Array<{ name: string; bookings: number; revenue: number; country: string }>>([]);
   const [customerInsights, setCustomerInsights] = useState<{ total: number; returning: number; thisMonth: number }>({ total: 0, returning: 0, thisMonth: 0 });
-  const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenue: number; revenueByCurrency: Record<string, number> }>>([]);
+  const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenueByCurrency: Record<string, number> }>>([]);
   // Revenue summary with time periods + country filter
   const [revenuePeriod, setRevenuePeriod] = useState<'week' | 'month' | 'all'>('month');
   const [revenueCountry, setRevenueCountry] = useState<string>('all');
@@ -407,7 +407,6 @@ export default function Dashboard() {
               category,
               count: data.count,
               bookings: data.bookings,
-              revenue: Object.values(data.revenueByCurrency).reduce((s, a) => s + a, 0),
               revenueByCurrency: data.revenueByCurrency,
             }))
             .sort((a, b) => b.count - a.count)
@@ -818,7 +817,7 @@ export default function Dashboard() {
       {categoryBreakdown.length > 0 && (
         <div className="mt-8">
           <h2 className="text-lg font-semibold text-gray-900">By Category</h2>
-          <p className="mt-0.5 text-sm text-gray-500">Active accounts, bookings this month, and total revenue per category</p>
+          <p className="mt-0.5 text-sm text-gray-500">Active accounts, bookings this month, and payment volume per category (currency inferred from business country; unreconciled)</p>
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
@@ -826,7 +825,7 @@ export default function Dashboard() {
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Category</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Accounts</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Bookings</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Revenue</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Payment Volume</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-500 w-40">Activity</th>
                 </tr>
               </thead>
@@ -839,12 +838,7 @@ export default function Dashboard() {
                       <td className="px-4 py-3 text-right text-gray-700">{cat.count}</td>
                       <td className="px-4 py-3 text-right text-gray-700">{cat.bookings}</td>
                       <td className="px-4 py-3 text-right font-medium text-gray-900">
-                        {cat.revenue > 0
-                          ? Object.entries(cat.revenueByCurrency)
-                              .filter(([, a]) => a > 0)
-                              .map(([cur, amt]) => formatMoney(amt, cur))
-                              .join(' · ') || '—'
-                          : '—'}
+                        <CategoryPaymentValue amounts={cat.revenueByCurrency} />
                       </td>
                       <td className="px-4 py-3">
                         <div className="h-2 w-full rounded-full bg-gray-100 overflow-hidden">
@@ -897,6 +891,16 @@ export default function Dashboard() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Production renderer used by the Dashboard category table and mounted regressions. */
+export function CategoryPaymentValue({ amounts }: { amounts: Record<string, number> }) {
+  const positive = Object.entries(amounts).filter(([, value]) => value > 0);
+  return (
+    <>{positive.length > 0
+      ? positive.map(([currency, amount]) => formatMoney(amount, currency)).join(' · ')
+      : '—'}</>
   );
 }
 
