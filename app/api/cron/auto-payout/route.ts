@@ -6,7 +6,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { createCronLogger } from '@/lib/observability/cron';
-import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { getCurrencyCode, getPaymentGatewayForCountry, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
@@ -38,6 +38,170 @@ const AUTO_APPROVE_LIMIT_NGN = 500_000; // ₦500,000 max auto-approve
 const AUTO_APPROVE_LIMIT_USD = 1_000;   // $1,000 max auto-approve
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
+// Stripe auto-payout is disabled in this PR — requires a reconciliation webhook
+// to transition processing → paid. Stripe businesses get pending for manual review.
+
+/**
+ * Execute an automated payout transfer via the appropriate provider.
+ * Returns 'transferred' | 'held' to indicate whether the transfer was initiated.
+ * Uses the same FIN-002 atomic claim/classify/submit pattern as the admin approve route.
+ */
+async function executeAutoTransfer(
+  supabase: ReturnType<typeof createServiceClient>,
+  payoutId: string,
+  net: number,
+  biz: { id: string; country_code: string },
+  payoutAccount: PayoutAccountRow,
+  periodStartStr: string,
+  periodEndStr: string,
+): Promise<'transferred' | 'held'> {
+  // Resolve the authoritative gateway for this country (DB-backed via loadCountries).
+  // The payout account's gateway must match the country's authoritative provider.
+  let countryGateway: string;
+  try {
+    countryGateway = getPaymentGatewayForCountry(biz.country_code as CountryCode);
+  } catch {
+    // loadCountries() not loaded or country unknown — cannot determine provider
+    return 'held';
+  }
+
+  // Only Paystack NUBAN transfers (NG/GH) are supported in this PR.
+  // Other Paystack markets use different recipient types (not nuban).
+  // Stripe auto-payout requires a reconciliation webhook (transfer → paid).
+  // All other combinations get pending for manual review.
+  const NUBAN_COUNTRIES = new Set(['NG', 'GH']);
+  const usePaystack = countryGateway === 'paystack'
+    && NUBAN_COUNTRIES.has(biz.country_code)
+    && isEligiblePaystackAccount(payoutAccount) && paystackSecretKey;
+
+  if (!usePaystack) return 'held';
+
+  const transferMethod = 'paystack_transfer' as const;
+
+  // Atomic claim — PostgreSQL generates token and provider key
+  const { data: claimResult, error: claimErr } = await supabase.rpc('claim_payout_for_transfer', {
+    p_payout_id: payoutId,
+    p_transfer_method: transferMethod,
+  });
+
+  if (claimErr) {
+    logger.withContext({ op: 'auto-payout.claim', businessId: biz.id, ...safeLogErrorContext(claimErr) })
+      .error('[AUTO-PAYOUT] Claim RPC error');
+    return 'held';
+  }
+
+  if (!claimResult || claimResult.length === 0) {
+    logger.debug(`[AUTO-PAYOUT] Payout ${payoutId} already claimed, skipping`);
+    return 'held';
+  }
+
+  const claimToken: string = claimResult[0].claimed_token;
+  const providerKey: string = claimResult[0].idempotency_key;
+
+  const markFailed = async () => {
+    const { data, error } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payoutId, p_claim_token: claimToken });
+    if (error || !data?.length) {
+      logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id, rpcError: error?.message, rows: data?.length ?? 0 })
+        .error('[AUTO-PAYOUT] Failed to mark transfer failed — payout may remain in processing');
+    }
+  };
+  const markReview = async () => {
+    const { data, error } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payoutId, p_claim_token: claimToken });
+    if (error || !data?.length) {
+      logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id, rpcError: error?.message, rows: data?.length ?? 0 })
+        .error('[AUTO-PAYOUT] Failed to mark review_required — payout may remain in processing');
+    }
+  };
+
+  try {
+    let gatewayTransferCode: string | null = null;
+
+    if (usePaystack) {
+      // ── Paystack transfer ──
+      const currency = getCurrencyCode(biz.country_code as CountryCode);
+
+      // Create transfer recipient
+      const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'nuban',
+          name: payoutAccount.account_name,
+          account_number: payoutAccount.account_number,
+          bank_code: payoutAccount.bank_code,
+          currency,
+        }),
+      });
+
+      if (!recipientRes.ok) {
+        const classification = await classifyPaystackError(recipientRes);
+        if (classification === 'conclusive_rejection') await markFailed(); else await markReview();
+        return 'held';
+      }
+
+      let recipientData: Record<string, unknown>;
+      try { recipientData = await recipientRes.json(); }
+      catch { await markReview(); return 'held'; }
+
+      if (!recipientData.status || !(recipientData.data as Record<string, unknown>)?.recipient_code) {
+        await markFailed();
+        return 'held';
+      }
+
+      // Initiate transfer
+      const transferRes = await fetch('https://api.paystack.co/transfer', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'balance',
+          amount: Math.round(net * 100),
+          recipient: (recipientData.data as Record<string, unknown>).recipient_code,
+          reference: providerKey,
+          reason: `Waaiio payout: ${periodStartStr} to ${periodEndStr}`,
+        }),
+      });
+
+      if (!transferRes.ok) {
+        const classification = await classifyPaystackError(transferRes);
+        if (classification === 'conclusive_rejection') await markFailed(); else await markReview();
+        return 'held';
+      }
+
+      let transferData: Record<string, unknown>;
+      try { transferData = await transferRes.json(); }
+      catch { await markReview(); return 'held'; }
+
+      if (!transferData.status || !(transferData.data as Record<string, unknown>)?.transfer_code) {
+        await markReview();
+        return 'held';
+      }
+
+      gatewayTransferCode = (transferData.data as Record<string, unknown>).transfer_code as string;
+    }
+
+    // Token-guarded submission
+    const { data: submitResult, error: submitErr } = await supabase.rpc('mark_payout_provider_submitted', {
+      p_payout_id: payoutId,
+      p_claim_token: claimToken,
+      p_gateway_transfer_code: gatewayTransferCode,
+    });
+
+    if (submitErr || !submitResult?.length) {
+      logger.withContext({ op: 'auto-payout.submit-transition', businessId: biz.id })
+        .error('[AUTO-PAYOUT] Provider submitted but finalization failed');
+      return 'held';
+    }
+
+    logger.debug(`[AUTO-PAYOUT] ${transferMethod} transfer initiated for business ${biz.id}`);
+    return 'transferred';
+
+  } catch (err) {
+    logger.withContext({ op: 'auto-payout.paystack', businessId: biz.id, ...safeLogErrorContext(err) })
+      .error('[AUTO-PAYOUT] Paystack error — uncertain outcome');
+    await markReview();
+    return 'held';
+  }
+}
 
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
@@ -122,7 +286,7 @@ export async function GET(request: NextRequest) {
       // Active payout accounts across all businesses (includes verified_at for eligibility check)
       supabase
         .from('payout_accounts')
-        .select('id, business_id, bank_code, account_number, account_name, gateway, verified_at, is_active')
+        .select('id, business_id, bank_code, account_number, account_name, gateway, verified_at, is_active, stripe_account_id')
         .in('business_id', bizIds)
         .eq('is_active', true)
         .limit(5000),
@@ -191,38 +355,50 @@ export async function GET(request: NextRequest) {
       // Look up payout account from pre-fetched batch data
       const payoutAccount = payoutAccountByBiz.get(biz.id) ?? null;
 
-      // FIN-002: Check Paystack eligibility for automated transfers
-      const isNG = biz.country_code === 'NG' || biz.country_code === 'GH';
-      const hasEligiblePaystackAccount = payoutAccount != null && isEligiblePaystackAccount(payoutAccount);
+      // FIN-002: Check Paystack eligibility using country-authoritative gateway.
+      // Stripe auto-payout is disabled — no reconciliation webhook yet.
+      let bizGateway: string | null = null;
+      try { bizGateway = getPaymentGatewayForCountry(biz.country_code as CountryCode); } catch { /* unknown country */ }
+
+      const hasEligiblePaystackAccount = bizGateway === 'paystack'
+        && payoutAccount != null && isEligiblePaystackAccount(payoutAccount);
 
       // Safety checks
       const bizAge = (Date.now() - new Date(biz.created_at).getTime()) / (1000 * 60 * 60 * 24);
       const transactionCount = (fees || []).length;
       const avgPerDay = transactionCount / 7;
-      const autoApproveLimit = isNG ? AUTO_APPROVE_LIMIT_NGN : AUTO_APPROVE_LIMIT_USD;
+      const isPaystackCountry = bizGateway === 'paystack';
+      // Currency-specific auto-approval limit. Only NGN has the higher limit.
+      // All other currencies (including GHS, KES, ZAR, USD, GBP, CAD) use the
+      // conservative USD-equivalent limit. Unknown currencies fail closed to USD limit.
+      const bizCurrency = getCurrencyCode(biz.country_code as CountryCode);
+      const autoApproveLimit = bizCurrency === 'NGN' ? AUTO_APPROVE_LIMIT_NGN : AUTO_APPROVE_LIMIT_USD;
 
       // Check monthly verification-tier limit
       const payoutMinor = Math.round(net * 100);
       const limitCheck = await checkVerificationLimit(supabase, biz.id, payoutMinor);
       const withinLimit = limitCheck.allowed;
 
-      // FIN-002: Auto-approval requires ALL conditions — eligible Paystack
-      // account in a supported country with a configured provider key.
-      // Any failure creates the payout as pending for admin review.
+      // Auto-approval: Nigeria only. Ghana requires explicit Owner approval for
+      // auto-payout rules. All other markets get pending for manual review.
+      const AUTO_APPROVE_COUNTRIES = new Set(['NG']);
+      const hasEligibleProvider =
+        AUTO_APPROVE_COUNTRIES.has(biz.country_code)
+        && hasEligiblePaystackAccount && paystackSecretKey !== '';
+
+      // FIN-002: Auto-approval requires ALL conditions — eligible provider
+      // account with configured keys + safety checks.
       const canAutoApprove =
-        isNG &&
-        hasEligiblePaystackAccount &&
-        paystackSecretKey !== '' &&
+        hasEligibleProvider &&
         bizAge >= COOLING_PERIOD_DAYS &&
         avgPerDay < VELOCITY_THRESHOLD &&
         net <= autoApproveLimit &&
         (biz.verification_level || 'unverified') !== 'unverified';
 
       const holdReasons: string[] = [];
-      if (!isNG) holdReasons.push('Business country not supported for automatic Paystack transfer');
       if (!payoutAccount) holdReasons.push('No payout account configured');
-      if (payoutAccount && !hasEligiblePaystackAccount) holdReasons.push('Payout account not eligible for Paystack transfer (requires gateway=paystack, active, verified, bank_code, account_number, account_name)');
-      if (!paystackSecretKey) holdReasons.push('PAYSTACK_SECRET_KEY not configured');
+      if (payoutAccount && !hasEligiblePaystackAccount) holdReasons.push('Payout account not eligible for Paystack transfer');
+      if (!hasEligibleProvider) holdReasons.push('No eligible provider for automated transfer');
       if (bizAge < COOLING_PERIOD_DAYS) holdReasons.push('Business too new (cooling period)');
       if (avgPerDay >= VELOCITY_THRESHOLD) holdReasons.push('High transaction velocity');
       if (net > autoApproveLimit) holdReasons.push(`Amount exceeds auto-approve limit`);
@@ -317,175 +493,11 @@ export async function GET(request: NextRequest) {
           if (intendedStatus === 'approved') {
             autoApproved++;
 
-            // FIN-002: Initiate Paystack transfer only with eligible verified account
-            if (isNG && hasEligiblePaystackAccount && paystackSecretKey) {
-              // Atomic claim — PostgreSQL generates token and provider key
-              const { data: claimResult, error: claimErr } = await supabase.rpc('claim_payout_for_transfer', {
-                p_payout_id: payout.id,
-                p_transfer_method: 'paystack_transfer',
-              });
-
-              if (claimErr) {
-                logger.withContext({ op: 'auto-payout.claim', businessId: biz.id, ...safeLogErrorContext(claimErr) })
-                  .error('[AUTO-PAYOUT] Claim RPC error');
-                held++;
-                continue;
-              }
-
-              if (!claimResult || claimResult.length === 0) {
-                logger.debug(`[AUTO-PAYOUT] Payout ${payout.id} already claimed, skipping`);
-                continue;
-              }
-
-              const claimToken: string = claimResult[0].claimed_token;
-              const providerKey: string = claimResult[0].idempotency_key;
-
-              try {
-                // Create transfer recipient — pre-transfer step
-                const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${paystackSecretKey}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    type: 'nuban',
-                    name: payoutAccount.account_name,
-                    account_number: payoutAccount.account_number,
-                    bank_code: payoutAccount.bank_code,
-                    currency: getCurrencyCode(biz.country_code as CountryCode),
-                  }),
-                });
-
-                // FIN-002: Classify recipient creation with body validation
-                if (!recipientRes.ok) {
-                  const classification = await classifyPaystackError(recipientRes);
-                  if (classification === 'conclusive_rejection') {
-                    const { data: failData, error: failErr } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payout.id, p_claim_token: claimToken });
-                    if (failErr || !failData?.length) {
-                      logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id })
-                        .error('[AUTO-PAYOUT] Failed to mark transfer failed');
-                    }
-                  } else {
-                    const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                    if (revErr || !revData?.length) {
-                      logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                        .error('[AUTO-PAYOUT] Failed to mark review_required');
-                    }
-                  }
-                  held++;
-                  continue;
-                }
-
-                let recipientData: Record<string, unknown>;
-                try { recipientData = await recipientRes.json(); }
-                catch {
-                  const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                  if (revErr || !revData?.length) {
-                    logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                      .error('[AUTO-PAYOUT] Failed to mark review_required');
-                  }
-                  held++;
-                  continue;
-                }
-
-                if (!recipientData.status || !(recipientData.data as Record<string, unknown>)?.recipient_code) {
-                  const { data: failData, error: failErr } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payout.id, p_claim_token: claimToken });
-                  if (failErr || !failData?.length) {
-                    logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id })
-                      .error('[AUTO-PAYOUT] Failed to mark transfer failed');
-                  }
-                  held++;
-                  continue;
-                }
-
-                // Initiate transfer with server-generated idempotency reference
-                const transferRes = await fetch('https://api.paystack.co/transfer', {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${paystackSecretKey}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    source: 'balance',
-                    amount: Math.round(net * 100),
-                    recipient: (recipientData.data as Record<string, unknown>).recipient_code,
-                    reference: providerKey,
-                    reason: `Waaiio payout: ${periodStartStr} to ${periodEndStr}`,
-                  }),
-                });
-
-                // FIN-002: Classify transfer response with body validation
-                if (!transferRes.ok) {
-                  const classification = await classifyPaystackError(transferRes);
-                  if (classification === 'conclusive_rejection') {
-                    const { data: failData, error: failErr } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payout.id, p_claim_token: claimToken });
-                    if (failErr || !failData?.length) {
-                      logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id })
-                        .error('[AUTO-PAYOUT] Failed to mark transfer failed');
-                    }
-                  } else {
-                    const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                    if (revErr || !revData?.length) {
-                      logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                        .error('[AUTO-PAYOUT] Failed to mark review_required');
-                    }
-                  }
-                  held++;
-                  continue;
-                }
-
-                let transferData: Record<string, unknown>;
-                try { transferData = await transferRes.json(); }
-                catch {
-                  const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                  if (revErr || !revData?.length) {
-                    logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                      .error('[AUTO-PAYOUT] Failed to mark review_required');
-                  }
-                  held++;
-                  continue;
-                }
-
-                if (!transferData.status || !(transferData.data as Record<string, unknown>)?.transfer_code) {
-                  // 200 but missing expected fields — ambiguous
-                  const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                  if (revErr || !revData?.length) {
-                    logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                      .error('[AUTO-PAYOUT] Failed to mark review_required');
-                  }
-                  held++;
-                  continue;
-                }
-
-                // Token-guarded submission — verify exactly one row transitioned
-                const { data: submitResult, error: submitErr } = await supabase.rpc('mark_payout_provider_submitted', {
-                  p_payout_id: payout.id,
-                  p_claim_token: claimToken,
-                  p_gateway_transfer_code: (transferData.data as Record<string, unknown>).transfer_code as string,
-                });
-                if (submitErr || !submitResult?.length) {
-                  logger.withContext({ op: 'auto-payout.submit-transition', businessId: biz.id })
-                    .error('[AUTO-PAYOUT] Provider submitted but finalization failed');
-                  held++;
-                } else {
-                  transferred++;
-                  logger.debug(`[AUTO-PAYOUT] Transfer initiated for business ${biz.id}`);
-                }
-              } catch (err) {
-                // Ambiguous outcome — mark review_required
-                logger.withContext({ op: 'auto-payout.paystack', businessId: biz.id, ...safeLogErrorContext(err) })
-                  .error('[AUTO-PAYOUT] Paystack error — uncertain outcome');
-                const { data: revData, error: reviewErr } = await supabase.rpc('mark_payout_review_required', {
-                  p_payout_id: payout.id,
-                  p_claim_token: claimToken,
-                });
-                if (reviewErr || !revData?.length) {
-                  logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                    .error('[AUTO-PAYOUT] Failed to mark review_required');
-                }
-                held++;
-              }
+            // FIN-002: Initiate provider transfer with eligible verified account
+            if (hasEligibleProvider && payoutAccount) {
+              const result = await executeAutoTransfer(supabase, payout.id, net, biz, payoutAccount, periodStartStr, periodEndStr);
+              if (result === 'transferred') transferred++;
+              else held++;
             }
           } else {
             // intendedStatus !== 'approved' — payout is held (promoted to held)
@@ -549,175 +561,11 @@ export async function GET(request: NextRequest) {
         if (status === 'approved') {
           autoApproved++;
 
-          // FIN-002: Initiate Paystack transfer only with eligible verified account
-          if (isNG && hasEligiblePaystackAccount && paystackSecretKey) {
-            // Atomic claim — PostgreSQL generates token and provider key
-            const { data: claimResult, error: claimErr } = await supabase.rpc('claim_payout_for_transfer', {
-              p_payout_id: payout.id,
-              p_transfer_method: 'paystack_transfer',
-            });
-
-            if (claimErr) {
-              logger.withContext({ op: 'auto-payout.claim', businessId: biz.id, ...safeLogErrorContext(claimErr) })
-                .error('[AUTO-PAYOUT] Claim RPC error');
-              held++;
-              continue;
-            }
-
-            if (!claimResult || claimResult.length === 0) {
-              logger.debug(`[AUTO-PAYOUT] Payout ${payout.id} already claimed, skipping`);
-              continue;
-            }
-
-            const claimToken: string = claimResult[0].claimed_token;
-            const providerKey: string = claimResult[0].idempotency_key;
-
-            try {
-              // Create transfer recipient — pre-transfer step
-              const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${paystackSecretKey}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  type: 'nuban',
-                  name: payoutAccount.account_name,
-                  account_number: payoutAccount.account_number,
-                  bank_code: payoutAccount.bank_code,
-                  currency: getCurrencyCode(biz.country_code as CountryCode),
-                }),
-              });
-
-              // FIN-002: Classify recipient creation with body validation
-              if (!recipientRes.ok) {
-                const classification = await classifyPaystackError(recipientRes);
-                if (classification === 'conclusive_rejection') {
-                  const { data: failData, error: failErr } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payout.id, p_claim_token: claimToken });
-                  if (failErr || !failData?.length) {
-                    logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id })
-                      .error('[AUTO-PAYOUT] Failed to mark transfer failed');
-                  }
-                } else {
-                  const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                  if (revErr || !revData?.length) {
-                    logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                      .error('[AUTO-PAYOUT] Failed to mark review_required');
-                  }
-                }
-                held++;
-                continue;
-              }
-
-              let recipientData: Record<string, unknown>;
-              try { recipientData = await recipientRes.json(); }
-              catch {
-                const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                if (revErr || !revData?.length) {
-                  logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                    .error('[AUTO-PAYOUT] Failed to mark review_required');
-                }
-                held++;
-                continue;
-              }
-
-              if (!recipientData.status || !(recipientData.data as Record<string, unknown>)?.recipient_code) {
-                const { data: failData, error: failErr } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payout.id, p_claim_token: claimToken });
-                if (failErr || !failData?.length) {
-                  logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id })
-                    .error('[AUTO-PAYOUT] Failed to mark transfer failed');
-                }
-                held++;
-                continue;
-              }
-
-              // Initiate transfer with server-generated idempotency reference
-              const transferRes = await fetch('https://api.paystack.co/transfer', {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${paystackSecretKey}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  source: 'balance',
-                  amount: Math.round(net * 100),
-                  recipient: (recipientData.data as Record<string, unknown>).recipient_code,
-                  reference: providerKey,
-                  reason: `Waaiio payout: ${periodStartStr} to ${periodEndStr}`,
-                }),
-              });
-
-              // FIN-002: Classify transfer response with body validation
-              if (!transferRes.ok) {
-                const classification = await classifyPaystackError(transferRes);
-                if (classification === 'conclusive_rejection') {
-                  const { data: failData, error: failErr } = await supabase.rpc('mark_payout_transfer_failed', { p_payout_id: payout.id, p_claim_token: claimToken });
-                  if (failErr || !failData?.length) {
-                    logger.withContext({ op: 'auto-payout.fail-transition', businessId: biz.id })
-                      .error('[AUTO-PAYOUT] Failed to mark transfer failed');
-                  }
-                } else {
-                  const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                  if (revErr || !revData?.length) {
-                    logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                      .error('[AUTO-PAYOUT] Failed to mark review_required');
-                  }
-                }
-                held++;
-                continue;
-              }
-
-              let transferData: Record<string, unknown>;
-              try { transferData = await transferRes.json(); }
-              catch {
-                const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                if (revErr || !revData?.length) {
-                  logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                    .error('[AUTO-PAYOUT] Failed to mark review_required');
-                }
-                held++;
-                continue;
-              }
-
-              if (!transferData.status || !(transferData.data as Record<string, unknown>)?.transfer_code) {
-                // 200 but missing expected fields — ambiguous
-                const { data: revData, error: revErr } = await supabase.rpc('mark_payout_review_required', { p_payout_id: payout.id, p_claim_token: claimToken });
-                if (revErr || !revData?.length) {
-                  logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                    .error('[AUTO-PAYOUT] Failed to mark review_required');
-                }
-                held++;
-                continue;
-              }
-
-              // Token-guarded submission — verify exactly one row transitioned
-              const { data: submitResult, error: submitErr } = await supabase.rpc('mark_payout_provider_submitted', {
-                p_payout_id: payout.id,
-                p_claim_token: claimToken,
-                p_gateway_transfer_code: (transferData.data as Record<string, unknown>).transfer_code as string,
-              });
-              if (submitErr || !submitResult?.length) {
-                logger.withContext({ op: 'auto-payout.submit-transition', businessId: biz.id })
-                  .error('[AUTO-PAYOUT] Provider submitted but finalization failed');
-                held++;
-              } else {
-                transferred++;
-                logger.debug(`[AUTO-PAYOUT] Transfer initiated for business ${biz.id}`);
-              }
-            } catch (err) {
-              // Ambiguous outcome — mark review_required
-              logger.withContext({ op: 'auto-payout.paystack', businessId: biz.id, ...safeLogErrorContext(err) })
-                .error('[AUTO-PAYOUT] Paystack error — uncertain outcome');
-              const { data: revData, error: reviewErr } = await supabase.rpc('mark_payout_review_required', {
-                p_payout_id: payout.id,
-                p_claim_token: claimToken,
-              });
-              if (reviewErr || !revData?.length) {
-                logger.withContext({ op: 'auto-payout.review-transition', businessId: biz.id })
-                  .error('[AUTO-PAYOUT] Failed to mark review_required');
-              }
-              held++;
-            }
+          // FIN-002: Initiate provider transfer with eligible verified account
+          if (hasEligibleProvider && payoutAccount) {
+            const result = await executeAutoTransfer(supabase, payout.id, net, biz, payoutAccount, periodStartStr, periodEndStr);
+            if (result === 'transferred') transferred++;
+            else held++;
           }
         } else {
           held++;

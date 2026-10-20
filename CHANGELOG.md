@@ -13,6 +13,14 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-19 — feat(payouts): settlement closure — Paystack auto-payout dedup, manual settlement evidence gate, lifecycle tests
+
+### What changed
+- Extracted duplicated Paystack transfer code in auto-payout cron into shared `executeAutoTransfer()` helper.
+- `manual_cash` removed from transfer methods. `manual_bank` approval now sets `approved` (not `paid`).
+- New `/confirm-settlement` endpoint: requires `transfer_reference`, server-enforced `attestation`, SEC-005 step-up, atomic audit. Rebalances against refunds before confirming.
+- 51+ new settlement tests. Codex P1 findings resolved: kill switch, gateway authority, row verification, step-up allowlist + DB constraint.
+
 ## 2026-10-10 — #591 Phase 2 CTO R2: answer/option alignment, channel boundary, registry
 
 ### What changed

@@ -16,7 +16,7 @@ import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
-const ALLOWED_TRANSFER_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank', 'manual_cash'] as const;
+const ALLOWED_TRANSFER_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank'] as const;
 type TransferMethod = typeof ALLOWED_TRANSFER_METHODS[number];
 
 // FIN-002: Only these methods initiate automated provider transfers.
@@ -65,6 +65,14 @@ export async function POST(
 
   if (!['pending', 'approved', 'held'].includes(payout.status)) {
     return NextResponse.json({ error: 'Payout cannot be approved in current status' }, { status: 400 });
+  }
+
+  // Prevent automated claims of manually-approved payouts:
+  // A manual_bank payout that is already approved must use confirm-settlement, not re-approve with an automated method.
+  if (payout.status === 'approved' && payout.transfer_method === 'manual_bank' && AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
+    return NextResponse.json({
+      error: 'This payout was approved for manual bank transfer. Use confirm-settlement to complete it, or reject and re-create for automated transfer.',
+    }, { status: 409 });
   }
 
   // Block payouts with adjustment linkage flags that require resolution
@@ -310,32 +318,41 @@ export async function POST(
   // ═══════════════════════════════════════════════════════════
 
   if (!AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
-    // Atomic conditional update — verifies exactly one row transitions
+    // Manual bank transfer: approve only — settlement confirmed separately
+    // via /api/admin/payouts/[id]/confirm-settlement with required transfer_reference.
     // SEC-005: uses service client — authenticated DML revoked on business_payouts.
     const { data: manualResult } = await serviceClient
       .from('business_payouts')
       .update({
-        status: 'paid',
+        status: 'approved',
         approved_by: admin.id,
         approved_at: new Date().toISOString(),
         transfer_method,
         transfer_reference: reference || null,
         notes: notes || null,
-        paid_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
-      .in('status', ['pending', 'approved', 'held'])
+      .in('status', ['pending', 'held'])
       .select('id');
 
     if (!manualResult || manualResult.length === 0) {
+      // Check if already approved with manual_bank — idempotent no-op
+      const { data: reread } = await serviceClient
+        .from('business_payouts')
+        .select('status, transfer_method')
+        .eq('id', id)
+        .single();
+      if (reread?.status === 'approved' && reread?.transfer_method === 'manual_bank') {
+        return NextResponse.json({ success: true, status: 'approved', already_approved: true });
+      }
       return NextResponse.json({
-        error: 'Payout status has changed — cannot complete manual payout',
+        error: 'Payout status has changed — cannot approve manual payout',
       }, { status: 409 });
     }
 
-    await logAndNotify(serviceClient, id, payout, admin, 'paid', transfer_method, null, reference);
-    return NextResponse.json({ success: true, status: 'paid' });
+    await logAndNotify(serviceClient, id, payout, admin, 'approved', transfer_method, null, reference);
+    return NextResponse.json({ success: true, status: 'approved' });
   }
 
   // ═══════════════════════════════════════════════════════════

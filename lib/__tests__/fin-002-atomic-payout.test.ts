@@ -1146,17 +1146,23 @@ describe('FIN-002: Payout account eligibility', () => {
     })).toBe(false);
   });
 
-  it('cron source uses isEligiblePaystackAccount before claim', async () => {
+  it('cron source uses Paystack eligibility and country-authoritative gateway', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
     expect(source).toContain('isEligiblePaystackAccount');
-    // Eligibility check must appear before the claim RPC
-    const eligPos = source.indexOf('hasEligiblePaystackAccount');
-    const claimPos = source.indexOf("'claim_payout_for_transfer'");
-    expect(eligPos).toBeLessThan(claimPos);
+    expect(source).toContain('getPaymentGatewayForCountry');
+    // Transfer is guarded by hasEligibleProvider in the main loop
+    expect(source).toContain('hasEligibleProvider');
+    // The executeAutoTransfer helper uses the claim RPC
+    expect(source).toContain("'claim_payout_for_transfer'");
+    // Eligibility is checked BEFORE executeAutoTransfer is called
+    const mainLoop = source.slice(source.indexOf('export async function GET'));
+    const eligPos = mainLoop.indexOf('hasEligibleProvider');
+    const transferCallPos = mainLoop.indexOf('executeAutoTransfer');
+    expect(eligPos).toBeLessThan(transferCallPos);
   });
 
   it('cron source uses shared classifyPaystackError', async () => {
@@ -1176,19 +1182,20 @@ describe('FIN-002: Payout account eligibility', () => {
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
-    // Every mark_payout_transfer_failed call should check result
-    const failedCalls = source.match(/mark_payout_transfer_failed/g) || [];
-    const failDataChecks = source.match(/failData\?\./g) || [];
-    const failErrChecks = source.match(/failErr/g) || [];
-    expect(failedCalls.length).toBeGreaterThan(0);
-    expect(failDataChecks.length).toBeGreaterThanOrEqual(failedCalls.length - 1); // import line doesn't count
-    expect(failErrChecks.length).toBeGreaterThanOrEqual(failedCalls.length - 1);
-
-    // Every mark_payout_review_required call should check result
-    const reviewCalls = source.match(/mark_payout_review_required/g) || [];
-    const revDataChecks = source.match(/revData\?\./g) || [];
-    expect(reviewCalls.length).toBeGreaterThan(0);
-    expect(revDataChecks.length).toBeGreaterThanOrEqual(reviewCalls.length - 1);
+    // The executeAutoTransfer helper checks both error and data?.length
+    // on markFailed and markReview transitions
+    expect(source).toContain('mark_payout_transfer_failed');
+    expect(source).toContain('mark_payout_review_required');
+    // Both helpers check error AND row count (data?.length)
+    const helperBlock = source.slice(
+      source.indexOf('const markFailed'),
+      source.indexOf('try {', source.indexOf('const markReview') + 20),
+    );
+    // markFailed checks data?.length
+    expect(helperBlock).toContain("data?.length");
+    // Both check error
+    const errorChecks = (helperBlock.match(/if \(error \|\| !data/g) || []).length;
+    expect(errorChecks).toBe(2); // one for markFailed, one for markReview
   });
 });
 
@@ -1197,37 +1204,37 @@ describe('FIN-002: Payout account eligibility', () => {
 // ═══════════════════════════════════════════════════════════
 
 describe('FIN-002: Cron auto-approval requires eligible Paystack account', () => {
-  it('canAutoApprove requires isNG, hasEligiblePaystackAccount, and paystackSecretKey', async () => {
+  it('canAutoApprove requires hasEligibleProvider and safety checks', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
-    // canAutoApprove must include all three critical conditions
     const approveBlock = source.slice(
       source.indexOf('const canAutoApprove'),
-      source.indexOf('const status = canAutoApprove'),
+      source.indexOf('const holdReasons'),
     );
-    expect(approveBlock).toContain('isNG');
-    expect(approveBlock).toContain('hasEligiblePaystackAccount');
-    expect(approveBlock).toContain("paystackSecretKey !== ''");
+    expect(approveBlock).toContain('hasEligibleProvider');
+    // hasEligibleProvider: NG-only auto-approval (GH manual, Stripe disabled)
+    const providerBlock = source.slice(
+      source.indexOf('const hasEligibleProvider'),
+      source.indexOf('const canAutoApprove'),
+    );
+    expect(providerBlock).toContain('AUTO_APPROVE_COUNTRIES');
+    expect(providerBlock).toContain('hasEligiblePaystackAccount');
+    expect(providerBlock).toContain("paystackSecretKey !== ''");
   });
 
-  it('Stripe-only account → not auto-approved, no claim, no provider call', async () => {
+  it('Stripe auto-payout is explicitly disabled (no reconciliation webhook)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
-    // isEligiblePaystackAccount returns false for gateway='stripe',
-    // so hasEligiblePaystackAccount = false, canAutoApprove = false.
-    // The transfer block is guarded by isNG && hasEligiblePaystackAccount.
-    const transferGuard = source.slice(
-      source.indexOf('if (isNG && hasEligiblePaystackAccount'),
-      source.indexOf('claim_payout_for_transfer'),
-    );
-    expect(transferGuard).toContain('isNG');
-    expect(transferGuard).toContain('hasEligiblePaystackAccount');
+    // Stripe auto-payout is disabled — only Paystack auto-transfers
+    expect(source).toContain('Stripe auto-payout is disabled');
+    expect(source).not.toContain('isEligibleStripeAccount');
+    expect(source).toContain('isEligiblePaystackAccount');
   });
 
   it('inactive Paystack account → not eligible', async () => {
@@ -1275,47 +1282,39 @@ describe('FIN-002: Cron auto-approval requires eligible Paystack account', () =>
     })).toBe(false);
   });
 
-  it('unsupported country (US) → canAutoApprove is false', async () => {
+  it('provider selection uses country-authoritative gateway', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
-    // isNG only true for NG/GH
-    expect(source).toContain("biz.country_code === 'NG' || biz.country_code === 'GH'");
-    // canAutoApprove requires isNG
-    const approveBlock = source.slice(
-      source.indexOf('const canAutoApprove'),
-      source.indexOf('const status = canAutoApprove'),
-    );
-    expect(approveBlock).toContain('isNG');
+    // Must use getPaymentGatewayForCountry for authoritative routing
+    expect(source).toContain('getPaymentGatewayForCountry');
+    // Both helper and main loop resolve gateway from the DB-backed country config
+    expect(source).toContain("bizGateway === 'paystack'");
+    expect(source).toContain("countryGateway === 'paystack'");
   });
 
-  it('Paystack key missing → canAutoApprove is false', async () => {
+  it('missing provider produces hold reason', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
-    const approveBlock = source.slice(
-      source.indexOf('const canAutoApprove'),
-      source.indexOf('const status = canAutoApprove'),
-    );
-    expect(approveBlock).toContain("paystackSecretKey !== ''");
-    // Hold reason for missing key
-    expect(source).toContain('PAYSTACK_SECRET_KEY not configured');
+    // Hold reasons for ineligible provider
+    expect(source).toContain('No eligible provider for automated transfer');
+    expect(source).toContain('Payout account not eligible for Paystack transfer');
   });
 
-  it('fully eligible NG Paystack account → may auto-approve', async () => {
+  it('fully eligible account → canAutoApprove checks all safety conditions', async () => {
     const { isEligiblePaystackAccount } = await import('@/lib/payments/payout-classification');
-    // Fully eligible account
+    // Fully eligible Paystack account
     expect(isEligiblePaystackAccount({
       id: 'a1', business_id: 'b1', gateway: 'paystack',
       bank_code: '058', account_number: '0123456789', account_name: 'Test User',
       verified_at: '2024-01-01', is_active: true,
     })).toBe(true);
-    // canAutoApprove in cron requires isNG (NG/GH), hasEligiblePaystackAccount,
-    // paystackSecretKey, cooling period, velocity, limit, and verification — all are checked
+    // canAutoApprove requires hasEligibleProvider + safety checks
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
@@ -1323,11 +1322,9 @@ describe('FIN-002: Cron auto-approval requires eligible Paystack account', () =>
     );
     const approveBlock = source.slice(
       source.indexOf('const canAutoApprove'),
-      source.indexOf('const status = canAutoApprove'),
+      source.indexOf('const holdReasons'),
     );
-    expect(approveBlock).toContain('isNG');
-    expect(approveBlock).toContain('hasEligiblePaystackAccount');
-    expect(approveBlock).toContain("paystackSecretKey !== ''");
+    expect(approveBlock).toContain('hasEligibleProvider');
     expect(approveBlock).toContain('bizAge >= COOLING_PERIOD_DAYS');
     expect(approveBlock).toContain('avgPerDay < VELOCITY_THRESHOLD');
     expect(approveBlock).toContain('net <= autoApproveLimit');

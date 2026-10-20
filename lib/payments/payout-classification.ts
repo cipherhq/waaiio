@@ -124,6 +124,7 @@ export interface PayoutAccountRow {
   account_name: string | null;
   verified_at: string | null;
   is_active: boolean;
+  stripe_account_id?: string | null;
 }
 
 export function isEligiblePaystackAccount(acct: PayoutAccountRow): boolean {
@@ -134,5 +135,18 @@ export function isEligiblePaystackAccount(acct: PayoutAccountRow): boolean {
     && acct.bank_code != null && acct.bank_code !== ''
     && acct.account_number != null && acct.account_number !== ''
     && acct.account_name != null && acct.account_name !== ''
+  );
+}
+
+/**
+ * Check whether a Stripe payout account has all required fields
+ * for an automated Stripe Connect transfer.
+ */
+export function isEligibleStripeAccount(acct: PayoutAccountRow): boolean {
+  return (
+    acct.is_active === true
+    && acct.gateway === 'stripe'
+    && acct.verified_at != null
+    && acct.stripe_account_id != null && acct.stripe_account_id !== ''
   );
 }

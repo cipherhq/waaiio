@@ -31,7 +31,7 @@ export async function POST(
   // if the payout doesn't exist or is in an invalid status
   const { data: payout } = await serviceClient
     .from('business_payouts')
-    .select('id, business_id, net_amount, status')
+    .select('id, business_id, net_amount, status, transfer_method')
     .eq('id', id)
     .single();
 
@@ -41,6 +41,14 @@ export async function POST(
 
   if (!['pending', 'approved', 'held'].includes(payout.status)) {
     return NextResponse.json({ error: 'Payout cannot be rejected in current status' }, { status: 400 });
+  }
+
+  // Prevent rejecting a manual_bank payout that has been approved — the bank
+  // transfer may already be in flight. Use confirm-settlement instead.
+  if (payout.status === 'approved' && payout.transfer_method === 'manual_bank') {
+    return NextResponse.json({
+      error: 'This payout was approved for manual bank transfer and may be in flight. It cannot be rejected after approval. Contact support if the transfer failed.',
+    }, { status: 409 });
   }
 
   // SEC-005 Layer 4: Consume operation-bound step-up authorization
