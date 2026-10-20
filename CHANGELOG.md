@@ -13,6 +13,54 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-19 — feat(payouts): settlement closure — Paystack auto-payout dedup, manual settlement evidence gate, lifecycle tests
+
+### What changed
+- Extracted duplicated Paystack transfer code in auto-payout cron into shared `executeAutoTransfer()` helper.
+- `manual_cash` removed from transfer methods. `manual_bank` approval now sets `approved` (not `paid`).
+- New `/confirm-settlement` endpoint: requires `transfer_reference`, server-enforced `attestation`, SEC-005 step-up, atomic audit. Rebalances against refunds before confirming.
+- 51+ new settlement tests. Codex P1 findings resolved: kill switch, gateway authority, row verification, step-up allowlist + DB constraint.
+
+## 2026-10-10 — #591 Phase 2 CTO R2: answer/option alignment, channel boundary, registry
+
+### What changed
+- submission-handler.ts: Reject empty/null form fields before INSERT (mandatory validation). Accept compiler-generated option IDs (option_1, option_2) alongside display titles. Reject non-object/array/oversized response_json.
+- submission-handler.ts: Enforce all ResolvedChannel fields (businessId, channelId, phoneNumberId) are non-empty.
+- docs/MIGRATION_REGISTRY.md: Added reservation rows with correct branch names for M436/M437/M438.
+
+### What it affects / could break
+- Native form submissions with empty field schemas now rejected (previously silently accepted any answers).
+- Option validation now accepts both display titles (web) and compiler-generated IDs (native).
+
+## 2026-10-10 — #591 Phase 2 CTO R1: channel authority, phone normalization, answer validation
+
+### What changed
+- submission-handler.ts: Replaced WABA-based business resolution with pre-resolved channel contract (phone_number_id authority from webhook). Shared/unbound channels fail closed.
+- flow-token.ts: Added normalizePhone() to strip leading '+' before signing/verifying, matching Meta webhook msg.from format.
+- submission-handler.ts: Added validateAnswersAgainstSchema() — rejects unknown fields, enforces required, validates options, bounds answer size.
+- submission-handler.ts: Replaced read-modify-write response_count with atomic increment_form_response_count RPC.
+- docs/MIGRATION_REGISTRY.md: Recorded M436/M437/M438 reservations.
+
+### What it affects / could break
+- Submission handler now requires a pre-resolved channel object, not WABA ID. Webhook integration (future) must pass the resolved channel.
+- Phone numbers are canonicalized (strip +) before token signing — existing tokens from Phase 2 (never issued in production) are not affected.
+
+## 2026-10-09 — #591 Phase 2: Native WhatsApp Forms infrastructure
+
+### What changed
+- `supabase/migrations/437_native_whatsapp_forms.sql`: Extends `forms` table with `meta_flow_id` (VARCHAR 64), `meta_flow_status` (VARCHAR 20, CHECK draft/published/deprecated/blocked/throttled), `native_flow_json` (JSONB). Extends `form_responses` table with `submission_source` (VARCHAR 10, CHECK web/native), `flow_token_hash` (VARCHAR 128), `consent_given` (BOOLEAN). Adds partial unique index on `flow_token_hash` WHERE NOT NULL for replay prevention. No new RLS policies (existing row-level policies cover new columns). No SECURITY DEFINER functions. Idempotent with IF NOT EXISTS.
+- `lib/whatsapp-forms/flow-token.ts`: HMAC-SHA256 signed one-time flow tokens binding a form send to a specific recipient, form, and business. 30-minute TTL. Generates, verifies (with constant-time signature comparison), and hashes nonces for DB replay prevention.
+- `lib/whatsapp-forms/meta-flow-asset.ts`: Typed service abstraction for Meta WhatsApp Flows lifecycle API (create, upload, publish, get status, deprecate). All functions validate inputs then throw "provider calls not authorized" — no live API calls in this phase.
+- `lib/whatsapp-forms/submission-handler.ts`: Secure handler for nfm_reply webhook messages. Resolves business_id from channel (NEVER from Flow payload), customer_phone from webhook envelope (NEVER from Flow payload). Verifies signed flow_token, rejects expired/forged/replayed tokens before any INSERT. Persists to form_responses with submission_source='native' and nonce-derived replay hash. Records marketing consent only when form has published consent prompt. Normalizes compiler option IDs to display titles. No booking creation, no payment, no scheduling RPC.
+- `app/api/forms/native-flow/send/route.ts`: Owner-scoped POST endpoint to construct a WhatsApp native Flow send payload. Verifies auth, business ownership, form published status, schema drift detection. Generates signed flow_token. Returns constructed payload with `queued: false, reason: 'provider_send_not_authorized'` — does NOT send. Real sending requires separate provider authorization.
+- `lib/__tests__/native-forms-phase2-591.test.ts`: 78 executable tests covering flow token lifecycle, submission handler security, consent proof, option normalization, send API, Meta asset service, and migration contract.
+
+### What it affects / could break
+- New columns on forms and form_responses tables — existing web form code unaffected (new columns have defaults or are nullable). Existing RLS policies cover new columns without modification.
+- No Meta API calls, no WhatsApp message sends, no webhook interception wired. All provider operations gated.
+- Does not modify existing native-flow.ts compiler or preview route from Phase 1.
+- Does not touch financial code, payment flows, or scheduling.
+
 ## 2026-10-15 — feat(admin): assisted shared-number and owner WABA connection (#652)
 
 ### What changed

@@ -202,6 +202,9 @@ describe('FIN-001: Payout kill switch (auto-payout cron)', () => {
     vi.doMock('@/lib/email/templates', () => ({ payoutFailedEmail: vi.fn() }));
     vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
     vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
+    vi.doMock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('@/lib/constants', () => ({ getCurrencyCode: vi.fn(() => 'NGN'), getPaymentGatewayForCountry: vi.fn(() => 'paystack'), CountryCode: {} }));
+    vi.doMock('@/lib/errors', () => ({ safeLogErrorContext: vi.fn(() => ({})) }));
     return import('@/app/api/cron/auto-payout/route');
   }
 
@@ -800,7 +803,7 @@ describe('FIN-001: Transfer-method allowlist', () => {
     return import('@/app/api/admin/payouts/[id]/approve/route');
   }
 
-  const VALID_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank', 'manual_cash'];
+  const VALID_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank'];
 
   for (const method of VALID_METHODS) {
     it(`accepts valid transfer method: ${method}`, async () => {
@@ -897,10 +900,10 @@ describe('FIN-001: Transfer-method allowlist', () => {
     // and never enter the automated provider code path (claim + provider call).
     // The AUTOMATED_TRANSFER_METHODS set separates them explicitly.
     expect(source).toContain("AUTOMATED_TRANSFER_METHODS.has(transfer_method)");
-    // Manual path sets status to 'paid' directly without claim
+    // Manual path sets status to 'approved' (settlement confirmed separately)
     const manualSection = source.indexOf('!AUTOMATED_TRANSFER_METHODS.has');
-    const paidAssign = source.indexOf("status: 'paid'", manualSection);
-    expect(paidAssign).toBeGreaterThan(manualSection);
+    const approvedAssign = source.indexOf("status: 'approved'", manualSection);
+    expect(approvedAssign).toBeGreaterThan(manualSection);
     // The automated try block does NOT contain a 'paid' assignment
     const tryBlock = source.indexOf('try {', manualSection + 200);
     const automatedSection = source.slice(tryBlock, source.indexOf('} catch', tryBlock));
