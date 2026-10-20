@@ -705,3 +705,171 @@ describe('Array draft input behavior', () => {
     });
   });
 });
+
+/* ── 12. P1: Invalid numeric draft cannot trigger save/preview with stale data ── */
+
+describe('Invalid draft blocks save and preview', () => {
+  it('save is blocked when numeric array has invalid tokens', async () => {
+    const numExpression = {
+      type: 'all' as const,
+      children: [{ type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [100, 200] }],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-block', name: 'Block Test', description: null, expression: numExpression, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Block Test')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    // Type invalid numeric values and blur to commit
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInput, { target: { value: '100, abc, 300' } });
+    fireEvent.blur(arrayInput);
+
+    // Inline error should be visible
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+
+    // Try to save — should be blocked, NOT send the old [100, 200]
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    // Wait a tick and verify NO PUT was made
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    const putCall = fetchMock.mock.calls.find(
+      (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+    );
+    expect(putCall).toBeUndefined();
+
+    // Validation error should be shown to the user
+    expect(screen.getByText(/Fix invalid values/i)).toBeTruthy();
+  });
+
+  it('preview is blocked when numeric array has invalid tokens', async () => {
+    const numExpression = {
+      type: 'all' as const,
+      children: [{ type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [50] }],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-prev-block', name: 'Preview Block', description: null, expression: numExpression, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Preview Block')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)');
+    fireEvent.change(arrayInput, { target: { value: '50, xyz' } });
+    fireEvent.blur(arrayInput);
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+
+    // Try preview — should be blocked
+    fireEvent.click(screen.getByText('Preview Audience'));
+
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    // No preview API call should have been made
+    const previewCall = fetchMock.mock.calls.find(
+      (c: [string, RequestInit?]) => c[0] === '/api/engage/audience/preview',
+    );
+    expect(previewCall).toBeUndefined();
+
+    expect(screen.getByText(/Fix invalid values/i)).toBeTruthy();
+  });
+
+  it('invalid draft text remains visible until user corrects it', async () => {
+    const numExpression = {
+      type: 'all' as const,
+      children: [{ type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [100] }],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-vis', name: 'Visible Draft', description: null, expression: numExpression, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Visible Draft')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    const arrayInput = screen.getByLabelText('List values (comma-separated)') as HTMLInputElement;
+    fireEvent.change(arrayInput, { target: { value: '100, bad' } });
+    fireEvent.blur(arrayInput);
+
+    // The invalid text should remain visible in the input (not revert to "100")
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    // Draft should still show the invalid text since commit failed
+    expect(arrayInput.value).toBe('100, bad');
+  });
+});
+
+/* ── 13. P1: Numeric array-to-scalar operator conversion ── */
+
+describe('Numeric array-to-scalar operator conversion', () => {
+  it('blocks numeric multi-value array from switching to scalar operator', async () => {
+    const numArrayExpression = {
+      type: 'all' as const,
+      children: [{ type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [100, 200, 300] }],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-num-block', name: 'Num Block', description: null, expression: numArrayExpression, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Num Block')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    // Try to switch from 'in' to 'eq' with multiple numeric values
+    const operatorSelect = screen.getByDisplayValue('is one of');
+    fireEvent.change(operatorSelect, { target: { value: 'eq' } });
+
+    // The operator should NOT have changed (blocked)
+    // An error message should be shown
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByText(/Remove values until one remains/i)).toBeTruthy();
+  });
+
+  it('allows numeric single-value array to switch to scalar operator', async () => {
+    const singleNumExpression = {
+      type: 'all' as const,
+      children: [{ type: 'predicate' as const, source: 'payment' as const, field: 'amount', operator: 'in' as const, value: [500] }],
+    };
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      success: true,
+      segments: [{ id: 'seg-single', name: 'Single Num', description: null, expression: singleNumExpression, is_dynamic: true, created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' }],
+    }));
+
+    render(<AudiencesPage />);
+    await waitFor(() => expect(screen.getByText('Single Num')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+
+    // Switch from 'in' to 'eq' — should work because only 1 value
+    const operatorSelect = screen.getByDisplayValue('is one of');
+    fireEvent.change(operatorSelect, { target: { value: 'eq' } });
+
+    // Save and verify the scalar conversion
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segment: { id: 'seg-single' } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, segments: [] }));
+
+    fireEvent.click(screen.getByText('Update Audience'));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const body = JSON.parse(putCall![1]!.body as string);
+      expect(body.expression.children[0].operator).toBe('eq');
+      expect(body.expression.children[0].value).toBe(500);
+      expect(typeof body.expression.children[0].value).toBe('number');
+    });
+  });
+});

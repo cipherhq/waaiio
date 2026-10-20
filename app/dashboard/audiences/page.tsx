@@ -123,10 +123,13 @@ function PredicateEditor({
   predicate,
   onChange,
   onRemove,
+  onValidationChange,
 }: {
   predicate: Predicate;
   onChange: (p: Predicate) => void;
   onRemove: () => void;
+  /** Reports whether this editor has uncommitted or invalid input */
+  onValidationChange?: (hasError: boolean) => void;
 }) {
   const fields = FIELD_ALLOWLIST[predicate.source];
   const fieldNames = Object.keys(fields);
@@ -148,6 +151,7 @@ function PredicateEditor({
     const firstOp = OPERATOR_TYPE_COMPAT[firstFieldType][0];
     setArrayDraft(null);
     setArrayErrors([]);
+    onValidationChange?.(false);
     onChange({ type: 'predicate', source, field: firstField, operator: firstOp, value: '' });
   };
 
@@ -157,6 +161,7 @@ function PredicateEditor({
     const op = ops.includes(predicate.operator) ? predicate.operator : ops[0];
     setArrayDraft(null);
     setArrayErrors([]);
+    onValidationChange?.(false);
     onChange({ ...predicate, field, operator: op, value: VALUE_FREE_OPS.has(op) ? undefined : '' });
   };
 
@@ -176,14 +181,26 @@ function PredicateEditor({
         onChange({ ...predicate, operator, value: [] as string[] });
       }
     } else {
-      // Switching FROM array operator to scalar: preserve all values as joined string
-      // so the user can see what they had and edit down, instead of silent truncation
+      // Switching FROM array operator to scalar
       const existing = predicate.value;
-      if (Array.isArray(existing) && existing.length > 0) {
+      const ft = currentFieldDef?.type || 'string';
+      if (Array.isArray(existing) && existing.length > 1) {
+        if (ft === 'number') {
+          // Numeric arrays cannot join to a valid scalar number — block and explain
+          setArrayErrors([`Remove values until one remains before switching to "${OPERATOR_LABELS[operator]}"`]);
+          onValidationChange?.(true);
+          return; // Do NOT change operator
+        }
+        // String arrays: join as comma-separated string for user to edit
         onChange({ ...predicate, operator, value: existing.join(', ') });
+      } else if (Array.isArray(existing) && existing.length === 1) {
+        // Single-element array: safe to convert to scalar
+        onChange({ ...predicate, operator, value: existing[0] ?? '' });
       } else {
         onChange({ ...predicate, operator, value: existing ?? '' });
       }
+      setArrayErrors([]);
+      onValidationChange?.(false);
     }
   };
 
@@ -209,14 +226,18 @@ function PredicateEditor({
       setArrayErrors(errors);
       if (errors.length === 0) {
         onChange({ ...predicate, value: result as unknown as string[] });
+        setArrayDraft(null); // Clear draft only on successful commit
+        onValidationChange?.(false);
+      } else {
+        // Keep draft visible so the user can fix it — do NOT setArrayDraft(null)
+        onValidationChange?.(true);
       }
-      // When there are errors, do NOT update predicate.value — keep the draft
-      // visible so the user can fix it. The save/preview button checks arrayErrors.
     } else {
       setArrayErrors([]);
       onChange({ ...predicate, value: tokens });
+      setArrayDraft(null);
+      onValidationChange?.(false);
     }
-    setArrayDraft(null);
   };
 
   const handleScalarValueChange = (value: string) => {
@@ -365,11 +386,13 @@ function GroupEditor({
   onChange,
   onRemove,
   depth,
+  onValidationChange,
 }: {
   group: GroupExpression;
   onChange: (g: GroupExpression) => void;
   onRemove?: () => void;
   depth: number;
+  onValidationChange?: (hasError: boolean) => void;
 }) {
   const updateChild = (index: number, child: AudienceExpression) => {
     const newChildren = [...group.children];
@@ -441,6 +464,7 @@ function GroupEditor({
                 predicate={child}
                 onChange={(p) => updateChild(i, p)}
                 onRemove={() => removeChild(i)}
+                onValidationChange={onValidationChange}
               />
             ) : (
               <GroupEditor
@@ -448,6 +472,7 @@ function GroupEditor({
                 onChange={(g) => updateChild(i, g)}
                 onRemove={() => removeChild(i)}
                 depth={depth + 1}
+                onValidationChange={onValidationChange}
               />
             )}
           </div>
@@ -581,6 +606,8 @@ export default function AudiencesPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  // Tracks whether any child predicate editor has invalid/uncommitted input
+  const [hasEditorErrors, setHasEditorErrors] = useState(false);
 
   // Preview state
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -621,6 +648,12 @@ export default function AudiencesPage() {
   const runPreview = useCallback(async () => {
     if (!business?.id) return;
 
+    if (hasEditorErrors) {
+      setValidationErrors(['Fix invalid values in conditions before previewing']);
+      setPreview(null);
+      return;
+    }
+
     const validation = validateAudienceExpression(expression);
     if (!validation.valid) {
       setValidationErrors(validation.errors.map((e) => `${e.path}: ${e.message}`));
@@ -650,12 +683,17 @@ export default function AudiencesPage() {
     } finally {
       setPreviewLoading(false);
     }
-  }, [business?.id, expression]);
+  }, [business?.id, expression, hasEditorErrors]);
 
   /* ── Save segment ── */
 
   const handleSave = async () => {
     if (!business?.id || !segmentName.trim()) return;
+
+    if (hasEditorErrors) {
+      setValidationErrors(['Fix invalid values in conditions before saving']);
+      return;
+    }
 
     const validation = validateAudienceExpression(expression);
     if (!validation.valid) {
@@ -759,6 +797,7 @@ export default function AudiencesPage() {
     setPreviewError(null);
     setValidationErrors([]);
     setSaveError(null);
+    setHasEditorErrors(false);
   };
 
   /* ── Loading / capability gate ── */
@@ -935,6 +974,7 @@ export default function AudiencesPage() {
               group={expression}
               onChange={setExpression}
               depth={0}
+              onValidationChange={setHasEditorErrors}
             />
           </div>
 
