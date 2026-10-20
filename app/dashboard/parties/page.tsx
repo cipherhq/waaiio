@@ -43,6 +43,9 @@ interface InviteRow {
   invite_token: string;
   responded_at: string | null;
   reminder_sent: boolean;
+  tags: string[];
+  table_id: string | null;
+  seat_number: number | null;
   created_at: string;
 }
 
@@ -73,6 +76,21 @@ export default function PartiesPage() {
   const [sending, setSending] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+
+  // Table management state
+  interface TableRow { id: string; name: string; capacity: number; sort_order: number; seated: number; }
+  const [partyTables, setPartyTables] = useState<TableRow[]>([]);
+  const [showTableForm, setShowTableForm] = useState(false);
+  const [tableForm, setTableForm] = useState({ name: '', capacity: 10 });
+  const [editingTableId, setEditingTableId] = useState<string | null>(null);
+
+  // Tag management state
+  const [tagFilter, setTagFilter] = useState<string>('');
+  const [editingTagInviteId, setEditingTagInviteId] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState('');
+  const [showBulkTag, setShowBulkTag] = useState(false);
+  const [bulkTagValue, setBulkTagValue] = useState('');
+  const [selectedInviteIds, setSelectedInviteIds] = useState<Set<string>>(new Set());
 
   const appUrl = typeof window !== 'undefined' ? window.location.origin : '';
 
@@ -124,7 +142,7 @@ export default function PartiesPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('event_invites')
-      .select('id, guest_phone, guest_name, status, plus_ones, dietary_notes, invite_token, responded_at, reminder_sent, created_at')
+      .select('id, guest_phone, guest_name, status, plus_ones, dietary_notes, invite_token, responded_at, reminder_sent, tags, table_id, seat_number, created_at')
       .eq('party_id', partyId)
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
@@ -195,6 +213,7 @@ export default function PartiesPage() {
     setView('detail');
     setStatusMessage('');
     loadInvites(party.id);
+    loadTables(party.id);
   }
 
   async function handleSave() {
@@ -354,6 +373,144 @@ export default function PartiesPage() {
     }
     setSendingReminder(false);
   }
+
+  // ── Tag management ──
+  async function handleAddTag(inviteId: string, tag: string) {
+    const trimmed = tag.trim();
+    if (!trimmed || !selectedParty) return;
+    const invite = invites.find(i => i.id === inviteId);
+    if (!invite || invite.tags.includes(trimmed)) return;
+    const newTags = [...invite.tags, trimmed];
+    const supabase = createClient();
+    await supabase.from('event_invites').update({ tags: newTags }).eq('id', inviteId);
+    setInvites(prev => prev.map(i => i.id === inviteId ? { ...i, tags: newTags } : i));
+  }
+
+  async function handleRemoveTag(inviteId: string, tag: string) {
+    const invite = invites.find(i => i.id === inviteId);
+    if (!invite) return;
+    const newTags = invite.tags.filter(t => t !== tag);
+    const supabase = createClient();
+    await supabase.from('event_invites').update({ tags: newTags }).eq('id', inviteId);
+    setInvites(prev => prev.map(i => i.id === inviteId ? { ...i, tags: newTags } : i));
+  }
+
+  async function handleBulkTag() {
+    const trimmed = bulkTagValue.trim();
+    if (!trimmed || selectedInviteIds.size === 0) return;
+    const supabase = createClient();
+    for (const invId of selectedInviteIds) {
+      const invite = invites.find(i => i.id === invId);
+      if (invite && !invite.tags.includes(trimmed)) {
+        const newTags = [...invite.tags, trimmed];
+        await supabase.from('event_invites').update({ tags: newTags }).eq('id', invId);
+      }
+    }
+    if (selectedParty) loadInvites(selectedParty.id);
+    setBulkTagValue('');
+    setShowBulkTag(false);
+    setSelectedInviteIds(new Set());
+  }
+
+  // ── Table management ──
+  const loadTables = useCallback(async (partyId: string) => {
+    const supabase = createClient();
+    const { data: tables } = await supabase
+      .from('party_tables')
+      .select('id, name, capacity, sort_order')
+      .eq('party_id', partyId)
+      .eq('business_id', business.id)
+      .order('sort_order', { ascending: true });
+
+    if (tables) {
+      // Count seated guests per table
+      const withCounts = await Promise.all(tables.map(async (t) => {
+        const { count } = await supabase
+          .from('event_invites')
+          .select('*', { count: 'exact', head: true })
+          .eq('table_id', t.id);
+        return { ...t, seated: count ?? 0 };
+      }));
+      setPartyTables(withCounts);
+    }
+  }, [business.id]);
+
+  async function handleCreateTable() {
+    if (!tableForm.name.trim() || !selectedParty) return;
+    const supabase = createClient();
+    const { error: err } = await supabase.from('party_tables').insert({
+      business_id: business.id,
+      party_id: selectedParty.id,
+      name: tableForm.name.trim(),
+      capacity: tableForm.capacity,
+      sort_order: partyTables.length,
+    });
+    if (err) {
+      if (err.code === '23505') setStatusMessage('A table with that name already exists.');
+      else setStatusMessage(`Failed to create table: ${err.message}`);
+      return;
+    }
+    setTableForm({ name: '', capacity: 10 });
+    setShowTableForm(false);
+    loadTables(selectedParty.id);
+  }
+
+  async function handleDeleteTable(tableId: string) {
+    if (!confirm('Delete this table? Guests will be unassigned.')) return;
+    const supabase = createClient();
+    await supabase.from('party_tables').delete().eq('id', tableId);
+    if (selectedParty) loadTables(selectedParty.id);
+  }
+
+  async function handleAssignGuest(inviteId: string, tableId: string | null) {
+    const supabase = createClient();
+    if (tableId) {
+      const { assignGuest: assign } = await import('@/lib/parties/table-assignment');
+      const result = await assign(supabase, inviteId, tableId);
+      if (!result.success) {
+        setStatusMessage(result.error || 'Assignment failed');
+        return;
+      }
+    } else {
+      const { unassignGuest } = await import('@/lib/parties/table-assignment');
+      await unassignGuest(supabase, inviteId);
+    }
+    if (selectedParty) {
+      loadInvites(selectedParty.id);
+      loadTables(selectedParty.id);
+    }
+  }
+
+  async function handleAutoAssign() {
+    if (!selectedParty) return;
+    const supabase = createClient();
+    const { autoAssign } = await import('@/lib/parties/table-assignment');
+    const result = await autoAssign(supabase, selectedParty.id, business.id);
+    if (result.success) {
+      setStatusMessage(`Auto-assigned ${result.assigned} guests${result.skipped ? ` (${result.skipped} skipped — no capacity)` : ''}`);
+      loadInvites(selectedParty.id);
+      loadTables(selectedParty.id);
+    } else {
+      setStatusMessage(result.error || 'Auto-assign failed');
+    }
+  }
+
+  async function handleBulkAssignByTag(tag: string, tableId: string) {
+    if (!selectedParty) return;
+    const supabase = createClient();
+    const { bulkAssignByTag } = await import('@/lib/parties/table-assignment');
+    const result = await bulkAssignByTag(supabase, selectedParty.id, tag, tableId);
+    if (result.success) {
+      setStatusMessage(`Assigned ${result.assigned} "${tag}" guests${result.skipped ? ` (${result.skipped} skipped — table full)` : ''}`);
+      loadInvites(selectedParty.id);
+      loadTables(selectedParty.id);
+    } else {
+      setStatusMessage(result.error || 'Bulk assign failed');
+    }
+  }
+
+  // All unique tags across current guest list
+  const allTags = [...new Set(invites.flatMap(i => i.tags || []))].sort();
 
   // Loading
   if (loading) {
@@ -586,10 +743,13 @@ export default function PartiesPage() {
 
   // ═══════════ DETAIL VIEW ═══════════
   if (view === 'detail' && selectedParty) {
-    const accepted = invites.filter(i => i.status === 'accepted');
-    const maybe = invites.filter(i => i.status === 'maybe');
-    const declined = invites.filter(i => i.status === 'declined');
-    const pending = invites.filter(i => i.status === 'pending');
+    const filteredInvites = tagFilter
+      ? invites.filter(i => (i.tags || []).includes(tagFilter))
+      : invites;
+    const accepted = filteredInvites.filter(i => i.status === 'accepted');
+    const maybe = filteredInvites.filter(i => i.status === 'maybe');
+    const declined = filteredInvites.filter(i => i.status === 'declined');
+    const pending = filteredInvites.filter(i => i.status === 'pending');
     const totalPlusOnes = accepted.reduce((sum, i) => sum + i.plus_ones, 0);
     const totalComing = accepted.length + totalPlusOnes;
 
@@ -615,12 +775,13 @@ export default function PartiesPage() {
           {invites.length > 0 && (
             <button
               onClick={() => {
-                const headers = ['Name', 'Phone', 'Status', 'Plus Ones', 'Dietary Notes', 'Responded At'];
-                const rows = invites.map(inv => [
+                const headers = ['Name', 'Phone', 'Status', 'Plus Ones', 'Tags', 'Dietary Notes', 'Responded At'];
+                const rows = filteredInvites.map(inv => [
                   inv.guest_name || '',
                   inv.guest_phone,
                   inv.status,
                   inv.status === 'accepted' ? String(inv.plus_ones) : '0',
+                  (inv.tags || []).join('; '),
                   inv.dietary_notes || '',
                   inv.responded_at ? new Date(inv.responded_at).toLocaleString('en-GB') : '',
                 ]);
@@ -644,6 +805,53 @@ export default function PartiesPage() {
             </button>
           )}
         </div>
+
+        {/* Tag filter + bulk tag */}
+        {allTags.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Filter:</span>
+            <button
+              onClick={() => setTagFilter('')}
+              className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${!tagFilter ? 'bg-brand text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+            >
+              All
+            </button>
+            {allTags.map(tag => (
+              <button
+                key={tag}
+                onClick={() => setTagFilter(tagFilter === tag ? '' : tag)}
+                className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${tagFilter === tag ? 'bg-brand text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+        {selectedInviteIds.size > 0 && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-gray-500">{selectedInviteIds.size} selected</span>
+            <button onClick={() => setShowBulkTag(true)} className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10">
+              Add Tag to Selected
+            </button>
+            <button onClick={() => setSelectedInviteIds(new Set())} className="text-xs text-gray-400 hover:text-gray-600">Clear</button>
+          </div>
+        )}
+        {showBulkTag && (
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="text"
+              value={bulkTagValue}
+              onChange={e => setBulkTagValue(e.target.value)}
+              placeholder="Enter tag name"
+              maxLength={50}
+              className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-1.5 text-xs outline-none focus:border-brand dark:bg-gray-800 dark:text-gray-100"
+              onKeyDown={e => { if (e.key === 'Enter') handleBulkTag(); }}
+              autoFocus
+            />
+            <button onClick={handleBulkTag} disabled={!bulkTagValue.trim()} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-50">Apply</button>
+            <button onClick={() => setShowBulkTag(false)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+          </div>
+        )}
 
         {/* Share section */}
         {selectedParty && (
@@ -891,6 +1099,101 @@ export default function PartiesPage() {
           </div>
         )}
 
+        {/* ═══ Table Management ═══ */}
+        <div className="mt-6 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Tables &amp; Seating</h3>
+            <div className="flex items-center gap-2">
+              {partyTables.length > 0 && invites.some(i => !i.table_id && ['accepted', 'maybe', 'pending'].includes(i.status)) && (
+                <button onClick={handleAutoAssign} className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10">
+                  Auto-Assign
+                </button>
+              )}
+              <button onClick={() => { setShowTableForm(!showTableForm); setEditingTableId(null); setTableForm({ name: '', capacity: 10 }); }} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600">
+                + Add Table
+              </button>
+            </div>
+          </div>
+
+          {showTableForm && (
+            <div className="mt-3 flex items-end gap-3">
+              <div className="flex-1">
+                <label className="mb-1 block text-xs font-medium text-gray-500">Table Name</label>
+                <input
+                  type="text"
+                  value={tableForm.name}
+                  onChange={e => setTableForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder='e.g. "Head Table", "Table 1"'
+                  maxLength={100}
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:text-gray-100"
+                  autoFocus
+                />
+              </div>
+              <div className="w-24">
+                <label className="mb-1 block text-xs font-medium text-gray-500">Capacity</label>
+                <input
+                  type="number"
+                  value={tableForm.capacity}
+                  onChange={e => setTableForm(f => ({ ...f, capacity: Math.max(1, parseInt(e.target.value) || 1) }))}
+                  min={1}
+                  max={500}
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:text-gray-100"
+                />
+              </div>
+              <button onClick={handleCreateTable} disabled={!tableForm.name.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+                Save
+              </button>
+              <button onClick={() => setShowTableForm(false)} className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700">
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {partyTables.length === 0 ? (
+            <p className="mt-3 text-xs text-gray-400 dark:text-gray-500">No tables configured. Add tables to manage seating arrangements.</p>
+          ) : (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {partyTables.map(table => (
+                <div key={table.id} className="rounded-lg border border-gray-100 dark:border-gray-700 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{table.name}</span>
+                    <button onClick={() => handleDeleteTable(table.id)} className="text-xs text-red-400 hover:text-red-600" title="Delete table">&times;</button>
+                  </div>
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <span>{table.seated} / {table.capacity} seats</span>
+                      <span className={table.seated >= table.capacity ? 'font-medium text-red-500' : table.seated >= table.capacity * 0.8 ? 'text-amber-500' : 'text-green-500'}>
+                        {table.seated >= table.capacity ? 'Full' : `${table.capacity - table.seated} available`}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-2 w-full rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${table.seated >= table.capacity ? 'bg-red-500' : table.seated >= table.capacity * 0.8 ? 'bg-amber-500' : 'bg-green-500'}`}
+                        style={{ width: `${Math.min(100, (table.seated / table.capacity) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                  {/* Bulk assign by tag for this table */}
+                  {allTags.length > 0 && table.seated < table.capacity && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {allTags.map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => handleBulkAssignByTag(tag, table.id)}
+                          className="rounded-full bg-gray-50 dark:bg-gray-700 px-2 py-0.5 text-[10px] text-gray-500 dark:text-gray-400 hover:bg-brand/10 hover:text-brand"
+                          title={`Assign unseated "${tag}" guests to this table`}
+                        >
+                          + {tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Guest list */}
         {loadingInvites ? (
           <div className="mt-8 flex justify-center">
@@ -905,17 +1208,30 @@ export default function PartiesPage() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-gray-700 text-xs font-medium uppercase tracking-wider text-gray-400">
+                  <th scope="col" className="pb-3 pr-2 w-8">
+                    <input
+                      type="checkbox"
+                      checked={selectedInviteIds.size === filteredInvites.length && filteredInvites.length > 0}
+                      onChange={e => {
+                        if (e.target.checked) setSelectedInviteIds(new Set(filteredInvites.map(i => i.id)));
+                        else setSelectedInviteIds(new Set());
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                  </th>
                   <th scope="col" className="pb-3 pr-4">Guest</th>
                   <th scope="col" className="pb-3 pr-4">Phone</th>
                   <th scope="col" className="pb-3 pr-4">Status</th>
+                  <th scope="col" className="pb-3 pr-4">Tags</th>
                   <th scope="col" className="pb-3 pr-4">Plus-ones</th>
+                  {partyTables.length > 0 && <th scope="col" className="pb-3 pr-4">Table</th>}
                   <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Dietary</th>
                   <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Responded</th>
                   <th scope="col" className="pb-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {invites.map(invite => {
+                {filteredInvites.map(invite => {
                   const statusColors: Record<string, string> = {
                     accepted: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
                     maybe: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
@@ -924,12 +1240,83 @@ export default function PartiesPage() {
                   };
                   return (
                     <tr key={invite.id} className="border-b border-gray-50 dark:border-gray-700">
+                      <td className="py-3 pr-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedInviteIds.has(invite.id)}
+                          onChange={e => {
+                            const next = new Set(selectedInviteIds);
+                            if (e.target.checked) next.add(invite.id);
+                            else next.delete(invite.id);
+                            setSelectedInviteIds(next);
+                          }}
+                          className="rounded border-gray-300"
+                        />
+                      </td>
                       <td className="py-3 pr-4 font-medium text-gray-900 dark:text-gray-100">{invite.guest_name || '-'}</td>
                       <td className="py-3 pr-4 text-gray-600 dark:text-gray-400 font-mono text-xs">{invite.guest_phone}</td>
                       <td className="py-3 pr-4">
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[invite.status]}`}>{invite.status}</span>
                       </td>
+                      <td className="py-3 pr-4">
+                        <div className="flex flex-wrap items-center gap-1">
+                          {(invite.tags || []).map(tag => (
+                            <span key={tag} className="inline-flex items-center gap-0.5 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
+                              {tag}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleRemoveTag(invite.id, tag); }}
+                                className="ml-0.5 text-brand/50 hover:text-brand"
+                                aria-label={`Remove tag ${tag}`}
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          ))}
+                          {editingTagInviteId === invite.id ? (
+                            <input
+                              type="text"
+                              value={tagInput}
+                              onChange={e => setTagInput(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && tagInput.trim()) {
+                                  handleAddTag(invite.id, tagInput);
+                                  setTagInput('');
+                                }
+                                if (e.key === 'Escape') { setEditingTagInviteId(null); setTagInput(''); }
+                              }}
+                              onBlur={() => { if (tagInput.trim()) handleAddTag(invite.id, tagInput); setEditingTagInviteId(null); setTagInput(''); }}
+                              placeholder="Tag..."
+                              maxLength={50}
+                              className="w-16 rounded border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 text-[11px] outline-none focus:border-brand dark:bg-gray-800 dark:text-gray-100"
+                              autoFocus
+                            />
+                          ) : (
+                            <button
+                              onClick={() => { setEditingTagInviteId(invite.id); setTagInput(''); }}
+                              className="rounded-full border border-dashed border-gray-300 dark:border-gray-600 px-1.5 py-0.5 text-[11px] text-gray-400 hover:border-brand hover:text-brand"
+                            >
+                              +
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 pr-4 text-gray-600">{invite.status === 'accepted' ? invite.plus_ones : '-'}</td>
+                      {partyTables.length > 0 && (
+                        <td className="py-3 pr-4">
+                          <select
+                            value={invite.table_id || ''}
+                            onChange={e => handleAssignGuest(invite.id, e.target.value || null)}
+                            className="rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1 text-xs outline-none focus:border-brand dark:text-gray-100"
+                          >
+                            <option value="">Unassigned</option>
+                            {partyTables.map(t => (
+                              <option key={t.id} value={t.id} disabled={t.seated >= t.capacity && invite.table_id !== t.id}>
+                                {t.name} ({t.seated}/{t.capacity})
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      )}
                       <td className="py-3 pr-4 text-gray-600 text-xs max-w-[150px] truncate hidden md:table-cell">{invite.dietary_notes || '-'}</td>
                       <td className="py-3 pr-4 text-gray-400 text-xs hidden md:table-cell">
                         {invite.responded_at ? new Date(invite.responded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-'}

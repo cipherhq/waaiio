@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
   if (partyId) {
     const { data: party, error: partyError } = await service
       .from('parties')
-      .select('id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, image_url')
+      .select('id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, image_url, max_guests')
       .eq('id', partyId)
       .eq('business_id', businessId)
       .single();
@@ -86,6 +86,24 @@ export async function POST(request: NextRequest) {
     if (partyError || !party) {
       return NextResponse.json({ error: 'Party not found' }, { status: 404 });
     }
+
+    // ── Capacity enforcement (#661 B1-0) ──
+    if (party.max_guests && party.max_guests > 0) {
+      const { count } = await service
+        .from('event_invites')
+        .select('*', { count: 'exact', head: true })
+        .eq('party_id', partyId)
+        .eq('business_id', businessId)
+        .in('status', ['accepted', 'pending', 'maybe']);
+      const currentGuests = count ?? 0;
+      const newGuests = phones.slice(0, 50).filter(p => p.replace(/\D/g, '').length >= 7).length;
+      if (currentGuests + newGuests > party.max_guests) {
+        return NextResponse.json({
+          error: `Party capacity is ${party.max_guests} guests. Currently ${currentGuests} invited. Cannot add ${newGuests} more.`,
+        }, { status: 409 });
+      }
+    }
+
     inviteTarget = party;
   } else if (eventId) {
     const { data: event, error: eventError } = await service
