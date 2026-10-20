@@ -99,8 +99,12 @@ export function compileNativeFormFlow(form: WaaiioFormDefinition): Record<string
       throw new NativeFlowValidationError('Every form field must be an object.');
     }
     const field = raw as WaaiioFormField;
+    // flow_token and _marketing_consent are reserved: the nfm_reply response_json
+    // uses flow_token for the signed token and _marketing_consent for the OptIn value.
+    // A form field with either name would collide during answer extraction.
     if (typeof field.id !== 'string' || !FIELD_ID.test(field.id) ||
-        used.has(field.id) || field.id === '__proto__' || field.id === 'constructor') {
+        used.has(field.id) || field.id === '__proto__' || field.id === 'constructor' ||
+        field.id === 'flow_token' || field.id === '_marketing_consent') {
       throw new NativeFlowValidationError('Form field IDs must be unique, safe identifiers.');
     }
     used.add(field.id);
