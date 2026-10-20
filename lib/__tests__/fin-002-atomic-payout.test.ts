@@ -1215,12 +1215,12 @@ describe('FIN-002: Cron auto-approval requires eligible Paystack account', () =>
       source.indexOf('const holdReasons'),
     );
     expect(approveBlock).toContain('hasEligibleProvider');
-    // hasEligibleProvider is Paystack-only (Stripe auto-payout disabled)
+    // hasEligibleProvider: NG-only auto-approval (GH manual, Stripe disabled)
     const providerBlock = source.slice(
       source.indexOf('const hasEligibleProvider'),
       source.indexOf('const canAutoApprove'),
     );
-    expect(providerBlock).toContain('isPaystackCountry');
+    expect(providerBlock).toContain('AUTO_APPROVE_COUNTRIES');
     expect(providerBlock).toContain('hasEligiblePaystackAccount');
     expect(providerBlock).toContain("paystackSecretKey !== ''");
   });

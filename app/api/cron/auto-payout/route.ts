@@ -379,9 +379,12 @@ export async function GET(request: NextRequest) {
       const limitCheck = await checkVerificationLimit(supabase, biz.id, payoutMinor);
       const withinLimit = limitCheck.allowed;
 
-      // Paystack-only auto-approval (Stripe disabled — no reconciliation webhook)
+      // Auto-approval: Nigeria only. Ghana requires explicit Owner approval for
+      // auto-payout rules. All other markets get pending for manual review.
+      const AUTO_APPROVE_COUNTRIES = new Set(['NG']);
       const hasEligibleProvider =
-        isPaystackCountry && hasEligiblePaystackAccount && paystackSecretKey !== '';
+        AUTO_APPROVE_COUNTRIES.has(biz.country_code)
+        && hasEligiblePaystackAccount && paystackSecretKey !== '';
 
       // FIN-002: Auto-approval requires ALL conditions — eligible provider
       // account with configured keys + safety checks.

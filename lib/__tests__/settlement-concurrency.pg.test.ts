@@ -195,11 +195,11 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
       );
     `);
 
-    // Apply M453 migration
-    const migrationSql = readFileSync(
-      resolve('supabase/migrations/453_settlement_confirmation.sql'), 'utf-8',
-    );
-    await admin.query(migrationSql);
+    // Apply M453 + M454 migrations
+    const m453 = readFileSync(resolve('supabase/migrations/453_settlement_confirmation.sql'), 'utf-8');
+    await admin.query(m453);
+    const m454 = readFileSync(resolve('supabase/migrations/454_settlement_force_reconciliation.sql'), 'utf-8');
+    await admin.query(m454);
   });
 
   afterAll(async () => {
@@ -539,5 +539,127 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
     } catch (err: any) {
       expect(err.message).toContain('violates check constraint');
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // 9. Force-settle: refund-caused shortfall reconciliation
+  // ═══════════════════════════════════════════════════════════
+
+  it('force-settle creates reconciliation adjustment when balance is short', async () => {
+    await seedScenario();
+
+    // Finalize a refund first (reduces available balance)
+    await admin.query(`
+      INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, initiated_by, dispatched_at, gateway_refund_reference)
+      VALUES ('${REFUND1}', '${PAYMENT1}', '${BIZ}', 5000, 'provider_success_unfinalized', 'paystack', '${ADMIN}', now(), 'gw-ref-1');
+    `);
+    await admin.query(`SELECT finalize_refund_execution('${REFUND1}')`);
+
+    // Normal settlement should fail (balance insufficient for 12480 payout)
+    try {
+      await admin.query(`SELECT * FROM confirm_manual_settlement('${PAYOUT1}', 'REF-X', true, '${ADMIN}')`);
+      expect.fail('Should have raised insufficient_balance');
+    } catch (err: any) { expect(err.message).toContain('insufficient_balance'); }
+
+    // Force-settle succeeds with reconciliation adjustment
+    const result = await admin.query(`
+      SELECT * FROM force_settle_executed_transfer('${PAYOUT1}', 'NIP-FORCE-001', 'Refund processed after bank transfer sent', true, '${ADMIN}')
+    `);
+    expect(result.rows.length).toBe(1);
+    expect(result.rows[0].settled_id).toBe(PAYOUT1);
+    const adj = parseFloat(result.rows[0].adjustment_amount);
+    expect(adj).toBeLessThan(0); // negative adjustment
+
+    // Payout is now paid
+    const payout = await admin.query(`SELECT status, transfer_reference FROM public.business_payouts WHERE id = '${PAYOUT1}'`);
+    expect(payout.rows[0].status).toBe('paid');
+    expect(payout.rows[0].transfer_reference).toBe('NIP-FORCE-001');
+
+    // Reconciliation adjustment exists
+    const adjustments = await admin.query(`
+      SELECT amount, reason FROM public.payout_adjustments WHERE business_id = '${BIZ}' AND reason LIKE 'Force-settle%'
+    `);
+    expect(adjustments.rows.length).toBe(1);
+    expect(parseFloat(adjustments.rows[0].amount)).toBeLessThan(0);
+
+    // Audit log exists with reconciliation details
+    const audit = await admin.query(`
+      SELECT details FROM public.admin_audit_logs WHERE entity_id = '${PAYOUT1}' AND action = 'force_settle_executed_transfer'
+    `);
+    expect(audit.rows.length).toBe(1);
+    expect(audit.rows[0].details.reason).toContain('Refund processed');
+    expect(audit.rows[0].details.shortfall).toBeGreaterThan(0);
+  });
+
+  it('force-settle rejects non-approved payout', async () => {
+    await seedScenario();
+    // Change status to pending
+    await admin.query(`UPDATE public.business_payouts SET status = 'pending' WHERE id = '${PAYOUT1}'`);
+    try {
+      await admin.query(`SELECT * FROM force_settle_executed_transfer('${PAYOUT1}', 'REF', 'test', true, '${ADMIN}')`);
+      expect.fail('Should have raised ineligible_status');
+    } catch (err: any) { expect(err.message).toContain('ineligible_status'); }
+  });
+
+  it('force-settle rejects non-manual_bank payout', async () => {
+    await seedScenario();
+    await admin.query(`UPDATE public.business_payouts SET transfer_method = 'paystack_transfer' WHERE id = '${PAYOUT1}'`);
+    try {
+      await admin.query(`SELECT * FROM force_settle_executed_transfer('${PAYOUT1}', 'REF', 'test', true, '${ADMIN}')`);
+      expect.fail('Should have raised ineligible_method');
+    } catch (err: any) { expect(err.message).toContain('ineligible_method'); }
+  });
+
+  it('force-settle rejects missing attestation', async () => {
+    await seedScenario();
+    try {
+      await admin.query(`SELECT * FROM force_settle_executed_transfer('${PAYOUT1}', 'REF', 'test', false, '${ADMIN}')`);
+      expect.fail('Should have raised attestation_required');
+    } catch (err: any) { expect(err.message).toContain('attestation_required'); }
+  });
+
+  it('force-settle rejects missing reason', async () => {
+    await seedScenario();
+    try {
+      await admin.query(`SELECT * FROM force_settle_executed_transfer('${PAYOUT1}', 'REF', '', true, '${ADMIN}')`);
+      expect.fail('Should have raised reason_required');
+    } catch (err: any) { expect(err.message).toContain('reason_required'); }
+  });
+
+  it('force-settle is idempotent: second call fails (already paid)', async () => {
+    await seedScenario();
+    await admin.query(`SELECT * FROM force_settle_executed_transfer('${PAYOUT1}', 'NIP-1', 'first settle', true, '${ADMIN}')`);
+    try {
+      await admin.query(`SELECT * FROM force_settle_executed_transfer('${PAYOUT1}', 'NIP-2', 'duplicate', true, '${ADMIN}')`);
+      expect.fail('Should have raised ineligible_status');
+    } catch (err: any) { expect(err.message).toContain('ineligible_status'); }
+  });
+
+  it('step-up constraint accepts payout_force_settle', async () => {
+    const result = await admin.query(`
+      INSERT INTO public.admin_step_up_authorizations (admin_user_id, session_id, action_type, params_hash)
+      VALUES ('${ADMIN}', 'test-force', 'payout_force_settle', 'hash')
+      RETURNING id
+    `);
+    expect(result.rows.length).toBe(1);
+    await admin.query(`DELETE FROM public.admin_step_up_authorizations WHERE session_id = 'test-force'`);
+  });
+
+  it('force_settle_executed_transfer: SECURITY DEFINER + service_role only', async () => {
+    const cfg = await admin.query(`
+      SELECT p.proconfig, p.prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'force_settle_executed_transfer'
+    `);
+    expect(cfg.rows[0].prosecdef).toBe(true);
+    expect(cfg.rows[0].proconfig).toContain('search_path=public, extensions');
+
+    const grants = await admin.query(`
+      SELECT grantee FROM information_schema.routine_privileges
+      WHERE routine_name = 'force_settle_executed_transfer' AND routine_schema = 'public'
+    `);
+    const grantees = grants.rows.map((r: any) => r.grantee);
+    expect(grantees).toContain('service_role');
+    expect(grantees).not.toContain('anon');
+    expect(grantees).not.toContain('authenticated');
   });
 });
