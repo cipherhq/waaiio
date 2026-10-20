@@ -297,16 +297,26 @@ export class MetaCloudSender implements MessageSender {
       throw new GateBlockError('Business send requires attempt authority (Supabase client unavailable) — zero Meta emission');
     }
 
-    // 1. Create pre-WAMID attempt (before guard)
+    // 1. Create pre-WAMID attempt with authoritative pricing context.
+    // Populate it on INSERT: the financial RPC must never depend on a later
+    // best-effort update to obtain the recipient country or message category.
+    const recipientCountryCode = !isPlatform ? resolveRecipientCountry(params.recipientPhone) : null;
+    const messageCategory = params.messageCategory || null;
     const attemptId = this._supabase
-      ? await createAttempt(this._supabase, { ...params, businessId: this._businessId || null, attemptScope: scope })
+      ? await createAttempt(this._supabase, {
+          ...params,
+          recipientCountryCode: recipientCountryCode || undefined,
+          messageCategory: messageCategory || undefined,
+          businessId: this._businessId || null,
+          attemptScope: scope,
+        })
       : null;
 
     // #261: Resolve recipient country and update attempt context
     let wasReserved = false;
     if (attemptId && this._supabase && !isPlatform) {
-      const recipientCountryCode = resolveRecipientCountry(params.recipientPhone);
-      const messageCategory = params.messageCategory || null;
+      // Keep the existing context-update path for compatibility; INSERT already
+      // supplies both fields so an update failure cannot erase billing context.
       await updateAttemptContext(this._supabase, attemptId, recipientCountryCode, messageCategory);
     }
 
