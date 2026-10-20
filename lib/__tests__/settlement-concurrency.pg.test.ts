@@ -475,6 +475,7 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
       WHERE routine_name = 'confirm_manual_settlement' AND routine_schema = 'public'
     `);
     const grantees = result.rows.map((r: any) => r.grantee);
+    expect(grantees).toContain('service_role');
     expect(grantees).not.toContain('anon');
     expect(grantees).not.toContain('authenticated');
     expect(grantees).not.toContain('PUBLIC');

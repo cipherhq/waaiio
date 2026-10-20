@@ -65,10 +65,13 @@ async function executeAutoTransfer(
     return 'held';
   }
 
-  // Only Paystack auto-transfers are supported in this PR.
-  // Stripe auto-payout requires a reconciliation webhook (transfer → paid)
-  // that does not exist yet — Stripe businesses get pending for manual review.
+  // Only Paystack NUBAN transfers (NG/GH) are supported in this PR.
+  // Other Paystack markets use different recipient types (not nuban).
+  // Stripe auto-payout requires a reconciliation webhook (transfer → paid).
+  // All other combinations get pending for manual review.
+  const NUBAN_COUNTRIES = new Set(['NG', 'GH']);
   const usePaystack = countryGateway === 'paystack'
+    && NUBAN_COUNTRIES.has(biz.country_code)
     && isEligiblePaystackAccount(payoutAccount) && paystackSecretKey;
 
   if (!usePaystack) return 'held';
@@ -365,7 +368,11 @@ export async function GET(request: NextRequest) {
       const transactionCount = (fees || []).length;
       const avgPerDay = transactionCount / 7;
       const isPaystackCountry = bizGateway === 'paystack';
-      const autoApproveLimit = isPaystackCountry ? AUTO_APPROVE_LIMIT_NGN : AUTO_APPROVE_LIMIT_USD;
+      // Currency-specific auto-approval limit. Only NGN has the higher limit.
+      // All other currencies (including GHS, KES, ZAR, USD, GBP, CAD) use the
+      // conservative USD-equivalent limit. Unknown currencies fail closed to USD limit.
+      const bizCurrency = getCurrencyCode(biz.country_code as CountryCode);
+      const autoApproveLimit = bizCurrency === 'NGN' ? AUTO_APPROVE_LIMIT_NGN : AUTO_APPROVE_LIMIT_USD;
 
       // Check monthly verification-tier limit
       const payoutMinor = Math.round(net * 100);
