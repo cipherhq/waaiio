@@ -19,6 +19,8 @@ const LANGUAGE_SWITCH_PATTERNS: readonly RegExp[] = [
   /^(?:always\s+)?(?:speak|talk|use)\s+(.+?)(?:\s+(?:for now|from now on))?$/,
   /^reply\s+to\s+me\s+in\s+(.+?)(?:\s+from now on)?$/,
   /^switch\s+to\s+(.+?)$/,
+  /^(?:i\s+want\s+to\s+)?switch\s+back\s+to\s+(.+?)$/,
+  /^i\s+want\s+to\s+(?:switch\s+to|speak|use)\s+(.+?)$/,
   /^(?:change|set)\s+(?:my\s+)?language\s+to\s+(.+?)$/,
   // Nigerian Pidgin
   /^(?:abeg\s+)?(?:speak|talk|use)\s+(.+?)(?:\s+for\s+now)?$/,
