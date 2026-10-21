@@ -477,6 +477,9 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'confirm.free': 'FREE',
 
     // Language confirmation
+    'lang.switch_confirm': 'Do you want to switch to {langName}? Reply YES to confirm or NO to stay in your current language.',
+    'lang.switch_cancelled': 'Okay, I will keep using your current language.',
+    'lang.already_selected': 'You are already using this language.',
     'lang.switched': 'Switched to {langName}. ✅',
     'lang.switched_english': 'Switched to English. ✅',
     'lang.not_available': '{langName} is not available for this business right now.',
@@ -1275,6 +1278,9 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'confirm.free': 'FREE',
 
     // Language confirmation
+    'lang.switch_confirm': 'You wan change your language to {langName}? Reply YES make I change am, or NO make we continue as we dey.',
+    'lang.switch_cancelled': 'No wahala, we go continue for the language wey you choose before.',
+    'lang.already_selected': 'Na this language we dey use already.',
     'lang.switched': 'Don change to {langName}. ✅',
     'lang.switched_english': 'Don change to English. ✅',
     'lang.not_available': '{langName} no dey available for this business now.',
