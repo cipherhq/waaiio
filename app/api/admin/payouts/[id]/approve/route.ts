@@ -184,6 +184,9 @@ export async function POST(
     .is('refunded_at', null);
 
   if (balanceError) {
+    logger.error('[PAYOUT] Balance check failed during approval', {
+      payout_id: id, business_id: payout.business_id, ...safeLogErrorContext(balanceError),
+    });
     return NextResponse.json({ error: 'Failed to load balance data' }, { status: 500 });
   }
 
@@ -195,6 +198,9 @@ export async function POST(
     .neq('id', id);
 
   if (priorError) {
+    logger.error('[PAYOUT] Prior payout check failed during approval', {
+      payout_id: id, business_id: payout.business_id, ...safeLogErrorContext(priorError),
+    });
     return NextResponse.json({ error: 'Failed to load prior payout data' }, { status: 500 });
   }
 
@@ -207,6 +213,9 @@ export async function POST(
     .eq('business_id', payout.business_id);
 
   if (balAdjError) {
+    logger.error('[PAYOUT] Adjustment check failed during approval', {
+      payout_id: id, business_id: payout.business_id, ...safeLogErrorContext(balAdjError),
+    });
     return NextResponse.json({ error: 'Failed to load adjustment data' }, { status: 500 });
   }
 
