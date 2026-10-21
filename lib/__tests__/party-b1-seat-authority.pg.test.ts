@@ -36,25 +36,99 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: TEST_DB_URL, max: 5 });
 
-    // ── Fixture creation (strict — no ON CONFLICT) ──
-    // Each INSERT must succeed exactly once. Failure here means the disposable
-    // database was not clean, which is a genuine CI harness issue.
-    // FK chain: auth.users → profiles (auto-created by Supabase trigger) → businesses
+    // ── Minimal self-contained schema (matches bank-accounts-server-only.pg.test.ts pattern) ──
+    // The CI P0 job uses vanilla Postgres (no Supabase auth trigger, no profiles table).
+    // Each .pg.test.ts creates its own minimal schema from scratch.
+    await pool.query(`
+      CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE TABLE IF NOT EXISTS auth.users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        raw_app_meta_data JSONB DEFAULT '{}'
+      );
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+        SELECT COALESCE(
+          NULLIF(current_setting('request.jwt.claim.sub', true), ''),
+          NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+        )::uuid;
+      $$ LANGUAGE SQL STABLE;
 
-    // 1. Create auth users (triggers profile creation via handle_new_user)
-    await pool.query(
-      `INSERT INTO auth.users (id) VALUES ('${OWNER1}'), ('${OWNER2}')`
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $$;
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$;
+
+      GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
+      GRANT SELECT ON auth.users TO service_role;
+      GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
+
+      CREATE OR REPLACE FUNCTION public.has_admin_role(roles text[]) RETURNS boolean
+        LANGUAGE sql STABLE AS $fn$ SELECT false $fn$;
+
+      CREATE TABLE IF NOT EXISTS public.businesses (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id UUID NOT NULL,
+        name TEXT NOT NULL DEFAULT 'Test',
+        slug TEXT UNIQUE,
+        status TEXT DEFAULT 'active'
+      );
+
+      CREATE TABLE IF NOT EXISTS public.parties (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+        name VARCHAR(200) NOT NULL,
+        date DATE NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        max_guests INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS public.event_invites (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+        event_id UUID,
+        party_id UUID REFERENCES parties(id) ON DELETE CASCADE,
+        guest_phone VARCHAR(20) NOT NULL,
+        guest_name VARCHAR(100),
+        status VARCHAR(20) NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending','accepted','maybe','declined')),
+        plus_ones INTEGER NOT NULL DEFAULT 0,
+        tags TEXT[] DEFAULT '{}',
+        invite_token VARCHAR(32) NOT NULL DEFAULT substr(replace(gen_random_uuid()::text, '-', ''), 1, 24),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.businesses TO service_role, authenticated;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.parties TO service_role, authenticated;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.event_invites TO service_role, authenticated;
+    `);
+
+    // Apply M457 (party_tables + triggers + RPCs) from disk.
+    // Drop existing objects first for idempotent re-run (CI uses fresh DBs per file,
+    // but local combined runs may reuse the same TEST_DATABASE_URL).
+    await pool.query(`
+      DROP TRIGGER IF EXISTS trg_serialize_capacity_writes ON public.event_invites;
+      DROP TRIGGER IF EXISTS trg_enforce_capacity ON public.event_invites;
+      DROP TRIGGER IF EXISTS trg_validate_invite_table ON public.event_invites;
+      DROP FUNCTION IF EXISTS public.serialize_capacity_writes() CASCADE;
+      DROP FUNCTION IF EXISTS public.enforce_capacity() CASCADE;
+      DROP FUNCTION IF EXISTS public.validate_invite_table_membership() CASCADE;
+      DROP FUNCTION IF EXISTS public.assign_guest_to_table(UUID, UUID, INTEGER) CASCADE;
+      DROP FUNCTION IF EXISTS public.bulk_assign_guests_to_table(UUID[], UUID) CASCADE;
+      ALTER TABLE IF EXISTS public.event_invites DROP COLUMN IF EXISTS table_id;
+      ALTER TABLE IF EXISTS public.event_invites DROP COLUMN IF EXISTS seat_number;
+      DROP TABLE IF EXISTS public.party_tables CASCADE;
+    `);
+    const fs = await import('fs');
+    const path = await import('path');
+    const m457 = fs.readFileSync(
+      path.join(process.cwd(), 'supabase/migrations/457_party_tables_seats.sql'),
+      'utf-8'
     );
+    await pool.query(m457);
 
-    // 2. Verify profiles were created by the trigger (FK target for businesses.owner_id)
-    const { rows: profiles } = await pool.query(
-      `SELECT id FROM public.profiles WHERE id IN ('${OWNER1}', '${OWNER2}')`
-    );
-    if (profiles.length !== 2) {
-      throw new Error(`Expected 2 profiles from auth trigger, got ${profiles.length}`);
-    }
+    // ── Fixture data (strict — no ON CONFLICT) ──
+    await pool.query(`INSERT INTO auth.users (id) VALUES ('${OWNER1}'), ('${OWNER2}')`);
 
-    // 3. Create businesses (owner_id → profiles.id)
     await pool.query(
       `INSERT INTO businesses (id, name, owner_id, slug)
        VALUES ('${BIZ1}', 'Party Test Biz 1', '${OWNER1}', 'party-test-1'),
@@ -63,7 +137,6 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
     bizId1 = BIZ1;
     bizId2 = BIZ2;
 
-    // 4. Create parties (business_id → businesses.id)
     await pool.query(
       `INSERT INTO parties (id, business_id, name, date)
        VALUES ('${PARTY1}', '${BIZ1}', 'Seat Test Party 1', '2027-06-01'),
@@ -72,14 +145,12 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
     partyId1 = PARTY1;
     partyId2 = PARTY2;
 
-    // 5. Create party table (party_id → parties.id, capacity=4)
     await pool.query(
       `INSERT INTO party_tables (id, business_id, party_id, name, capacity)
        VALUES ('${TABLE1}', '${BIZ1}', '${PARTY1}', 'Test Table 1', 4)`
     );
     tableId1 = TABLE1;
 
-    // 6. Create 3 invites (party_id → parties.id)
     for (let i = 0; i < 3; i++) {
       await pool.query(
         `INSERT INTO event_invites (id, business_id, party_id, guest_phone, status)
@@ -91,20 +162,15 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
 
   afterAll(async () => {
     if (!pool) return;
-    // Cleanup by primary key — scoped to exactly the fixtures this test created.
+    // Cleanup by primary key — scoped to exactly this test's fixtures.
     // FK dependency order: children first, then parents.
     // Errors propagate (indicate genuine issues). DELETE of nonexistent rows
     // returns 0 affected rows without error — safe if beforeAll was partial.
-    // Final auth.users DELETE cascades through profiles → businesses → all children
-    // as a safety net, but explicit cleanup verifies FK ordering is correct.
     try {
       await pool.query(`DELETE FROM event_invites WHERE id IN ('${INV[0]}', '${INV[1]}', '${INV[2]}')`);
       await pool.query(`DELETE FROM party_tables WHERE id = '${TABLE1}'`);
       await pool.query(`DELETE FROM parties WHERE id IN ('${PARTY1}', '${PARTY2}')`);
       await pool.query(`DELETE FROM businesses WHERE id IN ('${BIZ1}', '${BIZ2}')`);
-      // auth.users deletion cascades to profiles. Any mid-test fixtures
-      // (cross-party parties, cross-business invites) were already cleaned
-      // up in their respective test blocks via explicit DELETE.
       await pool.query(`DELETE FROM auth.users WHERE id IN ('${OWNER1}', '${OWNER2}')`);
     } finally {
       await pool.end();
