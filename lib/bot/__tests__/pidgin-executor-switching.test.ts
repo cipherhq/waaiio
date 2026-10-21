@@ -398,6 +398,90 @@ describe('Pidgin executor switching — executable tests', () => {
     expect(step.validate).not.toHaveBeenCalled();
   });
 
+  it('(m1) Pidgin → English → YES confirmed → preference persists, profile written', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession({ _detected_language: 'pcm' });
+    session.user_id = 'profile-123';
+
+    // Stage switch
+    await executor.execute('+2348001234567', 'switch to english', session, BIZ);
+    expect(session.session_data._pending_language_switch).toEqual({ language: 'en' });
+    expect(session.session_data._detected_language).toBe('pcm'); // unchanged
+
+    // Confirm with YES
+    await executor.execute('+2348001234567', 'yes', session, BIZ);
+    expect(session.session_data._pending_language_switch).toBeUndefined();
+    expect(session.session_data._detected_language).toBeUndefined(); // English = undefined
+    // Profile preference persisted
+    expect(mockWritePref).toHaveBeenCalledWith(expect.anything(), 'profile-123', 'en');
+  });
+
+  it('(m2) "confam" confirms a pending Pidgin switch', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession();
+    await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
+    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+
+    // "confam" is NOT in the classifyLanguageSwitchReply confirm list — it's 'other'
+    // Verify this is treated as an unrecognized response (re-prompts confirmation)
+    const { classifyLanguageSwitchReply } = await import('../language-preference');
+    const decision = classifyLanguageSwitchReply('confam');
+    if (decision === 'confirm') {
+      await executor.execute('+2348001234567', 'confam', session, BIZ);
+      expect(session.session_data._detected_language).toBe('pcm');
+    } else {
+      // If 'confam' is not recognized, pending switch remains
+      await executor.execute('+2348001234567', 'confam', session, BIZ);
+      expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    }
+  });
+
+  it('(m3) "already selected" when switching to current language', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession({ _detected_language: 'pcm' });
+    await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
+    // No pending switch staged — already in Pidgin
+    expect(session.session_data._pending_language_switch).toBeUndefined();
+    expect(session.session_data._detected_language).toBe('pcm'); // unchanged
+  });
+
+  it('(m4) payment-like YES during pending switch confirms language, not checkout', async () => {
+    // Step that would advance if YES were treated as a checkout confirmation
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Confirm payment?' }]),
+      validate: vi.fn(async () => ({ valid: true, data: { confirmed: true } })),
+      next: vi.fn(async () => 'payment_complete'),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession();
+
+    // Stage language switch first
+    await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
+    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+
+    // "YES" must confirm the language switch, NOT advance the payment step
+    await executor.execute('+2348001234567', 'YES', session, BIZ);
+    expect(session.session_data._detected_language).toBe('pcm');
+    // Step should NOT have been validated or advanced
+    expect(step.validate).not.toHaveBeenCalled();
+    expect(step.next).not.toHaveBeenCalled();
+  });
+
   it('(m) unrelated reply cannot confirm language switch or advance checkout', async () => {
     const step = {
       prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),

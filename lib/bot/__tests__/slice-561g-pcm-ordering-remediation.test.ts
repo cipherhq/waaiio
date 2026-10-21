@@ -108,9 +108,9 @@ describe('561-G: PCM product option selection', () => {
 
 describe('561-G: PCM checkout', () => {
   it('checkout_confirm is consistent across EN and PCM', () => {
-    // "Checkout ✅" is a natural loanword in PCM — both are the same
     expect(getFlowCopy('en', 'ordering.checkout_confirm')).toBe('Checkout ✅');
-    expect(getFlowCopy('pcm', 'ordering.checkout_confirm')).toBe('Checkout ✅');
+    // PCM uses natural Pidgin: "Go Pay" instead of the English loanword
+    expect(getFlowCopy('pcm', 'ordering.checkout_confirm')).toBe('Go Pay ✅');
   });
 
   it('total_label preserves exact amount', () => {

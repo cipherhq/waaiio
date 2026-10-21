@@ -208,7 +208,7 @@ describe('561-B: deterministic copy follows canonical authority', () => {
   it('Pidgin-entitled: booking chrome is Pidgin', () => {
     const lang = getCopyLang('pcm', pcmEntitled);
     expect(getFlowCopy(lang, 'booking.no_locations')).toContain('Abeg');
-    expect(getFlowCopy(lang, 'booking.confirm_btn')).toBe('Confirm ✓');
+    expect(getFlowCopy(lang, 'booking.confirm_btn')).toBe('Yes, Confirm ✓');
   });
 
   it('Pidgin-entitled: payment buttons are Pidgin', () => {
@@ -530,8 +530,8 @@ describe('561-B: ordering flow returns localized chrome', () => {
     const msg = msgs[0] as any;
     expect(msg.type).toBe('buttons');
     expect(msg.body).toContain('combination no dey available');
-    expect(msg.buttons[0].title).toBe('Try Another');
-    expect(msg.buttons[1].title).toBe('Cancel'); // pcm nav.cancel is 'Cancel'
+    expect(msg.buttons[0].title).toBe('Try Another One');
+    expect(msg.buttons[1].title).toBe('Cancel am'); // pcm nav.cancel
   });
 
   it('browse_catalog validate returns localized item-not-found error', async () => {

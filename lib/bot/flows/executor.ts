@@ -486,6 +486,8 @@ export class FlowExecutor {
         await this.sendText(from, fillFlowCopy(currentLang, 'lang.not_available', {
           langName: getLanguageName(targetLang),
         }), scopedSender);
+        const retryMsgs = await step.prompt(ctx);
+        await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
         return;
       }
       session.session_data._pending_language_switch = { language: targetLang };

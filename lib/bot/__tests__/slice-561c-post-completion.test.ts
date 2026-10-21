@@ -302,7 +302,7 @@ describe('561-C: escape hatch sends localized exit buttons', () => {
     expect(buttonMsg).toBeDefined();
     expect(buttonMsg.body).toContain('Test Biz'); // merchant name preserved
     expect(buttonMsg.body).toContain('comot'); // Pidgin exit phrasing
-    expect(buttonMsg.buttons[0].title).toBe('Back to Menu'); // pcm keeps English for recognizability
+    expect(buttonMsg.buttons[0].title).toBe('Go back to menu'); // pcm nav.back_to_menu
     expect(buttonMsg.buttons[1].title).toBe('Change Business'); // pcm nav.switch_business
   });
 
