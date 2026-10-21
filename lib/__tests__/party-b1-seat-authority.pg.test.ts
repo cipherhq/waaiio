@@ -725,6 +725,29 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
     await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
   }, 10000);
 
+  // ═══ NEW: Codex P1 findings ═══
+  it('cross-business party_tables INSERT denied by ownership trigger', async () => {
+    // Try to create a table linking BIZ1's business_id with BIZ2's party
+    try {
+      await pool.query(
+        `INSERT INTO party_tables (business_id, party_id, name, capacity)
+         VALUES ('${BIZ1}', '${PARTY2}', 'Cross-Tenant Table', 10)`
+      );
+      expect.fail('Should have rejected cross-tenant party_tables INSERT');
+    } catch (err: any) {
+      expect(err.message).toContain('must match');
+    }
+  }, 10000);
+
+  it('negative plus_ones rejected by CHECK constraint', async () => {
+    try {
+      await pool.query(`UPDATE event_invites SET plus_ones = -1 WHERE id = $1`, [inviteIds[0]]);
+      expect.fail('Should have rejected negative plus_ones');
+    } catch (err: any) {
+      expect(err.message).toContain('plus_ones_nonneg');
+    }
+  }, 10000);
+
   // ── CTO F2: Opposite-direction reassignment (deadlock-free) ──
   it('opposite-direction table swap completes without deadlock', async () => {
     const table2 = await pool.query(

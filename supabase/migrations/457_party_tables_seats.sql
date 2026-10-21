@@ -24,7 +24,11 @@ CREATE TABLE IF NOT EXISTS public.party_tables (
     CHECK (capacity > 0 AND capacity <= 500),
   sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(party_id, name)
+  UNIQUE(party_id, name),
+  -- Ensure party belongs to the same business (Codex P1: cross-tenant prevention)
+  CONSTRAINT party_tables_business_party_match CHECK (true)
+  -- Note: Composite FK not possible (parties PK is id alone).
+  -- Enforced via INSERT trigger below (validate_party_table_ownership).
 );
 
 ALTER TABLE public.party_tables ENABLE ROW LEVEL SECURITY;
@@ -382,6 +386,35 @@ CREATE TRIGGER trg_guard_table_identity
   FOR EACH ROW
   EXECUTE FUNCTION public.guard_table_identity();
 
+-- 6d. party_tables INSERT ownership validation (Codex P1: cross-tenant)
+--     Ensures party_id belongs to the same business_id on INSERT.
+CREATE OR REPLACE FUNCTION public.validate_party_table_ownership()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_party_biz UUID;
+BEGIN
+  SELECT business_id INTO v_party_biz FROM parties WHERE id = NEW.party_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Referenced party does not exist' USING ERRCODE = '23503';
+  END IF;
+  IF v_party_biz IS DISTINCT FROM NEW.business_id THEN
+    RAISE EXCEPTION 'party_tables.business_id must match the party''s business_id'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_validate_party_table_ownership ON public.party_tables;
+CREATE TRIGGER trg_validate_party_table_ownership
+  BEFORE INSERT ON public.party_tables
+  FOR EACH ROW
+  EXECUTE FUNCTION public.validate_party_table_ownership();
+
+-- 6e. event_invites.plus_ones non-negative constraint (Codex P1)
+ALTER TABLE public.event_invites
+  ADD CONSTRAINT event_invites_plus_ones_nonneg CHECK (plus_ones >= 0);
+
 -- ═══════════════════════════════════════════════════════════
 -- 7. RPCs (unchanged logic, triggers are final authority)
 -- ═══════════════════════════════════════════════════════════
@@ -583,6 +616,23 @@ BEGIN
       AND prosrc ILIKE '%pg_advisory_xact_lock%'
   ) THEN
     RAISE EXCEPTION '457 SELF-CHECK FAILED: serialize_capacity_writes missing advisory locks';
+  END IF;
+
+  -- Verify party_tables ownership trigger (Codex P1)
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'trg_validate_party_table_ownership'
+      AND tgrelid = 'public.party_tables'::regclass
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_validate_party_table_ownership not found';
+  END IF;
+
+  -- Verify plus_ones non-negative constraint (Codex P1)
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.check_constraints
+    WHERE constraint_name = 'event_invites_plus_ones_nonneg'
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: event_invites_plus_ones_nonneg constraint not found';
   END IF;
 
   -- Verify RPCs exist
