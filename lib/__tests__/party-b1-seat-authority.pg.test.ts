@@ -12,7 +12,20 @@ const describeDB = TEST_DB_URL ? describe : describe.skip;
 
 describeDB('Database-authoritative seat assignment (real PG)', () => {
   let pool: pg.Pool;
-  const testPrefix = `_test_${Date.now()}`;
+
+  // Fixed UUIDs — matches codebase PG test pattern (no gen_random_uuid())
+  const OWNER1 = '00000000-0000-4000-a661-000000000001';
+  const OWNER2 = '00000000-0000-4000-a661-000000000002';
+  const BIZ1   = '00000000-0000-4000-b661-000000000001';
+  const BIZ2   = '00000000-0000-4000-b661-000000000002';
+  const PARTY1 = '00000000-0000-4000-c661-000000000001';
+  const PARTY2 = '00000000-0000-4000-c661-000000000002';
+  const TABLE1 = '00000000-0000-4000-d661-000000000001';
+  const INV    = ['00000000-0000-4000-e661-000000000001',
+                  '00000000-0000-4000-e661-000000000002',
+                  '00000000-0000-4000-e661-000000000003'];
+
+  // Aliases for existing test code that references these
   let bizId1: string;
   let bizId2: string;
   let partyId1: string;
@@ -23,58 +36,79 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: TEST_DB_URL, max: 5 });
 
-    const biz1 = await pool.query(
-      `INSERT INTO businesses (id, name, owner_id, slug, category)
-       VALUES (gen_random_uuid(), $1, gen_random_uuid(), $2, 'events') RETURNING id`,
-      [`${testPrefix}_biz1`, `${testPrefix}-biz1`]
-    );
-    bizId1 = biz1.rows[0].id;
+    // ── Fixture creation (strict — no ON CONFLICT) ──
+    // Each INSERT must succeed exactly once. Failure here means the disposable
+    // database was not clean, which is a genuine CI harness issue.
+    // FK chain: auth.users → profiles (auto-created by Supabase trigger) → businesses
 
-    const biz2 = await pool.query(
-      `INSERT INTO businesses (id, name, owner_id, slug, category)
-       VALUES (gen_random_uuid(), $1, gen_random_uuid(), $2, 'events') RETURNING id`,
-      [`${testPrefix}_biz2`, `${testPrefix}-biz2`]
+    // 1. Create auth users (triggers profile creation via handle_new_user)
+    await pool.query(
+      `INSERT INTO auth.users (id) VALUES ('${OWNER1}'), ('${OWNER2}')`
     );
-    bizId2 = biz2.rows[0].id;
 
-    const party1 = await pool.query(
-      `INSERT INTO parties (id, business_id, name, date) VALUES (gen_random_uuid(), $1, $2, '2027-06-01') RETURNING id`,
-      [bizId1, `${testPrefix}_party1`]
+    // 2. Verify profiles were created by the trigger (FK target for businesses.owner_id)
+    const { rows: profiles } = await pool.query(
+      `SELECT id FROM public.profiles WHERE id IN ('${OWNER1}', '${OWNER2}')`
     );
-    partyId1 = party1.rows[0].id;
-
-    const party2 = await pool.query(
-      `INSERT INTO parties (id, business_id, name, date) VALUES (gen_random_uuid(), $1, $2, '2027-06-01') RETURNING id`,
-      [bizId2, `${testPrefix}_party2`]
-    );
-    partyId2 = party2.rows[0].id;
-
-    // Table with capacity=4 (enough for varied attendee-counting tests)
-    const table1 = await pool.query(
-      `INSERT INTO party_tables (id, business_id, party_id, name, capacity)
-       VALUES (gen_random_uuid(), $1, $2, $3, 4) RETURNING id`,
-      [bizId1, partyId1, `${testPrefix}_table1`]
-    );
-    tableId1 = table1.rows[0].id;
-
-    // Create 3 invites in party1
-    for (let i = 0; i < 3; i++) {
-      const inv = await pool.query(
-        `INSERT INTO event_invites (id, business_id, party_id, guest_phone, status)
-         VALUES (gen_random_uuid(), $1, $2, $3, 'accepted') RETURNING id`,
-        [bizId1, partyId1, `234800000000${i}`]
-      );
-      inviteIds.push(inv.rows[0].id);
+    if (profiles.length !== 2) {
+      throw new Error(`Expected 2 profiles from auth trigger, got ${profiles.length}`);
     }
-  }, 15000);
+
+    // 3. Create businesses (owner_id → profiles.id)
+    await pool.query(
+      `INSERT INTO businesses (id, name, owner_id, slug)
+       VALUES ('${BIZ1}', 'Party Test Biz 1', '${OWNER1}', 'party-test-1'),
+              ('${BIZ2}', 'Party Test Biz 2', '${OWNER2}', 'party-test-2')`
+    );
+    bizId1 = BIZ1;
+    bizId2 = BIZ2;
+
+    // 4. Create parties (business_id → businesses.id)
+    await pool.query(
+      `INSERT INTO parties (id, business_id, name, date)
+       VALUES ('${PARTY1}', '${BIZ1}', 'Seat Test Party 1', '2027-06-01'),
+              ('${PARTY2}', '${BIZ2}', 'Seat Test Party 2', '2027-06-01')`
+    );
+    partyId1 = PARTY1;
+    partyId2 = PARTY2;
+
+    // 5. Create party table (party_id → parties.id, capacity=4)
+    await pool.query(
+      `INSERT INTO party_tables (id, business_id, party_id, name, capacity)
+       VALUES ('${TABLE1}', '${BIZ1}', '${PARTY1}', 'Test Table 1', 4)`
+    );
+    tableId1 = TABLE1;
+
+    // 6. Create 3 invites (party_id → parties.id)
+    for (let i = 0; i < 3; i++) {
+      await pool.query(
+        `INSERT INTO event_invites (id, business_id, party_id, guest_phone, status)
+         VALUES ('${INV[i]}', '${BIZ1}', '${PARTY1}', '23480000000${i}', 'accepted')`
+      );
+      inviteIds.push(INV[i]);
+    }
+  }, 30000);
 
   afterAll(async () => {
     if (!pool) return;
-    await pool.query(`DELETE FROM event_invites WHERE business_id IN ($1, $2)`, [bizId1, bizId2]);
-    await pool.query(`DELETE FROM party_tables WHERE business_id IN ($1, $2)`, [bizId1, bizId2]);
-    await pool.query(`DELETE FROM parties WHERE business_id IN ($1, $2)`, [bizId1, bizId2]);
-    await pool.query(`DELETE FROM businesses WHERE id IN ($1, $2)`, [bizId1, bizId2]);
-    await pool.end();
+    // Cleanup by primary key — scoped to exactly the fixtures this test created.
+    // FK dependency order: children first, then parents.
+    // Errors propagate (indicate genuine issues). DELETE of nonexistent rows
+    // returns 0 affected rows without error — safe if beforeAll was partial.
+    // Final auth.users DELETE cascades through profiles → businesses → all children
+    // as a safety net, but explicit cleanup verifies FK ordering is correct.
+    try {
+      await pool.query(`DELETE FROM event_invites WHERE id IN ('${INV[0]}', '${INV[1]}', '${INV[2]}')`);
+      await pool.query(`DELETE FROM party_tables WHERE id = '${TABLE1}'`);
+      await pool.query(`DELETE FROM parties WHERE id IN ('${PARTY1}', '${PARTY2}')`);
+      await pool.query(`DELETE FROM businesses WHERE id IN ('${BIZ1}', '${BIZ2}')`);
+      // auth.users deletion cascades to profiles. Any mid-test fixtures
+      // (cross-party parties, cross-business invites) were already cleaned
+      // up in their respective test blocks via explicit DELETE.
+      await pool.query(`DELETE FROM auth.users WHERE id IN ('${OWNER1}', '${OWNER2}')`);
+    } finally {
+      await pool.end();
+    }
   }, 15000);
 
   // Clean state before each test
@@ -191,8 +225,8 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
   // ── Cross-party denial ──
   it('rejects cross-party assignment (same business)', async () => {
     const otherParty = await pool.query(
-      `INSERT INTO parties (business_id, name, date) VALUES ($1, $2, '2027-06-01') RETURNING id`,
-      [bizId1, `${testPrefix}_party3`]
+      `INSERT INTO parties (business_id, name, date) VALUES ($1, 'Cross-Party Test', '2027-06-01') RETURNING id`,
+      [bizId1]
     );
     const inv = await pool.query(
       `INSERT INTO event_invites (business_id, party_id, guest_phone, status)
@@ -431,7 +465,7 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
   it('opposite-direction table swap completes without deadlock', async () => {
     const table2 = await pool.query(
       `INSERT INTO party_tables (business_id, party_id, name, capacity) VALUES ($1, $2, $3, 4) RETURNING id`,
-      [bizId1, partyId1, `${testPrefix}_table2`]
+      [bizId1, partyId1, 'Swap Table 2']
     );
     const tableId2 = table2.rows[0].id;
 
