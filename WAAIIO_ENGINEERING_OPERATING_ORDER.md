@@ -38,6 +38,14 @@ For every new or reopened P0/P1 claim, launch blocker, or proposed remediation o
 
 The CTO is accountable for the final severity declaration. The verifier gate strengthens existing cross-agent review and **does not** transfer merge, deployment, migration, or provider-operation authority from the Owner. The review role does not imply that an autonomous background agent is actually running.
 
+## Lean Change Contract — prove, minimize, finish
+
+Apply this inside the **existing** Phase A/implementation/CTO workflow; do not create additional approval rounds or replace required security and release evidence.
+
+1. **Before implementation:** State the requested outcome, authoritative current behavior, impact boundary, unchanged behavior, and executable definition of done in the relevant GitHub issue/PR. Alleged bugs need a confirmed current failure or decisive code/schema trace under the Evidence Verification Agent gate; otherwise investigate read-only and do not start speculative remediation. New features follow Owner-approved requirements without requiring an artificial pre-existing failure.
+2. **During implementation:** Use the smallest reviewable diff that proves the agreed acceptance criteria. For each touched file, identify its necessity and relevant dependencies. Preserve already-working behavior; split unrelated cleanup, optional features, or premature abstractions into separately authorized work. This limits scope, **not** necessary security controls or regression testing.
+3. **After implementation:** Verify acceptance and affected regressions with executable evidence and exact-SHA CI, then stop at the existing CTO review/Owner merge gate. Do not prolong implementation or reopen cleared work without a new evidenced defect, changed dependency, or Owner-approved requirement. Report genuine unresolved risks without presenting uncertainty as failure.
+
 ## Standard Substantive-Change Process
 
 For security, payments, financial state, migrations, authorization, concurrency, state transitions, cross-tenant behavior, privileged RPCs, and other high-blast-radius work:
