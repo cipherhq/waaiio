@@ -169,7 +169,7 @@ describe('Pidgin executor switching — executable tests', () => {
     await executor.execute('+2348001234567', 'pidgin', session, BIZ);
 
     expect(session.session_data._detected_language).toBeUndefined();
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
     // Confirmation request should mention Pidgin
     expect(sender.hasMessageContaining('Pidgin')).toBe(true);
   });
@@ -207,7 +207,7 @@ describe('Pidgin executor switching — executable tests', () => {
 
     // English is not activated before confirmation.
     expect(session.session_data._detected_language).toBe('pcm');
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'en' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'en' }));
   });
 
   it('(d) step with "French" option + "French" → answer accepted, language unchanged', async () => {
@@ -258,7 +258,7 @@ describe('Pidgin executor switching — executable tests', () => {
 
     // Verb phrase bypasses free-text validation but still requires confirmation.
     expect(session.session_data._detected_language).toBeUndefined();
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
   });
 
   it('(g) live-chat step + "pidgin" → insert called once, forward called once, no language switch', async () => {
@@ -307,7 +307,7 @@ describe('Pidgin executor switching — executable tests', () => {
 
     // Switch staged, not activated before YES.
     expect(session.session_data._detected_language).toBeUndefined();
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
     // Confirmation sent in Pidgin
     expect(sender.hasMessageContaining('Pidgin')).toBe(true);
     // The step's validation error "Please pick a valid service" must NOT appear
@@ -360,7 +360,7 @@ describe('Pidgin executor switching — executable tests', () => {
 
     // Verb phrase stages confirmation without probing validate
     expect(session.session_data._detected_language).toBeUndefined();
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
     // validate must NOT have been called (verb phrases skip the probe entirely)
     expect(freeTextStep.validate).not.toHaveBeenCalled();
   });
@@ -374,7 +374,7 @@ describe('Pidgin executor switching — executable tests', () => {
     const session = createSession();
     await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
     expect(session.session_data._detected_language).toBeUndefined();
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
     await executor.execute('+2348001234567', 'YES', session, BIZ);
     expect(session.session_data._pending_language_switch).toBeUndefined();
     expect(session.session_data._detected_language).toBe('pcm');
@@ -391,14 +391,14 @@ describe('Pidgin executor switching — executable tests', () => {
     mockGetFlowStep.mockReturnValue(step);
     const session = createSession({ _detected_language: 'pcm' });
     await executor.execute('+2348001234567', 'switch to English', session, BIZ);
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'en' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'en' }));
     await executor.execute('+2348001234567', 'NO', session, BIZ);
     expect(session.session_data._pending_language_switch).toBeUndefined();
     expect(session.session_data._detected_language).toBe('pcm');
     expect(step.validate).not.toHaveBeenCalled();
   });
 
-  it('(m1) Pidgin → English → YES confirmed → preference persists, profile written', async () => {
+  it('(m1) persistent "always use english" → YES confirmed → profile written', async () => {
     const step = {
       prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
       validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
@@ -408,17 +408,40 @@ describe('Pidgin executor switching — executable tests', () => {
     const session = createSession({ _detected_language: 'pcm' });
     session.user_id = 'profile-123';
 
-    // Stage switch
-    await executor.execute('+2348001234567', 'switch to english', session, BIZ);
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'en' });
+    // "always use english" is a persistent intent
+    await executor.execute('+2348001234567', 'always use english', session, BIZ);
+    expect(session.session_data._pending_language_switch).toEqual(
+      expect.objectContaining({ language: 'en', persistent: true }),
+    );
     expect(session.session_data._detected_language).toBe('pcm'); // unchanged
 
     // Confirm with YES
     await executor.execute('+2348001234567', 'yes', session, BIZ);
     expect(session.session_data._pending_language_switch).toBeUndefined();
     expect(session.session_data._detected_language).toBeUndefined(); // English = undefined
-    // Profile preference persisted
+    // Persistent switch writes profile
     expect(mockWritePref).toHaveBeenCalledWith(expect.anything(), 'profile-123', 'en');
+  });
+
+  it('(m1b) session-only "switch to english" → YES confirmed → profile NOT written', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession({ _detected_language: 'pcm' });
+    session.user_id = 'profile-123';
+
+    await executor.execute('+2348001234567', 'switch to english', session, BIZ);
+    expect(session.session_data._pending_language_switch).toEqual(
+      expect.objectContaining({ language: 'en', persistent: false }),
+    );
+
+    await executor.execute('+2348001234567', 'yes', session, BIZ);
+    expect(session.session_data._detected_language).toBeUndefined();
+    // Session-only switch does NOT write profile
+    expect(mockWritePref).not.toHaveBeenCalled();
   });
 
   it('(m2) "confam" confirms a pending Pidgin switch', async () => {
@@ -430,7 +453,7 @@ describe('Pidgin executor switching — executable tests', () => {
     mockGetFlowStep.mockReturnValue(step);
     const session = createSession();
     await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
 
     // "confam" is NOT in the classifyLanguageSwitchReply confirm list — it's 'other'
     // Verify this is treated as an unrecognized response (re-prompts confirmation)
@@ -442,7 +465,7 @@ describe('Pidgin executor switching — executable tests', () => {
     } else {
       // If 'confam' is not recognized, pending switch remains
       await executor.execute('+2348001234567', 'confam', session, BIZ);
-      expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+      expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
     }
   });
 
@@ -472,7 +495,7 @@ describe('Pidgin executor switching — executable tests', () => {
 
     // Stage language switch first
     await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
 
     // "YES" must confirm the language switch, NOT advance the payment step
     await executor.execute('+2348001234567', 'YES', session, BIZ);
@@ -492,7 +515,7 @@ describe('Pidgin executor switching — executable tests', () => {
     const session = createSession();
     await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
     await executor.execute('+2348001234567', 'pay now', session, BIZ);
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
     expect(session.session_data._detected_language).toBeUndefined();
     expect(step.validate).not.toHaveBeenCalled();
     expect(step.next).not.toHaveBeenCalled();

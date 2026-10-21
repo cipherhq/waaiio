@@ -352,7 +352,7 @@ export class FlowExecutor {
         if (!await this.casUpdateSession(session, {
           current_step: session.current_step, session_data: session.session_data,
         })) return;
-        if (session.user_id) {
+        if (session.user_id && pendingLanguage.persistent) {
           try {
             await writePreferredResponseLanguage(this.supabase as never, session.user_id, targetLang);
           } catch (err) {
@@ -476,6 +476,16 @@ export class FlowExecutor {
       const currentLang = this.resolveCopyLang(session, entitlement);
       const { getLanguageName } = await import('@/lib/bot/languages');
       if (targetLang === currentLang) {
+        // Persistent intent ("always use X") updates the profile even when
+        // the session is already using that language, ensuring the durable
+        // preference survives future sessions.
+        if (languagePreferenceIntent.persistence === 'persistent' && session.user_id) {
+          try {
+            await writePreferredResponseLanguage(this.supabase as never, session.user_id as string, targetLang);
+          } catch (err) {
+            logger.warn('[EXECUTOR] Language preference persistence failed:', err);
+          }
+        }
         await this.sendText(from, getFlowCopy(currentLang, 'lang.already_selected'), scopedSender);
         return;
       }
@@ -490,7 +500,10 @@ export class FlowExecutor {
         await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
         return;
       }
-      session.session_data._pending_language_switch = { language: targetLang };
+      session.session_data._pending_language_switch = {
+        language: targetLang,
+        persistent: languagePreferenceIntent.persistence === 'persistent',
+      };
       if (!await this.casUpdateSession(session, {
         current_step: session.current_step, session_data: session.session_data,
       })) return;

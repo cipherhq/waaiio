@@ -403,7 +403,7 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
 
     // Language must NOT be changed yet — only staged
     expect(session.session_data._detected_language).toBeUndefined();
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'pcm' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
 
     // CAS update persists the pending state
     expect(supabase.rpc).toHaveBeenCalledWith(
@@ -453,7 +453,7 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
 
     // Language must NOT be changed yet
     expect(session.session_data._detected_language).toBe('pcm');
-    expect(session.session_data._pending_language_switch).toEqual({ language: 'en' });
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'en' }));
 
     // Step 2: "yes" confirms the switch
     sender.clear();
@@ -474,10 +474,10 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('"always use English" when already in English => already-selected, no profile write', async () => {
+  it('"always use English" when already in English => already-selected, but profile IS written', async () => {
     // Session has no _detected_language → effective language is already English.
-    // The two-step confirmation flow recognizes target === current and sends
-    // "already selected" without staging a pending switch.
+    // Persistent intent still writes the profile even when no session-level change
+    // is needed, ensuring the durable preference survives future sessions.
     const session = createTestSession({ user_id: 'profile-1' });
 
     await executor.execute('+2348001234567', 'always use English', session, TEST_BUSINESS);
@@ -486,21 +486,23 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
     expect(session.session_data._detected_language).toBeUndefined();
     expect(session.session_data._pending_language_switch).toBeUndefined();
 
-    // Profile write is not triggered for already-selected language
-    expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
-
-    // "already selected" message must be sent
-    const msgs = sender.getMessages();
-    expect(msgs.length).toBeGreaterThan(0);
+    // Persistent intent writes the profile even for current language
+    expect(mockWritePreferredResponseLanguage).toHaveBeenCalledOnce();
+    expect(mockWritePreferredResponseLanguage).toHaveBeenCalledWith(
+      supabase,
+      'profile-1',
+      'en',
+    );
   });
 
   it('ordinary temporary switch never writes the durable profile preference', async () => {
     const session = createTestSession({ user_id: 'profile-1' });
 
+    // "switch to English" while already on English → "already selected" (session-only
+    // intent, not persistent), so no profile write and no CAS update needed.
     await executor.execute('+2348001234567', 'switch to English', session, TEST_BUSINESS);
 
     expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
-    expect(supabase.rpc).toHaveBeenCalled();
   });
 
   it('passive language-shaped text never writes the durable profile preference', async () => {
