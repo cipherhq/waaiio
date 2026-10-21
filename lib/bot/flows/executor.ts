@@ -464,9 +464,12 @@ export class FlowExecutor {
     // Neither the saved preference nor the active checkout state changes yet.
     const languagePreferenceIntent = parseLanguagePreferenceIntent(input);
     let skipBareSwitch = false;
+    // Preserve the one-time validation result: repeating validation can perform
+    // side effects (for example, live-chat forwarding or DB writes).
+    let preValidation: Awaited<ReturnType<typeof step.validate>> | undefined;
     if (languagePreferenceIntent?.isBare && step) {
-      const validation = await step.validate(input, ctx);
-      if (validation.valid) skipBareSwitch = true;
+      preValidation = await step.validate(input, ctx);
+      if (preValidation.valid) skipBareSwitch = true;
     }
     if (languagePreferenceIntent && !skipBareSwitch) {
       const targetLang = languagePreferenceIntent.language;
