@@ -1,5 +1,11 @@
 ## 2026-10-21 — Parties Phase B1: slug fix, guest tags, table seating (#661)
 
+### Attendee-capacity enforcement (527d8b66)
+- **Owner policy**: 1 invite + N plus_ones = (1+N) attendees against party and table capacity.
+- **5 code paths updated**: invite API, web RSVP API, bot RSVP flow, dashboard capacity bar, table capacity trigger.
+- **M457 trigger architecture**: STATEMENT trigger checks final state; RPCs use `pg_advisory_xact_lock` (M304 pattern) for concurrent serialization.
+- **Tests**: 140 passed, 0 skipped, 0 failed — including 16 real PostgreSQL tests with zero skips.
+
 ### CTO corrections (b7e4b349)
 - **M457 rewritten**: Added ROW trigger (`trg_validate_invite_table`) for party membership + business isolation on ALL write paths. Added STATEMENT trigger (`trg_enforce_table_capacity`) with `FOR UPDATE` on `party_tables` to serialize concurrent assignments (M451 pattern). RPCs `assign_guest_to_table` and `bulk_assign_guests_to_table` (SECURITY INVOKER) provide clean JSON API. Self-check block validates all components.
 - **`table-assignment.ts` rewritten**: All assignment operations now go through RPCs. No direct UPDATE of `table_id` from application code.
