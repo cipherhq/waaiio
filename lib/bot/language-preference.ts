@@ -92,6 +92,14 @@ export function parseLanguagePreferenceIntent(
   };
 }
 
+/** A pending language switch is a presentation-only choice, never a flow confirmation. */
+export function classifyLanguageSwitchReply(input: string): 'confirm' | 'decline' | 'other' {
+  const normalized = normalizeInboundCommand(input).trim();
+  if (/^(?:yes|yes switch|yes change|confirm|confirm switch|switch|okay|ok|yes na|oya|abeg change|ehen|oui|si|sí|bẹẹni|bee ni)$/i.test(normalized)) return 'confirm';
+  if (/^(?:no|no thanks|no thank you|don't switch|dont switch|keep current|stay|cancel switch|not now|no wahala|mba|non)$/i.test(normalized)) return 'decline';
+  return 'other';
+}
+
 export interface EffectiveResponseLanguageInput {
   explicitLanguage?: string | null;
   sessionLanguage?: string | null;
