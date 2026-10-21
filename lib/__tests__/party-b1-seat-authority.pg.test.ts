@@ -450,22 +450,43 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
   }, 10000);
 
   it('triggers and RPCs exist', async () => {
-    const triggers = await pool.query(`
+    // event_invites triggers
+    const eiTriggers = await pool.query(`
       SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.event_invites'::regclass
-        AND tgname LIKE 'trg_%capacity%'
+        AND tgname LIKE 'trg_%'
     `);
-    const tnames = triggers.rows.map(r => r.tgname);
-    expect(tnames).toContain('trg_enforce_capacity');
-    expect(tnames).toContain('trg_serialize_capacity_writes');
+    const eiNames = eiTriggers.rows.map(r => r.tgname);
+    expect(eiNames).toContain('trg_serialize_capacity_writes');
+    expect(eiNames).toContain('trg_validate_invite_table');
+    expect(eiNames).toContain('trg_enforce_invite_capacity');
 
+    // parties + party_tables guard triggers
+    const ptTriggers = await pool.query(`
+      SELECT tgname, tgrelid::regclass::text as tbl FROM pg_trigger
+      WHERE tgname LIKE 'trg_guard_%'
+    `);
+    const ptNames = ptTriggers.rows.map(r => r.tgname);
+    expect(ptNames).toContain('trg_guard_party_capacity');
+    expect(ptNames).toContain('trg_guard_table_capacity');
+    expect(ptNames).toContain('trg_guard_table_identity');
+
+    // RPCs and functions
     const funcs = await pool.query(`
-      SELECT proname FROM pg_proc WHERE proname IN ('assign_guest_to_table', 'bulk_assign_guests_to_table', 'serialize_capacity_writes', 'enforce_capacity')
+      SELECT proname FROM pg_proc WHERE proname IN (
+        'assign_guest_to_table', 'bulk_assign_guests_to_table',
+        'serialize_capacity_writes', 'enforce_invite_capacity',
+        'guard_party_capacity_reduction', 'guard_table_capacity_reduction',
+        'guard_table_identity', 'validate_invite_table_membership'
+      )
     `);
     const fnames = funcs.rows.map(r => r.proname);
     expect(fnames).toContain('assign_guest_to_table');
     expect(fnames).toContain('bulk_assign_guests_to_table');
     expect(fnames).toContain('serialize_capacity_writes');
-    expect(fnames).toContain('enforce_capacity');
+    expect(fnames).toContain('enforce_invite_capacity');
+    expect(fnames).toContain('guard_party_capacity_reduction');
+    expect(fnames).toContain('guard_table_capacity_reduction');
+    expect(fnames).toContain('guard_table_identity');
   }, 10000);
 
   // ── CTO F1: Party-wide capacity under concurrency ──
@@ -526,6 +547,183 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
       await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
     }
   }, 15000);
+
+  // ═══ NEW: Scoped enforcement — overcapacity A does not block B ═══
+  it('overcapacity party A does not block unrelated party B INSERT', async () => {
+    // Create overcapacity by temporarily disabling the reduction guard,
+    // simulating a pre-existing overcapacity state (e.g., from before
+    // the guard was deployed, or from a data migration).
+    await pool.query(`ALTER TABLE parties DISABLE TRIGGER trg_guard_party_capacity`);
+    await pool.query(`UPDATE parties SET max_guests = 2 WHERE id = $1`, [partyId1]);
+    await pool.query(`ALTER TABLE parties ENABLE TRIGGER trg_guard_party_capacity`);
+    // Party1 is now overcapacity (3 attendees > 2 max_guests).
+    // Party2 INSERT should succeed — scoped trigger must not scan party1.
+    await pool.query(
+      `INSERT INTO event_invites (business_id, party_id, guest_phone, status)
+       VALUES ('${BIZ2}', '${PARTY2}', '5550001111', 'accepted')`
+    );
+    // Clean up
+    await pool.query(`DELETE FROM event_invites WHERE guest_phone = '5550001111'`);
+    await pool.query(`ALTER TABLE parties DISABLE TRIGGER trg_guard_party_capacity`);
+    await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
+    await pool.query(`ALTER TABLE parties ENABLE TRIGGER trg_guard_party_capacity`);
+  }, 10000);
+
+  it('overcapacity party A does not block unrelated party B plus_ones', async () => {
+    await pool.query(`ALTER TABLE parties DISABLE TRIGGER trg_guard_party_capacity`);
+    await pool.query(`UPDATE parties SET max_guests = 2 WHERE id = $1`, [partyId1]);
+    await pool.query(`ALTER TABLE parties ENABLE TRIGGER trg_guard_party_capacity`);
+    // Create an invite in party2 and increase its plus_ones
+    await pool.query(
+      `INSERT INTO event_invites (business_id, party_id, guest_phone, status, plus_ones)
+       VALUES ('${BIZ2}', '${PARTY2}', '5550002222', 'accepted', 0)`
+    );
+    await pool.query(`UPDATE event_invites SET plus_ones = 3 WHERE guest_phone = '5550002222'`);
+    // Clean up
+    await pool.query(`DELETE FROM event_invites WHERE guest_phone = '5550002222'`);
+    await pool.query(`ALTER TABLE parties DISABLE TRIGGER trg_guard_party_capacity`);
+    await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
+    await pool.query(`ALTER TABLE parties ENABLE TRIGGER trg_guard_party_capacity`);
+  }, 10000);
+
+  it('overcapacity table does not block writes to unrelated table', async () => {
+    // Create overcapacity table: assign all 3 invites (3 attendees > capacity after reduction)
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id = $2`, [tableId1, inviteIds[0]]);
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id = $2`, [tableId1, inviteIds[1]]);
+    // Reduce capacity below current attendance
+    try { await pool.query(`UPDATE party_tables SET capacity = 1 WHERE id = $1`, [tableId1]); } catch { /* expected rejection */ }
+    // Even if table1 had capacity issues, a separate table should work
+    const table2 = await pool.query(
+      `INSERT INTO party_tables (business_id, party_id, name, capacity) VALUES ('${BIZ1}', '${PARTY1}', 'Isolated Table', 10) RETURNING id`
+    );
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id = $2`, [table2.rows[0].id, inviteIds[2]]);
+    // Clean up
+    await pool.query(`UPDATE event_invites SET table_id = NULL WHERE id = $1`, [inviteIds[2]]);
+    await pool.query(`DELETE FROM party_tables WHERE id = $1`, [table2.rows[0].id]);
+  }, 10000);
+
+  // ═══ NEW: Membership revalidation on identity change ═══
+  it('seated guest party_id change to different same-business party — denied', async () => {
+    // Seat invite 0 at table1
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id = $2`, [tableId1, inviteIds[0]]);
+    // Create another party in same business
+    const otherParty = await pool.query(
+      `INSERT INTO parties (business_id, name, date) VALUES ('${BIZ1}', 'Other Party', '2027-06-01') RETURNING id`
+    );
+    // Try to move the seated guest to the other party without unassigning
+    try {
+      await pool.query(`UPDATE event_invites SET party_id = $1 WHERE id = $2`, [otherParty.rows[0].id, inviteIds[0]]);
+      expect.fail('Should have rejected party_id change on seated guest');
+    } catch (err: any) {
+      expect(err.message).toMatch(/different parties/i);
+    }
+    // Restore and clean up
+    await pool.query(`DELETE FROM parties WHERE id = $1`, [otherParty.rows[0].id]);
+  }, 10000);
+
+  it('seated guest business_id change — denied', async () => {
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id = $2`, [tableId1, inviteIds[0]]);
+    try {
+      await pool.query(`UPDATE event_invites SET business_id = '${BIZ2}' WHERE id = $1`, [inviteIds[0]]);
+      expect.fail('Should have rejected business_id change on seated guest');
+    } catch (err: any) {
+      expect(err.message).toMatch(/Cross-business|different parties/i);
+    }
+  }, 10000);
+
+  // ═══ NEW: Capacity reduction guards ═══
+  it('parties.max_guests reduction below current attendance — denied', async () => {
+    // 3 invites in party1 = 3 attendees
+    try {
+      await pool.query(`UPDATE parties SET max_guests = 2 WHERE id = $1`, [partyId1]);
+      expect.fail('Should have rejected max_guests below attendance');
+    } catch (err: any) {
+      expect(err.message).toContain('Cannot reduce party capacity');
+    }
+  }, 10000);
+
+  it('parties.max_guests set to NULL (unlimited) always succeeds', async () => {
+    await pool.query(`UPDATE parties SET max_guests = 5 WHERE id = $1`, [partyId1]);
+    await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
+    const check = await pool.query(`SELECT max_guests FROM parties WHERE id = $1`, [partyId1]);
+    expect(check.rows[0].max_guests).toBeNull();
+  }, 10000);
+
+  it('party_tables.capacity reduction below current table attendance — denied', async () => {
+    // Seat 2 invites at table (2 attendees)
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id IN ($2, $3)`, [tableId1, inviteIds[0], inviteIds[1]]);
+    try {
+      await pool.query(`UPDATE party_tables SET capacity = 1 WHERE id = $1`, [tableId1]);
+      expect.fail('Should have rejected capacity below attendance');
+    } catch (err: any) {
+      expect(err.message).toContain('Cannot reduce table capacity');
+    }
+  }, 10000);
+
+  // ═══ NEW: Table identity immutability ═══
+  it('party_tables.party_id change after creation — denied', async () => {
+    try {
+      await pool.query(`UPDATE party_tables SET party_id = '${PARTY2}' WHERE id = $1`, [tableId1]);
+      expect.fail('Should have rejected party_id change');
+    } catch (err: any) {
+      expect(err.message).toContain('immutable');
+    }
+  }, 10000);
+
+  it('party_tables.business_id change after creation — denied', async () => {
+    try {
+      await pool.query(`UPDATE party_tables SET business_id = '${BIZ2}' WHERE id = $1`, [tableId1]);
+      expect.fail('Should have rejected business_id change');
+    } catch (err: any) {
+      expect(err.message).toContain('immutable');
+    }
+  }, 10000);
+
+  // ═══ NEW: Legitimate reductions succeed at capacity ═══
+  it('declining a guest succeeds even when party is at capacity', async () => {
+    await pool.query(`UPDATE parties SET max_guests = 3 WHERE id = $1`, [partyId1]);
+    // 3 attendees = exactly at cap. Decline one → 2 attendees. Must succeed.
+    await pool.query(`UPDATE event_invites SET status = 'declined' WHERE id = $1`, [inviteIds[0]]);
+    const count = await pool.query(
+      `SELECT COALESCE(SUM(1 + plus_ones), 0)::int as a FROM event_invites
+       WHERE party_id = $1 AND status IN ('accepted','pending','maybe')`, [partyId1]
+    );
+    expect(count.rows[0].a).toBe(2);
+    // Restore
+    await pool.query(`UPDATE event_invites SET status = 'accepted' WHERE id = $1`, [inviteIds[0]]);
+    await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
+  }, 10000);
+
+  it('unassigning a guest from a full table succeeds', async () => {
+    // Fill table to capacity
+    await pool.query(`UPDATE event_invites SET plus_ones = 1 WHERE id = $1`, [inviteIds[0]]);
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id IN ($2, $3)`, [tableId1, inviteIds[0], inviteIds[1]]);
+    // 2 + 1+1 = 4 = capacity. Unassign one → must succeed.
+    await pool.query(`UPDATE event_invites SET table_id = NULL WHERE id = $1`, [inviteIds[1]]);
+    const count = await pool.query(
+      `SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int as a FROM event_invites WHERE table_id = $1`, [tableId1]
+    );
+    expect(count.rows[0].a).toBe(2); // just inviteIds[0] with 1 plus_one
+  }, 10000);
+
+  it('multirow INSERT respects party capacity across all rows', async () => {
+    await pool.query(`UPDATE parties SET max_guests = 4 WHERE id = $1`, [partyId1]);
+    // 3 existing = 3 attendees. Try to insert 2 more in one statement → should fail (5 > 4).
+    try {
+      await pool.query(`
+        INSERT INTO event_invites (business_id, party_id, guest_phone, status) VALUES
+          ('${BIZ1}', '${PARTY1}', '8880001111', 'accepted'),
+          ('${BIZ1}', '${PARTY1}', '8880002222', 'accepted')
+      `);
+      expect.fail('Should have rejected multirow insert exceeding capacity');
+    } catch (err: any) {
+      expect(err.message).toContain('capacity exceeded');
+    }
+    // Verify neither was inserted (AFTER ROW catches on second row, rolls back statement)
+    const check = await pool.query(`SELECT COUNT(*)::int as c FROM event_invites WHERE guest_phone LIKE '888000%'`);
+    expect(check.rows[0].c).toBe(0);
+    await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
+  }, 10000);
 
   // ── CTO F2: Opposite-direction reassignment (deadlock-free) ──
   it('opposite-direction table swap completes without deadlock', async () => {

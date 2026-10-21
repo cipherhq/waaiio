@@ -3,12 +3,14 @@
 -- Adds table_id and seat_number to event_invites with database-authoritative
 -- capacity enforcement, party membership validation, and concurrency protection.
 --
--- Concurrency strategy (matches M304 advisory-lock + M451 FOR UPDATE patterns):
---   ROW trigger:       validates party membership + business isolation (deterministic)
---   STATEMENT trigger:  FOR UPDATE on party_tables to serialize concurrent assignments,
---                       then counts actual seats. Rolls back on capacity breach.
---   RPCs:              assign_guest_to_table / bulk_assign_guests_to_table
---                       provide clean JSON API; triggers enforce invariants on ALL paths.
+-- Trigger architecture (CTO-approved 2026-10-22):
+--   BEFORE ROW on event_invites: advisory locks (serialize concurrent writes)
+--   BEFORE ROW on event_invites: membership validation (party/business isolation)
+--   AFTER ROW on event_invites:  scoped capacity check (party + table, not global)
+--   BEFORE UPDATE on parties:     prevent max_guests reduction below attendance
+--   BEFORE UPDATE on party_tables: prevent capacity reduction below attendance
+--   BEFORE UPDATE on party_tables: identity immutability (party_id/business_id)
+--   RPCs: pre-validate for clean JSON errors; triggers are final authority
 
 -- ═══════════════════════════════════════════════════════════
 -- 1. party_tables — each row is a named table with a capacity
@@ -56,9 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_event_invites_table ON public.event_invites(table
   WHERE table_id IS NOT NULL;
 
 -- ═══════════════════════════════════════════════════════════
--- 3. ROW trigger: party membership + business isolation
---    Deterministic checks — no concurrency concern.
---    Fires on ALL write paths (RPC, direct SQL, service_role).
+-- 3. BEFORE ROW: party membership + business isolation
+--    Fires on table_id, party_id, business_id changes.
+--    Revalidates whenever a seated guest's identity changes.
 -- ═══════════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.validate_invite_table_membership()
 RETURNS TRIGGER AS $$
@@ -72,9 +74,16 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Skip if table_id unchanged (seat_number-only update)
-  IF TG_OP = 'UPDATE' AND OLD.table_id IS NOT DISTINCT FROM NEW.table_id THEN
-    RETURN NEW;
+  -- Determine if validation is needed:
+  -- Always validate on INSERT with table_id set.
+  -- On UPDATE: validate if table_id changed OR if party_id/business_id changed
+  -- while the guest remains seated (identity moved under existing assignment).
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.table_id IS NOT DISTINCT FROM NEW.table_id
+       AND OLD.party_id IS NOT DISTINCT FROM NEW.party_id
+       AND OLD.business_id IS NOT DISTINCT FROM NEW.business_id THEN
+      RETURN NEW; -- nothing relevant changed
+    END IF;
   END IF;
 
   -- Fetch table's party and business
@@ -84,13 +93,13 @@ BEGIN
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Referenced party table does not exist'
-      USING ERRCODE = '23503'; -- foreign_key_violation
+      USING ERRCODE = '23503';
   END IF;
 
   -- Party membership: guest must belong to same party as table
   IF NEW.party_id IS DISTINCT FROM v_table_party_id THEN
     RAISE EXCEPTION 'Guest and table belong to different parties'
-      USING ERRCODE = '23514'; -- check_violation
+      USING ERRCODE = '23514';
   END IF;
 
   -- Business isolation
@@ -105,128 +114,77 @@ $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_validate_invite_table ON public.event_invites;
 CREATE TRIGGER trg_validate_invite_table
-  BEFORE INSERT OR UPDATE OF table_id ON public.event_invites
+  BEFORE INSERT OR UPDATE OF table_id, party_id, business_id ON public.event_invites
   FOR EACH ROW
   EXECUTE FUNCTION public.validate_invite_table_membership();
 
 -- ═══════════════════════════════════════════════════════════
--- 4. Capacity enforcement — three-layer strategy
---
---    Layer 1 (BEFORE ROW trigger): pg_advisory_xact_lock on
---    BOTH the party_id AND any affected table_id. Serializes
---    ALL concurrent writes that affect capacity — party-wide
---    AND per-table. Matches M304 book_slot_atomic pattern.
---
---    Lock ordering: party lock first (hashtext('party:' || id)),
---    then table locks in UUID order to prevent deadlocks.
---
---    Layer 2 (AFTER STATEMENT trigger): Post-hoc final-state
---    check for BOTH party max_guests AND table capacity.
---    Blocked transactions get fresh snapshot after advisory
---    lock — sees committed counts.
---
---    Layer 3 (RPCs): Pre-validate capacity with advisory lock
---    for clean JSON error responses (application layer).
---
---    Attendee counting: SUM(1 + plus_ones) (#661 owner policy).
+-- 4. BEFORE ROW: advisory lock serialization (M304 pattern)
+--    Lock ordering: party locks first (ascending UUID),
+--    then table locks (ascending UUID). Prevents deadlocks.
+--    Fires on columns that affect capacity or membership.
 -- ═══════════════════════════════════════════════════════════
-
--- BEFORE ROW trigger: serialize via advisory lock (M304 pattern).
--- Acquires locks on party_id (always) and affected table_ids.
--- Lock ordering: party first, then tables in UUID order (no deadlocks).
 CREATE OR REPLACE FUNCTION public.serialize_capacity_writes()
 RETURNS TRIGGER AS $$
 DECLARE
+  v_party_a UUID;
+  v_party_b UUID;
   v_table_a UUID;
   v_table_b UUID;
 BEGIN
-  -- ── Party-level lock: serialize ALL attendee-count mutations for same party ──
-  IF NEW.party_id IS NOT NULL THEN
-    PERFORM pg_advisory_xact_lock(hashtext('party:' || NEW.party_id::text));
+  -- ── Collect affected party IDs ──
+  IF TG_OP = 'INSERT' THEN
+    v_party_a := NEW.party_id;
+  ELSIF TG_OP = 'UPDATE' THEN
+    v_party_a := OLD.party_id;
+    IF NEW.party_id IS DISTINCT FROM OLD.party_id THEN
+      v_party_b := NEW.party_id;
+    END IF;
   END IF;
 
-  -- ── Table-level locks: serialize seat mutations for affected tables ──
+  -- ── Party locks (ascending UUID order) ──
+  IF v_party_a IS NOT NULL AND v_party_b IS NOT NULL THEN
+    IF v_party_a < v_party_b THEN
+      PERFORM pg_advisory_xact_lock(hashtext('party:' || v_party_a::text));
+      PERFORM pg_advisory_xact_lock(hashtext('party:' || v_party_b::text));
+    ELSE
+      PERFORM pg_advisory_xact_lock(hashtext('party:' || v_party_b::text));
+      PERFORM pg_advisory_xact_lock(hashtext('party:' || v_party_a::text));
+    END IF;
+  ELSIF v_party_a IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtext('party:' || v_party_a::text));
+  ELSIF v_party_b IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtext('party:' || v_party_b::text));
+  END IF;
+
+  -- ── Collect affected table IDs ──
   IF TG_OP = 'INSERT' THEN
-    IF NEW.table_id IS NOT NULL THEN
-      PERFORM pg_advisory_xact_lock(hashtext('table:' || NEW.table_id::text));
-    END IF;
+    v_table_a := NEW.table_id;
   ELSIF TG_OP = 'UPDATE' THEN
-    -- Collect both old and new table_ids
     v_table_a := OLD.table_id;
-    v_table_b := NEW.table_id;
+    v_table_b := CASE WHEN NEW.table_id IS DISTINCT FROM OLD.table_id THEN NEW.table_id END;
+  END IF;
 
-    -- Lock in UUID order to prevent deadlocks on opposite-direction reassignment
-    IF v_table_a IS NOT NULL AND v_table_b IS NOT NULL AND v_table_a != v_table_b THEN
-      IF v_table_a < v_table_b THEN
-        PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_a::text));
-        PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_b::text));
-      ELSE
-        PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_b::text));
-        PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_a::text));
-      END IF;
-    ELSIF v_table_a IS NOT NULL THEN
-      -- Unassignment: lock OLD table (F2 fix — was missing)
+  -- ── Table locks (ascending UUID order) ──
+  IF v_table_a IS NOT NULL AND v_table_b IS NOT NULL THEN
+    IF v_table_a < v_table_b THEN
       PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_a::text));
-    ELSIF v_table_b IS NOT NULL THEN
-      -- New assignment
       PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_b::text));
+    ELSE
+      PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_b::text));
+      PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_a::text));
     END IF;
-
-    -- Plus_ones change on an assigned guest: lock the table
-    IF NEW.table_id IS NOT NULL
-       AND OLD.plus_ones IS DISTINCT FROM NEW.plus_ones
-       AND v_table_a IS NOT DISTINCT FROM v_table_b  -- table_id didn't change (already locked above if it did)
-    THEN
-      PERFORM pg_advisory_xact_lock(hashtext('table:' || NEW.table_id::text));
-    END IF;
+  ELSIF v_table_a IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_a::text));
+  ELSIF v_table_b IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_b::text));
   END IF;
 
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- AFTER STATEMENT trigger: post-hoc capacity check for BOTH party and table.
-CREATE OR REPLACE FUNCTION public.enforce_capacity()
-RETURNS TRIGGER AS $$
-DECLARE
-  v_over RECORD;
-BEGIN
-  -- ── Check party-wide max_guests ──
-  FOR v_over IN
-    SELECT p.name, p.max_guests,
-           COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0)::int AS attendees
-    FROM parties p
-    JOIN event_invites ei ON ei.party_id = p.id
-    WHERE p.max_guests IS NOT NULL AND p.max_guests > 0
-      AND ei.status IN ('accepted', 'pending', 'maybe')
-    GROUP BY p.id, p.name, p.max_guests
-    HAVING COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0) > p.max_guests
-    LIMIT 1
-  LOOP
-    RAISE EXCEPTION 'Party "%" capacity exceeded (% attendees / % max_guests)',
-      v_over.name, v_over.attendees, v_over.max_guests
-      USING ERRCODE = '23514';
-  END LOOP;
-
-  -- ── Check per-table capacity ──
-  FOR v_over IN
-    SELECT pt.name, pt.capacity,
-           COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0)::int AS attendees
-    FROM party_tables pt
-    JOIN event_invites ei ON ei.table_id = pt.id
-    GROUP BY pt.id, pt.name, pt.capacity
-    HAVING COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0) > pt.capacity
-    LIMIT 1
-  LOOP
-    RAISE EXCEPTION 'Table "%" capacity exceeded (% attendees / % seats)',
-      v_over.name, v_over.attendees, v_over.capacity
-      USING ERRCODE = '23514';
-  END LOOP;
-
-  RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
-
+-- Drop all previous trigger variants
 DROP TRIGGER IF EXISTS trg_serialize_table_writes ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_serialize_capacity_writes ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity ON public.event_invites;
@@ -234,29 +192,202 @@ DROP TRIGGER IF EXISTS trg_enforce_capacity ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_assign ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_insert ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_plusones ON public.event_invites;
+DROP TRIGGER IF EXISTS trg_enforce_invite_capacity ON public.event_invites;
 
--- BEFORE ROW: acquire advisory locks to serialize concurrent writes
 CREATE TRIGGER trg_serialize_capacity_writes
-  BEFORE INSERT OR UPDATE OF table_id, plus_ones, status ON public.event_invites
+  BEFORE INSERT OR UPDATE OF table_id, plus_ones, status, party_id, business_id
+    ON public.event_invites
   FOR EACH ROW
   EXECUTE FUNCTION public.serialize_capacity_writes();
 
--- AFTER STATEMENT: post-hoc capacity check (party + table)
-CREATE TRIGGER trg_enforce_capacity
-  AFTER INSERT OR UPDATE ON public.event_invites
-  FOR EACH STATEMENT
-  EXECUTE FUNCTION public.enforce_capacity();
+-- ═══════════════════════════════════════════════════════════
+-- 5. AFTER ROW: scoped capacity validation
+--    Fires after each row change is visible. Checks ONLY the
+--    affected party_id(s) and table_id(s) — never scans
+--    unrelated tenants.
+--    Party: counts status IN ('accepted','pending','maybe')
+--           weighted by 1 + plus_ones.
+--    Table: counts all assigned invites weighted by 1 + plus_ones.
+-- ═══════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION public.enforce_invite_capacity()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_party_id UUID;
+  v_table_id UUID;
+  v_max INTEGER;
+  v_current INTEGER;
+BEGIN
+  -- ── Check affected party capacities ──
+  -- Check NEW party (INSERT or UPDATE target)
+  v_party_id := NEW.party_id;
+  IF v_party_id IS NOT NULL THEN
+    SELECT max_guests INTO v_max FROM parties WHERE id = v_party_id;
+    IF v_max IS NOT NULL AND v_max > 0 THEN
+      SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int INTO v_current
+      FROM event_invites
+      WHERE party_id = v_party_id AND status IN ('accepted', 'pending', 'maybe');
+
+      IF v_current > v_max THEN
+        RAISE EXCEPTION 'Party capacity exceeded (% attendees / % max_guests)',
+          v_current, v_max USING ERRCODE = '23514';
+      END IF;
+    END IF;
+  END IF;
+
+  -- Check OLD party if different (guest moved between parties)
+  IF TG_OP = 'UPDATE' AND OLD.party_id IS DISTINCT FROM NEW.party_id
+     AND OLD.party_id IS NOT NULL THEN
+    SELECT max_guests INTO v_max FROM parties WHERE id = OLD.party_id;
+    IF v_max IS NOT NULL AND v_max > 0 THEN
+      SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int INTO v_current
+      FROM event_invites
+      WHERE party_id = OLD.party_id AND status IN ('accepted', 'pending', 'maybe');
+
+      IF v_current > v_max THEN
+        RAISE EXCEPTION 'Party capacity exceeded (% attendees / % max_guests)',
+          v_current, v_max USING ERRCODE = '23514';
+      END IF;
+    END IF;
+  END IF;
+
+  -- ── Check affected table capacities ──
+  -- Check NEW table
+  v_table_id := NEW.table_id;
+  IF v_table_id IS NOT NULL THEN
+    SELECT capacity INTO v_max FROM party_tables WHERE id = v_table_id;
+    IF v_max IS NOT NULL THEN
+      SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int INTO v_current
+      FROM event_invites WHERE table_id = v_table_id;
+
+      IF v_current > v_max THEN
+        RAISE EXCEPTION 'Table capacity exceeded (% attendees / % seats)',
+          v_current, v_max USING ERRCODE = '23514';
+      END IF;
+    END IF;
+  END IF;
+
+  -- Check OLD table if different (guest moved between tables)
+  IF TG_OP = 'UPDATE' AND OLD.table_id IS DISTINCT FROM NEW.table_id
+     AND OLD.table_id IS NOT NULL THEN
+    SELECT capacity INTO v_max FROM party_tables WHERE id = OLD.table_id;
+    IF v_max IS NOT NULL THEN
+      SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int INTO v_current
+      FROM event_invites WHERE table_id = OLD.table_id;
+
+      IF v_current > v_max THEN
+        RAISE EXCEPTION 'Table capacity exceeded (% attendees / % seats)',
+          v_current, v_max USING ERRCODE = '23514';
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN NULL; -- AFTER trigger, return ignored
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_enforce_invite_capacity
+  AFTER INSERT OR UPDATE OF table_id, plus_ones, status, party_id, business_id
+    ON public.event_invites
+  FOR EACH ROW
+  EXECUTE FUNCTION public.enforce_invite_capacity();
 
 -- ═══════════════════════════════════════════════════════════
--- 5. RPC: assign_guest_to_table (single assignment)
---    Advisory lock serializes concurrent assignments to same table.
---    Pre-validates capacity before UPDATE (avoids trigger rollback).
---    STATEMENT trigger provides defense-in-depth for direct SQL.
---    SECURITY INVOKER: RLS on event_invites still applies.
+-- 6. Capacity-reduction guards on parties and party_tables
+--    Prevent reducing max_guests / capacity below current attendance.
+--    Uses same advisory lock namespace for serialization consistency.
+-- ═══════════════════════════════════════════════════════════
+
+-- 6a. parties.max_guests reduction guard
+CREATE OR REPLACE FUNCTION public.guard_party_capacity_reduction()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_current INTEGER;
+BEGIN
+  -- Only check when max_guests is being reduced (not when set to NULL/0 = unlimited)
+  IF NEW.max_guests IS NOT NULL AND NEW.max_guests > 0 THEN
+    IF OLD.max_guests IS NULL OR OLD.max_guests = 0 OR NEW.max_guests < OLD.max_guests THEN
+      -- Serialize with invite triggers
+      PERFORM pg_advisory_xact_lock(hashtext('party:' || NEW.id::text));
+
+      SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int INTO v_current
+      FROM event_invites
+      WHERE party_id = NEW.id AND status IN ('accepted', 'pending', 'maybe');
+
+      IF v_current > NEW.max_guests THEN
+        RAISE EXCEPTION 'Cannot reduce party capacity: % attendees exceed new limit of %',
+          v_current, NEW.max_guests USING ERRCODE = '23514';
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_guard_party_capacity ON public.parties;
+CREATE TRIGGER trg_guard_party_capacity
+  BEFORE UPDATE OF max_guests ON public.parties
+  FOR EACH ROW
+  EXECUTE FUNCTION public.guard_party_capacity_reduction();
+
+-- 6b. party_tables.capacity reduction guard
+CREATE OR REPLACE FUNCTION public.guard_table_capacity_reduction()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_current INTEGER;
+BEGIN
+  IF NEW.capacity < OLD.capacity THEN
+    -- Serialize with invite triggers
+    PERFORM pg_advisory_xact_lock(hashtext('table:' || NEW.id::text));
+
+    SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int INTO v_current
+    FROM event_invites WHERE table_id = NEW.id;
+
+    IF v_current > NEW.capacity THEN
+      RAISE EXCEPTION 'Cannot reduce table capacity: % attendees exceed new limit of %',
+        v_current, NEW.capacity USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_guard_table_capacity ON public.party_tables;
+CREATE TRIGGER trg_guard_table_capacity
+  BEFORE UPDATE OF capacity ON public.party_tables
+  FOR EACH ROW
+  EXECUTE FUNCTION public.guard_table_capacity_reduction();
+
+-- 6c. party_tables identity immutability (party_id, business_id)
+--     Prevents reparenting an occupied table to a different party/business.
+CREATE OR REPLACE FUNCTION public.guard_table_identity()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.party_id IS DISTINCT FROM NEW.party_id THEN
+    RAISE EXCEPTION 'party_tables.party_id is immutable after creation'
+      USING ERRCODE = '23514';
+  END IF;
+  IF OLD.business_id IS DISTINCT FROM NEW.business_id THEN
+    RAISE EXCEPTION 'party_tables.business_id is immutable after creation'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_guard_table_identity ON public.party_tables;
+CREATE TRIGGER trg_guard_table_identity
+  BEFORE UPDATE OF party_id, business_id ON public.party_tables
+  FOR EACH ROW
+  EXECUTE FUNCTION public.guard_table_identity();
+
+-- ═══════════════════════════════════════════════════════════
+-- 7. RPCs (unchanged logic, triggers are final authority)
 -- ═══════════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.assign_guest_to_table(
   p_invite_id UUID,
-  p_table_id UUID,            -- NULL to unassign
+  p_table_id UUID,
   p_seat_number INTEGER DEFAULT NULL
 )
 RETURNS JSONB
@@ -269,11 +400,9 @@ DECLARE
   v_current INTEGER;
   v_invite_plus_ones INTEGER;
 BEGIN
-  -- Unassign path: no capacity check needed
+  -- Unassign path
   IF p_table_id IS NULL THEN
-    UPDATE event_invites
-    SET table_id = NULL, seat_number = NULL
-    WHERE id = p_invite_id;
+    UPDATE event_invites SET table_id = NULL, seat_number = NULL WHERE id = p_invite_id;
     GET DIAGNOSTICS v_count = ROW_COUNT;
     IF v_count = 0 THEN
       RETURN jsonb_build_object('success', false, 'error', 'Guest not found or access denied');
@@ -281,28 +410,23 @@ BEGIN
     RETURN jsonb_build_object('success', true);
   END IF;
 
-  -- Serialize concurrent assignments to the same table (M304 pattern)
+  -- RPC pre-validation (advisory, triggers are final authority)
   PERFORM pg_advisory_xact_lock(hashtext(p_table_id::text));
 
-  -- Pre-validate capacity (fresh snapshot after lock acquisition)
   SELECT capacity INTO v_capacity FROM party_tables WHERE id = p_table_id;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('success', false, 'error', 'Table not found');
   END IF;
 
-  -- Get this invite's plus_ones (they count as attendees)
   SELECT COALESCE(plus_ones, 0) INTO v_invite_plus_ones
   FROM event_invites WHERE id = p_invite_id;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('success', false, 'error', 'Guest not found');
   END IF;
 
-  -- Count current attendees at this table (excluding this invite for reassignment)
   SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0) INTO v_current
-  FROM event_invites
-  WHERE table_id = p_table_id AND id != p_invite_id;
+  FROM event_invites WHERE table_id = p_table_id AND id != p_invite_id;
 
-  -- This guest brings: 1 (self) + plus_ones
   IF v_current + 1 + v_invite_plus_ones > v_capacity THEN
     RETURN jsonb_build_object('success', false, 'error',
       format('Table capacity exceeded (%s attendees / %s seats)',
@@ -327,11 +451,6 @@ EXCEPTION
 END;
 $$;
 
--- ═══════════════════════════════════════════════════════════
--- 6. RPC: bulk_assign_guests_to_table (all-or-nothing)
---    Advisory lock + pre-validation + single UPDATE.
---    STATEMENT trigger provides defense-in-depth.
--- ═══════════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.bulk_assign_guests_to_table(
   p_invite_ids UUID[],
   p_table_id UUID
@@ -350,7 +469,6 @@ BEGIN
     RETURN jsonb_build_object('success', true, 'assigned', 0);
   END IF;
 
-  -- Serialize on target table
   PERFORM pg_advisory_xact_lock(hashtext(p_table_id::text));
 
   SELECT capacity INTO v_capacity FROM party_tables WHERE id = p_table_id;
@@ -358,15 +476,11 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'error', 'Table not found');
   END IF;
 
-  -- Count current attendees at target (excluding guests being reassigned)
   SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0) INTO v_current
-  FROM event_invites
-  WHERE table_id = p_table_id AND id != ALL(p_invite_ids);
+  FROM event_invites WHERE table_id = p_table_id AND id != ALL(p_invite_ids);
 
-  -- Count attendees being added (each invite + their plus_ones)
   SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0) INTO v_new_attendees
-  FROM event_invites
-  WHERE id = ANY(p_invite_ids);
+  FROM event_invites WHERE id = ANY(p_invite_ids);
 
   IF v_current + v_new_attendees > v_capacity THEN
     RETURN jsonb_build_object('success', false, 'error',
@@ -379,7 +493,6 @@ BEGIN
   WHERE id = ANY(p_invite_ids);
 
   GET DIAGNOSTICS v_count = ROW_COUNT;
-
   RETURN jsonb_build_object('success', true, 'assigned', v_count);
 EXCEPTION
   WHEN check_violation THEN
@@ -389,16 +502,15 @@ EXCEPTION
 END;
 $$;
 
--- GRANTs for RPCs
 GRANT EXECUTE ON FUNCTION public.assign_guest_to_table(UUID, UUID, INTEGER) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.bulk_assign_guests_to_table(UUID[], UUID) TO authenticated;
 
 -- ═══════════════════════════════════════════════════════════
--- 7. Self-check (M451 pattern)
+-- 8. Self-check
 -- ═══════════════════════════════════════════════════════════
 DO $$
 BEGIN
-  -- Verify ROW trigger exists
+  -- Membership validation trigger (fires on table_id, party_id, business_id)
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger
     WHERE tgname = 'trg_validate_invite_table'
@@ -407,25 +519,62 @@ BEGIN
     RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_validate_invite_table not found';
   END IF;
 
-  -- Verify BEFORE ROW serialization trigger
+  -- BEFORE ROW serialization trigger
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger
-    WHERE tgrelid = 'public.event_invites'::regclass
-      AND tgname = 'trg_serialize_capacity_writes'
+    WHERE tgname = 'trg_serialize_capacity_writes'
+      AND tgrelid = 'public.event_invites'::regclass
   ) THEN
     RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_serialize_capacity_writes not found';
   END IF;
 
-  -- Verify AFTER STATEMENT capacity trigger
+  -- AFTER ROW scoped capacity trigger (replaces global AFTER STATEMENT)
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger
-    WHERE tgrelid = 'public.event_invites'::regclass
-      AND tgname = 'trg_enforce_capacity'
+    WHERE tgname = 'trg_enforce_invite_capacity'
+      AND tgrelid = 'public.event_invites'::regclass
   ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_enforce_capacity not found';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_enforce_invite_capacity not found';
   END IF;
 
-  -- Verify serialization locks BOTH party and table (M304 pattern)
+  -- Party capacity reduction guard
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'trg_guard_party_capacity'
+      AND tgrelid = 'public.parties'::regclass
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_guard_party_capacity not found';
+  END IF;
+
+  -- Table capacity reduction guard
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'trg_guard_table_capacity'
+      AND tgrelid = 'public.party_tables'::regclass
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_guard_table_capacity not found';
+  END IF;
+
+  -- Table identity immutability guard
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'trg_guard_table_identity'
+      AND tgrelid = 'public.party_tables'::regclass
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_guard_table_identity not found';
+  END IF;
+
+  -- Verify scoped capacity function checks party and table
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname = 'enforce_invite_capacity'
+      AND prosrc ILIKE '%max_guests%'
+      AND prosrc ILIKE '%party_tables%'
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: enforce_invite_capacity missing party or table check';
+  END IF;
+
+  -- Verify advisory lock serialization
   IF NOT EXISTS (
     SELECT 1 FROM pg_proc
     WHERE proname = 'serialize_capacity_writes'
@@ -433,45 +582,17 @@ BEGIN
       AND prosrc ILIKE '%table:%'
       AND prosrc ILIKE '%pg_advisory_xact_lock%'
   ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: serialize_capacity_writes missing party+table advisory locks';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: serialize_capacity_writes missing advisory locks';
   END IF;
 
-  -- Verify capacity enforcement checks BOTH party max_guests AND table capacity
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_proc
-    WHERE proname = 'enforce_capacity'
-      AND prosrc ILIKE '%max_guests%'
-      AND prosrc ILIKE '%pt.capacity%'
-  ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: enforce_capacity missing party or table check';
-  END IF;
-
-  -- Verify RPCs use advisory lock (M304 pattern)
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_proc
-    WHERE proname = 'assign_guest_to_table'
-      AND prosrc ILIKE '%pg_advisory_xact_lock%'
-  ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: assign_guest_to_table missing advisory lock';
-  END IF;
-
-  -- Verify membership validation function checks party_id
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_proc
-    WHERE proname = 'validate_invite_table_membership'
-      AND prosrc ILIKE '%party_id%'
-  ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: validate_invite_table_membership missing party_id check';
-  END IF;
-
-  -- Verify RPC functions exist
+  -- Verify RPCs exist
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'assign_guest_to_table') THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: assign_guest_to_table RPC not found';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: assign_guest_to_table not found';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'bulk_assign_guests_to_table') THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: bulk_assign_guests_to_table RPC not found';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: bulk_assign_guests_to_table not found';
   END IF;
 
-  RAISE NOTICE '457 SELF-CHECK PASSED: party_tables + triggers + RPCs verified';
+  RAISE NOTICE '457 SELF-CHECK PASSED: party_tables + triggers + RPCs + guards verified';
 END;
 $$;

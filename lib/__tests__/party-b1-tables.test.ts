@@ -215,25 +215,32 @@ describe('Migration 457 schema expectations', () => {
     expect(content).toContain('table_id UUID REFERENCES party_tables(id) ON DELETE SET NULL');
     expect(content).toContain('seat_number INTEGER');
 
-    // ROW trigger: party membership
+    // BEFORE ROW: membership validation (fires on table_id, party_id, business_id)
     expect(content).toContain('validate_invite_table_membership');
     expect(content).toContain('trg_validate_invite_table');
-    expect(content).toContain('BEFORE INSERT OR UPDATE OF table_id');
+    expect(content).toContain('BEFORE INSERT OR UPDATE OF table_id, party_id, business_id');
     expect(content).toContain('party_id IS DISTINCT FROM');
     expect(content).toContain('business_id IS DISTINCT FROM');
 
-    // STATEMENT trigger: capacity enforcement
-    expect(content).toContain('enforce_capacity');
-    expect(content).toContain('trg_enforce_capacity');
-    expect(content).toContain('FOR EACH STATEMENT');
-    expect(content).toContain('capacity exceeded');
-    // BEFORE ROW trigger: advisory lock for concurrent serialization (M304 pattern)
+    // BEFORE ROW: advisory lock serialization (M304 pattern)
     expect(content).toContain('serialize_capacity_writes');
     expect(content).toContain('trg_serialize_capacity_writes');
-    // RPCs use advisory lock for serialization (M304 pattern)
     expect(content).toContain('pg_advisory_xact_lock');
+
+    // AFTER ROW: scoped capacity enforcement (not global AFTER STATEMENT)
+    expect(content).toContain('enforce_invite_capacity');
+    expect(content).toContain('trg_enforce_invite_capacity');
+    expect(content).toContain('AFTER INSERT OR UPDATE OF');
+    expect(content).toContain('FOR EACH ROW');
+    expect(content).toContain('capacity exceeded');
     // Attendee counting: SUM(1 + plus_ones), not COUNT(*)
     expect(content).toContain('SUM(1 + COALESCE(plus_ones, 0))');
+
+    // Capacity reduction guards
+    expect(content).toContain('guard_party_capacity_reduction');
+    expect(content).toContain('guard_table_capacity_reduction');
+    expect(content).toContain('guard_table_identity');
+    expect(content).toContain('immutable after creation');
 
     // RPCs
     expect(content).toContain('assign_guest_to_table');
