@@ -113,64 +113,102 @@ CREATE TRIGGER trg_validate_invite_table
 -- 4. Capacity enforcement — three-layer strategy
 --
 --    Layer 1 (BEFORE ROW trigger): pg_advisory_xact_lock on
---    the affected table_id. Serializes ALL concurrent writes
---    (assignments + plus_ones changes) that affect the same
---    table. Matches M304 book_slot_atomic pattern.
+--    BOTH the party_id AND any affected table_id. Serializes
+--    ALL concurrent writes that affect capacity — party-wide
+--    AND per-table. Matches M304 book_slot_atomic pattern.
+--
+--    Lock ordering: party lock first (hashtext('party:' || id)),
+--    then table locks in UUID order to prevent deadlocks.
 --
 --    Layer 2 (AFTER STATEMENT trigger): Post-hoc final-state
---    check. Catches violations from bulk operations within a
---    single statement. Blocked transactions get fresh snapshot
---    after advisory lock acquisition — sees committed counts.
+--    check for BOTH party max_guests AND table capacity.
+--    Blocked transactions get fresh snapshot after advisory
+--    lock — sees committed counts.
 --
 --    Layer 3 (RPCs): Pre-validate capacity with advisory lock
 --    for clean JSON error responses (application layer).
 --
---    Attendee counting: SUM(1 + plus_ones) per table (#661 owner policy).
+--    Attendee counting: SUM(1 + plus_ones) (#661 owner policy).
 -- ═══════════════════════════════════════════════════════════
 
--- BEFORE ROW trigger: serialize on table_id via advisory lock (M304 pattern)
--- Fires on table_id changes AND plus_ones changes.
--- Guarantees that concurrent direct SQL mutations cannot bypass capacity.
-CREATE OR REPLACE FUNCTION public.serialize_table_writes()
+-- BEFORE ROW trigger: serialize via advisory lock (M304 pattern).
+-- Acquires locks on party_id (always) and affected table_ids.
+-- Lock ordering: party first, then tables in UUID order (no deadlocks).
+CREATE OR REPLACE FUNCTION public.serialize_capacity_writes()
 RETURNS TRIGGER AS $$
 DECLARE
-  v_lock_table_id UUID;
+  v_table_a UUID;
+  v_table_b UUID;
 BEGIN
-  -- Determine which table_id to serialize on
-  IF TG_OP = 'INSERT' THEN
-    v_lock_table_id := NEW.table_id;
-  ELSIF TG_OP = 'UPDATE' THEN
-    -- Lock new table_id (assignment/reassignment)
-    IF NEW.table_id IS NOT NULL AND (OLD.table_id IS DISTINCT FROM NEW.table_id) THEN
-      v_lock_table_id := NEW.table_id;
-    -- Lock current table_id when plus_ones change on an assigned guest
-    ELSIF NEW.table_id IS NOT NULL AND (OLD.plus_ones IS DISTINCT FROM NEW.plus_ones) THEN
-      v_lock_table_id := NEW.table_id;
-    END IF;
-    -- Also serialize on old table_id for reassignment (frees capacity there)
-    IF OLD.table_id IS NOT NULL AND OLD.table_id IS DISTINCT FROM COALESCE(NEW.table_id, OLD.table_id) THEN
-      PERFORM pg_advisory_xact_lock(hashtext(OLD.table_id::text));
-    END IF;
+  -- ── Party-level lock: serialize ALL attendee-count mutations for same party ──
+  IF NEW.party_id IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtext('party:' || NEW.party_id::text));
   END IF;
 
-  IF v_lock_table_id IS NOT NULL THEN
-    PERFORM pg_advisory_xact_lock(hashtext(v_lock_table_id::text));
+  -- ── Table-level locks: serialize seat mutations for affected tables ──
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.table_id IS NOT NULL THEN
+      PERFORM pg_advisory_xact_lock(hashtext('table:' || NEW.table_id::text));
+    END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- Collect both old and new table_ids
+    v_table_a := OLD.table_id;
+    v_table_b := NEW.table_id;
+
+    -- Lock in UUID order to prevent deadlocks on opposite-direction reassignment
+    IF v_table_a IS NOT NULL AND v_table_b IS NOT NULL AND v_table_a != v_table_b THEN
+      IF v_table_a < v_table_b THEN
+        PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_a::text));
+        PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_b::text));
+      ELSE
+        PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_b::text));
+        PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_a::text));
+      END IF;
+    ELSIF v_table_a IS NOT NULL THEN
+      -- Unassignment: lock OLD table (F2 fix — was missing)
+      PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_a::text));
+    ELSIF v_table_b IS NOT NULL THEN
+      -- New assignment
+      PERFORM pg_advisory_xact_lock(hashtext('table:' || v_table_b::text));
+    END IF;
+
+    -- Plus_ones change on an assigned guest: lock the table
+    IF NEW.table_id IS NOT NULL
+       AND OLD.plus_ones IS DISTINCT FROM NEW.plus_ones
+       AND v_table_a IS NOT DISTINCT FROM v_table_b  -- table_id didn't change (already locked above if it did)
+    THEN
+      PERFORM pg_advisory_xact_lock(hashtext('table:' || NEW.table_id::text));
+    END IF;
   END IF;
 
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- AFTER STATEMENT trigger: post-hoc capacity check
-CREATE OR REPLACE FUNCTION public.enforce_table_capacity()
+-- AFTER STATEMENT trigger: post-hoc capacity check for BOTH party and table.
+CREATE OR REPLACE FUNCTION public.enforce_capacity()
 RETURNS TRIGGER AS $$
 DECLARE
   v_over RECORD;
 BEGIN
-  -- Find any party table where attendees exceed capacity.
-  -- Fires after all rows in the statement are modified AND after
-  -- BEFORE triggers have acquired advisory locks. Blocked transactions
-  -- get fresh snapshot after lock — sees committed counts.
+  -- ── Check party-wide max_guests ──
+  FOR v_over IN
+    SELECT p.name, p.max_guests,
+           COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0)::int AS attendees
+    FROM parties p
+    JOIN event_invites ei ON ei.party_id = p.id
+    WHERE p.max_guests IS NOT NULL AND p.max_guests > 0
+      AND ei.status IN ('accepted', 'pending', 'maybe')
+    GROUP BY p.id, p.name, p.max_guests
+    HAVING COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0) > p.max_guests
+    LIMIT 1
+  LOOP
+    RAISE EXCEPTION 'Party "%" capacity exceeded (% attendees / % max_guests)',
+      v_over.name, v_over.attendees, v_over.max_guests
+      USING ERRCODE = '23514';
+  END LOOP;
+
+  -- ── Check per-table capacity ──
   FOR v_over IN
     SELECT pt.name, pt.capacity,
            COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0)::int AS attendees
@@ -190,22 +228,24 @@ END;
 $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_serialize_table_writes ON public.event_invites;
+DROP TRIGGER IF EXISTS trg_serialize_capacity_writes ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity ON public.event_invites;
+DROP TRIGGER IF EXISTS trg_enforce_capacity ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_assign ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_insert ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_plusones ON public.event_invites;
 
--- BEFORE ROW: acquire advisory lock to serialize concurrent writes
-CREATE TRIGGER trg_serialize_table_writes
-  BEFORE INSERT OR UPDATE OF table_id, plus_ones ON public.event_invites
+-- BEFORE ROW: acquire advisory locks to serialize concurrent writes
+CREATE TRIGGER trg_serialize_capacity_writes
+  BEFORE INSERT OR UPDATE OF table_id, plus_ones, status ON public.event_invites
   FOR EACH ROW
-  EXECUTE FUNCTION public.serialize_table_writes();
+  EXECUTE FUNCTION public.serialize_capacity_writes();
 
--- AFTER STATEMENT: post-hoc capacity check with fresh snapshot
-CREATE TRIGGER trg_enforce_table_capacity
+-- AFTER STATEMENT: post-hoc capacity check (party + table)
+CREATE TRIGGER trg_enforce_capacity
   AFTER INSERT OR UPDATE ON public.event_invites
   FOR EACH STATEMENT
-  EXECUTE FUNCTION public.enforce_table_capacity();
+  EXECUTE FUNCTION public.enforce_capacity();
 
 -- ═══════════════════════════════════════════════════════════
 -- 5. RPC: assign_guest_to_table (single assignment)
@@ -367,40 +407,43 @@ BEGIN
     RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_validate_invite_table not found';
   END IF;
 
-  -- Verify serialization BEFORE ROW trigger exists
+  -- Verify BEFORE ROW serialization trigger
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger
     WHERE tgrelid = 'public.event_invites'::regclass
-      AND tgname = 'trg_serialize_table_writes'
+      AND tgname = 'trg_serialize_capacity_writes'
   ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_serialize_table_writes not found';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_serialize_capacity_writes not found';
   END IF;
 
-  -- Verify capacity AFTER STATEMENT trigger exists
+  -- Verify AFTER STATEMENT capacity trigger
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger
     WHERE tgrelid = 'public.event_invites'::regclass
-      AND tgname = 'trg_enforce_table_capacity'
+      AND tgname = 'trg_enforce_capacity'
   ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_enforce_table_capacity not found';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_enforce_capacity not found';
   END IF;
 
-  -- Verify serialization function uses advisory lock (M304 pattern)
+  -- Verify serialization locks BOTH party and table (M304 pattern)
   IF NOT EXISTS (
     SELECT 1 FROM pg_proc
-    WHERE proname = 'serialize_table_writes'
+    WHERE proname = 'serialize_capacity_writes'
+      AND prosrc ILIKE '%party:%'
+      AND prosrc ILIKE '%table:%'
       AND prosrc ILIKE '%pg_advisory_xact_lock%'
   ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: serialize_table_writes missing advisory lock';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: serialize_capacity_writes missing party+table advisory locks';
   END IF;
 
-  -- Verify capacity function uses attendee counting (SUM with plus_ones)
+  -- Verify capacity enforcement checks BOTH party max_guests AND table capacity
   IF NOT EXISTS (
     SELECT 1 FROM pg_proc
-    WHERE proname = 'enforce_table_capacity'
-      AND prosrc ILIKE '%plus_ones%'
+    WHERE proname = 'enforce_capacity'
+      AND prosrc ILIKE '%max_guests%'
+      AND prosrc ILIKE '%pt.capacity%'
   ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: enforce_table_capacity missing attendee counting';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: enforce_capacity missing party or table check';
   END IF;
 
   -- Verify RPCs use advisory lock (M304 pattern)

@@ -352,15 +352,113 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
   it('triggers and RPCs exist', async () => {
     const triggers = await pool.query(`
       SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.event_invites'::regclass
-        AND tgname LIKE 'trg_%table%'
+        AND tgname LIKE 'trg_%capacity%'
     `);
-    expect(triggers.rows.map(r => r.tgname)).toContain('trg_enforce_table_capacity');
-    expect(triggers.rows.map(r => r.tgname)).toContain('trg_validate_invite_table');
+    const tnames = triggers.rows.map(r => r.tgname);
+    expect(tnames).toContain('trg_enforce_capacity');
+    expect(tnames).toContain('trg_serialize_capacity_writes');
 
     const funcs = await pool.query(`
-      SELECT proname FROM pg_proc WHERE proname IN ('assign_guest_to_table', 'bulk_assign_guests_to_table')
+      SELECT proname FROM pg_proc WHERE proname IN ('assign_guest_to_table', 'bulk_assign_guests_to_table', 'serialize_capacity_writes', 'enforce_capacity')
     `);
-    expect(funcs.rows.map(r => r.proname)).toContain('assign_guest_to_table');
-    expect(funcs.rows.map(r => r.proname)).toContain('bulk_assign_guests_to_table');
+    const fnames = funcs.rows.map(r => r.proname);
+    expect(fnames).toContain('assign_guest_to_table');
+    expect(fnames).toContain('bulk_assign_guests_to_table');
+    expect(fnames).toContain('serialize_capacity_writes');
+    expect(fnames).toContain('enforce_capacity');
   }, 10000);
+
+  // ── CTO F1: Party-wide capacity under concurrency ──
+  it('concurrent plus_ones cannot exceed party max_guests', async () => {
+    // 3 invites with 0 plus_ones = 3 attendees. Set max_guests=4 → 1 slot remaining.
+    // Two guests concurrently try plus_ones 0→1. Each would add 1 attendee.
+    // Total would be 3+1+1=5 > 4. Only one should succeed.
+    await pool.query(`UPDATE parties SET max_guests = 4 WHERE id = $1`, [partyId1]);
+
+    const c1 = await pool.connect();
+    const c2 = await pool.connect();
+    try {
+      const p1 = c1.query(`UPDATE event_invites SET plus_ones = 1 WHERE id = $1`, [inviteIds[0]])
+        .then(() => ({ ok: true })).catch(e => ({ ok: false, err: e.message }));
+      const p2 = c2.query(`UPDATE event_invites SET plus_ones = 1 WHERE id = $1`, [inviteIds[1]])
+        .then(() => ({ ok: true })).catch(e => ({ ok: false, err: e.message }));
+      const [r1, r2] = await Promise.all([p1, p2]);
+
+      expect([r1.ok, r2.ok].filter(Boolean).length).toBe(1);
+
+      const count = await pool.query(
+        `SELECT COALESCE(SUM(1 + plus_ones), 0)::int as a FROM event_invites
+         WHERE party_id = $1 AND status IN ('accepted','pending','maybe')`, [partyId1]
+      );
+      expect(count.rows[0].a).toBeLessThanOrEqual(4);
+    } finally {
+      c1.release(); c2.release();
+      await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
+    }
+  }, 15000);
+
+  // ── CTO F1: Concurrent invite INSERT exceeding party max_guests ──
+  it('concurrent INSERT cannot exceed party max_guests', async () => {
+    // 3 existing invites = 3 attendees. max_guests=4 → 1 slot.
+    // 2 concurrent INSERTs → only one should succeed.
+    await pool.query(`UPDATE parties SET max_guests = 4 WHERE id = $1`, [partyId1]);
+
+    const c1 = await pool.connect();
+    const c2 = await pool.connect();
+    try {
+      const p1 = c1.query(`INSERT INTO event_invites (business_id, party_id, guest_phone, status) VALUES ($1, $2, '1111111111', 'accepted')`, [bizId1, partyId1])
+        .then(() => ({ ok: true })).catch(e => ({ ok: false, err: e.message }));
+      const p2 = c2.query(`INSERT INTO event_invites (business_id, party_id, guest_phone, status) VALUES ($1, $2, '2222222222', 'accepted')`, [bizId1, partyId1])
+        .then(() => ({ ok: true })).catch(e => ({ ok: false, err: e.message }));
+      const results = await Promise.all([p1, p2]);
+
+      const successes = results.filter(r => r.ok).length;
+      expect(successes).toBe(1);
+
+      const count = await pool.query(
+        `SELECT COALESCE(SUM(1 + plus_ones), 0)::int as a FROM event_invites
+         WHERE party_id = $1 AND status IN ('accepted','pending','maybe')`, [partyId1]
+      );
+      expect(count.rows[0].a).toBeLessThanOrEqual(4);
+    } finally {
+      c1.release(); c2.release();
+      await pool.query(`DELETE FROM event_invites WHERE guest_phone IN ('1111111111','2222222222')`);
+      await pool.query(`UPDATE parties SET max_guests = NULL WHERE id = $1`, [partyId1]);
+    }
+  }, 15000);
+
+  // ── CTO F2: Opposite-direction reassignment (deadlock-free) ──
+  it('opposite-direction table swap completes without deadlock', async () => {
+    const table2 = await pool.query(
+      `INSERT INTO party_tables (business_id, party_id, name, capacity) VALUES ($1, $2, $3, 4) RETURNING id`,
+      [bizId1, partyId1, `${testPrefix}_table2`]
+    );
+    const tableId2 = table2.rows[0].id;
+
+    await pool.query(`SELECT assign_guest_to_table($1, $2, NULL)`, [inviteIds[0], tableId1]);
+    await pool.query(`SELECT assign_guest_to_table($1, $2, NULL)`, [inviteIds[1], tableId2]);
+
+    const c1 = await pool.connect();
+    const c2 = await pool.connect();
+    try {
+      // Swap: inv[0] T1→T2, inv[1] T2→T1
+      const p1 = c1.query(`SELECT assign_guest_to_table($1, $2, NULL)`, [inviteIds[0], tableId2])
+        .then(r => ({ ok: r.rows[0].assign_guest_to_table.success }))
+        .catch(e => ({ ok: false, err: e.message }));
+      const p2 = c2.query(`SELECT assign_guest_to_table($1, $2, NULL)`, [inviteIds[1], tableId1])
+        .then(r => ({ ok: r.rows[0].assign_guest_to_table.success }))
+        .catch(e => ({ ok: false, err: e.message }));
+
+      const [r1, r2] = await Promise.all([
+        Promise.race([p1, new Promise<{ok: boolean; err?: string}>((_, rej) => setTimeout(() => rej(new Error('deadlock timeout')), 10000))]),
+        Promise.race([p2, new Promise<{ok: boolean; err?: string}>((_, rej) => setTimeout(() => rej(new Error('deadlock timeout')), 10000))]),
+      ]);
+
+      expect(r1.ok).toBe(true);
+      expect(r2.ok).toBe(true);
+    } finally {
+      c1.release(); c2.release();
+      await pool.query(`DELETE FROM party_tables WHERE id = $1`, [tableId2]);
+    }
+  }, 15000);
 });

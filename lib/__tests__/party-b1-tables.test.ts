@@ -223,13 +223,13 @@ describe('Migration 457 schema expectations', () => {
     expect(content).toContain('business_id IS DISTINCT FROM');
 
     // STATEMENT trigger: capacity enforcement
-    expect(content).toContain('enforce_table_capacity');
-    expect(content).toContain('trg_enforce_table_capacity');
+    expect(content).toContain('enforce_capacity');
+    expect(content).toContain('trg_enforce_capacity');
     expect(content).toContain('FOR EACH STATEMENT');
     expect(content).toContain('capacity exceeded');
     // BEFORE ROW trigger: advisory lock for concurrent serialization (M304 pattern)
-    expect(content).toContain('serialize_table_writes');
-    expect(content).toContain('trg_serialize_table_writes');
+    expect(content).toContain('serialize_capacity_writes');
+    expect(content).toContain('trg_serialize_capacity_writes');
     // RPCs use advisory lock for serialization (M304 pattern)
     expect(content).toContain('pg_advisory_xact_lock');
     // Attendee counting: SUM(1 + plus_ones), not COUNT(*)
