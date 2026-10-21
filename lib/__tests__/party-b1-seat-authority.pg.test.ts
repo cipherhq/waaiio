@@ -270,6 +270,73 @@ describeDB('Database-authoritative seat assignment (real PG)', () => {
     expect(check.rows[0].plus_ones).toBe(1);
   }, 10000);
 
+  // ── CTO-required: concurrent direct SQL races (no RPC) ──
+  it('concurrent direct SQL table_id race — only one wins', async () => {
+    // Fill to capacity-1
+    await pool.query(`UPDATE event_invites SET plus_ones = 2 WHERE id = $1`, [inviteIds[0]]);
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id = $2`, [tableId1, inviteIds[0]]);
+    // 3 attendees (1+2), 1 seat left in capacity=4
+
+    const c1 = await pool.connect();
+    const c2 = await pool.connect();
+    try {
+      // Both use direct SQL (no RPC) concurrently
+      const p1 = c1.query(`UPDATE event_invites SET table_id = $1 WHERE id = $2`, [tableId1, inviteIds[1]])
+        .then(() => ({ ok: true })).catch(e => ({ ok: false, err: e.message }));
+      const p2 = c2.query(`UPDATE event_invites SET table_id = $1 WHERE id = $2`, [tableId1, inviteIds[2]])
+        .then(() => ({ ok: true })).catch(e => ({ ok: false, err: e.message }));
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      const successes = [r1.ok, r2.ok].filter(Boolean).length;
+      expect(successes).toBe(1);
+
+      const count = await pool.query(
+        `SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int as a FROM event_invites WHERE table_id = $1`,
+        [tableId1]
+      );
+      expect(count.rows[0].a).toBeLessThanOrEqual(4);
+    } finally {
+      c1.release();
+      c2.release();
+    }
+  }, 15000);
+
+  it('concurrent direct SQL plus_ones race — capacity preserved', async () => {
+    // Seat 2 guests with 0 plus_ones (2 attendees at capacity=4). Each tries +2 = would make 4+4=8.
+    // But only total can be 4. So at most one can get +2 (2+1+2+1=6>4... actually let me set up correctly)
+    // capacity=4. Seat 2 guests (2 attendees). Each tries plus_ones=1 → would be 2+1+1=4 exactly.
+    // Both succeed? No — first gets 3, second would make 4. Both should succeed if total=4.
+    // Let's test overflow: 2 seated, each tries plus_ones=2 → 2*(1+2)=6 > 4.
+    await pool.query(`UPDATE event_invites SET table_id = $1 WHERE id IN ($2, $3)`, [tableId1, inviteIds[0], inviteIds[1]]);
+    // 2 attendees at capacity=4.
+
+    const c1 = await pool.connect();
+    const c2 = await pool.connect();
+    try {
+      // Both increase plus_ones to 2. Would make: (1+2)+(1+2)=6 > 4
+      const p1 = c1.query(`UPDATE event_invites SET plus_ones = 2 WHERE id = $1`, [inviteIds[0]])
+        .then(() => ({ ok: true })).catch(e => ({ ok: false, err: e.message }));
+      const p2 = c2.query(`UPDATE event_invites SET plus_ones = 2 WHERE id = $1`, [inviteIds[1]])
+        .then(() => ({ ok: true })).catch(e => ({ ok: false, err: e.message }));
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      const successes = [r1.ok, r2.ok].filter(Boolean).length;
+
+      // At most one can succeed (4 is max, one getting +2 = 1+2+1+0=4, fine.
+      // But both getting +2 = 6 > 4). So at most one.
+      expect(successes).toBeLessThanOrEqual(1);
+
+      const attendees = await pool.query(
+        `SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0)::int as a FROM event_invites WHERE table_id = $1`,
+        [tableId1]
+      );
+      expect(attendees.rows[0].a).toBeLessThanOrEqual(4);
+    } finally {
+      c1.release();
+      c2.release();
+    }
+  }, 15000);
+
   // ── Schema verification ──
   it('party_tables has correct constraints', async () => {
     const r = await pool.query(`

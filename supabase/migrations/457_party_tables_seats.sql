@@ -110,30 +110,67 @@ CREATE TRIGGER trg_validate_invite_table
   EXECUTE FUNCTION public.validate_invite_table_membership();
 
 -- ═══════════════════════════════════════════════════════════
--- 4. Capacity enforcement — two-layer strategy
+-- 4. Capacity enforcement — three-layer strategy
 --
---    Layer 1 (RPCs): pg_advisory_xact_lock serializes concurrent
---    assignments. Handles ALL application traffic correctly.
---    Same pattern as M304 book_slot_atomic.
+--    Layer 1 (BEFORE ROW trigger): pg_advisory_xact_lock on
+--    the affected table_id. Serializes ALL concurrent writes
+--    (assignments + plus_ones changes) that affect the same
+--    table. Matches M304 book_slot_atomic pattern.
 --
---    Layer 2 (STATEMENT trigger): Final-state check after every
---    INSERT or UPDATE to event_invites. Catches capacity violations
---    from ANY path including direct SQL. No REFERENCING needed —
---    checks ALL tables for violations (efficient: indexed join
---    with HAVING filter).
+--    Layer 2 (AFTER STATEMENT trigger): Post-hoc final-state
+--    check. Catches violations from bulk operations within a
+--    single statement. Blocked transactions get fresh snapshot
+--    after advisory lock acquisition — sees committed counts.
+--
+--    Layer 3 (RPCs): Pre-validate capacity with advisory lock
+--    for clean JSON error responses (application layer).
 --
 --    Attendee counting: SUM(1 + plus_ones) per table (#661 owner policy).
 -- ═══════════════════════════════════════════════════════════
 
--- STATEMENT trigger function: post-hoc capacity check
+-- BEFORE ROW trigger: serialize on table_id via advisory lock (M304 pattern)
+-- Fires on table_id changes AND plus_ones changes.
+-- Guarantees that concurrent direct SQL mutations cannot bypass capacity.
+CREATE OR REPLACE FUNCTION public.serialize_table_writes()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_lock_table_id UUID;
+BEGIN
+  -- Determine which table_id to serialize on
+  IF TG_OP = 'INSERT' THEN
+    v_lock_table_id := NEW.table_id;
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- Lock new table_id (assignment/reassignment)
+    IF NEW.table_id IS NOT NULL AND (OLD.table_id IS DISTINCT FROM NEW.table_id) THEN
+      v_lock_table_id := NEW.table_id;
+    -- Lock current table_id when plus_ones change on an assigned guest
+    ELSIF NEW.table_id IS NOT NULL AND (OLD.plus_ones IS DISTINCT FROM NEW.plus_ones) THEN
+      v_lock_table_id := NEW.table_id;
+    END IF;
+    -- Also serialize on old table_id for reassignment (frees capacity there)
+    IF OLD.table_id IS NOT NULL AND OLD.table_id IS DISTINCT FROM COALESCE(NEW.table_id, OLD.table_id) THEN
+      PERFORM pg_advisory_xact_lock(hashtext(OLD.table_id::text));
+    END IF;
+  END IF;
+
+  IF v_lock_table_id IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtext(v_lock_table_id::text));
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- AFTER STATEMENT trigger: post-hoc capacity check
 CREATE OR REPLACE FUNCTION public.enforce_table_capacity()
 RETURNS TRIGGER AS $$
 DECLARE
   v_over RECORD;
 BEGIN
   -- Find any party table where attendees exceed capacity.
-  -- Fires after all rows in the statement are modified,
-  -- so we see the final state.
+  -- Fires after all rows in the statement are modified AND after
+  -- BEFORE triggers have acquired advisory locks. Blocked transactions
+  -- get fresh snapshot after lock — sees committed counts.
   FOR v_over IN
     SELECT pt.name, pt.capacity,
            COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0)::int AS attendees
@@ -152,11 +189,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_serialize_table_writes ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_assign ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_insert ON public.event_invites;
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity_plusones ON public.event_invites;
 
+-- BEFORE ROW: acquire advisory lock to serialize concurrent writes
+CREATE TRIGGER trg_serialize_table_writes
+  BEFORE INSERT OR UPDATE OF table_id, plus_ones ON public.event_invites
+  FOR EACH ROW
+  EXECUTE FUNCTION public.serialize_table_writes();
+
+-- AFTER STATEMENT: post-hoc capacity check with fresh snapshot
 CREATE TRIGGER trg_enforce_table_capacity
   AFTER INSERT OR UPDATE ON public.event_invites
   FOR EACH STATEMENT
@@ -322,13 +367,31 @@ BEGIN
     RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_validate_invite_table not found';
   END IF;
 
-  -- Verify capacity STATEMENT trigger exists
+  -- Verify serialization BEFORE ROW trigger exists
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.event_invites'::regclass
+      AND tgname = 'trg_serialize_table_writes'
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_serialize_table_writes not found';
+  END IF;
+
+  -- Verify capacity AFTER STATEMENT trigger exists
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger
     WHERE tgrelid = 'public.event_invites'::regclass
       AND tgname = 'trg_enforce_table_capacity'
   ) THEN
     RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_enforce_table_capacity not found';
+  END IF;
+
+  -- Verify serialization function uses advisory lock (M304 pattern)
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname = 'serialize_table_writes'
+      AND prosrc ILIKE '%pg_advisory_xact_lock%'
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: serialize_table_writes missing advisory lock';
   END IF;
 
   -- Verify capacity function uses attendee counting (SUM with plus_ones)
