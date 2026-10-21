@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { LanguageEntitlement } from '../language-policy';
 import {
   parseLanguagePreferenceIntent,
+  classifyLanguageSwitchReply,
   readPreferredResponseLanguage,
   resolveEffectiveResponseLanguage,
   writePreferredResponseLanguage,
@@ -73,6 +74,23 @@ describe('language preference intent boundaries', () => {
     ('does not turn passive language evidence into a preference: %s', text => {
       expect(parseLanguagePreferenceIntent(text)).toBeNull();
     });
+});
+
+describe('confirmed language switch replies', () => {
+  it.each(['YES', 'confirm', 'yes na', 'oya', 'ok'])('accepts an explicit confirmation: %s', input => {
+    expect(classifyLanguageSwitchReply(input)).toBe('confirm');
+  });
+  it.each(['NO', 'no thanks', 'cancel switch', 'not now'])('preserves preference when declined: %s', input => {
+    expect(classifyLanguageSwitchReply(input)).toBe('decline');
+  });
+  it.each(['pay now', 'confirm order', '1234', 'I want two', 'maybe'])('never treats commerce text as language approval: %s', input => {
+    expect(classifyLanguageSwitchReply(input)).toBe('other');
+  });
+  it('recognizes a request to switch back to English', () => {
+    expect(parseLanguagePreferenceIntent('I want to switch back to English')).toEqual({
+      language: 'en', persistence: 'session', isBare: false,
+    });
+  });
 });
 
 describe('effective response-language authority', () => {
