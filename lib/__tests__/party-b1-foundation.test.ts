@@ -252,14 +252,20 @@ describe('Invite API capacity enforcement', () => {
     vi.clearAllMocks();
   });
 
-  it('rejects invites when party is at capacity', async () => {
-    // Party with max_guests=10, already 9 guests
+  it('rejects invites when party is at capacity (attendee counting)', async () => {
+    // Party with max_guests=10, 7 invites with plus_ones totaling 9 attendees
     const partyData = {
       id: 'party-1', name: 'Full Party', date: '2026-12-25',
       time: null, venue: null, invite_message: null,
       allow_plus_ones: false, max_plus_ones: 0, ask_dietary: false,
       dress_code: null, image_url: null, max_guests: 10,
     };
+
+    // 7 invites: 5 with 0 plus_ones + 2 with 1 plus_one = 5+2+2 = 9 attendees
+    const existingInvites = [
+      ...Array(5).fill({ plus_ones: 0 }),
+      { plus_ones: 1 }, { plus_ones: 1 },
+    ];
 
     let callIndex = 0;
     mockServiceFrom.mockImplementation((table: string) => {
@@ -269,8 +275,10 @@ describe('Invite API capacity enforcement', () => {
       if (table === 'event_invites') {
         callIndex++;
         if (callIndex === 1) {
-          // Count query — return 9 existing
-          return mockChain(null, null, 9);
+          // Attendee query — return array of invites with plus_ones
+          const chain = mockChain(existingInvites);
+          chain.then = (r: (v: any) => void) => r({ data: existingInvites, error: null });
+          return chain;
         }
       }
       if (table === 'businesses') {
@@ -293,7 +301,7 @@ describe('Invite API capacity enforcement', () => {
     const res = await POST(req);
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.error).toContain('capacity');
+    expect(body.error).toContain('capacity') || expect(body.error).toContain('attendees');
   });
 
   it('allows invites when under capacity', async () => {

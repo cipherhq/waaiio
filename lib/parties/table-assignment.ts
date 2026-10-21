@@ -168,12 +168,16 @@ export async function autoAssign(
   for (const table of tables) {
     if (guestIdx >= unassigned.length) break;
 
-    const { count } = await supabase
+    // Count total attendees (invite + plus_ones) per table
+    const { data: tableInvites } = await supabase
       .from('event_invites')
-      .select('*', { count: 'exact', head: true })
+      .select('plus_ones')
       .eq('table_id', table.id);
+    const seated = (tableInvites || []).reduce(
+      (sum: number, inv: { plus_ones: number }) => sum + 1 + (inv.plus_ones || 0), 0
+    );
 
-    const available = table.capacity - (count ?? 0);
+    const available = table.capacity - seated;
     if (available <= 0) continue;
 
     // Take up to 'available' guests

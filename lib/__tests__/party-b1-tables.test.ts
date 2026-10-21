@@ -222,13 +222,15 @@ describe('Migration 457 schema expectations', () => {
     expect(content).toContain('party_id IS DISTINCT FROM');
     expect(content).toContain('business_id IS DISTINCT FROM');
 
-    // STATEMENT trigger: capacity with FOR UPDATE serialization
+    // STATEMENT trigger: capacity enforcement
     expect(content).toContain('enforce_table_capacity');
     expect(content).toContain('trg_enforce_table_capacity');
-    expect(content).toContain('REFERENCING NEW TABLE AS new_rows');
     expect(content).toContain('FOR EACH STATEMENT');
-    expect(content).toContain('FOR UPDATE');
     expect(content).toContain('capacity exceeded');
+    // RPCs use advisory lock for serialization (M304 pattern)
+    expect(content).toContain('pg_advisory_xact_lock');
+    // Attendee counting: SUM(1 + plus_ones), not COUNT(*)
+    expect(content).toContain('SUM(1 + COALESCE(plus_ones, 0))');
 
     // RPCs
     expect(content).toContain('assign_guest_to_table');

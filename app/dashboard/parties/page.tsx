@@ -424,12 +424,16 @@ export default function PartiesPage() {
 
     if (tables) {
       // Count seated guests per table
+      // Count total attendees per table (invite + plus_ones = attendees)
       const withCounts = await Promise.all(tables.map(async (t) => {
-        const { count } = await supabase
+        const { data: tableInvites } = await supabase
           .from('event_invites')
-          .select('*', { count: 'exact', head: true })
+          .select('plus_ones')
           .eq('table_id', t.id);
-        return { ...t, seated: count ?? 0 };
+        const seated = (tableInvites || []).reduce(
+          (sum, inv) => sum + 1 + (inv.plus_ones || 0), 0
+        );
+        return { ...t, seated };
       }));
       setPartyTables(withCounts);
     }
@@ -997,24 +1001,30 @@ export default function PartiesPage() {
           </div>
         </div>
 
-        {/* Capacity bar */}
-        {selectedParty.max_guests && selectedParty.max_guests > 0 && (
-          <div className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Guest Capacity</p>
-              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{accepted.length} / {selectedParty.max_guests} spots filled</p>
+        {/* Capacity bar — counts total attendees (invites + plus-ones) */}
+        {selectedParty.max_guests && selectedParty.max_guests > 0 && (() => {
+          const totalAttendees = filteredInvites
+            .filter(i => ['accepted', 'maybe', 'pending'].includes(i.status))
+            .reduce((sum, i) => sum + 1 + (i.plus_ones || 0), 0);
+          return (
+            <div className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Attendee Capacity</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{totalAttendees} / {selectedParty.max_guests} spots filled</p>
+              </div>
+              <p className="mb-2 text-xs text-gray-400">{accepted.length} confirmed + {totalPlusOnes} plus-ones = {totalComing} attending</p>
+              <div className="h-3 w-full rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${totalAttendees >= selectedParty.max_guests ? 'bg-red-500' : totalAttendees >= selectedParty.max_guests * 0.8 ? 'bg-amber-500' : 'bg-green-500'}`}
+                  style={{ width: `${Math.min(100, (totalAttendees / selectedParty.max_guests) * 100)}%` }}
+                />
+              </div>
+              {totalAttendees >= selectedParty.max_guests && (
+                <p className="mt-2 text-xs font-medium text-red-600">This party is at full capacity!</p>
+              )}
             </div>
-            <div className="h-3 w-full rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${accepted.length >= selectedParty.max_guests ? 'bg-red-500' : accepted.length >= selectedParty.max_guests * 0.8 ? 'bg-amber-500' : 'bg-green-500'}`}
-                style={{ width: `${Math.min(100, (accepted.length / selectedParty.max_guests) * 100)}%` }}
-              />
-            </div>
-            {accepted.length >= selectedParty.max_guests && (
-              <p className="mt-2 text-xs font-medium text-red-600">This party is at full capacity!</p>
-            )}
-          </div>
-        )}
+          );
+        })()}
 
         {/* Analytics */}
         {invites.length > 0 && (

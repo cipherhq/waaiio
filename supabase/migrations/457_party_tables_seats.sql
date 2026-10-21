@@ -110,62 +110,63 @@ CREATE TRIGGER trg_validate_invite_table
   EXECUTE FUNCTION public.validate_invite_table_membership();
 
 -- ═══════════════════════════════════════════════════════════
--- 4. STATEMENT trigger: capacity enforcement with serialization
---    Uses FOR UPDATE on party_tables to serialize concurrent
---    transactions (same pattern as M451 contract signer lock).
---    In READ COMMITTED, a blocked transaction gets a fresh
---    snapshot after lock acquisition — sees committed counts.
---    Rolls back entire statement on capacity breach.
+-- 4. Capacity enforcement — two-layer strategy
+--
+--    Layer 1 (RPCs): pg_advisory_xact_lock serializes concurrent
+--    assignments. Handles ALL application traffic correctly.
+--    Same pattern as M304 book_slot_atomic.
+--
+--    Layer 2 (STATEMENT trigger): Final-state check after every
+--    INSERT or UPDATE to event_invites. Catches capacity violations
+--    from ANY path including direct SQL. No REFERENCING needed —
+--    checks ALL tables for violations (efficient: indexed join
+--    with HAVING filter).
+--
+--    Attendee counting: SUM(1 + plus_ones) per table (#661 owner policy).
 -- ═══════════════════════════════════════════════════════════
+
+-- STATEMENT trigger function: post-hoc capacity check
 CREATE OR REPLACE FUNCTION public.enforce_table_capacity()
 RETURNS TRIGGER AS $$
 DECLARE
-  v_rec RECORD;
-  v_capacity INTEGER;
-  v_current INTEGER;
+  v_over RECORD;
 BEGIN
-  -- Check each table affected by this statement
-  FOR v_rec IN
-    SELECT DISTINCT table_id FROM new_rows WHERE table_id IS NOT NULL
+  -- Find any party table where attendees exceed capacity.
+  -- Fires after all rows in the statement are modified,
+  -- so we see the final state.
+  FOR v_over IN
+    SELECT pt.name, pt.capacity,
+           COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0)::int AS attendees
+    FROM party_tables pt
+    JOIN event_invites ei ON ei.table_id = pt.id
+    GROUP BY pt.id, pt.name, pt.capacity
+    HAVING COALESCE(SUM(1 + COALESCE(ei.plus_ones, 0)), 0) > pt.capacity
+    LIMIT 1
   LOOP
-    -- Lock the table row: serializes concurrent assignments to same table.
-    -- Re-entrant within same transaction (safe when called via RPC that
-    -- also locks this row). Blocked transactions get fresh snapshot on
-    -- lock acquisition in READ COMMITTED mode.
-    SELECT capacity INTO v_capacity
-    FROM party_tables WHERE id = v_rec.table_id
-    FOR UPDATE;
-
-    IF NOT FOUND THEN
-      -- FK constraint should prevent this, but defense in depth
-      RAISE EXCEPTION 'Party table % not found', v_rec.table_id
-        USING ERRCODE = '23503';
-    END IF;
-
-    -- Count actual seats (fresh snapshot after lock acquisition)
-    SELECT COUNT(*) INTO v_current
-    FROM event_invites WHERE table_id = v_rec.table_id;
-
-    IF v_current > v_capacity THEN
-      RAISE EXCEPTION 'Table capacity exceeded (%/% seats)', v_current, v_capacity
-        USING ERRCODE = '23514';
-    END IF;
+    RAISE EXCEPTION 'Table "%" capacity exceeded (% attendees / % seats)',
+      v_over.name, v_over.attendees, v_over.capacity
+      USING ERRCODE = '23514';
   END LOOP;
 
-  RETURN NULL; -- AFTER trigger, return ignored
+  RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_enforce_table_capacity ON public.event_invites;
+DROP TRIGGER IF EXISTS trg_enforce_table_capacity_assign ON public.event_invites;
+DROP TRIGGER IF EXISTS trg_enforce_table_capacity_insert ON public.event_invites;
+DROP TRIGGER IF EXISTS trg_enforce_table_capacity_plusones ON public.event_invites;
+
 CREATE TRIGGER trg_enforce_table_capacity
-  AFTER INSERT OR UPDATE OF table_id ON public.event_invites
-  REFERENCING NEW TABLE AS new_rows
+  AFTER INSERT OR UPDATE ON public.event_invites
   FOR EACH STATEMENT
   EXECUTE FUNCTION public.enforce_table_capacity();
 
 -- ═══════════════════════════════════════════════════════════
 -- 5. RPC: assign_guest_to_table (single assignment)
---    Thin wrapper — triggers enforce invariants.
+--    Advisory lock serializes concurrent assignments to same table.
+--    Pre-validates capacity before UPDATE (avoids trigger rollback).
+--    STATEMENT trigger provides defense-in-depth for direct SQL.
 --    SECURITY INVOKER: RLS on event_invites still applies.
 -- ═══════════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.assign_guest_to_table(
@@ -179,10 +180,52 @@ SECURITY INVOKER
 AS $$
 DECLARE
   v_count INTEGER;
+  v_capacity INTEGER;
+  v_current INTEGER;
+  v_invite_plus_ones INTEGER;
 BEGIN
+  -- Unassign path: no capacity check needed
+  IF p_table_id IS NULL THEN
+    UPDATE event_invites
+    SET table_id = NULL, seat_number = NULL
+    WHERE id = p_invite_id;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    IF v_count = 0 THEN
+      RETURN jsonb_build_object('success', false, 'error', 'Guest not found or access denied');
+    END IF;
+    RETURN jsonb_build_object('success', true);
+  END IF;
+
+  -- Serialize concurrent assignments to the same table (M304 pattern)
+  PERFORM pg_advisory_xact_lock(hashtext(p_table_id::text));
+
+  -- Pre-validate capacity (fresh snapshot after lock acquisition)
+  SELECT capacity INTO v_capacity FROM party_tables WHERE id = p_table_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Table not found');
+  END IF;
+
+  -- Get this invite's plus_ones (they count as attendees)
+  SELECT COALESCE(plus_ones, 0) INTO v_invite_plus_ones
+  FROM event_invites WHERE id = p_invite_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Guest not found');
+  END IF;
+
+  -- Count current attendees at this table (excluding this invite for reassignment)
+  SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0) INTO v_current
+  FROM event_invites
+  WHERE table_id = p_table_id AND id != p_invite_id;
+
+  -- This guest brings: 1 (self) + plus_ones
+  IF v_current + 1 + v_invite_plus_ones > v_capacity THEN
+    RETURN jsonb_build_object('success', false, 'error',
+      format('Table capacity exceeded (%s attendees / %s seats)',
+             v_current + 1 + v_invite_plus_ones, v_capacity));
+  END IF;
+
   UPDATE event_invites
-  SET table_id = p_table_id,
-      seat_number = CASE WHEN p_table_id IS NULL THEN NULL ELSE p_seat_number END
+  SET table_id = p_table_id, seat_number = p_seat_number
   WHERE id = p_invite_id;
 
   GET DIAGNOSTICS v_count = ROW_COUNT;
@@ -201,8 +244,8 @@ $$;
 
 -- ═══════════════════════════════════════════════════════════
 -- 6. RPC: bulk_assign_guests_to_table (all-or-nothing)
---    Single UPDATE statement → single STATEMENT trigger →
---    rolls back entire batch on capacity breach.
+--    Advisory lock + pre-validation + single UPDATE.
+--    STATEMENT trigger provides defense-in-depth.
 -- ═══════════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.bulk_assign_guests_to_table(
   p_invite_ids UUID[],
@@ -214,9 +257,36 @@ SECURITY INVOKER
 AS $$
 DECLARE
   v_count INTEGER;
+  v_capacity INTEGER;
+  v_current INTEGER;
+  v_new_attendees INTEGER;
 BEGIN
   IF p_invite_ids IS NULL OR array_length(p_invite_ids, 1) IS NULL THEN
     RETURN jsonb_build_object('success', true, 'assigned', 0);
+  END IF;
+
+  -- Serialize on target table
+  PERFORM pg_advisory_xact_lock(hashtext(p_table_id::text));
+
+  SELECT capacity INTO v_capacity FROM party_tables WHERE id = p_table_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Table not found');
+  END IF;
+
+  -- Count current attendees at target (excluding guests being reassigned)
+  SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0) INTO v_current
+  FROM event_invites
+  WHERE table_id = p_table_id AND id != ALL(p_invite_ids);
+
+  -- Count attendees being added (each invite + their plus_ones)
+  SELECT COALESCE(SUM(1 + COALESCE(plus_ones, 0)), 0) INTO v_new_attendees
+  FROM event_invites
+  WHERE id = ANY(p_invite_ids);
+
+  IF v_current + v_new_attendees > v_capacity THEN
+    RETURN jsonb_build_object('success', false, 'error',
+      format('Table capacity exceeded (%s attendees / %s seats)',
+             v_current + v_new_attendees, v_capacity));
   END IF;
 
   UPDATE event_invites
@@ -252,22 +322,31 @@ BEGIN
     RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_validate_invite_table not found';
   END IF;
 
-  -- Verify STATEMENT trigger exists
+  -- Verify capacity STATEMENT trigger exists
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger
-    WHERE tgname = 'trg_enforce_table_capacity'
-      AND tgrelid = 'public.event_invites'::regclass
+    WHERE tgrelid = 'public.event_invites'::regclass
+      AND tgname = 'trg_enforce_table_capacity'
   ) THEN
     RAISE EXCEPTION '457 SELF-CHECK FAILED: trg_enforce_table_capacity not found';
   END IF;
 
-  -- Verify capacity enforcement function contains FOR UPDATE
+  -- Verify capacity function uses attendee counting (SUM with plus_ones)
   IF NOT EXISTS (
     SELECT 1 FROM pg_proc
     WHERE proname = 'enforce_table_capacity'
-      AND prosrc ILIKE '%FOR UPDATE%'
+      AND prosrc ILIKE '%plus_ones%'
   ) THEN
-    RAISE EXCEPTION '457 SELF-CHECK FAILED: enforce_table_capacity missing FOR UPDATE';
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: enforce_table_capacity missing attendee counting';
+  END IF;
+
+  -- Verify RPCs use advisory lock (M304 pattern)
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname = 'assign_guest_to_table'
+      AND prosrc ILIKE '%pg_advisory_xact_lock%'
+  ) THEN
+    RAISE EXCEPTION '457 SELF-CHECK FAILED: assign_guest_to_table missing advisory lock';
   END IF;
 
   -- Verify membership validation function checks party_id

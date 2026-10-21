@@ -119,6 +119,42 @@ export const rsvpFlow: FlowDefinition = {
         if (num > maxPlusOnes + 1) {
           return { valid: false, errorMessage: `Maximum ${maxPlusOnes + 1} guests (you + ${maxPlusOnes}).` };
         }
+
+        // ── Attendee capacity enforcement (#661) ──
+        const partyId = ctx.session.session_data.rsvp_party_id as string | undefined;
+        if (partyId && ctx.supabase) {
+          const { data: party } = await ctx.supabase
+            .from('parties')
+            .select('max_guests')
+            .eq('id', partyId)
+            .single();
+
+          if (party?.max_guests && party.max_guests > 0) {
+            const { data: attendeeData } = await ctx.supabase
+              .from('event_invites')
+              .select('plus_ones')
+              .eq('party_id', partyId)
+              .in('status', ['accepted', 'pending', 'maybe']);
+
+            const currentAttendees = (attendeeData || []).reduce(
+              (sum: number, inv: { plus_ones: number }) => sum + 1 + (inv.plus_ones || 0), 0
+            );
+            // This guest wants (num - 1) plus_ones, but they're already counted as 1 attendee
+            // Net new attendees = (num - 1) additional plus_ones
+            const requestedPlusOnes = num - 1;
+            if (currentAttendees + requestedPlusOnes > party.max_guests) {
+              const remaining = Math.max(0, party.max_guests - currentAttendees);
+              const maxAllowed = remaining + 1; // +1 because guest is already counted
+              return {
+                valid: false,
+                errorMessage: remaining > 0
+                  ? `Only ${maxAllowed} spots left (you + ${remaining}). Please choose a smaller number.`
+                  : 'Sorry, the party is at full capacity. No plus-ones available.',
+              };
+            }
+          }
+        }
+
         return { valid: true, data: { rsvp_plus_ones: num - 1 } };
       },
       async next() { return 'rsvp_dietary'; },
