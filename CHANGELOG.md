@@ -39,6 +39,13 @@
 - Custom RSVP questions
 - Party messaging/broadcasting
 
+### #596 Finance UI reconciliation — fix schema mismatch, error handling, currency safety (2026-10-20)
+
+- **`admin/src/pages/Finance.tsx`**: Fixed `business_payouts` query selecting nonexistent `currency` column, added `Promise.allSettled` error handling, applied country filter to payout metrics, changed category ranking to tx count, monthly rollup uses filtered data, country breakdown uses per-currency format, CSV export disabled pending server-side implementation.
+- **`admin/src/pages/Dashboard.tsx`**: Removed cross-currency revenue sum, added `CategoryPaymentValue`, corrected labels.
+- **`admin/src/pages/Payouts.tsx`**: Removed `flutterwave_transfer` from dropdown.
+- Affects: Admin Finance/Payouts display only. No settlement logic changes.
+
 ### PR #605 offline payment cancellation gate candidate (2026-10-19)
 - Proposed M452 (NOT applied): cancellation intent + Paystack/Flutterwave claim and dispatch gates with subscription-first locking.
 - Retry cron: executable Paystack pre-provider guard and bounded post-cancellation reconciliation of in-flight attempts using existing verify_attempts CAS rotation.
