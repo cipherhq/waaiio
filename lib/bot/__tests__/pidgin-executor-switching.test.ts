@@ -103,6 +103,7 @@ import { FlowExecutor } from '../flows/executor';
 import { createCaptureSender } from './bot-harness';
 
 function createMockSupabase() {
+  const maybeSingleResult = { data: null, error: null };
   return {
     rpc: vi.fn().mockResolvedValue({
       data: { success: true, version: 2, current_step: 'test_step' },
@@ -112,7 +113,12 @@ function createMockSupabase() {
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
           single: vi.fn().mockResolvedValue({ data: null, error: null }),
-          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue(maybeSingleResult),
+        })),
+        or: vi.fn(() => ({
+          limit: vi.fn(() => ({
+            maybeSingle: vi.fn().mockResolvedValue(maybeSingleResult),
+          })),
         })),
       })),
       update: vi.fn(() => ({ eq: vi.fn().mockResolvedValue({ error: null }) })),
@@ -597,5 +603,80 @@ describe('Pidgin executor switching — executable tests', () => {
     await executor.execute('+2348001234567', 'NO', session, BIZ);
     expect(session.session_data._pending_language_switch).toBeUndefined();
     expect(mockWritePref).not.toHaveBeenCalled();
+  });
+
+  // Human-escalation escapes pending language confirmation
+  it('(n4) "talk to human" during pending switch clears pending and reaches escalation handler', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession();
+    session.session_data.capabilities = ['scheduling', 'chat'];
+    await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
+
+    // "talk to human" must clear pending and fall through to escalation
+    await executor.execute('+2348001234567', 'talk to human', session, BIZ);
+    expect(session.session_data._pending_language_switch).toBeUndefined();
+    // Language must NOT have changed
+    expect(session.session_data._detected_language).toBeUndefined();
+    // step.validate must NOT be called (escalation, not commerce input)
+    expect(step.validate).not.toHaveBeenCalled();
+  });
+
+  // Postback button variant
+  it('(n5) "talk_to_human" postback during pending switch clears pending', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession();
+    await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
+
+    await executor.execute('+2348001234567', 'talk_to_human', session, BIZ);
+    expect(session.session_data._pending_language_switch).toBeUndefined();
+    expect(session.session_data._detected_language).toBeUndefined();
+  });
+
+  // Chat unavailable: escalation clears pending but sends unavailable message
+  it('(n6) "talk to human" with no chat capability clears pending, sends unavailable', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession();
+    // No 'chat' in capabilities — escalation is unavailable
+    session.session_data.capabilities = ['scheduling'];
+    await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
+
+    await executor.execute('+2348001234567', 'talk to human', session, BIZ);
+    expect(session.session_data._pending_language_switch).toBeUndefined();
+    // Unavailable message should be sent (contains business name)
+    expect(sender.hasMessageContaining('Test Biz')).toBe(true);
+  });
+
+  // Negative: "human" as bare word on free-text step is NOT escalation
+  it('(n7) bare "human" at free-text collect_name step is NOT treated as escalation', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Enter your name:' }]),
+      validate: vi.fn(async () => ({ valid: true, data: { name: 'human' } })),
+      next: vi.fn(async () => 'next_step'),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession();
+    // "human" is a bare word, not "talk to human" — the escalation regex
+    // requires a verb phrase. It should be treated as flow input.
+    await executor.execute('+2348001234567', 'human', session, BIZ);
+    // No pending switch was staged, so this just processes as normal input
+    expect(session.session_data._detected_language).toBeUndefined();
   });
 });

@@ -337,7 +337,10 @@ export class FlowExecutor {
       const ESCAPE_CANCEL = ['stop', 'quit', 'exit', 'end', 'cancel', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
       const ESCAPE_RESTART = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
       const isGlobalEscape = ESCAPE_CANCEL.includes(trimmedInput) || ESCAPE_RESTART.includes(trimmedInput);
-      if (isGlobalEscape || (isBackNav && !FREE_TEXT_STEPS.includes(stepId))) {
+      // Human-support escalation uses the same pattern as the handler at line ~548.
+      const escalationPattern = /\b(talk|speak|chat)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|someone)\b|\b(live\s+(agent|chat|support))\b|\b(customer\s+service)\b|\b(i\s+need\s+(a\s+)?(human|agent|help))\b/i;
+      const isHumanEscalation = escalationPattern.test(trimmedInput) || trimmedInput === 'talk_to_human';
+      if (isGlobalEscape || isHumanEscalation || (isBackNav && !FREE_TEXT_STEPS.includes(stepId))) {
         delete session.session_data._pending_language_switch;
         if (!await this.casUpdateSession(session, {
           current_step: session.current_step, session_data: session.session_data,
