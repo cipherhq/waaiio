@@ -319,62 +319,72 @@ export class FlowExecutor {
     // A language switch must be confirmed before changing either session or profile.
     // Keep this separate from commerce confirmations (PIN, payment, order approval).
     const pendingLanguage = session.session_data._pending_language_switch as
-      | { language: string }
+      | { language: string; persistent?: boolean }
       | undefined;
     if (pendingLanguage) {
-      const decision = classifyLanguageSwitchReply(input);
-      const currentLang = this.resolveCopyLang(session, entitlement);
-      if (decision === 'other') {
-        const { getLanguageName } = await import('@/lib/bot/languages');
-        await this.sendText(from, fillFlowCopy(currentLang, 'lang.switch_confirm', {
-          langName: getLanguageName(pendingLanguage.language),
-        }), scopedSender);
-        return;
-      }
-
-      delete session.session_data._pending_language_switch;
-      if (decision === 'confirm') {
-        const targetLang = pendingLanguage.language;
-        const allowed = CERTIFIED_LANGUAGES.includes(targetLang)
-          && entitlement.allowedLanguages.includes(targetLang)
-          && (targetLang === 'en' || entitlement.translationAllowed);
-        if (!allowed) {
-          if (!await this.casUpdateSession(session, {
-            current_step: session.current_step, session_data: session.session_data,
-          })) return;
+      // Global escape commands must not be blocked by a pending language switch.
+      // Clear the pending state and fall through to the normal escape handlers.
+      if (/^(cancel|exit|quit|stop|restart|start\s*over)$/i.test(input.trim())) {
+        delete session.session_data._pending_language_switch;
+        if (!await this.casUpdateSession(session, {
+          current_step: session.current_step, session_data: session.session_data,
+        })) return;
+        // Fall through to the global escape handlers below
+      } else {
+        const decision = classifyLanguageSwitchReply(input);
+        const currentLang = this.resolveCopyLang(session, entitlement);
+        if (decision === 'other') {
           const { getLanguageName } = await import('@/lib/bot/languages');
-          await this.sendText(from, fillFlowCopy(currentLang, 'lang.not_available', {
-            langName: getLanguageName(targetLang),
+          await this.sendText(from, fillFlowCopy(currentLang, 'lang.switch_confirm', {
+            langName: getLanguageName(pendingLanguage.language),
           }), scopedSender);
           return;
         }
-        session.session_data._detected_language = targetLang === 'en' ? undefined : targetLang;
-        if (!await this.casUpdateSession(session, {
-          current_step: session.current_step, session_data: session.session_data,
-        })) return;
-        if (session.user_id && pendingLanguage.persistent) {
-          try {
-            await writePreferredResponseLanguage(this.supabase as never, session.user_id, targetLang);
-          } catch (err) {
-            logger.warn('[EXECUTOR] Language preference persistence failed:', err);
-          }
-        }
-        const { getLanguageName } = await import('@/lib/bot/languages');
-        const switched = targetLang === 'en'
-          ? getFlowCopy('en', 'lang.switched_english')
-          : fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
-        await this.sendText(from, switched, scopedSender);
-        ctx.copyLang = this.resolveCopyLang(session, entitlement);
-      } else {
-        if (!await this.casUpdateSession(session, {
-          current_step: session.current_step, session_data: session.session_data,
-        })) return;
-        await this.sendText(from, getFlowCopy(currentLang, 'lang.switch_cancelled'), scopedSender);
-      }
 
-      const retryMsgs = await step.prompt(ctx);
-      await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
-      return;
+        delete session.session_data._pending_language_switch;
+        if (decision === 'confirm') {
+          const targetLang = pendingLanguage.language;
+          const allowed = CERTIFIED_LANGUAGES.includes(targetLang)
+            && entitlement.allowedLanguages.includes(targetLang)
+            && (targetLang === 'en' || entitlement.translationAllowed);
+          if (!allowed) {
+            if (!await this.casUpdateSession(session, {
+              current_step: session.current_step, session_data: session.session_data,
+            })) return;
+            const { getLanguageName } = await import('@/lib/bot/languages');
+            await this.sendText(from, fillFlowCopy(currentLang, 'lang.not_available', {
+              langName: getLanguageName(targetLang),
+            }), scopedSender);
+            return;
+          }
+          session.session_data._detected_language = targetLang === 'en' ? undefined : targetLang;
+          if (!await this.casUpdateSession(session, {
+            current_step: session.current_step, session_data: session.session_data,
+          })) return;
+          if (session.user_id && pendingLanguage.persistent) {
+            try {
+              await writePreferredResponseLanguage(this.supabase as never, session.user_id, targetLang);
+            } catch (err) {
+              logger.warn('[EXECUTOR] Language preference persistence failed:', err);
+            }
+          }
+          const { getLanguageName } = await import('@/lib/bot/languages');
+          const switched = targetLang === 'en'
+            ? getFlowCopy('en', 'lang.switched_english')
+            : fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
+          await this.sendText(from, switched, scopedSender);
+          ctx.copyLang = this.resolveCopyLang(session, entitlement);
+        } else {
+          if (!await this.casUpdateSession(session, {
+            current_step: session.current_step, session_data: session.session_data,
+          })) return;
+          await this.sendText(from, getFlowCopy(currentLang, 'lang.switch_cancelled'), scopedSender);
+        }
+
+        const retryMsgs = await step.prompt(ctx);
+        await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
+        return;
+      }
     }
 
     // ── Navigation: "back" command ──

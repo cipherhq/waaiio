@@ -505,6 +505,27 @@ describe('Pidgin executor switching — executable tests', () => {
     expect(step.next).not.toHaveBeenCalled();
   });
 
+  it('(m5) "cancel" during pending switch clears pending and triggers escape hatch', async () => {
+    const step = {
+      prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+      validate: vi.fn(async () => ({ valid: false, errorMessage: 'Invalid' })),
+      next: vi.fn(async () => null),
+    };
+    mockGetFlowStep.mockReturnValue(step);
+    const session = createSession();
+
+    // Stage language switch
+    await executor.execute('+2348001234567', 'switch to pidgin', session, BIZ);
+    expect(session.session_data._pending_language_switch).toBeDefined();
+
+    // "cancel" must clear pending and fall through to escape handler
+    sender.clear();
+    await executor.execute('+2348001234567', 'cancel', session, BIZ);
+    expect(session.session_data._pending_language_switch).toBeUndefined();
+    // Language must NOT have changed
+    expect(session.session_data._detected_language).toBeUndefined();
+  });
+
   it('(m) unrelated reply cannot confirm language switch or advance checkout', async () => {
     const step = {
       prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
