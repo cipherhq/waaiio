@@ -474,19 +474,22 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('"always use English" when already in English => already-selected, but profile IS written', async () => {
-    // Session has no _detected_language → effective language is already English.
-    // Persistent intent still writes the profile even when no session-level change
-    // is needed, ensuring the durable preference survives future sessions.
+  it('"always use English" when already in English => L3: stages confirmation, profile written only after YES', async () => {
+    // L3: Session effective language is already English, but persistent intent
+    // must stage YES/NO confirmation before writing the global preference.
     const session = createTestSession({ user_id: 'profile-1' });
 
     await executor.execute('+2348001234567', 'always use English', session, TEST_BUSINESS);
 
-    // No language change — already selected
-    expect(session.session_data._detected_language).toBeUndefined();
-    expect(session.session_data._pending_language_switch).toBeUndefined();
+    // Must stage pending — NOT write immediately
+    expect(session.session_data._pending_language_switch).toEqual(
+      expect.objectContaining({ language: 'en', persistent: true }),
+    );
+    expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
 
-    // Persistent intent writes the profile even for current language
+    // Confirm with YES → profile written
+    await executor.execute('+2348001234567', 'YES', session, TEST_BUSINESS);
+    expect(session.session_data._pending_language_switch).toBeUndefined();
     expect(mockWritePreferredResponseLanguage).toHaveBeenCalledOnce();
     expect(mockWritePreferredResponseLanguage).toHaveBeenCalledWith(
       supabase,

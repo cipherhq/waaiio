@@ -27,6 +27,10 @@ import { logDropoff } from '@/lib/bot/flow-analytics';
 import { FlowExecutionCollector, createScopedSender, generateExecutionId } from './instrumentation';
 import { flushExecutionAnalytics } from './analytics-flush';
 
+// Steps where users type arbitrary text (names, addresses, codes, PINs).
+// Navigation words like "back" should NOT be intercepted on these steps.
+const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'chat_handoff', 'chat_start'];
+
 export class FlowExecutor {
   private currentBusinessId: string | null = null;
 
@@ -324,7 +328,11 @@ export class FlowExecutor {
     if (pendingLanguage) {
       // Global escape commands must not be blocked by a pending language switch.
       // Clear the pending state and fall through to the normal escape handlers.
-      if (/^(cancel|exit|quit|stop|restart|start\s*over)$/i.test(input.trim())) {
+      // L1: Back-navigation words also escape, but ONLY on non-free-text steps
+      // (matching the existing BACK_WORDS handler which skips free-text).
+      const isBackNav = /^(back|go\s+back|previous)$/i.test(input.trim());
+      const isGlobalEscape = /^(cancel|exit|quit|stop|restart|start\s*over)$/i.test(input.trim());
+      if (isGlobalEscape || (isBackNav && !FREE_TEXT_STEPS.includes(stepId))) {
         delete session.session_data._pending_language_switch;
         if (!await this.casUpdateSession(session, {
           current_step: session.current_step, session_data: session.session_data,
@@ -389,7 +397,6 @@ export class FlowExecutor {
 
     // ── Navigation: "back" command ──
     // Only intercept on non-free-text steps so users can literally type "back" as input
-    const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'chat_handoff', 'chat_start'];
     const BACK_WORDS = ['back', 'go back', 'previous', 'cancel'];
     const lowerInputTrimmed = input.toLowerCase().trim();
     if (BACK_WORDS.includes(lowerInputTrimmed) && !FREE_TEXT_STEPS.includes(stepId)) {
@@ -486,17 +493,26 @@ export class FlowExecutor {
       const currentLang = this.resolveCopyLang(session, entitlement);
       const { getLanguageName } = await import('@/lib/bot/languages');
       if (targetLang === currentLang) {
-        // Persistent intent ("always use X") updates the profile even when
-        // the session is already using that language, ensuring the durable
-        // preference survives future sessions.
+        // L3: Persistent intent ("always use X") must be confirmed before writing
+        // the global preference. The session may match due to business-level fallback,
+        // not because the user deliberately chose it globally.
         if (languagePreferenceIntent.persistence === 'persistent' && session.user_id) {
-          try {
-            await writePreferredResponseLanguage(this.supabase as never, session.user_id as string, targetLang);
-          } catch (err) {
-            logger.warn('[EXECUTOR] Language preference persistence failed:', err);
-          }
+          session.session_data._pending_language_switch = {
+            language: targetLang,
+            persistent: true,
+          };
+          if (!await this.casUpdateSession(session, {
+            current_step: session.current_step, session_data: session.session_data,
+          })) return;
+          await this.sendText(from, fillFlowCopy(currentLang, 'lang.confirm_save_preference', {
+            langName: getLanguageName(targetLang),
+          }), scopedSender);
+          return;
         }
+        // L4: Non-persistent "already selected" — acknowledge and re-prompt step.
         await this.sendText(from, getFlowCopy(currentLang, 'lang.already_selected'), scopedSender);
+        const retryMsgs = await step.prompt(ctx);
+        await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
         return;
       }
       const allowed = CERTIFIED_LANGUAGES.includes(targetLang)

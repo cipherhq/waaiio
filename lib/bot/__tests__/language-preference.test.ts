@@ -77,7 +77,7 @@ describe('language preference intent boundaries', () => {
 });
 
 describe('confirmed language switch replies', () => {
-  it.each(['YES', 'confirm', 'yes na', 'oya', 'ok'])('accepts an explicit confirmation: %s', input => {
+  it.each(['YES', 'confirm', 'confam', 'yes na', 'oya', 'ok'])('accepts an explicit confirmation: %s', input => {
     expect(classifyLanguageSwitchReply(input)).toBe('confirm');
   });
   it.each(['NO', 'no thanks', 'cancel switch', 'not now'])('preserves preference when declined: %s', input => {
@@ -90,6 +90,34 @@ describe('confirmed language switch replies', () => {
     expect(parseLanguagePreferenceIntent('I want to switch back to English')).toEqual({
       language: 'en', persistence: 'session', isBare: false,
     });
+  });
+  // L5: confam is a definitive Pidgin confirmation
+  it('confam confirms a pending language switch', () => {
+    expect(classifyLanguageSwitchReply('confam')).toBe('confirm');
+  });
+  // L5: multi-word commerce phrases containing confam must NOT confirm
+  it.each(['confam order', 'confam the booking', 'I confam'])('rejects commerce phrase: %s', input => {
+    expect(classifyLanguageSwitchReply(input)).toBe('other');
+  });
+  // L2: restored legacy phrases
+  it('parses "change to English"', () => {
+    expect(parseLanguagePreferenceIntent('change to English')).toEqual({
+      language: 'en', persistence: 'session', isBare: false,
+    });
+  });
+  it('parses "change to pidgin"', () => {
+    expect(parseLanguagePreferenceIntent('change to pidgin')).toEqual({
+      language: 'pcm', persistence: 'session', isBare: false,
+    });
+  });
+  it('parses "please speak pidgin"', () => {
+    expect(parseLanguagePreferenceIntent('please speak pidgin')).toEqual({
+      language: 'pcm', persistence: 'session', isBare: false,
+    });
+  });
+  // L2 negative: commerce phrases must NOT trigger language intent
+  it.each(['please change my order', 'change the date', 'please speak to a human'])('does not treat commerce phrase as language intent: %s', input => {
+    expect(parseLanguagePreferenceIntent(input)).toBeNull();
   });
 });
 
