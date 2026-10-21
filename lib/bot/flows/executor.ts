@@ -331,7 +331,12 @@ export class FlowExecutor {
       // L1: Back-navigation words also escape, but ONLY on non-free-text steps
       // (matching the existing BACK_WORDS handler which skips free-text).
       const isBackNav = /^(back|go\s+back|previous)$/i.test(input.trim());
-      const isGlobalEscape = /^(cancel|exit|quit|stop|restart|start\s*over)$/i.test(input.trim());
+      // Must match ALL cancel/restart tokens from the global escape handlers below,
+      // including multilingual forms, to avoid trapping users at confirmation.
+      const trimmedInput = input.trim().toLowerCase();
+      const ESCAPE_CANCEL = ['stop', 'quit', 'exit', 'end', 'cancel', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
+      const ESCAPE_RESTART = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
+      const isGlobalEscape = ESCAPE_CANCEL.includes(trimmedInput) || ESCAPE_RESTART.includes(trimmedInput);
       if (isGlobalEscape || (isBackNav && !FREE_TEXT_STEPS.includes(stepId))) {
         delete session.session_data._pending_language_switch;
         if (!await this.casUpdateSession(session, {
