@@ -22,6 +22,22 @@ Repository/database/runtime/executable-test evidence beats:
 - source-string tests
 - green CI alone
 
+## Evidence Verification Agent / No-Assumption Severity Gate
+
+**Owner directive (2026-10-22): certainty must come from current evidence, not the seriousness of an old audit label.** Incorrectly declaring a mature, working subsystem P0 without proving the remaining defect wastes engineering time and threatens launch scope.
+
+For every new or reopened P0/P1 claim, launch blocker, or proposed remediation of a historical finding:
+
+1. **Primary auditor** records a precise hypothesis and relevant invariant, exact code SHA, current source/caller path, migration/schema contract, earlier remediations, tests, known feature flags, and which environment is affected. Do not infer current state from issue title/status or archived reports.
+2. An **independent Evidence Verification Agent** (Codex or ChatGPT/CTO or separately tasked independent reviewer) checks the hypothesis against current GitHub repository, applicable database/runtime evidence and exact-head executable tests. Independence means checking sources, not echoing a Claude summary. For financial/provider claims, trace real funds custody and provider state when that claim requires it; if credentials or access are missing, record the limitation rather than guessing.
+3. **Proof standard:** Cite a reproducible failing behavior/test, authoritative database/runtime discrepancy, or a complete reachable code + schema trace with concrete failure/impact. Explicitly distinguish a code defect from production deployment, a conditional risk from an active failure, and unverified certification from malfunction.
+4. **Mandatory finding states:** `CONFIRMED ACTIVE`, `CONFIRMED CODE DEFECT — DEPLOYMENT UNVERIFIED`, `FIXED`, `NOT REPRODUCED`, `UNVERIFIED / EVIDENCE GAP`, `PRODUCT DECISION NEEDED`. Only confirmed findings receive present-tense defect severity. Unverified hypotheses must not inflate P0/P1 counts or automatically trigger implementation.
+5. **Severity gate:** P0 requires evidence of a critical, actually applicable failure or provably reachable severe security/financial exposure; P1 requires a specific supported material defect. An umbrella audit, missing provider acceptance proof, stale severity label, or theoretical concern is not itself a confirmed P0. Lack of acceptance evidence may separately block certification of that precise capability. No unsafe live transactions are required to prove a risk when deterministic safe evidence suffices.
+6. **Action gate:** If current evidence disproves or supersedes a finding, mark it FIXED or NOT REPRODUCED and preserve the existing system. If proof is incomplete, scope the next step to bounded read-only verification or safe disposable/sandbox tests, with separate owner approval for external provider operations. No broad code rewrite, merge, deployment, migration, or payment operation from assumptions.
+7. **CTO report format:** For each material claim, give `status | exact SHA | environment/reachability | concrete evidence | severity (confirmed only) | smallest next action`. Report the number of confirmed active defects separately from confirmed code-only, fixed, and unverified findings. Reconcile earlier statements explicitly when evidence changes.
+
+The CTO is accountable for the final severity declaration. The verifier gate strengthens existing cross-agent review and **does not** transfer merge, deployment, migration, or provider-operation authority from the Owner. The review role does not imply that an autonomous background agent is actually running.
+
 ## Standard Substantive-Change Process
 
 For security, payments, financial state, migrations, authorization, concurrency, state transitions, cross-tenant behavior, privileged RPCs, and other high-blast-radius work:
