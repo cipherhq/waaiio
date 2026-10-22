@@ -286,3 +286,42 @@ describe('#596 Payouts: settlement state display', () => {
     expect(screen.getByText('Confirm Settlement')).toBeInTheDocument();
   });
 });
+
+// ═══════════════════════════════════════════════════════════
+// 7. #682 Subscriptions query uses authoritative `plan` column
+// ═══════════════════════════════════════════════════════════
+describe('#682 Finance: subscriptions query selects plan column', () => {
+  it('queries subscriptions with plan column, not tier', async () => {
+    const subscriptions = [
+      { id: 'sub-1', business_id: NG, plan: 'business', amount: 39999, currency: 'NGN', status: 'active', created_at: '2026-09-29T18:53:03Z' },
+    ];
+    setSource('subscriptions', { data: subscriptions, error: null });
+    setSource('businesses', { data: businesses, error: null });
+    render(<Finance />);
+    await screen.findByText('Platform Fees Earned');
+    // The captured select columns must contain 'plan', not 'tier'
+    const cols = (selected.subscriptions?.[0] ?? '').split(',').map((s: string) => s.trim());
+    expect(cols).toContain('plan');
+    expect(cols).not.toContain('tier');
+  });
+
+  it('renders subscription MRR from plan field', async () => {
+    const subscriptions = [
+      { id: 'sub-1', business_id: NG, plan: 'business', amount: 39999, currency: 'NGN', status: 'active', created_at: '2026-09-29T18:53:03Z' },
+      { id: 'sub-2', business_id: US, plan: 'growth', amount: 15000, currency: 'USD', status: 'active', created_at: '2026-10-01T10:00:00Z' },
+    ];
+    setSource('subscriptions', { data: subscriptions, error: null });
+    setSource('businesses', { data: businesses, error: null });
+    render(<Finance />);
+    await screen.findByText('Platform Fees Earned');
+    // MRR section renders when subscriptions have plan data — label is "Total MRR (Subscriptions)"
+    expect(screen.getByText('Total MRR (Subscriptions)')).toBeInTheDocument();
+    expect(screen.getByText('Active Paid Subscribers')).toBeInTheDocument();
+  });
+
+  it('subscription source failure still produces error banner', async () => {
+    setSource('subscriptions', { data: null, error: { code: '42703', message: 'column "tier" does not exist' } });
+    render(<Finance />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('source queries failed');
+  });
+});

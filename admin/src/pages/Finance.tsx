@@ -40,7 +40,7 @@ interface Refund {
 interface Subscription {
   id: string;
   business_id: string;
-  tier: string;
+  plan: string;
   amount: number;
   currency: string;
   status: string;
@@ -84,7 +84,7 @@ export default function Finance() {
           adminDb.from('business_payouts').select('business_id, net_amount, platform_fee, gateway_fee, status, created_at'),
           adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
           adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
-          adminDb.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
+          adminDb.from('subscriptions').select('id, business_id, plan, amount, currency, status, created_at').eq('status', 'active'),
         ]);
         if (cancelled) return;
         const names = ['payments', 'platform fees', 'payouts', 'refunds', 'businesses', 'subscriptions'];
@@ -625,7 +625,7 @@ export default function Finance() {
                 byTier.set(tier, row);
               }
               for (const s of subscriptions) {
-                const tier = s.tier || 'free';
+                const tier = s.plan || 'free';
                 const row = byTier.get(tier) || { count: 0, mrrByCurrency: {} };
                 const cur = s.currency || 'NGN';
                 row.mrrByCurrency[cur] = (row.mrrByCurrency[cur] || 0) + Number(s.amount || 0);
