@@ -1,3 +1,13 @@
+### #671 QA Phase B — CTO R3 final corrections (2026-10-22)
+
+- **`app/api/release-identity/route.ts`** (B1): Replace unanchored regex with `new URL()` parsing + anchored hostname match `^[a-z]{20}\.supabase\.co$`. Enforces HTTPS scheme. Rejects spoofed hostnames like `ref.supabase.co.evil.com` or ref-in-path attacks.
+- **`e2e/fixtures/staging-guard.ts`** (B3): Switch from `page.route()` to `page.context().route()` for context-level interception covering popups/new pages. Sanitize blocked-request diagnostics to `scheme://host/path` only (no query params, fragments, or userinfo).
+- **`e2e/staging/auth-boundaries.spec.ts`** (B3): Add `test.use({ serviceWorkers: 'block' })` for unauthenticated tests.
+- **`.github/workflows/staging-qa.yml`** (B4): Replace inline Python heredoc with tested `scripts/parse-evidence.py`. Summary checks `evidence_valid`, `timed_out`, `interrupted` — not just `failed`.
+- **`scripts/parse-evidence.py`** (new, B4): Extracted standalone evidence parser. Fails closed (exit 1) on ANY: parse errors, unknown statuses, timedOut, interrupted, missing reports, empty results. Tested by actual Python execution in unit tests.
+- **Tests**: Expanded to cover B1 hostname spoof regression (anchored regex, spoofed hostnames), B3 service-worker/URL-sanitization contracts, B4 actual Python parser execution (passed, retry, timedOut, interrupted, unknown, missing, malformed, all-skipped, nested suites).
+- Codex: UNAVAILABLE (usage limit). CTO is reviewer of record.
+
 ### #671 QA Phase B — CTO R2 corrections (2026-10-22)
 
 - **`app/api/release-identity/route.ts`** (B1): Add `supabaseProjectRef` derived from `NEXT_PUBLIC_SUPABASE_URL` — reports only the 20-char project ref (already public), fail-closed if absent/malformed. Configuration-identity check, not DB reachability proof.

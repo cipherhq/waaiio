@@ -23,6 +23,9 @@ const BASE_URL = process.env.E2E_STAGING_URL
   || process.env.PLAYWRIGHT_BASE_URL
   || 'http://localhost:3000';
 
+// Block service workers in unauthenticated tests (B3)
+test.use({ serviceWorkers: 'block' });
+
 test.describe('Auth boundaries — unauthenticated access', () => {
   test.beforeAll(async () => {
     // Safety check: never run against production

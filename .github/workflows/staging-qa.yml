@@ -279,105 +279,10 @@ jobs:
           find . -name '*.webm' -delete 2>/dev/null || true
           find . -name '*.png' -path '*/test-results/*' -delete 2>/dev/null || true
 
-          mkdir -p staging-qa-summary
-
-          # Extract ONLY allowlisted fields from Playwright JSON results.
-          # Playwright JSONReportTest.status is 'expected'|'unexpected'|'flaky'|'skipped'.
-          # The actual execution outcome (passed/failed/timedOut/interrupted) is in
-          # results[].status. We use results[].status for truthful reporting.
-          python3 - <<'PYEOF'
-          import json, glob, os, sys
-
-          EXECUTION_STATUSES = {'passed', 'failed', 'timedOut', 'interrupted', 'skipped'}
-          results = []
-          auth_tests_actually_ran = False
-          parse_errors = []
-          files_found = 0
-
-          def collect_specs(suite, is_auth):
-              """Recursively collect specs from nested suites."""
-              global auth_tests_actually_ran
-              for spec in suite.get('specs', []):
-                  for test_entry in spec.get('tests', []):
-                      # B4: Use LAST result (final retry), not first.
-                      # Playwright retries produce multiple results; the last is the
-                      # definitive outcome. results[0] may be a transient failure.
-                      test_results = test_entry.get('results', [])
-                      if test_results:
-                          final_result = test_results[-1]
-                          exec_status = final_result.get('status', 'unknown')
-                      else:
-                          exec_status = 'skipped'
-                      if exec_status not in EXECUTION_STATUSES:
-                          parse_errors.append(f"Unknown status '{exec_status}' for '{spec.get('title','?')}'")
-                          exec_status = 'unknown'
-                      entry = {
-                          'title': spec.get('title', 'unnamed')[:200],
-                          'status': exec_status,
-                          'duration_ms': int(test_results[-1].get('duration', 0)) if test_results else 0,
-                          'retries': len(test_results) - 1 if test_results else 0,
-                      }
-                      results.append(entry)
-                      # B4: auth_tests_actually_ran only if a test actually executed
-                      # (not skipped). An all-skipped suite is NOT "auth tested".
-                      if is_auth and exec_status != 'skipped':
-                          auth_tests_actually_ran = True
-              for child in suite.get('suites', []):
-                  collect_specs(child, is_auth)
-
-          for filepath in sorted(glob.glob('*-results.json')):
-              is_auth_suite = 'authenticated' in filepath
-              files_found += 1
-              try:
-                  with open(filepath) as fh:
-                      data = json.load(fh)
-                  if not isinstance(data, dict) or 'suites' not in data:
-                      parse_errors.append(f"Malformed report structure in {filepath}")
-                      continue
-                  for suite in data.get('suites', []):
-                      collect_specs(suite, is_auth_suite)
-              except (json.JSONDecodeError, KeyError, IndexError) as e:
-                  parse_errors.append(f"Failed to parse {filepath}: {e}")
-
-          # B4: Fail closed — empty/missing results and parse errors
-          # are not success; they indicate something went wrong.
-          evidence_valid = True
-          if files_found == 0:
-              parse_errors.append("No result files found — tests may not have run")
-              evidence_valid = False
-          if len(results) == 0 and files_found > 0:
-              parse_errors.append("Result files exist but contain zero test entries")
-              evidence_valid = False
-
-          if parse_errors:
-              print("EVIDENCE ERRORS:", file=sys.stderr)
-              for err in parse_errors:
-                  print(f"  - {err}", file=sys.stderr)
-
-          summary = {
-              'source_sha': os.environ.get('GITHUB_SHA', 'unknown'),
-              'deployment_sha': os.environ.get('E2E_DEPLOYMENT_SHA', 'not provided'),
-              'total': len(results),
-              'passed': sum(1 for r in results if r['status'] == 'passed'),
-              'failed': sum(1 for r in results if r['status'] == 'failed'),
-              'skipped': sum(1 for r in results if r['status'] == 'skipped'),
-              'timed_out': sum(1 for r in results if r['status'] == 'timedOut'),
-              'unknown': sum(1 for r in results if r['status'] == 'unknown'),
-              'auth_tests_executed': auth_tests_actually_ran,
-              'evidence_valid': evidence_valid,
-              'parse_errors': len(parse_errors),
-              'parse_error_details': parse_errors[:10],
-              'tests': results,
-          }
-
-          with open('staging-qa-summary/evidence.json', 'w') as out:
-              json.dump(summary, out, indent=2)
-
-          # Fail the step if evidence is invalid
-          if not evidence_valid:
-              print("::error::Evidence generation failed — see parse errors above", file=sys.stderr)
-              sys.exit(1)
-          PYEOF
+          # Parse evidence using the tested script (same code tested in CI unit tests).
+          # Fails closed on: parse errors, unknown/interrupted/timedOut statuses,
+          # missing reports, or empty results.
+          python3 scripts/parse-evidence.py --output-dir staging-qa-summary
 
           # Delete raw JSON results (may contain error messages, URLs, credentials)
           rm -f *-results.json
@@ -400,10 +305,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ -f staging-qa-summary/evidence.json ]; then
+            VALID=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('evidence_valid',False))")
             PASSED=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('passed',0))")
             FAILED=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('failed',0))")
             SKIPPED=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('skipped',0))")
             TOTAL=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('total',0))")
+            TIMED_OUT=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('timed_out',0))")
+            INTERRUPTED=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('interrupted',0))")
             AUTH_RAN=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('auth_tests_executed',False))")
 
             echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
@@ -412,17 +320,14 @@ jobs:
             echo "| Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
             echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
             echo "| Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Timed out | $TIMED_OUT |" >> $GITHUB_STEP_SUMMARY
+            echo "| Interrupted | $INTERRUPTED |" >> $GITHUB_STEP_SUMMARY
             echo "| Auth tests executed | $AUTH_RAN |" >> $GITHUB_STEP_SUMMARY
-
-            UNKNOWN=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('unknown',0))")
-            PARSE_ERRORS=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('parse_errors',0))")
-            if [ "$UNKNOWN" -gt 0 ] || [ "$PARSE_ERRORS" -gt 0 ]; then
-              echo "| Unknown/parse errors | $UNKNOWN / $PARSE_ERRORS |" >> $GITHUB_STEP_SUMMARY
-            fi
+            echo "| Evidence valid | $VALID |" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            if [ "$UNKNOWN" -gt 0 ] || [ "$PARSE_ERRORS" -gt 0 ]; then
-              echo "**WARNING: Evidence contains unknown test statuses or parse errors.** Results may be inaccurate." >> $GITHUB_STEP_SUMMARY
+            if [ "$VALID" != "True" ]; then
+              echo "**EVIDENCE INVALID.** Parse errors, unknown statuses, timeouts, or interrupted tests detected. This is NOT a valid QA pass." >> $GITHUB_STEP_SUMMARY
             elif [ "$FAILED" -gt 0 ]; then
               echo "**Some tests failed.** See evidence.json artifact for per-test results." >> $GITHUB_STEP_SUMMARY
             elif [ "$AUTH_RAN" = "False" ]; then
@@ -432,6 +337,5 @@ jobs:
               echo "All executed tests passed (auth boundary + authenticated suites)." >> $GITHUB_STEP_SUMMARY
             fi
           else
-            echo "No test evidence generated. Tests may have failed to start." >> $GITHUB_STEP_SUMMARY
-            echo "Reproduce locally: \`./scripts/qa-staging.sh --headed\`" >> $GITHUB_STEP_SUMMARY
+            echo "**No evidence file generated.** Evidence step failed or did not run." >> $GITHUB_STEP_SUMMARY
           fi

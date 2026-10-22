@@ -184,12 +184,17 @@ const ALLOWED_THIRD_PARTY_HOSTNAMES = new Set([
 ]);
 
 /**
- * Installs request interception on a Playwright page to prevent
+ * Installs request interception at the browser-context level to prevent
  * credentials from being sent to production or unexpected origins.
+ * Uses context.route() for coverage of popups and new pages, not just
+ * the initial page.
  *
  * Supabase restriction: ONLY requests to the exact staging project
  * (tqjvrzopvtczxfxiwmnz.supabase.co) are allowed. All other
  * *.supabase.co hostnames are blocked, including unknown projects.
+ *
+ * Blocked-request diagnostics log only scheme + host + path (no query
+ * params, fragments, or userinfo that could contain tokens).
  *
  * Must be called BEFORE any navigation that could trigger auth.
  */
@@ -213,7 +218,8 @@ export async function installRequestGuard(
     allowedOrigins.add('http://127.0.0.1:3000');
   }
 
-  await page.route('**/*', async (route) => {
+  // Use context-level routing for coverage of popups and new pages
+  await page.context().route('**/*', async (route) => {
     const requestUrl = route.request().url();
     let parsed: URL;
     try {
@@ -226,6 +232,8 @@ export async function installRequestGuard(
 
     const requestOrigin = parsed.origin.toLowerCase();
     const requestHostname = parsed.hostname.toLowerCase();
+    // Sanitized diagnostic: scheme + host + path only (no query/fragment/userinfo)
+    const safeDiag = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
 
     // 1. Allow exact same-origin and staging Supabase
     if (allowedOrigins.has(requestOrigin)) {
@@ -242,24 +250,21 @@ export async function installRequestGuard(
     // 3. Block ANY *.supabase.co that is NOT the staging project
     //    This catches unknown projects, production, and typos.
     if (requestHostname.endsWith('.supabase.co') || requestHostname === 'supabase.co') {
-      const msg = `BLOCKED REQUEST to non-staging Supabase: ${requestUrl} (only ${STAGING_SUPABASE_REF}.supabase.co allowed)`;
-      blockedAttempts.push(msg);
+      blockedAttempts.push(`BLOCKED non-staging Supabase: ${safeDiag}`);
       await route.abort('blockedbyclient');
       return;
     }
 
     // 4. Block known production origins
     if (BLOCKED_ORIGINS.has(requestOrigin)) {
-      const msg = `BLOCKED REQUEST to production origin: ${requestUrl}`;
-      blockedAttempts.push(msg);
+      blockedAttempts.push(`BLOCKED production origin: ${safeDiag}`);
       await route.abort('blockedbyclient');
       return;
     }
 
     // 5. Block any URL containing production Supabase ref
     if (requestUrl.includes(PRODUCTION_SUPABASE_REF)) {
-      const msg = `BLOCKED REQUEST containing production Supabase ref: ${requestUrl}`;
-      blockedAttempts.push(msg);
+      blockedAttempts.push(`BLOCKED production Supabase ref in: ${safeDiag}`);
       await route.abort('blockedbyclient');
       return;
     }
@@ -271,7 +276,6 @@ export async function installRequestGuard(
     }
 
     // 7. Allow subdomains of known third-party services
-    //    (e.g. o123456.ingest.sentry.io)
     const isKnownSubdomain =
       requestHostname.endsWith('.posthog.com') ||
       requestHostname.endsWith('.sentry.io') ||
@@ -286,10 +290,8 @@ export async function installRequestGuard(
       return;
     }
 
-    // 8. Unknown origin — block and log
-    //    Fail-closed: do not allow unexpected destinations.
-    const msg = `BLOCKED REQUEST to unknown origin: ${requestUrl}`;
-    blockedAttempts.push(msg);
+    // 8. Unknown origin — block and log (sanitized, no query params)
+    blockedAttempts.push(`BLOCKED unknown origin: ${safeDiag}`);
     await route.abort('blockedbyclient');
   });
 

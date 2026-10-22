@@ -358,47 +358,256 @@ describe('guard coverage in auth-boundaries', () => {
     const swBlocks = (authContent.match(/serviceWorkers:\s*'block'/g) || []).length;
     expect(swBlocks).toBeGreaterThanOrEqual(2);
   });
+
+  it('unauthenticated spec blocks service workers', () => {
+    const specContent = require('fs').readFileSync(
+      require('path').join(__dirname, '../../e2e/staging/auth-boundaries.spec.ts'),
+      'utf-8'
+    );
+    expect(specContent).toContain("serviceWorkers: 'block'");
+  });
+
+  it('blocked-request diagnostics do not include query params', () => {
+    const guardContent = require('fs').readFileSync(
+      require('path').join(__dirname, '../../e2e/fixtures/staging-guard.ts'),
+      'utf-8'
+    );
+    // Verify safeDiag uses protocol//host+pathname only
+    expect(guardContent).toContain('${parsed.protocol}//${parsed.host}${parsed.pathname}');
+    // Verify context.route is used (not page.route)
+    expect(guardContent).toContain('page.context().route');
+  });
 });
 
-// ── B4: Evidence parser truthfulness ──
+// ── B1: Hostname spoof regression ──
 
-describe('evidence parser correctness', () => {
-  // These tests verify the Python evidence parser logic by testing the
-  // JavaScript equivalent of the key decisions.
-
-  it('final retry result is used, not first failure', () => {
-    // Simulates Playwright results array: first failed, second passed (retry success)
-    const testResults = [
-      { status: 'failed', duration: 1000 },
-      { status: 'passed', duration: 500 },
-    ];
-    // B4: parser must use last result
-    const finalResult = testResults[testResults.length - 1];
-    expect(finalResult.status).toBe('passed');
+describe('B1 — release-identity hostname spoof prevention', () => {
+  it('release-identity uses anchored hostname match (code verification)', () => {
+    const routeContent = require('fs').readFileSync(
+      require('path').join(__dirname, '../../app/api/release-identity/route.ts'),
+      'utf-8'
+    );
+    // Must use new URL() for parsing, not regex on raw string
+    expect(routeContent).toContain('new URL(supabaseUrl)');
+    // Must use anchored regex: ^<ref>.supabase.co$
+    expect(routeContent).toContain('.match(/^([a-z]{20})\\.supabase\\.co$/)');
+    // Must enforce HTTPS
+    expect(routeContent).toContain("parsed.protocol !== 'https:'");
   });
 
-  it('all-skipped auth suite is NOT reported as auth tested', () => {
-    // All entries are skipped
-    const testEntries = [
-      { status: 'skipped' },
-      { status: 'skipped' },
-    ];
-    const actuallyRan = testEntries.some(t => t.status !== 'skipped');
-    expect(actuallyRan).toBe(false);
+  it('anchored regex rejects spoofed hostnames', () => {
+    const anchoredRe = /^([a-z]{20})\.supabase\.co$/;
+    // Valid staging hostname
+    expect('tqjvrzopvtczxfxiwmnz.supabase.co').toMatch(anchoredRe);
+    // Spoofed: suffix after .co
+    expect('tqjvrzopvtczxfxiwmnz.supabase.co.evil.com').not.toMatch(anchoredRe);
+    // Spoofed: ref in path
+    expect('evil.com').not.toMatch(anchoredRe);
+    // Spoofed: numeric prefix
+    expect('123tqjvrzopvtczxfxiw.supabase.co').not.toMatch(anchoredRe);
+    // Spoofed: uppercase
+    expect('TQJVRZOPVTCZXFXIWMNZ.supabase.co').not.toMatch(anchoredRe);
+    // Spoofed: too short
+    expect('short.supabase.co').not.toMatch(anchoredRe);
+  });
+});
+
+// ── B4: Python evidence parser (actual parser, not JS reimplementation) ──
+
+describe('B4 — Python evidence parser', () => {
+  const { execSync } = require('child_process');
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+
+  function runParser(fixtureFiles: Record<string, unknown>, env?: Record<string, string>): {
+    exitCode: number;
+    evidence: Record<string, unknown> | null;
+    stderr: string;
+  } {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-evidence-'));
+    const outputDir = path.join(tmpDir, 'output');
+    fs.mkdirSync(outputDir);
+
+    // Write fixture JSON files
+    for (const [name, data] of Object.entries(fixtureFiles)) {
+      fs.writeFileSync(path.join(tmpDir, name), JSON.stringify(data));
+    }
+
+    const scriptPath = path.join(__dirname, '../../scripts/parse-evidence.py');
+    let exitCode = 0;
+    let stderr = '';
+    try {
+      execSync(`cd "${tmpDir}" && python3 "${scriptPath}" --output-dir "${outputDir}"`, {
+        encoding: 'utf-8',
+        env: { ...process.env, ...env },
+        timeout: 10000,
+      });
+    } catch (err: unknown) {
+      exitCode = (err as { status?: number }).status || 1;
+      stderr = String((err as { stderr?: string }).stderr || '');
+    }
+
+    let evidence: Record<string, unknown> | null = null;
+    const evidencePath = path.join(outputDir, 'evidence.json');
+    if (fs.existsSync(evidencePath)) {
+      evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf-8'));
+    }
+
+    // Cleanup
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    return { exitCode, evidence, stderr };
+  }
+
+  it('passes with all-passed report', () => {
+    const report = {
+      suites: [{
+        title: 'test suite',
+        specs: [{
+          title: 'test 1',
+          tests: [{ status: 'expected', results: [{ status: 'passed', duration: 100 }] }],
+        }],
+        suites: [],
+      }],
+    };
+    const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
+    expect(exitCode).toBe(0);
+    expect(evidence?.passed).toBe(1);
+    expect(evidence?.evidence_valid).toBe(true);
   });
 
-  it('passed test after initial failure counts as passed', () => {
-    const results = [
-      { status: 'failed', duration: 1000 },
-      { status: 'passed', duration: 500 },
-    ];
-    const final = results[results.length - 1];
-    expect(final.status).toBe('passed');
+  it('uses final retry result (not first failure)', () => {
+    const report = {
+      suites: [{
+        title: 'suite',
+        specs: [{
+          title: 'flaky test',
+          tests: [{
+            status: 'flaky',
+            results: [
+              { status: 'failed', duration: 1000 },
+              { status: 'passed', duration: 500 },
+            ],
+          }],
+        }],
+        suites: [],
+      }],
+    };
+    const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
+    expect(exitCode).toBe(0);
+    expect(evidence?.passed).toBe(1);
+    expect(evidence?.failed).toBe(0);
   });
 
-  it('timed out test is not counted as passed', () => {
-    const results = [{ status: 'timedOut', duration: 30000 }];
-    expect(results[results.length - 1].status).not.toBe('passed');
+  it('fails on timedOut test', () => {
+    const report = {
+      suites: [{
+        title: 'suite',
+        specs: [{
+          title: 'slow test',
+          tests: [{ status: 'expected', results: [{ status: 'timedOut', duration: 30000 }] }],
+        }],
+        suites: [],
+      }],
+    };
+    const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
+    expect(exitCode).toBe(1);
+    expect(evidence?.timed_out).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
+  });
+
+  it('fails on interrupted test', () => {
+    const report = {
+      suites: [{
+        title: 'suite',
+        specs: [{
+          title: 'interrupted test',
+          tests: [{ status: 'expected', results: [{ status: 'interrupted', duration: 0 }] }],
+        }],
+        suites: [],
+      }],
+    };
+    const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
+    expect(exitCode).toBe(1);
+    expect(evidence?.interrupted).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
+  });
+
+  it('fails on unknown status', () => {
+    const report = {
+      suites: [{
+        title: 'suite',
+        specs: [{
+          title: 'weird test',
+          tests: [{ status: 'expected', results: [{ status: 'INVALID_STATUS', duration: 0 }] }],
+        }],
+        suites: [],
+      }],
+    };
+    const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
+    expect(exitCode).toBe(1);
+    expect(evidence?.unknown).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
+  });
+
+  it('fails when no result files exist', () => {
+    const { exitCode, evidence } = runParser({});
+    expect(exitCode).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
+  });
+
+  it('fails on malformed JSON', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-evidence-'));
+    const outputDir = path.join(tmpDir, 'output');
+    fs.mkdirSync(outputDir);
+    fs.writeFileSync(path.join(tmpDir, 'auth-boundaries-results.json'), 'NOT JSON');
+    const scriptPath = path.join(__dirname, '../../scripts/parse-evidence.py');
+    let exitCode = 0;
+    try {
+      execSync(`cd "${tmpDir}" && python3 "${scriptPath}" --output-dir "${outputDir}"`, {
+        encoding: 'utf-8', timeout: 10000,
+      });
+    } catch { exitCode = 1; }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    expect(exitCode).toBe(1);
+  });
+
+  it('all-skipped auth suite is NOT auth_tests_executed', () => {
+    const report = {
+      suites: [{
+        title: 'suite',
+        specs: [{
+          title: 'skipped auth test',
+          tests: [{ status: 'skipped', results: [] }],
+        }],
+        suites: [],
+      }],
+    };
+    const { exitCode, evidence } = runParser({ 'authenticated-results.json': report });
+    expect(exitCode).toBe(0);
+    expect(evidence?.auth_tests_executed).toBe(false);
+    expect(evidence?.skipped).toBe(1);
+  });
+
+  it('handles nested suites', () => {
+    const report = {
+      suites: [{
+        title: 'outer',
+        specs: [],
+        suites: [{
+          title: 'inner',
+          specs: [{
+            title: 'nested test',
+            tests: [{ status: 'expected', results: [{ status: 'passed', duration: 50 }] }],
+          }],
+          suites: [],
+        }],
+      }],
+    };
+    const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
+    expect(exitCode).toBe(0);
+    expect(evidence?.passed).toBe(1);
+    expect(evidence?.total).toBe(1);
   });
 });
 
