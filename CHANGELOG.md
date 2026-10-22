@@ -1,3 +1,44 @@
+## 2026-10-21 — Parties Phase B1: slug fix, guest tags, table seating (#661)
+
+### Attendee-capacity enforcement (527d8b66)
+- **Owner policy**: 1 invite + N plus_ones = (1+N) attendees against party and table capacity.
+- **5 code paths updated**: invite API, web RSVP API, bot RSVP flow, dashboard capacity bar, table capacity trigger.
+- **M457 trigger architecture**: STATEMENT trigger checks final state; RPCs use `pg_advisory_xact_lock` (M304 pattern) for concurrent serialization.
+- **Tests**: 140 passed, 0 skipped, 0 failed — including 16 real PostgreSQL tests with zero skips.
+
+### CTO corrections (b7e4b349)
+- **M457 rewritten**: Added ROW trigger (`trg_validate_invite_table`) for party membership + business isolation on ALL write paths. Added STATEMENT trigger (`trg_enforce_table_capacity`) with `FOR UPDATE` on `party_tables` to serialize concurrent assignments (M451 pattern). RPCs `assign_guest_to_table` and `bulk_assign_guests_to_table` (SECURITY INVOKER) provide clean JSON API. Self-check block validates all components.
+- **`table-assignment.ts` rewritten**: All assignment operations now go through RPCs. No direct UPDATE of `table_id` from application code.
+- **28 lifecycle tests** (`party-b1-lifecycle.test.ts`): slug lifecycle, required fields, ownership, error handling, guest preservation, URL validity, capacity, backward compat.
+- **14 disposable PG tests** (`party-b1-seat-authority.pg.test.ts`): concurrent seat race, cross-business denial, cross-party denial, bulk all-or-nothing, direct SQL bypass caught by triggers.
+
+### What changed
+- **M455**: Added `slug` VARCHAR(100) UNIQUE and `updated_at` TIMESTAMPTZ with auto-update trigger to `parties` table. Backfills existing rows with auto-generated slugs. Fixes P2 bug where dashboard generated share URLs referencing a non-existent `slug` column.
+- **M456**: Added `tags TEXT[] DEFAULT '{}'` to `event_invites` with partial GIN index for efficient tag-based filtering.
+- **M457**: Created `party_tables` table (RLS, capacity CHECK 1-500, UNIQUE party_id+name, admin read policy via `has_admin_role`). Added `table_id` and `seat_number` to `event_invites` (ON DELETE SET NULL).
+- **`lib/parties/slug.ts`**: Slug generation utility — `slugify(name)-random6` format with collision retry.
+- **`lib/parties/table-assignment.ts`**: Manual assign, unassign, reassign, bulk-assign-by-tag, and auto-assign (capacity-aware, fills by sort_order).
+- **`lib/actions/party-persistence.ts`**: `createParty` now auto-generates slug and returns `id`/`slug`. `updateParty` strips slug from payload (immutable once set).
+- **`app/api/events/invite/route.ts`**: Added `max_guests` capacity enforcement — rejects new invites with 409 when party is at capacity.
+- **`app/dashboard/parties/page.tsx`**: Guest tag management (inline editor, bulk tag, filter-by-tag), table CRUD, per-guest table assignment dropdown, auto-assign button, capacity indicators, CSV export includes tags.
+- **`lib/__tests__/issue-493-staging-readiness.test.ts`**: Updated `createParty` mock to match new `.insert().select().single()` chain.
+
+### Tests
+- 37 new tests in 3 files: `party-b1-foundation.test.ts` (14), `party-b1-tags.test.ts` (14), `party-b1-tables.test.ts` (9)
+- 78/78 affected tests pass. Build clean (0 type errors).
+
+### What could break
+- Code that calls `createParty` without handling the new `id`/`slug` return fields (backward compatible — old code just ignores them).
+- Queries on `event_invites` that `SELECT *` will now include `tags`, `table_id`, `seat_number` — existing code handles unknown columns gracefully.
+- Dashboard code references `party.slug` which now exists — share URLs will use slugs instead of UUIDs for new parties.
+- **Migrations not yet applied.** Until M455-457 are applied, `slug`/`tags`/`table_id`/`seat_number` columns don't exist and new features won't work.
+
+### Not included (deferred to B2)
+- Named plus-ones with individual QR passes
+- Check-in system with HMAC-signed tokens
+- Custom RSVP questions
+- Party messaging/broadcasting
+
 ### 2026-10-22 — Lean engineering execution contract (governance-only)
 
 - **`CLAUDE.md`**: Require a short proven-need/acceptance contract, smallest justified diff, and stop-at-definition-of-done discipline. Bug allegations use existing independent evidence verification; new features follow approved requirements.
