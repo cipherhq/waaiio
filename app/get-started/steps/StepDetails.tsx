@@ -255,7 +255,7 @@ export function StepDetails({
       </label>
 
       <div className="mt-4 flex gap-3">
-        <button type="button" onClick={() => setStep('category')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
+        <button type="button" onClick={() => setStep('features')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
         <button type="submit" disabled={loading || !agreedToTerms || !agreedToDataProcessing || !firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className={`flex-1 rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
           {loading ? 'Setting up...' : selectedPlan === 'free' ? 'Start Free Trial' : `Pay ${formatCurrency(localTiers[selectedPlan]?.price as number || 0, selectedCountry)}/mo & Launch`}
         </button>
