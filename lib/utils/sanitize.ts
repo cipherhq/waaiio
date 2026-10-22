@@ -26,3 +26,15 @@ export function sanitizeIlikeSearch(raw: string): string {
   if (!trimmed) return '';
   return sanitizeFilterValue(trimmed.replace(/[%_]/g, '\\$&'));
 }
+
+/**
+ * Build a PostgREST `.or()` ILIKE filter string for searching contacts.
+ *
+ * Composes sanitizeIlikeSearch with the standard multi-column ILIKE pattern.
+ * Returns null if the search input is empty/whitespace (caller should skip .or()).
+ */
+export function buildContactsSearchFilter(search: string): string | null {
+  const s = sanitizeIlikeSearch(search);
+  if (!s) return null;
+  return `first_name.ilike.%${s}%,last_name.ilike.%${s}%,phone.ilike.%${s}%`;
+}
