@@ -281,8 +281,13 @@ jobs:
 
           # Parse evidence using the tested script (same code tested in CI unit tests).
           # Fails closed on: parse errors, unknown/interrupted/timedOut statuses,
-          # missing reports, or empty results.
+          # missing required reports, or empty results.
+          # Always requires auth-boundaries-results.json.
+          # When auth tests were requested, also requires authenticated-results.json
+          # with ≥1 non-skipped executed test.
           python3 scripts/parse-evidence.py --output-dir staging-qa-summary
+        env:
+          E2E_REQUIRE_AUTH_TESTS: ${{ inputs.run_auth_tests }}
 
           # Delete raw JSON results (may contain error messages, URLs, credentials)
           rm -f *-results.json

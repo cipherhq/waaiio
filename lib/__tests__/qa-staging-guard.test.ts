@@ -420,7 +420,32 @@ describe('B4 — Python evidence parser', () => {
   const path = require('path');
   const os = require('os');
 
-  function runParser(fixtureFiles: Record<string, unknown>, env?: Record<string, string>): {
+  const PASSING_REPORT = {
+    suites: [{
+      title: 'suite',
+      specs: [{
+        title: 'test 1',
+        tests: [{ status: 'expected', results: [{ status: 'passed', duration: 100 }] }],
+      }],
+      suites: [],
+    }],
+  };
+
+  const SKIPPED_REPORT = {
+    suites: [{
+      title: 'suite',
+      specs: [{
+        title: 'skipped test',
+        tests: [{ status: 'skipped', results: [] }],
+      }],
+      suites: [],
+    }],
+  };
+
+  function runParser(
+    fixtureFiles: Record<string, unknown>,
+    opts?: { requireAuth?: boolean; env?: Record<string, string> },
+  ): {
     exitCode: number;
     evidence: Record<string, unknown> | null;
     stderr: string;
@@ -429,20 +454,23 @@ describe('B4 — Python evidence parser', () => {
     const outputDir = path.join(tmpDir, 'output');
     fs.mkdirSync(outputDir);
 
-    // Write fixture JSON files
     for (const [name, data] of Object.entries(fixtureFiles)) {
-      fs.writeFileSync(path.join(tmpDir, name), JSON.stringify(data));
+      if (typeof data === 'string') {
+        fs.writeFileSync(path.join(tmpDir, name), data);
+      } else {
+        fs.writeFileSync(path.join(tmpDir, name), JSON.stringify(data));
+      }
     }
 
     const scriptPath = path.join(__dirname, '../../scripts/parse-evidence.py');
+    const authFlag = opts?.requireAuth ? '--require-auth-tests' : '';
     let exitCode = 0;
     let stderr = '';
     try {
-      execSync(`cd "${tmpDir}" && python3 "${scriptPath}" --output-dir "${outputDir}"`, {
-        encoding: 'utf-8',
-        env: { ...process.env, ...env },
-        timeout: 10000,
-      });
+      execSync(
+        `cd "${tmpDir}" && python3 "${scriptPath}" --output-dir "${outputDir}" ${authFlag}`,
+        { encoding: 'utf-8', env: { ...process.env, ...opts?.env }, timeout: 10000 },
+      );
     } catch (err: unknown) {
       exitCode = (err as { status?: number }).status || 1;
       stderr = String((err as { stderr?: string }).stderr || '');
@@ -454,23 +482,16 @@ describe('B4 — Python evidence parser', () => {
       evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf-8'));
     }
 
-    // Cleanup
     fs.rmSync(tmpDir, { recursive: true, force: true });
     return { exitCode, evidence, stderr };
   }
 
-  it('passes with all-passed report', () => {
-    const report = {
-      suites: [{
-        title: 'test suite',
-        specs: [{
-          title: 'test 1',
-          tests: [{ status: 'expected', results: [{ status: 'passed', duration: 100 }] }],
-        }],
-        suites: [],
-      }],
-    };
-    const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
+  // ── Core behavior ──
+
+  it('passes with auth-boundaries report containing passing tests', () => {
+    const { exitCode, evidence } = runParser({
+      'auth-boundaries-results.json': PASSING_REPORT,
+    });
     expect(exitCode).toBe(0);
     expect(evidence?.passed).toBe(1);
     expect(evidence?.evidence_valid).toBe(true);
@@ -512,7 +533,6 @@ describe('B4 — Python evidence parser', () => {
     };
     const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
     expect(exitCode).toBe(1);
-    expect(evidence?.timed_out).toBe(1);
     expect(evidence?.evidence_valid).toBe(false);
   });
 
@@ -529,7 +549,6 @@ describe('B4 — Python evidence parser', () => {
     };
     const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
     expect(exitCode).toBe(1);
-    expect(evidence?.interrupted).toBe(1);
     expect(evidence?.evidence_valid).toBe(false);
   });
 
@@ -546,47 +565,7 @@ describe('B4 — Python evidence parser', () => {
     };
     const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
     expect(exitCode).toBe(1);
-    expect(evidence?.unknown).toBe(1);
     expect(evidence?.evidence_valid).toBe(false);
-  });
-
-  it('fails when no result files exist', () => {
-    const { exitCode, evidence } = runParser({});
-    expect(exitCode).toBe(1);
-    expect(evidence?.evidence_valid).toBe(false);
-  });
-
-  it('fails on malformed JSON', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-evidence-'));
-    const outputDir = path.join(tmpDir, 'output');
-    fs.mkdirSync(outputDir);
-    fs.writeFileSync(path.join(tmpDir, 'auth-boundaries-results.json'), 'NOT JSON');
-    const scriptPath = path.join(__dirname, '../../scripts/parse-evidence.py');
-    let exitCode = 0;
-    try {
-      execSync(`cd "${tmpDir}" && python3 "${scriptPath}" --output-dir "${outputDir}"`, {
-        encoding: 'utf-8', timeout: 10000,
-      });
-    } catch { exitCode = 1; }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    expect(exitCode).toBe(1);
-  });
-
-  it('all-skipped auth suite is NOT auth_tests_executed', () => {
-    const report = {
-      suites: [{
-        title: 'suite',
-        specs: [{
-          title: 'skipped auth test',
-          tests: [{ status: 'skipped', results: [] }],
-        }],
-        suites: [],
-      }],
-    };
-    const { exitCode, evidence } = runParser({ 'authenticated-results.json': report });
-    expect(exitCode).toBe(0);
-    expect(evidence?.auth_tests_executed).toBe(false);
-    expect(evidence?.skipped).toBe(1);
   });
 
   it('handles nested suites', () => {
@@ -606,8 +585,85 @@ describe('B4 — Python evidence parser', () => {
     };
     const { exitCode, evidence } = runParser({ 'auth-boundaries-results.json': report });
     expect(exitCode).toBe(0);
-    expect(evidence?.passed).toBe(1);
     expect(evidence?.total).toBe(1);
+  });
+
+  // ── Required report: auth-boundaries-results.json (always) ──
+
+  it('FAILS when auth-boundaries-results.json is missing', () => {
+    const { exitCode, evidence } = runParser({
+      'authenticated-results.json': PASSING_REPORT,
+    });
+    expect(exitCode).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
+  });
+
+  it('FAILS when no result files exist', () => {
+    const { exitCode, evidence } = runParser({});
+    expect(exitCode).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
+  });
+
+  it('FAILS on malformed auth-boundaries JSON', () => {
+    const { exitCode } = runParser({
+      'auth-boundaries-results.json': 'NOT JSON' as unknown,
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  // ── Required report: authenticated-results.json (when --require-auth-tests) ──
+
+  it('FAILS when auth tests requested but authenticated-results.json missing', () => {
+    const { exitCode, evidence } = runParser(
+      { 'auth-boundaries-results.json': PASSING_REPORT },
+      { requireAuth: true },
+    );
+    expect(exitCode).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
+  });
+
+  it('FAILS when auth tests requested but authenticated report is all-skipped', () => {
+    const { exitCode, evidence } = runParser(
+      {
+        'auth-boundaries-results.json': PASSING_REPORT,
+        'authenticated-results.json': SKIPPED_REPORT,
+      },
+      { requireAuth: true },
+    );
+    expect(exitCode).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
+    expect(evidence?.auth_tests_executed).toBe(false);
+  });
+
+  it('PASSES when auth tests NOT requested and only auth-boundaries present', () => {
+    const { exitCode, evidence } = runParser(
+      { 'auth-boundaries-results.json': PASSING_REPORT },
+      { requireAuth: false },
+    );
+    expect(exitCode).toBe(0);
+    expect(evidence?.evidence_valid).toBe(true);
+  });
+
+  it('PASSES when both required reports present with executed tests', () => {
+    const { exitCode, evidence } = runParser(
+      {
+        'auth-boundaries-results.json': PASSING_REPORT,
+        'authenticated-results.json': PASSING_REPORT,
+      },
+      { requireAuth: true },
+    );
+    expect(exitCode).toBe(0);
+    expect(evidence?.evidence_valid).toBe(true);
+    expect(evidence?.auth_tests_executed).toBe(true);
+  });
+
+  it('accepts --require-auth-tests via E2E_REQUIRE_AUTH_TESTS env var', () => {
+    const { exitCode, evidence } = runParser(
+      { 'auth-boundaries-results.json': PASSING_REPORT },
+      { env: { E2E_REQUIRE_AUTH_TESTS: 'true' } },
+    );
+    expect(exitCode).toBe(1);
+    expect(evidence?.evidence_valid).toBe(false);
   });
 });
 

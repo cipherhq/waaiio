@@ -6,13 +6,18 @@ Reads Playwright JSON reporter output files (*-results.json) and produces
 a strictly allowlisted evidence.json with only: test title, execution status,
 duration, and retry count. No error messages, URLs, stack traces, or credentials.
 
+Required reports:
+  - auth-boundaries-results.json: ALWAYS required (≥1 parsed test)
+  - authenticated-results.json: required when --require-auth-tests is passed
+    (≥1 non-skipped executed test)
+
 Exit codes:
-  0 — evidence generated successfully, all statuses known
+  0 — evidence generated successfully, all statuses known, required reports present
   1 — evidence generation failed (parse errors, unknown/interrupted/timedOut statuses,
       missing required reports, or empty results)
 
 Usage:
-  python3 scripts/parse-evidence.py [--output-dir staging-qa-summary]
+  python3 scripts/parse-evidence.py [--output-dir DIR] [--require-auth-tests]
 """
 
 import json
@@ -21,8 +26,6 @@ import os
 import sys
 
 EXECUTION_STATUSES = {'passed', 'failed', 'timedOut', 'interrupted', 'skipped'}
-# Statuses that indicate execution failure (not just a test assertion failure)
-BLOCKING_STATUSES = {'timedOut', 'interrupted', 'unknown'}
 
 
 def collect_specs(suite, is_auth, results, state):
@@ -57,27 +60,43 @@ def collect_specs(suite, is_auth, results, state):
         collect_specs(child, is_auth, results, state)
 
 
-def parse_evidence(output_dir='staging-qa-summary'):
+def parse_evidence(output_dir='staging-qa-summary', require_auth_tests=False):
     results = []
     state = {
         'auth_tests_actually_ran': False,
         'parse_errors': [],
         'files_found': 0,
+        'auth_boundary_tests': 0,
+        'authenticated_tests': 0,
+        'authenticated_executed': 0,
     }
 
     for filepath in sorted(glob.glob('*-results.json')):
         is_auth_suite = 'authenticated' in filepath
+        is_auth_boundary = 'auth-boundaries' in filepath
         state['files_found'] += 1
+        suite_test_count = 0
         try:
             with open(filepath) as fh:
                 data = json.load(fh)
             if not isinstance(data, dict) or 'suites' not in data:
                 state['parse_errors'].append(f"Malformed report structure in {filepath}")
                 continue
+            before = len(results)
             for suite in data.get('suites', []):
                 collect_specs(suite, is_auth_suite, results, state)
+            suite_test_count = len(results) - before
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             state['parse_errors'].append(f"Failed to parse {filepath}: {e}")
+
+        if is_auth_boundary:
+            state['auth_boundary_tests'] += suite_test_count
+        if is_auth_suite:
+            state['authenticated_tests'] += suite_test_count
+            state['authenticated_executed'] += sum(
+                1 for r in results[len(results) - suite_test_count:]
+                if r['status'] != 'skipped'
+            )
 
     # Count statuses
     passed = sum(1 for r in results if r['status'] == 'passed')
@@ -89,6 +108,30 @@ def parse_evidence(output_dir='staging-qa-summary'):
 
     # Determine evidence validity — fail closed on ANY problem
     evidence_valid = True
+
+    # Required report: auth-boundaries-results.json (always)
+    if not os.path.exists('auth-boundaries-results.json'):
+        state['parse_errors'].append(
+            "Required report auth-boundaries-results.json is missing")
+        evidence_valid = False
+    elif state['auth_boundary_tests'] == 0:
+        state['parse_errors'].append(
+            "auth-boundaries-results.json exists but contains zero tests")
+        evidence_valid = False
+
+    # Required report: authenticated-results.json (when auth tests requested)
+    if require_auth_tests:
+        if not os.path.exists('authenticated-results.json'):
+            state['parse_errors'].append(
+                "Required report authenticated-results.json is missing "
+                "(auth tests were requested)")
+            evidence_valid = False
+        elif state['authenticated_executed'] == 0:
+            state['parse_errors'].append(
+                "authenticated-results.json has zero non-skipped executed tests "
+                "(auth tests were requested but none actually ran)")
+            evidence_valid = False
+
     if state['files_found'] == 0:
         state['parse_errors'].append("No result files found — tests may not have run")
         evidence_valid = False
@@ -135,12 +178,21 @@ def parse_evidence(output_dir='staging-qa-summary'):
 
 if __name__ == '__main__':
     output_dir = 'staging-qa-summary'
+    require_auth = False
+
     if '--output-dir' in sys.argv:
         idx = sys.argv.index('--output-dir')
         if idx + 1 < len(sys.argv):
             output_dir = sys.argv[idx + 1]
 
-    valid = parse_evidence(output_dir)
+    if '--require-auth-tests' in sys.argv:
+        require_auth = True
+
+    # Also accept via env var (safe — not from user input interpolation)
+    if os.environ.get('E2E_REQUIRE_AUTH_TESTS', '').lower() == 'true':
+        require_auth = True
+
+    valid = parse_evidence(output_dir, require_auth)
     if not valid:
         print("::error::Evidence generation failed — see errors above", file=sys.stderr)
         sys.exit(1)
