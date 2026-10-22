@@ -26,6 +26,7 @@ set -euo pipefail
 # Safety:
 #   - Exact hostname validation (not substring matching)
 #   - Rejects all production hostnames and Supabase refs
+#   - Enforces HTTPS for non-loopback targets
 #   - Never stores credentials on disk
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,11 +56,20 @@ if [ -z "$STAGING_URL" ]; then
   exit 1
 fi
 
-# Extract hostname using python3 (available on macOS and Linux)
-HOSTNAME=$(python3 -c "from urllib.parse import urlparse; print(urlparse('${STAGING_URL}').hostname or '')" 2>/dev/null || echo "")
+# Extract hostname using positional argument (not string interpolation)
+HOSTNAME=$(python3 -c "import sys; from urllib.parse import urlparse; print(urlparse(sys.argv[1]).hostname or '')" "$STAGING_URL" 2>/dev/null || echo "")
 if [ -z "$HOSTNAME" ]; then
-  echo "FAIL-CLOSED — Cannot parse hostname from URL '$STAGING_URL'."
+  echo "FAIL-CLOSED — Cannot parse hostname from URL."
   exit 1
+fi
+
+# Enforce HTTPS for non-loopback targets
+if [ "$HOSTNAME" != "localhost" ] && [ "$HOSTNAME" != "127.0.0.1" ]; then
+  PROTOCOL=$(python3 -c "import sys; from urllib.parse import urlparse; print(urlparse(sys.argv[1]).scheme)" "$STAGING_URL" 2>/dev/null || echo "")
+  if [ "$PROTOCOL" != "https" ]; then
+    echo "FAIL-CLOSED — Non-loopback target must use HTTPS. Got '$PROTOCOL'."
+    exit 1
+  fi
 fi
 
 # Block exact production hostnames
@@ -95,6 +105,16 @@ case "$HOSTNAME" in
     ;;
 esac
 
+# Require deployment SHA for remote targets (B5)
+if [ "$HOSTNAME" != "localhost" ] && [ "$HOSTNAME" != "127.0.0.1" ]; then
+  SHA_PATTERN='^[0-9a-f]{40}$'
+  if [ -z "${E2E_DEPLOYMENT_SHA:-}" ] || ! echo "${E2E_DEPLOYMENT_SHA}" | grep -qE "$SHA_PATTERN"; then
+    echo "FAIL-CLOSED — E2E_DEPLOYMENT_SHA must be a valid 40-hex-char SHA for remote targets."
+    echo "Set it to the exact SHA deployed to staging."
+    exit 1
+  fi
+fi
+
 echo "═══════════════════════════════════════"
 echo "  Staging QA — Local Runner"
 echo "═══════════════════════════════════════"
@@ -112,6 +132,9 @@ cd "$PROJECT_DIR"
 export PLAYWRIGHT_BASE_URL="$STAGING_URL"
 export E2E_SOURCE_SHA="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
 
+# Staging config enforces artifact safety (no traces, screenshots, videos)
+PW_CONFIG="--config=e2e/playwright.staging.config.ts"
+
 # ── Run tests ──
 
 EXIT_CODE=0
@@ -120,12 +143,12 @@ if [ "$AUTH_ONLY" = true ]; then
   echo ""
   echo "▸ Running auth boundary tests only..."
   npx playwright test e2e/staging/auth-boundaries.spec.ts \
-    --project=chromium --reporter=list $HEADED $DEBUG || EXIT_CODE=$?
+    --project=chromium --reporter=list $PW_CONFIG $HEADED $DEBUG || EXIT_CODE=$?
 else
   echo ""
   echo "▸ Running auth boundary tests..."
   npx playwright test e2e/staging/auth-boundaries.spec.ts \
-    --project=chromium --reporter=list $HEADED $DEBUG || EXIT_CODE=$?
+    --project=chromium --reporter=list $PW_CONFIG $HEADED $DEBUG || EXIT_CODE=$?
 
   if [ "$NO_AUTH" = false ]; then
     # Check credentials
@@ -149,17 +172,21 @@ else
       e2e/staging/engage.spec.ts \
       e2e/staging/financials.spec.ts \
       --project=chromium --reporter=list \
-      $HEADED $DEBUG || EXIT_CODE=$?
+      $PW_CONFIG $HEADED $DEBUG || EXIT_CODE=$?
   fi
 fi
 
 echo ""
 echo "═══════════════════════════════════════"
 if [ "$EXIT_CODE" -eq 0 ]; then
-  echo "  RESULT: ALL TESTS PASSED"
+  if [ "$NO_AUTH" = true ] || [ "$AUTH_ONLY" = true ]; then
+    echo "  RESULT: EXECUTED TESTS PASSED"
+    echo "  NOTE: Not all test suites were run."
+  else
+    echo "  RESULT: ALL TESTS PASSED"
+  fi
 else
   echo "  RESULT: SOME TESTS FAILED (exit code $EXIT_CODE)"
-  echo "  Report: $PROJECT_DIR/playwright-report/index.html"
 fi
 echo "═══════════════════════════════════════"
 

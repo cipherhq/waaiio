@@ -99,6 +99,15 @@ function parseOrigin(rawUrl: string): { hostname: string; origin: string; port: 
 export function assertStagingTarget(baseUrl: string): void {
   const { hostname, origin } = parseOrigin(baseUrl);
 
+  // Enforce HTTPS for non-loopback targets
+  const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1';
+  if (!isLoopback && new URL(baseUrl).protocol !== 'https:') {
+    throw new Error(
+      `FAIL-CLOSED: Non-loopback target "${baseUrl}" must use HTTPS. ` +
+      `HTTP is only permitted for localhost/127.0.0.1.`
+    );
+  }
+
   // FIRST: reject known production origins
   if (BLOCKED_ORIGINS.has(origin) || BLOCKED_ORIGINS.has(`https://${hostname}`)) {
     throw new Error(
@@ -175,12 +184,17 @@ const ALLOWED_THIRD_PARTY_HOSTNAMES = new Set([
 ]);
 
 /**
- * Installs request interception on a Playwright page to prevent
+ * Installs request interception at the browser-context level to prevent
  * credentials from being sent to production or unexpected origins.
+ * Uses context.route() for coverage of popups and new pages, not just
+ * the initial page.
  *
  * Supabase restriction: ONLY requests to the exact staging project
  * (tqjvrzopvtczxfxiwmnz.supabase.co) are allowed. All other
  * *.supabase.co hostnames are blocked, including unknown projects.
+ *
+ * Blocked-request diagnostics log only scheme + host + path (no query
+ * params, fragments, or userinfo that could contain tokens).
  *
  * Must be called BEFORE any navigation that could trigger auth.
  */
@@ -204,7 +218,8 @@ export async function installRequestGuard(
     allowedOrigins.add('http://127.0.0.1:3000');
   }
 
-  await page.route('**/*', async (route) => {
+  // Use context-level routing for coverage of popups and new pages
+  await page.context().route('**/*', async (route) => {
     const requestUrl = route.request().url();
     let parsed: URL;
     try {
@@ -217,6 +232,8 @@ export async function installRequestGuard(
 
     const requestOrigin = parsed.origin.toLowerCase();
     const requestHostname = parsed.hostname.toLowerCase();
+    // Sanitized diagnostic: scheme + host + path only (no query/fragment/userinfo)
+    const safeDiag = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
 
     // 1. Allow exact same-origin and staging Supabase
     if (allowedOrigins.has(requestOrigin)) {
@@ -233,24 +250,21 @@ export async function installRequestGuard(
     // 3. Block ANY *.supabase.co that is NOT the staging project
     //    This catches unknown projects, production, and typos.
     if (requestHostname.endsWith('.supabase.co') || requestHostname === 'supabase.co') {
-      const msg = `BLOCKED REQUEST to non-staging Supabase: ${requestUrl} (only ${STAGING_SUPABASE_REF}.supabase.co allowed)`;
-      blockedAttempts.push(msg);
+      blockedAttempts.push(`BLOCKED non-staging Supabase: ${safeDiag}`);
       await route.abort('blockedbyclient');
       return;
     }
 
     // 4. Block known production origins
     if (BLOCKED_ORIGINS.has(requestOrigin)) {
-      const msg = `BLOCKED REQUEST to production origin: ${requestUrl}`;
-      blockedAttempts.push(msg);
+      blockedAttempts.push(`BLOCKED production origin: ${safeDiag}`);
       await route.abort('blockedbyclient');
       return;
     }
 
     // 5. Block any URL containing production Supabase ref
     if (requestUrl.includes(PRODUCTION_SUPABASE_REF)) {
-      const msg = `BLOCKED REQUEST containing production Supabase ref: ${requestUrl}`;
-      blockedAttempts.push(msg);
+      blockedAttempts.push(`BLOCKED production Supabase ref in: ${safeDiag}`);
       await route.abort('blockedbyclient');
       return;
     }
@@ -262,7 +276,6 @@ export async function installRequestGuard(
     }
 
     // 7. Allow subdomains of known third-party services
-    //    (e.g. o123456.ingest.sentry.io)
     const isKnownSubdomain =
       requestHostname.endsWith('.posthog.com') ||
       requestHostname.endsWith('.sentry.io') ||
@@ -277,10 +290,8 @@ export async function installRequestGuard(
       return;
     }
 
-    // 8. Unknown origin — block and log
-    //    Fail-closed: do not allow unexpected destinations.
-    const msg = `BLOCKED REQUEST to unknown origin: ${requestUrl}`;
-    blockedAttempts.push(msg);
+    // 8. Unknown origin — block and log (sanitized, no query params)
+    blockedAttempts.push(`BLOCKED unknown origin: ${safeDiag}`);
     await route.abort('blockedbyclient');
   });
 
@@ -375,6 +386,137 @@ function execGitSha(): string | null {
   } catch {
     return null;
   }
+}
+
+// ── Deployment identity verification ──
+
+/** Known Vercel project ID for the staging deployment */
+export const STAGING_VERCEL_PROJECT_ID = 'prj_h7YmC4fvpxhn429znCy34OjLZ6se';
+
+export interface DeploymentIdentity {
+  sha: string;
+  projectId: string;
+  deploymentId: string;
+  vercelEnv: string;
+  supabaseProjectRef: string;
+}
+
+/**
+ * Verifies server-side Vercel deployment identity via /api/release-identity.
+ *
+ * Checks:
+ *   - projectId matches expected staging Vercel project
+ *   - vercelEnv is NOT 'production'
+ *   - supabaseProjectRef matches expected staging Supabase ref
+ *   - Deployed SHA matches expectedSha (required for remote targets)
+ *   - Response shape is valid (40-hex SHA, prj_ prefix, dpl_ prefix)
+ *
+ * NOTE: supabaseProjectRef is a configuration-identity check — it verifies
+ * the server's NEXT_PUBLIC_SUPABASE_URL matches the staging project. This
+ * does not prove actual database reachability or that no other DB client
+ * with a different URL exists elsewhere.
+ *
+ * Fail-closed: throws on mismatch, network error, or malformed response.
+ */
+export async function verifyStagingIdentity(
+  baseUrl: string,
+  expectedSha: string,
+): Promise<DeploymentIdentity> {
+  // Require valid 40-hex SHA for remote targets (B5)
+  if (!/^[0-9a-f]{40}$/.test(expectedSha)) {
+    throw new Error(
+      `FAIL-CLOSED: expectedSha must be a valid 40-hex-char SHA for remote targets. ` +
+      `Got: "${expectedSha}". Set E2E_DEPLOYMENT_SHA to the exact deployed staging SHA.`
+    );
+  }
+
+  const url = `${baseUrl.replace(/\/$/, '')}/api/release-identity`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      redirect: 'error',
+    });
+  } catch (err) {
+    throw new Error(
+      `FAIL-CLOSED: Cannot reach ${url} — deployment identity unverifiable. ` +
+      `Error: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `FAIL-CLOSED: /api/release-identity returned HTTP ${response.status}. ` +
+      `The deployment may be missing required identity environment variables.`
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error(
+      'FAIL-CLOSED: /api/release-identity returned non-JSON response.'
+    );
+  }
+
+  const data = body as Record<string, unknown>;
+
+  // Verify projectId matches expected staging project
+  if (data.projectId !== STAGING_VERCEL_PROJECT_ID) {
+    throw new Error(
+      `FAIL-CLOSED: Deployment projectId "${String(data.projectId)}" does not match ` +
+      `expected staging project "${STAGING_VERCEL_PROJECT_ID}".`
+    );
+  }
+
+  // Reject production environment
+  if (data.vercelEnv === 'production') {
+    throw new Error(
+      'FAIL-CLOSED: Deployment reports vercelEnv="production". ' +
+      'Staging QA must not run against a production deployment.'
+    );
+  }
+
+  // Verify SHA match (required for remote targets)
+  if (data.sha !== expectedSha) {
+    throw new Error(
+      `FAIL-CLOSED: Deployed SHA "${String(data.sha)}" does not match ` +
+      `expected SHA "${expectedSha}".`
+    );
+  }
+
+  // Verify Supabase project ref matches staging (B1 — database identity)
+  if (data.supabaseProjectRef !== STAGING_SUPABASE_REF) {
+    throw new Error(
+      `FAIL-CLOSED: Server supabaseProjectRef "${String(data.supabaseProjectRef)}" ` +
+      `does not match expected staging ref "${STAGING_SUPABASE_REF}". ` +
+      `The deployment may be configured with a non-staging database.`
+    );
+  }
+
+  // Validate response shape
+  const sha = String(data.sha || '');
+  const projectId = String(data.projectId || '');
+  const deploymentId = String(data.deploymentId || '');
+  const vercelEnv = String(data.vercelEnv || '');
+  const supabaseProjectRef = String(data.supabaseProjectRef || '');
+
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`FAIL-CLOSED: Deployment SHA "${sha}" is not a valid 40-hex-char string.`);
+  }
+  if (!projectId.startsWith('prj_')) {
+    throw new Error(`FAIL-CLOSED: Deployment projectId "${projectId}" missing prj_ prefix.`);
+  }
+  if (!deploymentId.startsWith('dpl_')) {
+    throw new Error(`FAIL-CLOSED: Deployment deploymentId "${deploymentId}" missing dpl_ prefix.`);
+  }
+  if (!/^[a-z]{20}$/.test(supabaseProjectRef)) {
+    throw new Error(`FAIL-CLOSED: supabaseProjectRef "${supabaseProjectRef}" is malformed (expected 20 lowercase letters).`);
+  }
+
+  return { sha, projectId, deploymentId, vercelEnv, supabaseProjectRef };
 }
 
 // ── Credential requirement assertions ──

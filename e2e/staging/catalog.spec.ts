@@ -3,6 +3,9 @@
  *
  * Verifies catalog pages render. Read-only — no mutations.
  * Empty states are valid for a QA merchant without catalog data.
+ *
+ * Assertions are scoped to the main content area (not sidebar/nav)
+ * to avoid false positives from navigation text matching generic terms.
  */
 
 import { test, expect } from '../fixtures/auth';
@@ -14,15 +17,19 @@ test.describe('Catalog — products page', () => {
 
     await expect(merchantPage).not.toHaveURL(/\/login/);
 
-    // Either product list or empty state should be visible
-    const bodyText = await merchantPage.locator('body').textContent() || '';
+    // Scope to main content area to avoid sidebar false positives
+    const mainArea = merchantPage.locator('main, [role="main"]').first();
+    const hasMainElement = (await mainArea.count()) > 0;
+    const contentText = hasMainElement
+      ? (await mainArea.textContent() || '')
+      : (await merchantPage.locator('body').textContent() || '');
     const hasContent =
-      bodyText.includes('Product') ||
-      bodyText.includes('product') ||
-      bodyText.includes('No ') ||     // "No products yet"
-      bodyText.includes('empty') ||
-      bodyText.includes('Get started') ||
-      bodyText.includes('Add');        // "Add your first product"
+      contentText.includes('Product') ||
+      contentText.includes('product') ||
+      contentText.includes('No ') ||     // "No products yet"
+      contentText.includes('empty') ||
+      contentText.includes('Get started') ||
+      contentText.includes('Add');        // "Add your first product"
     expect(hasContent).toBe(true);
   });
 });
@@ -34,14 +41,19 @@ test.describe('Catalog — services page', () => {
 
     await expect(merchantPage).not.toHaveURL(/\/login/);
 
-    const bodyText = await merchantPage.locator('body').textContent() || '';
+    // Scope to main content area to avoid sidebar false positives
+    const mainArea = merchantPage.locator('main, [role="main"]').first();
+    const hasMainElement = (await mainArea.count()) > 0;
+    const contentText = hasMainElement
+      ? (await mainArea.textContent() || '')
+      : (await merchantPage.locator('body').textContent() || '');
     const hasContent =
-      bodyText.includes('Service') ||
-      bodyText.includes('service') ||
-      bodyText.includes('No ') ||
-      bodyText.includes('empty') ||
-      bodyText.includes('Get started') ||
-      bodyText.includes('Add');
+      contentText.includes('Service') ||
+      contentText.includes('service') ||
+      contentText.includes('No ') ||
+      contentText.includes('empty') ||
+      contentText.includes('Get started') ||
+      contentText.includes('Add');
     expect(hasContent).toBe(true);
   });
 });

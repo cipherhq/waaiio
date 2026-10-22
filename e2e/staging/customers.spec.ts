@@ -27,7 +27,10 @@ test.describe('Customers — authenticated merchant', () => {
     await merchantPage.goto('/dashboard/customers');
     await merchantPage.waitForLoadState('networkidle');
 
-    // Verify no service role key or internal tokens are exposed in page source
+    // Verify no service role key or internal tokens are exposed in page source.
+    // LIMITATION: This checks for env var NAME strings in page source, not
+    // actual JWT token structure. Detecting a real service_role JWT by parsing
+    // and validating token claims is deferred to Phase C.
     const pageContent = await merchantPage.content();
     expect(pageContent).not.toContain('service_role');
     expect(pageContent).not.toContain('SUPABASE_SERVICE_ROLE_KEY');

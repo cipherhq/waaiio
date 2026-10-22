@@ -1,3 +1,39 @@
+### #671 QA Phase B — CTO R3 final corrections (2026-10-22)
+
+- **`app/api/release-identity/route.ts`** (B1): Replace unanchored regex with `new URL()` parsing + anchored hostname match `^[a-z]{20}\.supabase\.co$`. Enforces HTTPS scheme. Rejects spoofed hostnames like `ref.supabase.co.evil.com` or ref-in-path attacks.
+- **`e2e/fixtures/staging-guard.ts`** (B3): Switch from `page.route()` to `page.context().route()` for context-level interception covering popups/new pages. Sanitize blocked-request diagnostics to `scheme://host/path` only (no query params, fragments, or userinfo).
+- **`e2e/staging/auth-boundaries.spec.ts`** (B3): Add `test.use({ serviceWorkers: 'block' })` for unauthenticated tests.
+- **`.github/workflows/staging-qa.yml`** (B4): Replace inline Python heredoc with tested `scripts/parse-evidence.py`. Summary checks `evidence_valid`, `timed_out`, `interrupted` — not just `failed`.
+- **`scripts/parse-evidence.py`** (new, B4): Extracted standalone evidence parser. Fails closed (exit 1) on ANY: parse errors, unknown statuses, timedOut, interrupted, missing reports, empty results. Tested by actual Python execution in unit tests.
+- **Tests**: Expanded to cover B1 hostname spoof regression (anchored regex, spoofed hostnames), B3 service-worker/URL-sanitization contracts, B4 actual Python parser execution (passed, retry, timedOut, interrupted, unknown, missing, malformed, all-skipped, nested suites).
+- Codex: UNAVAILABLE (usage limit). CTO is reviewer of record.
+
+### #671 QA Phase B — CTO R2 corrections (2026-10-22)
+
+- **`app/api/release-identity/route.ts`** (B1): Add `supabaseProjectRef` derived from `NEXT_PUBLIC_SUPABASE_URL` — reports only the 20-char project ref (already public), fail-closed if absent/malformed. Configuration-identity check, not DB reachability proof.
+- **`e2e/fixtures/staging-guard.ts`** (B1, B5): `verifyStagingIdentity()` now requires `supabaseProjectRef === staging ref` before navigation. `expectedSha` is now required (not optional) for remote targets — rejects empty/malformed SHA.
+- **`e2e/fixtures/auth.ts`** (B3): Block service workers in both worker-scoped and test-scoped contexts via `serviceWorkers: 'block'`.
+- **`e2e/staging/auth-boundaries.spec.ts`** (B2, B3): Use POST for `/api/dashboard/switch-business` (was GET, route exports POST only — GET would 405). Install request guard on ALL page-navigation tests (was only first test). API tests use `maxRedirects: 0` to prevent cross-origin redirect following.
+- **`.github/workflows/staging-qa.yml`** (B1, B4): Workflow identity step verifies `supabaseProjectRef`. Evidence parser uses LAST result for retries (not first), `auth_tests_executed` requires at least one non-skipped test, empty/missing files fail closed, malformed reports fail closed.
+- **`scripts/qa-staging.sh`** (B5): Require valid 40-hex `E2E_DEPLOYMENT_SHA` for non-loopback targets.
+- **`lib/__tests__/qa-staging-guard.test.ts`**: Expanded to 38 tests covering B1 (wrong/missing/production supabaseProjectRef), B2 (route method regression), B3 (guard coverage, service worker blocking), B4 (retry truthfulness, all-skipped detection), B5 (SHA requirement).
+- Codex: UNAVAILABLE (usage limit). CTO is reviewer of record.
+
+### #671 QA Phase B — staging fixture/workflow hardening (2026-10-22)
+
+- **`e2e/fixtures/staging-guard.ts`**: (1) Enforce HTTPS for non-loopback staging targets. (2) Add `verifyStagingIdentity()` — verifies Vercel deployment projectId, vercelEnv, and SHA via `/api/release-identity`. Documented limitation: this is deployment identity only, NOT database identity (see Phase C follow-up).
+- **`e2e/fixtures/auth.ts`**: (1) Refactor `merchantPage` to worker-scoped auth — login once per worker, reuse `storageState` in memory across tests (avoids repeated session-bind writes and notification emails). (2) Request guard violations now throw (fail-closed) instead of logging warnings. (3) Inherit project device settings (viewport, userAgent) from config in test contexts.
+- **`e2e/staging/auth-boundaries.spec.ts`**: (1) Add `verifyStagingIdentity()` in `beforeAll` for remote targets. (2) Install request guard and verify redirect origin stays on staging. (3) Replace non-existent `/api/businesses` route with real `/api/dashboard/switch-business`. (4) Rename admin test to "unauthenticated" (honest label; authenticated merchant check deferred to Phase C).
+- **`e2e/staging/navigation.spec.ts`**: Add `response.status()` check — 4xx/5xx responses now fail tests.
+- **`e2e/staging/catalog.spec.ts`**: Scope content assertions to `main` element to avoid sidebar false positives.
+- **`e2e/staging/customers.spec.ts`**: Add limitation comment about env-var-name vs JWT-structure detection.
+- **`.github/workflows/staging-qa.yml`**: (1) Replace all `${{ inputs.* }}` in shell `run:` blocks with env vars (command injection prevention). (2) Add HTTPS enforcement in guard step. (3) Add deployment identity verification step via `/api/release-identity`. (4) Use JSON reporter with allowlisted per-test evidence artifact (title, status, duration only — no error text, URLs, or credentials). (5) Summary now distinguishes "all passed" from "auth tests not executed".
+- **`scripts/qa-staging.sh`**: (1) Add `--config=e2e/playwright.staging.config.ts` to all Playwright invocations. (2) Enforce HTTPS for non-loopback. (3) Fix Python URL parsing to use positional args instead of string interpolation.
+- **`lib/__tests__/qa-staging-guard.test.ts`** (new): 25 unit tests covering HTTPS enforcement, identity verification (positive/negative), target validation, and constants.
+- **Not changed**: Application code, database, existing CI merge gate, Playwright staging config, or other 6 staging spec files.
+- **Affects**: Staging QA workflow safety, test fixtures, and evidence reporting only. No runtime application behavior changed.
+- **Known limitation**: Database identity (which Supabase project the server connects to) is NOT verified. Requires a minimal app-code change to `/api/release-identity` to report `NEXT_PUBLIC_SUPABASE_URL` — presented as Phase C follow-up.
+
 ## 2026-10-21 — Parties Phase B1: slug fix, guest tags, table seating (#661)
 
 ### Attendee-capacity enforcement (527d8b66)
