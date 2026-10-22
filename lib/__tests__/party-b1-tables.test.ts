@@ -405,6 +405,125 @@ describe('autoAssign', () => {
     expect(result.assigned).toBe(1);
     expect(mockRpc).toHaveBeenCalledTimes(2); // tried T1, then T2
   });
+
+  it('returns success:false when ALL table RPCs reject', async () => {
+    const { autoAssign } = await import('@/lib/parties/table-assignment');
+
+    let fromCallCount = 0;
+    const mockFrom = vi.fn((table: string) => {
+      if (table === 'party_tables') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                order: vi.fn(() => Promise.resolve({
+                  data: [{ id: 't1', capacity: 5, sort_order: 0 }],
+                })),
+              })),
+            })),
+          })),
+        };
+      }
+      if (table === 'event_invites') {
+        fromCallCount++;
+        if (fromCallCount === 1) {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    in: vi.fn(() => Promise.resolve({
+                      data: [{ id: 'inv-1', plus_ones: 0 }],
+                    })),
+                  })),
+                })),
+              })),
+            })),
+          };
+        }
+        return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
+      }
+      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
+    });
+
+    // Every RPC rejects
+    const mockRpc = vi.fn(() => Promise.resolve({
+      data: { success: false, error: 'Table capacity exceeded' },
+      error: null,
+    }));
+
+    const supabase = { from: mockFrom, rpc: mockRpc } as any;
+    const result = await autoAssign(supabase, 'party-1', 'biz-1');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('rejected');
+    expect(result.assigned).toBe(0);
+  });
+
+  it('returns success:true with partial assignment when some RPCs fail', async () => {
+    const { autoAssign } = await import('@/lib/parties/table-assignment');
+
+    let fromCallCount = 0;
+    const mockFrom = vi.fn((table: string) => {
+      if (table === 'party_tables') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                order: vi.fn(() => Promise.resolve({
+                  data: [
+                    { id: 't1', capacity: 2, sort_order: 0 },
+                    { id: 't2', capacity: 5, sort_order: 1 },
+                  ],
+                })),
+              })),
+            })),
+          })),
+        };
+      }
+      if (table === 'event_invites') {
+        fromCallCount++;
+        if (fromCallCount === 1) {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    in: vi.fn(() => Promise.resolve({
+                      data: [
+                        { id: 'inv-1', plus_ones: 0 },
+                        { id: 'inv-2', plus_ones: 0 },
+                      ],
+                    })),
+                  })),
+                })),
+              })),
+            })),
+          };
+        }
+        return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
+      }
+      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
+    });
+
+    let rpcCallNum = 0;
+    const mockRpc = vi.fn(() => {
+      rpcCallNum++;
+      if (rpcCallNum === 1) {
+        // T1 rejects (concurrent fill)
+        return Promise.resolve({ data: { success: false, error: 'capacity exceeded' }, error: null });
+      }
+      // T2 accepts
+      return Promise.resolve({ data: { success: true, assigned: 2 }, error: null });
+    });
+
+    const supabase = { from: mockFrom, rpc: mockRpc } as any;
+    const result = await autoAssign(supabase, 'party-1', 'biz-1');
+
+    // Partial success: T1 failed but T2 succeeded
+    expect(result.success).toBe(true);
+    expect(result.assigned).toBe(2);
+  });
 });
 
 // ════════════════════════════════════════════════════════════════

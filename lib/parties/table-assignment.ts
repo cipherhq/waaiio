@@ -168,6 +168,7 @@ export async function autoAssign(
   }));
 
   let totalAssigned = 0;
+  let rpcFailures = 0;
   const placed = new Set<string>();
 
   for (const table of tables) {
@@ -204,10 +205,17 @@ export async function autoAssign(
     if (!error && data?.success) {
       for (const id of batch) placed.add(id);
       totalAssigned += data.assigned ?? batch.length;
+    } else {
+      rpcFailures++;
     }
-    // If RPC rejects the batch, skip this table and try the next one
   }
 
   const skipped = guests.length - totalAssigned;
+
+  // Distinguish outcomes: all RPCs failed vs genuine capacity non-fit vs partial success
+  if (totalAssigned === 0 && rpcFailures > 0) {
+    return { success: false, error: 'All table assignments were rejected', assigned: 0, skipped };
+  }
+
   return { success: true, assigned: totalAssigned, skipped };
 }

@@ -491,11 +491,14 @@ export default function PartiesPage() {
     const { autoAssign } = await import('@/lib/parties/table-assignment');
     const result = await autoAssign(supabase, selectedParty.id, business.id);
     if (result.success) {
-      setStatusMessage(`Auto-assigned ${result.assigned} guests${result.skipped ? ` (${result.skipped} skipped — no capacity)` : ''}`);
+      const msg = result.assigned
+        ? `Auto-assigned ${result.assigned} guest${result.assigned !== 1 ? 's' : ''}${result.skipped ? ` (${result.skipped} could not be placed)` : ''}`
+        : 'No guests could be placed — all tables may be full';
+      setStatusMessage(msg);
       loadInvites(selectedParty.id);
       loadTables(selectedParty.id);
     } else {
-      setStatusMessage(result.error || 'Auto-assign failed');
+      setStatusMessage(result.error || 'Auto-assign failed — please try again');
     }
   }
 
