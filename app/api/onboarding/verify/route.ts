@@ -540,6 +540,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // #682: Track messaging allowance state across paid activation for the response.
+    let allowanceStatus: 'granted' | 'reconciled' | 'recovery_failed' | 'not_applicable' = 'not_applicable';
+
     if (plan !== 'free' && subscription?.id && paymentEvidenceId) {
       // Paid path: atomic activation via RPC — sets subscription active + business tier + allowance
       const { data: activationResult, error: activationError } = await service.rpc(
@@ -563,21 +566,100 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // #682: Structured warning when activation succeeds but allowance grant was skipped.
+      // The RPC checks channel readiness against the business status snapshot at RPC time.
+      // For shared-channel businesses, status may still be 'pending' at that point,
+      // causing allowance_granted: false with reason 'channel_not_ready'.
+      if (activationResult.activated === true && activationResult.allowance_granted === false) {
+        console.warn('[ONBOARDING-VERIFY] Activation succeeded but allowance not granted:', {
+          businessId,
+          reason: activationResult.reason,
+          plan,
+        });
+      }
+
       // Paid onboarding completion: transition business to active after proven
       // activation authority. Matches free path behavior (line ~600).
       // Payment/subscription evidence is already committed and will not be
       // rolled back. The existing idempotent verify/RPC replay converges on retry.
-      const { error: paidStatusErr } = await service
+      //
+      // #682: Use .select() to verify the update affected a row. A zero-row
+      // result with no error means the CAS guard (status='pending') didn't match —
+      // either an idempotent replay (already active) or an unexpected state.
+      const { data: statusUpdateRows, error: paidStatusErr } = await service
         .from('businesses')
         .update({ status: 'active' })
         .eq('id', businessId)
-        .eq('status', 'pending');
+        .eq('status', 'pending')
+        .select('id, status');
       if (paidStatusErr) {
         console.warn('[ONBOARDING-VERIFY] Paid business status update failed (retryable):', paidStatusErr);
         return NextResponse.json(
           { message: 'Business activation failed after payment. Please retry verification.', recoverable: true },
           { status: 500 },
         );
+      }
+
+      // #682: Determine whether the status transition actually happened.
+      // statusUpdateRows is empty when the CAS guard didn't match (business
+      // was not 'pending' — most likely already 'active' from a prior attempt).
+      const statusTransitioned = Array.isArray(statusUpdateRows) && statusUpdateRows.length > 0;
+      if (!statusTransitioned) {
+        // Verify the business is actually active before proceeding.
+        const { data: currentBiz } = await service
+          .from('businesses')
+          .select('status')
+          .eq('id', businessId)
+          .maybeSingle();
+        if (currentBiz?.status !== 'active') {
+          console.warn('[ONBOARDING-VERIFY] Business status not active after paid activation:', {
+            businessId,
+            currentStatus: currentBiz?.status,
+          });
+          return NextResponse.json(
+            { message: 'Business is not in expected state after activation. Please retry.', recoverable: true },
+            { status: 500 },
+          );
+        }
+        // Idempotent replay: business was already active.
+      }
+
+      // #682: Post-activation allowance recovery.
+      // If the initial activation skipped the allowance grant (e.g., channel_not_ready
+      // because business was still 'pending'), attempt reconciliation now that the
+      // business is confirmed active. reconcile_paid_allowance re-checks channel
+      // readiness against the current business state and is fully idempotent via source_ref.
+      if (activationResult.allowance_granted === true) {
+        allowanceStatus = 'granted';
+      } else if (activationResult.allowance_granted === false) {
+        try {
+          const { data: reconcileResult, error: reconcileErr } = await service.rpc(
+            'reconcile_paid_allowance',
+            { p_business_id: businessId },
+          );
+          if (reconcileErr) {
+            allowanceStatus = 'recovery_failed';
+            console.warn('[ONBOARDING-VERIFY] Post-activation allowance reconciliation failed:', {
+              businessId,
+              error: reconcileErr.message,
+            });
+          } else if (!reconcileResult || reconcileResult.reconciled !== true) {
+            allowanceStatus = 'recovery_failed';
+            console.warn('[ONBOARDING-VERIFY] Post-activation allowance not reconciled:', {
+              businessId,
+              reason: reconcileResult?.reason,
+            });
+          } else {
+            allowanceStatus = 'reconciled';
+            console.log('[ONBOARDING-VERIFY] Post-activation allowance reconciled:', {
+              businessId,
+              idempotent: reconcileResult.idempotent || false,
+            });
+          }
+        } catch (reconcileErr) {
+          allowanceStatus = 'recovery_failed';
+          console.warn('[ONBOARDING-VERIFY] Post-activation allowance reconciliation exception:', reconcileErr);
+        }
       }
 
       // Post-authority provider identity update (only after successful activation)
@@ -758,6 +840,9 @@ export async function POST(request: NextRequest) {
       plan,
       bot_code: business?.bot_code,
       slug: business?.slug,
+      // #682: Expose messaging allowance state so callers can distinguish
+      // full readiness from activation-without-messaging-credit.
+      messaging_allowance_status: allowanceStatus,
     });
   } catch (error) {
     return NextResponse.json(
