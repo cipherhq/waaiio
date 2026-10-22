@@ -381,6 +381,10 @@ export class FlowExecutor {
             try {
               await writePreferredResponseLanguage(this.supabase as never, session.user_id, targetLang);
             } catch (err) {
+              // Session switch succeeded but global preference write failed.
+              // The lang.switched copy says "Switched to X ✅" — accurately describes
+              // the session-level change without claiming the global preference was saved.
+              // Log for monitoring; do not send a false "saved preference" confirmation.
               logger.warn('[EXECUTOR] Language preference persistence failed:', err);
             }
           }

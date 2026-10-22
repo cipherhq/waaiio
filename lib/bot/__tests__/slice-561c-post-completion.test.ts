@@ -846,3 +846,143 @@ describe('561-C: transaction-docs handler sends localized copy', () => {
     expect(textMsgs.some(m => m.text.includes('No transactions found') || m.text.includes('Generating'))).toBe(true);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// Upstream navigation clears _pending_language_switch
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-C: upstream escape-hatch navigation clears pending language switch', () => {
+
+  it('free-text back clears _pending_language_switch and navigates to previous step', async () => {
+    const { handleEscapeHatch } = await import('../../bot/handlers/escape-hatches');
+    const executeSpy = vi.fn();
+    const casResult = { success: true, version: 2, current_step: 'select_service' };
+    const mockCtx = {
+      supabase: {
+        rpc: vi.fn().mockResolvedValue({ data: casResult, error: null }),
+        from: vi.fn(() => ({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'biz-1', name: 'Test Biz', slug: 'test', category: 'salon', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: '2099-01-01', metadata: {}, country_code: 'NG', payment_gateway: null }, error: null }),
+            }),
+          }),
+        })),
+      },
+      messageSender: { sendText: vi.fn(), sendButtons: vi.fn() },
+      flowExecutor: { execute: executeSpy },
+      intelligence: { resetAbuse: vi.fn() },
+    } as any;
+
+    const session = {
+      id: 's1', user_id: 'u1', business_id: 'biz-1',
+      current_step: 'collect_name',
+      session_data: {
+        _step_history: ['select_service', 'collect_name'],
+        _pending_language_switch: { language: 'pcm', persistent: false },
+        active_capability: 'scheduling',
+      },
+      version: 1,
+    } as any;
+
+    const result = await handleEscapeHatch(
+      mockCtx, '+234800', session, 'back', 'text', undefined,
+      'collect_name', vi.fn(), vi.fn(), vi.fn(), 'en',
+    );
+
+    expect(result.handled).toBe(true);
+    // _pending_language_switch must be removed from the CAS payload
+    const casCall = mockCtx.supabase.rpc.mock.calls[0];
+    expect(casCall[1].p_session_data._pending_language_switch).toBeUndefined();
+    // Session object updated
+    expect(session.session_data._pending_language_switch).toBeUndefined();
+    // Executor called with empty input to render previous step
+    expect(executeSpy).toHaveBeenCalledWith('+234800', '', expect.anything(), expect.anything());
+  });
+
+  it('booking-management back clears _pending_language_switch and navigates to my_account_menu', async () => {
+    const { handleEscapeHatch } = await import('../../bot/handlers/escape-hatches');
+    const executeSpy = vi.fn();
+    const casResult = { success: true, version: 2, current_step: 'my_account_menu' };
+    const mockCtx = {
+      supabase: {
+        rpc: vi.fn().mockResolvedValue({ data: casResult, error: null }),
+        from: vi.fn(() => ({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'biz-1', name: 'Test Biz', slug: 'test', category: 'salon', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: '2099-01-01', metadata: {}, country_code: 'NG', payment_gateway: null }, error: null }),
+            }),
+          }),
+        })),
+      },
+      messageSender: { sendText: vi.fn(), sendButtons: vi.fn() },
+      flowExecutor: { execute: executeSpy },
+      intelligence: { resetAbuse: vi.fn() },
+    } as any;
+
+    const session = {
+      id: 's1', user_id: 'u1', business_id: 'biz-1',
+      current_step: 'my_bookings',
+      session_data: {
+        _pending_language_switch: { language: 'en', persistent: true },
+        active_capability: 'scheduling',
+      },
+      version: 1,
+    } as any;
+
+    const result = await handleEscapeHatch(
+      mockCtx, '+234800', session, 'back', 'text', undefined,
+      'my_bookings', vi.fn(), vi.fn(), vi.fn(), 'en',
+    );
+
+    expect(result.handled).toBe(true);
+    // CAS payload must NOT contain _pending_language_switch
+    const casCall = mockCtx.supabase.rpc.mock.calls[0];
+    expect(casCall[1].p_session_data._pending_language_switch).toBeUndefined();
+    expect(casCall[1].p_current_step).toBe('my_account_menu');
+    // Session updated
+    expect(session.session_data._pending_language_switch).toBeUndefined();
+    expect(session.current_step).toBe('my_account_menu');
+    // Executor called with empty input
+    expect(executeSpy).toHaveBeenCalledWith('+234800', '', expect.anything(), expect.anything());
+  });
+
+  it('CAS failure on free-text back does not navigate or clear session state', async () => {
+    const { handleEscapeHatch } = await import('../../bot/handlers/escape-hatches');
+    const executeSpy = vi.fn();
+    const mockCtx = {
+      supabase: {
+        rpc: vi.fn().mockResolvedValue({ data: { success: false }, error: null }),
+        from: vi.fn(() => ({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        })),
+      },
+      messageSender: { sendText: vi.fn(), sendButtons: vi.fn() },
+      flowExecutor: { execute: executeSpy },
+      intelligence: { resetAbuse: vi.fn() },
+    } as any;
+
+    const session = {
+      id: 's1', user_id: 'u1', business_id: 'biz-1',
+      current_step: 'collect_name',
+      session_data: {
+        _step_history: ['select_service', 'collect_name'],
+        _pending_language_switch: { language: 'pcm', persistent: false },
+      },
+      version: 1,
+    } as any;
+
+    const result = await handleEscapeHatch(
+      mockCtx, '+234800', session, 'back', 'text', undefined,
+      'collect_name', vi.fn(), vi.fn(), vi.fn(), 'en',
+    );
+
+    // CAS failed — handler returns silently
+    expect(result.handled).toBe(true);
+    // Executor must NOT be called — navigation was not committed
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+});
