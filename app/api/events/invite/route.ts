@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
   if (partyId) {
     const { data: party, error: partyError } = await service
       .from('parties')
-      .select('id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, image_url')
+      .select('id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, image_url, max_guests')
       .eq('id', partyId)
       .eq('business_id', businessId)
       .single();
@@ -86,6 +86,29 @@ export async function POST(request: NextRequest) {
     if (partyError || !party) {
       return NextResponse.json({ error: 'Party not found' }, { status: 404 });
     }
+
+    // ── Attendee capacity enforcement (#661) ──
+    // Counts total attendees (invites + their plus_ones), not just invite rows.
+    // 1 invite + 2 plus_ones = 3 attendees against max_guests.
+    if (party.max_guests && party.max_guests > 0) {
+      const { data: attendeeData } = await service
+        .from('event_invites')
+        .select('plus_ones')
+        .eq('party_id', partyId)
+        .eq('business_id', businessId)
+        .in('status', ['accepted', 'pending', 'maybe']);
+      const currentAttendees = (attendeeData || []).reduce(
+        (sum, inv) => sum + 1 + (inv.plus_ones || 0), 0
+      );
+      // Each new invite = 1 attendee (plus_ones added later via RSVP)
+      const newAttendees = phones.slice(0, 50).filter(p => p.replace(/\D/g, '').length >= 7).length;
+      if (currentAttendees + newAttendees > party.max_guests) {
+        return NextResponse.json({
+          error: `Party capacity is ${party.max_guests} attendees. Currently ${currentAttendees} (including plus-ones). Cannot add ${newAttendees} more.`,
+        }, { status: 409 });
+      }
+    }
+
     inviteTarget = party;
   } else if (eventId) {
     const { data: event, error: eventError } = await service

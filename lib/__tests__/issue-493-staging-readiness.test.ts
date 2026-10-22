@@ -354,19 +354,19 @@ describe('POST /api/giving/save — actual route', () => {
 describe('createParty — production function', () => {
   it('successful insert -> success:true', async () => {
     const { createParty } = await import('@/lib/actions/party-persistence');
-    const sb = { from: () => ({ insert: () => Promise.resolve({ error: null }) }) } as any;
+    const sb = { from: () => ({ insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: { id: 'p-1', slug: 'test-abc123' }, error: null }) }) }) }) } as any;
     const r = await createParty(sb, { business_id: 'b1', name: 'Test', date: '2026-12-01' });
     expect(r.success).toBe(true);
   });
   it('DB error -> success:false + error message', async () => {
     const { createParty } = await import('@/lib/actions/party-persistence');
-    const sb = { from: () => ({ insert: () => Promise.resolve({ error: { message: 'RLS violation' } }) }) } as any;
+    const sb = { from: () => ({ insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: null, error: { message: 'RLS violation', code: '42501' } }) }) }) }) } as any;
     const r = await createParty(sb, { business_id: 'b1', name: 'Bad', date: '2026-12-01' });
     expect(r.success).toBe(false); expect(r.error).toContain('RLS violation');
   });
   it('error path does not return success', async () => {
     const { createParty } = await import('@/lib/actions/party-persistence');
-    const sb = { from: () => ({ insert: () => Promise.resolve({ error: { message: 'constraint' } }) }) } as any;
+    const sb = { from: () => ({ insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: null, error: { message: 'constraint', code: '23514' } }) }) }) }) } as any;
     const r = await createParty(sb, { business_id: 'b1', name: 'X', date: '2026-12-01' });
     expect(r.success).not.toBe(true);
   });

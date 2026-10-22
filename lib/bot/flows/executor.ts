@@ -8,6 +8,7 @@ import type { SupportedLanguage } from '@/lib/bot/languages';
 import { CERTIFIED_LANGUAGES } from '@/lib/bot/languages';
 import {
   parseLanguagePreferenceIntent,
+  classifyLanguageSwitchReply,
   writePreferredResponseLanguage,
   resolveEffectiveResponseLanguage,
 } from '@/lib/bot/language-preference';
@@ -25,6 +26,10 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logDropoff } from '@/lib/bot/flow-analytics';
 import { FlowExecutionCollector, createScopedSender, generateExecutionId } from './instrumentation';
 import { flushExecutionAnalytics } from './analytics-flush';
+
+// Steps where users type arbitrary text (names, addresses, codes, PINs).
+// Navigation words like "back" should NOT be intercepted on these steps.
+const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'chat_handoff', 'chat_start'];
 
 export class FlowExecutor {
   private currentBusinessId: string | null = null;
@@ -315,9 +320,95 @@ export class FlowExecutor {
       session.conversation_log = session.conversation_log.slice(-100);
     }
 
+    // A language switch must be confirmed before changing either session or profile.
+    // Keep this separate from commerce confirmations (PIN, payment, order approval).
+    const pendingLanguage = session.session_data._pending_language_switch as
+      | { language: string; persistent?: boolean }
+      | undefined;
+    if (pendingLanguage) {
+      // Global escape commands must not be blocked by a pending language switch.
+      // Clear the pending state and fall through to the normal escape handlers.
+      // L1: Back-navigation words also escape, but ONLY on non-free-text steps
+      // (matching the existing BACK_WORDS handler which skips free-text).
+      const isBackNav = /^(back|go\s+back|previous)$/i.test(input.trim());
+      // Must match ALL cancel/restart tokens from the global escape handlers below,
+      // including multilingual forms, to avoid trapping users at confirmation.
+      const trimmedInput = input.trim().toLowerCase();
+      const ESCAPE_CANCEL = ['stop', 'quit', 'exit', 'end', 'cancel', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
+      const ESCAPE_RESTART = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
+      const isGlobalEscape = ESCAPE_CANCEL.includes(trimmedInput) || ESCAPE_RESTART.includes(trimmedInput);
+      // Human-support escalation uses the same pattern as the handler at line ~548.
+      const escalationPattern = /\b(talk|speak|chat)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|someone)\b|\b(live\s+(agent|chat|support))\b|\b(customer\s+service)\b|\b(i\s+need\s+(a\s+)?(human|agent|help))\b/i;
+      const isHumanEscalation = escalationPattern.test(trimmedInput) || trimmedInput === 'talk_to_human';
+      if (isGlobalEscape || isHumanEscalation || (isBackNav && !FREE_TEXT_STEPS.includes(stepId))) {
+        delete session.session_data._pending_language_switch;
+        if (!await this.casUpdateSession(session, {
+          current_step: session.current_step, session_data: session.session_data,
+        })) return;
+        // Fall through to the global escape handlers below
+      } else {
+        const decision = classifyLanguageSwitchReply(input);
+        const currentLang = this.resolveCopyLang(session, entitlement);
+        if (decision === 'other') {
+          const { getLanguageName } = await import('@/lib/bot/languages');
+          await this.sendText(from, fillFlowCopy(currentLang, 'lang.switch_confirm', {
+            langName: getLanguageName(pendingLanguage.language),
+          }), scopedSender);
+          return;
+        }
+
+        delete session.session_data._pending_language_switch;
+        if (decision === 'confirm') {
+          const targetLang = pendingLanguage.language;
+          const allowed = CERTIFIED_LANGUAGES.includes(targetLang)
+            && entitlement.allowedLanguages.includes(targetLang)
+            && (targetLang === 'en' || entitlement.translationAllowed);
+          if (!allowed) {
+            if (!await this.casUpdateSession(session, {
+              current_step: session.current_step, session_data: session.session_data,
+            })) return;
+            const { getLanguageName } = await import('@/lib/bot/languages');
+            await this.sendText(from, fillFlowCopy(currentLang, 'lang.not_available', {
+              langName: getLanguageName(targetLang),
+            }), scopedSender);
+            return;
+          }
+          session.session_data._detected_language = targetLang === 'en' ? undefined : targetLang;
+          if (!await this.casUpdateSession(session, {
+            current_step: session.current_step, session_data: session.session_data,
+          })) return;
+          if (session.user_id && pendingLanguage.persistent) {
+            try {
+              await writePreferredResponseLanguage(this.supabase as never, session.user_id, targetLang);
+            } catch (err) {
+              // Session switch succeeded but global preference write failed.
+              // The lang.switched copy says "Switched to X ✅" — accurately describes
+              // the session-level change without claiming the global preference was saved.
+              // Log for monitoring; do not send a false "saved preference" confirmation.
+              logger.warn('[EXECUTOR] Language preference persistence failed:', err);
+            }
+          }
+          const { getLanguageName } = await import('@/lib/bot/languages');
+          const switched = targetLang === 'en'
+            ? getFlowCopy('en', 'lang.switched_english')
+            : fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
+          await this.sendText(from, switched, scopedSender);
+          ctx.copyLang = this.resolveCopyLang(session, entitlement);
+        } else {
+          if (!await this.casUpdateSession(session, {
+            current_step: session.current_step, session_data: session.session_data,
+          })) return;
+          await this.sendText(from, getFlowCopy(currentLang, 'lang.switch_cancelled'), scopedSender);
+        }
+
+        const retryMsgs = await step.prompt(ctx);
+        await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
+        return;
+      }
+    }
+
     // ── Navigation: "back" command ──
     // Only intercept on non-free-text steps so users can literally type "back" as input
-    const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'chat_handoff', 'chat_start'];
     const BACK_WORDS = ['back', 'go back', 'previous', 'cancel'];
     const lowerInputTrimmed = input.toLowerCase().trim();
     if (BACK_WORDS.includes(lowerInputTrimmed) && !FREE_TEXT_STEPS.includes(stepId)) {
@@ -398,112 +489,66 @@ export class FlowExecutor {
       return;
     }
 
-    // #524: Language preference intent covers both persistent ("always speak pidgin")
-    // and session-scoped ("pidgin", "speak pidgin", "abeg talk pidgin") requests.
-    // Persistent writes to the profile; session-scoped only updates session_data.
-    //
-    // Bare language names ("pidgin", "english") defer to the active step: if the
-    // step accepts the word as an answer (option match, free-text), treat it as
-    // input, not a language switch. Verb phrases always switch regardless of step.
+    // Explicit language requests stage a presentation-only confirmation.
+    // Neither the saved preference nor the active checkout state changes yet.
     const languagePreferenceIntent = parseLanguagePreferenceIntent(input);
-    let preValidation: Awaited<ReturnType<typeof step.validate>> | undefined;
     let skipBareSwitch = false;
+    // Preserve the one-time validation result: repeating validation can perform
+    // side effects (for example, live-chat forwarding or DB writes).
+    let preValidation: Awaited<ReturnType<typeof step.validate>> | undefined;
     if (languagePreferenceIntent?.isBare && step) {
       preValidation = await step.validate(input, ctx);
       if (preValidation.valid) skipBareSwitch = true;
     }
     if (languagePreferenceIntent && !skipBareSwitch) {
-      const targetLang = languagePreferenceIntent.language as SupportedLanguage;
-      const isPersistent = languagePreferenceIntent.persistence === 'persistent';
-      const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
-      const mayActivate = CERTIFIED_LANGUAGES.includes(targetLang)
-        && entitlement.allowedLanguages.includes(targetLang)
-        && (targetLang === 'en'
-          || (entitlement.translationAllowed && entitlement.llmAllowed));
-
-      if (mayActivate) {
-        session.session_data._detected_language = targetLang === 'en'
-          ? undefined
-          : targetLang;
-        const langSaved = await this.casUpdateSession(session, {
-          current_step: session.current_step,
-          session_data: session.session_data,
-        });
-        if (!langSaved) return;
-
-        if (isPersistent && session.user_id) {
-          try {
-            // The helper intentionally exposes only the narrow profiles operations it
-            // needs; the runtime Supabase client provides that same surface.
-            await writePreferredResponseLanguage(this.supabase as never, session.user_id, targetLang);
-          } catch (err) {
-            // Preference persistence is non-transactional presentation state. Keep
-            // the valid session switch working, but fail closed on the durable write.
-            logger.warn('[EXECUTOR] Could not persist response-language preference:', err);
-          }
+      const targetLang = languagePreferenceIntent.language;
+      const currentLang = this.resolveCopyLang(session, entitlement);
+      const { getLanguageName } = await import('@/lib/bot/languages');
+      if (targetLang === currentLang) {
+        // L3: Persistent intent ("always use X") must be confirmed before writing
+        // the global preference. The session may match due to business-level fallback,
+        // not because the user deliberately chose it globally.
+        if (languagePreferenceIntent.persistence === 'persistent' && session.user_id) {
+          session.session_data._pending_language_switch = {
+            language: targetLang,
+            persistent: true,
+          };
+          if (!await this.casUpdateSession(session, {
+            current_step: session.current_step, session_data: session.session_data,
+          })) return;
+          await this.sendText(from, fillFlowCopy(currentLang, 'lang.confirm_save_preference', {
+            langName: getLanguageName(targetLang),
+          }), scopedSender);
+          return;
         }
-
-        const { getLanguageName } = await import('@/lib/bot/translate');
-        const confirmation = targetLang === 'en'
-          ? getFlowCopy('en', 'lang.switched_english')
-          : fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
-        await this.sendText(from, confirmation, scopedSender);
-      } else {
-        const { getLanguageName } = await import('@/lib/bot/translate');
-        const unavailMsg = fillFlowCopy('en', 'lang.not_available', { langName: getLanguageName(targetLang) });
-        await this.sendText(from, unavailMsg, scopedSender);
-      }
-
-      const retryMsgs = await step.prompt(ctx);
-      await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
-      return;
-    }
-
-    // Language switching escape hatch: "switch to yoruba" / "speak hausa" / "parle français"
-    const langSwitchMatch = lowerInput.match(/\b(?:switch\s+to|speak|talk|change\s+(?:to|language\s+to)|use)\s+(pidgin|yoruba|igbo|hausa|twi|french|spanish|english|français|español)\b/i);
-    if (langSwitchMatch) {
-      const langMap: Record<string, SupportedLanguage> = {
-        pidgin: 'pcm', yoruba: 'yo', igbo: 'ig', hausa: 'ha', twi: 'tw',
-        french: 'fr', français: 'fr', spanish: 'es', español: 'es', english: 'en',
-      };
-      const targetLang = langMap[langSwitchMatch[1].toLowerCase()];
-      if (targetLang) {
-        const { getLanguageName } = await import('@/lib/bot/translate');
-        if (targetLang === 'en') {
-          session.session_data._detected_language = undefined;
-          const langSaved = await this.casUpdateSession(session, {
-            current_step: session.current_step,
-            session_data: session.session_data,
-          });
-          if (!langSaved) return;
-          await this.sendText(from, getFlowCopy('en', 'lang.switched_english'), scopedSender);
-        } else {
-          // Validate target language against entitlement + certification before persisting
-          const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
-          if (!entitlement.translationAllowed
-              || !entitlement.allowedLanguages.includes(targetLang)
-              || !CERTIFIED_LANGUAGES.includes(targetLang)) {
-            const langName = getLanguageName(targetLang);
-            await this.sendText(from, fillFlowCopy('en', 'lang.not_available', { langName }), scopedSender);
-            // Re-prompt current step without changing language
-            const retryMsgs = await step.prompt(ctx);
-            await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
-            return;
-          }
-          session.session_data._detected_language = targetLang;
-          const langSaved = await this.casUpdateSession(session, {
-            current_step: session.current_step,
-            session_data: session.session_data,
-          });
-          if (!langSaved) return;
-          const msg = fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
-          await this.sendText(from, msg, scopedSender);
-        }
-        // Re-prompt current step in new language
+        // L4: Non-persistent "already selected" — acknowledge and re-prompt step.
+        await this.sendText(from, getFlowCopy(currentLang, 'lang.already_selected'), scopedSender);
         const retryMsgs = await step.prompt(ctx);
         await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
         return;
       }
+      const allowed = CERTIFIED_LANGUAGES.includes(targetLang)
+        && entitlement.allowedLanguages.includes(targetLang)
+        && (targetLang === 'en' || entitlement.translationAllowed);
+      if (!allowed) {
+        await this.sendText(from, fillFlowCopy(currentLang, 'lang.not_available', {
+          langName: getLanguageName(targetLang),
+        }), scopedSender);
+        const retryMsgs = await step.prompt(ctx);
+        await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
+        return;
+      }
+      session.session_data._pending_language_switch = {
+        language: targetLang,
+        persistent: languagePreferenceIntent.persistence === 'persistent',
+      };
+      if (!await this.casUpdateSession(session, {
+        current_step: session.current_step, session_data: session.session_data,
+      })) return;
+      await this.sendText(from, fillFlowCopy(currentLang, 'lang.switch_confirm', {
+        langName: getLanguageName(targetLang),
+      }), scopedSender);
+      return;
     }
 
     // Global escalation escape hatch: "talk to human" works at any step
