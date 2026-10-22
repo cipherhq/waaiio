@@ -149,7 +149,7 @@ describe('561-D: waitlist flow runtime', () => {
     expect(p.body).toContain('dey fully booked');
     expect(p.buttons).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ title: 'Join Waitlist' }),
+        expect.objectContaining({ title: 'Join Waiting List' }),
         expect.objectContaining({ title: getFlowCopy('pcm', 'nav.no_thanks') }),
       ])
     );
@@ -229,7 +229,7 @@ describe('561-D: RSVP flow runtime', () => {
     const btnOut = output[1] as any;
     expect(btnOut.buttons).toEqual([
       expect.objectContaining({ title: 'Yes, I go dey there!' }),
-      expect.objectContaining({ title: 'Maybe' }),
+      expect.objectContaining({ title: 'I Never Sure' }),
       expect.objectContaining({ title: 'I no fit come' }),
     ]);
   });

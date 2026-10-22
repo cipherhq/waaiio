@@ -17,9 +17,13 @@ export interface LanguagePreferenceIntent {
 const LANGUAGE_SWITCH_PATTERNS: readonly RegExp[] = [
   // English / code-switched commands
   /^(?:always\s+)?(?:speak|talk|use)\s+(.+?)(?:\s+(?:for now|from now on))?$/,
+  /^(?:please\s+)?(?:speak|talk|use)\s+(.+?)(?:\s+(?:for now|from now on))?$/,
   /^reply\s+to\s+me\s+in\s+(.+?)(?:\s+from now on)?$/,
   /^switch\s+to\s+(.+?)$/,
+  /^(?:i\s+want\s+to\s+)?switch\s+back\s+to\s+(.+?)$/,
+  /^i\s+want\s+to\s+(?:switch\s+to|speak|use)\s+(.+?)$/,
   /^(?:change|set)\s+(?:my\s+)?language\s+to\s+(.+?)$/,
+  /^change\s+to\s+(.+?)$/,
   // Nigerian Pidgin
   /^(?:abeg\s+)?(?:speak|talk|use)\s+(.+?)(?:\s+for\s+now)?$/,
   /^reply\s+me\s+(?:for|in)\s+(.+?)$/,
@@ -90,6 +94,14 @@ export function parseLanguagePreferenceIntent(
     persistence: persistent ? 'persistent' : 'session',
     isBare: bare,
   };
+}
+
+/** A pending language switch is a presentation-only choice, never a flow confirmation. */
+export function classifyLanguageSwitchReply(input: string): 'confirm' | 'decline' | 'other' {
+  const normalized = normalizeInboundCommand(input).trim();
+  if (/^(?:yes|yes switch|yes change|confirm|confam|confirm switch|switch|okay|ok|yes na|oya|abeg change|ehen|oui|si|sí|bẹẹni|bee ni)$/i.test(normalized)) return 'confirm';
+  if (/^(?:no|no thanks|no thank you|don't switch|dont switch|keep current|stay|cancel switch|not now|no wahala|mba|non)$/i.test(normalized)) return 'decline';
+  return 'other';
 }
 
 export interface EffectiveResponseLanguageInput {
