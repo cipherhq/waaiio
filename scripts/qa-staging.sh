@@ -105,6 +105,16 @@ case "$HOSTNAME" in
     ;;
 esac
 
+# Require deployment SHA for remote targets (B5)
+if [ "$HOSTNAME" != "localhost" ] && [ "$HOSTNAME" != "127.0.0.1" ]; then
+  SHA_PATTERN='^[0-9a-f]{40}$'
+  if [ -z "${E2E_DEPLOYMENT_SHA:-}" ] || ! echo "${E2E_DEPLOYMENT_SHA}" | grep -qE "$SHA_PATTERN"; then
+    echo "FAIL-CLOSED — E2E_DEPLOYMENT_SHA must be a valid 40-hex-char SHA for remote targets."
+    echo "Set it to the exact SHA deployed to staging."
+    exit 1
+  fi
+fi
+
 echo "═══════════════════════════════════════"
 echo "  Staging QA — Local Runner"
 echo "═══════════════════════════════════════"

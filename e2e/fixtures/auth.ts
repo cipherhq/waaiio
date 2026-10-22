@@ -108,14 +108,13 @@ export const test = base.extend<StagingTestFixtures, StagingWorkerFixtures>({
     // that passes the hostname allowlist but is not the real staging project.
     const { hostname } = new URL(baseUrl);
     if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      await verifyStagingIdentity(
-        baseUrl,
-        process.env.E2E_DEPLOYMENT_SHA || undefined,
-      );
+      const deploymentSha = process.env.E2E_DEPLOYMENT_SHA || '';
+      await verifyStagingIdentity(baseUrl, deploymentSha);
     }
 
     const context: BrowserContext = await browser.newContext({
       baseURL: baseUrl,
+      serviceWorkers: 'block',
     });
     const page = await context.newPage();
 
@@ -199,6 +198,7 @@ export const test = base.extend<StagingTestFixtures, StagingWorkerFixtures>({
       ...projectUse,
       baseURL: stagingBaseUrl,
       storageState: merchantAuth.storageState,
+      serviceWorkers: 'block',
     });
 
     const page = await context.newPage();

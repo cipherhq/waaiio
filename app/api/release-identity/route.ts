@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 
 const ERR_HEADERS = { 'Cache-Control': 'no-store' } as const;
 const SHA_RE = /^[0-9a-f]{40}$/;
+const SUPABASE_REF_RE = /^[a-z]{20}$/;
 
 /**
  * GET /api/release-identity
@@ -50,12 +51,27 @@ export async function GET() {
     );
   }
 
+  // Supabase project ref — derived from the same NEXT_PUBLIC_SUPABASE_URL
+  // used by lib/supabase/server.ts and lib/supabase/service.ts.
+  // Reports only the 20-char project ref (already public), never keys.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const supabaseRefMatch = supabaseUrl.match(/\/\/([a-z]+)\.supabase\.co/);
+  const supabaseProjectRef = supabaseRefMatch?.[1] || '';
+
+  if (!SUPABASE_REF_RE.test(supabaseProjectRef)) {
+    return NextResponse.json(
+      { error: 'Missing or malformed Supabase project ref' },
+      { status: 500, headers: ERR_HEADERS },
+    );
+  }
+
   return NextResponse.json(
     {
       sha,
       projectId,
       deploymentId,
       vercelEnv,
+      supabaseProjectRef,
       timestamp: new Date().toISOString(),
     },
     { status: 200, headers: { 'Cache-Control': 'no-store' } },

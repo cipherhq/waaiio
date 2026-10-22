@@ -396,6 +396,7 @@ export interface DeploymentIdentity {
   projectId: string;
   deploymentId: string;
   vercelEnv: string;
+  supabaseProjectRef: string;
 }
 
 /**
@@ -404,21 +405,29 @@ export interface DeploymentIdentity {
  * Checks:
  *   - projectId matches expected staging Vercel project
  *   - vercelEnv is NOT 'production'
- *   - Deployed SHA matches expectedSha (if provided)
+ *   - supabaseProjectRef matches expected staging Supabase ref
+ *   - Deployed SHA matches expectedSha (required for remote targets)
  *   - Response shape is valid (40-hex SHA, prj_ prefix, dpl_ prefix)
  *
- * LIMITATION: This verifies Vercel deployment identity only. It does NOT
- * verify the server's Supabase/database project. A staging Vercel deployment
- * misconfigured to use a production database would pass this check.
- * Server-side database identity verification requires an application-code
- * change to report NEXT_PUBLIC_SUPABASE_URL from the server — see Phase C.
+ * NOTE: supabaseProjectRef is a configuration-identity check — it verifies
+ * the server's NEXT_PUBLIC_SUPABASE_URL matches the staging project. This
+ * does not prove actual database reachability or that no other DB client
+ * with a different URL exists elsewhere.
  *
  * Fail-closed: throws on mismatch, network error, or malformed response.
  */
 export async function verifyStagingIdentity(
   baseUrl: string,
-  expectedSha?: string,
+  expectedSha: string,
 ): Promise<DeploymentIdentity> {
+  // Require valid 40-hex SHA for remote targets (B5)
+  if (!/^[0-9a-f]{40}$/.test(expectedSha)) {
+    throw new Error(
+      `FAIL-CLOSED: expectedSha must be a valid 40-hex-char SHA for remote targets. ` +
+      `Got: "${expectedSha}". Set E2E_DEPLOYMENT_SHA to the exact deployed staging SHA.`
+    );
+  }
+
   const url = `${baseUrl.replace(/\/$/, '')}/api/release-identity`;
 
   let response: Response;
@@ -468,11 +477,20 @@ export async function verifyStagingIdentity(
     );
   }
 
-  // Verify SHA match if expected
-  if (expectedSha && data.sha !== expectedSha) {
+  // Verify SHA match (required for remote targets)
+  if (data.sha !== expectedSha) {
     throw new Error(
       `FAIL-CLOSED: Deployed SHA "${String(data.sha)}" does not match ` +
       `expected SHA "${expectedSha}".`
+    );
+  }
+
+  // Verify Supabase project ref matches staging (B1 — database identity)
+  if (data.supabaseProjectRef !== STAGING_SUPABASE_REF) {
+    throw new Error(
+      `FAIL-CLOSED: Server supabaseProjectRef "${String(data.supabaseProjectRef)}" ` +
+      `does not match expected staging ref "${STAGING_SUPABASE_REF}". ` +
+      `The deployment may be configured with a non-staging database.`
     );
   }
 
@@ -481,6 +499,7 @@ export async function verifyStagingIdentity(
   const projectId = String(data.projectId || '');
   const deploymentId = String(data.deploymentId || '');
   const vercelEnv = String(data.vercelEnv || '');
+  const supabaseProjectRef = String(data.supabaseProjectRef || '');
 
   if (!/^[0-9a-f]{40}$/.test(sha)) {
     throw new Error(`FAIL-CLOSED: Deployment SHA "${sha}" is not a valid 40-hex-char string.`);
@@ -491,8 +510,11 @@ export async function verifyStagingIdentity(
   if (!deploymentId.startsWith('dpl_')) {
     throw new Error(`FAIL-CLOSED: Deployment deploymentId "${deploymentId}" missing dpl_ prefix.`);
   }
+  if (!/^[a-z]{20}$/.test(supabaseProjectRef)) {
+    throw new Error(`FAIL-CLOSED: supabaseProjectRef "${supabaseProjectRef}" is malformed (expected 20 lowercase letters).`);
+  }
 
-  return { sha, projectId, deploymentId, vercelEnv };
+  return { sha, projectId, deploymentId, vercelEnv, supabaseProjectRef };
 }
 
 // ── Credential requirement assertions ──

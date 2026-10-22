@@ -1,3 +1,14 @@
+### #671 QA Phase B — CTO R2 corrections (2026-10-22)
+
+- **`app/api/release-identity/route.ts`** (B1): Add `supabaseProjectRef` derived from `NEXT_PUBLIC_SUPABASE_URL` — reports only the 20-char project ref (already public), fail-closed if absent/malformed. Configuration-identity check, not DB reachability proof.
+- **`e2e/fixtures/staging-guard.ts`** (B1, B5): `verifyStagingIdentity()` now requires `supabaseProjectRef === staging ref` before navigation. `expectedSha` is now required (not optional) for remote targets — rejects empty/malformed SHA.
+- **`e2e/fixtures/auth.ts`** (B3): Block service workers in both worker-scoped and test-scoped contexts via `serviceWorkers: 'block'`.
+- **`e2e/staging/auth-boundaries.spec.ts`** (B2, B3): Use POST for `/api/dashboard/switch-business` (was GET, route exports POST only — GET would 405). Install request guard on ALL page-navigation tests (was only first test). API tests use `maxRedirects: 0` to prevent cross-origin redirect following.
+- **`.github/workflows/staging-qa.yml`** (B1, B4): Workflow identity step verifies `supabaseProjectRef`. Evidence parser uses LAST result for retries (not first), `auth_tests_executed` requires at least one non-skipped test, empty/missing files fail closed, malformed reports fail closed.
+- **`scripts/qa-staging.sh`** (B5): Require valid 40-hex `E2E_DEPLOYMENT_SHA` for non-loopback targets.
+- **`lib/__tests__/qa-staging-guard.test.ts`**: Expanded to 38 tests covering B1 (wrong/missing/production supabaseProjectRef), B2 (route method regression), B3 (guard coverage, service worker blocking), B4 (retry truthfulness, all-skipped detection), B5 (SHA requirement).
+- Codex: UNAVAILABLE (usage limit). CTO is reviewer of record.
+
 ### #671 QA Phase B — staging fixture/workflow hardening (2026-10-22)
 
 - **`e2e/fixtures/staging-guard.ts`**: (1) Enforce HTTPS for non-loopback staging targets. (2) Add `verifyStagingIdentity()` — verifies Vercel deployment projectId, vercelEnv, and SHA via `/api/release-identity`. Documented limitation: this is deployment identity only, NOT database identity (see Phase C follow-up).
