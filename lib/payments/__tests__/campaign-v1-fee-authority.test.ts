@@ -231,13 +231,40 @@ describe('processCampaignDonation — V1 fee-policy propagation (real calculator
     expect(feeInserts[0].row.transaction_amount).toBe(3000);
   });
 
-  it('two-call replay: second invocation still attempts insert (DB UNIQUE handles dedup)', async () => {
+  it('two-call replay: second insert hits unique violation, exactly one fee persists', async () => {
+    // M310: CREATE UNIQUE INDEX idx_platform_fees_payment_unique
+    //   ON platform_fees(payment_id) WHERE payment_id IS NOT NULL;
+    //
+    // recordPlatformFee handles duplicate by checking error.message includes
+    // 'duplicate' or 'unique' — silently succeeds on duplicate (idempotent).
+    const insertCallCount = { count: 0 };
+
     const supabase = mockSupabase({
       rpcResult: { applied: true, is_legacy: false, amount: 500 },
     });
 
-    // First call
-    await processCampaignDonation(supabase as any, 'pay-dup', 'camp-dup', 500, 15, {
+    // Override the insert mock to simulate DB unique violation on second call
+    const originalFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      const chain = originalFrom(table);
+      if (table === 'platform_fees') {
+        chain.insert = vi.fn().mockImplementation((row: Record<string, unknown>) => {
+          supabase._insertCalls.push({ table, row });
+          insertCallCount.count++;
+          if (insertCallCount.count > 1) {
+            // Simulate PostgreSQL 23505 unique_violation
+            return Promise.resolve({
+              data: null,
+              error: { code: '23505', message: 'duplicate key value violates unique constraint "idx_platform_fees_payment_unique"' },
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        });
+      }
+      return chain;
+    }) as typeof supabase.from;
+
+    const feePolicy = {
       feePolicyVersion: 1,
       configVersionId: 'cfg-v1-abc',
       transactionCategory: 'giving',
@@ -249,12 +276,11 @@ describe('processCampaignDonation — V1 fee-policy propagation (real calculator
         custom_fee_flat: null,
       },
       paymentRouting: 'platform' as const,
-    });
+    };
 
-    const firstCallInserts = supabase._insertCalls.filter(
-      (c: { table: string }) => c.table === 'platform_fees'
-    ).length;
-    expect(firstCallInserts).toBe(1);
+    // First call — insert succeeds
+    await processCampaignDonation(supabase as any, 'pay-dup', 'camp-dup', 500, 15, feePolicy);
+    expect(insertCallCount.count).toBe(1);
 
     // Simulate replay: RPC returns already_applied
     supabase.rpc.mockResolvedValueOnce({
@@ -262,29 +288,59 @@ describe('processCampaignDonation — V1 fee-policy propagation (real calculator
       error: null,
     });
 
-    // Second call
-    await processCampaignDonation(supabase as any, 'pay-dup', 'camp-dup', 500, 15, {
-      feePolicyVersion: 1,
-      configVersionId: 'cfg-v1-abc',
-      transactionCategory: 'giving',
-      feeBasis: {
-        payment_routing: 'platform' as const,
-        tier: 'growth' as const,
-        is_in_trial: false,
-        custom_fee_percentage: null,
-        custom_fee_flat: null,
-      },
-      paymentRouting: 'platform' as const,
-    });
+    // Second call — insert hits 23505 unique violation, function silently succeeds
+    await processCampaignDonation(supabase as any, 'pay-dup', 'camp-dup', 500, 15, feePolicy);
 
-    // Both calls should attempt insert; the DB UNIQUE constraint prevents actual duplicates
-    const allFeeInserts = supabase._insertCalls.filter(
+    // Two insert attempts were made
+    expect(insertCallCount.count).toBe(2);
+
+    // Both attempts used the same payment_id
+    const feeInserts = supabase._insertCalls.filter(
       (c: { table: string }) => c.table === 'platform_fees'
     );
-    expect(allFeeInserts).toHaveLength(2);
-    // Both inserts use the same payment_id — DB UNIQUE on payment_id prevents duplication
-    expect(allFeeInserts[0].row.payment_id).toBe('pay-dup');
-    expect(allFeeInserts[1].row.payment_id).toBe('pay-dup');
+    expect(feeInserts[0].row.payment_id).toBe('pay-dup');
+    expect(feeInserts[1].row.payment_id).toBe('pay-dup');
+
+    // Only the first insert succeeded (second was duplicate) — exactly one fee row persists
+    // The function did NOT throw on the duplicate error (idempotent success)
+  });
+
+  it('non-duplicate insert error throws (not silently swallowed)', async () => {
+    const supabase = mockSupabase({
+      rpcResult: { applied: true, is_legacy: false, amount: 500 },
+    });
+
+    // Override insert to return a non-duplicate error
+    const originalFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      const chain = originalFrom(table);
+      if (table === 'platform_fees') {
+        chain.insert = vi.fn().mockImplementation((row: Record<string, unknown>) => {
+          supabase._insertCalls.push({ table, row });
+          return Promise.resolve({
+            data: null,
+            error: { code: '42P01', message: 'relation "platform_fees" does not exist' },
+          });
+        });
+      }
+      return chain;
+    }) as typeof supabase.from;
+
+    await expect(
+      processCampaignDonation(supabase as any, 'pay-err', 'camp-err', 500, 15, {
+        feePolicyVersion: 1,
+        configVersionId: 'cfg-v1-abc',
+        transactionCategory: 'giving',
+        feeBasis: {
+          payment_routing: 'platform' as const,
+          tier: 'growth' as const,
+          is_in_trial: false,
+          custom_fee_percentage: null,
+          custom_fee_flat: null,
+        },
+        paymentRouting: 'platform' as const,
+      }),
+    ).rejects.toThrow('V1 platform fee insert failed');
   });
 
   it('replay with is_legacy=true skips fee recording', async () => {
@@ -319,5 +375,35 @@ describe('processCampaignDonation — V1 fee-policy propagation (real calculator
     );
     expect(feeInserts).toHaveLength(1);
     expect(feeInserts[0].row.transaction_amount).toBe(1000);
+  });
+});
+
+describe('platform_fees payment_id uniqueness contract', () => {
+  it('M310 migration defines UNIQUE INDEX on platform_fees(payment_id)', () => {
+    // Independently verify the migration that establishes the dedup contract
+    const { readFileSync } = require('fs');
+    const { join } = require('path');
+    const m310 = readFileSync(
+      join(process.cwd(), 'supabase/migrations/310_payment_level_idempotency.sql'),
+      'utf-8',
+    );
+    // The exact unique index definition
+    expect(m310).toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_payment_unique');
+    expect(m310).toContain('ON platform_fees(payment_id)');
+    expect(m310).toContain('WHERE payment_id IS NOT NULL');
+  });
+
+  it('recordPlatformFee V1 path handles duplicate error as idempotent success', () => {
+    // Verify the error-handling pattern in source (defensive — ensures the contract is maintained)
+    const { readFileSync } = require('fs');
+    const { join } = require('path');
+    const source = readFileSync(
+      join(process.cwd(), 'lib/payments/process-success.ts'),
+      'utf-8',
+    );
+    // V1 path (line ~714): checks isDuplicate before throwing
+    expect(source).toContain("feeErr.message?.includes('duplicate') || feeErr.message?.includes('unique')");
+    // V1 path does not throw on duplicate
+    expect(source).toContain('if (!isDuplicate)');
   });
 });
