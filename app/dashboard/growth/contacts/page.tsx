@@ -6,7 +6,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
-import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { sanitizeIlikeSearch } from '@/lib/utils/sanitize';
 
 interface GrowthContact {
   id: string;
@@ -74,9 +74,7 @@ export default function GrowthContactsPage() {
     }
 
     if (search.trim()) {
-      // 1. Escape ILIKE wildcards so literal %, _ in user input are matched verbatim
-      // 2. Strip PostgREST filter delimiters (,()") to prevent .or() injection
-      const s = sanitizeFilterValue(search.trim().replace(/[%_]/g, '\\$&'));
+      const s = sanitizeIlikeSearch(search);
       query = query.or(`first_name.ilike.%${s}%,last_name.ilike.%${s}%,phone.ilike.%${s}%`);
     }
 

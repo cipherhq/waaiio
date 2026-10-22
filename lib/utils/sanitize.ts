@@ -10,3 +10,19 @@
 export function sanitizeFilterValue(value: string): string {
   return value.replace(/[,()]/g, '');
 }
+
+/**
+ * Sanitize user search input for use in a PostgREST `.or()` ILIKE filter.
+ *
+ * Composes two protections in order:
+ * 1. Escape ILIKE wildcards (`%` → `\%`, `_` → `\_`) so they match literally.
+ * 2. Strip PostgREST filter delimiters (`,`, `(`, `)`) via `sanitizeFilterValue`.
+ *
+ * Returns the sanitized string ready for interpolation into `.or()` ILIKE conditions.
+ * Returns empty string for whitespace-only input.
+ */
+export function sanitizeIlikeSearch(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  return sanitizeFilterValue(trimmed.replace(/[%_]/g, '\\$&'));
+}

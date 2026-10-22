@@ -1,228 +1,161 @@
 /**
  * contacts-filter-safety.test.ts
  *
- * Regression tests for Growth Contacts search filter safety.
+ * Tests the PRODUCTION sanitizeIlikeSearch function from lib/utils/sanitize.ts,
+ * which is used by app/dashboard/growth/contacts/page.tsx to build PostgREST
+ * .or() ILIKE filters from user search input.
  *
- * The contacts page search interpolates user input into a PostgREST `.or()` filter
- * with ILIKE conditions. Two distinct protections are required:
- *
- *   1. ILIKE wildcard escaping: `%` and `_` must be backslash-escaped so they are
- *      treated as literal characters, not SQL wildcards.
- *   2. PostgREST filter-syntax sanitization: `,`, `(`, `)` must be stripped to
- *      prevent injection of additional filter conditions into the `.or()` string.
- *
- * Both protections must be composed in order: ILIKE escaping first, then
- * PostgREST sanitization via `sanitizeFilterValue()`.
+ * Verifies both ILIKE wildcard escaping and PostgREST filter-syntax safety.
  */
 
 import { describe, it, expect } from 'vitest';
-import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { sanitizeIlikeSearch, sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 /**
- * Replicates the exact sanitization pipeline used in
- * `app/dashboard/growth/contacts/page.tsx` lines 79.
- *
- * Step 1: Escape ILIKE wildcards (% → \%, _ → \_)
- * Step 2: Strip PostgREST filter delimiters via sanitizeFilterValue
+ * Builds the exact .or() filter string that the contacts page produces.
+ * This mirrors the production code at page.tsx line 80:
+ *   query.or(`first_name.ilike.%${s}%,last_name.ilike.%${s}%,phone.ilike.%${s}%`)
  */
-function contactsSearchSanitize(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return '';
-  return sanitizeFilterValue(trimmed.replace(/[%_]/g, '\\$&'));
-}
-
-/**
- * Builds the `.or()` filter string exactly as the contacts page does.
- */
-function buildOrFilter(raw: string): string {
-  const s = contactsSearchSanitize(raw);
+function buildContactsOrFilter(search: string): string {
+  const s = sanitizeIlikeSearch(search);
+  if (!s) return '';
   return `first_name.ilike.%${s}%,last_name.ilike.%${s}%,phone.ilike.%${s}%`;
 }
 
-describe('Contacts filter safety', () => {
-  describe('Normal input passthrough', () => {
-    it('passes plain names through unchanged', () => {
-      expect(contactsSearchSanitize('John')).toBe('John');
-      expect(contactsSearchSanitize('Jane Doe')).toBe('Jane Doe');
-    });
+// ── sanitizeIlikeSearch (production function) ──
 
-    it('passes phone numbers through unchanged', () => {
-      expect(contactsSearchSanitize('+2348012345678')).toBe('+2348012345678');
-      expect(contactsSearchSanitize('080 1234 5678')).toBe('080 1234 5678');
-    });
-
-    it('trims whitespace', () => {
-      expect(contactsSearchSanitize('  John  ')).toBe('John');
-    });
-
-    it('builds correct .or() filter for normal input', () => {
-      const filter = buildOrFilter('John');
-      expect(filter).toBe(
-        'first_name.ilike.%John%,last_name.ilike.%John%,phone.ilike.%John%'
-      );
-    });
+describe('sanitizeIlikeSearch — production function', () => {
+  it('passes normal names through unchanged', () => {
+    expect(sanitizeIlikeSearch('John')).toBe('John');
+    expect(sanitizeIlikeSearch('Ade Ogunlesi')).toBe('Ade Ogunlesi');
   });
 
-  describe('PostgREST injection prevention — commas', () => {
-    it('strips commas from input', () => {
-      // An attacker typing ",phone.eq.+1234567890" would inject a filter condition
-      const result = contactsSearchSanitize(',phone.eq.+1234567890');
-      expect(result).not.toContain(',');
-    });
-
-    it('strips commas in the middle of input', () => {
-      const result = contactsSearchSanitize('first,last');
-      expect(result).toBe('firstlast');
-    });
-
-    it('strips all commas from complex injection attempts', () => {
-      const result = contactsSearchSanitize('a%,phone.eq.secret,b');
-      expect(result).not.toContain(',');
-    });
+  it('passes phone numbers through unchanged', () => {
+    expect(sanitizeIlikeSearch('+234 801 234 5678')).toBe('+234 801 234 5678');
   });
 
-  describe('PostgREST injection prevention — parentheses', () => {
-    it('strips opening parentheses', () => {
-      const result = contactsSearchSanitize('test(injection');
-      expect(result).not.toContain('(');
-    });
-
-    it('strips closing parentheses', () => {
-      const result = contactsSearchSanitize('test)injection');
-      expect(result).not.toContain(')');
-    });
-
-    it('strips nested parentheses from complex injection', () => {
-      // PostgREST .or() supports nested conditions with parentheses
-      const result = contactsSearchSanitize('x),(email.eq.admin@evil.com');
-      expect(result).not.toContain('(');
-      expect(result).not.toContain(')');
-      expect(result).not.toContain(',');
-    });
+  it('escapes % as literal ILIKE wildcard', () => {
+    expect(sanitizeIlikeSearch('100%')).toBe('100\\%');
   });
 
-  describe('ILIKE wildcard escaping — percent', () => {
-    it('escapes % to \\% for literal search', () => {
-      const result = contactsSearchSanitize('100%');
-      expect(result).toBe('100\\%');
-    });
-
-    it('escapes multiple % characters', () => {
-      const result = contactsSearchSanitize('%admin%');
-      expect(result).toBe('\\%admin\\%');
-    });
-
-    it('percent in .or() filter is properly escaped', () => {
-      const filter = buildOrFilter('100%');
-      // The literal search value should contain \% not bare %
-      // The surrounding wildcards are the only bare % signs
-      expect(filter).toBe(
-        'first_name.ilike.%100\\%%,last_name.ilike.%100\\%%,phone.ilike.%100\\%%'
-      );
-    });
+  it('escapes _ as literal ILIKE wildcard', () => {
+    expect(sanitizeIlikeSearch('john_doe')).toBe('john\\_doe');
   });
 
-  describe('ILIKE wildcard escaping — underscore', () => {
-    it('escapes _ to \\_ for literal search', () => {
-      const result = contactsSearchSanitize('user_name');
-      expect(result).toBe('user\\_name');
-    });
-
-    it('escapes multiple underscores', () => {
-      const result = contactsSearchSanitize('__admin__');
-      expect(result).toBe('\\_\\_admin\\_\\_');
-    });
+  it('strips commas (PostgREST filter delimiter)', () => {
+    expect(sanitizeIlikeSearch('Smith, Jr')).toBe('Smith Jr');
   });
 
-  describe('Combined ILIKE + PostgREST protection', () => {
-    it('escapes % AND strips commas in a single input', () => {
-      // This is the critical composition test:
-      // Input: "100%,phone.eq.+1234"
-      // Step 1 (ILIKE): "100\%,phone.eq.+1234"
-      // Step 2 (sanitize): "100\%phone.eq.+1234" (comma stripped)
-      const result = contactsSearchSanitize('100%,phone.eq.+1234');
-      expect(result).toContain('\\%'); // % escaped
-      expect(result).not.toContain(','); // comma stripped
-    });
-
-    it('escapes _ AND strips parentheses in a single input', () => {
-      const result = contactsSearchSanitize('user_name)(evil');
-      expect(result).toContain('\\_'); // _ escaped
-      expect(result).not.toContain('(');
-      expect(result).not.toContain(')');
-    });
-
-    it('handles full injection payload with all dangerous chars', () => {
-      const attack = '%_,(phone.eq.+1234567890)';
-      const result = contactsSearchSanitize(attack);
-      expect(result).toContain('\\%'); // % escaped
-      expect(result).toContain('\\_'); // _ escaped
-      expect(result).not.toContain(','); // comma stripped
-      expect(result).not.toContain('('); // parens stripped
-      expect(result).not.toContain(')');
-    });
+  it('strips parentheses (PostgREST filter delimiter)', () => {
+    expect(sanitizeIlikeSearch('John (CEO)')).toBe('John CEO');
   });
 
-  describe('Backslash handling', () => {
-    it('preserves backslashes in input (they are not special to PostgREST filters)', () => {
-      const result = contactsSearchSanitize('test\\value');
-      expect(result).toBe('test\\value');
-    });
-
-    it('does not double-escape the backslash added by ILIKE escaping', () => {
-      // When we escape % to \%, the backslash should remain a single backslash
-      const result = contactsSearchSanitize('50%');
-      expect(result).toBe('50\\%');
-      // Should NOT be '50\\\\%'
-    });
+  it('composes ILIKE escaping and PostgREST stripping', () => {
+    // % is escaped first, then , is stripped
+    expect(sanitizeIlikeSearch('100%, (test)')).toBe('100\\% test');
   });
 
-  describe('Dots and quotes', () => {
-    it('preserves dots (safe in ILIKE values)', () => {
-      const result = contactsSearchSanitize('john.doe');
-      expect(result).toBe('john.doe');
-    });
-
-    it('preserves single quotes', () => {
-      const result = contactsSearchSanitize("O'Brien");
-      expect(result).toBe("O'Brien");
-    });
-
-    it('preserves double quotes', () => {
-      const result = contactsSearchSanitize('John "Johnny"');
-      expect(result).toBe('John "Johnny"');
-    });
+  it('handles PostgREST injection attempt', () => {
+    // Attacker tries to inject: ,phone.eq.+1234567890
+    const attack = ',phone.eq.+1234567890';
+    const result = sanitizeIlikeSearch(attack);
+    expect(result).not.toContain(',');
+    expect(result).toBe('phone.eq.+1234567890');
   });
 
-  describe('Empty and whitespace input', () => {
-    it('returns empty string for empty input', () => {
-      expect(contactsSearchSanitize('')).toBe('');
-    });
-
-    it('returns empty string for whitespace-only input', () => {
-      expect(contactsSearchSanitize('   ')).toBe('');
-    });
-
-    it('returns empty string for tab/newline input', () => {
-      expect(contactsSearchSanitize('\t\n')).toBe('');
-    });
+  it('handles parenthesis injection attempt', () => {
+    const attack = '),email.eq.admin@evil.com,(';
+    const result = sanitizeIlikeSearch(attack);
+    expect(result).not.toContain('(');
+    expect(result).not.toContain(')');
+    expect(result).not.toContain(',');
   });
 
-  describe('sanitizeFilterValue standalone behavior', () => {
-    it('strips commas', () => {
-      expect(sanitizeFilterValue('a,b,c')).toBe('abc');
-    });
+  it('returns empty string for whitespace-only input', () => {
+    expect(sanitizeIlikeSearch('   ')).toBe('');
+    expect(sanitizeIlikeSearch('')).toBe('');
+  });
 
-    it('strips parentheses', () => {
-      expect(sanitizeFilterValue('a(b)c')).toBe('abc');
-    });
+  it('trims leading and trailing whitespace', () => {
+    expect(sanitizeIlikeSearch('  John  ')).toBe('John');
+  });
 
-    it('strips all filter delimiters at once', () => {
-      expect(sanitizeFilterValue('a,(b),c')).toBe('abc');
-    });
+  it('preserves dots (used in email addresses)', () => {
+    expect(sanitizeIlikeSearch('john.doe@example.com')).toBe('john.doe@example.com');
+  });
 
-    it('preserves safe characters', () => {
-      expect(sanitizeFilterValue('John Doe +123')).toBe('John Doe +123');
-    });
+  it('preserves quotes', () => {
+    expect(sanitizeIlikeSearch("O'Brien")).toBe("O'Brien");
+    expect(sanitizeIlikeSearch('"test"')).toBe('"test"');
+  });
+
+  it('handles backslashes without double-escaping', () => {
+    expect(sanitizeIlikeSearch('test\\value')).toBe('test\\value');
+  });
+
+  it('handles combined wildcards and delimiters', () => {
+    expect(sanitizeIlikeSearch('50% off, (limited)')).toBe('50\\% off limited');
+  });
+});
+
+// ── buildContactsOrFilter (production .or() string) ──
+
+describe('contacts page .or() filter construction', () => {
+  it('builds correct filter for normal name', () => {
+    const filter = buildContactsOrFilter('John');
+    expect(filter).toBe('first_name.ilike.%John%,last_name.ilike.%John%,phone.ilike.%John%');
+  });
+
+  it('builds correct filter with escaped wildcards', () => {
+    const filter = buildContactsOrFilter('100%');
+    expect(filter).toBe('first_name.ilike.%100\\%%,last_name.ilike.%100\\%%,phone.ilike.%100\\%%');
+  });
+
+  it('returns empty string for empty search', () => {
+    expect(buildContactsOrFilter('')).toBe('');
+    expect(buildContactsOrFilter('   ')).toBe('');
+  });
+
+  it('filter contains exactly 3 conditions separated by commas', () => {
+    const filter = buildContactsOrFilter('test');
+    const conditions = filter.split(',');
+    expect(conditions).toHaveLength(3);
+    expect(conditions[0]).toMatch(/^first_name\.ilike\./);
+    expect(conditions[1]).toMatch(/^last_name\.ilike\./);
+    expect(conditions[2]).toMatch(/^phone\.ilike\./);
+  });
+
+  it('injection attempt cannot add a 4th condition', () => {
+    // If commas pass through, this would create 4+ conditions
+    const filter = buildContactsOrFilter(',phone.eq.+123,');
+    const conditions = filter.split(',');
+    expect(conditions).toHaveLength(3);
+  });
+
+  it('parenthesis injection cannot break filter syntax', () => {
+    const filter = buildContactsOrFilter('),id.eq.1,(');
+    expect(filter).not.toContain('),(');
+    const conditions = filter.split(',');
+    expect(conditions).toHaveLength(3);
+  });
+});
+
+// ── sanitizeFilterValue (standalone) ──
+
+describe('sanitizeFilterValue — standalone', () => {
+  it('strips commas', () => {
+    expect(sanitizeFilterValue('a,b,c')).toBe('abc');
+  });
+
+  it('strips parentheses', () => {
+    expect(sanitizeFilterValue('a(b)c')).toBe('abc');
+  });
+
+  it('preserves % and _', () => {
+    expect(sanitizeFilterValue('100%_test')).toBe('100%_test');
+  });
+
+  it('preserves normal text', () => {
+    expect(sanitizeFilterValue('hello world')).toBe('hello world');
   });
 });
