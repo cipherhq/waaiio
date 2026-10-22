@@ -107,9 +107,17 @@ function setupService(activationResult: Record<string, unknown>) {
           if (values.status === 'active') {
             state.events.push('business:active');
           }
-          return chain({ error: null }, (column, value) => {
+          // #682: update now chains .select('id, status') to verify row affected
+          const updateChain = chain({ error: null }, (column, value) => {
             if (column === 'status') expect(value).toBe('pending');
           });
+          const origSelect = updateChain.select;
+          updateChain.select = () => ({
+            ...origSelect(),
+            then: (resolve: (v: unknown) => unknown) =>
+              resolve({ data: [{ id: state.businessId, status: 'active' }], error: null }),
+          });
+          return updateChain;
         },
         select: () => chain({
           data: { bot_code: 'TESTBIZ', slug: 'testbiz' },
@@ -122,10 +130,16 @@ function setupService(activationResult: Record<string, unknown>) {
   });
 
   state.rpc.mockImplementation(async (fn: string, args: Record<string, unknown>) => {
-    expect(fn).toBe('activate_paid_subscription');
-    expect(args).toEqual({ p_payment_id: state.paymentId });
-    state.events.push('rpc:activate');
-    return { data: activationResult, error: null };
+    state.events.push(`rpc:${fn}`);
+    if (fn === 'activate_paid_subscription') {
+      expect(args).toEqual({ p_payment_id: state.paymentId });
+      return { data: activationResult, error: null };
+    }
+    // #682: reconcile_paid_allowance may be called after status update
+    if (fn === 'reconcile_paid_allowance') {
+      return { data: { reconciled: true }, error: null };
+    }
+    return { data: null, error: null };
   });
 }
 
@@ -175,7 +189,12 @@ describe('#496 paid onboarding production orchestration', () => {
       plan: 'growth',
       bot_code: 'TESTBIZ',
     });
-    expect(state.events).toEqual(['rpc:activate', 'business:active']);
+    // #682: reconcile_paid_allowance now called after status update when allowance_granted: false
+    expect(state.events).toContain('rpc:activate_paid_subscription');
+    expect(state.events).toContain('business:active');
+    expect(state.events.indexOf('rpc:activate_paid_subscription')).toBeLessThan(
+      state.events.indexOf('business:active'),
+    );
   });
 
   it('fails closed and never activates the business when authority rejects payment evidence', async () => {
@@ -192,6 +211,6 @@ describe('#496 paid onboarding production orchestration', () => {
 
     expect(response.status).toBe(400);
     expect(body.message).toContain('amount_mismatch');
-    expect(state.events).toEqual(['rpc:activate']);
+    expect(state.events).toEqual(['rpc:activate_paid_subscription']);
   });
 });
