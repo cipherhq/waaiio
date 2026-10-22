@@ -686,3 +686,65 @@ describe('staging constants', () => {
     expect(PRODUCTION_SUPABASE_REF).toMatch(/^[a-z]{20}$/);
   });
 });
+
+// ── Workflow YAML structural validation ──
+
+describe('staging-qa.yml structural integrity', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const yaml = require('js-yaml');
+
+  const workflowPath = path.join(__dirname, '../../.github/workflows/staging-qa.yml');
+  let workflowContent: string;
+  let parsed: Record<string, unknown>;
+
+  beforeAll(() => {
+    workflowContent = fs.readFileSync(workflowPath, 'utf-8');
+    parsed = yaml.load(workflowContent) as Record<string, unknown>;
+  });
+
+  it('parses as valid YAML without errors', () => {
+    expect(parsed).toBeDefined();
+    expect(parsed).toHaveProperty('name');
+    expect(parsed).toHaveProperty('jobs');
+  });
+
+  it('evidence generation step has E2E_REQUIRE_AUTH_TESTS env var', () => {
+    const steps = (parsed as any).jobs['staging-qa'].steps as Array<Record<string, unknown>>;
+    const evidenceStep = steps.find((s) =>
+      String(s.name || '').includes('Generate allowlisted test evidence')
+    );
+    expect(evidenceStep).toBeDefined();
+    expect(evidenceStep!.env).toBeDefined();
+    expect((evidenceStep!.env as Record<string, string>).E2E_REQUIRE_AUTH_TESTS).toBeDefined();
+  });
+
+  it('evidence generation step run block contains cleanup trap and parser call', () => {
+    const steps = (parsed as any).jobs['staging-qa'].steps as Array<Record<string, unknown>>;
+    const evidenceStep = steps.find((s) =>
+      String(s.name || '').includes('Generate allowlisted test evidence')
+    );
+    expect(evidenceStep).toBeDefined();
+    const runBlock = String(evidenceStep!.run || '');
+    // trap must be in the run block (shell), not in env
+    expect(runBlock).toContain("trap 'rm -f -- *-results.json' EXIT");
+    // Python parser call must be in run block
+    expect(runBlock).toContain('python3 scripts/parse-evidence.py');
+  });
+
+  it('evidence generation step env block contains only valid YAML entries (no shell commands)', () => {
+    const steps = (parsed as any).jobs['staging-qa'].steps as Array<Record<string, unknown>>;
+    const evidenceStep = steps.find((s) =>
+      String(s.name || '').includes('Generate allowlisted test evidence')
+    );
+    expect(evidenceStep).toBeDefined();
+    const env = evidenceStep!.env as Record<string, unknown>;
+    // Every env key should be an uppercase/underscore identifier
+    for (const key of Object.keys(env)) {
+      expect(key).toMatch(/^[A-Z][A-Z0-9_]*$/);
+    }
+    // Shell commands must NOT appear in env
+    const envStr = JSON.stringify(env);
+    expect(envStr).not.toContain('rm -f');
+  });
+});

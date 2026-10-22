@@ -279,6 +279,10 @@ jobs:
           find . -name '*.webm' -delete 2>/dev/null || true
           find . -name '*.png' -path '*/test-results/*' -delete 2>/dev/null || true
 
+          # Ensure raw JSON cleanup even if the parser fails (exit 1).
+          # Raw results may contain error messages, URLs, or credentials.
+          trap 'rm -f -- *-results.json' EXIT
+
           # Parse evidence using the tested script (same code tested in CI unit tests).
           # Fails closed on: parse errors, unknown/interrupted/timedOut statuses,
           # missing required reports, or empty results.
@@ -288,9 +292,6 @@ jobs:
           python3 scripts/parse-evidence.py --output-dir staging-qa-summary
         env:
           E2E_REQUIRE_AUTH_TESTS: ${{ inputs.run_auth_tests }}
-
-          # Delete raw JSON results (may contain error messages, URLs, credentials)
-          rm -f *-results.json
 
       - name: Upload allowlisted evidence only
         if: always()
