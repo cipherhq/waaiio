@@ -185,6 +185,226 @@ describe('autoAssign', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('No tables');
   });
+
+  it('assigns guest with plus_ones to table that fits, skips smaller tables', async () => {
+    const { autoAssign } = await import('@/lib/parties/table-assignment');
+
+    // Table T1: capacity 3, 0 seated. Table T2: capacity 5, 0 seated.
+    // Guest A: 2 plus_ones (weight 3). Guest B: 0 plus_ones (weight 1).
+    // A fits in T1 (3 seats, weight 3). B goes to T1 too? No, 3-3=0 remaining.
+    // B goes to T2.
+
+    let fromCallCount = 0;
+    const mockFrom = vi.fn((table: string) => {
+      if (table === 'party_tables') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                order: vi.fn(() => Promise.resolve({
+                  data: [
+                    { id: 't1', capacity: 3, sort_order: 0 },
+                    { id: 't2', capacity: 5, sort_order: 1 },
+                  ],
+                })),
+              })),
+            })),
+          })),
+        };
+      }
+      if (table === 'event_invites') {
+        fromCallCount++;
+        // First call: unassigned guests with plus_ones
+        if (fromCallCount === 1) {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    in: vi.fn(() => Promise.resolve({
+                      data: [
+                        { id: 'inv-a', plus_ones: 2 },
+                        { id: 'inv-b', plus_ones: 0 },
+                      ],
+                    })),
+                  })),
+                })),
+              })),
+            })),
+          };
+        }
+        // Subsequent calls: table occupancy queries (empty tables)
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => Promise.resolve({ data: [] })),
+          })),
+        };
+      }
+      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
+    });
+
+    const rpcCalls: Array<{ ids: string[]; tableId: string }> = [];
+    const mockRpc = vi.fn((name: string, args: any) => {
+      rpcCalls.push({ ids: args.p_invite_ids, tableId: args.p_table_id });
+      return Promise.resolve({
+        data: { success: true, assigned: args.p_invite_ids.length },
+        error: null,
+      });
+    });
+
+    const supabase = { from: mockFrom, rpc: mockRpc } as any;
+    const result = await autoAssign(supabase, 'party-1', 'biz-1');
+
+    expect(result.success).toBe(true);
+    expect(result.assigned).toBe(2);
+    expect(result.skipped).toBe(0);
+
+    // T1 should get inv-a (weight 3 = capacity 3), T2 should get inv-b (weight 1)
+    expect(rpcCalls).toHaveLength(2);
+    expect(rpcCalls[0].tableId).toBe('t1');
+    expect(rpcCalls[0].ids).toEqual(['inv-a']);
+    expect(rpcCalls[1].tableId).toBe('t2');
+    expect(rpcCalls[1].ids).toEqual(['inv-b']);
+  });
+
+  it('skips unplaceable guests without blocking later valid ones', async () => {
+    const { autoAssign } = await import('@/lib/parties/table-assignment');
+
+    // Single table, capacity 2. Guest A: 3 plus_ones (weight 4, too big).
+    // Guest B: 0 plus_ones (weight 1, fits).
+    let fromCallCount = 0;
+    const mockFrom = vi.fn((table: string) => {
+      if (table === 'party_tables') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                order: vi.fn(() => Promise.resolve({
+                  data: [{ id: 't1', capacity: 2, sort_order: 0 }],
+                })),
+              })),
+            })),
+          })),
+        };
+      }
+      if (table === 'event_invites') {
+        fromCallCount++;
+        if (fromCallCount === 1) {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    in: vi.fn(() => Promise.resolve({
+                      data: [
+                        { id: 'inv-big', plus_ones: 3 },
+                        { id: 'inv-small', plus_ones: 0 },
+                      ],
+                    })),
+                  })),
+                })),
+              })),
+            })),
+          };
+        }
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => Promise.resolve({ data: [] })),
+          })),
+        };
+      }
+      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
+    });
+
+    const rpcCalls: Array<{ ids: string[] }> = [];
+    const mockRpc = vi.fn((_name: string, args: any) => {
+      rpcCalls.push({ ids: args.p_invite_ids });
+      return Promise.resolve({
+        data: { success: true, assigned: args.p_invite_ids.length },
+        error: null,
+      });
+    });
+
+    const supabase = { from: mockFrom, rpc: mockRpc } as any;
+    const result = await autoAssign(supabase, 'party-1', 'biz-1');
+
+    expect(result.success).toBe(true);
+    expect(result.assigned).toBe(1); // only inv-small placed
+    expect(result.skipped).toBe(1); // inv-big couldn't fit
+    expect(rpcCalls[0].ids).toEqual(['inv-small']); // big guest skipped, small assigned
+  });
+
+  it('handles RPC rejection gracefully and tries next table', async () => {
+    const { autoAssign } = await import('@/lib/parties/table-assignment');
+
+    let fromCallCount = 0;
+    const mockFrom = vi.fn((table: string) => {
+      if (table === 'party_tables') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                order: vi.fn(() => Promise.resolve({
+                  data: [
+                    { id: 't1', capacity: 2, sort_order: 0 },
+                    { id: 't2', capacity: 5, sort_order: 1 },
+                  ],
+                })),
+              })),
+            })),
+          })),
+        };
+      }
+      if (table === 'event_invites') {
+        fromCallCount++;
+        if (fromCallCount === 1) {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    in: vi.fn(() => Promise.resolve({
+                      data: [{ id: 'inv-1', plus_ones: 0 }],
+                    })),
+                  })),
+                })),
+              })),
+            })),
+          };
+        }
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => Promise.resolve({ data: [] })),
+          })),
+        };
+      }
+      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
+    });
+
+    let rpcCallNum = 0;
+    const mockRpc = vi.fn(() => {
+      rpcCallNum++;
+      if (rpcCallNum === 1) {
+        // T1 rejects (simulate concurrent capacity fill)
+        return Promise.resolve({
+          data: { success: false, error: 'Table capacity exceeded' },
+          error: null,
+        });
+      }
+      // T2 accepts
+      return Promise.resolve({
+        data: { success: true, assigned: 1 },
+        error: null,
+      });
+    });
+
+    const supabase = { from: mockFrom, rpc: mockRpc } as any;
+    const result = await autoAssign(supabase, 'party-1', 'biz-1');
+
+    expect(result.success).toBe(true);
+    expect(result.assigned).toBe(1);
+    expect(mockRpc).toHaveBeenCalledTimes(2); // tried T1, then T2
+  });
 });
 
 // ════════════════════════════════════════════════════════════════

@@ -148,10 +148,10 @@ export async function autoAssign(
     return { success: false, error: 'No tables defined for this party' };
   }
 
-  // Fetch all unassigned guests for this party
+  // Fetch unassigned guests with plus_ones (needed for attendee-weighted batching)
   const { data: unassigned } = await supabase
     .from('event_invites')
-    .select('id')
+    .select('id, plus_ones')
     .eq('party_id', partyId)
     .eq('business_id', businessId)
     .is('table_id', null)
@@ -161,14 +161,17 @@ export async function autoAssign(
     return { success: true, assigned: 0, skipped: 0 };
   }
 
-  // Get current occupancy per table
+  // Build attendee-weighted guest list: each guest occupies 1 + plus_ones seats
+  const guests = unassigned.map(g => ({
+    id: g.id,
+    weight: 1 + (g.plus_ones || 0),
+  }));
+
   let totalAssigned = 0;
-  let guestIdx = 0;
+  const placed = new Set<string>();
 
   for (const table of tables) {
-    if (guestIdx >= unassigned.length) break;
-
-    // Count total attendees (invite + plus_ones) per table
+    // Count current table occupancy (attendee-weighted)
     const { data: tableInvites } = await supabase
       .from('event_invites')
       .select('plus_ones')
@@ -177,25 +180,34 @@ export async function autoAssign(
       (sum: number, inv: { plus_ones: number }) => sum + 1 + (inv.plus_ones || 0), 0
     );
 
-    const available = table.capacity - seated;
+    let available = table.capacity - seated;
     if (available <= 0) continue;
 
-    // Take up to 'available' guests
-    const batch = unassigned.slice(guestIdx, guestIdx + available).map(g => g.id);
+    // Greedily select guests that fit within remaining capacity
+    const batch: string[] = [];
+    for (const guest of guests) {
+      if (placed.has(guest.id)) continue;
+      if (guest.weight <= available) {
+        batch.push(guest.id);
+        available -= guest.weight;
+      }
+    }
 
-    // Use bulk RPC for atomic assignment
+    if (batch.length === 0) continue;
+
+    // Use bulk RPC for atomic assignment (DB triggers are final authority)
     const { data, error } = await supabase.rpc('bulk_assign_guests_to_table', {
       p_invite_ids: batch,
       p_table_id: table.id,
     });
 
     if (!error && data?.success) {
+      for (const id of batch) placed.add(id);
       totalAssigned += data.assigned ?? batch.length;
-      guestIdx += batch.length;
     }
-    // If a table fails, skip it and try the next one
+    // If RPC rejects the batch, skip this table and try the next one
   }
 
-  const skipped = unassigned.length - totalAssigned;
+  const skipped = guests.length - totalAssigned;
   return { success: true, assigned: totalAssigned, skipped };
 }
