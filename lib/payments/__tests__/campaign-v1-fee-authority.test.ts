@@ -2,24 +2,19 @@
  * Campaign V1 Fee-Authority Propagation Tests
  *
  * Proves that processCampaignDonation correctly threads V1 fee-policy fields
- * (fee_policy_version, config_version_id, transaction_category, fee_basis)
- * through to recordPlatformFee, matching the pattern used by invoice, booking,
- * order, and reservation entity paths.
+ * through to recordPlatformFee, using the REAL calculateFee and validateV1Snapshot
+ * functions (not mocked) with a valid production-shaped config snapshot.
  *
  * Test scenarios:
- *   1. V1 campaign donation passes all four pinned fee-policy fields to recordPlatformFee
- *   2. V1 campaign with incomplete authority (missing config_version_id) — recordPlatformFee
- *      still receives what's available (feePolicyVersion triggers V1 path, which then
- *      fails closed on missing fields — that's recordPlatformFee's contract)
- *   3. Legacy v0 campaign donation (no fee_policy_version) — legacy path
- *   4. Replay: apply_campaign_donation returning already_applied — no duplicate fee
+ *   1. V1 campaign: pinned config → exact fee_percentage/fee_total/is_direct_transfer
+ *   2. V1 incomplete authority (missing configVersionId) → fail closed
+ *   3. Legacy v0 campaign (no feePolicy) → legacy path with getPlatformFees
+ *   4. Two-call replay: second invocation attempts fee insert (DB UNIQUE handles dedup)
+ *   5. Legacy caller: backward-compatible 4-arg call
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ── Shared mocks ──
-vi.mock('@/lib/getPlatformFees', () => ({
-  getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2.0, feeFlat: 0, feeTotal: 100 }),
-}));
+// Only mock external dependencies — NOT calculateFee or validateV1Snapshot
 vi.mock('@/lib/logger', () => ({
   logger: {
     info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(),
@@ -29,10 +24,26 @@ vi.mock('@/lib/logger', () => ({
 vi.mock('@sentry/nextjs', () => ({
   captureException: vi.fn(),
 }));
+// Mock getPlatformFees for the legacy path only
+vi.mock('@/lib/getPlatformFees', () => ({
+  getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 3.5, feeFlat: 0, feeTotal: 105 }),
+}));
 
-import { processCampaignDonation, recordPlatformFee } from '../process-success';
+import { processCampaignDonation } from '../process-success';
 
-// ── Helpers ──
+// ── Valid production-shaped config snapshot ──
+// Uses pricing_tiers and category_fee_rates (the real keys, not tiers/categories)
+const VALID_V1_SNAPSHOT = {
+  pricing_tiers: {
+    free: { feePercentage: 5.0, feeFlat: 0 },
+    growth: { feePercentage: 3.5, feeFlat: 0 },
+    business: { feePercentage: 2.0, feeFlat: 0 },
+  },
+  category_fee_rates: {
+    giving: { feePercentage: 2.0 },
+    booking: { feePercentage: 3.0 },
+  },
+};
 
 type RpcResult = {
   applied?: boolean;
@@ -45,19 +56,21 @@ type RpcResult = {
 function mockSupabase(opts: {
   rpcResult?: RpcResult;
   rpcError?: { message: string } | null;
-  campaignBusinessId?: string | null;
+  campaignBusinessId?: string;
+  tier?: string;
+  payoutMode?: string;
+  resellerId?: string | null;
+  configSnapshot?: Record<string, unknown> | null;
 } = {}) {
-  const rpcResult = opts.rpcResult ?? { applied: true, is_legacy: false, amount: 500 };
+  const rpcResult = opts.rpcResult ?? { applied: true, is_legacy: false, amount: 2500 };
   const rpcError = opts.rpcError ?? null;
   const campaignBusinessId = opts.campaignBusinessId ?? 'biz1';
+  const tier = opts.tier ?? 'growth';
+  const payoutMode = opts.payoutMode ?? 'platform_managed';
+  const resellerId = opts.resellerId ?? null;
+  const configSnapshot = opts.configSnapshot !== undefined ? opts.configSnapshot : VALID_V1_SNAPSHOT;
 
   const insertCalls: Array<{ table: string; row: Record<string, unknown> }> = [];
-  const insertFn = vi.fn().mockImplementation((row: Record<string, unknown>) => {
-    // Capture which table it was called on (set by from())
-    insertCalls.push({ table: currentTable, row });
-    return Promise.resolve({ data: null, error: null });
-  });
-
   let currentTable = '';
 
   const supabase = {
@@ -68,33 +81,35 @@ function mockSupabase(opts: {
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({
               data: table === 'campaigns'
-                ? (campaignBusinessId ? { business_id: campaignBusinessId } : null)
+                ? { business_id: campaignBusinessId }
                 : table === 'businesses'
-                ? { subscription_tier: 'growth', trial_ends_at: null, payout_mode: 'platform_managed', reseller_id: null }
+                ? { subscription_tier: tier, trial_ends_at: null, payout_mode: payoutMode, reseller_id: resellerId }
                 : table === 'platform_config_versions'
-                ? { config_snapshot: { tiers: { growth: { feePercentage: 3.5, feeFlat: 0 } }, categories: { giving: { feePercentage: 2.0, feeFlat: 0 } } } }
+                ? { config_snapshot: configSnapshot }
                 : null,
             }),
             maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
           }),
         }),
-        insert: insertFn,
+        insert: vi.fn().mockImplementation((row: Record<string, unknown>) => {
+          insertCalls.push({ table: currentTable, row });
+          return Promise.resolve({ data: null, error: null });
+        }),
       };
     }),
     rpc: vi.fn().mockResolvedValue({ data: rpcResult, error: rpcError }),
-    _insertFn: insertFn,
     _insertCalls: insertCalls,
   };
 
   return supabase;
 }
 
-describe('processCampaignDonation — V1 fee-policy propagation', () => {
+describe('processCampaignDonation — V1 fee-policy propagation (real calculator)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('passes all four V1 fee-policy fields through to recordPlatformFee', async () => {
+  it('V1 campaign: pinned config produces exact fee_percentage, fee_total, is_direct_transfer', async () => {
     const supabase = mockSupabase({
       rpcResult: { applied: true, is_legacy: false, amount: 2500 },
     });
@@ -103,167 +118,206 @@ describe('processCampaignDonation — V1 fee-policy propagation', () => {
       feePolicyVersion: 1,
       configVersionId: 'cfg-v1-abc',
       transactionCategory: 'giving',
-      feeBasis: { payment_routing: 'platform' as const, tier: 'growth', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null },
+      feeBasis: {
+        payment_routing: 'platform' as const,
+        tier: 'growth' as const,
+        is_in_trial: false,
+        custom_fee_percentage: null,
+        custom_fee_flat: null,
+      },
       paymentRouting: 'platform' as const,
     };
 
-    // Mock the V1 calculateFee import used by recordPlatformFee
-    vi.doMock('@/lib/payments/calculateFee', () => ({
-      calculateFee: vi.fn().mockReturnValue({ feePercentage: 2.0, feeFlat: 0, feeTotal: 50 }),
-      validateV1Snapshot: vi.fn().mockReturnValue(null),
-    }));
+    await processCampaignDonation(supabase as any, 'pay-v1', 'camp-v1', 2500, 75, feePolicy);
 
-    await processCampaignDonation(
-      supabase as any,
-      'pay-v1-1',
-      'camp-v1-1',
-      2500,
-      75,
-      feePolicy,
-    );
-
-    // RPC should be called with campaign and payment ids
-    expect(supabase.rpc).toHaveBeenCalledWith('apply_campaign_donation', {
-      p_campaign_id: 'camp-v1-1',
-      p_payment_id: 'pay-v1-1',
-    });
-
-    // recordPlatformFee should receive the V1 fields via platform_fees insert
-    // Since recordPlatformFee resolves business_id from campaign, it queries campaigns table
-    expect(supabase.from).toHaveBeenCalledWith('campaigns');
-
-    // Verify platform_fees insert was called (the V1 path inserts into platform_fees)
     const feeInserts = supabase._insertCalls.filter(
-      (c: { table: string; row: Record<string, unknown> }) => c.table === 'platform_fees'
+      (c: { table: string }) => c.table === 'platform_fees'
     );
-    expect(feeInserts.length).toBe(1);
+    expect(feeInserts).toHaveLength(1);
 
-    const feeRow = feeInserts[0].row;
-    expect(feeRow.campaign_id).toBe('camp-v1-1');
-    expect(feeRow.payment_id).toBe('pay-v1-1');
-    expect(feeRow.business_id).toBe('biz1');
-    // V1 path uses authoritative amount from RPC (2500), not caller-supplied
-    expect(feeRow.transaction_amount).toBe(2500);
+    const row = feeInserts[0].row;
+    // Real calculateFee with giving category rate (2.0%) on 2500:
+    //   pctComponent = Math.round(2500 * 2.0 * 100) / 10000 = 50
+    //   feeTotal = Math.round(50 * 100) / 100 = 50
+    expect(row.fee_percentage).toBe(2.0);
+    expect(row.fee_total).toBe(50);
+    expect(row.transaction_amount).toBe(2500);
+    expect(row.is_direct_transfer).toBe(false);
+    expect(row.campaign_id).toBe('camp-v1');
+    expect(row.payment_id).toBe('pay-v1');
+    expect(row.business_id).toBe('biz1');
+    expect(row.gateway_fee).toBe(75);
+    // V1 path should NOT set fee_policy_version or config_version_id on the platform_fees row
+    // (those are on the payments row — recordPlatformFee just records the computed fee)
   });
 
-  it('V1 campaign with incomplete authority (missing configVersionId) — recordPlatformFee fails closed', async () => {
+  it('V1 campaign with connect routing produces is_direct_transfer=true', async () => {
     const supabase = mockSupabase({
       rpcResult: { applied: true, is_legacy: false, amount: 1000 },
     });
 
     const feePolicy = {
       feePolicyVersion: 1,
-      configVersionId: undefined,  // Missing!
+      configVersionId: 'cfg-v1-abc',
       transactionCategory: 'giving',
-      feeBasis: { payment_routing: 'platform' as const, tier: 'growth', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null },
+      feeBasis: {
+        payment_routing: 'connect' as const,
+        tier: 'growth' as const,
+        is_in_trial: false,
+        custom_fee_percentage: null,
+        custom_fee_flat: null,
+      },
+      paymentRouting: 'connect' as const,
+    };
+
+    await processCampaignDonation(supabase as any, 'pay-connect', 'camp-connect', 1000, 30, feePolicy);
+
+    // direct_split businesses return early before insert — but connect routing
+    // only sets is_direct_transfer=true, it doesn't mean payout_mode=direct_split
+    // The mock has payout_mode=platform_managed, so the fee IS recorded.
+    const feeInserts = supabase._insertCalls.filter(
+      (c: { table: string }) => c.table === 'platform_fees'
+    );
+    expect(feeInserts).toHaveLength(1);
+    expect(feeInserts[0].row.is_direct_transfer).toBe(true);
+  });
+
+  it('V1 incomplete authority (missing configVersionId) → fail closed, no fee', async () => {
+    const supabase = mockSupabase({
+      rpcResult: { applied: true, is_legacy: false, amount: 1000 },
+    });
+
+    const feePolicy = {
+      feePolicyVersion: 1,
+      configVersionId: undefined,
+      transactionCategory: 'giving',
+      feeBasis: {
+        payment_routing: 'platform' as const,
+        tier: 'growth' as const,
+        is_in_trial: false,
+        custom_fee_percentage: null,
+        custom_fee_flat: null,
+      },
       paymentRouting: 'platform' as const,
     };
 
-    // recordPlatformFee should throw when V1 but missing required authority fields
     await expect(
-      processCampaignDonation(
-        supabase as any,
-        'pay-v1-incomplete',
-        'camp-v1-incomplete',
-        1000,
-        30,
-        feePolicy,
-      ),
+      processCampaignDonation(supabase as any, 'pay-bad', 'camp-bad', 1000, 30, feePolicy),
     ).rejects.toThrow('V1 fee policy: missing authority fields');
 
-    // No fee should have been inserted
     const feeInserts = supabase._insertCalls.filter(
-      (c: { table: string; row: Record<string, unknown> }) => c.table === 'platform_fees'
+      (c: { table: string }) => c.table === 'platform_fees'
     );
-    expect(feeInserts.length).toBe(0);
+    expect(feeInserts).toHaveLength(0);
   });
 
-  it('legacy v0 campaign (no feePolicy) uses legacy recordPlatformFee path', async () => {
+  it('legacy v0 campaign (no feePolicy) uses legacy path', async () => {
     const supabase = mockSupabase({
       rpcResult: { applied: true, is_legacy: false, amount: 3000 },
     });
 
-    // No feePolicy arg → legacy v0 path
-    await processCampaignDonation(
-      supabase as any,
-      'pay-legacy',
-      'camp-legacy',
-      3000,
-      90,
-    );
+    // No feePolicy → legacy v0 path uses getPlatformFees mock
+    await processCampaignDonation(supabase as any, 'pay-leg', 'camp-leg', 3000, 90);
 
-    // Should still call RPC
-    expect(supabase.rpc).toHaveBeenCalledWith('apply_campaign_donation', {
-      p_campaign_id: 'camp-legacy',
-      p_payment_id: 'pay-legacy',
-    });
-
-    // Should query campaigns for business_id
-    expect(supabase.from).toHaveBeenCalledWith('campaigns');
-
-    // Should query businesses for tier/trial/payout_mode (legacy path)
     expect(supabase.from).toHaveBeenCalledWith('businesses');
 
-    // Should insert platform_fees via legacy path
     const feeInserts = supabase._insertCalls.filter(
-      (c: { table: string; row: Record<string, unknown> }) => c.table === 'platform_fees'
+      (c: { table: string }) => c.table === 'platform_fees'
     );
-    expect(feeInserts.length).toBe(1);
-    // Legacy path uses authoritative RPC amount (3000)
+    expect(feeInserts).toHaveLength(1);
+    // Legacy path uses getPlatformFees mock result (feePercentage: 3.5, feeTotal: 105)
+    expect(feeInserts[0].row.fee_percentage).toBe(3.5);
+    expect(feeInserts[0].row.fee_total).toBe(105);
     expect(feeInserts[0].row.transaction_amount).toBe(3000);
   });
 
-  it('replay: already_applied RPC result still records fee (idempotent re-fee)', async () => {
-    // When apply_campaign_donation returns already_applied=true, the fee
-    // should still be attempted because platform_fees has payment_id UNIQUE
-    // constraint that prevents actual duplicates.
+  it('two-call replay: second invocation still attempts insert (DB UNIQUE handles dedup)', async () => {
     const supabase = mockSupabase({
-      rpcResult: { applied: false, already_applied: true, is_legacy: false, amount: 500 },
+      rpcResult: { applied: true, is_legacy: false, amount: 500 },
     });
 
-    await processCampaignDonation(
-      supabase as any,
-      'pay-replay',
-      'camp-replay',
-      500,
-      15,
-    );
-
-    // RPC called
-    expect(supabase.rpc).toHaveBeenCalledWith('apply_campaign_donation', {
-      p_campaign_id: 'camp-replay',
-      p_payment_id: 'pay-replay',
+    // First call
+    await processCampaignDonation(supabase as any, 'pay-dup', 'camp-dup', 500, 15, {
+      feePolicyVersion: 1,
+      configVersionId: 'cfg-v1-abc',
+      transactionCategory: 'giving',
+      feeBasis: {
+        payment_routing: 'platform' as const,
+        tier: 'growth' as const,
+        is_in_trial: false,
+        custom_fee_percentage: null,
+        custom_fee_flat: null,
+      },
+      paymentRouting: 'platform' as const,
     });
 
-    // shouldEnsureFee = result && !result.reason && !result.is_legacy
-    // For already_applied with no reason and not legacy → fee attempted
-    // The DB UNIQUE constraint on payment_id handles actual dedup
-    expect(supabase.from).toHaveBeenCalledWith('campaigns');
+    const firstCallInserts = supabase._insertCalls.filter(
+      (c: { table: string }) => c.table === 'platform_fees'
+    ).length;
+    expect(firstCallInserts).toBe(1);
 
-    const feeInserts = supabase._insertCalls.filter(
-      (c: { table: string; row: Record<string, unknown> }) => c.table === 'platform_fees'
+    // Simulate replay: RPC returns already_applied
+    supabase.rpc.mockResolvedValueOnce({
+      data: { applied: false, already_applied: true, is_legacy: false, amount: 500 },
+      error: null,
+    });
+
+    // Second call
+    await processCampaignDonation(supabase as any, 'pay-dup', 'camp-dup', 500, 15, {
+      feePolicyVersion: 1,
+      configVersionId: 'cfg-v1-abc',
+      transactionCategory: 'giving',
+      feeBasis: {
+        payment_routing: 'platform' as const,
+        tier: 'growth' as const,
+        is_in_trial: false,
+        custom_fee_percentage: null,
+        custom_fee_flat: null,
+      },
+      paymentRouting: 'platform' as const,
+    });
+
+    // Both calls should attempt insert; the DB UNIQUE constraint prevents actual duplicates
+    const allFeeInserts = supabase._insertCalls.filter(
+      (c: { table: string }) => c.table === 'platform_fees'
     );
-    expect(feeInserts.length).toBe(1);
+    expect(allFeeInserts).toHaveLength(2);
+    // Both inserts use the same payment_id — DB UNIQUE on payment_id prevents duplication
+    expect(allFeeInserts[0].row.payment_id).toBe('pay-dup');
+    expect(allFeeInserts[1].row.payment_id).toBe('pay-dup');
   });
 
-  it('replay: already_applied with is_legacy=true skips fee recording', async () => {
+  it('replay with is_legacy=true skips fee recording', async () => {
     const supabase = mockSupabase({
       rpcResult: { applied: false, already_applied: true, is_legacy: true, amount: 500 },
     });
 
-    await processCampaignDonation(
-      supabase as any,
-      'pay-replay-legacy',
-      'camp-replay-legacy',
-      500,
-      15,
-    );
+    await processCampaignDonation(supabase as any, 'pay-leg-replay', 'camp-leg-replay', 500, 15);
 
-    // shouldEnsureFee = result && !result.reason && !result.is_legacy
-    // is_legacy=true → shouldEnsureFee=false → no fee recording
+    // shouldEnsureFee = result && !result.reason && !result.is_legacy → false
     const feeInserts = supabase._insertCalls.filter(
-      (c: { table: string; row: Record<string, unknown> }) => c.table === 'platform_fees'
+      (c: { table: string }) => c.table === 'platform_fees'
     );
-    expect(feeInserts.length).toBe(0);
+    expect(feeInserts).toHaveLength(0);
+  });
+
+  it('backward-compatible 4-arg call (legacy callers without gatewayFee or feePolicy)', async () => {
+    const supabase = mockSupabase({
+      rpcResult: { applied: true, is_legacy: false, amount: 1000 },
+    });
+
+    // 4-arg call — no gatewayFee, no feePolicy
+    await processCampaignDonation(supabase as any, 'pay-4arg', 'camp-4arg', 1000);
+
+    expect(supabase.rpc).toHaveBeenCalledWith('apply_campaign_donation', {
+      p_campaign_id: 'camp-4arg',
+      p_payment_id: 'pay-4arg',
+    });
+
+    const feeInserts = supabase._insertCalls.filter(
+      (c: { table: string }) => c.table === 'platform_fees'
+    );
+    expect(feeInserts).toHaveLength(1);
+    expect(feeInserts[0].row.transaction_amount).toBe(1000);
   });
 });
