@@ -563,6 +563,18 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // #682: Structured warning when activation succeeds but allowance grant was skipped.
+      // The RPC checks channel readiness against the business status snapshot at RPC time.
+      // For shared-channel businesses, status may still be 'pending' at that point,
+      // causing allowance_granted: false with reason 'channel_not_ready'.
+      if (activationResult.activated === true && activationResult.allowance_granted === false) {
+        console.warn('[ONBOARDING-VERIFY] Activation succeeded but allowance not granted:', {
+          businessId,
+          reason: activationResult.reason,
+          plan,
+        });
+      }
+
       // Paid onboarding completion: transition business to active after proven
       // activation authority. Matches free path behavior (line ~600).
       // Payment/subscription evidence is already committed and will not be
@@ -578,6 +590,38 @@ export async function POST(request: NextRequest) {
           { message: 'Business activation failed after payment. Please retry verification.', recoverable: true },
           { status: 500 },
         );
+      }
+
+      // #682: Post-activation allowance recovery.
+      // If the initial activation skipped the allowance grant (e.g., channel_not_ready
+      // because business was still 'pending'), attempt reconciliation now that the
+      // business is active. reconcile_paid_allowance re-checks channel readiness
+      // against the updated business state and is fully idempotent via source_ref.
+      if (activationResult.allowance_granted === false) {
+        try {
+          const { data: reconcileResult, error: reconcileErr } = await service.rpc(
+            'reconcile_paid_allowance',
+            { p_business_id: businessId },
+          );
+          if (reconcileErr) {
+            console.warn('[ONBOARDING-VERIFY] Post-activation allowance reconciliation failed (non-fatal):', {
+              businessId,
+              error: reconcileErr.message,
+            });
+          } else if (!reconcileResult || reconcileResult.reconciled !== true) {
+            console.warn('[ONBOARDING-VERIFY] Post-activation allowance not reconciled:', {
+              businessId,
+              result: reconcileResult,
+            });
+          } else {
+            console.log('[ONBOARDING-VERIFY] Post-activation allowance reconciled:', {
+              businessId,
+              idempotent: reconcileResult.idempotent || false,
+            });
+          }
+        } catch (reconcileErr) {
+          console.warn('[ONBOARDING-VERIFY] Post-activation allowance reconciliation exception (non-fatal):', reconcileErr);
+        }
       }
 
       // Post-authority provider identity update (only after successful activation)
