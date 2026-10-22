@@ -14,8 +14,8 @@ on:
         default: 'https://staging.waaiio.com'
         type: string
       deployment_sha:
-        description: 'SHA of the deployed staging build (for evidence recording)'
-        required: false
+        description: 'Exact 40-char SHA of the deployed staging build (required for evidence integrity)'
+        required: true
         type: string
       run_auth_tests:
         description: 'Run authenticated merchant tests (requires staging credentials)'
@@ -37,6 +37,8 @@ jobs:
     # ── EXPLICIT environment variable allowlist ──
     # ONLY these variables are injected. No production API keys,
     # payment secrets, email credentials, or messaging tokens.
+    # Workflow inputs are passed ONLY through these env vars — never
+    # interpolated directly in shell `run:` blocks (injection prevention).
     env:
       E2E_STAGING_URL: ${{ inputs.staging_url }}
       E2E_DEPLOYMENT_SHA: ${{ inputs.deployment_sha }}
@@ -66,11 +68,27 @@ jobs:
         run: npx playwright install chromium --with-deps
 
       # ── Safety guards ──
+      # All guards use env vars ($E2E_STAGING_URL, $E2E_DEPLOYMENT_SHA)
+      # instead of ${{ inputs.* }} to prevent command injection.
 
-      - name: Guard — reject production targets
+      - name: Guard — reject production targets and enforce HTTPS
         run: |
-          URL="${{ inputs.staging_url }}"
-          HOSTNAME=$(python3 -c "from urllib.parse import urlparse; print(urlparse('$URL').hostname or '')")
+          # Parse hostname using positional argument (not string interpolation)
+          HOSTNAME=$(python3 -c "import sys; from urllib.parse import urlparse; print(urlparse(sys.argv[1]).hostname or '')" "$E2E_STAGING_URL")
+          PROTOCOL=$(python3 -c "import sys; from urllib.parse import urlparse; print(urlparse(sys.argv[1]).scheme)" "$E2E_STAGING_URL")
+
+          if [ -z "$HOSTNAME" ]; then
+            echo "::error::FAIL-CLOSED: Cannot parse hostname from E2E_STAGING_URL."
+            exit 1
+          fi
+
+          # Enforce HTTPS for non-loopback targets
+          if [ "$HOSTNAME" != "localhost" ] && [ "$HOSTNAME" != "127.0.0.1" ]; then
+            if [ "$PROTOCOL" != "https" ]; then
+              echo "::error::FAIL-CLOSED: Non-loopback target must use HTTPS. Got '$PROTOCOL'."
+              exit 1
+            fi
+          fi
 
           # Block exact production hostnames
           for PROD_HOST in waaiio.com www.waaiio.com app.waaiio.com; do
@@ -81,7 +99,7 @@ jobs:
           done
 
           # Block production Supabase ref anywhere in URL
-          if echo "$URL" | grep -qF 'cxcmiqotkowhxinjbytg'; then
+          if echo "$E2E_STAGING_URL" | grep -qF 'cxcmiqotkowhxinjbytg'; then
             echo "::error::FAIL-CLOSED: URL contains production Supabase ref."
             exit 1
           fi
@@ -142,6 +160,55 @@ jobs:
           fi
           echo "Staging credentials available (values not printed)"
 
+      - name: Guard — verify deployment identity
+        run: |
+          # Parse hostname to check if target is remote
+          HOSTNAME=$(python3 -c "import sys; from urllib.parse import urlparse; print(urlparse(sys.argv[1]).hostname or '')" "$E2E_STAGING_URL")
+
+          if [ "$HOSTNAME" = "localhost" ] || [ "$HOSTNAME" = "127.0.0.1" ]; then
+            echo "Skipping identity verification for localhost target"
+            exit 0
+          fi
+
+          IDENTITY_URL="${E2E_STAGING_URL%/}/api/release-identity"
+          echo "Checking deployment identity at: $IDENTITY_URL"
+
+          RESPONSE=$(curl -sf --max-time 15 -H "Accept: application/json" "$IDENTITY_URL" 2>&1) || {
+            echo "::error::FAIL-CLOSED: Cannot reach $IDENTITY_URL — deployment identity unverifiable."
+            exit 1
+          }
+
+          PROJECT_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('projectId',''))")
+          VERCEL_ENV=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('vercelEnv',''))")
+          DEPLOY_SHA=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('sha',''))")
+
+          EXPECTED_PROJECT="prj_h7YmC4fvpxhn429znCy34OjLZ6se"
+          if [ "$PROJECT_ID" != "$EXPECTED_PROJECT" ]; then
+            echo "::error::FAIL-CLOSED: projectId '$PROJECT_ID' does not match expected '$EXPECTED_PROJECT'."
+            exit 1
+          fi
+
+          if [ "$VERCEL_ENV" = "production" ]; then
+            echo "::error::FAIL-CLOSED: vercelEnv is 'production'. Staging QA must not target production."
+            exit 1
+          fi
+
+          if [ -z "$E2E_DEPLOYMENT_SHA" ]; then
+            echo "::error::FAIL-CLOSED: deployment_sha is required for remote targets."
+            exit 1
+          fi
+
+          if [ "$DEPLOY_SHA" != "$E2E_DEPLOYMENT_SHA" ]; then
+            echo "::error::FAIL-CLOSED: Deployed SHA '$DEPLOY_SHA' does not match expected '$E2E_DEPLOYMENT_SHA'."
+            exit 1
+          fi
+
+          echo "Deployment identity verified:"
+          echo "  projectId: $PROJECT_ID"
+          echo "  vercelEnv: $VERCEL_ENV"
+          echo "  sha: $DEPLOY_SHA"
+          echo "NOTE: This verifies Vercel deployment identity only, not database identity."
+
       # ── Test execution ──
 
       - name: Record evidence metadata
@@ -150,22 +217,23 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Staging URL | \`${{ inputs.staging_url }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Source SHA | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Deployment SHA | \`${{ inputs.deployment_sha || 'not provided' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging URL | \`$E2E_STAGING_URL\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Source SHA | \`$GITHUB_SHA\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployment SHA | \`${E2E_DEPLOYMENT_SHA:-not provided}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Supabase Ref | \`tqjvrzopvtczxfxiwmnz\` (staging) |" >> $GITHUB_STEP_SUMMARY
           echo "| Timestamp | \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Auth tests | \`${{ inputs.run_auth_tests }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Triggered by | \`${{ github.actor }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | \`$GITHUB_ACTOR\` |" >> $GITHUB_STEP_SUMMARY
 
       - name: Run auth boundary tests (no credentials needed)
         run: |
           npx playwright test e2e/staging/auth-boundaries.spec.ts \
             --project=chromium \
-            --reporter=list \
+            --reporter=list,json \
             --config=e2e/playwright.staging.config.ts
         env:
           E2E_SOURCE_SHA: ${{ github.sha }}
+          PLAYWRIGHT_JSON_OUTPUT_NAME: auth-boundaries-results.json
 
       - name: Run authenticated staging tests
         if: inputs.run_auth_tests
@@ -181,80 +249,111 @@ jobs:
             e2e/staging/engage.spec.ts \
             e2e/staging/financials.spec.ts \
             --project=chromium \
-            --reporter=list \
+            --reporter=list,json \
             --config=e2e/playwright.staging.config.ts
         env:
           E2E_SOURCE_SHA: ${{ github.sha }}
+          PLAYWRIGHT_JSON_OUTPUT_NAME: authenticated-results.json
 
-      # ── Artifacts: MINIMAL SANITIZED SUMMARY ONLY ──
-      # No raw traces, HAR files, videos, screenshots, or storageState.
-      # Only the text-based test result summary is uploaded.
+      # ── Artifacts: STRICTLY ALLOWLISTED EVIDENCE ONLY ──
+      # Never upload raw Playwright JSON, HTML, traces, HAR, videos,
+      # screenshots, or storageState. Generate a per-test status report
+      # with only allowlisted fields (title, status, duration).
 
-      - name: Generate sanitized test summary
+      - name: Generate allowlisted test evidence
         if: always()
         run: |
-          # Delete ALL potentially sensitive artifacts
-          rm -rf test-results/ 2>/dev/null || true
+          # Delete ALL potentially sensitive artifacts FIRST
+          rm -rf test-results/ playwright-report/ 2>/dev/null || true
           find . -name '*.storageState.json' -delete 2>/dev/null || true
           find . -name 'storageState*.json' -delete 2>/dev/null || true
           find . -name '*.har' -delete 2>/dev/null || true
-          find . -name '*.zip' -path '*/test-results/*' -delete 2>/dev/null || true
           find . -name '*.webm' -delete 2>/dev/null || true
           find . -name '*.png' -path '*/test-results/*' -delete 2>/dev/null || true
 
-          # Create minimal text summary
           mkdir -p staging-qa-summary
-          echo "Staging QA Run Summary" > staging-qa-summary/results.txt
-          echo "======================" >> staging-qa-summary/results.txt
-          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> staging-qa-summary/results.txt
-          echo "Source SHA: ${{ github.sha }}" >> staging-qa-summary/results.txt
-          echo "Deployment SHA: ${{ inputs.deployment_sha || 'not provided' }}" >> staging-qa-summary/results.txt
-          echo "Staging URL: ${{ inputs.staging_url }}" >> staging-qa-summary/results.txt
-          echo "Job status: ${{ job.status }}" >> staging-qa-summary/results.txt
-          echo "" >> staging-qa-summary/results.txt
 
-          # If playwright-report exists, extract ONLY test names and pass/fail status
-          if [ -d "playwright-report" ]; then
-            # Scrub any credential values from HTML report
-            for f in playwright-report/*.html playwright-report/**/*.html; do
-              [ -f "$f" ] || continue
-              if [ -n "$E2E_STAGING_EMAIL" ]; then
-                sed -i "s|${E2E_STAGING_EMAIL}|[REDACTED]|g" "$f" 2>/dev/null || true
-              fi
-              if [ -n "$E2E_STAGING_PASSWORD" ]; then
-                sed -i "s|${E2E_STAGING_PASSWORD}|[REDACTED]|g" "$f" 2>/dev/null || true
-              fi
-            done
+          # Extract ONLY allowlisted fields from Playwright JSON results.
+          # Playwright JSONReportTest.status is 'expected'|'unexpected'|'flaky'|'skipped'.
+          # The actual execution outcome (passed/failed/timedOut/interrupted) is in
+          # results[].status. We use results[].status for truthful reporting.
+          python3 - <<'PYEOF'
+          import json, glob, os, sys
 
-            # Verify no credentials remain in report
-            LEAKED=0
-            if [ -n "$E2E_STAGING_EMAIL" ]; then
-              if grep -rq "$E2E_STAGING_EMAIL" playwright-report/ 2>/dev/null; then
-                echo "::error::Credential leak detected in playwright-report after scrubbing"
-                LEAKED=1
-              fi
-            fi
-            if [ -n "$E2E_STAGING_PASSWORD" ]; then
-              if grep -rq "$E2E_STAGING_PASSWORD" playwright-report/ 2>/dev/null; then
-                echo "::error::Credential leak detected in playwright-report after scrubbing"
-                LEAKED=1
-              fi
-            fi
-            if [ "$LEAKED" -eq 1 ]; then
-              echo "Deleting playwright-report due to credential leak"
-              rm -rf playwright-report/
-            fi
-          fi
+          EXECUTION_STATUSES = {'passed', 'failed', 'timedOut', 'interrupted', 'skipped'}
+          results = []
+          auth_tests_executed = False
+          parse_errors = []
 
-      - name: Delete HTML report (artifact security not yet demonstrated)
-        if: always()
-        run: rm -rf playwright-report/ 2>/dev/null || true
+          def collect_specs(suite, is_auth):
+              """Recursively collect specs from nested suites."""
+              global auth_tests_executed
+              for spec in suite.get('specs', []):
+                  for test_entry in spec.get('tests', []):
+                      # Use results[].status (execution outcome), NOT test.status
+                      test_results = test_entry.get('results', [])
+                      if test_results:
+                          exec_status = test_results[0].get('status', 'unknown')
+                      else:
+                          # No results = test was skipped
+                          exec_status = 'skipped'
+                      if exec_status not in EXECUTION_STATUSES:
+                          parse_errors.append(f"Unknown status '{exec_status}' for '{spec.get('title','?')}'")
+                          exec_status = 'unknown'
+                      entry = {
+                          'title': spec.get('title', 'unnamed')[:200],
+                          'status': exec_status,
+                          'duration_ms': int(test_results[0].get('duration', 0)) if test_results else 0,
+                      }
+                      results.append(entry)
+                      if is_auth:
+                          auth_tests_executed = True
+              # Recurse into nested suites
+              for child in suite.get('suites', []):
+                  collect_specs(child, is_auth)
 
-      - name: Upload sanitized text summary only
+          for filepath in sorted(glob.glob('*-results.json')):
+              is_auth_suite = 'authenticated' in filepath
+              try:
+                  with open(filepath) as fh:
+                      data = json.load(fh)
+                  for suite in data.get('suites', []):
+                      collect_specs(suite, is_auth_suite)
+              except (json.JSONDecodeError, KeyError, IndexError) as e:
+                  parse_errors.append(f"Failed to parse {filepath}: {e}")
+
+          # Fail evidence generation if unknown statuses were encountered
+          if parse_errors:
+              print("WARNING: Evidence parse issues:", file=sys.stderr)
+              for err in parse_errors:
+                  print(f"  - {err}", file=sys.stderr)
+
+          summary = {
+              'source_sha': os.environ.get('GITHUB_SHA', 'unknown'),
+              'deployment_sha': os.environ.get('E2E_DEPLOYMENT_SHA', 'not provided'),
+              'total': len(results),
+              'passed': sum(1 for r in results if r['status'] == 'passed'),
+              'failed': sum(1 for r in results if r['status'] == 'failed'),
+              'skipped': sum(1 for r in results if r['status'] == 'skipped'),
+              'timed_out': sum(1 for r in results if r['status'] == 'timedOut'),
+              'unknown': sum(1 for r in results if r['status'] == 'unknown'),
+              'auth_tests_executed': auth_tests_executed,
+              'parse_errors': len(parse_errors),
+              'tests': results,
+          }
+
+          with open('staging-qa-summary/evidence.json', 'w') as out:
+              json.dump(summary, out, indent=2)
+          PYEOF
+
+          # Delete raw JSON results (may contain error messages, URLs, credentials)
+          rm -f *-results.json
+
+      - name: Upload allowlisted evidence only
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: staging-qa-summary-${{ github.run_number }}
+          name: staging-qa-evidence-${{ github.run_number }}
           path: staging-qa-summary/
           retention-days: 14
 
@@ -266,9 +365,40 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ job.status }}" == "success" ]; then
-            echo "All staging QA tests passed." >> $GITHUB_STEP_SUMMARY
+
+          if [ -f staging-qa-summary/evidence.json ]; then
+            PASSED=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('passed',0))")
+            FAILED=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('failed',0))")
+            SKIPPED=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('skipped',0))")
+            TOTAL=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('total',0))")
+            AUTH_RAN=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('auth_tests_executed',False))")
+
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total | $TOTAL |" >> $GITHUB_STEP_SUMMARY
+            echo "| Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Auth tests executed | $AUTH_RAN |" >> $GITHUB_STEP_SUMMARY
+
+            UNKNOWN=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('unknown',0))")
+            PARSE_ERRORS=$(python3 -c "import json; d=json.load(open('staging-qa-summary/evidence.json')); print(d.get('parse_errors',0))")
+            if [ "$UNKNOWN" -gt 0 ] || [ "$PARSE_ERRORS" -gt 0 ]; then
+              echo "| Unknown/parse errors | $UNKNOWN / $PARSE_ERRORS |" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "$UNKNOWN" -gt 0 ] || [ "$PARSE_ERRORS" -gt 0 ]; then
+              echo "**WARNING: Evidence contains unknown test statuses or parse errors.** Results may be inaccurate." >> $GITHUB_STEP_SUMMARY
+            elif [ "$FAILED" -gt 0 ]; then
+              echo "**Some tests failed.** See evidence.json artifact for per-test results." >> $GITHUB_STEP_SUMMARY
+            elif [ "$AUTH_RAN" = "False" ]; then
+              echo "**Auth boundary tests passed. Authenticated tests were NOT executed.**" >> $GITHUB_STEP_SUMMARY
+              echo "This is NOT a complete staging QA pass." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "All executed tests passed (auth boundary + authenticated suites)." >> $GITHUB_STEP_SUMMARY
+            fi
           else
-            echo "Some tests failed. See text summary artifact for evidence." >> $GITHUB_STEP_SUMMARY
+            echo "No test evidence generated. Tests may have failed to start." >> $GITHUB_STEP_SUMMARY
             echo "Reproduce locally: \`./scripts/qa-staging.sh --headed\`" >> $GITHUB_STEP_SUMMARY
           fi

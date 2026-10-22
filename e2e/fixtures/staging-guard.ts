@@ -99,6 +99,15 @@ function parseOrigin(rawUrl: string): { hostname: string; origin: string; port: 
 export function assertStagingTarget(baseUrl: string): void {
   const { hostname, origin } = parseOrigin(baseUrl);
 
+  // Enforce HTTPS for non-loopback targets
+  const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1';
+  if (!isLoopback && new URL(baseUrl).protocol !== 'https:') {
+    throw new Error(
+      `FAIL-CLOSED: Non-loopback target "${baseUrl}" must use HTTPS. ` +
+      `HTTP is only permitted for localhost/127.0.0.1.`
+    );
+  }
+
   // FIRST: reject known production origins
   if (BLOCKED_ORIGINS.has(origin) || BLOCKED_ORIGINS.has(`https://${hostname}`)) {
     throw new Error(
@@ -375,6 +384,115 @@ function execGitSha(): string | null {
   } catch {
     return null;
   }
+}
+
+// ── Deployment identity verification ──
+
+/** Known Vercel project ID for the staging deployment */
+export const STAGING_VERCEL_PROJECT_ID = 'prj_h7YmC4fvpxhn429znCy34OjLZ6se';
+
+export interface DeploymentIdentity {
+  sha: string;
+  projectId: string;
+  deploymentId: string;
+  vercelEnv: string;
+}
+
+/**
+ * Verifies server-side Vercel deployment identity via /api/release-identity.
+ *
+ * Checks:
+ *   - projectId matches expected staging Vercel project
+ *   - vercelEnv is NOT 'production'
+ *   - Deployed SHA matches expectedSha (if provided)
+ *   - Response shape is valid (40-hex SHA, prj_ prefix, dpl_ prefix)
+ *
+ * LIMITATION: This verifies Vercel deployment identity only. It does NOT
+ * verify the server's Supabase/database project. A staging Vercel deployment
+ * misconfigured to use a production database would pass this check.
+ * Server-side database identity verification requires an application-code
+ * change to report NEXT_PUBLIC_SUPABASE_URL from the server — see Phase C.
+ *
+ * Fail-closed: throws on mismatch, network error, or malformed response.
+ */
+export async function verifyStagingIdentity(
+  baseUrl: string,
+  expectedSha?: string,
+): Promise<DeploymentIdentity> {
+  const url = `${baseUrl.replace(/\/$/, '')}/api/release-identity`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      redirect: 'error',
+    });
+  } catch (err) {
+    throw new Error(
+      `FAIL-CLOSED: Cannot reach ${url} — deployment identity unverifiable. ` +
+      `Error: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `FAIL-CLOSED: /api/release-identity returned HTTP ${response.status}. ` +
+      `The deployment may be missing required identity environment variables.`
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error(
+      'FAIL-CLOSED: /api/release-identity returned non-JSON response.'
+    );
+  }
+
+  const data = body as Record<string, unknown>;
+
+  // Verify projectId matches expected staging project
+  if (data.projectId !== STAGING_VERCEL_PROJECT_ID) {
+    throw new Error(
+      `FAIL-CLOSED: Deployment projectId "${String(data.projectId)}" does not match ` +
+      `expected staging project "${STAGING_VERCEL_PROJECT_ID}".`
+    );
+  }
+
+  // Reject production environment
+  if (data.vercelEnv === 'production') {
+    throw new Error(
+      'FAIL-CLOSED: Deployment reports vercelEnv="production". ' +
+      'Staging QA must not run against a production deployment.'
+    );
+  }
+
+  // Verify SHA match if expected
+  if (expectedSha && data.sha !== expectedSha) {
+    throw new Error(
+      `FAIL-CLOSED: Deployed SHA "${String(data.sha)}" does not match ` +
+      `expected SHA "${expectedSha}".`
+    );
+  }
+
+  // Validate response shape
+  const sha = String(data.sha || '');
+  const projectId = String(data.projectId || '');
+  const deploymentId = String(data.deploymentId || '');
+  const vercelEnv = String(data.vercelEnv || '');
+
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`FAIL-CLOSED: Deployment SHA "${sha}" is not a valid 40-hex-char string.`);
+  }
+  if (!projectId.startsWith('prj_')) {
+    throw new Error(`FAIL-CLOSED: Deployment projectId "${projectId}" missing prj_ prefix.`);
+  }
+  if (!deploymentId.startsWith('dpl_')) {
+    throw new Error(`FAIL-CLOSED: Deployment deploymentId "${deploymentId}" missing dpl_ prefix.`);
+  }
+
+  return { sha, projectId, deploymentId, vercelEnv };
 }
 
 // ── Credential requirement assertions ──

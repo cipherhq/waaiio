@@ -1,3 +1,18 @@
+### #671 QA Phase B — staging fixture/workflow hardening (2026-10-22)
+
+- **`e2e/fixtures/staging-guard.ts`**: (1) Enforce HTTPS for non-loopback staging targets. (2) Add `verifyStagingIdentity()` — verifies Vercel deployment projectId, vercelEnv, and SHA via `/api/release-identity`. Documented limitation: this is deployment identity only, NOT database identity (see Phase C follow-up).
+- **`e2e/fixtures/auth.ts`**: (1) Refactor `merchantPage` to worker-scoped auth — login once per worker, reuse `storageState` in memory across tests (avoids repeated session-bind writes and notification emails). (2) Request guard violations now throw (fail-closed) instead of logging warnings. (3) Inherit project device settings (viewport, userAgent) from config in test contexts.
+- **`e2e/staging/auth-boundaries.spec.ts`**: (1) Add `verifyStagingIdentity()` in `beforeAll` for remote targets. (2) Install request guard and verify redirect origin stays on staging. (3) Replace non-existent `/api/businesses` route with real `/api/dashboard/switch-business`. (4) Rename admin test to "unauthenticated" (honest label; authenticated merchant check deferred to Phase C).
+- **`e2e/staging/navigation.spec.ts`**: Add `response.status()` check — 4xx/5xx responses now fail tests.
+- **`e2e/staging/catalog.spec.ts`**: Scope content assertions to `main` element to avoid sidebar false positives.
+- **`e2e/staging/customers.spec.ts`**: Add limitation comment about env-var-name vs JWT-structure detection.
+- **`.github/workflows/staging-qa.yml`**: (1) Replace all `${{ inputs.* }}` in shell `run:` blocks with env vars (command injection prevention). (2) Add HTTPS enforcement in guard step. (3) Add deployment identity verification step via `/api/release-identity`. (4) Use JSON reporter with allowlisted per-test evidence artifact (title, status, duration only — no error text, URLs, or credentials). (5) Summary now distinguishes "all passed" from "auth tests not executed".
+- **`scripts/qa-staging.sh`**: (1) Add `--config=e2e/playwright.staging.config.ts` to all Playwright invocations. (2) Enforce HTTPS for non-loopback. (3) Fix Python URL parsing to use positional args instead of string interpolation.
+- **`lib/__tests__/qa-staging-guard.test.ts`** (new): 25 unit tests covering HTTPS enforcement, identity verification (positive/negative), target validation, and constants.
+- **Not changed**: Application code, database, existing CI merge gate, Playwright staging config, or other 6 staging spec files.
+- **Affects**: Staging QA workflow safety, test fixtures, and evidence reporting only. No runtime application behavior changed.
+- **Known limitation**: Database identity (which Supabase project the server connects to) is NOT verified. Requires a minimal app-code change to `/api/release-identity` to report `NEXT_PUBLIC_SUPABASE_URL` — presented as Phase C follow-up.
+
 ### 2026-10-22 — Lean engineering execution contract (governance-only)
 
 - **`CLAUDE.md`**: Require a short proven-need/acceptance contract, smallest justified diff, and stop-at-definition-of-done discipline. Bug allegations use existing independent evidence verification; new features follow approved requirements.

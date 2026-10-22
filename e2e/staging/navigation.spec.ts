@@ -38,7 +38,15 @@ const CAPABILITY_PAGES = [
 test.describe('Dashboard navigation — core pages', () => {
   for (const { path, label } of CORE_PAGES) {
     test(`${label} (${path}) loads without error`, async ({ merchantPage }) => {
-      await merchantPage.goto(path);
+      const response = await merchantPage.goto(path);
+
+      // Server-side errors must fail the test
+      if (response) {
+        expect(
+          response.status(),
+          `${path} returned HTTP ${response.status()}`
+        ).toBeLessThan(400);
+      }
 
       // Must NOT redirect to login (session loss)
       await expect(merchantPage).not.toHaveURL(/\/login/);
@@ -57,7 +65,15 @@ test.describe('Dashboard navigation — core pages', () => {
 test.describe('Dashboard navigation — capability pages', () => {
   for (const { path, label } of CAPABILITY_PAGES) {
     test(`${label} (${path}) loads or shows empty state`, async ({ merchantPage }) => {
-      await merchantPage.goto(path);
+      const response = await merchantPage.goto(path);
+
+      // Server-side errors must fail the test
+      if (response) {
+        expect(
+          response.status(),
+          `${path} returned HTTP ${response.status()}`
+        ).toBeLessThan(400);
+      }
 
       // Must NOT redirect to login
       await expect(merchantPage).not.toHaveURL(/\/login/);
