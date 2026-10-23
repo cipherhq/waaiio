@@ -255,6 +255,90 @@ describe('M378 RPC contract', () => {
   });
 });
 
+// ═══ M458: Atomic price + plan-code cutover (tier_prices) ═══
+describe('M458 atomic cutover — tier_prices', () => {
+  it('save_refs with tier_prices passes p_tier_prices to RPC', async () => {
+    mockFetch.mockResolvedValueOnce(flwPlanOk(15000)).mockResolvedValueOnce(flwPlanOk(45000));
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: { growth: { flutterwave: '300001' }, business: { flutterwave: '300002' } },
+      expected_version_id: 'uuid-m458-1',
+      tier_prices: { growth: { price: 15000 }, business: { price: 45000 } },
+    }) as never);
+    expect(res.status).toBe(200);
+    const saveCall = rpcCalls.find(c => c.fn === 'save_provider_plan_refs');
+    expect(saveCall).toBeDefined();
+    expect(saveCall!.params).toHaveProperty('p_tier_prices');
+    expect((saveCall!.params.p_tier_prices as Record<string, unknown>)).toEqual({ growth: { price: 15000 }, business: { price: 45000 } });
+  });
+
+  it('save_refs without tier_prices omits p_tier_prices from RPC (backward compat)', async () => {
+    mockFetch.mockResolvedValueOnce(flwPlanOk(5000));
+    await POST(makeReq({ action: 'save_refs', country_code: 'NG', plan_refs: { growth: { flutterwave: '111222' } }, expected_version_id: 'uuid-compat' }) as never);
+    const saveCall = rpcCalls.find(c => c.fn === 'save_provider_plan_refs');
+    expect(saveCall).toBeDefined();
+    expect(saveCall!.params).not.toHaveProperty('p_tier_prices');
+  });
+
+  it('preflight uses new price from tier_prices, not DB price', async () => {
+    // DB has growth price 5000, but tier_prices says 15000
+    // Plan is configured at 15000 — should pass with tier_prices, fail without
+    mockFetch.mockResolvedValueOnce(flwPlanOk(15000));
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: { growth: { flutterwave: '300003' } },
+      expected_version_id: 'uuid-m458-2',
+      tier_prices: { growth: { price: 15000 } },
+    }) as never);
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects invalid tier_prices — negative price', async () => {
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: { growth: { flutterwave: '300004' } },
+      expected_version_id: 'uuid-m458-3',
+      tier_prices: { growth: { price: -1 } },
+    }) as never);
+    expect(res.status).toBe(400);
+    expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
+  });
+
+  it('rejects invalid tier_prices — free tier not allowed', async () => {
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: { growth: { flutterwave: '300005' } },
+      expected_version_id: 'uuid-m458-4',
+      tier_prices: { free: { price: 0 } },
+    }) as never);
+    expect(res.status).toBe(400);
+    expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
+  });
+
+  it('tier_prices included in step-up parameter hash', async () => {
+    mockFetch.mockResolvedValueOnce(flwPlanOk(15000));
+    await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: { growth: { flutterwave: '300006' } },
+      expected_version_id: 'uuid-m458-5',
+      tier_prices: { growth: { price: 15000 } },
+    }) as never);
+    // consumeStepUp is called with stepUpParams that must include tier_prices
+    const stepUpCall = vi.mocked(consumeStepUp).mock.calls.find(
+      c => c[2] === 'provider_config' && c[3] === 'save_refs'
+    );
+    expect(stepUpCall).toBeDefined();
+    const params = stepUpCall![4] as Record<string, unknown>;
+    expect(params).toHaveProperty('tier_prices');
+    expect((params.tier_prices as Record<string, unknown>)).toEqual({ growth: { price: 15000 } });
+  });
+});
+
 // ═══ CORS tests ═══
 describe('CORS handling', () => {
   it('OPTIONS preflight for configured Admin origin succeeds with required headers', async () => {
