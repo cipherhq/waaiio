@@ -115,6 +115,12 @@ export async function POST(request: NextRequest) {
         if (!obj || typeof obj !== 'object' || typeof obj.price !== 'number' || obj.price <= 0) {
           return respond({ error: `tier_prices.${tier}.price must be a positive number` }, { status: 400 });
         }
+        // M458 atomicity: every tier with a price change MUST have a plan ref —
+        // prevents updating price without verifying the matching provider plan.
+        const tierRefs = (plan_refs as Record<string, Record<string, string>>)[tier];
+        if (!tierRefs || Object.keys(tierRefs).length === 0) {
+          return respond({ error: `tier_prices.${tier} requires a matching plan_refs entry for atomic cutover` }, { status: 400 });
+        }
       }
     }
 

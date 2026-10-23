@@ -307,6 +307,20 @@ describe('M458 atomic cutover — tier_prices', () => {
     expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
   });
 
+  it('rejects tier_prices without matching plan_refs (atomicity guard)', async () => {
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: {},  // empty — no plan ref for growth
+      expected_version_id: 'uuid-m458-atom',
+      tier_prices: { growth: { price: 15000 } },
+    }) as never);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('requires a matching plan_refs entry');
+    expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
+  });
+
   it('rejects invalid tier_prices — free tier not allowed', async () => {
     const res = await POST(makeReq({
       action: 'save_refs',

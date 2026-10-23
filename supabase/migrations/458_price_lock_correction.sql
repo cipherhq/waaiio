@@ -188,6 +188,14 @@ BEGIN
       END IF;
     END LOOP;
 
+    -- Atomicity guard: every tier with a price change must have a matching plan ref.
+    -- Prevents price-only updates that break price/plan consistency.
+    FOR v_price_tier IN SELECT key FROM jsonb_each(p_tier_prices) LOOP
+      IF NOT (p_plan_refs ? v_price_tier) THEN
+        RAISE EXCEPTION 'p_tier_prices[%] requires a matching p_plan_refs entry for atomic cutover', v_price_tier;
+      END IF;
+    END LOOP;
+
     -- Apply price updates BEFORE plan ref updates (so preflight at the API
     -- layer can verify new plan codes against the new prices)
     FOR v_price_tier IN SELECT key FROM jsonb_each(p_tier_prices) LOOP
