@@ -117,7 +117,7 @@ describe.skipIf(!canRun)('M458: save_provider_plan_refs function integrity', () 
       WHERE proname = 'save_provider_plan_refs' AND pronamespace = 'public'::regnamespace;
     `);
     expect(result).toContain('t'); // prosecdef = true
-    expect(result).toContain('search_path=public, pg_temp');
+    expect(result).toContain('search_path=public, extensions, pg_temp');
   });
 
   it('service_role can execute; anon, authenticated, PUBLIC cannot', () => {
