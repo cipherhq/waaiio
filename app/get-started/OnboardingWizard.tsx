@@ -225,7 +225,7 @@ function getQueryParam(key: string): string | null {
 }
 
 function OnboardingWizard() {
-  useCategoryConfig(); // trigger DB load for category templates
+  const { isLoaded: isCategoryConfigLoaded } = useCategoryConfig(); // #682: track DB load state
   const router = useRouter();
   const preselectedPlan = getQueryParam('plan') as SubscriptionTier | null;
   // #270: monthly-only — ignore legacy ?billing=annual query param
@@ -1371,6 +1371,7 @@ function OnboardingWizard() {
                 setSelectedCapabilities={setSelectedCapabilities}
                 setSelectedPlan={setSelectedPlan}
                 setStep={setStep}
+                isCategoryConfigLoaded={isCategoryConfigLoaded}
               />
             )}
 
