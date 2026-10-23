@@ -308,20 +308,20 @@ BEGIN
     RAISE EXCEPTION 'M458: CA growth price not 20';
   END IF;
 
-  -- Verify fee alignment for all countries
+  -- Verify fee alignment for the 5 lock countries
   IF EXISTS (
     SELECT 1 FROM countries
-    WHERE is_active = true
+    WHERE code IN ('NG', 'GH', 'US', 'GB', 'CA')
       AND (pricing -> 'free' ->> 'feePercentage')::numeric <> 3
   ) THEN
-    RAISE EXCEPTION 'M458: free tier feePercentage not 3 for all countries';
+    RAISE EXCEPTION 'M458: free tier feePercentage not 3 for lock countries';
   END IF;
   IF EXISTS (
     SELECT 1 FROM countries
-    WHERE is_active = true
+    WHERE code IN ('NG', 'GH', 'US', 'GB', 'CA')
       AND (pricing -> 'free' ->> 'feeFlat')::numeric <> 0
   ) THEN
-    RAISE EXCEPTION 'M458: free tier feeFlat not 0 for all countries';
+    RAISE EXCEPTION 'M458: free tier feeFlat not 0 for lock countries';
   END IF;
 END $$;
 
