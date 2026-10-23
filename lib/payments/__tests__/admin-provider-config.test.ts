@@ -43,6 +43,7 @@ const mockServiceClient = {
           business: { price: 10000, provider_plan_refs: { flutterwave: '243207', paystack: 'PLN_B' } },
         },
         currency_code: 'NGN',
+        payment_gateway: 'paystack',
       },
       error: null,
     }),
@@ -88,6 +89,11 @@ function makeReq(body: Record<string, unknown>) {
 // Flutterwave plan response matching accepted verifyFlutterwavePlan contract
 function flwPlanOk(amount: number) {
   return { ok: true, json: async () => ({ status: 'success', data: { id: 1, status: 'active', amount, currency: 'NGN', interval: 'monthly' } }) };
+}
+
+// Paystack plan response matching accepted verifyPaystackPlan contract (amount in minor units)
+function psPlanOk(amountMajor: number) {
+  return { ok: true, json: async () => ({ status: true, data: { plan_code: 'PLN_test', name: 'Test', amount: amountMajor * 100, currency: 'NGN', interval: 'monthly', is_archived: false } }) };
 }
 
 const { POST } = await import('@/app/api/admin/provider-config/route');
@@ -258,11 +264,11 @@ describe('M378 RPC contract', () => {
 // ═══ M458: Atomic price + plan-code cutover (tier_prices) ═══
 describe('M458 atomic cutover — tier_prices', () => {
   it('save_refs with tier_prices passes p_tier_prices to RPC', async () => {
-    mockFetch.mockResolvedValueOnce(flwPlanOk(15000)).mockResolvedValueOnce(flwPlanOk(45000));
+    mockFetch.mockResolvedValueOnce(psPlanOk(15000)).mockResolvedValueOnce(psPlanOk(45000));
     const res = await POST(makeReq({
       action: 'save_refs',
       country_code: 'NG',
-      plan_refs: { growth: { flutterwave: '300001' }, business: { flutterwave: '300002' } },
+      plan_refs: { growth: { paystack: 'PLN_ng_growth_v2' }, business: { paystack: 'PLN_ng_business_v2' } },
       expected_version_id: 'uuid-m458-1',
       tier_prices: { growth: { price: 15000 }, business: { price: 45000 } },
     }) as never);
@@ -284,11 +290,11 @@ describe('M458 atomic cutover — tier_prices', () => {
   it('preflight uses new price from tier_prices, not DB price', async () => {
     // DB has growth price 5000, but tier_prices says 15000
     // Plan is configured at 15000 — should pass with tier_prices, fail without
-    mockFetch.mockResolvedValueOnce(flwPlanOk(15000));
+    mockFetch.mockResolvedValueOnce(psPlanOk(15000));
     const res = await POST(makeReq({
       action: 'save_refs',
       country_code: 'NG',
-      plan_refs: { growth: { flutterwave: '300003' } },
+      plan_refs: { growth: { paystack: 'PLN_new_growth' } },
       expected_version_id: 'uuid-m458-2',
       tier_prices: { growth: { price: 15000 } },
     }) as never);
@@ -299,11 +305,27 @@ describe('M458 atomic cutover — tier_prices', () => {
     const res = await POST(makeReq({
       action: 'save_refs',
       country_code: 'NG',
-      plan_refs: { growth: { flutterwave: '300004' } },
+      plan_refs: { growth: { paystack: 'PLN_neg' } },
       expected_version_id: 'uuid-m458-3',
       tier_prices: { growth: { price: -1 } },
     }) as never);
     expect(res.status).toBe(400);
+    expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
+  });
+
+  it('rejects tier_prices with wrong-gateway plan ref (gateway guard)', async () => {
+    // Country NG uses paystack, but only flutterwave ref provided
+    mockFetch.mockResolvedValueOnce(flwPlanOk(15000));
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: { growth: { flutterwave: '300010' } },  // flutterwave, not paystack
+      expected_version_id: 'uuid-m458-gw',
+      tier_prices: { growth: { price: 15000 } },
+    }) as never);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('paystack plan reference');
     expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
   });
 
@@ -325,7 +347,7 @@ describe('M458 atomic cutover — tier_prices', () => {
     const res = await POST(makeReq({
       action: 'save_refs',
       country_code: 'NG',
-      plan_refs: { growth: { flutterwave: '300005' } },
+      plan_refs: { growth: { paystack: 'PLN_free' } },
       expected_version_id: 'uuid-m458-4',
       tier_prices: { free: { price: 0 } },
     }) as never);
@@ -334,11 +356,11 @@ describe('M458 atomic cutover — tier_prices', () => {
   });
 
   it('tier_prices included in step-up parameter hash', async () => {
-    mockFetch.mockResolvedValueOnce(flwPlanOk(15000));
+    mockFetch.mockResolvedValueOnce(psPlanOk(15000));
     await POST(makeReq({
       action: 'save_refs',
       country_code: 'NG',
-      plan_refs: { growth: { flutterwave: '300006' } },
+      plan_refs: { growth: { paystack: 'PLN_stepup' } },
       expected_version_id: 'uuid-m458-5',
       tier_prices: { growth: { price: 15000 } },
     }) as never);

@@ -115,23 +115,39 @@ export async function POST(request: NextRequest) {
         if (!obj || typeof obj !== 'object' || typeof obj.price !== 'number' || obj.price <= 0) {
           return respond({ error: `tier_prices.${tier}.price must be a positive number` }, { status: 400 });
         }
-        // M458 atomicity: every tier with a price change MUST have a plan ref —
-        // prevents updating price without verifying the matching provider plan.
+        // M458 atomicity: every tier with a price change MUST have a plan ref
+        // for the country's ACTIVE gateway — prevents updating price without
+        // verifying the matching provider plan, or with a wrong-gateway ref.
         const tierRefs = (plan_refs as Record<string, Record<string, string>>)[tier];
         if (!tierRefs || Object.keys(tierRefs).length === 0) {
           return respond({ error: `tier_prices.${tier} requires a matching plan_refs entry for atomic cutover` }, { status: 400 });
         }
+        // Verify the ref is for the country's active gateway (read from DB below)
+        // — deferred to after country DB read
       }
     }
 
-    // Read authoritative country pricing/currency from DB
+    // Read authoritative country pricing/currency/gateway from DB
     const { data: country, error: countryErr } = await service
-      .from('countries').select('currency_code, pricing').eq('code', country_code).single();
+      .from('countries').select('currency_code, pricing, payment_gateway').eq('code', country_code).single();
     if (countryErr || !country) {
       return respond({ error: `Country "${country_code}" not found` }, { status: 404 });
     }
     const dbCurrency = country.currency_code as string;
     const dbPricing = country.pricing as Record<string, Record<string, unknown>> | null;
+    const dbGateway = country.payment_gateway as string;
+
+    // M458 atomicity: verify tier_prices refs are for the country's active gateway
+    if (tier_prices) {
+      for (const tier of Object.keys(tier_prices as Record<string, unknown>)) {
+        const tierRefs = (plan_refs as Record<string, Record<string, string>>)[tier];
+        if (!tierRefs?.[dbGateway]) {
+          return respond({
+            error: `tier_prices.${tier} requires a ${dbGateway} plan reference for ${country_code} (active gateway)`,
+          }, { status: 400 });
+        }
+      }
+    }
 
     // Preflight every ref against the provider BEFORE calling save RPC.
     // M458: When tier_prices is provided, preflight uses the NEW price (from the request)
