@@ -67,6 +67,16 @@ export function useOnboardingPersistence(
       // Don't restore if already on success step
       if (draft.step === 'success' || draft.step === 'auth') return;
 
+      // #682: Validate draft category against current category config.
+      // A stale draft may contain a category that is no longer valid.
+      if (draft.category) {
+        const { getAllCategoryKeys } = await import('@/lib/categoryConfig');
+        if (!getAllCategoryKeys().includes(draft.category)) {
+          draft.category = '';
+          draft.step = 'category';
+        }
+      }
+
       draftRestoredRef.current = true;
       restore(draft);
     } catch {
