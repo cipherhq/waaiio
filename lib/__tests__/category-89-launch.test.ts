@@ -295,12 +295,44 @@ describe('#682: migration 459', () => {
     expect(migrationSrc).toContain("UPDATE category_templates SET category_group = 'Government & Public' WHERE key = 'car_park'");
   });
 
-  it('sets alphabetical sort_order', () => {
-    expect(migrationSrc).toContain('UPDATE category_templates SET sort_order');
-  });
-
   it('is idempotent (ON CONFLICT for templates, IF NOT EXISTS for enums)', () => {
     expect(migrationSrc).toContain('ON CONFLICT (key) DO UPDATE');
     expect(migrationSrc).toContain('IF NOT EXISTS');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 8. Corrective migration M460 — sort_order by label
+// ═══════════════════════════════════════════════════════════
+
+describe('#682: corrective migration 460', () => {
+  const m460Src = readFileSync(
+    resolve(__dirname, '../../supabase/migrations/460_category_sort_order_correction.sql'),
+    'utf-8',
+  );
+
+  it('uses ROW_NUMBER window function for runtime label ordering', () => {
+    expect(m460Src).toContain('ROW_NUMBER()');
+    expect(m460Src).toContain('ORDER BY category_group, label');
+  });
+
+  it('only updates sort_order column', () => {
+    expect(m460Src).toContain('SET sort_order = r.new_sort');
+    expect(m460Src).not.toContain('SET label');
+    expect(m460Src).not.toContain('SET default_greeting');
+    expect(m460Src).not.toContain('SET category_group');
+  });
+
+  it('scopes to active templates only', () => {
+    expect(m460Src).toContain('WHERE is_active = true');
+  });
+
+  it('does not modify M459 (immutable per Release Gate V2)', () => {
+    const m459Src = readFileSync(
+      resolve(__dirname, '../../supabase/migrations/459_expand_business_categories.sql'),
+      'utf-8',
+    );
+    // M459 still has its original sort_order UPDATE statements
+    expect(m459Src).toContain('UPDATE category_templates SET sort_order');
   });
 });
