@@ -175,8 +175,8 @@ export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
   taxi: _TRANSPORT,
   transport: _TRANSPORT,
   logistics: _TRANSPORT,
-  courier: _TRANSPORT,
-  moving: _TRANSPORT,
+  courier: _DELIVERY_RETAIL, // #682: corrected — couriers take delivery orders, not sell tickets
+  moving: _HOME_AUTO, // #682: corrected — moving companies schedule jobs and invoice
   bus: _TRANSPORT,
 
   // ── Education & Training ──

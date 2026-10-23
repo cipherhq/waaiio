@@ -58,6 +58,8 @@ export interface StepCategoryProps {
   setSelectedCapabilities: React.Dispatch<React.SetStateAction<CapabilityId[]>>;
   setSelectedPlan: (v: SubscriptionTier) => void;
   setStep: (v: WizardStep) => void;
+  /** #682: Whether category_templates have loaded from the DB */
+  isCategoryConfigLoaded: boolean;
 }
 
 export interface StepFeaturesProps {
