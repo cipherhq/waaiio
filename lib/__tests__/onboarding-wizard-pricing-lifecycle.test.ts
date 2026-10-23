@@ -60,7 +60,7 @@ vi.mock('@/lib/supabase/client', () => ({
 }));
 vi.mock('@/lib/supabase/safe-view-query', () => ({ queryChannelsPublic: vi.fn().mockResolvedValue({ data: null }) }));
 vi.mock('@/lib/posthog/client', () => ({ getPostHogClient: () => ({ capture: vi.fn(), identify: vi.fn() }) }));
-vi.mock('@/hooks/useCategoryConfig', () => ({ useCategoryConfig: () => {} }));
+vi.mock('@/hooks/useCategoryConfig', () => ({ useCategoryConfig: () => ({ isLoaded: true }) }));
 vi.mock('@/hooks/useOnboardingPersistence', () => ({ useOnboardingPersistence: vi.fn(), clearOnboardingDraft: vi.fn() }));
 vi.mock('@/lib/countries', async (importOriginal) => {
   const orig = await importOriginal() as any;
