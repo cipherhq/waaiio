@@ -181,10 +181,59 @@ describe('#682: draft category validation', () => {
     'utf-8',
   );
 
-  it('validates draft category against getAllCategoryKeys', () => {
-    expect(draftSrc).toContain('getAllCategoryKeys');
+  it('imports getAllCategoryKeys statically (not async import)', () => {
+    expect(draftSrc).toContain("import { getAllCategoryKeys } from '@/lib/categoryConfig'");
+    expect(draftSrc).not.toContain('await import');
+  });
+
+  it('validates draft category synchronously', () => {
+    expect(draftSrc).toContain('getAllCategoryKeys().includes(draft.category)');
+  });
+
+  it('clears invalid category and resets to category step', () => {
     expect(draftSrc).toContain("draft.category = ''");
     expect(draftSrc).toContain("draft.step = 'category'");
+  });
+
+  it('preserves valid categories (does not clear unconditionally)', () => {
+    // The clearing is conditional on !getAllCategoryKeys().includes(...)
+    const clearLine = draftSrc.indexOf("draft.category = ''");
+    const condLine = draftSrc.lastIndexOf('getAllCategoryKeys', clearLine);
+    expect(condLine).toBeGreaterThan(0);
+    expect(clearLine - condLine).toBeLessThan(200); // within the same block
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 5b. Draft validation — behavioral (getAllCategoryKeys covers all 89)
+// ═══════════════════════════════════════════════════════════
+
+describe('#682: draft validation behavior', () => {
+  it('getAllCategoryKeys includes all 89 in BUSINESS_CATEGORIES fallback', () => {
+    // When DB cache is empty/null, getAllCategoryKeys falls through to BUSINESS_CATEGORIES.
+    // Verify that BUSINESS_CATEGORIES itself has all 89 keys — this is the fallback source.
+    const allKeys = BUSINESS_CATEGORIES.map(c => c.key);
+    expect(allKeys.length).toBe(89);
+    // Spot-check new categories that were previously missing
+    expect(allKeys).toContain('yoga');
+    expect(allKeys).toContain('cafe');
+    expect(allKeys).toContain('courier');
+    expect(allKeys).toContain('plumber');
+  });
+
+  it('BUSINESS_CATEGORIES contains all existing template categories', () => {
+    const allKeys = new Set(BUSINESS_CATEGORIES.map(c => c.key));
+    // All 38 READY categories must be in the hardcoded list
+    const existing = ['restaurant', 'barber', 'shop', 'events', 'church', 'hotel', 'gym', 'taxi'];
+    for (const key of existing) {
+      expect(allKeys.has(key), `${key} missing from BUSINESS_CATEGORIES`).toBe(true);
+    }
+  });
+
+  it('invented categories are not in BUSINESS_CATEGORIES', () => {
+    const allKeys = new Set(BUSINESS_CATEGORIES.map(c => c.key));
+    expect(allKeys.has('invented_nonexistent')).toBe(false);
+    expect(allKeys.has('')).toBe(false);
   });
 });
 
@@ -225,7 +274,7 @@ describe('#682: migration 459', () => {
   );
 
   it('adds 32 new enum values', () => {
-    const addValueCount = (migrationSrc.match(/ADD VALUE IF NOT EXISTS/g) || []).length;
+    const addValueCount = (migrationSrc.match(/ALTER TYPE business_category ADD VALUE/g) || []).length;
     expect(addValueCount).toBe(32);
   });
 

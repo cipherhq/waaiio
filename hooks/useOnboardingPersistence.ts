@@ -5,6 +5,7 @@ import type { User } from '@supabase/supabase-js';
 import type { CountryCode, BusinessCategoryKey, SubscriptionTier } from '@/lib/constants';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import type { WizardStep, WhatsAppMethod } from '@/app/get-started/steps';
+import { getAllCategoryKeys } from '@/lib/categoryConfig';
 
 const STORAGE_KEY = 'waaiio-onboarding-draft';
 const DEBOUNCE_MS = 500;
@@ -68,13 +69,12 @@ export function useOnboardingPersistence(
       if (draft.step === 'success' || draft.step === 'auth') return;
 
       // #682: Validate draft category against current category config.
-      // A stale draft may contain a category that is no longer valid.
-      if (draft.category) {
-        const { getAllCategoryKeys } = await import('@/lib/categoryConfig');
-        if (!getAllCategoryKeys().includes(draft.category)) {
-          draft.category = '';
-          draft.step = 'category';
-        }
+      // getAllCategoryKeys() reads from the in-memory cache synchronously.
+      // If templates haven't loaded yet, it falls back to the hardcoded
+      // BUSINESS_CATEGORIES list, which covers all 89 approved keys.
+      if (draft.category && !getAllCategoryKeys().includes(draft.category)) {
+        draft.category = '';
+        draft.step = 'category';
       }
 
       draftRestoredRef.current = true;

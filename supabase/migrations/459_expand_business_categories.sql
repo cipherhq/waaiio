@@ -3,15 +3,19 @@
 -- Owner-approved 89-category launch scope (#682).
 --
 -- Part 1: Extend business_category enum with 32 new values (IF NOT EXISTS — idempotent).
--- Part 2: Insert 49 new category_templates with generic default greeting.
+-- Part 2: Insert 51 new category_templates with generic default greeting.
 -- Part 3: Update category_group for 18 existing categories to match approved 17-group structure.
 -- Part 4: Set alphabetical sort_order within each group.
 --
 -- Preserves all existing businesses, merchant-customized greetings, and template configurations.
 -- Existing 40 active templates retain their current labels, greetings, capabilities, and services.
 --
--- NOTE: ALTER TYPE ADD VALUE cannot run inside a transaction block.
--- Each ADD VALUE auto-commits. IF NOT EXISTS makes partial re-runs safe.
+-- TRANSACTION NOTE: ALTER TYPE ADD VALUE cannot run inside a transaction
+-- block in PostgreSQL < 12. In PostgreSQL 12+, ADD VALUE IF NOT EXISTS
+-- CAN run inside a transaction. Supabase Cloud uses PostgreSQL 15+.
+-- The Supabase migration runner executes each migration file as a single
+-- transaction. IF NOT EXISTS makes the entire migration idempotent —
+-- safe to re-run if partially applied.
 
 -- Part 1: Extend business_category enum (32 new values)
 ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'bar';
