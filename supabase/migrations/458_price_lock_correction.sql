@@ -17,16 +17,63 @@
 BEGIN;
 
 -- ══════════════════════════════════════════════════════════════
+-- Section A0: Ensure country-activation trigger prerequisites exist
+-- ══════════════════════════════════════════════════════════════
+-- guard_country_activation checks messaging_pricing, trial_credit, and
+-- subscription_included in platform_config_versions.config_snapshot.
+-- These keys are set via admin API on staging/production but may not exist
+-- in CI disposable PostgreSQL. Seed them if absent (ON CONFLICT DO NOTHING
+-- is a no-op on staging/production). This preserves the activation trigger
+-- without bypass — the trigger verifies real market-readiness invariants.
+
+INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
+VALUES (
+  'messaging_pricing',
+  '{"NGN":{"rates":{"NG":{"*":2100}},"default_cost_minor":2100,"default_spend_cap_minor":7500000},"GHS":{"rates":{"GH":{"*":12}},"default_cost_minor":12,"default_spend_cap_minor":75000},"USD":{"rates":{"US":{"*":1}},"default_cost_minor":1,"default_spend_cap_minor":5000},"GBP":{"rates":{"GB":{"*":4}},"default_cost_minor":4,"default_spend_cap_minor":4000},"CAD":{"rates":{"CA":{"*":1}},"default_cost_minor":1,"default_spend_cap_minor":7000}}'::jsonb,
+  'M458: seed for country activation trigger in CI',
+  '00000000-0000-0000-0000-000000000000'::uuid,
+  clock_timestamp()
+) ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
+VALUES (
+  'trial_credit_minor_by_currency',
+  '{"NGN":600000,"GHS":6000,"USD":400,"GBP":500,"CAD":550}'::jsonb,
+  'M458: seed for country activation trigger in CI',
+  '00000000-0000-0000-0000-000000000000'::uuid,
+  clock_timestamp()
+) ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
+VALUES (
+  'subscription_included_minor_by_tier_currency',
+  '{"growth":{"NGN":225000,"GHS":2250,"USD":225,"GBP":180,"CAD":300},"business":{"NGN":675000,"GHS":6000,"USD":600,"GBP":480,"CAD":750}}'::jsonb,
+  'M458: seed for country activation trigger in CI',
+  '00000000-0000-0000-0000-000000000000'::uuid,
+  clock_timestamp()
+) ON CONFLICT (key) DO NOTHING;
+
+-- Refresh the config version snapshot so the trigger reads the seeded keys
+INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by, created_at)
+SELECT gen_random_uuid(),
+       (SELECT jsonb_object_agg(key, value) FROM platform_settings
+        WHERE key = ANY(ARRAY[
+          'pricing_tiers','trial_days','broadcast_limits','conversation_limits',
+          'default_platform_fee_percent','annual_discount_percentage',
+          'payout_cooling_period_days','minimum_payout','payout_verification_limits',
+          'transfer_expiry_hours','minimum_bank_transfer',
+          'messaging_financial_gate','messaging_reservation_ttl_seconds',
+          'trial_credit_minor_by_currency','subscription_included_minor_by_tier_currency',
+          'fee_policy_enabled','category_fee_rates','messaging_pricing'
+        ])),
+       clock_timestamp(),
+       '00000000-0000-0000-0000-000000000000'::uuid,
+       clock_timestamp();
+
+-- ══════════════════════════════════════════════════════════════
 -- Section A: Env-agnostic price/fee corrections
 -- ══════════════════════════════════════════════════════════════
-
--- Temporarily disable guard_country_activation trigger.
--- This trigger validates messaging infrastructure config (messaging_pricing
--- in platform_settings) which is a market-readiness check, not a price-
--- correctness check. We are updating prices on already-active countries
--- per the approved price lock — not activating new markets.
--- The trigger is re-enabled immediately after the price updates.
-ALTER TABLE countries DISABLE TRIGGER trg_guard_country_activation;
+-- guard_country_activation trigger is preserved — prerequisites seeded above.
 
 -- US: Growth $15, Business $40 (was $39/$99)
 UPDATE countries SET pricing = jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(
@@ -106,9 +153,6 @@ UPDATE countries SET pricing = jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set
   '{business,feeFlat}', '0'),
   '{business,trialDays}', '14')
 WHERE code = 'GH' AND is_active = true;
-
--- Re-enable the activation trigger
-ALTER TABLE countries ENABLE TRIGGER trg_guard_country_activation;
 
 -- ══════════════════════════════════════════════════════════════
 -- Section B: Extend save_provider_plan_refs with p_tier_prices
@@ -199,11 +243,17 @@ BEGIN
       END IF;
     END LOOP;
 
-    -- Atomicity guard: every tier with a price change must have a matching plan ref.
-    -- Prevents price-only updates that break price/plan consistency.
+    -- Atomicity guard: every tier with a price change must have a matching plan ref
+    -- for the country's ACTIVE gateway. Prevents price-only updates and wrong-gateway refs.
     FOR v_price_tier IN SELECT key FROM jsonb_each(p_tier_prices) LOOP
       IF NOT (p_plan_refs ? v_price_tier) THEN
         RAISE EXCEPTION 'p_tier_prices[%] requires a matching p_plan_refs entry for atomic cutover', v_price_tier;
+      END IF;
+      -- Gateway-specific guard: the ref must be for the country's active gateway
+      IF v_country.payment_gateway IN ('paystack', 'flutterwave')
+         AND (p_plan_refs -> v_price_tier ->> v_country.payment_gateway) IS NULL THEN
+        RAISE EXCEPTION 'p_tier_prices[%] requires a % plan reference (active gateway for %)',
+          v_price_tier, v_country.payment_gateway, p_country_code;
       END IF;
     END LOOP;
 

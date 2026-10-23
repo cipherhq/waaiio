@@ -162,6 +162,27 @@ describe.skipIf(!canRun)('M458: backward compatibility', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// 5b. Gateway-specific guard in RPC
+// ══════════════════════════════════════════════════════════════
+
+describe.skipIf(!canRun)('M458: RPC gateway-specific guard', () => {
+  it('rejects tier_prices with wrong-gateway ref via direct service_role call', () => {
+    // NG uses paystack; providing only a flutterwave ref should fail
+    const result = psqlMayFail(`
+      SET ROLE service_role;
+      SELECT save_provider_plan_refs(
+        'NG',
+        '{"growth":{"flutterwave":"FLW_wrong_gateway"}}'::jsonb,
+        (SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1),
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        '{"growth":{"price":15000}}'::jsonb
+      );
+    `);
+    expect(result).toContain('requires a paystack plan reference');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
 // 6. Tier_prices validation
 // ══════════════════════════════════════════════════════════════
 
