@@ -60,12 +60,13 @@ export async function POST(request: NextRequest) {
     if (SUBSCRIPTION_LIFECYCLE_EVENTS.includes(event) && !reference) {
       const supabase = createServiceClient();
       const subCode = data.subscription_code as string | undefined;
-      // Invoice events may repeat across billing cycles — include invoice_code for uniqueness
-      const invoiceCode = (event === 'invoice.payment_failed')
-        ? (data.invoice_code as string || data.id as string || '')
+      // Invoice events: use invoice_code (provider-assigned, unique per billing cycle).
+      // Fall back to id if invoice_code absent; reject if neither exists.
+      const invoiceId = (event === 'invoice.payment_failed')
+        ? (data.invoice_code as string || '')
         : '';
       const subEventId = subCode
-        ? `paystack-${event}-${subCode}${invoiceCode ? `-${invoiceCode}` : ''}`
+        ? `paystack-${event}-${subCode}${invoiceId ? `-${invoiceId}` : ''}`
         : null;
 
       if (!subEventId) {
@@ -73,40 +74,37 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ received: true });
       }
 
-      // Atomic idempotency claim — matches the established charge.success pattern.
-      // upsert with onConflict claims the event; if already completed, skip.
-      // If already processing (concurrent delivery), the upsert succeeds but
-      // we check claimed.status to avoid double-processing.
-      const { data: claimed, error: claimErr } = await supabase
-        .from('processed_webhook_events')
-        .upsert({
-          event_id: subEventId,
-          gateway: 'paystack',
-          event_type: event,
-          status: 'processing',
-          attempts: 1,
-          first_received_at: new Date().toISOString(),
-          last_attempted_at: new Date().toISOString(),
-        }, { onConflict: 'event_id', ignoreDuplicates: false })
-        .select('id, status, attempts')
-        .single();
+      // Invoice.payment_failed without a unique invoice identifier cannot be safely
+      // deduplicated across billing cycles — reject to prevent permanent single-key masking.
+      if (event === 'invoice.payment_failed' && !invoiceId) {
+        wh.ignored('invoice.payment_failed without invoice_code');
+        logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed missing invoice_code, cannot deduplicate across cycles', { subCode });
+        return NextResponse.json({ received: true });
+      }
+
+      // Atomic idempotency claim via established M362 claim_webhook_event RPC.
+      // INSERT-or-reclaim with FOR UPDATE row lock: never overwrites completed events,
+      // rejects concurrent processing, allows retry of stale/failed events.
+      const { data: claimResult, error: claimErr } = await supabase.rpc('claim_webhook_event', {
+        p_event_id: subEventId,
+        p_gateway: 'paystack',
+        p_event_type: event,
+      });
 
       if (claimErr) {
-        // Claim failed — another instance may be processing; safe to return 200
-        wh.duplicate({ webhookEventId: subEventId });
+        logger.error('[PAYSTACK-WEBHOOK] claim_webhook_event RPC failed', { subEventId, error: claimErr.message });
         return NextResponse.json({ received: true });
       }
 
-      if (claimed.status === 'completed') {
+      const claim = claimResult as { claimed: boolean; reason?: string; claim_token?: string };
+      if (!claim.claimed) {
         wh.duplicate({ webhookEventId: subEventId });
+        if (claim.reason === 'already_completed') {
+          logger.info('[PAYSTACK-WEBHOOK] subscription event already completed', { subEventId });
+        } else if (claim.reason === 'active_processing') {
+          logger.info('[PAYSTACK-WEBHOOK] subscription event being processed by another instance', { subEventId });
+        }
         return NextResponse.json({ received: true });
-      }
-
-      // Retry of a previously failed event — allow, bump attempts
-      if (claimed.status === 'failed' || (claimed.status === 'processing' && claimed.attempts > 1)) {
-        await supabase.from('processed_webhook_events')
-          .update({ status: 'processing', attempts: (claimed.attempts || 0) + 1, last_attempted_at: new Date().toISOString() })
-          .eq('event_id', subEventId);
       }
 
       let processingSucceeded = false;
@@ -152,57 +150,14 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            // Fallback: match by email → profile → single active paystack subscription
-            // Only if primary match failed AND exactly one unambiguous match exists
-            if (!matched && custEmail) {
-              const { data: profile } = await supabase
-                .from('profiles')
-                .select('id')
-                .eq('email', custEmail)
-                .maybeSingle();
-
-              if (profile) {
-                const { data: businesses } = await supabase
-                  .from('businesses')
-                  .select('id')
-                  .eq('owner_id', profile.id);
-
-                if (businesses && businesses.length > 0) {
-                  const bizIds = businesses.map(b => b.id);
-                  // Must find EXACTLY ONE active paystack subscription without an existing code
-                  const { data: subs } = await supabase
-                    .from('subscriptions')
-                    .select('id, business_id, paystack_subscription_code')
-                    .eq('status', 'active')
-                    .eq('gateway', 'paystack')
-                    .is('paystack_subscription_code', null)
-                    .in('business_id', bizIds);
-
-                  if (subs && subs.length === 1) {
-                    const { error: updateErr } = await supabase
-                      .from('subscriptions')
-                      .update({
-                        paystack_subscription_code: subCode,
-                        paystack_customer_code: custCode || null,
-                        updated_at: new Date().toISOString(),
-                      })
-                      .eq('id', subs[0].id);
-                    if (updateErr) {
-                      logger.error('[PAYSTACK-WEBHOOK] subscription.create: email fallback update failed', { error: updateErr.message });
-                    } else {
-                      matched = true;
-                      logger.info('[PAYSTACK-WEBHOOK] subscription.create: linked by email (single match)', { subCode, custEmail, subscriptionId: subs[0].id });
-                    }
-                  } else if (subs && subs.length > 1) {
-                    // Ambiguous — multiple active subs without codes. Do not guess.
-                    logger.warn('[PAYSTACK-WEBHOOK] subscription.create: ambiguous email match, skipping', { subCode, custEmail, matchCount: subs.length });
-                  }
-                }
-              }
-            }
-
             if (!matched) {
-              logger.warn('[PAYSTACK-WEBHOOK] subscription.create: no matching DB subscription', { subCode, custCode, custEmail });
+              // No match by paystack_customer_code. Do not fall back to email-only
+              // matching — email alone is insufficient to establish subscription
+              // ownership. Log for manual reconciliation.
+              logger.warn('[PAYSTACK-WEBHOOK] subscription.create: no matching DB subscription by customer_code', {
+                subCode, custCode,
+                custEmail: (data.customer as Record<string, string> | undefined)?.email,
+              });
             }
             processingSucceeded = true; // subscription.create is best-effort — unmatched is not a failure
           }
@@ -276,24 +231,36 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Mark event completed only if processing succeeded
+        // Mark event completed only if processing confirmed success.
+        // Verify the update actually persisted — don't acknowledge without proof.
         if (processingSucceeded) {
-          await supabase.from('processed_webhook_events')
-            .update({ status: 'completed', last_attempted_at: new Date().toISOString() })
-            .eq('event_id', subEventId);
+          const { error: completeErr } = await supabase.from('processed_webhook_events')
+            .update({ status: 'completed', completed_at: new Date().toISOString(), last_attempted_at: new Date().toISOString() })
+            .eq('event_id', subEventId)
+            .eq('claim_token', claim.claim_token); // Only our claim can mark complete
+          if (completeErr) {
+            logger.error('[PAYSTACK-WEBHOOK] failed to mark event completed', { subEventId, error: completeErr.message });
+          }
         } else {
-          // Processing did not confirm success — leave as 'processing' for retry
-          await supabase.from('processed_webhook_events')
+          const { error: failErr } = await supabase.from('processed_webhook_events')
             .update({ status: 'failed', last_error: 'Processing did not confirm success', last_attempted_at: new Date().toISOString() })
-            .eq('event_id', subEventId);
+            .eq('event_id', subEventId)
+            .eq('claim_token', claim.claim_token);
+          if (failErr) {
+            logger.error('[PAYSTACK-WEBHOOK] failed to mark event failed', { subEventId, error: failErr.message });
+          }
         }
 
       } catch (subErr) {
         const msg = subErr instanceof Error ? subErr.message : 'Unknown error';
         logger.error(`[PAYSTACK-WEBHOOK] ${event} handler failed`, { subEventId, error: msg });
-        await supabase.from('processed_webhook_events')
-          .update({ status: 'failed', last_error: msg.slice(0, 500), last_attempted_at: new Date().toISOString() })
-          .eq('event_id', subEventId);
+        // Record failure — use claim_token to ensure only our claim is updated
+        try {
+          await supabase.from('processed_webhook_events')
+            .update({ status: 'failed', last_error: msg.slice(0, 500), last_attempted_at: new Date().toISOString() })
+            .eq('event_id', subEventId)
+            .eq('claim_token', claim.claim_token);
+        } catch { /* best-effort failure recording */ }
       }
 
       return NextResponse.json({ received: true });
