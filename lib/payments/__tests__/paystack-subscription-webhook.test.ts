@@ -408,28 +408,57 @@ describe('R6: durable completion and retry policy', () => {
     mockSupabase.from = origFrom;
   });
 
-  it('R7: invoice.payment_failed with data.reference bypasses lifecycle handler', async () => {
-    // If Paystack ever includes data.reference on invoice events,
-    // it falls through to the charge handler (separate idempotency)
+  it('R8: invoice.payment_failed WITH data.reference still uses lifecycle handler', async () => {
+    mockSubResult = { id: 'sref', business_id: 'bref' };
     await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_ref_inv',
       invoice_code: 'INV_ref',
       reference: 'T_invoice_ref',
     }) as never);
-    // Should NOT call claim_webhook_event (lifecycle path)
-    expect(rpcCalls.filter(c => c.fn === 'claim_webhook_event')).toHaveLength(0);
+    // R8: lifecycle handler processes it (not legacy charge handler)
+    expect(rpcCalls.find(c => c.fn === 'claim_webhook_event')).toBeDefined();
+    // Should NOT set past_due (our handler creates alert instead)
+    expect(updateCalls.filter(c => c.table === 'subscriptions' && c.data.status)).toHaveLength(0);
+  });
+
+  it('R8: subscription.not_renew WITH data.reference preserves paid-through', async () => {
+    mockSubResult = { id: 'snr_ref', business_id: 'bnr_ref', current_period_end: '2026-11-15T00:00:00Z' };
+    await POST(makeReq('subscription.not_renew', {
+      subscription_code: 'SUB_nr_ref',
+      reference: 'T_nr_ref',
+      customer: { customer_code: 'CUS_nr_ref' },
+    }) as never);
+    // Should go through lifecycle handler
+    expect(rpcCalls.find(c => c.fn === 'claim_webhook_event')).toBeDefined();
+    // Should record cancelled_at without changing status or suspending
+    const subUpdate = updateCalls.find(c => c.table === 'subscriptions' && c.data.cancelled_at);
+    expect(subUpdate).toBeDefined();
+    expect(subUpdate!.data.status).toBeUndefined();
+    expect(updateCalls.find(c => c.table === 'businesses')).toBeUndefined();
   });
 });
 
-describe('R4-3: lifecycle safety', () => {
-  it('subscription.create with unexpected reference falls through to charge handler', async () => {
-    // Event has BOTH subscription_code AND reference — should NOT enter subscription handler
+describe('R8: lifecycle routing regardless of reference', () => {
+  it('subscription.create with reference still uses lifecycle handler', async () => {
+    mockSubResult = { id: 'shybrid', business_id: 'bhybrid', paystack_subscription_code: null };
     await POST(makeReq('subscription.create', {
       subscription_code: 'SUB_hybrid',
       reference: 'T_hybrid_ref',
       customer: { customer_code: 'CUS_hybrid' },
     }) as never);
-    // Should NOT call claim_webhook_event (subscription path)
+    // R8: lifecycle handler processes it (not charge handler)
+    expect(rpcCalls.find(c => c.fn === 'claim_webhook_event')).toBeDefined();
+  });
+
+  it('charge.success is NOT routed to lifecycle handler', async () => {
+    await POST(makeReq('charge.success', {
+      reference: 'T_charge_only',
+      amount: 5000,
+      currency: 'NGN',
+      metadata: { type: 'booking' },
+      customer: { customer_code: 'CUS_charge' },
+    }) as never);
+    // charge.success should NOT go through lifecycle path
     expect(rpcCalls.filter(c => c.fn === 'claim_webhook_event')).toHaveLength(0);
   });
 });

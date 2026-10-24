@@ -52,27 +52,19 @@ export async function POST(request: NextRequest) {
 
     wh.received({ gateway: 'paystack', eventType: event, providerRef: reference });
 
-    // ── Subscription lifecycle events (no data.reference) ──
-    // Paystack subscription.create, subscription.not_renew, subscription.disable,
-    // and invoice.payment_failed events use data.subscription_code, not data.reference.
-    // Handle them before the reference guard with subscription_code-based idempotency.
-    // R6-4/R7: Paystack event shape verification (MCP-verified against live staging data):
-    // - subscription.create: data = { subscription_code, customer, plan, authorization }
-    //   → NO data.reference (verified via GET /subscription/SUB_8443ip903l2yo15)
-    // - subscription.not_renew/disable: data = { subscription_code, customer, plan }
-    //   → NO data.reference
-    // - invoice.payment_failed: data = { subscription_code, invoice_code, ... }
-    //   → Paystack invoice webhook events typically do NOT include a top-level
-    //     data.reference. If a future Paystack change adds one, the event falls
-    //     through to the legacy handler at line ~730 which sets past_due via
-    //     metadata.business_id. This is the pre-existing behavior and is handled
-    //     by the subscription-expiry cron after current_period_end.
+    // ── Subscription lifecycle events ──
+    // R8: Route ALL recognized subscription lifecycle events through this handler,
+    // regardless of whether data.reference is present. Paystack subscription events
+    // typically lack data.reference, but invoice events may include one. Without
+    // this routing, reference-bearing lifecycle events would fall through to legacy
+    // handlers that set past_due (dead-end) or immediate cancellation/suspension,
+    // bypassing our paid-through protections.
     //
-    // Lifecycle events without data.reference → handled by our subscription handler.
-    // Events WITH data.reference → handled by the established charge/reference handler.
-    // Both paths use separate idempotency key spaces, preventing double-processing.
+    // Idempotency: uses subscription_code-based keys (separate from the reference-
+    // based keys used by charge.success). charge.success events are NOT in this
+    // list and continue through the established reference-based path.
     const SUBSCRIPTION_LIFECYCLE_EVENTS = ['subscription.create', 'subscription.not_renew', 'subscription.disable', 'invoice.payment_failed'];
-    if (SUBSCRIPTION_LIFECYCLE_EVENTS.includes(event) && !reference) {
+    if (SUBSCRIPTION_LIFECYCLE_EVENTS.includes(event)) {
       const supabase = createServiceClient();
       const subCode = data.subscription_code as string | undefined;
       // Invoice events: use invoice_code (provider-assigned, unique per billing cycle).
@@ -98,6 +90,11 @@ export async function POST(request: NextRequest) {
       // Must confirm durable recording before acknowledging with HTTP 200.
       if (event === 'invoice.payment_failed' && !invoiceId) {
         const paystackId = data.id as string | number | undefined;
+        // R8: stable quarantine key. With data.id → unique per provider event.
+        // Without data.id → falls back to subscription_code only. This merges
+        // distinct billing cycles into one quarantine record. This is a documented
+        // limitation: manual reconciliation is required to distinguish cycles.
+        // Full per-cycle dedup is only possible with invoice_code or data.id.
         const quarantineId = paystackId
           ? `paystack-invoice.payment_failed-${subCode}-pid-${paystackId}`
           : `paystack-invoice.payment_failed-${subCode}-nocode`;
