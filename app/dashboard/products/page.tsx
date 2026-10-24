@@ -59,6 +59,12 @@ export default function ProductsPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const [galleryUploading, setGalleryUploading] = useState(false);
+  const swappingPrimaryRef = useRef(false);
+  // Ref mirror of form state — allows async handlers to read the latest
+  // gallery/image state without stale closures or React updater side effects.
+  const formRef = useRef(form);
+  formRef.current = form;
 
   // Variants
   const [variants, setVariants] = useState<ProductVariant[]>([]);
@@ -98,7 +104,9 @@ export default function ProductsPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from('products')
-        .select('id, name, description, price, image_url, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
+        // NOTE: gallery_urls requires migration 462. Apply migration before deploying this code.
+        // If the column doesn't exist, PostgREST returns 400 and the page shows an error state.
+        .select('id, name, description, price, image_url, gallery_urls, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
         .eq('business_id', business.id)
         .is('deleted_at', null)
         .order('sort_order', { ascending: true });
@@ -295,7 +303,7 @@ export default function ProductsPage() {
   }
 
   async function openEdit(product: Product) {
-    setForm({ ...product });
+    setForm({ ...product, gallery_urls: product.gallery_urls || [] });
     setImageFile(null);
     setImagePreview(product.image_url);
     setDeletedVariantIds([]);
@@ -393,6 +401,105 @@ export default function ProductsPage() {
     e.target.value = '';
   }
 
+  // ── Gallery image handling ──
+  async function handleGalleryUpload(file: File) {
+    // Pre-check with current state (best effort — re-checked after upload)
+    const currentGallery = form.gallery_urls || [];
+    const totalImages = (imagePreview ? 1 : 0) + currentGallery.length;
+    if (totalImages >= 4 || currentGallery.length >= 3) return;
+    setGalleryUploading(true);
+    const url = await uploadImageFile(file);
+    if (url) {
+      // Use functional update to read the latest form state after the async upload,
+      // preventing concurrent uploads or gallery edits from being overwritten.
+      setForm(prev => {
+        const latestGallery = prev.gallery_urls || [];
+        if (latestGallery.length >= 3) return prev; // Re-check limit with latest state
+        return { ...prev, gallery_urls: [...latestGallery, url] };
+      });
+    }
+    setGalleryUploading(false);
+  }
+
+  function handleGalleryRemove(index: number) {
+    const updated = [...(form.gallery_urls || [])];
+    updated.splice(index, 1);
+    setForm({ ...form, gallery_urls: updated });
+  }
+
+  function handleGalleryReorder(fromIndex: number, toIndex: number) {
+    const updated = [...(form.gallery_urls || [])];
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(toIndex, 0, moved);
+    setForm({ ...form, gallery_urls: updated });
+  }
+
+  function handlePromoteToGallery() {
+    // Move current primary image to gallery, clear primary
+    if (imagePreview && (form.gallery_urls || []).length < 3) {
+      const currentPrimary = form.image_url;
+      if (currentPrimary) {
+        setForm({ ...form, gallery_urls: [...(form.gallery_urls || []), currentPrimary], image_url: null });
+        setImagePreview(null);
+        setImageFile(null);
+      }
+    }
+  }
+
+  async function handleSetPrimary(galleryIndex: number) {
+    // Prevent overlapping primary swaps — the async upload makes re-entrance possible.
+    if (swappingPrimaryRef.current) return;
+    swappingPrimaryRef.current = true;
+
+    try {
+      // Phase 1: If there's a pending image file, upload it to get a permanent URL.
+      // On failure, abort entirely — keep imageFile and imagePreview intact.
+      let uploadedPrimaryUrl: string | null = null;
+      if (imageFile) {
+        setUploadingImage(true);
+        uploadedPrimaryUrl = await uploadImageFile(imageFile);
+        setUploadingImage(false);
+        if (!uploadedPrimaryUrl) {
+          setSyncMessage({ type: 'error', text: 'Image upload failed. Please try again before changing the primary photo.' });
+          return; // imageFile and imagePreview remain intact
+        }
+      }
+
+      // Phase 2: Read the LATEST form state via ref (not the stale closure capture).
+      // This accounts for any gallery changes (removals, reorders, uploads) that
+      // occurred during the async upload.
+      const latest = formRef.current;
+      const latestGallery = [...(latest.gallery_urls || [])];
+
+      // Validate the gallery index against the latest state.
+      // If it's invalid (gallery changed during upload), abort without clearing
+      // the pending image or changing any displayed state.
+      if (galleryIndex < 0 || galleryIndex >= latestGallery.length) {
+        // If we uploaded the pending file but can't complete the swap, the uploaded
+        // URL is orphaned. This is acceptable — it's in storage but unreferenced.
+        // The merchant can re-select or re-upload. We do NOT clear imageFile here
+        // because the original pending file was already uploaded; imageFile was consumed.
+        if (uploadedPrimaryUrl) setImageFile(null);
+        return;
+      }
+
+      // Phase 3: Compute the swap result synchronously from latest state.
+      // No side effects inside React updaters — just pure state derivation.
+      const newPrimary = latestGallery[galleryIndex];
+      const currentPrimaryUrl = uploadedPrimaryUrl ?? latest.image_url;
+      latestGallery.splice(galleryIndex, 1);
+      if (currentPrimaryUrl) latestGallery.splice(galleryIndex, 0, currentPrimaryUrl);
+
+      // Phase 4: Apply all state changes together. The form, preview, and file
+      // state are all derived from the same computation — guaranteed consistent.
+      setForm(prev => ({ ...prev, image_url: newPrimary, gallery_urls: latestGallery }));
+      setImagePreview(newPrimary);
+      setImageFile(null);
+    } finally {
+      swappingPrimaryRef.current = false;
+    }
+  }
+
   // ── Generate variants from option groups ──
   function handleGenerateVariants() {
     const combos = generateCombinations(optionGroups);
@@ -452,6 +559,7 @@ export default function ProductsPage() {
       description: form.description?.trim() || null,
       price: form.has_variants ? 0 : (form.price || 0),
       image_url: imageUrl,
+      gallery_urls: form.gallery_urls || [],
       category: form.category?.trim() || null,
       stock_quantity: form.has_variants ? null : form.stock_quantity,
       is_active: form.is_active,
@@ -771,6 +879,12 @@ export default function ProductsPage() {
         setPromoCodes={setPromoCodes}
         promoCodesLoaded={promoCodesLoaded}
         setPromoCodesLoaded={setPromoCodesLoaded}
+        galleryUploading={galleryUploading}
+        handleGalleryUpload={handleGalleryUpload}
+        handleGalleryRemove={handleGalleryRemove}
+        handleGalleryReorder={handleGalleryReorder}
+        handlePromoteToGallery={handlePromoteToGallery}
+        handleSetPrimary={handleSetPrimary}
       />
     );
   }

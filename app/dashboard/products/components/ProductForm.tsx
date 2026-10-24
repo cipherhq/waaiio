@@ -38,6 +38,13 @@ interface ProductFormProps {
   business: { id: string };
   country: CountryCode;
   categories: (string | null)[];
+  // Gallery
+  galleryUploading: boolean;
+  handleGalleryUpload: (file: File) => void;
+  handleGalleryRemove: (index: number) => void;
+  handleGalleryReorder: (fromIndex: number, toIndex: number) => void;
+  handlePromoteToGallery: () => void;
+  handleSetPrimary: (galleryIndex: number) => void;
   // Variants
   variants: ProductVariant[];
   setVariants: (variants: ProductVariant[]) => void;
@@ -117,7 +124,15 @@ export default function ProductForm({
   setPromoCodes,
   promoCodesLoaded,
   setPromoCodesLoaded,
+  galleryUploading,
+  handleGalleryUpload,
+  handleGalleryRemove,
+  handleGalleryReorder,
+  handlePromoteToGallery,
+  handleSetPrimary,
 }: ProductFormProps) {
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const totalImages = (imagePreview ? 1 : 0) + (form.gallery_urls?.length || 0);
   return (
     <div>
       {/* Header */}
@@ -170,6 +185,65 @@ export default function ProductForm({
               className="hidden"
             />
           </div>
+
+          {/* Gallery Images (up to 3 additional) */}
+          {imagePreview && (
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Additional Photos <span className="text-xs font-normal text-gray-400">({totalImages}/4)</span>
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(form.gallery_urls || []).map((url, i) => (
+                  <div key={`gallery-${i}`} className="group relative">
+                    <Image src={url} alt={`Gallery ${i + 1}`} width={72} height={72}
+                      className="h-[72px] w-[72px] rounded-lg border border-gray-200 dark:border-gray-600 object-cover" />
+                    <div className="absolute inset-0 flex items-center justify-center gap-1 rounded-lg bg-black/0 opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100">
+                      {/* Set as primary */}
+                      <button type="button" onClick={() => handleSetPrimary(i)} title="Set as primary"
+                        className="flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-xs text-brand shadow hover:bg-brand hover:text-white">
+                        &#9733;
+                      </button>
+                      {/* Move left */}
+                      {i > 0 && (
+                        <button type="button" onClick={() => handleGalleryReorder(i, i - 1)} title="Move left"
+                          className="flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-xs text-gray-600 shadow hover:bg-gray-100">
+                          &#8592;
+                        </button>
+                      )}
+                      {/* Move right */}
+                      {i < (form.gallery_urls?.length || 0) - 1 && (
+                        <button type="button" onClick={() => handleGalleryReorder(i, i + 1)} title="Move right"
+                          className="flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-xs text-gray-600 shadow hover:bg-gray-100">
+                          &#8594;
+                        </button>
+                      )}
+                      {/* Remove */}
+                      <button type="button" onClick={() => handleGalleryRemove(i)} title="Remove"
+                        className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-xs text-white shadow hover:bg-red-600">
+                        &times;
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {totalImages < 4 && (
+                  <>
+                    <input ref={galleryInputRef} type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif,image/heic,.jpg,.jpeg,.png,.webp,.gif,.heic"
+                      className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGalleryUpload(f); e.target.value = ''; }} />
+                    <button type="button" onClick={() => galleryInputRef.current?.click()} disabled={galleryUploading}
+                      className="flex h-[72px] w-[72px] items-center justify-center rounded-lg border-2 border-dashed border-gray-200 dark:border-gray-600 text-gray-400 transition hover:border-brand hover:text-brand">
+                      {galleryUploading ? (
+                        <svg className="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                      ) : '+'}
+                    </button>
+                  </>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Hover for reorder, set primary, or remove. Max 4 photos total.</p>
+            </div>
+          )}
 
           {/* Product Name */}
           <div>
