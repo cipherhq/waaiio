@@ -30,6 +30,11 @@ function psqlMayFail(sql: string): string {
   } catch (e: unknown) { return (e as { stderr?: string }).stderr || String(e); }
 }
 
+/** Fetch current config version ID as the DB owner (before SET ROLE) */
+function currentVersionId(): string {
+  return psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;").trim();
+}
+
 // ── Approved price lock table ──
 const LOCKED_PRICES: Record<string, { growth: number; business: number }> = {
   NG: { growth: 15_000, business: 45_000 },
@@ -152,7 +157,7 @@ describe.skipIf(!canRun)('M458: backward compatibility', () => {
       SELECT save_provider_plan_refs(
         'NG',
         '{"growth":{"paystack":"PLN_backcompat_test"}}'::jsonb,
-        (SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1),
+        '${currentVersionId()}'::uuid,
         '00000000-0000-0000-0000-000000000001'::uuid
       );
     `);
@@ -173,7 +178,7 @@ describe.skipIf(!canRun)('M458: RPC gateway-specific guard', () => {
       SELECT save_provider_plan_refs(
         'NG',
         '{"growth":{"flutterwave":"FLW_wrong_gateway"}}'::jsonb,
-        (SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1),
+        '${currentVersionId()}'::uuid,
         '00000000-0000-0000-0000-000000000001'::uuid,
         '{"growth":{"price":15000}}'::jsonb
       );
@@ -192,7 +197,7 @@ describe.skipIf(!canRun)('M458: tier_prices validation', () => {
       SET ROLE service_role;
       SELECT save_provider_plan_refs(
         'NG', '{}'::jsonb,
-        (SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1),
+        '${currentVersionId()}'::uuid,
         '00000000-0000-0000-0000-000000000001'::uuid,
         '{"free":{"price":0}}'::jsonb
       );
@@ -205,7 +210,7 @@ describe.skipIf(!canRun)('M458: tier_prices validation', () => {
       SET ROLE service_role;
       SELECT save_provider_plan_refs(
         'NG', '{}'::jsonb,
-        (SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1),
+        '${currentVersionId()}'::uuid,
         '00000000-0000-0000-0000-000000000001'::uuid,
         '{"growth":{"price":-100}}'::jsonb
       );
@@ -218,7 +223,7 @@ describe.skipIf(!canRun)('M458: tier_prices validation', () => {
       SET ROLE service_role;
       SELECT save_provider_plan_refs(
         'NG', '{}'::jsonb,
-        (SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1),
+        '${currentVersionId()}'::uuid,
         '00000000-0000-0000-0000-000000000001'::uuid,
         '{"growth":{"price":15000,"secret":"inject"}}'::jsonb
       );
