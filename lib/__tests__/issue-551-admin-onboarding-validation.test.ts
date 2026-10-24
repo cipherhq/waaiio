@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/categoryConfig', () => ({
-  loadCategories: vi.fn().mockResolvedValue(undefined),
+  loadCategoriesStrict: vi.fn().mockResolvedValue(undefined),
   getAllCategoryKeys: () => ['restaurant', 'salon'],
 }));
 
