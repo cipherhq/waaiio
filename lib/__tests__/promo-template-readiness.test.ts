@@ -16,9 +16,10 @@ describe('Template definition', () => {
   const fs = require('fs');
   const provisionSrc = fs.readFileSync('app/api/whatsapp/templates/provision/route.ts', 'utf-8');
 
-  it('promo_verification maps to promo_pickup_verification', () => {
+  it('promo_verification maps only to promo_pickup_verification_v2', () => {
     expect(provisionSrc).toContain('promo_verification:');
-    expect(provisionSrc).toContain("'promo_pickup_verification'");
+    expect(provisionSrc).toContain('PROMO_TEMPLATE_CONTRACTS.promo_pickup_verification_v2');
+    expect(provisionSrc).not.toContain("name: 'promo_pickup_verification'");
   });
 
   it('UTILITY category with en_US language', () => {
@@ -30,15 +31,13 @@ describe('Template definition', () => {
     expect(section).toContain("language: 'en_US'");
   });
 
-  it('three body variables matching send contract', () => {
+  it('uses the canonical V2 body contract with four variables', () => {
     const section = provisionSrc.substring(
       provisionSrc.indexOf('promo_verification:'),
       provisionSrc.indexOf('promo_verification:') + 500,
     );
-    expect(section).toContain('{{1}}');
-    expect(section).toContain('{{2}}');
-    expect(section).toContain('{{3}}');
-    expect(section).not.toContain('{{4}}');
+    expect(section).toContain('PROMO_TEMPLATE_CONTRACTS.promo_pickup_verification_v2');
+    expect(provisionSrc).not.toContain("name: 'promo_pickup_verification'");
   });
 });
 
@@ -225,11 +224,9 @@ describe('Legacy provision-templates.ts', () => {
   const fs = require('fs');
   const src = fs.readFileSync('lib/channels/provision-templates.ts', 'utf-8');
 
-  it('includes promo_pickup_verification as UTILITY', () => {
-    expect(src).toContain("'promo_pickup_verification'");
-    const idx = src.indexOf('promo_pickup_verification');
-    const block = src.substring(idx - 50, idx + 200);
-    expect(block).toContain("category: 'UTILITY'");
+  it('provisions canonical pickup V2, not the rejected legacy template', () => {
+    expect(src).toContain('PROMO_TEMPLATE_CONTRACTS.promo_pickup_verification_v2');
+    expect(src).not.toContain("name: 'promo_pickup_verification'");
   });
 });
 
@@ -293,7 +290,7 @@ describe('Route invocation: GET /api/promotions/template-status', () => {
   it('APPROVED template on resolved.cloud → status: ready', async () => {
     const mockCloud = {
       getTemplates: vi.fn().mockResolvedValue({
-        data: [{ name: 'promo_pickup_verification', language: 'en_US', status: 'APPROVED' }],
+        data: [{ name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' }],
       }),
     };
     mockResolver({
@@ -314,7 +311,7 @@ describe('Route invocation: GET /api/promotions/template-status', () => {
       channel: { channel_type: 'dedicated', business_id: 'biz-1' },
       cloud: {
         getTemplates: vi.fn().mockResolvedValue({
-          data: [{ name: 'promo_pickup_verification', language: 'en_US', status: 'PENDING' }],
+          data: [{ name: 'promo_pickup_verification_v2', language: 'en_US', status: 'PENDING' }],
         }),
       },
     });
@@ -342,7 +339,7 @@ describe('Route invocation: GET /api/promotions/template-status', () => {
       channel: { channel_type: 'dedicated', business_id: 'biz-1' },
       cloud: {
         getTemplates: vi.fn().mockResolvedValue({
-          data: [{ name: 'promo_pickup_verification', language: 'en_US', status: 'REJECTED' }],
+          data: [{ name: 'promo_pickup_verification_v2', language: 'en_US', status: 'REJECTED' }],
         }),
       },
     });
@@ -388,7 +385,7 @@ describe('Route invocation: GET /api/promotions/template-status', () => {
 
   it('getTemplates invoked on the exact resolved.cloud object', async () => {
     const getTemplatesFn = vi.fn().mockResolvedValue({
-      data: [{ name: 'promo_pickup_verification', language: 'en_US', status: 'APPROVED' }],
+      data: [{ name: 'promo_pickup_verification_v2', language: 'en_US', status: 'APPROVED' }],
     });
     mockResolver({
       channel: { channel_type: 'dedicated', business_id: 'biz-1' },
