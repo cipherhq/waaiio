@@ -136,14 +136,20 @@ export async function POST(request: NextRequest) {
                     subCode, existing: sub.paystack_subscription_code, subscriptionId: sub.id,
                   });
                 } else {
-                  const { error: updateErr } = await supabase
+                  // Conditional update: only set code if it's still NULL (prevents race)
+                  const { error: updateErr, count } = await supabase
                     .from('subscriptions')
                     .update({ paystack_subscription_code: subCode, updated_at: new Date().toISOString() })
-                    .eq('id', sub.id);
+                    .eq('id', sub.id)
+                    .is('paystack_subscription_code', null) as { error: { message: string } | null; count: number | null };
                   if (updateErr) {
                     logger.error('[PAYSTACK-WEBHOOK] subscription.create: update failed', { error: updateErr.message, subscriptionId: sub.id });
+                  } else if (count === 0) {
+                    // Another instance already set the code — check if it matches
+                    logger.warn('[PAYSTACK-WEBHOOK] subscription.create: code already set by concurrent update', { subCode, subscriptionId: sub.id });
                   } else {
                     matched = true;
+                    processingSucceeded = true;
                     logger.info('[PAYSTACK-WEBHOOK] subscription.create: linked by customer_code', { subCode, custCode, subscriptionId: sub.id });
                   }
                 }
@@ -153,13 +159,13 @@ export async function POST(request: NextRequest) {
             if (!matched) {
               // No match by paystack_customer_code. Do not fall back to email-only
               // matching — email alone is insufficient to establish subscription
-              // ownership. Log for manual reconciliation.
+              // ownership. Leave event as 'failed' for manual reconciliation.
               logger.warn('[PAYSTACK-WEBHOOK] subscription.create: no matching DB subscription by customer_code', {
                 subCode, custCode,
                 custEmail: (data.customer as Record<string, string> | undefined)?.email,
               });
+              // Do NOT set processingSucceeded — event stays retryable for reconciliation
             }
-            processingSucceeded = true; // subscription.create is best-effort — unmatched is not a failure
           }
         }
 
@@ -198,8 +204,10 @@ export async function POST(request: NextRequest) {
                 });
               }
             } else {
+              // Unmatched: subscription_code not in DB. Leave as 'failed' — the
+              // subscription.create event may not have been processed yet.
+              // A future retry after subscription.create succeeds can match.
               logger.warn(`[PAYSTACK-WEBHOOK] ${event}: no matching active subscription`, { subCode });
-              processingSucceeded = true; // Unmatched non-renewal is not retryable
             }
           }
         }
@@ -226,40 +234,47 @@ export async function POST(request: NextRequest) {
                 logger.info('[PAYSTACK-WEBHOOK] invoice.payment_failed: marked past_due', { subCode, subscriptionId: sub.id });
               }
             } else {
-              processingSucceeded = true; // Unmatched failure is not retryable
+              // Unmatched: leave as 'failed' for reconciliation
+              logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed: no matching active subscription', { subCode });
             }
           }
         }
 
-        // Mark event completed only if processing confirmed success.
-        // Verify the update actually persisted — don't acknowledge without proof.
+        // Use canonical M362 fencing RPCs for completion/failure.
+        // These verify claim_token + status='processing' atomically.
         if (processingSucceeded) {
-          const { error: completeErr } = await supabase.from('processed_webhook_events')
-            .update({ status: 'completed', completed_at: new Date().toISOString(), last_attempted_at: new Date().toISOString() })
-            .eq('event_id', subEventId)
-            .eq('claim_token', claim.claim_token); // Only our claim can mark complete
+          const { data: completed, error: completeErr } = await supabase.rpc('complete_webhook_event', {
+            p_event_id: subEventId,
+            p_claim_token: claim.claim_token,
+          });
           if (completeErr) {
-            logger.error('[PAYSTACK-WEBHOOK] failed to mark event completed', { subEventId, error: completeErr.message });
+            logger.error('[PAYSTACK-WEBHOOK] complete_webhook_event RPC failed', { subEventId, error: completeErr.message });
+          } else if (!completed) {
+            // Claim was lost (stale token, already completed by another instance, etc.)
+            logger.warn('[PAYSTACK-WEBHOOK] complete_webhook_event returned false — claim lost', { subEventId });
           }
         } else {
-          const { error: failErr } = await supabase.from('processed_webhook_events')
-            .update({ status: 'failed', last_error: 'Processing did not confirm success', last_attempted_at: new Date().toISOString() })
-            .eq('event_id', subEventId)
-            .eq('claim_token', claim.claim_token);
+          const { data: failed, error: failErr } = await supabase.rpc('fail_webhook_event', {
+            p_event_id: subEventId,
+            p_claim_token: claim.claim_token,
+            p_error: 'Processing did not confirm success',
+          });
           if (failErr) {
-            logger.error('[PAYSTACK-WEBHOOK] failed to mark event failed', { subEventId, error: failErr.message });
+            logger.error('[PAYSTACK-WEBHOOK] fail_webhook_event RPC failed', { subEventId, error: failErr.message });
+          } else if (!failed) {
+            logger.warn('[PAYSTACK-WEBHOOK] fail_webhook_event returned false — claim lost', { subEventId });
           }
         }
 
       } catch (subErr) {
         const msg = subErr instanceof Error ? subErr.message : 'Unknown error';
         logger.error(`[PAYSTACK-WEBHOOK] ${event} handler failed`, { subEventId, error: msg });
-        // Record failure — use claim_token to ensure only our claim is updated
         try {
-          await supabase.from('processed_webhook_events')
-            .update({ status: 'failed', last_error: msg.slice(0, 500), last_attempted_at: new Date().toISOString() })
-            .eq('event_id', subEventId)
-            .eq('claim_token', claim.claim_token);
+          await supabase.rpc('fail_webhook_event', {
+            p_event_id: subEventId,
+            p_claim_token: claim.claim_token,
+            p_error: msg.slice(0, 500),
+          });
         } catch { /* best-effort failure recording */ }
       }
 
