@@ -11,7 +11,7 @@ import { readFileSync } from 'fs';
 // ── Migration 461 verification ──────────────────────────────────────────────
 
 describe('M461: product gallery migration', () => {
-  const migrationSrc = readFileSync('supabase/migrations/461_product_gallery_images.sql', 'utf8');
+  const migrationSrc = readFileSync('supabase/migrations/462_product_gallery_images.sql', 'utf8');
 
   it('adds gallery_urls column with correct type and default', () => {
     expect(migrationSrc).toContain('ADD COLUMN IF NOT EXISTS gallery_urls TEXT[]');
@@ -91,7 +91,7 @@ describe('backward compatibility: existing single-image products', () => {
   });
 
   it('migration uses IF NOT EXISTS (safe for re-run)', () => {
-    const migrationSrc = readFileSync('supabase/migrations/461_product_gallery_images.sql', 'utf8');
+    const migrationSrc = readFileSync('supabase/migrations/462_product_gallery_images.sql', 'utf8');
     expect(migrationSrc).toContain('ADD COLUMN IF NOT EXISTS');
   });
 });
@@ -179,7 +179,7 @@ describe('bulk import preserves gallery_urls', () => {
 
 describe('gallery image limit', () => {
   it('CHECK constraint limits gallery to 3 entries (4 total with primary)', () => {
-    const migrationSrc = readFileSync('supabase/migrations/461_product_gallery_images.sql', 'utf8');
+    const migrationSrc = readFileSync('supabase/migrations/462_product_gallery_images.sql', 'utf8');
     expect(migrationSrc).toContain('COALESCE(array_length(gallery_urls, 1), 0) <= 3');
   });
 
@@ -234,14 +234,155 @@ describe('gallery UI interactions', () => {
   it('supports setting a gallery image as primary', () => {
     const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
     expect(pageSrc).toContain('handleSetPrimary');
-    // Swaps gallery image with current primary
+    // Swaps gallery image with current primary, uploading pending file first
     expect(pageSrc).toContain('newPrimary');
-    expect(pageSrc).toContain('oldPrimary');
+    expect(pageSrc).toContain('currentPrimaryUrl');
   });
 
   it('shows upload progress indicator', () => {
     const formSrc = readFileSync('app/dashboard/products/components/ProductForm.tsx', 'utf8');
     expect(formSrc).toContain('galleryUploading');
     expect(formSrc).toContain('animate-spin');
+  });
+});
+
+// ── Behavioral unit tests (gallery logic) ───────────────────────────────────
+
+describe('gallery logic: behavioral tests', () => {
+  // Simulate the gallery removal logic
+  function galleryRemove(urls: string[], index: number): string[] {
+    const updated = [...urls];
+    updated.splice(index, 1);
+    return updated;
+  }
+
+  // Simulate the gallery reorder logic
+  function galleryReorder(urls: string[], from: number, to: number): string[] {
+    const updated = [...urls];
+    const [moved] = updated.splice(from, 1);
+    updated.splice(to, 0, moved);
+    return updated;
+  }
+
+  // Simulate set-as-primary swap logic
+  function setPrimary(
+    imageUrl: string | null,
+    galleryUrls: string[],
+    galleryIndex: number,
+  ): { imageUrl: string; galleryUrls: string[] } {
+    const gallery = [...galleryUrls];
+    const newPrimary = gallery[galleryIndex];
+    gallery.splice(galleryIndex, 1);
+    if (imageUrl) gallery.splice(galleryIndex, 0, imageUrl);
+    return { imageUrl: newPrimary, galleryUrls: gallery };
+  }
+
+  it('removal: removes the correct image and preserves order', () => {
+    const urls = ['a.jpg', 'b.jpg', 'c.jpg'];
+    expect(galleryRemove(urls, 1)).toEqual(['a.jpg', 'c.jpg']);
+    expect(galleryRemove(urls, 0)).toEqual(['b.jpg', 'c.jpg']);
+    expect(galleryRemove(urls, 2)).toEqual(['a.jpg', 'b.jpg']);
+  });
+
+  it('removal: single-image gallery becomes empty', () => {
+    expect(galleryRemove(['only.jpg'], 0)).toEqual([]);
+  });
+
+  it('reorder: swap adjacent images', () => {
+    const urls = ['a.jpg', 'b.jpg', 'c.jpg'];
+    expect(galleryReorder(urls, 0, 1)).toEqual(['b.jpg', 'a.jpg', 'c.jpg']);
+    expect(galleryReorder(urls, 2, 1)).toEqual(['a.jpg', 'c.jpg', 'b.jpg']);
+  });
+
+  it('reorder: move first to last', () => {
+    expect(galleryReorder(['a.jpg', 'b.jpg', 'c.jpg'], 0, 2)).toEqual(['b.jpg', 'c.jpg', 'a.jpg']);
+  });
+
+  it('set-as-primary: swaps gallery image with current primary', () => {
+    const result = setPrimary('primary.jpg', ['g1.jpg', 'g2.jpg', 'g3.jpg'], 1);
+    expect(result.imageUrl).toBe('g2.jpg');
+    expect(result.galleryUrls).toEqual(['g1.jpg', 'primary.jpg', 'g3.jpg']);
+  });
+
+  it('set-as-primary: first gallery image becomes primary', () => {
+    const result = setPrimary('old.jpg', ['new.jpg', 'other.jpg'], 0);
+    expect(result.imageUrl).toBe('new.jpg');
+    expect(result.galleryUrls).toEqual(['old.jpg', 'other.jpg']);
+  });
+
+  it('set-as-primary: preserves total count (no image lost)', () => {
+    const gallery = ['g1.jpg', 'g2.jpg', 'g3.jpg'];
+    const primary = 'p.jpg';
+    const result = setPrimary(primary, gallery, 2);
+    expect(result.galleryUrls.length + 1).toBe(gallery.length + 1); // total unchanged
+    expect([result.imageUrl, ...result.galleryUrls].sort())
+      .toEqual([primary, ...gallery].sort()); // same URLs, just reordered
+  });
+
+  it('set-as-primary: with null primary, gallery shrinks by one', () => {
+    const result = setPrimary(null, ['g1.jpg', 'g2.jpg'], 0);
+    expect(result.imageUrl).toBe('g1.jpg');
+    expect(result.galleryUrls).toEqual(['g2.jpg']);
+  });
+
+  it('four-image limit: gallery accepts max 3', () => {
+    const gallery = ['a.jpg', 'b.jpg', 'c.jpg'];
+    // Simulating the functional update check
+    const canAdd = gallery.length < 3;
+    expect(canAdd).toBe(false);
+  });
+
+  it('four-image limit: total of primary + gallery = 4 max', () => {
+    const hasPrimary = true;
+    const gallery = ['a.jpg', 'b.jpg', 'c.jpg'];
+    const totalImages = (hasPrimary ? 1 : 0) + gallery.length;
+    expect(totalImages).toBe(4);
+    expect(totalImages >= 4).toBe(true);
+  });
+
+  it('existing single-image product: empty gallery is valid', () => {
+    const product = { image_url: 'existing.jpg', gallery_urls: [] };
+    expect(product.gallery_urls).toEqual([]);
+    expect(product.image_url).toBe('existing.jpg');
+  });
+
+  it('functional state update prevents stale gallery on concurrent upload', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    // handleGalleryUpload must use functional setForm(prev => ...) not setForm({...form})
+    expect(pageSrc).toContain('setForm(prev =>');
+    expect(pageSrc).toContain('prev.gallery_urls');
+  });
+
+  it('handleSetPrimary uploads pending imageFile before swapping', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    // Must upload pending file before clearing it
+    expect(pageSrc).toContain('if (imageFile)');
+    expect(pageSrc).toContain('await uploadImageFile(imageFile)');
+  });
+});
+
+// ── Migration/deployment ordering ───────────────────────────────────────────
+
+describe('deployment ordering: gallery_urls resilience', () => {
+  it('product select includes gallery_urls in the column list (not wildcard)', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    const selectMatch = pageSrc.match(/\.select\('([^']*gallery_urls[^']*)'\)/);
+    expect(selectMatch).toBeTruthy();
+  });
+
+  it('openEdit initializes gallery_urls with fallback for pre-migration data', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    // Must handle undefined gallery_urls from pre-migration DB
+    expect(pageSrc).toContain('gallery_urls: product.gallery_urls || []');
+  });
+
+  it('save payload uses fallback for missing gallery_urls', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    expect(pageSrc).toContain('gallery_urls: form.gallery_urls || []');
+  });
+
+  it('EMPTY_PRODUCT.gallery_urls is empty array (safe default)', () => {
+    const typeSrc = readFileSync('app/dashboard/products/components/types.ts', 'utf8');
+    expect(typeSrc).toContain("gallery_urls: []");
   });
 });

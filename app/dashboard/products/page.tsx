@@ -99,6 +99,8 @@ export default function ProductsPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from('products')
+        // NOTE: gallery_urls requires migration 462. Apply migration before deploying this code.
+        // If the column doesn't exist, PostgREST returns 400 and the page shows an error state.
         .select('id, name, description, price, image_url, gallery_urls, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
         .eq('business_id', business.id)
         .is('deleted_at', null)
@@ -396,13 +398,20 @@ export default function ProductsPage() {
 
   // ── Gallery image handling ──
   async function handleGalleryUpload(file: File) {
+    // Pre-check with current state (best effort — re-checked after upload)
     const currentGallery = form.gallery_urls || [];
     const totalImages = (imagePreview ? 1 : 0) + currentGallery.length;
     if (totalImages >= 4 || currentGallery.length >= 3) return;
     setGalleryUploading(true);
     const url = await uploadImageFile(file);
     if (url) {
-      setForm({ ...form, gallery_urls: [...currentGallery, url] });
+      // Use functional update to read the latest form state after the async upload,
+      // preventing concurrent uploads or gallery edits from being overwritten.
+      setForm(prev => {
+        const latestGallery = prev.gallery_urls || [];
+        if (latestGallery.length >= 3) return prev; // Re-check limit with latest state
+        return { ...prev, gallery_urls: [...latestGallery, url] };
+      });
     }
     setGalleryUploading(false);
   }
@@ -432,16 +441,28 @@ export default function ProductsPage() {
     }
   }
 
-  function handleSetPrimary(galleryIndex: number) {
+  async function handleSetPrimary(galleryIndex: number) {
+    // If a new image file was selected but not yet uploaded, upload it first
+    // so the URL can be preserved in the gallery during the swap.
+    let currentPrimaryUrl = form.image_url;
+    if (imageFile) {
+      setUploadingImage(true);
+      const uploadedUrl = await uploadImageFile(imageFile);
+      setUploadingImage(false);
+      if (uploadedUrl) {
+        currentPrimaryUrl = uploadedUrl;
+        setImageFile(null);
+      }
+    }
+
     // Swap: gallery image becomes primary, old primary goes to gallery
     const gallery = [...(form.gallery_urls || [])];
     const newPrimary = gallery[galleryIndex];
     gallery.splice(galleryIndex, 1);
-    const oldPrimary = form.image_url;
-    if (oldPrimary) gallery.splice(galleryIndex, 0, oldPrimary);
+    if (currentPrimaryUrl) gallery.splice(galleryIndex, 0, currentPrimaryUrl);
     setForm({ ...form, image_url: newPrimary, gallery_urls: gallery });
     setImagePreview(newPrimary);
-    setImageFile(null); // Clear pending file since we're using an existing URL
+    setImageFile(null);
   }
 
   // ── Generate variants from option groups ──

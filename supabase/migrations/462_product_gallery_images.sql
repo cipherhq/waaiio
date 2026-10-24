@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════════════
--- 461: Product Gallery Images
+-- 462: Product Gallery Images
 --
 -- Adds gallery_urls column to products table, following the
 -- proven services.gallery_urls pattern (migration 103).
@@ -28,22 +28,22 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'gallery_urls'
   ) THEN
-    RAISE EXCEPTION 'M461: gallery_urls column missing from products';
+    RAISE EXCEPTION 'M462: gallery_urls column missing from products';
   END IF;
 
   -- Constraint exists
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'chk_product_gallery_max_3'
   ) THEN
-    RAISE EXCEPTION 'M461: CHECK constraint chk_product_gallery_max_3 missing';
+    RAISE EXCEPTION 'M462: CHECK constraint chk_product_gallery_max_3 missing';
   END IF;
 
   -- Existing products unaffected (all have empty gallery by default)
   IF EXISTS (
     SELECT 1 FROM products WHERE COALESCE(array_length(gallery_urls, 1), 0) > 3
   ) THEN
-    RAISE EXCEPTION 'M461: existing product violates gallery limit';
+    RAISE EXCEPTION 'M462: existing product violates gallery limit';
   END IF;
 
-  RAISE NOTICE 'M461: Product gallery images migration complete';
+  RAISE NOTICE 'M462: Product gallery images migration complete';
 END $$;
