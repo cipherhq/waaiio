@@ -31,7 +31,7 @@ VALUES (
   'messaging_pricing',
   '{"NGN":{"rates":{"NG":{"*":2100}},"default_cost_minor":2100,"default_spend_cap_minor":7500000},"GHS":{"rates":{"GH":{"*":12}},"default_cost_minor":12,"default_spend_cap_minor":75000},"USD":{"rates":{"US":{"*":1}},"default_cost_minor":1,"default_spend_cap_minor":5000},"GBP":{"rates":{"GB":{"*":4}},"default_cost_minor":4,"default_spend_cap_minor":4000},"CAD":{"rates":{"CA":{"*":1}},"default_cost_minor":1,"default_spend_cap_minor":7000}}'::jsonb,
   'M458: seed for country activation trigger in CI',
-  '00000000-0000-0000-0000-000000000000'::uuid,
+  NULL,
   clock_timestamp()
 ) ON CONFLICT (key) DO NOTHING;
 
@@ -40,7 +40,7 @@ VALUES (
   'trial_credit_minor_by_currency',
   '{"NGN":600000,"GHS":6000,"USD":400,"GBP":500,"CAD":550}'::jsonb,
   'M458: seed for country activation trigger in CI',
-  '00000000-0000-0000-0000-000000000000'::uuid,
+  NULL,
   clock_timestamp()
 ) ON CONFLICT (key) DO NOTHING;
 
@@ -49,7 +49,7 @@ VALUES (
   'subscription_included_minor_by_tier_currency',
   '{"growth":{"NGN":225000,"GHS":2250,"USD":225,"GBP":180,"CAD":300},"business":{"NGN":675000,"GHS":6000,"USD":600,"GBP":480,"CAD":750}}'::jsonb,
   'M458: seed for country activation trigger in CI',
-  '00000000-0000-0000-0000-000000000000'::uuid,
+  NULL,
   clock_timestamp()
 ) ON CONFLICT (key) DO NOTHING;
 
@@ -67,7 +67,7 @@ SELECT gen_random_uuid(),
           'fee_policy_enabled','category_fee_rates','messaging_pricing'
         ])),
        clock_timestamp(),
-       '00000000-0000-0000-0000-000000000000'::uuid,
+       NULL,
        clock_timestamp();
 
 -- ══════════════════════════════════════════════════════════════
@@ -389,7 +389,7 @@ SELECT gen_random_uuid(),
                    'fee_policy_enabled','category_fee_rates','messaging_pricing'
                  ])), '{}'::jsonb),
        clock_timestamp(),
-       '00000000-0000-0000-0000-000000000000'::uuid,
+       NULL,
        clock_timestamp();
 
 COMMIT;
