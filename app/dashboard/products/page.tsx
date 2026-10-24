@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { captureProductEvent } from '@/lib/observability/product-events';
+import { useProductGallery } from './hooks/useProductGallery';
 import type {
   Product,
   ProductVariant,
@@ -55,10 +56,11 @@ export default function ProductsPage() {
   const [saving, setSaving] = useState(false);
   const [promoCodes, setPromoCodes] = useState<Array<{ code: string; discount_type: string; discount_value: number; is_active: boolean }>>([]);
   const [promoCodesLoaded, setPromoCodesLoaded] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Gallery hook — manages primary image, gallery images, uploads, and swaps.
+  // Extracted so the same production logic can be tested with renderHook.
+  const gallery = useProductGallery(uploadImageFile);
 
   // Variants
   const [variants, setVariants] = useState<ProductVariant[]>([]);
@@ -98,7 +100,9 @@ export default function ProductsPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from('products')
-        .select('id, name, description, price, image_url, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
+        // NOTE: gallery_urls requires migration 462. Apply migration before deploying this code.
+        // If the column doesn't exist, PostgREST returns 400 and the page shows an error state.
+        .select('id, name, description, price, image_url, gallery_urls, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
         .eq('business_id', business.id)
         .is('deleted_at', null)
         .order('sort_order', { ascending: true });
@@ -278,8 +282,8 @@ export default function ProductsPage() {
   // ── Open add/edit form ──
   function openAdd() {
     setForm({ ...EMPTY_PRODUCT, sort_order: products.length });
-    setImageFile(null);
-    setImagePreview(null);
+    gallery.reset({ imageUrl: null, galleryUrls: [] });
+    // previewSeq bumped inside gallery.reset()
     setVariants([]);
     setDeletedVariantIds([]);
     setOptionGroups([]);
@@ -295,9 +299,9 @@ export default function ProductsPage() {
   }
 
   async function openEdit(product: Product) {
-    setForm({ ...product });
-    setImageFile(null);
-    setImagePreview(product.image_url);
+    setForm({ ...product, gallery_urls: product.gallery_urls || [] });
+    gallery.reset({ imageUrl: product.image_url, galleryUrls: product.gallery_urls || [] });
+    // previewSeq bumped inside gallery.reset()
     setDeletedVariantIds([]);
     setBulkPrice('');
     setVariantImageFiles({});
@@ -348,10 +352,20 @@ export default function ProductsPage() {
   // ── Image handling ──
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
-    setImageFile(file);
+    if (!file) { return; }
+    // R8: Only start FileReader if the hook accepted the selection.
+    // Hook rejects during swap-in-progress (R5-1).
+    const accepted = gallery.handleImageSelect(file);
+    if (!accepted) { e.target.value = ''; return; }
+    // R8: Use the hook's previewSeq (bumped on select/swap/promote/reset)
+    // so a late-completing FileReader from any earlier operation is discarded.
+    const seq = gallery.previewSeq();
     const reader = new FileReader();
-    reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+    reader.onload = (ev) => {
+      if (seq === gallery.previewSeq()) {
+        gallery.setImagePreview(ev.target?.result as string);
+      }
+    };
     reader.readAsDataURL(file);
     e.target.value = '';
   }
@@ -369,13 +383,7 @@ export default function ProductsPage() {
     }
   }
 
-  async function uploadImage(): Promise<string | null> {
-    if (!imageFile) return form.image_url || null;
-    setUploadingImage(true);
-    const url = await uploadImageFile(imageFile);
-    setUploadingImage(false);
-    return url || form.image_url || null;
-  }
+
 
   // ── Variant image handling ──
   function handleVariantImageSelect(idx: number, e: React.ChangeEvent<HTMLInputElement>) {
@@ -444,14 +452,16 @@ export default function ProductsPage() {
     if (!form.name.trim()) return;
     setSaving(true);
 
-    const imageUrl = await uploadImage();
+    // R8: Use shared production save logic from the hook (not a page-local copy)
+    const imagePayload = await gallery.buildSaveImagePayload();
 
     const payload: Record<string, unknown> = {
       business_id: business.id,
       name: form.name.trim(),
       description: form.description?.trim() || null,
       price: form.has_variants ? 0 : (form.price || 0),
-      image_url: imageUrl,
+      image_url: imagePayload.image_url,
+      gallery_urls: imagePayload.gallery_urls,
       category: form.category?.trim() || null,
       stock_quantity: form.has_variants ? null : form.stock_quantity,
       is_active: form.is_active,
@@ -728,8 +738,8 @@ export default function ProductsPage() {
         form={form}
         setForm={setForm}
         saving={saving}
-        uploadingImage={uploadingImage}
-        imagePreview={imagePreview}
+        uploadingImage={gallery.uploadingImage}
+        imagePreview={gallery.imagePreview}
         imageInputRef={imageInputRef}
         handleImageSelect={handleImageSelect}
         handleSave={handleSave}
@@ -771,6 +781,13 @@ export default function ProductsPage() {
         setPromoCodes={setPromoCodes}
         promoCodesLoaded={promoCodesLoaded}
         setPromoCodesLoaded={setPromoCodesLoaded}
+        galleryUploading={gallery.galleryUploading}
+        galleryError={gallery.galleryError}
+        handleGalleryUpload={gallery.handleGalleryUpload}
+        handleGalleryRemove={gallery.handleGalleryRemove}
+        handleGalleryReorder={gallery.handleGalleryReorder}
+        handlePromoteToGallery={gallery.handlePromoteToGallery}
+        handleSetPrimary={gallery.handleSetPrimary}
       />
     );
   }
