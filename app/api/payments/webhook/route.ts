@@ -204,11 +204,13 @@ export async function POST(request: NextRequest) {
           // Record cancellation intent; let the subscription-expiry cron handle
           // actual downgrade after the paid period ends.
           if (subCode) {
+            // R5-2: Match both 'active' and 'past_due' — a cancellation can
+            // follow a payment failure (failure → not_renew sequence)
             const { data: sub } = await supabase
               .from('subscriptions')
               .select('id, business_id, current_period_end')
               .eq('paystack_subscription_code', subCode)
-              .eq('status', 'active')
+              .in('status', ['active', 'past_due'])
               .maybeSingle();
 
             if (sub) {
@@ -242,29 +244,47 @@ export async function POST(request: NextRequest) {
         }
 
         if (event === 'invoice.payment_failed') {
+          // R5-1: Do NOT change subscription status to 'past_due'.
+          // 'past_due' is a dead-end: no cron recovers it to 'active', no cron
+          // expires it, the renewal-recovery RPC skips it. Instead, keep the
+          // subscription 'active' — the merchant paid through current_period_end.
+          // If Paystack retries and succeeds, charge.success will renew normally.
+          // If all retries fail, Paystack sends subscription.not_renew and our
+          // cancellation handler records cancelled_at. The expiry cron then
+          // handles downgrade after current_period_end.
+          //
+          // Record the failure as an alert for merchant/admin visibility.
           if (subCode) {
+            // R5-2: Match both 'active' and 'past_due' (backward compat for
+            // any existing past_due records from the legacy handler)
             const { data: sub } = await supabase
               .from('subscriptions')
               .select('id, business_id')
               .eq('paystack_subscription_code', subCode)
-              .eq('status', 'active')
+              .in('status', ['active', 'past_due'])
               .maybeSingle();
 
             if (sub) {
-              const { error: updateErr } = await supabase
-                .from('subscriptions')
-                .update({ status: 'past_due', updated_at: new Date().toISOString() })
-                .eq('id', sub.id);
-
-              if (updateErr) {
-                logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: update failed', { error: updateErr.message, subscriptionId: sub.id });
-              } else {
-                processingSucceeded = true;
-                logger.info('[PAYSTACK-WEBHOOK] invoice.payment_failed: marked past_due', { subCode, subscriptionId: sub.id });
+              // Create an alert for visibility — do not change subscription status
+              try {
+                const { createAlert } = await import('@/lib/alerts/create-alert');
+                await createAlert(supabase, {
+                  business_id: sub.business_id,
+                  type: 'payment_failed',
+                  title: 'Subscription payment failed',
+                  message: 'Your subscription renewal payment failed. We will retry automatically.',
+                  severity: 'warning',
+                });
+              } catch (alertErr) {
+                logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed: alert creation failed (non-critical)', {
+                  error: alertErr instanceof Error ? alertErr.message : 'unknown',
+                });
               }
+              processingSucceeded = true;
+              logger.info('[PAYSTACK-WEBHOOK] invoice.payment_failed: recorded alert (subscription stays active)', { subCode, subscriptionId: sub.id });
             } else {
               // Unmatched: leave as 'failed' for reconciliation
-              logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed: no matching active subscription', { subCode });
+              logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed: no matching subscription', { subCode });
             }
           }
         }
@@ -307,14 +327,21 @@ export async function POST(request: NextRequest) {
         } catch { /* best-effort failure recording */ }
       }
 
-      // HTTP response policy (Paystack retries non-2xx up to 10 times over 5 days):
-      // - 200: event processed successfully, or permanently unprocessable (accept to stop retries)
-      // - 500: transient failure, event should be retried by Paystack
+      // R5-3: HTTP response policy (Paystack retries non-2xx up to 10 times over 5 days):
       //
-      // processingSucceeded=true  → 200 (completed, stop retries)
-      // processingSucceeded=false → 200 (failed but claimed — internal retry via reconciliation
-      //   cron, not Paystack retry, to avoid unbounded provider-driven retry loops)
-      return NextResponse.json({ received: true });
+      // processingSucceeded=true  → 200 (completed successfully, stop retries)
+      // processingSucceeded=false → 500 (failed — Paystack will retry, giving time for
+      //   subscription.create to be processed before a dependent not_renew/invoice event)
+      //
+      // Recovery path: claim_webhook_event uses a 90s stale threshold. When Paystack
+      // retries (minimum 10min gap), the stale claim is reclaimed and reprocessed.
+      // If subscription.create has been processed in the meantime, the retry succeeds.
+      // After Paystack exhausts retries (10 attempts over 5 days), the event stays
+      // in 'failed' state in processed_webhook_events for manual reconciliation.
+      if (processingSucceeded) {
+        return NextResponse.json({ received: true });
+      }
+      return NextResponse.json({ error: 'Processing incomplete' }, { status: 500 });
     }
 
     // ── Charge/transaction events require data.reference ──

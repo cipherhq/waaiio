@@ -196,23 +196,66 @@ describe('subscription.not_renew — paid-through', () => {
 
 // ── 4. Invoice uniqueness ──
 
-describe('invoice.payment_failed', () => {
-  it('includes invoice_code in idempotency key', async () => {
+describe('invoice.payment_failed — R5-1 corrected', () => {
+  it('does NOT change status to past_due (keeps active)', async () => {
     mockSubResult = { id: 'si', business_id: 'bi' };
     await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_i', invoice_code: 'INV_oct' }) as never);
-    const claim = rpcCalls.find(c => c.fn === 'claim_webhook_event');
-    expect(claim!.params.p_event_id).toBe('paystack-invoice.payment_failed-SUB_i-INV_oct');
+    // Should NOT update subscription status
+    const statusUpdate = updateCalls.find(c => c.table === 'subscriptions' && c.data.status);
+    expect(statusUpdate).toBeUndefined();
+    // Should complete successfully (alert created, subscription untouched)
+    expect(rpcCalls.find(c => c.fn === 'complete_webhook_event')).toBeDefined();
   });
 
-  it('rejects missing invoice_code (cannot deduplicate cycles)', async () => {
+  it('includes invoice_code in idempotency key', async () => {
+    mockSubResult = { id: 'si2', business_id: 'bi2' };
+    await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_i2', invoice_code: 'INV_oct2' }) as never);
+    const claim = rpcCalls.find(c => c.fn === 'claim_webhook_event');
+    expect(claim!.params.p_event_id).toBe('paystack-invoice.payment_failed-SUB_i2-INV_oct2');
+  });
+
+  it('rejects missing invoice_code', async () => {
     await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_noic' }) as never);
     expect(rpcCalls.filter(c => c.fn === 'claim_webhook_event')).toHaveLength(0);
   });
 
-  it('calls fail_webhook_event for unmatched invoice failure', async () => {
+  it('returns 500 for unmatched invoice failure (Paystack retries)', async () => {
     mockSubResult = null;
-    await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_uf', invoice_code: 'INV_uf' }) as never);
+    const res = await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_uf', invoice_code: 'INV_uf' }) as never);
+    expect(res.status).toBe(500);
     expect(rpcCalls.find(c => c.fn === 'fail_webhook_event')).toBeDefined();
+  });
+});
+
+describe('R5-2: subsequent lifecycle events after payment failure', () => {
+  it('cancellation matches past_due subscriptions (failure → cancel sequence)', async () => {
+    // Simulate a subscription that was manually set to past_due (legacy)
+    mockSubResult = { id: 'spd', business_id: 'bpd', current_period_end: '2026-11-01T00:00:00Z' };
+    await POST(makeReq('subscription.not_renew', { subscription_code: 'SUB_pd_cancel', customer: { customer_code: 'CUS_pd' } }) as never);
+    const subUpdate = updateCalls.find(c => c.table === 'subscriptions' && c.data.cancelled_at);
+    expect(subUpdate).toBeDefined();
+    expect(subUpdate!.data.cancellation_reason).toBe('customer_cancelled');
+  });
+
+  it('invoice failure matches past_due subscriptions (repeated failure)', async () => {
+    mockSubResult = { id: 'spd2', business_id: 'bpd2' };
+    const res = await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_pd_fail', invoice_code: 'INV_cycle2' }) as never);
+    expect(res.status).toBe(200); // Matched and completed
+    expect(rpcCalls.find(c => c.fn === 'complete_webhook_event')).toBeDefined();
+  });
+});
+
+describe('R5-3: failed event recovery path', () => {
+  it('unmatched events return 500 (Paystack retries, giving time for subscription.create)', async () => {
+    mockSubResult = null; // No matching subscription
+    const res = await POST(makeReq('subscription.not_renew', { subscription_code: 'SUB_unmatched_retry', customer: {} }) as never);
+    expect(res.status).toBe(500);
+  });
+
+  it('successfully processed events return 200', async () => {
+    mockSubResult = { id: 'sok', business_id: 'bok', current_period_end: '2026-11-01T00:00:00Z' };
+    const res = await POST(makeReq('subscription.not_renew', { subscription_code: 'SUB_ok_cancel', customer: {} }) as never);
+    expect(res.status).toBe(200);
   });
 });
 
