@@ -731,8 +731,11 @@ export class BotService {
 
       // #682: Track inbound message with new-conversation detection (non-blocking).
       // session.updated_at reflects the last interaction — if >24h ago, it's a new conversation.
-      trackInboundMessage(this.supabase, session.business_id, (session as any).updated_at ?? null)
-        .catch(err => logger.warn('[BOT] Inbound tracking failed (non-critical):', err));
+      // Skip for internal redispatches (pc_options, pc_again, etc.) to avoid double-counting.
+      if (!_internalProvenance) {
+        trackInboundMessage(this.supabase, session.business_id, (session as any).updated_at ?? null)
+          .catch(err => logger.warn('[BOT] Inbound tracking failed (non-critical):', err));
+      }
 
       try {
         // BOT-PERF: Use RPC-provided business if available, otherwise fetch
@@ -2152,7 +2155,8 @@ export class BotService {
       }
 
       // #682: Track inbound for new sessions (session just created → null updated_at → new conversation).
-      if (businessId) {
+      // Skip for internal redispatches (pc_options, pc_again, etc.) to avoid double-counting.
+      if (businessId && !_internalProvenance) {
         trackInboundMessage(this.supabase, businessId, null)
           .catch(err => logger.warn('[BOT] Inbound tracking failed (non-critical):', err));
       }
