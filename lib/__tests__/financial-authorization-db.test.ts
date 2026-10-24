@@ -239,13 +239,14 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('7. Missing price (no config, no rate) → fail closed', () => {
-    createAllowance(BIZ_ID_A, 'trial_grant', 10000, 'NGN', `auth-test-7-${Date.now()}`);
-    // Use a country code not in any pricing config
-    const attemptId = createAttempt(BIZ_ID_A, 'ZZ', 'utility');
+    // M461: billing uses business country. ZZ business has no pricing config.
+    const zzBiz = createIsolatedBusiness('ZZ');
+    createAllowance(zzBiz, 'trial_grant', 10000, 'NGN', `auth-test-7-${Date.now()}`);
+    const attemptId = createAttempt(zzBiz, 'NG', 'utility');
 
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(false);
-    // Should fail due to no currency match for ZZ
+    // Should fail due to no currency match for business country ZZ
   });
 
   it('8. Valid pricing resolution binds tuple atomically', () => {
