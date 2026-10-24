@@ -815,12 +815,14 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
       })}'::JSONB, NOW() + INTERVAL '35370 microseconds', '${OWNER_A}');
     `);
 
+    // M461: SN business needed for XOF billing (billing uses business country)
+    const snBiz = createIsolatedBusiness('SN');
     const uniqueCurrency = 'XOF';
-    createAllowance(BIZ_ID_B, 'trial_grant', 100000, uniqueCurrency, `conc-35a-${Date.now()}`);
-    createAllowance(BIZ_ID_B, 'trial_grant', 100000, uniqueCurrency, `conc-35b-${Date.now()}`);
+    createAllowance(snBiz, 'trial_grant', 100000, uniqueCurrency, `conc-35a-${Date.now()}`);
+    createAllowance(snBiz, 'trial_grant', 100000, uniqueCurrency, `conc-35b-${Date.now()}`);
 
-    const a1 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${BIZ_ID_B}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
-    const a2 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${BIZ_ID_B}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
+    const a1 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${snBiz}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
+    const a2 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${snBiz}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
 
     await Promise.allSettled([
       psqlAsync(`SELECT public.authorize_message_send('${a1}');`),
@@ -828,7 +830,7 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
     ]);
 
     // Exactly one period row for this business/currency/month
-    const periodCount = psql(`SELECT count(*) FROM messaging_spend_periods WHERE business_id = '${BIZ_ID_B}' AND currency_code = '${uniqueCurrency}';`);
+    const periodCount = psql(`SELECT count(*) FROM messaging_spend_periods WHERE business_id = '${snBiz}' AND currency_code = '${uniqueCurrency}';`);
     expect(periodCount).toBe('1');
   }, 30000);
 
