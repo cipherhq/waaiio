@@ -22,13 +22,17 @@ describe('Template definition', () => {
     expect(provisionSrc).not.toContain("name: 'promo_pickup_verification'");
   });
 
-  it('UTILITY category with en_US language', () => {
-    const section = provisionSrc.substring(
-      provisionSrc.indexOf('promo_verification:'),
-      provisionSrc.indexOf('promo_verification:') + 500,
-    );
+  it('canonical pickup V2 uses UTILITY/en_US and the four-parameter send contract', () => {
+    const contractSrc = fs.readFileSync('lib/promotions/template-contracts.ts', 'utf-8');
+    const start = contractSrc.indexOf('  promo_pickup_verification_v2: {');
+    const end = contractSrc.indexOf('  promo_winner_status_v1: {', start);
+    const section = contractSrc.slice(start, end);
+    expect(start).toBeGreaterThanOrEqual(0);
     expect(section).toContain("category: 'UTILITY'");
     expect(section).toContain("language: 'en_US'");
+    for (const parameter of ['{{1}}', '{{2}}', '{{3}}', '{{4}}']) {
+      expect(section).toContain(parameter);
+    }
   });
 
   it('uses the canonical V2 body contract with four variables', () => {
