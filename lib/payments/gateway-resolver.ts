@@ -37,6 +37,14 @@ const VALID_GATEWAYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Gateways available for NEW merchant setup (BYO credentials, gateway selection).
+ * Flutterwave deferred post-launch per Owner decision 2026-10-24.
+ * Existing Flutterwave merchants and payment processing are unaffected.
+ * To re-enable: add 'flutterwave' back to this array.
+ */
+export const SETUP_AVAILABLE_GATEWAYS: readonly string[] = ['paystack', 'stripe'] as const;
+
+/**
  * Resolve the canonical payment gateway for a business.
  *
  * Reads the business's country_code, then resolves gateway + currency

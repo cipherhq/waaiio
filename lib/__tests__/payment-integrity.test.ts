@@ -697,7 +697,10 @@ describe('Production Credential Guards — payment-credentials', () => {
     expect(json.error).toContain('not allowed in production');
   });
 
-  it('rejects Flutterwave test-mode keys in production', async () => {
+  it('rejects Flutterwave connections (setup disabled for launch)', async () => {
+    // Flutterwave is excluded from SETUP_AVAILABLE_GATEWAYS per Owner decision 2026-10-24.
+    // The gate rejects before reaching the deeper production-key validation.
+    // When re-enabled, this test should be updated to check 'not allowed in production'.
     process.env.WAAIIO_ENVIRONMENT = 'production';
     vi.doMock('@/lib/supabase/server', () => mockAuthenticatedUser());
 
@@ -711,7 +714,7 @@ describe('Production Credential Guards — payment-credentials', () => {
     const res = await POST(req);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain('not allowed in production');
+    expect(json.error).toContain('not available for new connections');
   });
 
   it('allows sk_test_ keys in staging', async () => {
@@ -2949,6 +2952,10 @@ describe('Route + real handler: incomplete → 503 (test 3b)', () => {
 // ═══════════════════════════════════════════════════════════
 
 describe('Payment credentials route — Flutterwave webhook_secret_hash', () => {
+  // Flutterwave setup is disabled for launch (SETUP_AVAILABLE_GATEWAYS excludes it).
+  // The gate rejects Flutterwave before reaching the webhook_secret_hash validation.
+  // These security tests are preserved for re-enablement: add 'flutterwave' to
+  // SETUP_AVAILABLE_GATEWAYS and remove the .skip to re-activate them.
   const originalEnv = { ...process.env };
 
   function mockAuthUser() {
@@ -2998,7 +3005,22 @@ describe('Payment credentials route — Flutterwave webhook_secret_hash', () => 
     vi.restoreAllMocks();
   });
 
-  it('Flutterwave without webhook_secret_hash → 400', async () => {
+  it('Flutterwave setup gate rejects all new connections', async () => {
+    const { POST } = await import('@/app/api/settings/payment-credentials/route');
+    const req = new NextRequest(new URL('http://localhost:3000/api/settings/payment-credentials'), {
+      method: 'POST',
+      body: JSON.stringify({ business_id: 'biz-1', gateway: 'flutterwave', secret_key: 'FLW_KEY' }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('not available for new connections');
+  });
+
+  // Security tests preserved for re-enablement. When Flutterwave is added back to
+  // SETUP_AVAILABLE_GATEWAYS, remove .skip and verify these still pass.
+  it.skip('[RE-ENABLE] Flutterwave without webhook_secret_hash → 400', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'success', data: { id: 1 } }) });
     try {
@@ -3017,7 +3039,7 @@ describe('Payment credentials route — Flutterwave webhook_secret_hash', () => 
     }
   });
 
-  it('Flutterwave with hash equal to secret key → 400', async () => {
+  it.skip('[RE-ENABLE] Flutterwave with hash equal to secret key → 400', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'success', data: { id: 1 } }) });
     try {
@@ -3039,7 +3061,7 @@ describe('Payment credentials route — Flutterwave webhook_secret_hash', () => 
     }
   });
 
-  it('Flutterwave with valid hash → saved encrypted, response excludes it', async () => {
+  it.skip('[RE-ENABLE] Flutterwave with valid hash → saved encrypted, response excludes it', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'success', data: { id: 1 } }) });
     try {

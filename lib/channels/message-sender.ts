@@ -124,14 +124,17 @@ async function withRetry<T>(
       // Retrying would create a fresh attempt+reservation and potentially emit after the
       // original reservation was released by expiry.
       const isGateBlock = err instanceof GateBlockError;
+      // Lane 3: Financial authorization denials are business-logic errors, not Meta API failures.
+      // They must NOT contribute to the circuit breaker or trigger retries.
+      const isFinancialDenial = err instanceof Error && errMsg.startsWith('Financial authorization');
 
       // Only record failure for server errors (5xx) or network errors, not client errors or suspensions
-      if (!is4xx && !isSuspended && !isAmbiguous && !isWamidFailure && !isGateBlock) {
+      if (!is4xx && !isSuspended && !isAmbiguous && !isWamidFailure && !isGateBlock && !isFinancialDenial) {
         recordFailure(CIRCUIT_KEY);
       }
 
-      // Don't retry: client errors, suspension blocks, ambiguous, WAMID persistence, gate blocks, or last attempt
-      if (is4xx || isSuspended || isAmbiguous || isWamidFailure || isGateBlock || i === retries) throw err;
+      // Don't retry: client errors, suspension blocks, ambiguous, WAMID persistence, gate blocks, financial denials, or last attempt
+      if (is4xx || isSuspended || isAmbiguous || isWamidFailure || isGateBlock || isFinancialDenial || i === retries) throw err;
       await new Promise(r => setTimeout(r, delay * (i + 1)));
     }
   }
