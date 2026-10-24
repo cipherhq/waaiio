@@ -19,7 +19,7 @@ import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlowDefinition } from './registry';
 import type { CapabilityId } from '@/lib/capabilities/types';
-import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessage } from '@/lib/bot/conversation-guard';
+import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessage, checkSpendThresholds } from '@/lib/bot/conversation-guard';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -1032,6 +1032,8 @@ export class FlowExecutor {
     }
     if (this.currentBusinessId) {
       trackOutboundMessage(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Failed to track outbound message:', err));
+      // #682: Non-blocking threshold check after each outbound message
+      checkSpendThresholds(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Threshold check failed (non-critical):', err));
     }
   }
 

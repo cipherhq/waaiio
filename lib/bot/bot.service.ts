@@ -13,6 +13,7 @@ import { loadCountries } from '@/lib/countries';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities as resolveEffectiveCaps } from '@/lib/capabilities/policy';
 import { resolveTrialCredit } from '@/lib/trial-status';
+import { trackInboundMessage } from '@/lib/bot/conversation-guard';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
@@ -727,6 +728,14 @@ export class BotService {
     if (session?.business_id) {
       // S-1 (#256): Bind resumed session's business to sender for hard-stop guard
       if (this.messageSender.bindBusiness) this.messageSender.bindBusiness(session.business_id);
+
+      // #682: Track inbound message with new-conversation detection (non-blocking).
+      // session.updated_at reflects the last interaction — if >24h ago, it's a new conversation.
+      // Skip for internal redispatches (pc_options, pc_again, etc.) to avoid double-counting.
+      if (!_internalProvenance) {
+        trackInboundMessage(this.supabase, session.business_id, (session as any).updated_at ?? null)
+          .catch(err => logger.warn('[BOT] Inbound tracking failed (non-critical):', err));
+      }
 
       try {
         // BOT-PERF: Use RPC-provided business if available, otherwise fetch
@@ -2143,6 +2152,13 @@ export class BotService {
         if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
         await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         return;
+      }
+
+      // #682: Track inbound for new sessions (session just created → null updated_at → new conversation).
+      // Skip for internal redispatches (pc_options, pc_again, etc.) to avoid double-counting.
+      if (businessId && !_internalProvenance) {
+        trackInboundMessage(this.supabase, businessId, null)
+          .catch(err => logger.warn('[BOT] Inbound tracking failed (non-critical):', err));
       }
 
       // ACC-180: If promo was handled on first message, the canonical session has been created
@@ -4001,10 +4017,30 @@ export class BotService {
     _bmark('flow_exec_done');
     logger.info('[BOT-PERF] timings_ms', _btimings);
     } catch (err) {
-      const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
-      logger.error('[BOT] handleMessage CRASH:', errMsg);
-      Sentry.captureException(err);
-      try { await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.'); } catch (_) { /* ignore */ }
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isFinancialDenial = errMsg.startsWith('Financial authorization denied:')
+        || errMsg.includes('insufficient_allowance_balance')
+        || errMsg.includes('spend_cap_exceeded');
+
+      if (isFinancialDenial) {
+        // #682: Financial exhaustion — rate-limited customer-facing message via platform scope.
+        // Platform scope bypasses the business financial gate that caused the denial.
+        logger.warn('[BOT] Financial authorization denied for', from.slice(-4), ':', errMsg);
+        Sentry.captureMessage(`[BOT] Financial denial: ${errMsg}`, 'warning');
+        const exhaustionKey = `bot_exhaustion:${from}`;
+        const exhaustionLimit = await checkRateLimitAsync(exhaustionKey, 1, 5 * 60 * 1000);
+        if (exhaustionLimit.allowed) {
+          try {
+            if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+            await this.sendPlatformText(from, 'This business is temporarily unable to send messages. Please try again later or contact the business directly.');
+          } catch (_) { /* best-effort */ }
+        }
+      } else {
+        const fullMsg = err instanceof Error ? `${errMsg}\n${err.stack?.slice(0, 300)}` : errMsg;
+        logger.error('[BOT] handleMessage CRASH:', fullMsg);
+        Sentry.captureException(err);
+        try { await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.'); } catch (_) { /* ignore */ }
+      }
     }
   }
 

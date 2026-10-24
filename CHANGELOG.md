@@ -1,3 +1,14 @@
+### #682 Bot Recovery — Messaging reliability fixes (2026-10-24)
+
+- **`lib/bot/conversation-guard.ts`**: Added `trackInboundMessage()` with 24h-window new-conversation detection (`isNewConversation()`). Fixed `trackOutboundMessage()` to accept `isNewConv` parameter instead of hardcoded `false`. Added `checkSpendThresholds()` for non-blocking threshold alert insertion (50/75/90/100%).
+- **`lib/bot/bot.service.ts`**: Added inbound message tracking for both resumed sessions (line ~731) and new sessions (line ~2155). Added financial denial detection in outer catch — sends rate-limited customer message via platform scope instead of generic crash message.
+- **`lib/bot/flows/executor.ts`**: Added `checkSpendThresholds` import and non-blocking call after outbound tracking.
+- **`app/dashboard/billing/page.tsx`**: Fixed null-currency crash in `formatCurrency()` and `formatSmallestUnit()` — now safely handles null/undefined currency parameter.
+- **Test mocks updated**: `pidgin-executor-switching`, `slice-a-localization-boundary`, `slice-559-executor-reroute`, `p0-executor-cas-regression`, `cas-003-route-integration` — added `checkSpendThresholds` and/or `trackInboundMessage` to conversation-guard mocks.
+- **`lib/__tests__/bot-recovery-messaging-682.test.ts`** (new): 38 tests covering isNewConversation (7), trackInboundMessage (3), trackOutboundMessage (3), null-currency safety (2), checkSpendThresholds (2), financial denial detection (9), isApproachingLimit (3), duplicate webhook resilience (1), conversation-window boundary conditions (8 — rolling-inactivity model, concurrent messages, RPC failure non-blocking, session expiration).
+- **Affects**: Bot messaging accounting, financial denial UX, billing page crash safety, spend threshold monitoring. No changes to payment flows, subscription logic, WhatsApp routing, or message classification.
+- **Could break**: Nothing — all changes are additive (new tracking), defensive (null-safety), or error-handling improvements. Existing `trackOutboundMessage` callers are backward-compatible (new param defaults to `false`).
+
 ### #671 QA Phase B — CTO R3 final corrections (2026-10-22)
 
 - **`app/api/release-identity/route.ts`** (B1): Replace unanchored regex with `new URL()` parsing + anchored hostname match `^[a-z]{20}\.supabase\.co$`. Enforces HTTPS scheme. Rejects spoofed hostnames like `ref.supabase.co.evil.com` or ref-in-path attacks.

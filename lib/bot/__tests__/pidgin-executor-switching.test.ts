@@ -47,6 +47,7 @@ vi.mock('@/lib/bot/conversation-guard', () => ({
   checkConversationLimit: vi.fn().mockResolvedValue({ allowed: true }),
   trackOutboundMessage: vi.fn().mockResolvedValue(undefined),
   getConversationLimitMessage: vi.fn(() => 'Limit reached'),
+  checkSpendThresholds: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@/lib/bot/step-overrides', () => ({
   loadOverrides: vi.fn().mockResolvedValue(new Map()),
