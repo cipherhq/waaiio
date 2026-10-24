@@ -1,3 +1,11 @@
+### #682 Launch: Disable Flutterwave merchant setup (2026-10-24)
+
+- **`lib/payments/gateway-resolver.ts`**: Added `SETUP_AVAILABLE_GATEWAYS = ['paystack', 'stripe']`. Shared constant gates new merchant gateway setup. Existing `VALID_GATEWAYS` unchanged (Flutterwave payment processing preserved).
+- **`app/api/settings/payment-credentials/route.ts`**: Server-side gate rejects `gateway === 'flutterwave'` for new BYO connections with clear message.
+- **`app/dashboard/settings/tabs/PaymentsTab.tsx`**: Gateway selection radio uses `SETUP_AVAILABLE_GATEWAYS` (Flutterwave option removed). BYO Flutterwave form conditionally hidden.
+- **Affects**: New merchant gateway selection only. Existing Flutterwave merchants, credentials, transactions, webhooks, refunds, and reconciliation are fully preserved.
+- **Re-enable**: Add `'flutterwave'` to `SETUP_AVAILABLE_GATEWAYS` array.
+
 ### Lane 3 — Cross-border messaging financial authorization fix (2026-10-24)
 
 - **`supabase/migrations/461_cross_border_business_country_billing.sql`** (new): Replaces both overloads of `authorize_message_send` (1-arg and 3-arg). Currency resolution now uses `businesses.country_code` (business country) instead of `message_send_attempts.recipient_country_code` (recipient country). Adds Step 3b: JOIN businesses to resolve `v_business_country`. `v_country` assignment changed from `v_attempt.recipient_country_code` to `v_business_country`. `recipient_country_code` preserved on attempt record for WhatsApp delivery analytics. New rejection reason `business_country_not_found` if business lacks country_code.

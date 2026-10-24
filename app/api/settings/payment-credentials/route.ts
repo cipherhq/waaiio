@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { encryptToken } from '@/lib/encryption';
+import { SETUP_AVAILABLE_GATEWAYS } from '@/lib/payments/gateway-resolver';
 
 const PLATFORM_PAYSTACK_KEY = process.env.PAYSTACK_SECRET_KEY || '';
 const PLATFORM_FLUTTERWAVE_KEY = process.env.FLUTTERWAVE_SECRET_KEY || '';
@@ -28,8 +29,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields: business_id, gateway, secret_key' }, { status: 400 });
   }
 
-  if (!['paystack', 'flutterwave', 'stripe'].includes(gateway)) {
-    return NextResponse.json({ error: 'Invalid gateway. Must be paystack, flutterwave, or stripe.' }, { status: 400 });
+  if (!SETUP_AVAILABLE_GATEWAYS.includes(gateway)) {
+    return NextResponse.json({ error: `Gateway "${gateway}" is not available for new connections. Supported: ${SETUP_AVAILABLE_GATEWAYS.join(', ')}.` }, { status: 400 });
   }
 
   // Flutterwave BYO requires a dedicated webhook secret hash
