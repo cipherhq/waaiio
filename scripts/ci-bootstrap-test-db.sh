@@ -181,6 +181,22 @@ VALUES
    clock_timestamp())
 ON CONFLICT (key) DO NOTHING;
 
+-- Refresh config version snapshot BEFORE plan ref updates so the
+-- activation trigger can find messaging_pricing in the snapshot.
+INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by, created_at)
+SELECT gen_random_uuid(),
+       (SELECT jsonb_object_agg(key, value) FROM platform_settings
+        WHERE key = ANY(ARRAY[
+          'pricing_tiers','trial_days','broadcast_limits','conversation_limits',
+          'default_platform_fee_percent','annual_discount_percentage',
+          'payout_cooling_period_days','minimum_payout','payout_verification_limits',
+          'transfer_expiry_hours','minimum_bank_transfer',
+          'messaging_financial_gate','messaging_reservation_ttl_seconds',
+          'trial_credit_minor_by_currency','subscription_included_minor_by_tier_currency',
+          'fee_policy_enabled','category_fee_rates','messaging_pricing'
+        ])),
+       clock_timestamp(), NULL, clock_timestamp();
+
 -- Paystack plan refs for NG and GH (required by guard_country_activation
 -- for paystack-gateway countries). Uses CI-only placeholder codes.
 DO $$
@@ -206,20 +222,5 @@ BEGIN
   END IF;
   PERFORM set_config('waaiio.provider_ref_auth', '', true);
 END $$;
-
--- Refresh config version snapshot so trigger reads the seeded keys
-INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by, created_at)
-SELECT gen_random_uuid(),
-       (SELECT jsonb_object_agg(key, value) FROM platform_settings
-        WHERE key = ANY(ARRAY[
-          'pricing_tiers','trial_days','broadcast_limits','conversation_limits',
-          'default_platform_fee_percent','annual_discount_percentage',
-          'payout_cooling_period_days','minimum_payout','payout_verification_limits',
-          'transfer_expiry_hours','minimum_bank_transfer',
-          'messaging_financial_gate','messaging_reservation_ttl_seconds',
-          'trial_credit_minor_by_currency','subscription_included_minor_by_tier_currency',
-          'fee_policy_enabled','category_fee_rates','messaging_pricing'
-        ])),
-       clock_timestamp(), NULL, clock_timestamp();
 EOMSGCFG
 echo "✅ CI messaging/pricing config seeded."
