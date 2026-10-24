@@ -64,9 +64,9 @@ describe('product gallery data flow', () => {
     expect(selectMatch?.[1]).toContain('gallery_urls');
   });
 
-  it('save payload includes gallery_urls', () => {
+  it('save payload includes gallery_urls from hook', () => {
     const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain("gallery_urls: form.gallery_urls || []");
+    expect(pageSrc).toContain('gallery_urls: gallery.galleryUrls');
   });
 
   it('openEdit initializes gallery_urls from product data', () => {
@@ -188,10 +188,10 @@ describe('gallery image limit', () => {
     expect(formSrc).toContain('totalImages < 4');
   });
 
-  it('handleGalleryUpload checks both gallery length and total image count', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('totalImages >= 4');
-    expect(pageSrc).toContain('currentGallery.length >= 3');
+  it('useProductGallery enforces gallery limits', () => {
+    const hookSrc = readFileSync('app/dashboard/products/hooks/useProductGallery.ts', 'utf8');
+    expect(hookSrc).toContain('totalImages >= 4');
+    expect(hookSrc).toContain('galleryUrls.length >= 3');
   });
 });
 
@@ -217,26 +217,19 @@ describe('gallery upload security', () => {
 
 // ── Gallery UI interactions ─────────────────────────────────────────────────
 
-describe('gallery UI interactions', () => {
-  it('supports image removal', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('handleGalleryRemove');
-    expect(pageSrc).toContain('updated.splice(index, 1)');
+describe('gallery UI interactions (hook + form)', () => {
+  it('hook exports removal, reorder, and primary swap handlers', () => {
+    const hookSrc = readFileSync('app/dashboard/products/hooks/useProductGallery.ts', 'utf8');
+    expect(hookSrc).toContain('handleGalleryRemove');
+    expect(hookSrc).toContain('handleGalleryReorder');
+    expect(hookSrc).toContain('handleSetPrimary');
   });
 
-  it('supports image reordering', () => {
+  it('page delegates gallery handlers to useProductGallery hook', () => {
     const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('handleGalleryReorder');
-    expect(pageSrc).toContain('updated.splice(fromIndex, 1)');
-    expect(pageSrc).toContain('updated.splice(toIndex, 0, moved)');
-  });
-
-  it('supports setting a gallery image as primary', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('handleSetPrimary');
-    // Swaps gallery image with current primary, uploading pending file first
-    expect(pageSrc).toContain('newPrimary');
-    expect(pageSrc).toContain('currentPrimaryUrl');
+    expect(pageSrc).toContain('gallery.handleGalleryUpload');
+    expect(pageSrc).toContain('gallery.handleSetPrimary');
+    expect(pageSrc).toContain('useProductGallery');
   });
 
   it('shows upload progress indicator', () => {
@@ -346,18 +339,15 @@ describe('gallery logic: behavioral tests', () => {
     expect(product.image_url).toBe('existing.jpg');
   });
 
-  it('functional state update prevents stale gallery on concurrent upload', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    // handleGalleryUpload must use functional setForm(prev => ...) not setForm({...form})
-    expect(pageSrc).toContain('setForm(prev =>');
-    expect(pageSrc).toContain('prev.gallery_urls');
+  it('hook uses functional state updates for concurrent safety', () => {
+    const hookSrc = readFileSync('app/dashboard/products/hooks/useProductGallery.ts', 'utf8');
+    expect(hookSrc).toContain('setGalleryUrls(prev =>');
   });
 
-  it('handleSetPrimary uploads pending imageFile before swapping', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    // Must upload pending file before clearing it
-    expect(pageSrc).toContain('if (imageFile)');
-    expect(pageSrc).toContain('await uploadImageFile(imageFile)');
+  it('hook uploads pending imageFile before swapping primary', () => {
+    const hookSrc = readFileSync('app/dashboard/products/hooks/useProductGallery.ts', 'utf8');
+    expect(hookSrc).toContain('if (imageFile)');
+    expect(hookSrc).toContain('await uploadFn(imageFile)');
   });
 });
 
@@ -376,9 +366,9 @@ describe('deployment ordering: gallery_urls resilience', () => {
     expect(pageSrc).toContain('gallery_urls: product.gallery_urls || []');
   });
 
-  it('save payload uses fallback for missing gallery_urls', () => {
+  it('save payload reads gallery_urls from hook state', () => {
     const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('gallery_urls: form.gallery_urls || []');
+    expect(pageSrc).toContain('gallery_urls: gallery.galleryUrls');
   });
 
   it('EMPTY_PRODUCT.gallery_urls is empty array (safe default)', () => {
@@ -460,10 +450,13 @@ function simulateSetPrimary(params: {
 }
 
 describe('R5-1: new primary selection blocked during swap', () => {
-  it('handleImageSelect checks swappingPrimaryRef', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    const fn = pageSrc.substring(pageSrc.indexOf('function handleImageSelect'), pageSrc.indexOf('function uploadImageFile'));
-    expect(fn).toContain('swappingPrimaryRef.current');
+  it('useProductGallery handleImageSelect checks swap guard', () => {
+    const hookSrc = readFileSync('app/dashboard/products/hooks/useProductGallery.ts', 'utf8');
+    // handleImageSelect body contains the swap guard check
+    const implStart = hookSrc.indexOf('const handleImageSelect = useCallback');
+    const implEnd = hookSrc.indexOf('const handleGalleryUpload', implStart);
+    const fnBody = hookSrc.substring(implStart, implEnd);
+    expect(fnBody).toContain('swappingPrimaryRef.current');
   });
 });
 
@@ -589,14 +582,15 @@ describe('R5-4: error display in ProductForm', () => {
     expect(formSrc).toContain('text-red-600');
   });
 
-  it('page passes galleryError prop to ProductForm', () => {
+  it('page passes galleryError from hook to ProductForm', () => {
     const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('galleryError={galleryError}');
+    expect(pageSrc).toContain('galleryError={gallery.galleryError}');
   });
 
-  it('handleSetPrimary sets galleryError on upload failure', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    const fn = pageSrc.substring(pageSrc.indexOf('async function handleSetPrimary'), pageSrc.indexOf('// ── Generate variants'));
-    expect(fn).toContain('setGalleryError(');
+  it('useProductGallery sets galleryError on upload failure', () => {
+    const hookSrc = readFileSync('app/dashboard/products/hooks/useProductGallery.ts', 'utf8');
+    expect(hookSrc).toContain('setGalleryError(');
+    expect(hookSrc).toContain('Image upload failed');
+    expect(hookSrc).toContain('Photo upload failed');
   });
 });
