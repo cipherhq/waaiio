@@ -57,6 +57,7 @@ export default function ProductsPage() {
   const [promoCodes, setPromoCodes] = useState<Array<{ code: string; discount_type: string; discount_value: number; is_active: boolean }>>([]);
   const [promoCodesLoaded, setPromoCodesLoaded] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageSelectSeqRef = useRef(0); // Guards against stale FileReader.onload
 
   // Gallery hook — manages primary image, gallery images, uploads, and swaps.
   // Extracted so the same production logic can be tested with renderHook.
@@ -283,6 +284,7 @@ export default function ProductsPage() {
   function openAdd() {
     setForm({ ...EMPTY_PRODUCT, sort_order: products.length });
     gallery.reset({ imageUrl: null, galleryUrls: [] });
+    imageSelectSeqRef.current++;
     setVariants([]);
     setDeletedVariantIds([]);
     setOptionGroups([]);
@@ -300,6 +302,7 @@ export default function ProductsPage() {
   async function openEdit(product: Product) {
     setForm({ ...product, gallery_urls: product.gallery_urls || [] });
     gallery.reset({ imageUrl: product.image_url, galleryUrls: product.gallery_urls || [] });
+    imageSelectSeqRef.current++;
     setDeletedVariantIds([]);
     setBulkPrice('');
     setVariantImageFiles({});
@@ -353,9 +356,16 @@ export default function ProductsPage() {
     if (!file) { return; }
     // Delegate to hook (handles R5-1 swap guard internally)
     gallery.handleImageSelect(file);
-    // Also generate a data-URL preview for the image display
+    // Generate a data-URL preview. Use a sequence counter so that a late-completing
+    // FileReader from a previous selection cannot overwrite the current preview
+    // (e.g. if the user resets or swaps primary before the read finishes).
+    const seq = ++imageSelectSeqRef.current;
     const reader = new FileReader();
-    reader.onload = (ev) => gallery.setImagePreview(ev.target?.result as string);
+    reader.onload = (ev) => {
+      if (seq === imageSelectSeqRef.current) {
+        gallery.setImagePreview(ev.target?.result as string);
+      }
+    };
     reader.readAsDataURL(file);
     e.target.value = '';
   }
@@ -374,10 +384,13 @@ export default function ProductsPage() {
   }
 
   async function uploadImage(): Promise<string | null> {
-    if (!gallery.imageFile) return gallery.imageUrl || form.image_url || null;
+    // Hook state is authoritative for the primary image URL.
+    // Do NOT fall through to form.image_url — it may be stale after
+    // handlePromoteToGallery clears the hook's imageUrl.
+    if (!gallery.imageFile) return gallery.imageUrl;
     const url = await uploadImageFile(gallery.imageFile);
     if (url) gallery.setImageFile(null);
-    return url || gallery.imageUrl || form.image_url || null;
+    return url || gallery.imageUrl;
   }
 
   // ── Variant image handling ──
