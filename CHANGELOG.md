@@ -1,3 +1,11 @@
+### #682 Launch: Disable Flutterwave merchant setup (2026-10-24)
+
+- **`lib/payments/gateway-resolver.ts`**: Added `SETUP_AVAILABLE_GATEWAYS = ['paystack', 'stripe']`. Shared constant gates new merchant gateway setup. Existing `VALID_GATEWAYS` unchanged (Flutterwave payment processing preserved).
+- **`app/api/settings/payment-credentials/route.ts`**: Server-side gate rejects `gateway === 'flutterwave'` for new BYO connections with clear message.
+- **`app/dashboard/settings/tabs/PaymentsTab.tsx`**: Gateway selection radio uses `SETUP_AVAILABLE_GATEWAYS` (Flutterwave option removed). BYO Flutterwave form conditionally hidden.
+- **Affects**: New merchant gateway selection only. Existing Flutterwave merchants, credentials, transactions, webhooks, refunds, and reconciliation are fully preserved.
+- **Re-enable**: Add `'flutterwave'` to `SETUP_AVAILABLE_GATEWAYS` array.
+
 ### #682 Bot Recovery — Messaging reliability fixes (2026-10-24)
 
 - **`lib/bot/conversation-guard.ts`**: Added `trackInboundMessage()` with 24h-window new-conversation detection (`isNewConversation()`). Fixed `trackOutboundMessage()` to accept `isNewConv` parameter instead of hardcoded `false`. Added `checkSpendThresholds()` for non-blocking threshold alert insertion (50/75/90/100%).
