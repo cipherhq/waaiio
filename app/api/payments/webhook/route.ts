@@ -267,9 +267,8 @@ export async function POST(request: NextRequest) {
             if (sub) {
               // Create an alert for visibility — do not change subscription status
               try {
-                const { createAlert } = await import('@/lib/alerts/create-alert');
                 await createAlert(supabase, {
-                  business_id: sub.business_id,
+                  businessId: sub.business_id,
                   type: 'payment_failed',
                   title: 'Subscription payment failed',
                   message: 'Your subscription renewal payment failed. We will retry automatically.',
