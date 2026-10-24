@@ -1142,7 +1142,8 @@ function TopUpStatusBadge({ status }: { status: string }) {
 
 /* ── Formatters ───────────────────────────────────────────────── */
 
-function formatCurrency(amount: number, currency: string): string {
+function formatCurrency(amount: number, currency: string | null | undefined): string {
+  if (!currency) return `${amount.toLocaleString()}`;
   const symbols: Record<string, string> = {
     NGN: '\u20A6',
     USD: '$',
@@ -1163,7 +1164,7 @@ function formatDateShort(dateStr: string): string {
   });
 }
 
-function formatSmallestUnit(amount: number, currency: string): string {
+function formatSmallestUnit(amount: number, currency: string | null | undefined): string {
   // Convert from smallest unit (kobo/cents) to major unit
   const major = amount / 100;
   return formatCurrency(major, currency);

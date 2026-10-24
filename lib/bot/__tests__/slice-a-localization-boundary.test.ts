@@ -75,8 +75,10 @@ vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi
 
 vi.mock('@/lib/bot/conversation-guard', () => ({
   checkConversationLimit: vi.fn().mockResolvedValue({ allowed: true }),
+  trackInboundMessage: vi.fn().mockResolvedValue(undefined),
   trackOutboundMessage: vi.fn().mockResolvedValue(undefined),
   getConversationLimitMessage: vi.fn(() => 'Limit reached'),
+  checkSpendThresholds: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@/lib/bot/step-overrides', () => ({

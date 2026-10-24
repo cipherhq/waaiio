@@ -73,19 +73,48 @@ export async function checkConversationLimit(
 }
 
 /**
+ * Track an inbound message from a customer.
+ * Detects new conversations using the 24h window rule (matches Meta billing).
+ * Non-blocking — doesn't fail the request if tracking fails.
+ *
+ * @param sessionUpdatedAt - The session's updated_at timestamp. If null or >24h old,
+ *   this is counted as a new conversation.
+ */
+export async function trackInboundMessage(
+  supabase: SupabaseClient,
+  businessId: string,
+  sessionUpdatedAt: string | null,
+): Promise<void> {
+  try {
+    const isNew = isNewConversation(sessionUpdatedAt);
+    await supabase.rpc('increment_message_usage', {
+      p_business_id: businessId,
+      p_direction: 'inbound',
+      p_is_new_conversation: isNew,
+    });
+  } catch (err) {
+    logger.error('[CONV-GUARD] Track inbound failed:', (err as Error).message);
+  }
+}
+
+/**
  * Track an outbound message (bot response, broadcast, reminder, etc.)
  * Non-blocking — doesn't fail the request if tracking fails.
+ *
+ * @param isNewConv - Whether this outbound starts a new conversation (template-initiated).
+ *   For bot replies to inbound messages, the inbound tracking already counted the conversation.
  */
 export async function trackOutboundMessage(
   supabase: SupabaseClient,
   businessId: string,
   isTemplate: boolean = false,
+  isNewConv: boolean = false,
 ): Promise<void> {
   try {
     await supabase.rpc('increment_message_usage', {
       p_business_id: businessId,
       p_direction: isTemplate ? 'template' : 'outbound',
-      p_is_new_conversation: false,
+      p_is_new_conversation: isNewConv,
     });
   } catch (err) {
     logger.error('[CONV-GUARD] Track outbound failed:', (err as Error).message);
@@ -93,10 +122,81 @@ export async function trackOutboundMessage(
 }
 
 /**
+ * Determine if a message starts a new conversation based on the 24h window rule.
+ * A conversation is "new" if there was no prior interaction within the last 24 hours.
+ * Matches Meta's conversation billing model.
+ */
+export function isNewConversation(sessionUpdatedAt: string | null): boolean {
+  if (!sessionUpdatedAt) return true;
+  const lastActivity = new Date(sessionUpdatedAt).getTime();
+  if (isNaN(lastActivity)) return true;
+  const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+  return Date.now() - lastActivity > twentyFourHoursMs;
+}
+
+/**
  * Get the conversation limit exhausted message to send to customers.
  */
 export function getConversationLimitMessage(): string {
   return 'This business has reached its monthly messaging limit. Please try again next month or contact the business directly.';
+}
+
+/**
+ * #682: Check messaging spend utilization and insert threshold alerts.
+ * Non-blocking — fires after a successful send. Reads the current spend period
+ * for the business and inserts a row into messaging_spend_threshold_alerts
+ * for each newly-crossed threshold (50%, 75%, 90%, 100%).
+ * Uses UNIQUE(business_id, currency_code, period_start, threshold_pct) for idempotency.
+ */
+export async function checkSpendThresholds(
+  supabase: SupabaseClient,
+  businessId: string,
+): Promise<void> {
+  try {
+    const periodStart = new Date();
+    periodStart.setUTCDate(1);
+    periodStart.setUTCHours(0, 0, 0, 0);
+    const periodStartIso = periodStart.toISOString();
+
+    const { data: periods } = await supabase
+      .from('messaging_spend_periods')
+      .select('currency_code, cap_minor, reserved_minor, spent_minor, period_start')
+      .eq('business_id', businessId)
+      .eq('period_start', periodStartIso);
+
+    if (!periods || periods.length === 0) return;
+
+    const THRESHOLDS = [50, 75, 90, 100] as const;
+
+    for (const period of periods) {
+      if (!period.cap_minor || period.cap_minor <= 0) continue;
+      const utilization = ((period.reserved_minor + period.spent_minor) / period.cap_minor) * 100;
+
+      for (const threshold of THRESHOLDS) {
+        if (utilization >= threshold) {
+          // Idempotent insert — 23505 (unique violation) is expected and harmless
+          const { error: insertErr } = await supabase
+            .from('messaging_spend_threshold_alerts')
+            .insert({
+              business_id: businessId,
+              currency_code: period.currency_code,
+              period_start: period.period_start,
+              threshold_pct: threshold,
+              utilization_at_alert: Math.round(utilization * 100) / 100,
+              cap_minor: period.cap_minor,
+              reserved_minor: period.reserved_minor,
+              spent_minor: period.spent_minor,
+            });
+          // Suppress unique constraint violations (already alerted for this threshold)
+          if (insertErr && insertErr.code !== '23505') {
+            logger.warn('[CONV-GUARD] Threshold alert insert error:', insertErr.message);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    logger.error('[CONV-GUARD] Threshold check failed (non-critical):', (err as Error).message);
+  }
 }
 
 /**
