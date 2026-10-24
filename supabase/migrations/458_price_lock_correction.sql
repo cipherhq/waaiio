@@ -70,6 +70,36 @@ SELECT gen_random_uuid(),
        NULL,
        clock_timestamp();
 
+-- Ensure Paystack countries have plan refs so the activation trigger passes.
+-- ON CONFLICT: staging/production already have real plan refs — no-op.
+-- CI disposable PG has none — seed placeholder refs that satisfy length >= 3.
+-- Uses the waaiio.provider_ref_auth sentinel to pass the ref-guard trigger.
+DO $$
+BEGIN
+  PERFORM set_config('waaiio.provider_ref_auth', 'true', true);
+  -- NG: seed only if growth plan ref is missing
+  IF (SELECT pricing -> 'growth' -> 'provider_plan_refs' ->> 'paystack' FROM countries WHERE code = 'NG') IS NULL THEN
+    UPDATE countries SET pricing = jsonb_set(jsonb_set(jsonb_set(jsonb_set(
+      pricing,
+      '{growth,provider_plan_refs}', '{"paystack":"PLN_ci_placeholder_ng_growth"}'::jsonb),
+      '{growth,paystack_plan_code}', '"PLN_ci_placeholder_ng_growth"'::jsonb),
+      '{business,provider_plan_refs}', '{"paystack":"PLN_ci_placeholder_ng_business"}'::jsonb),
+      '{business,paystack_plan_code}', '"PLN_ci_placeholder_ng_business"'::jsonb)
+    WHERE code = 'NG';
+  END IF;
+  -- GH: seed only if growth plan ref is missing
+  IF (SELECT pricing -> 'growth' -> 'provider_plan_refs' ->> 'paystack' FROM countries WHERE code = 'GH') IS NULL THEN
+    UPDATE countries SET pricing = jsonb_set(jsonb_set(jsonb_set(jsonb_set(
+      pricing,
+      '{growth,provider_plan_refs}', '{"paystack":"PLN_ci_placeholder_gh_growth"}'::jsonb),
+      '{growth,paystack_plan_code}', '"PLN_ci_placeholder_gh_growth"'::jsonb),
+      '{business,provider_plan_refs}', '{"paystack":"PLN_ci_placeholder_gh_business"}'::jsonb),
+      '{business,paystack_plan_code}', '"PLN_ci_placeholder_gh_business"'::jsonb)
+    WHERE code = 'GH';
+  END IF;
+  PERFORM set_config('waaiio.provider_ref_auth', '', true);
+END $$;
+
 -- ══════════════════════════════════════════════════════════════
 -- Section A: Env-agnostic price/fee corrections
 -- ══════════════════════════════════════════════════════════════
