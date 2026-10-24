@@ -1,3 +1,12 @@
+### Lane 3 — Cross-border messaging financial authorization fix (2026-10-24)
+
+- **`supabase/migrations/461_cross_border_business_country_billing.sql`** (new): Replaces both overloads of `authorize_message_send` (1-arg and 3-arg). Currency resolution now uses `businesses.country_code` (business country) instead of `message_send_attempts.recipient_country_code` (recipient country). Adds Step 3b: JOIN businesses to resolve `v_business_country`. `v_country` assignment changed from `v_attempt.recipient_country_code` to `v_business_country`. `recipient_country_code` preserved on attempt record for WhatsApp delivery analytics. New rejection reason `business_country_not_found` if business lacks country_code.
+- **`lib/channels/message-sender.ts`**: Added `isFinancialDenial` check in `withRetry` — errors starting with `'Financial authorization'` are now excluded from `recordFailure(CIRCUIT_KEY)` and from retry attempts. Prevents insufficient-balance denials from opening the Meta Cloud circuit breaker.
+- **`lib/__tests__/cross-border-billing-db.test.ts`** (new): 9 real-PostgreSQL tests: NG→US charges NGN, US→NG charges USD, GH→US charges GHS, same-country preservation, recipient country analytics preservation, unconfigured business country rejection, depleted balance rejection, 3-arg overload cross-border consistency.
+- **`lib/__tests__/circuit-breaker-financial-exclusion.test.ts`** (new): 3 tests proving financial denials don't trigger `recordFailure`, financial RPC errors don't trigger it either, but real Meta 5xx errors still do.
+- **Affects**: Financial authorization billing currency resolution (authorize_message_send RPC), circuit breaker error classification. No changes to payment gateways, subscription pricing, purchased balances, rate configuration, expiry policies, or WhatsApp delivery routing.
+- **Could break**: Existing tests that assume recipient_country_code drives currency (tests 3, 8, 23 in financial-authorization-db.test.ts create attempts with recipient country matching the allowance currency — those still pass because the test businesses default to NG country_code with NGN allowances).
+
 ### #682 Bot Recovery — Messaging reliability fixes (2026-10-24)
 
 - **`lib/bot/conversation-guard.ts`**: Added `trackInboundMessage()` with 24h-window new-conversation detection (`isNewConversation()`). Fixed `trackOutboundMessage()` to accept `isNewConv` parameter instead of hardcoded `false`. Added `checkSpendThresholds()` for non-blocking threshold alert insertion (50/75/90/100%).
