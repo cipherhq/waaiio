@@ -52,6 +52,192 @@ export async function POST(request: NextRequest) {
 
     wh.received({ gateway: 'paystack', eventType: event, providerRef: reference });
 
+    // ── Subscription lifecycle events (no data.reference) ──
+    // Paystack subscription.create, subscription.not_renew, subscription.disable,
+    // and invoice.payment_failed events do NOT carry a top-level data.reference.
+    // Handle them before the reference guard using subscription_code as the
+    // idempotency key. See: Paystack webhook docs — subscription events have
+    // data.subscription_code, not data.reference.
+    const SUBSCRIPTION_LIFECYCLE_EVENTS = ['subscription.create', 'subscription.not_renew', 'subscription.disable', 'invoice.payment_failed'];
+    if (SUBSCRIPTION_LIFECYCLE_EVENTS.includes(event) && !reference) {
+      const supabase = createServiceClient();
+      const subCode = data.subscription_code as string | undefined;
+      const subEventId = subCode ? `paystack-${event}-${subCode}` : null;
+
+      if (!subEventId) {
+        wh.ignored('Subscription event without subscription_code');
+        return NextResponse.json({ received: true });
+      }
+
+      // Atomic idempotency claim
+      const { data: claimed, error: claimErr } = await supabase
+        .from('processed_webhook_events')
+        .upsert({
+          event_id: subEventId,
+          gateway: 'paystack',
+          event_type: event,
+          status: 'processing',
+          attempts: 1,
+          first_received_at: new Date().toISOString(),
+          last_attempted_at: new Date().toISOString(),
+        }, { onConflict: 'event_id', ignoreDuplicates: false })
+        .select('id, status, attempts')
+        .single();
+
+      if (claimErr || claimed?.status === 'completed') {
+        wh.duplicate({ webhookEventId: subEventId });
+        return NextResponse.json({ received: true });
+      }
+
+      try {
+        if (event === 'subscription.create') {
+          // Paystack sends subscription_code + customer + plan + authorization.
+          // Match to DB subscription by finding the initial transaction's metadata.
+          const custCode = (data.customer as Record<string, string> | undefined)?.customer_code;
+
+          if (subCode) {
+            // Strategy: find active subscriptions with matching paystack_customer_code
+            // OR match by customer email → profiles → businesses → subscriptions
+            const custEmail = (data.customer as Record<string, string> | undefined)?.email;
+            let matched = false;
+
+            // Primary: match by paystack_customer_code if already populated
+            if (custCode) {
+              const { data: sub } = await supabase
+                .from('subscriptions')
+                .select('id, business_id')
+                .eq('paystack_customer_code', custCode)
+                .eq('status', 'active')
+                .maybeSingle();
+
+              if (sub) {
+                await supabase
+                  .from('subscriptions')
+                  .update({
+                    paystack_subscription_code: subCode,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', sub.id);
+                matched = true;
+                logger.info('[PAYSTACK-WEBHOOK] subscription.create: linked by customer_code', { subCode, custCode, subscriptionId: sub.id });
+              }
+            }
+
+            // Fallback: match by customer email → user → business → active subscription
+            if (!matched && custEmail) {
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('email', custEmail)
+                .maybeSingle();
+
+              if (profile) {
+                const { data: businesses } = await supabase
+                  .from('businesses')
+                  .select('id')
+                  .eq('owner_id', profile.id);
+
+                if (businesses && businesses.length > 0) {
+                  const bizIds = businesses.map(b => b.id);
+                  const { data: sub } = await supabase
+                    .from('subscriptions')
+                    .select('id, business_id')
+                    .eq('status', 'active')
+                    .eq('gateway', 'paystack')
+                    .in('business_id', bizIds)
+                    .maybeSingle();
+
+                  if (sub) {
+                    await supabase
+                      .from('subscriptions')
+                      .update({
+                        paystack_subscription_code: subCode,
+                        paystack_customer_code: custCode || null,
+                        updated_at: new Date().toISOString(),
+                      })
+                      .eq('id', sub.id);
+                    matched = true;
+                    logger.info('[PAYSTACK-WEBHOOK] subscription.create: linked by email fallback', { subCode, custEmail, subscriptionId: sub.id });
+                  }
+                }
+              }
+            }
+
+            if (!matched) {
+              logger.warn('[PAYSTACK-WEBHOOK] subscription.create: no matching DB subscription found', { subCode, custCode, custEmail: (data.customer as Record<string, string> | undefined)?.email });
+            }
+          }
+        }
+
+        if (event === 'subscription.not_renew' || event === 'subscription.disable') {
+          // Match by paystack_subscription_code (may have been populated by subscription.create)
+          if (subCode) {
+            const { data: sub } = await supabase
+              .from('subscriptions')
+              .select('id, business_id')
+              .eq('paystack_subscription_code', subCode)
+              .eq('status', 'active')
+              .maybeSingle();
+
+            if (sub) {
+              await supabase
+                .from('subscriptions')
+                .update({
+                  status: 'cancelled',
+                  cancelled_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', sub.id);
+
+              await supabase
+                .from('businesses')
+                .update({ status: 'suspended', subscription_tier: 'free' })
+                .eq('id', sub.business_id);
+
+              logger.info(`[PAYSTACK-WEBHOOK] ${event}: cancelled subscription`, { subCode, subscriptionId: sub.id, businessId: sub.business_id });
+            } else {
+              logger.warn(`[PAYSTACK-WEBHOOK] ${event}: no matching active subscription for code`, { subCode });
+            }
+          }
+        }
+
+        if (event === 'invoice.payment_failed') {
+          if (subCode) {
+            const { data: sub } = await supabase
+              .from('subscriptions')
+              .select('id, business_id')
+              .eq('paystack_subscription_code', subCode)
+              .eq('status', 'active')
+              .maybeSingle();
+
+            if (sub) {
+              await supabase
+                .from('subscriptions')
+                .update({ status: 'past_due', updated_at: new Date().toISOString() })
+                .eq('id', sub.id);
+
+              logger.info('[PAYSTACK-WEBHOOK] invoice.payment_failed: marked past_due', { subCode, subscriptionId: sub.id });
+            }
+          }
+        }
+
+        // Mark event completed
+        await supabase.from('processed_webhook_events')
+          .update({ status: 'completed', last_attempted_at: new Date().toISOString() })
+          .eq('event_id', subEventId);
+
+      } catch (subErr) {
+        const msg = subErr instanceof Error ? subErr.message : 'Unknown error';
+        logger.error(`[PAYSTACK-WEBHOOK] ${event} handler failed`, { subEventId, error: msg });
+        await supabase.from('processed_webhook_events')
+          .update({ status: 'failed', last_error: msg.slice(0, 500), last_attempted_at: new Date().toISOString() })
+          .eq('event_id', subEventId);
+      }
+
+      return NextResponse.json({ received: true });
+    }
+
+    // ── Charge/transaction events require data.reference ──
     if (!reference) {
       wh.ignored('Missing reference');
       return NextResponse.json({ received: true });
