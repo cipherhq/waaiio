@@ -60,11 +60,14 @@ describe('Generic Provisioner: WAAIIO_TEMPLATES', () => {
     expect(placeholders).toHaveLength(5);
   });
 
-  it('retains legacy promo_pickup_verification (v1)', async () => {
+  it('does NOT provision rejected legacy promo_pickup_verification (v1)', async () => {
     const { WAAIIO_TEMPLATES } = await import('@/lib/channels/provision-templates');
-    const t = WAAIIO_TEMPLATES.find(t => t.name === 'promo_pickup_verification');
-    expect(t).toBeDefined();
-    expect(t!.language).toBe('en_US');
+    const v1 = WAAIIO_TEMPLATES.find(t => t.name === 'promo_pickup_verification');
+    expect(v1).toBeUndefined();
+    // V2 is the canonical replacement
+    const v2 = WAAIIO_TEMPLATES.find(t => t.name === 'promo_pickup_verification_v2');
+    expect(v2).toBeDefined();
+    expect(v2!.language).toBe('en_US');
   });
 });
 

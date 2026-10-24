@@ -206,20 +206,8 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
     },
   ],
 
-  // Promotions Secure Pickup — verification OTP delivery
+  // Promotions Secure Pickup: V1 was rejected by Meta; provision only the approved V2 contract.
   promo_verification: [
-    {
-      name: 'promo_pickup_verification',
-      category: 'UTILITY',
-      language: 'en_US',
-      components: [
-        {
-          type: 'BODY',
-          text: 'Your {{1}} pickup verification code is {{2}}.\nIt expires in {{3}} minutes.\nOnly share this code with staff when collecting your prize.',
-          example: { body_text: [['Prize', '123456', '10']] },
-        },
-      ],
-    },
     PROMO_TEMPLATE_CONTRACTS.promo_pickup_verification_v2,
     PROMO_TEMPLATE_CONTRACTS.promo_winner_status_v1,
     PROMO_TEMPLATE_CONTRACTS.promo_fulfillment_status_v1,
