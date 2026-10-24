@@ -8,29 +8,30 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 
-describe('#705 Fix 1: admin/impersonate/end auth guard', () => {
+describe('#705 Fix 1: admin/impersonate/end — cookie-path-aware design', () => {
   const src = fs.readFileSync('app/api/admin/impersonate/end/route.ts', 'utf-8');
 
-  it('checks impersonate_admin_id cookie before clearing', () => {
-    expect(src).toContain("cookieStore.get('impersonate_admin_id')");
-  });
-
-  it('returns 401 when no active impersonation session', () => {
-    expect(src).toContain("'No active impersonation session'");
-    expect(src).toContain('status: 401');
+  it('does NOT check cookie presence (cookies use path=/dashboard, unreachable at /api/admin/*)', () => {
+    // Browser cookie-path rule: path=/dashboard cookies are NOT sent to /api/admin/*.
+    // A cookie-presence guard here would break legitimate impersonation logout.
+    expect(src).not.toContain("cookieStore.get('impersonate_admin_id')");
+    expect(src).not.toContain('status: 401');
   });
 
   it('does NOT import or call requirePlatformAdmin (cross-domain incompatible)', () => {
-    // The comment may mention it as context, but the function should not be imported or called
     expect(src).not.toMatch(/import.*requirePlatformAdmin/);
     expect(src).not.toMatch(/await\s+requirePlatformAdmin/);
   });
 
-  it('only clears cookies after auth check passes', () => {
-    const guardIndex = src.indexOf("cookieStore.get('impersonate_admin_id')");
-    const clearIndex = src.indexOf("cookieStore.set('impersonate_business_id', ''");
-    expect(guardIndex).toBeGreaterThan(-1);
-    expect(clearIndex).toBeGreaterThan(guardIndex);
+  it('clears cookies with path=/dashboard matching the creation path', () => {
+    expect(src).toContain("path: '/dashboard'");
+    expect(src).toContain('maxAge: 0');
+  });
+
+  it('documents the security model in the route comment', () => {
+    expect(src).toContain('intentionally unauthenticated');
+    expect(src).toContain('NOT transmitted by browsers to /api/admin/');
+    expect(src).toContain('Clearing nonexistent or already-cleared cookies is a no-op');
   });
 });
 
