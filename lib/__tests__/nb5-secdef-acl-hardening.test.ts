@@ -13,12 +13,11 @@ const migrationSql = fs.readFileSync(MIGRATION_PATH, 'utf-8');
 
 describe('M463: SECURITY DEFINER ACL hardening', () => {
   describe('calculate_volume_discount', () => {
-    it('has SET search_path = public in CREATE OR REPLACE', () => {
-      const fnBlock = migrationSql.substring(
-        migrationSql.indexOf('CREATE OR REPLACE FUNCTION public.calculate_volume_discount'),
-        migrationSql.indexOf('REVOKE ALL ON FUNCTION public.calculate_volume_discount'),
-      );
-      expect(fnBlock).toContain('SET search_path = public');
+    it('uses ALTER FUNCTION SET search_path (preserves existing body)', () => {
+      expect(migrationSql).toContain('ALTER FUNCTION public.calculate_volume_discount');
+      expect(migrationSql).toContain('SET search_path = public');
+      // Must NOT rewrite the function body
+      expect(migrationSql).not.toContain('CREATE OR REPLACE FUNCTION public.calculate_volume_discount');
     });
 
     it('REVOKE from anon, authenticated, and PUBLIC', () => {
@@ -39,12 +38,10 @@ describe('M463: SECURITY DEFINER ACL hardening', () => {
       );
     });
 
-    it('body is SECURITY DEFINER', () => {
-      const fnBlock = migrationSql.substring(
-        migrationSql.indexOf('CREATE OR REPLACE FUNCTION public.calculate_volume_discount'),
-        migrationSql.indexOf('$$;'),
-      );
-      expect(fnBlock).toContain('SECURITY DEFINER');
+    it('does not rewrite the function body (ALTER-only approach)', () => {
+      // The migration should NOT contain a function body for calculate_volume_discount
+      expect(migrationSql).not.toContain('v_rule RECORD');
+      expect(migrationSql).not.toContain('volume_discount_rules');
     });
 
     it('assertion verifies anon cannot execute', () => {

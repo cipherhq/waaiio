@@ -18,65 +18,17 @@
 --   - get_active_appointments_public: public booking pages
 --   - get_upcoming_class_sessions: public class session pages
 --
--- SECURITY: All changes are REVOKE-only (backward compatible).
--- The functions themselves are not modified — only execution grants are tightened.
+-- SECURITY: All changes are REVOKE/GRANT + one ALTER FUNCTION SET search_path.
+-- Function bodies are NOT modified — only execution grants and proconfig are tightened.
 
 -- ══════════════════════════════════════════════════════════
 -- A. calculate_volume_discount — add missing search_path + lock to service_role
 -- ══════════════════════════════════════════════════════════
 
--- Recreate with SET search_path to fix the missing config.
--- Body is identical to the existing function; only proconfig changes.
-CREATE OR REPLACE FUNCTION public.calculate_volume_discount(
-  p_business_id uuid,
-  p_product_id uuid,
-  p_quantity integer,
-  p_unit_price integer
-)
-RETURNS integer
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_rule RECORD;
-  v_discount INTEGER := 0;
-BEGIN
-  -- Find the best matching rule (most specific: product-level first, then business-wide)
-  SELECT * INTO v_rule
-  FROM volume_discount_rules
-  WHERE business_id = p_business_id
-    AND is_active = true
-    AND (product_id = p_product_id OR product_id IS NULL)
-    AND p_quantity >= min_quantity
-    AND (max_quantity IS NULL OR p_quantity <= max_quantity)
-  ORDER BY
-    product_id IS NULL ASC,  -- product-specific first
-    min_quantity DESC         -- highest matching tier
-  LIMIT 1;
-
-  IF NOT FOUND THEN
-    RETURN 0;
-  END IF;
-
-  -- Calculate discount based on type
-  CASE v_rule.discount_type
-    WHEN 'percentage' THEN
-      v_discount := ROUND((p_unit_price * p_quantity * v_rule.discount_value) / 100);
-    WHEN 'fixed_per_unit' THEN
-      v_discount := ROUND(v_rule.discount_value * p_quantity);
-    WHEN 'fixed_total' THEN
-      v_discount := ROUND(v_rule.discount_value);
-  END CASE;
-
-  -- Cap discount at item total
-  IF v_discount > (p_unit_price * p_quantity) THEN
-    v_discount := p_unit_price * p_quantity;
-  END IF;
-
-  RETURN v_discount;
-END;
-$$;
+-- Add search_path without rewriting the function body.
+-- ALTER FUNCTION SET preserves the existing definition and only adds proconfig.
+ALTER FUNCTION public.calculate_volume_discount(uuid, uuid, integer, integer)
+  SET search_path = public;
 
 REVOKE ALL ON FUNCTION public.calculate_volume_discount(uuid, uuid, integer, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.calculate_volume_discount(uuid, uuid, integer, integer) FROM anon;
