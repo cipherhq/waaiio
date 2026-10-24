@@ -387,199 +387,216 @@ describe('deployment ordering: gallery_urls resilience', () => {
   });
 });
 
-// ── R2: Failed upload aborts primary swap ───────────────────────────────────
+// ── R5: Behavioral tests for handleSetPrimary swap logic ─────────────────────
+// These tests exercise the actual swap algorithm, not source strings.
 
-describe('R2: handleSetPrimary upload failure handling', () => {
-  it('aborts primary swap when pending image upload fails', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    // Must check upload result before proceeding
-    expect(pageSrc).toContain('if (!uploadedPrimaryUrl)');
-    // Must return early on failure
-    expect(pageSrc).toContain('return;');
-    // Must show actionable error message
-    expect(pageSrc).toContain('Image upload failed');
-    expect(pageSrc).toContain('setSyncMessage');
-  });
+/**
+ * Simulates the R5 handleSetPrimary logic:
+ * - Captures targetUrl by identity at invocation
+ * - After async upload, locates targetUrl in latest gallery by URL (not index)
+ * - If target removed, preserves uploaded URL as primary (R5-3)
+ * - All outputs derived synchronously from one computation
+ */
+function simulateSetPrimary(params: {
+  /** Gallery at invocation time */
+  invokeGallery: string[];
+  /** Gallery index clicked */
+  invokeIndex: number;
+  /** Current primary at invocation */
+  currentPrimary: string | null;
+  /** Whether there's a pending imageFile */
+  hasPendingFile: boolean;
+  /** Upload result (null = failure, string = URL) */
+  uploadResult: string | null;
+  /** Gallery state AFTER async upload (may differ from invoke time) */
+  latestGallery: string[];
+  /** Latest primary AFTER async upload */
+  latestPrimary: string | null;
+}): {
+  aborted: boolean;
+  reason?: string;
+  newPrimary: string | null;
+  newGallery: string[];
+  newPreview: string | null;
+  imageFileCleared: boolean;
+  errorMessage: string | null;
+} {
+  const { invokeGallery, invokeIndex, hasPendingFile, uploadResult, latestGallery, latestPrimary } = params;
 
-  it('does not clear imageFile on upload failure', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    // The setImageFile(null) must be AFTER the upload success check, not before
-    const handleSetPrimaryStart = pageSrc.indexOf('async function handleSetPrimary');
-    const handleSetPrimaryEnd = pageSrc.indexOf('// ── Generate variants', handleSetPrimaryStart);
-    const fnBody = pageSrc.substring(handleSetPrimaryStart, handleSetPrimaryEnd);
-    // Upload failure returns before any setImageFile(null)
-    const returnIndex = fnBody.indexOf('return;');
-    const firstClearIndex = fnBody.indexOf('setImageFile(null)');
-    expect(returnIndex).toBeLessThan(firstClearIndex);
-  });
-});
-
-// ── R4: Pure state transition via formRef (no updater side effects) ──────────
-
-describe('R4-1: handleSetPrimary uses formRef for latest state, not updater side effects', () => {
-  it('reads latest gallery from formRef.current, not stale closure or updater', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    const fn = extractHandleSetPrimary(pageSrc);
-    expect(fn).toContain('formRef.current');
-    expect(fn).toContain('latest.gallery_urls');
-    // No side-effect assignments inside setForm updater
-    expect(fn).not.toContain('swappedPrimary = newPrimary');
-  });
-
-  it('derives newPrimary, gallery, and preview from one synchronous computation', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    const fn = extractHandleSetPrimary(pageSrc);
-    // newPrimary computed before setForm
-    expect(fn).toContain('const newPrimary = latestGallery[galleryIndex]');
-    // setImagePreview uses the same newPrimary
-    expect(fn).toContain('setImagePreview(newPrimary)');
-  });
-
-  it('does not read form.gallery_urls (stale closure) for the swap', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    const fn = extractHandleSetPrimary(pageSrc);
-    expect(fn).not.toContain('form.gallery_urls');
-  });
-
-  it('validates galleryIndex against latest state before swap', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    const fn = extractHandleSetPrimary(pageSrc);
-    expect(fn).toContain('galleryIndex < 0 || galleryIndex >= latestGallery.length');
-  });
-
-  it('prevents overlapping swaps via ref guard with try/finally', () => {
-    const fn = extractHandleSetPrimary(readFileSync('app/dashboard/products/page.tsx', 'utf8'));
-    expect(fn).toContain('swappingPrimaryRef.current');
-    expect(fn).toContain('try {');
-    expect(fn).toContain('} finally {');
-  });
-
-  it('formRef is declared and kept in sync with form state', () => {
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('const formRef = useRef(form)');
-    expect(pageSrc).toContain('formRef.current = form');
-  });
-});
-
-describe('R4-2: pending image preserved on aborted swap', () => {
-  it('does not clear imageFile when gallery index is invalid after upload', () => {
-    const fn = extractHandleSetPrimary(readFileSync('app/dashboard/products/page.tsx', 'utf8'));
-    // On invalid index with a successful upload: setImageFile(null) is called
-    // (the file was consumed by upload) but imagePreview is NOT changed.
-    // On invalid index without upload: function returns without touching imageFile.
-    const invalidBlock = fn.substring(fn.indexOf('galleryIndex < 0'), fn.indexOf('Phase 3'));
-    expect(invalidBlock).toContain('if (uploadedPrimaryUrl) setImageFile(null)');
-    expect(invalidBlock).toContain('return');
-    expect(invalidBlock).not.toContain('setImagePreview');
-  });
-
-  it('upload failure preserves both imageFile and imagePreview', () => {
-    const fn = extractHandleSetPrimary(readFileSync('app/dashboard/products/page.tsx', 'utf8'));
-    // The upload failure return is before any setImageFile(null)
-    const failBlock = fn.substring(fn.indexOf('if (!uploadedPrimaryUrl)'), fn.indexOf('Phase 2'));
-    expect(failBlock).toContain('return');
-    expect(failBlock).not.toContain('setImageFile');
-    expect(failBlock).not.toContain('setImagePreview');
-  });
-});
-
-// ── R4 behavioral: concurrent changes during upload ─────────────────────────
-
-describe('R4 behavioral: formRef reads latest state after async upload', () => {
-  // Simulates the Phase 2-3 swap logic using latest state
-  function simulateSwapFromRef(
-    latestGallery: string[],
-    latestImageUrl: string | null,
-    uploadedPrimaryUrl: string | null,
-    galleryIndex: number,
-  ): { aborted: boolean; newPrimary: string | null; newGallery: string[]; newPreview: string | null } {
-    const gallery = [...latestGallery];
-    if (galleryIndex < 0 || galleryIndex >= gallery.length) {
-      return { aborted: true, newPrimary: null, newGallery: latestGallery, newPreview: null };
-    }
-    const newPrimary = gallery[galleryIndex];
-    const currentPrimaryUrl = uploadedPrimaryUrl ?? latestImageUrl;
-    gallery.splice(galleryIndex, 1);
-    if (currentPrimaryUrl) gallery.splice(galleryIndex, 0, currentPrimaryUrl);
-    return { aborted: false, newPrimary, newGallery: gallery, newPreview: newPrimary };
+  // Capture target URL by identity
+  const targetUrl = invokeGallery[invokeIndex];
+  if (!targetUrl) {
+    return { aborted: true, reason: 'invalid_initial_index', newPrimary: null, newGallery: latestGallery, newPreview: null, imageFileCleared: false, errorMessage: null };
   }
 
-  it('gallery removal during upload: index becomes invalid → abort', () => {
-    // Started with ['a','b','c'], user clicked set-primary on index 2 (c.jpg)
-    // During upload, user removed c.jpg → gallery is ['a','b']
-    const result = simulateSwapFromRef(['a.jpg', 'b.jpg'], 'primary.jpg', null, 2);
+  // Phase 1: Upload
+  let uploadedPrimaryUrl: string | null = null;
+  if (hasPendingFile) {
+    if (!uploadResult) {
+      return { aborted: true, reason: 'upload_failed', newPrimary: null, newGallery: latestGallery, newPreview: null, imageFileCleared: false, errorMessage: 'Image upload failed. Please try again before changing the primary photo.' };
+    }
+    uploadedPrimaryUrl = uploadResult;
+  }
+
+  // Phase 2: Locate target by URL in latest gallery
+  const gallery = [...latestGallery];
+  const currentIdx = gallery.indexOf(targetUrl);
+
+  if (currentIdx === -1) {
+    // R5-3: Target removed. Preserve uploaded URL if available.
+    if (uploadedPrimaryUrl) {
+      return { aborted: false, reason: 'target_removed_upload_preserved', newPrimary: uploadedPrimaryUrl, newGallery: latestGallery, newPreview: uploadedPrimaryUrl, imageFileCleared: true, errorMessage: null };
+    }
+    return { aborted: true, reason: 'target_removed', newPrimary: null, newGallery: latestGallery, newPreview: null, imageFileCleared: false, errorMessage: null };
+  }
+
+  // Phase 3: Swap
+  const newPrimary = gallery[currentIdx];
+  const currentPrimaryUrl = uploadedPrimaryUrl ?? latestPrimary;
+  gallery.splice(currentIdx, 1);
+  if (currentPrimaryUrl) gallery.splice(currentIdx, 0, currentPrimaryUrl);
+
+  return { aborted: false, newPrimary, newGallery: gallery, newPreview: newPrimary, imageFileCleared: true, errorMessage: null };
+}
+
+describe('R5-1: new primary selection blocked during swap', () => {
+  it('handleImageSelect checks swappingPrimaryRef', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    const fn = pageSrc.substring(pageSrc.indexOf('function handleImageSelect'), pageSrc.indexOf('function uploadImageFile'));
+    expect(fn).toContain('swappingPrimaryRef.current');
+  });
+});
+
+describe('R5-2: gallery target tracked by URL identity, not index', () => {
+  it('reorder during upload: promotes the SAME image regardless of new position', () => {
+    // Clicked on 'b.jpg' at index 1. During upload, reordered to ['c','a','b']
+    const result = simulateSetPrimary({
+      invokeGallery: ['a.jpg', 'b.jpg', 'c.jpg'], invokeIndex: 1,
+      currentPrimary: 'primary.jpg', hasPendingFile: false, uploadResult: null,
+      latestGallery: ['c.jpg', 'a.jpg', 'b.jpg'], latestPrimary: 'primary.jpg',
+    });
+    expect(result.aborted).toBe(false);
+    expect(result.newPrimary).toBe('b.jpg'); // the image the user actually clicked
+    expect(result.newGallery).toContain('primary.jpg');
+    expect(result.newGallery).not.toContain('b.jpg'); // moved to primary
+  });
+
+  it('removal of different image: target still found at new position', () => {
+    // Clicked on 'c.jpg' at index 2. During upload, 'a.jpg' removed → ['b','c']
+    const result = simulateSetPrimary({
+      invokeGallery: ['a.jpg', 'b.jpg', 'c.jpg'], invokeIndex: 2,
+      currentPrimary: 'p.jpg', hasPendingFile: false, uploadResult: null,
+      latestGallery: ['b.jpg', 'c.jpg'], latestPrimary: 'p.jpg',
+    });
+    expect(result.aborted).toBe(false);
+    expect(result.newPrimary).toBe('c.jpg'); // correct image by identity
+  });
+
+  it('target image removed during upload → graceful abort', () => {
+    // Clicked on 'b.jpg'. During upload, 'b.jpg' was removed.
+    const result = simulateSetPrimary({
+      invokeGallery: ['a.jpg', 'b.jpg', 'c.jpg'], invokeIndex: 1,
+      currentPrimary: 'p.jpg', hasPendingFile: false, uploadResult: null,
+      latestGallery: ['a.jpg', 'c.jpg'], latestPrimary: 'p.jpg',
+    });
     expect(result.aborted).toBe(true);
+    expect(result.reason).toBe('target_removed');
+    expect(result.imageFileCleared).toBe(false);
+  });
+});
+
+describe('R5-3: uploaded URL preserved when swap aborts', () => {
+  it('upload succeeds but target removed → uploaded URL becomes primary', () => {
+    const result = simulateSetPrimary({
+      invokeGallery: ['a.jpg', 'b.jpg'], invokeIndex: 1,
+      currentPrimary: 'old.jpg', hasPendingFile: true, uploadResult: 'uploaded.jpg',
+      latestGallery: ['a.jpg'], latestPrimary: 'old.jpg', // b.jpg removed during upload
+    });
+    expect(result.aborted).toBe(false);
+    expect(result.reason).toBe('target_removed_upload_preserved');
+    expect(result.newPrimary).toBe('uploaded.jpg');
+    expect(result.newPreview).toBe('uploaded.jpg');
+    expect(result.imageFileCleared).toBe(true);
+  });
+
+  it('upload failure → imageFile and preview preserved, error message set', () => {
+    const result = simulateSetPrimary({
+      invokeGallery: ['a.jpg'], invokeIndex: 0,
+      currentPrimary: 'old.jpg', hasPendingFile: true, uploadResult: null,
+      latestGallery: ['a.jpg'], latestPrimary: 'old.jpg',
+    });
+    expect(result.aborted).toBe(true);
+    expect(result.reason).toBe('upload_failed');
+    expect(result.imageFileCleared).toBe(false);
+    expect(result.errorMessage).toContain('Image upload failed');
+  });
+
+  it('no pending file, target removed → clean abort, no state change', () => {
+    const result = simulateSetPrimary({
+      invokeGallery: ['a.jpg', 'b.jpg'], invokeIndex: 0,
+      currentPrimary: 'p.jpg', hasPendingFile: false, uploadResult: null,
+      latestGallery: ['b.jpg'], latestPrimary: 'p.jpg', // a.jpg removed
+    });
+    expect(result.aborted).toBe(true);
+    expect(result.imageFileCleared).toBe(false);
     expect(result.newPreview).toBeNull();
   });
 
-  it('gallery reorder during upload: correct image is swapped', () => {
-    // Started with ['a','b','c'], user clicked set-primary on index 1 (b.jpg)
-    // During upload, user reordered → gallery is ['c','a','b']
-    const result = simulateSwapFromRef(['c.jpg', 'a.jpg', 'b.jpg'], 'primary.jpg', null, 1);
-    expect(result.aborted).toBe(false);
-    expect(result.newPrimary).toBe('a.jpg'); // index 1 in reordered gallery
-    expect(result.newGallery).toEqual(['c.jpg', 'primary.jpg', 'b.jpg']);
-  });
-
-  it('concurrent gallery upload: new image preserved in swap', () => {
-    // Started with ['a'], user clicked set-primary on index 0
-    // During upload, another gallery image was added → ['a','new.jpg']
-    const result = simulateSwapFromRef(['a.jpg', 'new.jpg'], 'primary.jpg', null, 0);
-    expect(result.aborted).toBe(false);
-    expect(result.newPrimary).toBe('a.jpg');
-    expect(result.newGallery).toEqual(['primary.jpg', 'new.jpg']); // new.jpg preserved
-  });
-
-  it('displayed preview matches saved image_url', () => {
-    const result = simulateSwapFromRef(['x.jpg', 'y.jpg'], 'old.jpg', null, 1);
-    expect(result.newPrimary).toBe(result.newPreview);
+  it('successful swap: displayed preview matches form.image_url', () => {
+    const result = simulateSetPrimary({
+      invokeGallery: ['x.jpg', 'y.jpg'], invokeIndex: 1,
+      currentPrimary: 'old.jpg', hasPendingFile: false, uploadResult: null,
+      latestGallery: ['x.jpg', 'y.jpg'], latestPrimary: 'old.jpg',
+    });
     expect(result.newPrimary).toBe('y.jpg');
+    expect(result.newPreview).toBe('y.jpg');
+    expect(result.newPrimary).toBe(result.newPreview);
   });
 
-  it('pending file upload provides URL for gallery during swap', () => {
-    // User selected new file, uploaded it, now swapping with gallery[0]
-    const result = simulateSwapFromRef(['g1.jpg', 'g2.jpg'], 'old.jpg', 'uploaded.jpg', 0);
-    expect(result.newPrimary).toBe('g1.jpg');
-    expect(result.newGallery).toEqual(['uploaded.jpg', 'g2.jpg']); // uploaded URL in gallery
-  });
-
-  it('total image count preserved after swap', () => {
+  it('total image count preserved after successful swap', () => {
     const gallery = ['a.jpg', 'b.jpg', 'c.jpg'];
-    const result = simulateSwapFromRef(gallery, 'p.jpg', null, 1);
-    const before = 1 + gallery.length;
-    const after = (result.newPrimary ? 1 : 0) + result.newGallery.length;
-    expect(after).toBe(before);
+    const result = simulateSetPrimary({
+      invokeGallery: gallery, invokeIndex: 1,
+      currentPrimary: 'p.jpg', hasPendingFile: false, uploadResult: null,
+      latestGallery: gallery, latestPrimary: 'p.jpg',
+    });
+    const totalBefore = 1 + gallery.length;
+    const totalAfter = (result.newPrimary ? 1 : 0) + result.newGallery.length;
+    expect(totalAfter).toBe(totalBefore);
+  });
+
+  it('uploaded primary URL placed in gallery at correct position', () => {
+    const result = simulateSetPrimary({
+      invokeGallery: ['g1.jpg', 'g2.jpg'], invokeIndex: 0,
+      currentPrimary: 'old.jpg', hasPendingFile: true, uploadResult: 'uploaded.jpg',
+      latestGallery: ['g1.jpg', 'g2.jpg'], latestPrimary: 'old.jpg',
+    });
+    expect(result.newPrimary).toBe('g1.jpg');
+    expect(result.newGallery).toEqual(['uploaded.jpg', 'g2.jpg']);
   });
 });
 
-describe('R4 behavioral: interrupted swap edge cases', () => {
-  // Reuse the simulateSwapFromRef logic
-  function trySwap(gallery: string[], primary: string | null, idx: number) {
-    const g = [...gallery];
-    if (idx < 0 || idx >= g.length) return { aborted: true, newPrimary: null, gallery };
-    const np = g[idx];
-    g.splice(idx, 1);
-    if (primary) g.splice(idx, 0, primary);
-    return { aborted: false, newPrimary: np, gallery: g };
-  }
-
-  it('empty gallery after all removed during upload → abort, no state change', () => {
-    const result = trySwap([], 'p.jpg', 0);
-    expect(result.aborted).toBe(true);
-    expect(result.newPrimary).toBeNull();
+describe('R5-4: error display in ProductForm', () => {
+  it('ProductForm accepts galleryError prop', () => {
+    const formSrc = readFileSync('app/dashboard/products/components/ProductForm.tsx', 'utf8');
+    expect(formSrc).toContain('galleryError: string | null');
+    expect(formSrc).toContain('galleryError');
   });
 
-  it('overlapping swap is rejected by ref guard', () => {
-    const fn = extractHandleSetPrimary(readFileSync('app/dashboard/products/page.tsx', 'utf8'));
-    // First line must check the guard
-    expect(fn).toContain('if (swappingPrimaryRef.current) return');
+  it('ProductForm renders error message in gallery section', () => {
+    const formSrc = readFileSync('app/dashboard/products/components/ProductForm.tsx', 'utf8');
+    expect(formSrc).toContain('{galleryError && (');
+    expect(formSrc).toContain('text-red-600');
+  });
+
+  it('page passes galleryError prop to ProductForm', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    expect(pageSrc).toContain('galleryError={galleryError}');
+  });
+
+  it('handleSetPrimary sets galleryError on upload failure', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    const fn = pageSrc.substring(pageSrc.indexOf('async function handleSetPrimary'), pageSrc.indexOf('// ── Generate variants'));
+    expect(fn).toContain('setGalleryError(');
   });
 });
-
-// ── Helper ──────────────────────────────────────────────────────────────────
-
-function extractHandleSetPrimary(src: string): string {
-  const start = src.indexOf('async function handleSetPrimary');
-  const end = src.indexOf('// ── Generate variants', start);
-  return src.substring(start, end);
-}

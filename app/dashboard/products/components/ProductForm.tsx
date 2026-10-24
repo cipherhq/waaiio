@@ -40,6 +40,7 @@ interface ProductFormProps {
   categories: (string | null)[];
   // Gallery
   galleryUploading: boolean;
+  galleryError: string | null;
   handleGalleryUpload: (file: File) => void;
   handleGalleryRemove: (index: number) => void;
   handleGalleryReorder: (fromIndex: number, toIndex: number) => void;
@@ -125,6 +126,7 @@ export default function ProductForm({
   promoCodesLoaded,
   setPromoCodesLoaded,
   galleryUploading,
+  galleryError,
   handleGalleryUpload,
   handleGalleryRemove,
   handleGalleryReorder,
@@ -242,6 +244,9 @@ export default function ProductForm({
                 )}
               </div>
               <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Hover for reorder, set primary, or remove. Max 4 photos total.</p>
+              {galleryError && (
+                <p className="mt-1.5 rounded-md bg-red-50 px-2.5 py-1.5 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">{galleryError}</p>
+              )}
             </div>
           )}
 
