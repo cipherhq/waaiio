@@ -371,15 +371,53 @@ describe('R6: durable completion and retry policy', () => {
     mockSupabase.rpc = origRpc;
   });
 
-  it('R6-3: missing invoice_code is quarantined (not silently dropped)', async () => {
-    const res = await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_noic_q' }) as never);
-    expect(res.status).toBe(200); // Quarantined, stop retries
-    // Should have inserted a quarantine record
+  it('R7: successful quarantine returns 200', async () => {
+    const res = await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_noic_q', id: 12345 }) as never);
+    expect(res.status).toBe(200);
     const { logger } = await import('@/lib/logger');
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-      expect.stringContaining('quarantined'),
+      expect.stringContaining('quarantining'),
       expect.objectContaining({ subCode: 'SUB_noic_q' }),
     );
+  });
+
+  it('R7: quarantine uses stable Paystack ID (not timestamp)', async () => {
+    await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_stable', id: 99999 }) as never);
+    const { logger } = await import('@/lib/logger');
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('quarantining'),
+      expect.objectContaining({
+        quarantineId: expect.stringContaining('pid-99999'),
+      }),
+    );
+  });
+
+  it('R7: quarantine insert failure returns 500 (event not durably recorded)', async () => {
+    // Override from() to simulate insert failure
+    const origFrom = mockSupabase.from;
+    mockSupabase.from = vi.fn((table: string) => {
+      if (table === 'processed_webhook_events') {
+        return {
+          upsert: vi.fn(() => ({ error: { message: 'connection reset' }, data: null })),
+        };
+      }
+      return origFrom(table);
+    });
+    const res = await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_qfail' }) as never);
+    expect(res.status).toBe(500);
+    mockSupabase.from = origFrom;
+  });
+
+  it('R7: invoice.payment_failed with data.reference bypasses lifecycle handler', async () => {
+    // If Paystack ever includes data.reference on invoice events,
+    // it falls through to the charge handler (separate idempotency)
+    await POST(makeReq('invoice.payment_failed', {
+      subscription_code: 'SUB_ref_inv',
+      invoice_code: 'INV_ref',
+      reference: 'T_invoice_ref',
+    }) as never);
+    // Should NOT call claim_webhook_event (lifecycle path)
+    expect(rpcCalls.filter(c => c.fn === 'claim_webhook_event')).toHaveLength(0);
   });
 });
 

@@ -56,19 +56,21 @@ export async function POST(request: NextRequest) {
     // Paystack subscription.create, subscription.not_renew, subscription.disable,
     // and invoice.payment_failed events use data.subscription_code, not data.reference.
     // Handle them before the reference guard with subscription_code-based idempotency.
-    // R6-4: Paystack event shape verification (MCP-verified against live staging data):
+    // R6-4/R7: Paystack event shape verification (MCP-verified against live staging data):
     // - subscription.create: data = { subscription_code, customer, plan, authorization }
-    //   → NO data.reference (verified: subscription objects have no reference field)
+    //   → NO data.reference (verified via GET /subscription/SUB_8443ip903l2yo15)
     // - subscription.not_renew/disable: data = { subscription_code, customer, plan }
     //   → NO data.reference
     // - invoice.payment_failed: data = { subscription_code, invoice_code, ... }
-    //   → MAY have data.reference if Paystack includes the failed transaction ref
+    //   → Paystack invoice webhook events typically do NOT include a top-level
+    //     data.reference. If a future Paystack change adds one, the event falls
+    //     through to the legacy handler at line ~730 which sets past_due via
+    //     metadata.business_id. This is the pre-existing behavior and is handled
+    //     by the subscription-expiry cron after current_period_end.
     //
-    // If a lifecycle event unexpectedly carries data.reference, it falls through
-    // to the charge handler. This is safe: the charge handler processes the
-    // transaction/payment side, and the subscription lifecycle handler skips it.
-    // No double-processing occurs because the charge handler uses reference-based
-    // idempotency while the lifecycle handler uses subscription_code-based idempotency.
+    // Lifecycle events without data.reference → handled by our subscription handler.
+    // Events WITH data.reference → handled by the established charge/reference handler.
+    // Both paths use separate idempotency key spaces, preventing double-processing.
     const SUBSCRIPTION_LIFECYCLE_EVENTS = ['subscription.create', 'subscription.not_renew', 'subscription.disable', 'invoice.payment_failed'];
     if (SUBSCRIPTION_LIFECYCLE_EVENTS.includes(event) && !reference) {
       const supabase = createServiceClient();
@@ -90,30 +92,36 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ received: true });
       }
 
-      // R6-3: invoice.payment_failed without invoice_code — cannot safely deduplicate
-      // across billing cycles but must not be silently lost. Record in processed_webhook_events
-      // as a quarantined event for manual review, using subscription_code + timestamp as key.
+      // R7: invoice.payment_failed without invoice_code — cannot safely deduplicate
+      // across billing cycles. Use a stable Paystack-provided identity if available
+      // (data.id is the Paystack event/object ID, deterministic across retries).
+      // Must confirm durable recording before acknowledging with HTTP 200.
       if (event === 'invoice.payment_failed' && !invoiceId) {
-        const quarantineId = `paystack-invoice.payment_failed-${subCode}-nocode-${Date.now()}`;
-        logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed missing invoice_code — quarantined', { subCode, quarantineId });
-        try {
-          const supabase = createServiceClient();
-          await supabase.from('processed_webhook_events').insert({
-            event_id: quarantineId,
-            gateway: 'paystack',
-            event_type: 'invoice.payment_failed',
-            status: 'failed',
-            attempts: 1,
-            first_received_at: new Date().toISOString(),
-            last_attempted_at: new Date().toISOString(),
-            last_error: 'Missing invoice_code — cannot safely deduplicate. Quarantined for manual review.',
-            correlation_id: subCode || null,
-          });
-        } catch (qErr) {
-          logger.error('[PAYSTACK-WEBHOOK] quarantine insert failed', { error: qErr instanceof Error ? qErr.message : 'unknown' });
+        const paystackId = data.id as string | number | undefined;
+        const quarantineId = paystackId
+          ? `paystack-invoice.payment_failed-${subCode}-pid-${paystackId}`
+          : `paystack-invoice.payment_failed-${subCode}-nocode`;
+        logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed missing invoice_code — quarantining', { subCode, quarantineId });
+
+        const supabase = createServiceClient();
+        const { error: qErr } = await supabase.from('processed_webhook_events').upsert({
+          event_id: quarantineId,
+          gateway: 'paystack',
+          event_type: 'invoice.payment_failed',
+          status: 'failed',
+          attempts: 1,
+          first_received_at: new Date().toISOString(),
+          last_attempted_at: new Date().toISOString(),
+          last_error: 'Missing invoice_code — cannot safely deduplicate. Quarantined for manual review.',
+          correlation_id: subCode || null,
+        }, { onConflict: 'event_id', ignoreDuplicates: true });
+
+        if (qErr) {
+          // R7: durable recording failed — return 500 so Paystack retries
+          logger.error('[PAYSTACK-WEBHOOK] quarantine insert failed — returning 500', { quarantineId, error: qErr.message });
+          return NextResponse.json({ error: 'Quarantine failed' }, { status: 500 });
         }
-        // Return 200 to prevent infinite retries — the event is recorded but cannot
-        // be safely processed without a unique billing-cycle identifier.
+        // Durably recorded — safe to acknowledge
         return NextResponse.json({ received: true });
       }
 
