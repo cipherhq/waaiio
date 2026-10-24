@@ -59,6 +59,7 @@ export default function ProductsPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const [galleryUploading, setGalleryUploading] = useState(false);
 
   // Variants
   const [variants, setVariants] = useState<ProductVariant[]>([]);
@@ -98,7 +99,7 @@ export default function ProductsPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from('products')
-        .select('id, name, description, price, image_url, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
+        .select('id, name, description, price, image_url, gallery_urls, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
         .eq('business_id', business.id)
         .is('deleted_at', null)
         .order('sort_order', { ascending: true });
@@ -295,7 +296,7 @@ export default function ProductsPage() {
   }
 
   async function openEdit(product: Product) {
-    setForm({ ...product });
+    setForm({ ...product, gallery_urls: product.gallery_urls || [] });
     setImageFile(null);
     setImagePreview(product.image_url);
     setDeletedVariantIds([]);
@@ -393,6 +394,56 @@ export default function ProductsPage() {
     e.target.value = '';
   }
 
+  // ── Gallery image handling ──
+  async function handleGalleryUpload(file: File) {
+    const currentGallery = form.gallery_urls || [];
+    const totalImages = (imagePreview ? 1 : 0) + currentGallery.length;
+    if (totalImages >= 4 || currentGallery.length >= 3) return;
+    setGalleryUploading(true);
+    const url = await uploadImageFile(file);
+    if (url) {
+      setForm({ ...form, gallery_urls: [...currentGallery, url] });
+    }
+    setGalleryUploading(false);
+  }
+
+  function handleGalleryRemove(index: number) {
+    const updated = [...(form.gallery_urls || [])];
+    updated.splice(index, 1);
+    setForm({ ...form, gallery_urls: updated });
+  }
+
+  function handleGalleryReorder(fromIndex: number, toIndex: number) {
+    const updated = [...(form.gallery_urls || [])];
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(toIndex, 0, moved);
+    setForm({ ...form, gallery_urls: updated });
+  }
+
+  function handlePromoteToGallery() {
+    // Move current primary image to gallery, clear primary
+    if (imagePreview && (form.gallery_urls || []).length < 3) {
+      const currentPrimary = form.image_url;
+      if (currentPrimary) {
+        setForm({ ...form, gallery_urls: [...(form.gallery_urls || []), currentPrimary], image_url: null });
+        setImagePreview(null);
+        setImageFile(null);
+      }
+    }
+  }
+
+  function handleSetPrimary(galleryIndex: number) {
+    // Swap: gallery image becomes primary, old primary goes to gallery
+    const gallery = [...(form.gallery_urls || [])];
+    const newPrimary = gallery[galleryIndex];
+    gallery.splice(galleryIndex, 1);
+    const oldPrimary = form.image_url;
+    if (oldPrimary) gallery.splice(galleryIndex, 0, oldPrimary);
+    setForm({ ...form, image_url: newPrimary, gallery_urls: gallery });
+    setImagePreview(newPrimary);
+    setImageFile(null); // Clear pending file since we're using an existing URL
+  }
+
   // ── Generate variants from option groups ──
   function handleGenerateVariants() {
     const combos = generateCombinations(optionGroups);
@@ -452,6 +503,7 @@ export default function ProductsPage() {
       description: form.description?.trim() || null,
       price: form.has_variants ? 0 : (form.price || 0),
       image_url: imageUrl,
+      gallery_urls: form.gallery_urls || [],
       category: form.category?.trim() || null,
       stock_quantity: form.has_variants ? null : form.stock_quantity,
       is_active: form.is_active,
@@ -771,6 +823,12 @@ export default function ProductsPage() {
         setPromoCodes={setPromoCodes}
         promoCodesLoaded={promoCodesLoaded}
         setPromoCodesLoaded={setPromoCodesLoaded}
+        galleryUploading={galleryUploading}
+        handleGalleryUpload={handleGalleryUpload}
+        handleGalleryRemove={handleGalleryRemove}
+        handleGalleryReorder={handleGalleryReorder}
+        handlePromoteToGallery={handlePromoteToGallery}
+        handleSetPrimary={handleSetPrimary}
       />
     );
   }
