@@ -8,7 +8,14 @@ import { loadPlatformSettings } from '@/lib/platformSettings';
  * Enforces monthly conversation limits based on subscription tier.
  * Reads limits from platform_settings (admin-editable) with hardcoded fallbacks.
  *
- * A "conversation" = 1 unique customer 24h window (matches Meta billing).
+ * conversation_count is an internal analytics and soft rate-limiting metric.
+ * It is NOT on the financial authorization path (authorize_message_send uses
+ * messaging_allowances / messaging_spend_periods — separate tables and RPCs).
+ *
+ * "New conversation" detection uses a rolling 24-hour inactivity window based on
+ * bot_sessions.updated_at. This is an approximation — not a proven equivalence to
+ * Meta's fixed-window billing model. It may conservatively undercount for
+ * long-running multi-hour sessions.
  */
 
 interface ConversationCheckResult {
@@ -74,7 +81,8 @@ export async function checkConversationLimit(
 
 /**
  * Track an inbound message from a customer.
- * Detects new conversations using the 24h window rule (matches Meta billing).
+ * Detects new conversations using a rolling 24h inactivity window
+ * (internal analytics approximation — not proven Meta billing equivalence).
  * Non-blocking — doesn't fail the request if tracking fails.
  *
  * @param sessionUpdatedAt - The session's updated_at timestamp. If null or >24h old,
@@ -122,9 +130,10 @@ export async function trackOutboundMessage(
 }
 
 /**
- * Determine if a message starts a new conversation based on the 24h window rule.
- * A conversation is "new" if there was no prior interaction within the last 24 hours.
- * Matches Meta's conversation billing model.
+ * Determine if a message starts a new conversation based on a rolling 24h
+ * inactivity window. Uses bot_sessions.updated_at as the reference timestamp.
+ * This is an internal analytics approximation — not a proven equivalence to
+ * Meta's fixed-window billing model.
  */
 export function isNewConversation(sessionUpdatedAt: string | null): boolean {
   if (!sessionUpdatedAt) return true;
