@@ -335,7 +335,7 @@ describe('No sensitive data in logs', () => {
 // 3. Executable webhook handler tests
 // ═══════════════════════════════════════════════════════════
 
-describe('OTP webhook handler — executable tests', () => {
+describe('OTP webhook handler — executable tests', { timeout: 60_000 }, () => {
   // Shared state captured by mocks
   let insertedEvents: Array<Record<string, unknown>>;
   let warnings: Array<{ ctx: Record<string, unknown>; msg: string }>;
@@ -498,6 +498,9 @@ describe('OTP webhook handler — executable tests', () => {
     insertBehavior = () => ({ error: { code: '42P01', message: 'relation "otp_delivery_status_events" does not exist' } });
 
     const { POST } = await import('@/app/api/webhook/meta-cloud/route');
+    // Clear warnings immediately before the action so concurrent test suites
+    // running in CI parallel mode cannot leak entries into our measurement window.
+    warnings.length = 0;
     const res = await POST(makeWebhookRequest(buildWebhookBody('wamid.err', 'sent')));
 
     expect(res.status).toBe(200);

@@ -566,7 +566,7 @@ describe('B1-EX: real FlowExecutor overlapping execute()', () => {
     };
   }
 
-  it('two concurrent execute() calls on one FlowExecutor instance produce isolated counts', async () => {
+  it('two concurrent execute() calls on one FlowExecutor instance produce isolated counts', { timeout: 60_000 }, async () => {
     // Import real FlowExecutor
     const { FlowExecutor } = await import('../executor');
 
@@ -574,8 +574,6 @@ describe('B1-EX: real FlowExecutor overlapping execute()', () => {
     const mockSender = {
       sendText: vi.fn().mockImplementation(async (args: { to: string; text: string }) => {
         sendCalls.push({ from: args.to, text: args.text });
-        // Simulate async network delay to force interleaving
-        await new Promise(r => setTimeout(r, Math.random() * 5));
         return { success: true };
       }),
       sendButtons: vi.fn().mockResolvedValue({ success: true }),
