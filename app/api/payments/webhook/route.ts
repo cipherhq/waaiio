@@ -56,11 +56,19 @@ export async function POST(request: NextRequest) {
     // Paystack subscription.create, subscription.not_renew, subscription.disable,
     // and invoice.payment_failed events use data.subscription_code, not data.reference.
     // Handle them before the reference guard with subscription_code-based idempotency.
-    // Note: if a subscription lifecycle event unexpectedly carries data.reference,
-    // it falls through to the charge.success handler path. This is safe — the
-    // charge handler will process any associated payment, and the subscription
-    // lifecycle effects (code population, cancellation) won't fire. This prevents
-    // double-processing of events that bridge both patterns.
+    // R6-4: Paystack event shape verification (MCP-verified against live staging data):
+    // - subscription.create: data = { subscription_code, customer, plan, authorization }
+    //   → NO data.reference (verified: subscription objects have no reference field)
+    // - subscription.not_renew/disable: data = { subscription_code, customer, plan }
+    //   → NO data.reference
+    // - invoice.payment_failed: data = { subscription_code, invoice_code, ... }
+    //   → MAY have data.reference if Paystack includes the failed transaction ref
+    //
+    // If a lifecycle event unexpectedly carries data.reference, it falls through
+    // to the charge handler. This is safe: the charge handler processes the
+    // transaction/payment side, and the subscription lifecycle handler skips it.
+    // No double-processing occurs because the charge handler uses reference-based
+    // idempotency while the lifecycle handler uses subscription_code-based idempotency.
     const SUBSCRIPTION_LIFECYCLE_EVENTS = ['subscription.create', 'subscription.not_renew', 'subscription.disable', 'invoice.payment_failed'];
     if (SUBSCRIPTION_LIFECYCLE_EVENTS.includes(event) && !reference) {
       const supabase = createServiceClient();
@@ -82,12 +90,30 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ received: true });
       }
 
-      // Invoice.payment_failed without a unique invoice identifier cannot be safely
-      // deduplicated across billing cycles. Accept to prevent infinite retries —
-      // the event is genuine but lacks the identity needed for safe processing.
+      // R6-3: invoice.payment_failed without invoice_code — cannot safely deduplicate
+      // across billing cycles but must not be silently lost. Record in processed_webhook_events
+      // as a quarantined event for manual review, using subscription_code + timestamp as key.
       if (event === 'invoice.payment_failed' && !invoiceId) {
-        wh.ignored('invoice.payment_failed without invoice_code');
-        logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed missing invoice_code, cannot deduplicate across cycles', { subCode });
+        const quarantineId = `paystack-invoice.payment_failed-${subCode}-nocode-${Date.now()}`;
+        logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed missing invoice_code — quarantined', { subCode, quarantineId });
+        try {
+          const supabase = createServiceClient();
+          await supabase.from('processed_webhook_events').insert({
+            event_id: quarantineId,
+            gateway: 'paystack',
+            event_type: 'invoice.payment_failed',
+            status: 'failed',
+            attempts: 1,
+            first_received_at: new Date().toISOString(),
+            last_attempted_at: new Date().toISOString(),
+            last_error: 'Missing invoice_code — cannot safely deduplicate. Quarantined for manual review.',
+            correlation_id: subCode || null,
+          });
+        } catch (qErr) {
+          logger.error('[PAYSTACK-WEBHOOK] quarantine insert failed', { error: qErr instanceof Error ? qErr.message : 'unknown' });
+        }
+        // Return 200 to prevent infinite retries — the event is recorded but cannot
+        // be safely processed without a unique billing-cycle identifier.
         return NextResponse.json({ received: true });
       }
 
@@ -111,11 +137,15 @@ export async function POST(request: NextRequest) {
       if (!claim.claimed) {
         wh.duplicate({ webhookEventId: subEventId });
         if (claim.reason === 'already_completed') {
+          // R6-2: Event durably completed — safe to ACK and stop retries
           logger.info('[PAYSTACK-WEBHOOK] subscription event already completed', { subEventId });
-        } else if (claim.reason === 'active_processing') {
-          logger.info('[PAYSTACK-WEBHOOK] subscription event being processed by another instance', { subEventId });
+          return NextResponse.json({ received: true });
         }
-        return NextResponse.json({ received: true });
+        // R6-2: active_processing or other non-completed reason — return 500 so
+        // Paystack retries. If the in-flight worker crashes without completing,
+        // the 90s stale threshold allows the retry to reclaim the event.
+        logger.info('[PAYSTACK-WEBHOOK] subscription event not claimable', { subEventId, reason: claim.reason });
+        return NextResponse.json({ error: 'Event in progress' }, { status: 500 });
       }
 
       let processingSucceeded = false;
@@ -288,8 +318,9 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Use canonical M362 fencing RPCs for completion/failure.
-        // These verify claim_token + status='processing' atomically.
+        // R6-1: Durable completion before HTTP acknowledgment.
+        // Only return 200 after confirmed durable completion. If the completion
+        // RPC fails or the claim was lost, return 500 so Paystack retries.
         if (processingSucceeded) {
           const { data: completed, error: completeErr } = await supabase.rpc('complete_webhook_event', {
             p_event_id: subEventId,
@@ -297,22 +328,29 @@ export async function POST(request: NextRequest) {
           });
           if (completeErr) {
             logger.error('[PAYSTACK-WEBHOOK] complete_webhook_event RPC failed', { subEventId, error: completeErr.message });
-          } else if (!completed) {
-            // Claim was lost (stale token, already completed by another instance, etc.)
+            return NextResponse.json({ error: 'Completion failed' }, { status: 500 });
+          }
+          if (!completed) {
+            // Claim lost — another instance may have completed it. Check actual state.
             logger.warn('[PAYSTACK-WEBHOOK] complete_webhook_event returned false — claim lost', { subEventId });
+            // If another instance already completed it, that's fine — return 200
+            // If the claim was stolen, returning 500 is safe (Paystack retries, claim_webhook_event
+            // will see 'completed' and return already_completed → 200 next time)
+            return NextResponse.json({ error: 'Claim lost' }, { status: 500 });
           }
-        } else {
-          const { data: failed, error: failErr } = await supabase.rpc('fail_webhook_event', {
-            p_event_id: subEventId,
-            p_claim_token: claim.claim_token,
-            p_error: 'Processing did not confirm success',
-          });
-          if (failErr) {
-            logger.error('[PAYSTACK-WEBHOOK] fail_webhook_event RPC failed', { subEventId, error: failErr.message });
-          } else if (!failed) {
-            logger.warn('[PAYSTACK-WEBHOOK] fail_webhook_event returned false — claim lost', { subEventId });
-          }
+          return NextResponse.json({ received: true });
         }
+
+        // Processing did not succeed — record failure and return 500 for retry
+        const { error: failErr } = await supabase.rpc('fail_webhook_event', {
+          p_event_id: subEventId,
+          p_claim_token: claim.claim_token,
+          p_error: 'Processing did not confirm success',
+        });
+        if (failErr) {
+          logger.error('[PAYSTACK-WEBHOOK] fail_webhook_event RPC failed', { subEventId, error: failErr.message });
+        }
+        return NextResponse.json({ error: 'Processing incomplete' }, { status: 500 });
 
       } catch (subErr) {
         const msg = subErr instanceof Error ? subErr.message : 'Unknown error';
@@ -324,23 +362,8 @@ export async function POST(request: NextRequest) {
             p_error: msg.slice(0, 500),
           });
         } catch { /* best-effort failure recording */ }
+        return NextResponse.json({ error: 'Handler failed' }, { status: 500 });
       }
-
-      // R5-3: HTTP response policy (Paystack retries non-2xx up to 10 times over 5 days):
-      //
-      // processingSucceeded=true  → 200 (completed successfully, stop retries)
-      // processingSucceeded=false → 500 (failed — Paystack will retry, giving time for
-      //   subscription.create to be processed before a dependent not_renew/invoice event)
-      //
-      // Recovery path: claim_webhook_event uses a 90s stale threshold. When Paystack
-      // retries (minimum 10min gap), the stale claim is reclaimed and reprocessed.
-      // If subscription.create has been processed in the meantime, the retry succeeds.
-      // After Paystack exhausts retries (10 attempts over 5 days), the event stays
-      // in 'failed' state in processed_webhook_events for manual reconciliation.
-      if (processingSucceeded) {
-        return NextResponse.json({ received: true });
-      }
-      return NextResponse.json({ error: 'Processing incomplete' }, { status: 500 });
     }
 
     // ── Charge/transaction events require data.reference ──

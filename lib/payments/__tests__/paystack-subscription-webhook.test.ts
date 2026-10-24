@@ -126,10 +126,10 @@ describe('M362 fencing contract', () => {
     expect(updateCalls).toHaveLength(0);
   });
 
-  it('skips actively-processing events (concurrent)', async () => {
+  it('returns 500 for actively-processing events (R6-2: worker may crash)', async () => {
     mockClaimResult = { data: { claimed: false, reason: 'active_processing' }, error: null };
     const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_race', customer: { customer_code: 'CUS_r' } }) as never);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500); // Triggers Paystack retry after stale threshold
     expect(updateCalls).toHaveLength(0);
   });
 
@@ -321,17 +321,65 @@ describe('R4-1: conditional update count handling', () => {
   });
 });
 
-describe('R4-2: claim failure returns 500 for retry', () => {
+describe('R6: durable completion and retry policy', () => {
   it('returns 500 on claim RPC failure (Paystack will retry)', async () => {
     mockClaimResult = { data: null, error: { message: 'connection timeout' } };
     const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_retry', customer: { customer_code: 'CUS_retry' } }) as never);
     expect(res.status).toBe(500);
   });
 
-  it('returns 200 on completed events (stop retries)', async () => {
+  it('returns 200 ONLY for already_completed events', async () => {
     mockClaimResult = { data: { claimed: false, reason: 'already_completed' }, error: null };
     const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_ok', customer: { customer_code: 'CUS_ok' } }) as never);
     expect(res.status).toBe(200);
+  });
+
+  it('R6-2: returns 500 for active_processing (worker may crash)', async () => {
+    mockClaimResult = { data: { claimed: false, reason: 'active_processing' }, error: null };
+    const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_inprog', customer: { customer_code: 'CUS_ip' } }) as never);
+    expect(res.status).toBe(500);
+  });
+
+  it('R6-1: returns 500 if complete_webhook_event RPC fails', async () => {
+    mockSubResult = { id: 'sfail', business_id: 'bfail', paystack_subscription_code: null };
+    // Override RPC to fail on complete_webhook_event
+    const origRpc = mockSupabase.rpc;
+    mockSupabase.rpc = vi.fn(async (fn: string, params: Record<string, unknown>) => {
+      rpcCalls.push({ fn, params });
+      if (fn === 'claim_webhook_event') return mockClaimResult;
+      if (fn === 'complete_webhook_event') return { data: null, error: { message: 'DB timeout' } };
+      if (fn === 'fail_webhook_event') return { data: true, error: null };
+      return { data: null, error: null };
+    });
+    const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_compfail', customer: { customer_code: 'CUS_cf' } }) as never);
+    expect(res.status).toBe(500);
+    mockSupabase.rpc = origRpc;
+  });
+
+  it('R6-1: returns 500 if complete_webhook_event returns false (claim lost)', async () => {
+    mockSubResult = { id: 'slost', business_id: 'blost', paystack_subscription_code: null };
+    const origRpc = mockSupabase.rpc;
+    mockSupabase.rpc = vi.fn(async (fn: string, params: Record<string, unknown>) => {
+      rpcCalls.push({ fn, params });
+      if (fn === 'claim_webhook_event') return mockClaimResult;
+      if (fn === 'complete_webhook_event') return { data: false, error: null }; // claim lost
+      if (fn === 'fail_webhook_event') return { data: true, error: null };
+      return { data: null, error: null };
+    });
+    const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_lost', customer: { customer_code: 'CUS_lost' } }) as never);
+    expect(res.status).toBe(500);
+    mockSupabase.rpc = origRpc;
+  });
+
+  it('R6-3: missing invoice_code is quarantined (not silently dropped)', async () => {
+    const res = await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_noic_q' }) as never);
+    expect(res.status).toBe(200); // Quarantined, stop retries
+    // Should have inserted a quarantine record
+    const { logger } = await import('@/lib/logger');
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('quarantined'),
+      expect.objectContaining({ subCode: 'SUB_noic_q' }),
+    );
   });
 });
 
