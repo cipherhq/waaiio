@@ -133,10 +133,10 @@ describe('M362 fencing contract', () => {
     expect(updateCalls).toHaveLength(0);
   });
 
-  it('handles claim RPC failure gracefully', async () => {
+  it('returns 500 on claim RPC failure (triggers Paystack retry)', async () => {
     mockClaimResult = { data: null, error: { message: 'connection reset' } };
     const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_err', customer: { customer_code: 'CUS_e' } }) as never);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
   });
 });
 
@@ -235,5 +235,72 @@ describe('HMAC preserved', () => {
       body: JSON.stringify({ event: 'subscription.create', data: { subscription_code: 'SUB_b' } }),
     });
     expect((await POST(req as never)).status).toBe(400);
+  });
+});
+
+// ── 7. R4 corrections ──
+
+describe('R4-1: conditional update count handling', () => {
+  it('verifies stored value when count is 0 (concurrent race)', async () => {
+    // Initial match query returns sub with null code
+    mockSubResult = { id: 'sr4', business_id: 'br4', paystack_subscription_code: null };
+    // But the update returns count:0 (another instance set it first)
+    // Mock the update to return count:0
+    const origFrom = mockSupabase.from;
+    let updateCallCount = 0;
+    mockSupabase.from = vi.fn((table: string) => {
+      const chain = origFrom(table);
+      if (table === 'subscriptions') {
+        const origUpdate = chain.update;
+        chain.update = vi.fn((_data: Record<string, unknown>) => {
+          updateCalls.push({ table, data: _data });
+          updateCallCount++;
+          const eqChain: Record<string, ReturnType<typeof vi.fn>> = {};
+          eqChain.eq = vi.fn(() => eqChain);
+          eqChain.is = vi.fn(() => eqChain);
+          // First update (conditional) returns count:0
+          (eqChain as Record<string, unknown>).then = (resolve: (v: unknown) => void) =>
+            resolve({ error: null, count: updateCallCount === 1 ? 0 : 1 });
+          return eqChain;
+        });
+        // Verification SELECT after zero-row update
+        chain.single = vi.fn(async () => ({
+          data: { paystack_subscription_code: 'SUB_r4_verify' },
+          error: null,
+        }));
+      }
+      return chain;
+    });
+    await POST(makeReq('subscription.create', { subscription_code: 'SUB_r4_verify', customer: { customer_code: 'CUS_r4' } }) as never);
+    // Should still mark as succeeded because the stored code matches
+    expect(rpcCalls.find(c => c.fn === 'complete_webhook_event')).toBeDefined();
+    mockSupabase.from = origFrom;
+  });
+});
+
+describe('R4-2: claim failure returns 500 for retry', () => {
+  it('returns 500 on claim RPC failure (Paystack will retry)', async () => {
+    mockClaimResult = { data: null, error: { message: 'connection timeout' } };
+    const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_retry', customer: { customer_code: 'CUS_retry' } }) as never);
+    expect(res.status).toBe(500);
+  });
+
+  it('returns 200 on completed events (stop retries)', async () => {
+    mockClaimResult = { data: { claimed: false, reason: 'already_completed' }, error: null };
+    const res = await POST(makeReq('subscription.create', { subscription_code: 'SUB_ok', customer: { customer_code: 'CUS_ok' } }) as never);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('R4-3: lifecycle safety', () => {
+  it('subscription.create with unexpected reference falls through to charge handler', async () => {
+    // Event has BOTH subscription_code AND reference — should NOT enter subscription handler
+    await POST(makeReq('subscription.create', {
+      subscription_code: 'SUB_hybrid',
+      reference: 'T_hybrid_ref',
+      customer: { customer_code: 'CUS_hybrid' },
+    }) as never);
+    // Should NOT call claim_webhook_event (subscription path)
+    expect(rpcCalls.filter(c => c.fn === 'claim_webhook_event')).toHaveLength(0);
   });
 });
