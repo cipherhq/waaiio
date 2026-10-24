@@ -73,6 +73,8 @@ export interface Product {
   description: string | null;
   price: number;
   image_url: string | null;
+  /** Up to 3 additional image URLs beyond the primary image_url */
+  gallery_urls: string[];
   category: string | null;
   stock_quantity: number | null;
   is_active: boolean;
@@ -103,6 +105,7 @@ export const EMPTY_PRODUCT: Omit<Product, 'id'> = {
   description: null,
   price: 0,
   image_url: null,
+  gallery_urls: [],
   category: null,
   stock_quantity: null,
   is_active: true,
