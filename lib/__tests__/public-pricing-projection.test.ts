@@ -18,12 +18,12 @@ import { NextRequest } from 'next/server';
 // Build a chainable Supabase mock
 function buildSupabaseMock(overrides: Record<string, unknown> = {}) {
   const defaultSnapshot = {
-    trial_days: 30,
+    trial_days: 14,
     annual_discount_percentage: 20,
     pricing_tiers: {
-      free: { feePercentage: 2.5 },
+      free: { feePercentage: 3 },
       growth: { feePercentage: 1.5 },
-      business: { feePercentage: 1.5 },
+      business: { feePercentage: 1 },
     },
     category_fee_rates: {
       scheduling: { feePercentage: 2.5 },
@@ -46,9 +46,9 @@ function buildSupabaseMock(overrides: Record<string, unknown> = {}) {
     flag: '\ud83c\uddf3\ud83c\uddec',
     payment_gateway: 'paystack',
     pricing: {
-      free: { price: 0, feeFlat: 150, feePercentage: 2.5 },
-      growth: { price: 20000, feeFlat: 50, feePercentage: 1.5 },
-      business: { price: 60000, feeFlat: 75, feePercentage: 1.5 },
+      free: { price: 0, feeFlat: 0, feePercentage: 3 },
+      growth: { price: 15000, feeFlat: 0, feePercentage: 1.5 },
+      business: { price: 45000, feeFlat: 0, feePercentage: 1 },
     },
   };
 
@@ -157,7 +157,7 @@ describe('Public Pricing Projection — runtime proofs', () => {
   it('D3/D5: trialDays and annualDiscountPercentage reflect fixture values', async () => {
     const res = await callGET();
     const body = await res.json();
-    expect(body.trialDays).toBe(30);
+    expect(body.trialDays).toBe(14);
     expect(body.annualDiscountPercentage).toBe(20);
   });
 
@@ -189,9 +189,9 @@ describe('Public Pricing Projection — runtime proofs', () => {
     const res = await callGET();
     const body = await res.json();
     expect(body.country.code).toBe('NG');
-    expect(body.country.pricing.growth.price).toBe(20000);
-    expect(body.country.pricing.business.price).toBe(60000);
-    expect(body.country.pricing.free.feeFlat).toBe(150);
+    expect(body.country.pricing.growth.price).toBe(15000);
+    expect(body.country.pricing.business.price).toBe(45000);
+    expect(body.country.pricing.free.feeFlat).toBe(0);
   });
 
   it('D8: categoryFees includes labels and feePercentage, excludes internals', async () => {

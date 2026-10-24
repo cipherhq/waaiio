@@ -159,3 +159,68 @@ WHERE id IN ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00
 ON CONFLICT (id) DO NOTHING;
 EOPROFILES
 echo "✅ Post-migration seed complete."
+
+# ── 4. Post-migration: seed messaging/pricing config for activation trigger ──
+# guard_country_activation (M377/M378) validates messaging infrastructure
+# config on active-country pricing updates. Staging/production have these
+# keys set via admin API. CI needs them seeded here so migrations that
+# update country pricing (e.g., M458) can pass the trigger.
+echo "Seeding CI messaging/pricing config for activation trigger..."
+$PSQL_CONN -q -v ON_ERROR_STOP=1 <<'EOMSGCFG'
+-- Messaging pricing, trial credits, and subscription allowances
+INSERT INTO platform_settings (key, value, updated_at)
+VALUES
+  ('messaging_pricing',
+   '{"NGN":{"rates":{"NG":{"*":2100}},"default_cost_minor":2100,"default_spend_cap_minor":7500000},"GHS":{"rates":{"GH":{"*":12}},"default_cost_minor":12,"default_spend_cap_minor":75000},"USD":{"rates":{"US":{"*":1}},"default_cost_minor":1,"default_spend_cap_minor":5000},"GBP":{"rates":{"GB":{"*":4}},"default_cost_minor":4,"default_spend_cap_minor":4000},"CAD":{"rates":{"CA":{"*":1}},"default_cost_minor":1,"default_spend_cap_minor":7000}}'::jsonb,
+   clock_timestamp()),
+  ('trial_credit_minor_by_currency',
+   '{"NGN":600000,"GHS":6000,"USD":400,"GBP":500,"CAD":550}'::jsonb,
+   clock_timestamp()),
+  ('subscription_included_minor_by_tier_currency',
+   '{"growth":{"NGN":225000,"GHS":2250,"USD":225,"GBP":180,"CAD":300},"business":{"NGN":675000,"GHS":6000,"USD":600,"GBP":480,"CAD":750}}'::jsonb,
+   clock_timestamp())
+ON CONFLICT (key) DO NOTHING;
+
+-- Refresh config version snapshot BEFORE plan ref updates so the
+-- activation trigger can find messaging_pricing in the snapshot.
+INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by, created_at)
+SELECT gen_random_uuid(),
+       (SELECT jsonb_object_agg(key, value) FROM platform_settings
+        WHERE key = ANY(ARRAY[
+          'pricing_tiers','trial_days','broadcast_limits','conversation_limits',
+          'default_platform_fee_percent','annual_discount_percentage',
+          'payout_cooling_period_days','minimum_payout','payout_verification_limits',
+          'transfer_expiry_hours','minimum_bank_transfer',
+          'messaging_financial_gate','messaging_reservation_ttl_seconds',
+          'trial_credit_minor_by_currency','subscription_included_minor_by_tier_currency',
+          'fee_policy_enabled','category_fee_rates','messaging_pricing'
+        ])),
+       clock_timestamp(), NULL, clock_timestamp();
+
+-- Paystack plan refs for NG and GH (required by guard_country_activation
+-- for paystack-gateway countries). Uses CI-only placeholder codes.
+DO $$
+BEGIN
+  PERFORM set_config('waaiio.provider_ref_auth', 'true', true);
+  IF (SELECT pricing -> 'growth' -> 'provider_plan_refs' ->> 'paystack' FROM countries WHERE code = 'NG') IS NULL THEN
+    UPDATE countries SET pricing = jsonb_set(jsonb_set(jsonb_set(jsonb_set(
+      pricing,
+      '{growth,provider_plan_refs}', '{"paystack":"PLN_ci_ng_growth"}'::jsonb),
+      '{growth,paystack_plan_code}', '"PLN_ci_ng_growth"'::jsonb),
+      '{business,provider_plan_refs}', '{"paystack":"PLN_ci_ng_business"}'::jsonb),
+      '{business,paystack_plan_code}', '"PLN_ci_ng_business"'::jsonb)
+    WHERE code = 'NG';
+  END IF;
+  IF (SELECT pricing -> 'growth' -> 'provider_plan_refs' ->> 'paystack' FROM countries WHERE code = 'GH') IS NULL THEN
+    UPDATE countries SET pricing = jsonb_set(jsonb_set(jsonb_set(jsonb_set(
+      pricing,
+      '{growth,provider_plan_refs}', '{"paystack":"PLN_ci_gh_growth"}'::jsonb),
+      '{growth,paystack_plan_code}', '"PLN_ci_gh_growth"'::jsonb),
+      '{business,provider_plan_refs}', '{"paystack":"PLN_ci_gh_business"}'::jsonb),
+      '{business,paystack_plan_code}', '"PLN_ci_gh_business"'::jsonb)
+    WHERE code = 'GH';
+  END IF;
+  PERFORM set_config('waaiio.provider_ref_auth', '', true);
+END $$;
+EOMSGCFG
+echo "✅ CI messaging/pricing config seeded."
