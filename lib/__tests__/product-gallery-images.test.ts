@@ -471,3 +471,106 @@ describe('R2: handleSetPrimary uses functional state update', () => {
     expect(gallery).toEqual(['old-primary.jpg', 'b.jpg', 'c.jpg']); // concurrent upload preserved
   });
 });
+
+// ── R3: State consistency after primary swap ─────────────────────────────────
+
+describe('R3: imagePreview derived from functional update, not stale form', () => {
+  it('uses closure variable (swappedPrimary) for imagePreview, not form.gallery_urls', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    const fn = extractHandleSetPrimary(pageSrc);
+    // Must declare a closure variable to capture the new primary
+    expect(fn).toContain('let swappedPrimary');
+    // Must set it inside the functional update
+    expect(fn).toContain('swappedPrimary = newPrimary');
+    // Must use the closure variable for setImagePreview
+    expect(fn).toContain('setImagePreview(swappedPrimary)');
+    // Must NOT read stale form.gallery_urls for the preview
+    expect(fn).not.toContain('form.gallery_urls');
+  });
+
+  it('does not change imagePreview or imageFile when index is invalid', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    const fn = extractHandleSetPrimary(pageSrc);
+    // If swappedPrimary is null (invalid index), imagePreview stays unchanged
+    expect(fn).toContain('if (swappedPrimary)');
+  });
+
+  it('prevents overlapping primary swaps via ref guard', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    expect(pageSrc).toContain('swappingPrimaryRef');
+    const fn = extractHandleSetPrimary(pageSrc);
+    expect(fn).toContain('if (swappingPrimaryRef.current) return');
+    expect(fn).toContain('swappingPrimaryRef.current = true');
+    expect(fn).toContain('swappingPrimaryRef.current = false');
+  });
+
+  it('uses try/finally to always release the swap guard', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    const fn = extractHandleSetPrimary(pageSrc);
+    expect(fn).toContain('try {');
+    expect(fn).toContain('} finally {');
+  });
+});
+
+describe('R3 behavioral: gallery removal makes swap index invalid', () => {
+  // Simulates the functional update when galleryIndex is out of bounds
+  function simulateSwap(
+    prevGallery: string[],
+    primaryUrl: string | null,
+    galleryIndex: number,
+  ): { changed: boolean; imageUrl: string | null; gallery: string[]; swappedPrimary: string | null } {
+    const gallery = [...prevGallery];
+    if (galleryIndex < 0 || galleryIndex >= gallery.length) {
+      return { changed: false, imageUrl: null, gallery: prevGallery, swappedPrimary: null };
+    }
+    const newPrimary = gallery[galleryIndex];
+    gallery.splice(galleryIndex, 1);
+    if (primaryUrl) gallery.splice(galleryIndex, 0, primaryUrl);
+    return { changed: true, imageUrl: newPrimary, gallery, swappedPrimary: newPrimary };
+  }
+
+  it('aborts when gallery is empty (all images removed during upload)', () => {
+    const result = simulateSwap([], 'primary.jpg', 0);
+    expect(result.changed).toBe(false);
+    expect(result.swappedPrimary).toBeNull();
+  });
+
+  it('aborts when target index was removed during upload', () => {
+    // Started with 3 images, user removed 2 during upload, index 2 is now invalid
+    const result = simulateSwap(['a.jpg'], 'primary.jpg', 2);
+    expect(result.changed).toBe(false);
+    expect(result.swappedPrimary).toBeNull();
+  });
+
+  it('succeeds with correct image when earlier items were removed', () => {
+    // Started with ['a','b','c'], user removed 'a' during upload, user wanted index 1 (was 'b')
+    // After removal, gallery is ['b','c'], index 1 is now 'c' not 'b'
+    const result = simulateSwap(['b.jpg', 'c.jpg'], 'primary.jpg', 1);
+    expect(result.changed).toBe(true);
+    expect(result.imageUrl).toBe('c.jpg');
+    expect(result.gallery).toEqual(['b.jpg', 'primary.jpg']);
+  });
+
+  it('displayed image (swappedPrimary) matches saved image (imageUrl)', () => {
+    const result = simulateSwap(['x.jpg', 'y.jpg', 'z.jpg'], 'old.jpg', 1);
+    expect(result.swappedPrimary).toBe(result.imageUrl);
+    expect(result.swappedPrimary).toBe('y.jpg');
+  });
+
+  it('total image count is preserved after swap', () => {
+    const gallery = ['a.jpg', 'b.jpg', 'c.jpg'];
+    const primary = 'p.jpg';
+    const result = simulateSwap(gallery, primary, 0);
+    const totalBefore = 1 + gallery.length;
+    const totalAfter = (result.imageUrl ? 1 : 0) + result.gallery.length;
+    expect(totalAfter).toBe(totalBefore);
+  });
+});
+
+// ── Helper ──────────────────────────────────────────────────────────────────
+
+function extractHandleSetPrimary(src: string): string {
+  const start = src.indexOf('async function handleSetPrimary');
+  const end = src.indexOf('// ── Generate variants', start);
+  return src.substring(start, end);
+}
