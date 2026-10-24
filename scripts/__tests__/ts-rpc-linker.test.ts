@@ -122,11 +122,37 @@ describe('ts-rpc-linker', () => {
       expect(defs).toHaveLength(3);
       // Sorted by migration filename — 100, 200, 300
       expect(defs[0].file).toBe('100_initial.sql');
-      expect(defs[0].security_definer).toBe(false);
       expect(defs[1].file).toBe('200_replace.sql');
-      expect(defs[1].security_definer).toBe(true);
       expect(defs[2].file).toBe('300_replace_again.sql');
-      expect(defs[2].security_definer).toBe(true);
+      // Definitions are discovery candidates — no security_definer classification
+      expect(defs[0]).not.toHaveProperty('security_definer');
+    });
+
+    it('historical definitions are discovery candidates, not deployed identity', () => {
+      tmp = buildFixture({
+        tsFiles: {
+          'lib/caller.ts': "await service.rpc('replaced_func', {});",
+        },
+        sqlFiles: {
+          '100_v1.sql':
+            'CREATE FUNCTION public.replaced_func(p_id UUID)\nRETURNS VOID LANGUAGE plpgsql AS $$ BEGIN END; $$;',
+          '200_v2.sql':
+            'CREATE OR REPLACE FUNCTION public.replaced_func(p_id UUID, p_name TEXT)\nRETURNS VOID LANGUAGE plpgsql AS $$ BEGIN END; $$;',
+        },
+      });
+
+      const result = runJson(`--root ${tmp}`);
+      const defs = result.rpc_to_sql['replaced_func'];
+      // Both definitions are recorded — the linker cannot determine which
+      // is currently deployed. The last migration is the most recent candidate
+      // but only Release Gate V2 §2 final-state checks or database catalog
+      // queries can confirm the effective deployed function.
+      expect(defs).toHaveLength(2);
+      expect(defs[0].file).toBe('100_v1.sql');
+      expect(defs[1].file).toBe('200_v2.sql');
+      // No security attribute classification — use Release Gate V2 for that
+      expect(Object.keys(defs[0])).toEqual(expect.arrayContaining(['file', 'line']));
+      expect(defs[0]).not.toHaveProperty('security_definer');
     });
   });
 
@@ -159,6 +185,56 @@ describe('ts-rpc-linker', () => {
       expect(defs.length).toBeGreaterThanOrEqual(2);
       // The match still counts as 1 (name matched)
       expect(result.stats.matched).toBe(1);
+    });
+  });
+
+  // ── 3b. SECURITY DEFINER misclassification regression ───────────
+
+  describe('security attribute not classified by linker', () => {
+    let tmp: string;
+    afterAll(() => tmp && rmSync(tmp, { recursive: true, force: true }));
+
+    it('does not classify SECURITY DEFINER/INVOKER (regression: file-wide scan)', () => {
+      // Regression: the linker previously scanned the entire migration file
+      // for SECURITY DEFINER and applied it to every function in the file.
+      // A migration with both DEFINER and INVOKER functions would falsely
+      // mark the INVOKER function as SECURITY DEFINER.
+      // Fix: removed security classification entirely — use Release Gate V2
+      // invariant registry and database catalog checks instead.
+      tmp = buildFixture({
+        tsFiles: {
+          'lib/caller.ts': [
+            "await service.rpc('privileged_func', {});",
+            "await service.rpc('unprivileged_func', {});",
+          ].join('\n'),
+        },
+        sqlFiles: {
+          '001_mixed_security.sql': [
+            'CREATE FUNCTION public.privileged_func(p_id UUID)',
+            'RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER',
+            'SET search_path = public, extensions',
+            'AS $$ BEGIN END; $$;',
+            '',
+            'CREATE FUNCTION public.unprivileged_func(p_id UUID)',
+            'RETURNS VOID LANGUAGE plpgsql SECURITY INVOKER',
+            'AS $$ BEGIN END; $$;',
+          ].join('\n'),
+        },
+      });
+
+      const result = runJson(`--root ${tmp}`);
+      expect(result.stats.matched).toBe(2);
+
+      const privDefs = result.rpc_to_sql['privileged_func'];
+      const unprivDefs = result.rpc_to_sql['unprivileged_func'];
+      expect(privDefs).toHaveLength(1);
+      expect(unprivDefs).toHaveLength(1);
+
+      // Neither function has a security_definer property — the linker does
+      // not attempt this classification. Release Gate V2 §1 (invariant
+      // registry) and pg_proc catalog checks are the authority for this.
+      expect(privDefs[0]).not.toHaveProperty('security_definer');
+      expect(unprivDefs[0]).not.toHaveProperty('security_definer');
     });
   });
 
@@ -336,7 +412,8 @@ describe('ts-rpc-linker', () => {
       const result = runJson(`--root ${tmp} --check checked_rpc`);
       expect(result.rpc).toBe('checked_rpc');
       expect(result.sql_definitions).toHaveLength(1);
-      expect(result.sql_definitions[0].security_definer).toBe(true);
+      expect(result.sql_definitions[0]).not.toHaveProperty('security_definer');
+      expect(result.sql_definitions[0].file).toBe('050_checked.sql');
       expect(result.production_callers).toHaveLength(1);
     });
 

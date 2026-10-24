@@ -163,9 +163,9 @@ verify channel readiness, retry activation.
 including the self-healing path in `verify/route.ts`. The import edge is correctly
 identified.
 
-**What the RPC linker detects:** `allocate_shared_channel` (M430:167, SECURITY DEFINER,
-service_role only) called from `whatsapp-readiness.ts:120`. Also `reassign_shared_channel`
-in the repair path.
+**What the RPC linker detects:** `allocate_shared_channel` (M430:167) called from
+`whatsapp-readiness.ts:120`. Also `reassign_shared_channel` in the repair path. Security
+attributes (SECURITY DEFINER, grants) are verified by Release Gate V2, not the linker.
 
 **What neither tool detects:** That the free activation path writes
 `businesses.status = 'active'` which can be blocked by the CHECK constraint on
@@ -188,8 +188,9 @@ check `allowance_granted`. If false, call `reconcile_paid_allowance` (M375, SECU
 DEFINER) which re-checks channel readiness against the now-active state.
 
 **What the RPC linker detects:** `verify/route.ts:548` calls `activate_paid_subscription`,
-`verify/route.ts:636` calls `reconcile_paid_allowance`. Both are SECURITY DEFINER.
-The linker identifies the co-location of both RPCs in the same file.
+`verify/route.ts:636` calls `reconcile_paid_allowance`. The linker identifies the
+co-location of both RPCs in the same file. Security attributes are verified by Release
+Gate V2, not the linker.
 
 **What neither tool detects:**
 1. Stale state snapshot: RPC reads `v_biz.status` before the caller updates it

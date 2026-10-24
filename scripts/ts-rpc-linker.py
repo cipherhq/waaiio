@@ -28,8 +28,6 @@ SQL_FUNC_RE = re.compile(
     r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_]+)",
     re.IGNORECASE,
 )
-SECURITY_DEFINER_RE = re.compile(r"SECURITY\s+DEFINER", re.IGNORECASE)
-
 RELEASE_GATE_RPCS = {
     "initialize_terminal_effects": "DB-006, PAY-006",
     "finalize_payment_confirmation": "DB-006, PAY-006",
@@ -93,12 +91,10 @@ def find_sql_definitions(migrations_dir):
             m = SQL_FUNC_RE.search(line)
             if m:
                 func_name = m.group(1)
-                is_sec_definer = bool(SECURITY_DEFINER_RE.search(content))
                 rpc_to_sql[func_name].append(
                     {
                         "file": fname,
                         "line": lineno,
-                        "security_definer": is_sec_definer,
                     }
                 )
     return rpc_to_sql
@@ -152,7 +148,7 @@ def check_rpc(dep_map, rpc_name):
 
 def print_report(dep_map):
     stats = dep_map["stats"]
-    print("TS → Supabase RPC Dependency Map")
+    print("TS → Supabase RPC Dependency Map (discovery candidates, not deployed identity)")
     print(f"  TS files with RPC calls: {stats['ts_files_with_rpc_calls']}")
     print(f"  Unique RPC names called: {stats['unique_rpc_names']}")
     print(f"  SQL function definitions: {stats['sql_function_definitions']}")
@@ -193,10 +189,9 @@ def main():
             print(f"RPC: {result['rpc']}")
             if result["invariant"]:
                 print(f"Invariant: {result['invariant']}")
-            print(f"SQL definitions: {len(result['sql_definitions'])}")
+            print(f"SQL definitions (discovery candidates, not deployed identity):")
             for s in result["sql_definitions"]:
-                sec = " [SECURITY DEFINER]" if s["security_definer"] else ""
-                print(f"  {s['file']}:{s['line']}{sec}")
+                print(f"  {s['file']}:{s['line']}")
             print(f"Production callers: {len(result['production_callers'])}")
             for c in result["production_callers"]:
                 print(f"  {c['file']}:{c['line']}")
