@@ -297,52 +297,27 @@ describe('overlapping swap prevention', () => {
 // R7: Integration tests — save payload correctness
 // ═══════════════════════════════════════════════════════════════════════
 
-/**
- * Simulates the page-level uploadImage() + save payload computation
- * using the production hook state — exactly as page.tsx does.
- */
-function computeSavePayload(
-  hookResult: ReturnType<typeof useProductGallery>,
-  uploadImageFile: (f: File) => Promise<string | null>,
-) {
-  // Mirrors page.tsx uploadImage() + payload construction
-  async function getPayload() {
-    let imageUrl: string | null;
-    if (hookResult.imageFile) {
-      const url = await uploadImageFile(hookResult.imageFile);
-      if (url) hookResult.setImageFile(null);
-      imageUrl = url || hookResult.imageUrl;
-    } else {
-      // R7 fix: hook state is authoritative — no fallback to stale form.image_url
-      imageUrl = hookResult.imageUrl;
-    }
-    return { image_url: imageUrl, gallery_urls: hookResult.galleryUrls };
-  }
-  return getPayload;
-}
+// R8: Save tests use the production buildSaveImagePayload from the hook.
 
-describe('R7: promote-to-gallery saves correct database values', () => {
+describe('R7/R8: promote-to-gallery saves correct database values', () => {
   it('after handlePromoteToGallery, save payload has null primary and old primary in gallery', async () => {
     const uploadFn = vi.fn(async () => null as string | null);
     const { result } = renderHook(() => useProductGallery(uploadFn));
 
-    // Set up: product with primary and one gallery image
     act(() => {
       result.current.setImageUrl('primary.jpg');
       result.current.setImagePreview('primary.jpg');
       result.current.setGalleryUrls(['gallery1.jpg']);
     });
 
-    // Move primary to gallery
     act(() => { result.current.handlePromoteToGallery(); });
 
-    // Hook state should be: imageUrl=null, gallery=['gallery1.jpg', 'primary.jpg']
     expect(result.current.imageUrl).toBeNull();
     expect(result.current.galleryUrls).toEqual(['gallery1.jpg', 'primary.jpg']);
 
-    // Simulate save — compute payload from hook state (as page.tsx does)
-    const getPayload = computeSavePayload(result.current, uploadFn);
-    const payload = await getPayload();
+    // R8: Use the production buildSaveImagePayload, not a test copy
+    let payload: { image_url: string | null; gallery_urls: string[] };
+    await act(async () => { payload = await result.current.buildSaveImagePayload(); });
 
     // The DB payload must have null primary — NOT the old 'primary.jpg'
     expect(payload.image_url).toBeNull();
@@ -362,22 +337,22 @@ describe('R7: promote-to-gallery saves correct database values', () => {
     // Swap g2.jpg to primary
     await act(async () => { await result.current.handleSetPrimary(1); });
 
-    const getPayload = computeSavePayload(result.current, uploadFn);
-    const payload = await getPayload();
+    let payload: { image_url: string | null; gallery_urls: string[] };
+    await act(async () => { payload = await result.current.buildSaveImagePayload(); });
 
-    expect(payload.image_url).toBe('g2.jpg');
-    expect(payload.gallery_urls).toEqual(['g1.jpg', 'old-primary.jpg']);
+    expect(payload!.image_url).toBe('g2.jpg');
+    expect(payload!.gallery_urls).toEqual(['g1.jpg', 'old-primary.jpg']);
   });
 
   it('new product with no images: save payload has null primary and empty gallery', async () => {
     const uploadFn = vi.fn(async () => null as string | null);
     const { result } = renderHook(() => useProductGallery(uploadFn));
 
-    const getPayload = computeSavePayload(result.current, uploadFn);
-    const payload = await getPayload();
+    let payload: { image_url: string | null; gallery_urls: string[] };
+    await act(async () => { payload = await result.current.buildSaveImagePayload(); });
 
-    expect(payload.image_url).toBeNull();
-    expect(payload.gallery_urls).toEqual([]);
+    expect(payload!.image_url).toBeNull();
+    expect(payload!.gallery_urls).toEqual([]);
   });
 
   it('pending file upload: save payload uses uploaded URL', async () => {
@@ -390,30 +365,102 @@ describe('R7: promote-to-gallery saves correct database values', () => {
       result.current.setGalleryUrls(['g1.jpg']);
     });
 
-    const getPayload = computeSavePayload(result.current, uploadFn);
     let payload: { image_url: string | null; gallery_urls: string[] };
-    await act(async () => { payload = await getPayload(); });
+    await act(async () => { payload = await result.current.buildSaveImagePayload(); });
 
     expect(payload!.image_url).toBe('https://storage/uploaded.jpg');
     expect(payload!.gallery_urls).toEqual(['g1.jpg']);
   });
 });
 
-describe('R7: FileReader race guard', () => {
-  it('page.tsx uses imageSelectSeqRef to guard FileReader.onload', () => {
-    const { readFileSync } = require('fs');
-    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('imageSelectSeqRef');
-    expect(pageSrc).toContain('seq === imageSelectSeqRef.current');
+describe('R8: FileReader gating and previewSeq invalidation', () => {
+  it('handleImageSelect returns false during swap — FileReader should not start', async () => {
+    const upload = createDeferredUpload();
+    const { result } = renderHook(() => useProductGallery(upload.fn));
+
+    act(() => {
+      result.current.setImageUrl('p.jpg');
+      result.current.setImagePreview('p.jpg');
+      result.current.setGalleryUrls(['g1.jpg']);
+      result.current.setImageFile(new File(['x'], 'pending.jpg'));
+    });
+
+    // Start swap (sets swappingPrimaryRef)
+    let swapPromise: Promise<void>;
+    act(() => { swapPromise = result.current.handleSetPrimary(0); });
+
+    // Try to select new image during swap — should return false
+    let accepted: boolean;
+    act(() => { accepted = result.current.handleImageSelect(new File(['y'], 'new.jpg')); });
+    expect(accepted!).toBe(false);
+
+    await act(async () => { upload.resolve('uploaded.jpg'); await swapPromise!; });
   });
 
-  it('resets on openAdd and openEdit prevent stale FileReader', () => {
+  it('previewSeq increments on swap, preventing stale FileReader callback', async () => {
+    const uploadFn = vi.fn(async () => null as string | null);
+    const { result } = renderHook(() => useProductGallery(uploadFn));
+
+    act(() => {
+      result.current.setImageUrl('p.jpg');
+      result.current.setImagePreview('p.jpg');
+      result.current.setGalleryUrls(['g1.jpg', 'g2.jpg']);
+    });
+
+    const seqBefore = result.current.previewSeq();
+
+    // Perform a swap — previewSeq should increment
+    await act(async () => { await result.current.handleSetPrimary(0); });
+
+    expect(result.current.previewSeq()).toBeGreaterThan(seqBefore);
+  });
+
+  it('previewSeq increments on promote-to-gallery', () => {
+    const uploadFn = vi.fn(async () => null as string | null);
+    const { result } = renderHook(() => useProductGallery(uploadFn));
+
+    act(() => {
+      result.current.setImageUrl('p.jpg');
+      result.current.setImagePreview('p.jpg');
+    });
+
+    const seqBefore = result.current.previewSeq();
+    act(() => { result.current.handlePromoteToGallery(); });
+    expect(result.current.previewSeq()).toBeGreaterThan(seqBefore);
+  });
+
+  it('previewSeq increments on reset', () => {
+    const uploadFn = vi.fn(async () => null as string | null);
+    const { result } = renderHook(() => useProductGallery(uploadFn));
+
+    const seqBefore = result.current.previewSeq();
+    act(() => { result.current.reset({ imageUrl: 'new.jpg', galleryUrls: [] }); });
+    expect(result.current.previewSeq()).toBeGreaterThan(seqBefore);
+  });
+
+  it('previewSeq increments on handleImageSelect', () => {
+    const uploadFn = vi.fn(async () => null as string | null);
+    const { result } = renderHook(() => useProductGallery(uploadFn));
+
+    const seqBefore = result.current.previewSeq();
+    act(() => { result.current.handleImageSelect(new File(['x'], 'file.jpg')); });
+    expect(result.current.previewSeq()).toBeGreaterThan(seqBefore);
+  });
+
+  it('page uses hook previewSeq (not a separate ref) for FileReader guard', () => {
     const { readFileSync } = require('fs');
     const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    // Both openAdd and openEdit bump the sequence counter
-    const addSection = pageSrc.substring(pageSrc.indexOf('function openAdd'), pageSrc.indexOf('async function openEdit'));
-    expect(addSection).toContain('imageSelectSeqRef.current++');
-    const editSection = pageSrc.substring(pageSrc.indexOf('async function openEdit'), pageSrc.indexOf('// ── Image handling'));
-    expect(editSection).toContain('imageSelectSeqRef.current++');
+    expect(pageSrc).toContain('gallery.previewSeq()');
+    expect(pageSrc).toContain('seq === gallery.previewSeq()');
+    // Old imageSelectSeqRef should be gone
+    expect(pageSrc).not.toContain('imageSelectSeqRef');
+  });
+
+  it('page only starts FileReader when hook accepts the selection', () => {
+    const { readFileSync } = require('fs');
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    const fn = pageSrc.substring(pageSrc.indexOf('function handleImageSelect'), pageSrc.indexOf('async function uploadImageFile'));
+    expect(fn).toContain('const accepted = gallery.handleImageSelect(file)');
+    expect(fn).toContain('if (!accepted)');
   });
 });

@@ -13,7 +13,8 @@ export interface ProductGalleryState {
 }
 
 export interface ProductGalleryActions {
-  handleImageSelect: (file: File | null) => void;
+  /** Returns true if accepted, false if rejected (swap in progress). */
+  handleImageSelect: (file: File | null) => boolean;
   handleGalleryUpload: (file: File) => Promise<void>;
   handleGalleryRemove: (index: number) => void;
   handleGalleryReorder: (fromIndex: number, toIndex: number) => void;
@@ -21,6 +22,10 @@ export interface ProductGalleryActions {
   handleSetPrimary: (galleryIndex: number) => Promise<void>;
   /** Reset gallery state for a new or edited product */
   reset: (opts: { imageUrl: string | null; galleryUrls: string[] }) => void;
+  /** Compute save payload: uploads pending file if needed, returns authoritative image_url + gallery_urls. */
+  buildSaveImagePayload: () => Promise<{ image_url: string | null; gallery_urls: string[] }>;
+  /** Current preview sequence — pass to FileReader guard. Bumped on select/swap/promote/reset. */
+  previewSeq: () => number;
   /** Direct setters (for form-level integration) */
   setImageUrl: (url: string | null) => void;
   setGalleryUrls: (urls: string[]) => void;
@@ -49,15 +54,20 @@ export function useProductGallery(
 
   // Ref mirror for async handlers to read the latest state without stale closures.
   const stateRef = useRef({ imageUrl, galleryUrls });
+  // Sequence counter for invalidating stale FileReader callbacks.
+  // Incremented on every operation that changes the preview: select, swap, promote, reset.
+  const previewSeqRef = useRef(0);
   stateRef.current = { imageUrl, galleryUrls };
 
-  const handleImageSelect = useCallback((file: File | null) => {
-    if (!file) return;
+  /** Returns true if the selection was accepted, false if rejected (e.g. swap in progress). */
+  const handleImageSelect = useCallback((file: File | null): boolean => {
+    if (!file) return false;
     // R5-1: Block while swap is in progress
-    if (swappingPrimaryRef.current) return;
+    if (swappingPrimaryRef.current) return false;
     setGalleryError(null);
     setImageFile(file);
-    setImagePreview('preview:' + file.name);
+    previewSeqRef.current++;
+    return true;
   }, []);
 
   const handleGalleryUpload = useCallback(async (file: File) => {
@@ -100,6 +110,7 @@ export function useProductGallery(
     if (current.imageUrl && current.galleryUrls.length < 3) {
       setGalleryUrls(prev => [...prev, current.imageUrl!]);
       setImageUrl(null);
+      previewSeqRef.current++; // Invalidate pending FileReader
       setImagePreview(null);
       setImageFile(null);
     }
@@ -136,6 +147,7 @@ export function useProductGallery(
         // R5-3: Target removed, preserve uploaded URL
         if (uploadedPrimaryUrl) {
           setImageUrl(uploadedPrimaryUrl);
+          previewSeqRef.current++; // Invalidate pending FileReader
           setImagePreview(uploadedPrimaryUrl);
           setImageFile(null);
         }
@@ -151,6 +163,7 @@ export function useProductGallery(
       // Phase 4: Apply atomically
       setImageUrl(newPrimary);
       setGalleryUrls(latestGallery);
+      previewSeqRef.current++; // Invalidate pending FileReader
       setImagePreview(newPrimary);
       setImageFile(null);
     } finally {
@@ -162,17 +175,37 @@ export function useProductGallery(
     setImageUrl(opts.imageUrl);
     setGalleryUrls(opts.galleryUrls);
     setImageFile(null);
+    previewSeqRef.current++; // Invalidate pending FileReader
     setImagePreview(opts.imageUrl);
     setGalleryError(null);
     setUploadingImage(false);
     setGalleryUploading(false);
   }, []);
 
+  /**
+   * Compute the image_url and gallery_urls for the save payload.
+   * If a pending imageFile exists, uploads it first. Hook state is authoritative.
+   */
+  const buildSaveImagePayload = useCallback(async (): Promise<{ image_url: string | null; gallery_urls: string[] }> => {
+    let saveImageUrl: string | null;
+    if (imageFile) {
+      const url = await uploadFn(imageFile);
+      if (url) setImageFile(null);
+      saveImageUrl = url || stateRef.current.imageUrl;
+    } else {
+      saveImageUrl = stateRef.current.imageUrl;
+    }
+    return { image_url: saveImageUrl, gallery_urls: stateRef.current.galleryUrls };
+  }, [imageFile, uploadFn]);
+
+  const previewSeq = useCallback(() => previewSeqRef.current, []);
+
   return {
     imageUrl, galleryUrls, imageFile, imagePreview, galleryError,
     uploadingImage, galleryUploading,
     handleImageSelect, handleGalleryUpload, handleGalleryRemove,
     handleGalleryReorder, handlePromoteToGallery, handleSetPrimary,
-    reset, setImageUrl, setGalleryUrls, setImageFile, setImagePreview, setGalleryError,
+    reset, buildSaveImagePayload, previewSeq,
+    setImageUrl, setGalleryUrls, setImageFile, setImagePreview, setGalleryError,
   };
 }

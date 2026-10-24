@@ -66,7 +66,7 @@ describe('product gallery data flow', () => {
 
   it('save payload includes gallery_urls from hook', () => {
     const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('gallery_urls: gallery.galleryUrls');
+    expect(pageSrc).toContain('gallery_urls: imagePayload.gallery_urls');
   });
 
   it('openEdit initializes gallery_urls from product data', () => {
@@ -368,7 +368,7 @@ describe('deployment ordering: gallery_urls resilience', () => {
 
   it('save payload reads gallery_urls from hook state', () => {
     const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
-    expect(pageSrc).toContain('gallery_urls: gallery.galleryUrls');
+    expect(pageSrc).toContain('gallery_urls: imagePayload.gallery_urls');
   });
 
   it('EMPTY_PRODUCT.gallery_urls is empty array (safe default)', () => {
