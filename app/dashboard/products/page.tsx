@@ -414,6 +414,7 @@ export default function ProductsPage() {
     const totalImages = (imagePreview ? 1 : 0) + currentGallery.length;
     if (totalImages >= 4 || currentGallery.length >= 3) return;
     setGalleryUploading(true);
+    setGalleryError(null);
     const url = await uploadImageFile(file);
     if (url) {
       // Use functional update to read the latest form state after the async upload,
@@ -423,6 +424,8 @@ export default function ProductsPage() {
         if (latestGallery.length >= 3) return prev; // Re-check limit with latest state
         return { ...prev, gallery_urls: [...latestGallery, url] };
       });
+    } else {
+      setGalleryError('Photo upload failed. Please check the file and try again.');
     }
     setGalleryUploading(false);
   }
