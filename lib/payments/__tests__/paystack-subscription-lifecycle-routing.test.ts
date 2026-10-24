@@ -517,6 +517,29 @@ describe('CTO-required additional coverage', () => {
     expect(update!.data.status).toBe('cancelled');
   });
 
+  it('24a. Nested subscription_code path (Codex P1-1)', async () => {
+    // Paystack may nest subscription_code under data.subscription for invoice events
+    customerResult = {
+      data: {
+        id: 'cs_nested', business_id: 'cb_nested', status: 'active', failure_count: 0,
+        amount: '1000', currency: 'NGN', user_id: 'u_nested', service_id: 'sv_nested',
+        customer_phone: '+234', customer_name: 'Nested', gateway_subscription_code: 'SUB_NESTED',
+      },
+      error: null,
+    };
+    const res = await POST(makeReq('invoice.payment_failed', {
+      // subscription_code nested under data.subscription (not top-level)
+      subscription: { subscription_code: 'SUB_NESTED' },
+      invoice_code: 'INV_NESTED',
+      gateway_response: 'Declined',
+    }) as never);
+    expect(res.status).toBe(200);
+    // Should still route to customer subscription
+    const update = updateCalls.find(c => c.table === 'customer_subscriptions');
+    expect(update).toBeTruthy();
+    expect(update!.data.failure_count).toBe(1);
+  });
+
   it('24. Customer subscription.not_renew on paused sub → cancelled_at set', async () => {
     customerResult = {
       data: {

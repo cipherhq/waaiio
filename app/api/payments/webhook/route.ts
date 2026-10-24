@@ -66,7 +66,10 @@ export async function POST(request: NextRequest) {
     const SUBSCRIPTION_LIFECYCLE_EVENTS = ['subscription.create', 'subscription.not_renew', 'subscription.disable', 'invoice.payment_failed'];
     if (SUBSCRIPTION_LIFECYCLE_EVENTS.includes(event)) {
       const supabase = createServiceClient();
-      const subCode = data.subscription_code as string | undefined;
+      // Paystack places subscription_code at top-level for subscription events,
+      // but invoice events may nest it under data.subscription.subscription_code.
+      const subCode = (data.subscription_code as string | undefined)
+        || (data.subscription as Record<string, unknown> | undefined)?.subscription_code as string | undefined;
       // Invoice events: use invoice_code (provider-assigned, unique per billing cycle).
       // Fall back to id if invoice_code absent; reject if neither exists.
       const invoiceId = (event === 'invoice.payment_failed')
