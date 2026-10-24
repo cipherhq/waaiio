@@ -124,11 +124,12 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
 
   // Helper: create an isolated test business with its own owner
   // This ensures tests that need clean allowance state are not affected by other tests.
-  function createIsolatedBusiness(): string {
+  // M461: countryCode parameter added — billing now uses business country, not recipient country.
+  function createIsolatedBusiness(countryCode: string = 'NG'): string {
     const bizId = psql(`SELECT gen_random_uuid();`);
     const ownerId = psql(`SELECT gen_random_uuid();`);
     psqlMayFail(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${ownerId}', '${bizId.substring(0,8)}@test370.com', '{}') ON CONFLICT (id) DO NOTHING;`);
-    psqlMayFail(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone) VALUES ('${bizId}', 'IsolTest-${bizId.substring(0,8)}', 'isol-${bizId.substring(0,8)}', '${ownerId}', '1 Test', 'T', 'T', '+1');`);
+    psqlMayFail(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, country_code) VALUES ('${bizId}', 'IsolTest-${bizId.substring(0,8)}', 'isol-${bizId.substring(0,8)}', '${ownerId}', '1 Test', 'T', 'T', '+1', '${countryCode}');`);
     return bizId;
   }
 
@@ -238,18 +239,21 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('7. Missing price (no config, no rate) → fail closed', () => {
-    createAllowance(BIZ_ID_A, 'trial_grant', 10000, 'NGN', `auth-test-7-${Date.now()}`);
-    // Use a country code not in any pricing config
-    const attemptId = createAttempt(BIZ_ID_A, 'ZZ', 'utility');
+    // M461: billing uses business country. ZZ business has no pricing config.
+    const zzBiz = createIsolatedBusiness('ZZ');
+    createAllowance(zzBiz, 'trial_grant', 10000, 'NGN', `auth-test-7-${Date.now()}`);
+    const attemptId = createAttempt(zzBiz, 'NG', 'utility');
 
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(false);
-    // Should fail due to no currency match for ZZ
+    // Should fail due to no currency match for business country ZZ
   });
 
   it('8. Valid pricing resolution binds tuple atomically', () => {
-    createAllowance(BIZ_ID_A, 'trial_grant', 10000, 'USD', `auth-test-8-${Date.now()}`);
-    const attemptId = createAttempt(BIZ_ID_A, 'US', 'marketing');
+    // M461: billing uses business country. US business needed for USD billing.
+    const usBiz = createIsolatedBusiness('US');
+    createAllowance(usBiz, 'trial_grant', 10000, 'USD', `auth-test-8-${Date.now()}`);
+    const attemptId = createAttempt(usBiz, 'US', 'marketing');
 
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(true);
@@ -295,7 +299,8 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('11. Pure overage reservation → charge_type = overage', () => {
-    const biz = createIsolatedBusiness();
+    // M461: US business needed for USD billing
+    const biz = createIsolatedBusiness('US');
     createAllowance(biz, 'purchased', 10000, 'USD', `auth-test-11-${Date.now()}`);
     const attemptId = createAttempt(biz, 'US', 'utility');
 
@@ -435,21 +440,22 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   // ═══════════════════════════════════════════════════════
 
   it('17. Spend cap exceeded → fail closed with zero footprint', () => {
-    // Create a small cap scenario: insert a period with almost-full cap
-    const allowanceId = createAllowance(BIZ_ID_B, 'purchased', 100000, 'USD', `auth-test-17-${Date.now()}`);
+    // M461: US business needed for USD billing
+    const usBiz = createIsolatedBusiness('US');
+    const allowanceId = createAllowance(usBiz, 'purchased', 100000, 'USD', `auth-test-17-${Date.now()}`);
 
     // First send should work
-    const a1 = createAttempt(BIZ_ID_B, 'US', 'marketing'); // 12 USD
+    const a1 = createAttempt(usBiz, 'US', 'marketing'); // 12 USD
     const r1 = JSON.parse(psql(`SELECT public.authorize_message_send('${a1}');`));
     expect(r1.authorized).toBe(true);
 
     // Fill up the cap near the limit
     const periodStart = psql(`SELECT spend_period_start FROM message_send_attempts WHERE id = '${a1}';`);
     // Set reserved to cap_minor - 5 (only 5 headroom)
-    psql(`UPDATE messaging_spend_periods SET reserved_minor = cap_minor - 5 WHERE business_id = '${BIZ_ID_B}' AND currency_code = 'USD' AND period_start = '${periodStart}';`);
+    psql(`UPDATE messaging_spend_periods SET reserved_minor = cap_minor - 5 WHERE business_id = '${usBiz}' AND currency_code = 'USD' AND period_start = '${periodStart}';`);
 
     // Next send should fail (cost=12 > 5 headroom)
-    const a2 = createAttempt(BIZ_ID_B, 'US', 'marketing');
+    const a2 = createAttempt(usBiz, 'US', 'marketing');
     const r2 = JSON.parse(psql(`SELECT public.authorize_message_send('${a2}');`));
     expect(r2.authorized).toBe(false);
     expect(r2.reason).toBe('spend_cap_exceeded');
@@ -498,15 +504,16 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
     expect(usdRemaining).toBe('500');
   });
 
-  it('20. USD attempt consumes only USD allowances, not NGN', () => {
-    const biz = createIsolatedBusiness();
+  it('20. USD attempt (US business) consumes only USD allowances, not NGN', () => {
+    // M461: US business needed for USD billing
+    const biz = createIsolatedBusiness('US');
     const ngnAllowance = createAllowance(biz, 'trial_grant', 5000, 'NGN', `auth-test-20-ngn-${Date.now()}`);
     const usdAllowance = createAllowance(biz, 'trial_grant', 500, 'USD', `auth-test-20-usd-${Date.now()}`);
 
     const attemptId = createAttempt(biz, 'US', 'utility');
     psql(`SELECT public.authorize_message_send('${attemptId}');`);
 
-    // USD decremented
+    // USD decremented (US business → USD billing)
     const usdRemaining = psql(`SELECT remaining_minor FROM messaging_allowances WHERE id = '${usdAllowance}';`);
     expect(parseInt(usdRemaining)).toBe(500 - 5);
 
@@ -516,13 +523,14 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('21. No matching currency allowance → fail closed', () => {
+    // M461: NG business has only USD allowance → fails because billing resolves to NGN
     const biz = createIsolatedBusiness();
-    createAllowance(biz, 'trial_grant', 50000, 'NGN', `auth-test-21-${Date.now()}`);
-    const attemptId = createAttempt(biz, 'US', 'utility');
+    createAllowance(biz, 'trial_grant', 50000, 'USD', `auth-test-21-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility');
 
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(false);
-    // Should fail because no USD allowance exists
+    // Should fail because no NGN allowance exists (NG business needs NGN)
   });
 
   it('22. No matching currency spend cap → fail closed', () => {
@@ -540,8 +548,10 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
       })}'::JSONB, NOW() + INTERVAL '22370 microseconds', '${OWNER_A}');
     `);
 
-    createAllowance(BIZ_ID_B, 'trial_grant', 10000, 'GBP', `auth-test-22-${Date.now()}`);
-    const attemptId = createAttempt(BIZ_ID_B, 'GB', 'marketing');
+    // M461: GB business needed for GBP billing
+    const gbBiz = createIsolatedBusiness('GB');
+    createAllowance(gbBiz, 'trial_grant', 10000, 'GBP', `auth-test-22-${Date.now()}`);
+    const attemptId = createAttempt(gbBiz, 'GB', 'marketing');
 
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     // Should succeed since GBP config has spend cap
@@ -568,18 +578,21 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
     `);
   });
 
-  it('23. Cross-currency cap isolation', () => {
-    createAllowance(BIZ_ID_A, 'purchased', 100000, 'NGN', `auth-test-23-ngn-${Date.now()}`);
-    createAllowance(BIZ_ID_A, 'purchased', 10000, 'USD', `auth-test-23-usd-${Date.now()}`);
+  it('23. Cross-currency cap isolation (NG vs US businesses)', () => {
+    // M461: each business bills in its own currency. Use separate businesses.
+    const ngBiz = createIsolatedBusiness('NG');
+    const usBiz = createIsolatedBusiness('US');
+    createAllowance(ngBiz, 'purchased', 100000, 'NGN', `auth-test-23-ngn-${Date.now()}`);
+    createAllowance(usBiz, 'purchased', 10000, 'USD', `auth-test-23-usd-${Date.now()}`);
 
     // Send several NGN messages to build up NGN cap usage
     for (let i = 0; i < 5; i++) {
-      const a = createAttempt(BIZ_ID_A, 'NG', 'marketing'); // 800 NGN each
+      const a = createAttempt(ngBiz, 'NG', 'marketing'); // 800 NGN each
       psql(`SELECT public.authorize_message_send('${a}');`);
     }
 
-    // USD send should succeed regardless of NGN cap state
-    const usdAttempt = createAttempt(BIZ_ID_A, 'US', 'utility'); // 5 USD
+    // USD send on a separate US business should succeed regardless of NGN cap state
+    const usdAttempt = createAttempt(usBiz, 'US', 'utility'); // 5 USD
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${usdAttempt}');`));
     expect(result.authorized).toBe(true);
     expect(result.currency_code).toBe('USD');
@@ -802,12 +815,14 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
       })}'::JSONB, NOW() + INTERVAL '35370 microseconds', '${OWNER_A}');
     `);
 
+    // M461: SN business needed for XOF billing (billing uses business country)
+    const snBiz = createIsolatedBusiness('SN');
     const uniqueCurrency = 'XOF';
-    createAllowance(BIZ_ID_B, 'trial_grant', 100000, uniqueCurrency, `conc-35a-${Date.now()}`);
-    createAllowance(BIZ_ID_B, 'trial_grant', 100000, uniqueCurrency, `conc-35b-${Date.now()}`);
+    createAllowance(snBiz, 'trial_grant', 100000, uniqueCurrency, `conc-35a-${Date.now()}`);
+    createAllowance(snBiz, 'trial_grant', 100000, uniqueCurrency, `conc-35b-${Date.now()}`);
 
-    const a1 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${BIZ_ID_B}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
-    const a2 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${BIZ_ID_B}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
+    const a1 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${snBiz}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
+    const a2 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${snBiz}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
 
     await Promise.allSettled([
       psqlAsync(`SELECT public.authorize_message_send('${a1}');`),
@@ -815,7 +830,7 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
     ]);
 
     // Exactly one period row for this business/currency/month
-    const periodCount = psql(`SELECT count(*) FROM messaging_spend_periods WHERE business_id = '${BIZ_ID_B}' AND currency_code = '${uniqueCurrency}';`);
+    const periodCount = psql(`SELECT count(*) FROM messaging_spend_periods WHERE business_id = '${snBiz}' AND currency_code = '${uniqueCurrency}';`);
     expect(periodCount).toBe('1');
   }, 30000);
 
@@ -875,19 +890,21 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   }, 30000);
 
   it('38. Two-session: two-currency contention — no cross-currency leakage', async () => {
-    const biz = createIsolatedBusiness();
-    const ngnAllowance = createAllowance(biz, 'purchased', 10000, 'NGN', `conc-38-ngn-${Date.now()}`);
-    const usdAllowance = createAllowance(biz, 'purchased', 5000, 'USD', `conc-38-usd-${Date.now()}`);
+    // M461: separate businesses for separate currencies
+    const ngBiz = createIsolatedBusiness('NG');
+    const usBiz = createIsolatedBusiness('US');
+    const ngnAllowance = createAllowance(ngBiz, 'purchased', 10000, 'NGN', `conc-38-ngn-${Date.now()}`);
+    const usdAllowance = createAllowance(usBiz, 'purchased', 5000, 'USD', `conc-38-usd-${Date.now()}`);
 
-    const ngnAttempt = createAttempt(biz, 'NG', 'utility'); // 300 NGN
-    const usdAttempt = createAttempt(biz, 'US', 'utility'); // 5 USD
+    const ngnAttempt = createAttempt(ngBiz, 'NG', 'utility'); // 300 NGN
+    const usdAttempt = createAttempt(usBiz, 'US', 'utility'); // 5 USD
 
     const [r1, r2] = await Promise.allSettled([
       psqlAsync(`SELECT public.authorize_message_send('${ngnAttempt}');`),
       psqlAsync(`SELECT public.authorize_message_send('${usdAttempt}');`),
     ]);
 
-    // Both should succeed — different currencies, no contention
+    // Both should succeed — different currencies on different businesses, no contention
     expect(r1.status).toBe('fulfilled');
     expect(r2.status).toBe('fulfilled');
 
@@ -968,7 +985,8 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
       })}'::JSONB, NOW() + INTERVAL '41370 microseconds', '${OWNER_A}');
     `);
 
-    const biz = createIsolatedBusiness();
+    // M461: US business needed for USD billing
+    const biz = createIsolatedBusiness('US');
     createAllowance(biz, 'trial_grant', 10000, 'USD', `auth-test-41-${Date.now()}`);
     // 'service' not in US rates, no wildcard, falls to default_cost_minor=8
     const attemptId = createAttempt(biz, 'US', 'service');
@@ -977,11 +995,11 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
     expect(result.cost_minor).toBe(8); // bucket default
   });
 
-  it('42. Unknown country with one default-enabled bucket → fail closed (not inferred)', () => {
-    const biz = createIsolatedBusiness();
+  it('42. Unknown business country → fail closed (not inferred)', () => {
+    // M461: billing uses business country. ZZ business has no pricing config.
+    const biz = createIsolatedBusiness('ZZ');
     createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-42-${Date.now()}`);
-    // 'ZZ' is not in any rates → no currency membership → fail closed
-    const attemptId = createAttempt(biz, 'ZZ', 'utility');
+    const attemptId = createAttempt(biz, 'NG', 'utility');
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(false);
     expect(result.reason).toBe('no_currency_for_country');
@@ -1008,10 +1026,10 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('44. Fail-closed cases stamp no trusted pricing fields on attempt', () => {
-    const biz = createIsolatedBusiness();
+    // M461: billing uses business country. ZZ business has no pricing config → fail closed.
+    const biz = createIsolatedBusiness('ZZ');
     createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-44-${Date.now()}`);
-    // Unknown country → fail closed
-    const attemptId = createAttempt(biz, 'ZZ', 'utility');
+    const attemptId = createAttempt(biz, 'NG', 'utility');
     psql(`SELECT public.authorize_message_send('${attemptId}');`);
 
     // No pricing fields stamped
@@ -1165,7 +1183,8 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
       })}'::JSONB, NOW() + INTERVAL '50370 microseconds', '${OWNER_A}');
     `);
 
-    const biz = createIsolatedBusiness();
+    // M461: US business needed for USD billing
+    const biz = createIsolatedBusiness('US');
     createAllowance(biz, 'trial_grant', 10000, 'USD', `auth-test-50-${Date.now()}`);
     // 'service' not in US rates, no '*', no default_cost_minor
     const attemptId = createAttempt(biz, 'US', 'service');
