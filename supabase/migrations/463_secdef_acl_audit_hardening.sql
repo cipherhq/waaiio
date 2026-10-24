@@ -98,18 +98,33 @@ GRANT EXECUTE ON FUNCTION public.check_conversation_limit(uuid) TO service_role;
 -- C. Dashboard revenue RPCs — revoke anon, keep authenticated
 -- ══════════════════════════════════════════════════════════
 -- These have internal auth.uid() ownership checks but should not be callable
--- without authentication at all.
+-- without authentication at all. Must REVOKE from PUBLIC first (Postgres default
+-- grants PUBLIC execute), then explicitly re-GRANT to authenticated + service_role.
 
-REVOKE EXECUTE ON FUNCTION public.get_business_revenue(uuid) FROM anon;
-REVOKE EXECUTE ON FUNCTION public.get_order_revenue(uuid) FROM anon;
-REVOKE EXECUTE ON FUNCTION public.get_outstanding_invoices(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.get_business_revenue(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_business_revenue(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.get_business_revenue(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_business_revenue(uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_order_revenue(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_order_revenue(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.get_order_revenue(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_order_revenue(uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_outstanding_invoices(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_outstanding_invoices(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.get_outstanding_invoices(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_outstanding_invoices(uuid) TO service_role;
 
 
 -- ══════════════════════════════════════════════════════════
 -- D. check_business_role — revoke anon, keep authenticated (RLS dependency)
 -- ══════════════════════════════════════════════════════════
 
-REVOKE EXECUTE ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) FROM anon;
+REVOKE ALL ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) FROM anon;
+GRANT EXECUTE ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) TO service_role;
 
 
 -- ══════════════════════════════════════════════════════════

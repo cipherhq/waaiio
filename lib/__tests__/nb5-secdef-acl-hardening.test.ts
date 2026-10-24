@@ -84,15 +84,14 @@ describe('M463: SECURITY DEFINER ACL hardening', () => {
     ];
 
     for (const fn of dashboardFns) {
-      it(`${fn}: REVOKE from anon`, () => {
-        expect(migrationSql).toContain(`REVOKE EXECUTE ON FUNCTION public.${fn} FROM anon`);
+      it(`${fn}: REVOKE ALL from PUBLIC and anon`, () => {
+        expect(migrationSql).toContain(`REVOKE ALL ON FUNCTION public.${fn} FROM PUBLIC`);
+        expect(migrationSql).toContain(`REVOKE ALL ON FUNCTION public.${fn} FROM anon`);
       });
 
-      it(`${fn}: does NOT revoke from authenticated`, () => {
-        // Should not contain a blanket REVOKE ALL for these functions
-        // (only targeted REVOKE FROM anon)
-        const revokeAuthPattern = `REVOKE EXECUTE ON FUNCTION public.${fn} FROM authenticated`;
-        expect(migrationSql).not.toContain(revokeAuthPattern);
+      it(`${fn}: explicitly re-GRANTs to authenticated and service_role`, () => {
+        expect(migrationSql).toContain(`GRANT EXECUTE ON FUNCTION public.${fn} TO authenticated`);
+        expect(migrationSql).toContain(`GRANT EXECUTE ON FUNCTION public.${fn} TO service_role`);
       });
     }
 
@@ -102,15 +101,21 @@ describe('M463: SECURITY DEFINER ACL hardening', () => {
   });
 
   describe('check_business_role — anon revoked, authenticated kept (RLS dependency)', () => {
-    it('REVOKE from anon', () => {
+    it('REVOKE ALL from PUBLIC and anon', () => {
       expect(migrationSql).toContain(
-        'REVOKE EXECUTE ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) FROM anon',
+        'REVOKE ALL ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) FROM PUBLIC',
+      );
+      expect(migrationSql).toContain(
+        'REVOKE ALL ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) FROM anon',
       );
     });
 
-    it('does NOT revoke from authenticated (RLS policy dependency)', () => {
-      expect(migrationSql).not.toContain(
-        'REVOKE EXECUTE ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) FROM authenticated',
+    it('explicitly re-GRANTs to authenticated and service_role', () => {
+      expect(migrationSql).toContain(
+        'GRANT EXECUTE ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) TO authenticated',
+      );
+      expect(migrationSql).toContain(
+        'GRANT EXECUTE ON FUNCTION public.check_business_role(uuid, uuid, business_role[]) TO service_role',
       );
     });
 
