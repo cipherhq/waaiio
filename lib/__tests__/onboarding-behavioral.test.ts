@@ -50,6 +50,7 @@ vi.mock('@/lib/supabase/service', () => ({
 
 vi.mock('@/lib/categoryConfig', () => ({
   loadCategories: () => Promise.resolve(),
+  loadCategoriesStrict: () => Promise.resolve(),
   getAllCategoryKeys: () => ['salon', 'restaurant', 'shop'],
 }));
 
