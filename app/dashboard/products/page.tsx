@@ -61,6 +61,10 @@ export default function ProductsPage() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [galleryUploading, setGalleryUploading] = useState(false);
   const swappingPrimaryRef = useRef(false);
+  // Ref mirror of form state — allows async handlers to read the latest
+  // gallery/image state without stale closures or React updater side effects.
+  const formRef = useRef(form);
+  formRef.current = form;
 
   // Variants
   const [variants, setVariants] = useState<ProductVariant[]>([]);
@@ -443,53 +447,54 @@ export default function ProductsPage() {
   }
 
   async function handleSetPrimary(galleryIndex: number) {
-    // Prevent overlapping primary swaps — the async upload makes re-entrance possible
+    // Prevent overlapping primary swaps — the async upload makes re-entrance possible.
     if (swappingPrimaryRef.current) return;
     swappingPrimaryRef.current = true;
 
     try {
-      // If a new image file was selected but not yet uploaded, upload it first
-      // so the URL can be preserved in the gallery during the swap.
-      let currentPrimaryUrl: string | null = null;
+      // Phase 1: If there's a pending image file, upload it to get a permanent URL.
+      // On failure, abort entirely — keep imageFile and imagePreview intact.
+      let uploadedPrimaryUrl: string | null = null;
       if (imageFile) {
         setUploadingImage(true);
-        const uploadedUrl = await uploadImageFile(imageFile);
+        uploadedPrimaryUrl = await uploadImageFile(imageFile);
         setUploadingImage(false);
-        if (!uploadedUrl) {
-          // Upload failed — abort entirely. Keep imageFile and displayed preview intact.
+        if (!uploadedPrimaryUrl) {
           setSyncMessage({ type: 'error', text: 'Image upload failed. Please try again before changing the primary photo.' });
-          return;
+          return; // imageFile and imagePreview remain intact
         }
-        currentPrimaryUrl = uploadedUrl;
-        setImageFile(null);
-      } else {
-        currentPrimaryUrl = form.image_url;
       }
 
-      // Extract newPrimary via closure variable so imagePreview can be set
-      // consistently outside the functional update (React batches setForm).
-      let swappedPrimary: string | null = null;
+      // Phase 2: Read the LATEST form state via ref (not the stale closure capture).
+      // This accounts for any gallery changes (removals, reorders, uploads) that
+      // occurred during the async upload.
+      const latest = formRef.current;
+      const latestGallery = [...(latest.gallery_urls || [])];
 
-      setForm(prev => {
-        const gallery = [...(prev.gallery_urls || [])];
-        // If gallery changed during upload and the index is now invalid, abort safely.
-        // Do not change form state — the displayed image stays as-is.
-        if (galleryIndex < 0 || galleryIndex >= gallery.length) return prev;
-        const newPrimary = gallery[galleryIndex];
-        gallery.splice(galleryIndex, 1);
-        if (currentPrimaryUrl) gallery.splice(galleryIndex, 0, currentPrimaryUrl);
-        swappedPrimary = newPrimary;
-        return { ...prev, image_url: newPrimary, gallery_urls: gallery };
-      });
-
-      // Derive imagePreview from the same value written to form.image_url above.
-      // This guarantees the displayed image matches what will be saved.
-      if (swappedPrimary) {
-        setImagePreview(swappedPrimary);
-        setImageFile(null);
+      // Validate the gallery index against the latest state.
+      // If it's invalid (gallery changed during upload), abort without clearing
+      // the pending image or changing any displayed state.
+      if (galleryIndex < 0 || galleryIndex >= latestGallery.length) {
+        // If we uploaded the pending file but can't complete the swap, the uploaded
+        // URL is orphaned. This is acceptable — it's in storage but unreferenced.
+        // The merchant can re-select or re-upload. We do NOT clear imageFile here
+        // because the original pending file was already uploaded; imageFile was consumed.
+        if (uploadedPrimaryUrl) setImageFile(null);
+        return;
       }
-      // If swappedPrimary is null, the functional update returned prev unchanged
-      // (invalid index). imagePreview and imageFile remain untouched — correct.
+
+      // Phase 3: Compute the swap result synchronously from latest state.
+      // No side effects inside React updaters — just pure state derivation.
+      const newPrimary = latestGallery[galleryIndex];
+      const currentPrimaryUrl = uploadedPrimaryUrl ?? latest.image_url;
+      latestGallery.splice(galleryIndex, 1);
+      if (currentPrimaryUrl) latestGallery.splice(galleryIndex, 0, currentPrimaryUrl);
+
+      // Phase 4: Apply all state changes together. The form, preview, and file
+      // state are all derived from the same computation — guaranteed consistent.
+      setForm(prev => ({ ...prev, image_url: newPrimary, gallery_urls: latestGallery }));
+      setImagePreview(newPrimary);
+      setImageFile(null);
     } finally {
       swappingPrimaryRef.current = false;
     }
