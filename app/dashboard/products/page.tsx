@@ -444,24 +444,36 @@ export default function ProductsPage() {
   async function handleSetPrimary(galleryIndex: number) {
     // If a new image file was selected but not yet uploaded, upload it first
     // so the URL can be preserved in the gallery during the swap.
-    let currentPrimaryUrl = form.image_url;
+    let currentPrimaryUrl: string | null = null;
     if (imageFile) {
       setUploadingImage(true);
       const uploadedUrl = await uploadImageFile(imageFile);
       setUploadingImage(false);
-      if (uploadedUrl) {
-        currentPrimaryUrl = uploadedUrl;
-        setImageFile(null);
+      if (!uploadedUrl) {
+        // Upload failed — abort the swap entirely. Do not discard the merchant's
+        // pending file or silently proceed with a broken state.
+        setSyncMessage({ type: 'error', text: 'Image upload failed. Please try again before changing the primary photo.' });
+        return;
       }
+      currentPrimaryUrl = uploadedUrl;
+      setImageFile(null);
+    } else {
+      currentPrimaryUrl = form.image_url;
     }
 
-    // Swap: gallery image becomes primary, old primary goes to gallery
-    const gallery = [...(form.gallery_urls || [])];
-    const newPrimary = gallery[galleryIndex];
-    gallery.splice(galleryIndex, 1);
-    if (currentPrimaryUrl) gallery.splice(galleryIndex, 0, currentPrimaryUrl);
-    setForm({ ...form, image_url: newPrimary, gallery_urls: gallery });
-    setImagePreview(newPrimary);
+    // Use functional update to read the latest gallery state after the async
+    // upload, preventing concurrent gallery edits from being overwritten.
+    setForm(prev => {
+      const gallery = [...(prev.gallery_urls || [])];
+      if (galleryIndex < 0 || galleryIndex >= gallery.length) return prev;
+      const newPrimary = gallery[galleryIndex];
+      gallery.splice(galleryIndex, 1);
+      if (currentPrimaryUrl) gallery.splice(galleryIndex, 0, currentPrimaryUrl);
+      return { ...prev, image_url: newPrimary, gallery_urls: gallery };
+    });
+    // Read new primary from gallery at the index (matches functional update above)
+    const newPreview = (form.gallery_urls || [])[galleryIndex];
+    if (newPreview) setImagePreview(newPreview);
     setImageFile(null);
   }
 

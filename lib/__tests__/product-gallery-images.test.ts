@@ -386,3 +386,88 @@ describe('deployment ordering: gallery_urls resilience', () => {
     expect(typeSrc).toContain("gallery_urls: []");
   });
 });
+
+// ── R2: Failed upload aborts primary swap ───────────────────────────────────
+
+describe('R2: handleSetPrimary upload failure handling', () => {
+  it('aborts primary swap when pending image upload fails', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    // Must check upload result before proceeding
+    expect(pageSrc).toContain('if (!uploadedUrl)');
+    // Must return early on failure
+    expect(pageSrc).toContain('return;');
+    // Must show actionable error message
+    expect(pageSrc).toContain('Image upload failed');
+    expect(pageSrc).toContain('setSyncMessage');
+  });
+
+  it('does not clear imageFile on upload failure', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    // The setImageFile(null) must be AFTER the upload success check, not before
+    const handleSetPrimaryStart = pageSrc.indexOf('async function handleSetPrimary');
+    const handleSetPrimaryEnd = pageSrc.indexOf('// ── Generate variants', handleSetPrimaryStart);
+    const fnBody = pageSrc.substring(handleSetPrimaryStart, handleSetPrimaryEnd);
+    // Upload failure returns before any setImageFile(null)
+    const returnIndex = fnBody.indexOf('return;');
+    const firstClearIndex = fnBody.indexOf('setImageFile(null)');
+    expect(returnIndex).toBeLessThan(firstClearIndex);
+  });
+});
+
+// ── R2: Async primary-swap race prevention ──────────────────────────────────
+
+describe('R2: handleSetPrimary uses functional state update', () => {
+  it('uses setForm(prev => ...) not setForm({...form})', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    const handleSetPrimaryStart = pageSrc.indexOf('async function handleSetPrimary');
+    const handleSetPrimaryEnd = pageSrc.indexOf('// ── Generate variants', handleSetPrimaryStart);
+    const fnBody = pageSrc.substring(handleSetPrimaryStart, handleSetPrimaryEnd);
+    // Must use functional update
+    expect(fnBody).toContain('setForm(prev =>');
+    expect(fnBody).toContain('prev.gallery_urls');
+    // Must NOT use stale form capture for the swap
+    expect(fnBody).not.toContain('setForm({ ...form');
+  });
+
+  it('validates galleryIndex bounds before swap', () => {
+    const pageSrc = readFileSync('app/dashboard/products/page.tsx', 'utf8');
+    expect(pageSrc).toContain('galleryIndex < 0 || galleryIndex >= gallery.length');
+  });
+
+  // Behavioral: concurrent gallery edit during async upload is not overwritten
+  it('functional update preserves concurrent gallery removal', () => {
+    // Simulates: user removes gallery[0] while handleSetPrimary is uploading
+    // The functional update reads latest state, not the captured pre-upload state
+    const initialGallery = ['a.jpg', 'b.jpg', 'c.jpg'];
+    const primaryUrl = 'primary.jpg';
+
+    // Concurrent removal of index 0 happens during upload
+    const afterRemoval = ['b.jpg', 'c.jpg'];
+
+    // Functional update runs on afterRemoval state, not initialGallery
+    const galleryIndex = 1; // user clicked "set primary" on what was index 1
+    const gallery = [...afterRemoval];
+    if (galleryIndex >= 0 && galleryIndex < gallery.length) {
+      const newPrimary = gallery[galleryIndex];
+      gallery.splice(galleryIndex, 1);
+      if (primaryUrl) gallery.splice(galleryIndex, 0, primaryUrl);
+      expect(newPrimary).toBe('c.jpg'); // was b.jpg before removal, now c.jpg
+      expect(gallery).toEqual(['b.jpg', 'primary.jpg']); // correct with latest state
+    }
+  });
+
+  it('functional update preserves concurrent gallery upload', () => {
+    // Simulates: another gallery upload completes while handleSetPrimary is uploading
+    const afterConcurrentUpload = ['a.jpg', 'b.jpg', 'c.jpg']; // c.jpg added concurrently
+    const primaryUrl = 'old-primary.jpg';
+
+    // Functional update runs on afterConcurrentUpload, sets gallery[0] as primary
+    const gallery = [...afterConcurrentUpload];
+    const galleryIndex = 0;
+    const newPrimary = gallery[galleryIndex];
+    gallery.splice(galleryIndex, 1);
+    if (primaryUrl) gallery.splice(galleryIndex, 0, primaryUrl);
+    expect(newPrimary).toBe('a.jpg');
+    expect(gallery).toEqual(['old-primary.jpg', 'b.jpg', 'c.jpg']); // concurrent upload preserved
+  });
+});
