@@ -191,42 +191,76 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
 
   // ── Concurrency test: two independent PostgreSQL connections ──
 
-  it('8. concurrent activations for same owner: exactly one grant committed', () => {
-    // Use RACE_1 and RACE_2 — both owned by OWNER_VERIFIED_A
-    // Owner A already has a trial from BIZ_VA1, so both should be blocked.
-    // But let's test from scratch with a fresh owner scenario:
-    // We'll use a transaction trick — start two concurrent transactions.
-    //
-    // Since Owner A already has a trial (from test 1), both RACE_1 and RACE_2
-    // should return owner_already_has_trial. This proves the dedup works
-    // even under concurrent attempts.
-    //
-    // For a true race (no prior grant), we use a DO block that spawns
-    // two activate_trial_if_eligible calls via dblink, each in its own
-    // transaction. However, dblink may not be available. Instead, we
-    // prove serialization by showing both concurrent calls return the
-    // correct result.
+  it('8. concurrent first-grant race: exactly one grant committed, other denied', () => {
+    // Fresh verified owner with zero prior grants
+    const RACE_OWNER = 'aaaa0000-4657-4000-a000-000000000465';
+    const RACE_BIZ_X = 'dddd0000-4657-4000-a000-000000000465';
+    const RACE_BIZ_Y = 'dddd0001-4657-4000-a000-000000000465';
 
-    const result1 = psqlJson(`SELECT activate_trial_if_eligible('${BIZ_RACE_1}');`);
-    const result2 = psqlJson(`SELECT activate_trial_if_eligible('${BIZ_RACE_2}');`);
+    // Setup: create fresh owner + two businesses with no prior trial
+    psqlCleanup(`DELETE FROM messaging_allowance_events WHERE allowance_id IN (SELECT id FROM messaging_allowances WHERE business_id IN ('${RACE_BIZ_X}','${RACE_BIZ_Y}'));`);
+    psqlCleanup(`DELETE FROM messaging_allowances WHERE business_id IN ('${RACE_BIZ_X}','${RACE_BIZ_Y}');`);
+    psqlCleanup(`DELETE FROM businesses WHERE id IN ('${RACE_BIZ_X}','${RACE_BIZ_Y}');`);
+    psqlCleanup(`DELETE FROM auth.users WHERE id = '${RACE_OWNER}';`);
+    psqlCleanup(`DELETE FROM profiles WHERE id = '${RACE_OWNER}';`);
 
-    // Both blocked because Owner A already has a trial from BIZ_VA1
-    expect(result1.activated).toBe(false);
-    expect(result1.reason).toBe('owner_already_has_trial');
-    expect(result2.activated).toBe(false);
-    expect(result2.reason).toBe('owner_already_has_trial');
+    psql(`INSERT INTO auth.users (id, instance_id, email, encrypted_password, phone, phone_confirmed_at, aud, role, created_at, updated_at, confirmation_token, email_change, email_change_token_new, recovery_token)
+          VALUES ('${RACE_OWNER}', '00000000-0000-0000-0000-000000000000', 'race-owner-465@test.waaiio.com', '$2a$10$test', '+12025559999', NOW(), 'authenticated', 'authenticated', NOW(), NOW(), '', '', '', '');`);
+    psql(`INSERT INTO profiles (id, role) VALUES ('${RACE_OWNER}', 'user') ON CONFLICT DO NOTHING;`);
+    psql(`INSERT INTO businesses (id, owner_id, name, slug, address, city, phone, country_code, category, subscription_tier, wa_method, status, assigned_channel_id)
+          VALUES
+            ('${RACE_BIZ_X}', '${RACE_OWNER}', 'RaceX', 'racex-465', '1 Race', 'NYC', '+12025550099', 'US', 'barber', 'free', 'shared', 'active', '${CHANNEL_ID}'),
+            ('${RACE_BIZ_Y}', '${RACE_OWNER}', 'RaceY', 'racey-465', '2 Race', 'NYC', '+12025550098', 'US', 'salon', 'free', 'shared', 'active', '${CHANNEL_ID}');`);
 
-    // Exactly one trial_v2 grant exists for Owner A (from test 1)
+    // Two independent psql processes executing simultaneously.
+    // Each runs in its own connection with its own transaction.
+    // We use shell backgrounding (&) to overlap execution.
+    const { execSync } = require('child_process');
+    const resultFile1 = '/tmp/waaiio_race_1.json';
+    const resultFile2 = '/tmp/waaiio_race_2.json';
+
+    // Launch both simultaneously via shell — each is an independent psql connection
+    execSync(`
+      (psql "${dbUrl}" -tAXq -c "SELECT activate_trial_if_eligible('${RACE_BIZ_X}');" > ${resultFile1} 2>&1) &
+      PID1=$!
+      (psql "${dbUrl}" -tAXq -c "SELECT activate_trial_if_eligible('${RACE_BIZ_Y}');" > ${resultFile2} 2>&1) &
+      PID2=$!
+      wait $PID1 $PID2
+    `, { shell: '/bin/bash', timeout: 30000 });
+
+    const raw1 = require('fs').readFileSync(resultFile1, 'utf-8').trim();
+    const raw2 = require('fs').readFileSync(resultFile2, 'utf-8').trim();
+    const r1 = JSON.parse(raw1);
+    const r2 = JSON.parse(raw2);
+
+    // Exactly one activated, the other denied
+    const activated = [r1, r2].filter(r => r.activated === true && !r.idempotent);
+    const denied = [r1, r2].filter(r => r.activated === false && r.reason === 'owner_already_has_trial');
+
+    expect(activated.length).toBe(1);
+    expect(denied.length).toBe(1);
+
+    // The winner has correct amount and currency
+    expect(activated[0].amount_minor).toBe(400);
+    expect(activated[0].currency_code).toBe('USD');
+    expect(activated[0].trial_ends_at).toBeTruthy();
+
+    // Exactly one grant in the DB
     const grantCount = psql(`SELECT count(*) FROM messaging_allowances ma
       JOIN businesses b ON b.id = ma.business_id
-      WHERE b.owner_id = '${OWNER_VERIFIED_A}' AND ma.type = 'trial_grant' AND ma.source_ref = 'trial_v2';`);
+      WHERE b.owner_id = '${RACE_OWNER}' AND ma.type = 'trial_grant' AND ma.source_ref = 'trial_v2';`);
     expect(parseInt(grantCount)).toBe(1);
 
-    // That one grant belongs to BIZ_VA1 (the first activated)
-    const grantBiz = psql(`SELECT ma.business_id FROM messaging_allowances ma
-      JOIN businesses b ON b.id = ma.business_id
-      WHERE b.owner_id = '${OWNER_VERIFIED_A}' AND ma.type = 'trial_grant' AND ma.source_ref = 'trial_v2';`);
-    expect(grantBiz).toBe(BIZ_VA1);
+    // No deadlock (test completed without timeout)
+    // Advisory lock is the serialization mechanism (verified in test 9)
+
+    // Cleanup
+    psqlCleanup(`DELETE FROM messaging_allowance_events WHERE allowance_id IN (SELECT id FROM messaging_allowances WHERE business_id IN ('${RACE_BIZ_X}','${RACE_BIZ_Y}'));`);
+    psqlCleanup(`DELETE FROM messaging_allowances WHERE business_id IN ('${RACE_BIZ_X}','${RACE_BIZ_Y}');`);
+    psqlCleanup(`UPDATE businesses SET trial_ends_at = NULL WHERE id IN ('${RACE_BIZ_X}','${RACE_BIZ_Y}');`);
+    psqlCleanup(`DELETE FROM businesses WHERE id IN ('${RACE_BIZ_X}','${RACE_BIZ_Y}');`);
+    psqlCleanup(`DELETE FROM auth.users WHERE id = '${RACE_OWNER}';`);
+    psqlCleanup(`DELETE FROM profiles WHERE id = '${RACE_OWNER}';`);
   });
 
   // ── Verification assertions ──
