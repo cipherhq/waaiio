@@ -73,18 +73,18 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
 
     // Create auth.users with phone verification state
     // Owner A: verified phone
-    psql(`INSERT INTO auth.users (id, instance_id, email, encrypted_password, phone, phone_confirmed_at, aud, role, created_at, updated_at, confirmation_token, email_change, email_change_token_new, recovery_token)
-          VALUES ('${OWNER_VERIFIED_A}', '00000000-0000-0000-0000-000000000000', 'owner-a-465@test.waaiio.com', '$2a$10$test', '+12025559901', NOW(), 'authenticated', 'authenticated', NOW(), NOW(), '', '', '', '')
+    psql(`INSERT INTO auth.users (id, email, phone, phone_confirmed_at, raw_app_meta_data)
+          VALUES ('${OWNER_VERIFIED_A}', 'owner-a-465@test.waaiio.com', '+12025559901', NOW(), '{}')
           ON CONFLICT (id) DO UPDATE SET phone_confirmed_at = NOW();`);
 
     // Owner B: verified phone (different number)
-    psql(`INSERT INTO auth.users (id, instance_id, email, encrypted_password, phone, phone_confirmed_at, aud, role, created_at, updated_at, confirmation_token, email_change, email_change_token_new, recovery_token)
-          VALUES ('${OWNER_VERIFIED_B}', '00000000-0000-0000-0000-000000000000', 'owner-b-465@test.waaiio.com', '$2a$10$test', '+12025559902', NOW(), 'authenticated', 'authenticated', NOW(), NOW(), '', '', '', '')
+    psql(`INSERT INTO auth.users (id, email, phone, phone_confirmed_at, raw_app_meta_data)
+          VALUES ('${OWNER_VERIFIED_B}', 'owner-b-465@test.waaiio.com', '+12025559902', NOW(), '{}')
           ON CONFLICT (id) DO UPDATE SET phone_confirmed_at = NOW();`);
 
     // Owner C: phone set but NOT confirmed (e.g., Facebook auth only)
-    psql(`INSERT INTO auth.users (id, instance_id, email, encrypted_password, phone, phone_confirmed_at, aud, role, created_at, updated_at, confirmation_token, email_change, email_change_token_new, recovery_token)
-          VALUES ('${OWNER_UNVERIFIED}', '00000000-0000-0000-0000-000000000000', 'owner-unv-465@test.waaiio.com', '$2a$10$test', '+12025559903', NULL, 'authenticated', 'authenticated', NOW(), NOW(), '', '', '', '')
+    psql(`INSERT INTO auth.users (id, email, phone, phone_confirmed_at, raw_app_meta_data)
+          VALUES ('${OWNER_UNVERIFIED}', 'owner-unv-465@test.waaiio.com', '+12025559903', NULL, '{}')
           ON CONFLICT (id) DO UPDATE SET phone_confirmed_at = NULL;`);
 
     // Create profiles (handle_new_user trigger may not fire in test)
@@ -204,8 +204,8 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
     psqlCleanup(`DELETE FROM auth.users WHERE id = '${RACE_OWNER}';`);
     psqlCleanup(`DELETE FROM profiles WHERE id = '${RACE_OWNER}';`);
 
-    psql(`INSERT INTO auth.users (id, instance_id, email, encrypted_password, phone, phone_confirmed_at, aud, role, created_at, updated_at, confirmation_token, email_change, email_change_token_new, recovery_token)
-          VALUES ('${RACE_OWNER}', '00000000-0000-0000-0000-000000000000', 'race-owner-465@test.waaiio.com', '$2a$10$test', '+12025559999', NOW(), 'authenticated', 'authenticated', NOW(), NOW(), '', '', '', '');`);
+    psql(`INSERT INTO auth.users (id, email, phone, phone_confirmed_at, raw_app_meta_data)
+          VALUES ('${RACE_OWNER}', 'race-owner-465@test.waaiio.com', '+12025559999', NOW(), '{}');`);
     psql(`INSERT INTO profiles (id, role) VALUES ('${RACE_OWNER}', 'user') ON CONFLICT DO NOTHING;`);
     psql(`INSERT INTO businesses (id, owner_id, name, slug, address, city, phone, country_code, category, subscription_tier, wa_method, status, assigned_channel_id)
           VALUES
