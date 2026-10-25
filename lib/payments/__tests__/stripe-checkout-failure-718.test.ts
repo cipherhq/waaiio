@@ -3,7 +3,7 @@
  * recovery evidence. No live Stripe calls; uses executable response mocks.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mayFallbackFromSaveCardOptions, stripeCheckoutErrorEvidence } from '../stripe-checkout-failure';
+import { mayFallbackFromLegacyPaymentMethodTypes, mayFallbackFromSaveCardOptions, stripeCheckoutErrorEvidence } from '../stripe-checkout-failure';
 import { StripeGateway } from '../stripe';
 import { provisionStripeCustomer } from '../provision-stripe-customer';
 
@@ -156,6 +156,88 @@ describe('#718 BalaShop — Stripe optional save validation fallback', () => {
       .mockResolvedValueOnce(providerError('customer'));
     const out = await new StripeGateway().initializePayment(checkoutInput);
     expect(out).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('#718 — Stripe Endive 2026-09-30 removed payment_method_types', () => {
+  it('only accepts explicit HTTP 400 parameter rejection of legacy method types', () => {
+    const rejection = (param: string, status: number, type = 'invalid_request_error') => ({
+      error: { type, param, code: 'parameter_unknown' },
+      __waaiio_http_status: status,
+    });
+    expect(mayFallbackFromLegacyPaymentMethodTypes(rejection('payment_method_types', 400), true)).toBe(true);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(rejection('payment_method_types[0]', 400), true)).toBe(true);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(rejection('payment_method_types', 500), true)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(rejection('payment_method_types', 400, 'card_error'), true)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(rejection('saved_payment_method_options', 400), true)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(rejection('payment_method_types', 400), false)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { type: 'invalid_request_error', message: 'payment_method_types' }, __waaiio_http_status: 400 }, true)).toBe(false);
+  });
+
+  it('on Endive validation error preserves card-only policy, $50, payment routing, save card, and ID', async () => {
+    mockFetch.mockResolvedValueOnce(providerError('payment_method_types[0]'))
+      .mockResolvedValueOnce(providerSuccess);
+
+    const result = await new StripeGateway().initializePayment({
+      ...checkoutInput,
+      stripeAccountId: 'acct_test_destination',
+      platformFeeAmount: 3,
+    });
+
+    expect(result).toEqual({
+      url: 'https://checkout.stripe.com/c/pay/cs_test_bala_ok', reference: 'cs_test_bala_ok',
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const oldBody = new URLSearchParams(mockFetch.mock.calls[0][1].body);
+    const endiveBody = new URLSearchParams(mockFetch.mock.calls[1][1].body);
+    expect(oldBody.get('payment_method_types[0]')).toBe('card');
+    expect(endiveBody.get('payment_method_types[0]')).toBeNull();
+    expect(endiveBody.get('allowed_payment_method_types[0]')).toBe('card');
+    expect(endiveBody.get('saved_payment_method_options[payment_method_save]')).toBe('enabled');
+    expect(endiveBody.get('saved_payment_method_options[allow_redisplay_filters][0]')).toBe('always');
+    for (const field of [
+      'line_items[0][price_data][currency]', 'line_items[0][price_data][unit_amount]',
+      'customer', 'client_reference_id', 'payment_intent_data[application_fee_amount]',
+      'payment_intent_data[transfer_data][destination]', 'metadata[booking_id]',
+    ]) expect(endiveBody.get(field)).toBe(oldBody.get(field));
+    expect(endiveBody.get('line_items[0][price_data][unit_amount]')).toBe('5000');
+    const key1 = mockFetch.mock.calls[0][1].headers['Idempotency-Key'];
+    const key2 = mockFetch.mock.calls[1][1].headers['Idempotency-Key'];
+    expect(key2).toBe(key1 + '_endive_card');
+  });
+
+  it('older Stripe API success does not retry or change the card-only field', async () => {
+    mockFetch.mockResolvedValueOnce(providerSuccess);
+    const result = await new StripeGateway().initializePayment(checkoutInput);
+    expect(result?.reference).toBe('cs_test_bala_ok');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const body = new URLSearchParams(mockFetch.mock.calls[0][1].body);
+    expect(body.get('payment_method_types[0]')).toBe('card');
+    expect(body.get('allowed_payment_method_types[0]')).toBeNull();
+  });
+
+  it('after Endive-method migration, recovers optional save setting rejection at most once', async () => {
+    mockFetch.mockResolvedValueOnce(providerError('payment_method_types[0]'))
+      .mockResolvedValueOnce(providerError('saved_payment_method_options[payment_method_save]'))
+      .mockResolvedValueOnce(providerSuccess);
+    const result = await new StripeGateway().initializePayment(checkoutInput);
+    expect(result?.reference).toBe('cs_test_bala_ok');
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    const third = new URLSearchParams(mockFetch.mock.calls[2][1].body);
+    expect(third.get('allowed_payment_method_types[0]')).toBe('card');
+    expect(third.get('payment_method_types[0]')).toBeNull();
+    expect(third.get('saved_payment_method_options[payment_method_save]')).toBeNull();
+    const key1 = mockFetch.mock.calls[0][1].headers['Idempotency-Key'];
+    expect(mockFetch.mock.calls[2][1].headers['Idempotency-Key'])
+      .toBe(key1 + '_endive_card_without_save_options');
+  });
+
+  it('fails closed if Endive alternative is rejected, with no uncontrolled retry', async () => {
+    mockFetch.mockResolvedValueOnce(providerError('payment_method_types[0]'))
+      .mockResolvedValueOnce(providerError('customer'));
+    const result = await new StripeGateway().initializePayment(checkoutInput);
+    expect(result).toBeNull();
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
