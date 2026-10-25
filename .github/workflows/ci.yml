@@ -4198,8 +4198,8 @@ jobs:
             echo "M469 required PostgreSQL test skipped — failing CI"
             exit 1
           fi
-          if ! echo "$OUTPUT" | grep -q '12 passed'; then
-            echo "M469 expected twelve passing tests"
+          if ! echo "$OUTPUT" | grep -q '14 passed'; then
+            echo "M469 expected fourteen passing tests"
             exit 1
           fi
           echo "M469 settlement and refund PostgreSQL tests passed — zero skips."
