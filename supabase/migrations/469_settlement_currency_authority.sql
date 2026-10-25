@@ -415,7 +415,8 @@ BEGIN
     END LOOP;
   END IF;
 
-  IF EXISTS (SELECT 1 FROM public.platform_fees f WHERE f.payment_id=v_payment.id
+  IF EXISTS (SELECT 1 FROM public.platform_fees f WHERE
+    (f.payment_id=v_payment.id OR f.id=v_legacy_fee_id)
     AND f.business_id=v_refund.business_id AND f.is_direct_transfer=false) THEN
     IF EXISTS (SELECT 1 FROM public.business_payouts bp WHERE bp.business_id=v_refund.business_id
       AND bp.status='paid' AND (bp.currency IS NULL OR bp.currency !~ '^[A-Z]{3}$')
