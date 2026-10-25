@@ -344,9 +344,13 @@ export const ticketingFlow: FlowDefinition = {
         if (ticketTypeId) {
           const { data: tt } = await ctx.supabase
             .from('event_ticket_types')
-            .select('total_tickets, tickets_sold')
+            .select('total_tickets, tickets_sold, is_active')
             .eq('id', ticketTypeId)
             .single();
+          // #716: Reject stale sessions where organizer paused the tier
+          if (tt && !tt.is_active) {
+            return { valid: false, errorMessage: 'Sorry, this ticket type is no longer available. Type *cancel* to start over.' };
+          }
           available = tt ? tt.total_tickets - tt.tickets_sold : 0;
         } else {
           const { data: event } = await ctx.supabase
@@ -537,6 +541,22 @@ export const ticketingFlow: FlowDefinition = {
               subject: 'Ticket limit approaching',
               body: `You've sold ${tierResult.current}/${tierResult.limit} tickets for this event. Upgrade for more.`,
             }).catch(err => logger.withContext({ op: 'ticketing.tier-limit-notification', ...safeLogErrorContext(err) }).error('[TICKETING] Failed to create tier limit notification'));
+          }
+        }
+
+        // #716: Re-check tier is_active before creating a new booking.
+        // Catches the race where organizer pauses the tier between quantity
+        // confirmation and booking creation. Does NOT block existing bookings
+        // (idempotent retry or already-paid recovery).
+        const ticketTypeId716 = d.ticket_type_id as string | undefined;
+        if (ticketTypeId716 && !(d.booking_id && d.reference_code)) {
+          const { data: ttCheck } = await ctx.supabase
+            .from('event_ticket_types')
+            .select('is_active')
+            .eq('id', ticketTypeId716)
+            .single();
+          if (ttCheck && !ttCheck.is_active) {
+            return [{ type: 'text' as const, text: await ctx.t('Sorry, this ticket type is no longer available. Send *Hi* to start over.') }];
           }
         }
 

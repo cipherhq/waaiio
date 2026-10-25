@@ -61,6 +61,7 @@ describe('Issue #716 — saved event ticket-tier edit validation', () => {
 describe('Issue #716 — integration boundaries', () => {
   const page = readFileSync('app/dashboard/events/page.tsx', 'utf-8');
   const purchase = readFileSync('app/api/events/purchase/route.ts', 'utf-8');
+  const botFlow = readFileSync('lib/bot/flows/ticketing.flow.ts', 'utf-8');
   it('saves through an ID/event-scoped conditional update and never touches tickets_sold', () => {
     expect(page).toContain(".update(validation.value)");
     expect(page).toContain(".eq('event_id', form.id)");
@@ -79,5 +80,37 @@ describe('Issue #716 — integration boundaries', () => {
   it('passes the quoted unit price into the atomic DB purchase and distinguishes stale-price failure', () => {
     expect(purchase).toContain('p_expected_price: unitPrice');
     expect(purchase).toContain("rpcError.message?.includes('price_changed')");
+  });
+  it('web purchase route handles tier_paused RPC error with 409', () => {
+    expect(purchase).toContain("rpcError.message?.includes('tier_paused')");
+  });
+  it('WhatsApp bot only shows active ticket types to customers', () => {
+    expect(botFlow).toContain(".eq('is_active', true)");
+    // The filter must be on the select_ticket_type step's skipIf query
+    const skipIfIdx = botFlow.indexOf("id: 'select_ticket_type'");
+    const filterIdx = botFlow.indexOf(".eq('is_active', true)", skipIfIdx);
+    expect(skipIfIdx).toBeGreaterThan(-1);
+    expect(filterIdx).toBeGreaterThan(skipIfIdx);
+  });
+  it('WhatsApp bot re-checks is_active in select_quantity to catch stale sessions', () => {
+    // select_quantity.validate must query is_active and reject paused tiers
+    const qtyStep = botFlow.indexOf("id: 'select_quantity'");
+    expect(qtyStep).toBeGreaterThan(-1);
+    const isActiveQuery = botFlow.indexOf("'total_tickets, tickets_sold, is_active'", qtyStep);
+    expect(isActiveQuery).toBeGreaterThan(qtyStep);
+    expect(botFlow).toContain('tt && !tt.is_active');
+    expect(botFlow).toContain('this ticket type is no longer available');
+  });
+  it('WhatsApp bot re-checks is_active before booking INSERT in process_tickets', () => {
+    // process_tickets must re-check is_active right before creating a new booking
+    const processStep = botFlow.indexOf("id: 'process_tickets'");
+    expect(processStep).toBeGreaterThan(-1);
+    // The check must appear between process_tickets start and the booking INSERT
+    const checkIdx = botFlow.indexOf('ticketTypeId716', processStep);
+    const insertIdx = botFlow.indexOf("from('bookings')", processStep);
+    expect(checkIdx).toBeGreaterThan(processStep);
+    expect(insertIdx).toBeGreaterThan(checkIdx);
+    // Must not block existing bookings (idempotent recovery)
+    expect(botFlow).toContain('!(d.booking_id && d.reference_code)');
   });
 });

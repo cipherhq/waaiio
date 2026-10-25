@@ -201,6 +201,10 @@ export async function POST(request: NextRequest) {
     if (rpcError.message?.includes('price_changed')) {
       return NextResponse.json({ error: 'Ticket price changed. Refresh and confirm the new price.' }, { status: 409 });
     }
+    // Organizer paused this ticket type between page load and purchase.
+    if (rpcError.message?.includes('tier_paused')) {
+      return NextResponse.json({ error: 'This ticket type is no longer available. Please refresh and try another.' }, { status: 409 });
+    }
     logger.withContext({ op: 'event-purchase.rpc', ...safeLogErrorContext(rpcError) }).error('[EVENT-PURCHASE] RPC error');
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 });
   }
