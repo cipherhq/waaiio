@@ -150,6 +150,7 @@ export default function EventsPage() {
     const { data, error } = await supabase.from('event_ticket_types')
       .update({ is_active: false })
       .eq('id', typeId).eq('event_id', form.id)
+      .eq('is_active', true)
       .select('id').maybeSingle();
     if (error || !data) {
       alert('Failed to pause ticket type: ' + (error?.message || 'Ticket type not found. Refresh and try again.'));
@@ -230,6 +231,9 @@ export default function EventsPage() {
   }
 
   function removePendingTicketType(index: number) {
+    // Avoid editing a shifted index if a different buffered tier is removed.
+    setEditingTier(null);
+    setTierEditError(null);
     setPendingTicketTypes(prev => prev.filter((_, i) => i !== index));
   }
 
