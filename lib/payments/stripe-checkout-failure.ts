@@ -40,7 +40,7 @@ export function stripeCheckoutErrorEvidence(data: unknown): {
   if (typeof data.__waaiio_request_id === 'string' && SAFE_REQUEST_ID.test(data.__waaiio_request_id)) {
     evidence.requestId = data.__waaiio_request_id;
   }
-  if (Number.isInteger(data.__waaiio_http_status) && typeof data.__waaiio_http_status === 'number'
+  if (typeof data.__waaiio_http_status === 'number' && Number.isInteger(data.__waaiio_http_status)
       && data.__waaiio_http_status >= 400 && data.__waaiio_http_status <= 599) {
     evidence.httpStatus = data.__waaiio_http_status;
   }
