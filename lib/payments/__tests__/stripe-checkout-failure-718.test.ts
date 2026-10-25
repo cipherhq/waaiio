@@ -97,7 +97,7 @@ describe('Stripe Checkout failure evidence — strict redaction', () => {
     expect(evidence).toEqual({});
   });
   it('only permits fallback for explicitly rejected optional save-card fields', () => {
-    const rejected = (param: string, type='invalid_request_error') => ({ error: { type, param } });
+    const rejected = (param: string, type='invalid_request_error') => ({ error: { type, param }, __waaiio_http_status: 400 });
     for (const p of [
       'saved_payment_method_options',
       'saved_payment_method_options[payment_method_save]',
@@ -108,7 +108,8 @@ describe('Stripe Checkout failure evidence — strict redaction', () => {
     expect(mayFallbackFromSaveCardOptions(rejected('payment_intent_data[application_fee_amount]'), true)).toBe(false);
     expect(mayFallbackFromSaveCardOptions(rejected('saved_payment_method_options[payment_method_save]', 'authentication_error'), true)).toBe(false);
     expect(mayFallbackFromSaveCardOptions(rejected('saved_payment_method_options[payment_method_save]'), false)).toBe(false);
-    expect(mayFallbackFromSaveCardOptions({ error: { type: 'invalid_request_error', message: 'saved_payment_method_options private@example.com' } }, true)).toBe(false);
+    expect(mayFallbackFromSaveCardOptions({ error: { type: 'invalid_request_error', message: 'saved_payment_method_options private@example.com' }, __waaiio_http_status: 400 }, true)).toBe(false);
+    expect(mayFallbackFromSaveCardOptions({ error: { type: 'invalid_request_error', param: 'saved_payment_method_options' }, __waaiio_http_status: 500 }, true)).toBe(false);
   });
 });
 
