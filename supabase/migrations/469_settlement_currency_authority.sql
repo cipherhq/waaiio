@@ -7,6 +7,11 @@ DO $$ BEGIN
  OR to_regprocedure('public.confirm_manual_settlement(uuid,text,boolean,uuid)') IS NULL
  OR to_regprocedure('public.force_settle_executed_transfer(uuid,text,text,boolean,uuid)') IS NULL
  OR to_regprocedure('public.finalize_refund_execution(uuid)') IS NULL
+ OR NOT EXISTS (
+   SELECT 1 FROM pg_indexes WHERE schemaname='public'
+    AND indexname='idx_business_payouts_period_unique'
+    AND indexdef LIKE '%COALESCE%currency%'
+ )
  THEN RAISE EXCEPTION 'M469 dependencies M453 M454 M466 M468 not ready'; END IF;
 END $$;
 
@@ -361,21 +366,38 @@ BEGIN
     UPDATE public.reservations SET deposit_status = 'refunded' WHERE id = v_payment.reservation_id;
   END IF;
 
-  IF v_payment.booking_id IS NOT NULL THEN v_fee_entity_col := 'booking_id'; v_fee_entity_val := v_payment.booking_id;
-  ELSIF v_payment.invoice_id IS NOT NULL THEN v_fee_entity_col := 'invoice_id'; v_fee_entity_val := v_payment.invoice_id;
-  ELSIF v_payment.order_id IS NOT NULL THEN v_fee_entity_col := 'order_id'; v_fee_entity_val := v_payment.order_id;
+  -- Scope fee reversal to the ORIGINAL payment, never every payment linked to
+  -- the same booking, invoice or order (possibly a different currency).
+  IF EXISTS (
+    SELECT 1 FROM public.platform_fees f
+    WHERE f.business_id=v_refund.business_id AND f.payment_id IS NULL
+      AND ((v_payment.booking_id IS NOT NULL AND f.booking_id=v_payment.booking_id)
+        OR (v_payment.invoice_id IS NOT NULL AND f.invoice_id=v_payment.invoice_id)
+        OR (v_payment.order_id IS NOT NULL AND f.order_id=v_payment.order_id))
+  ) THEN
+    RAISE EXCEPTION 'refund_fee_payment_provenance_required' USING ERRCODE='P0001';
   END IF;
 
-  IF v_fee_entity_col IS NOT NULL AND v_fee_entity_val IS NOT NULL THEN
-    IF v_is_fully_refunded THEN
-      EXECUTE format('UPDATE public.platform_fees SET fee_total = 0, refunded_at = now() WHERE %I = $1 AND refunded_at IS NULL', v_fee_entity_col) USING v_fee_entity_val;
-    ELSE
-      EXECUTE format('SELECT id, fee_total, fee_percentage, fee_flat, transaction_amount FROM public.platform_fees WHERE %I = $1 AND refunded_at IS NULL LIMIT 1', v_fee_entity_col) INTO v_fee USING v_fee_entity_val;
-      IF v_fee IS NOT NULL AND v_fee.transaction_amount > 0 THEN
-        v_fee_reduction := ROUND((v_fee.fee_percentage / 100.0 * v_refund.amount) + (v_fee.fee_flat::NUMERIC * v_refund.amount / v_fee.transaction_amount));
-        UPDATE public.platform_fees SET fee_total = GREATEST(0, fee_total - v_fee_reduction) WHERE id = v_fee.id;
+  IF v_is_fully_refunded THEN
+    UPDATE public.platform_fees SET fee_total=0,refunded_at=now()
+    WHERE payment_id=v_payment.id AND business_id=v_refund.business_id
+      AND refunded_at IS NULL;
+  ELSE
+    FOR v_fee IN SELECT id,fee_total,fee_percentage,fee_flat,transaction_amount
+      FROM public.platform_fees
+      WHERE payment_id=v_payment.id AND business_id=v_refund.business_id
+        AND refunded_at IS NULL
+    LOOP
+      IF v_fee.transaction_amount > 0 THEN
+        v_fee_reduction := ROUND(
+          (v_fee.fee_percentage / 100.0 * v_refund.amount)
+          + (v_fee.fee_flat::NUMERIC * v_refund.amount / v_fee.transaction_amount)
+        );
+        UPDATE public.platform_fees
+        SET fee_total=GREATEST(0,fee_total-v_fee_reduction)
+        WHERE id=v_fee.id;
       END IF;
-    END IF;
+    END LOOP;
   END IF;
 
   IF EXISTS (SELECT 1 FROM public.platform_fees f WHERE f.payment_id=v_payment.id
@@ -384,6 +406,15 @@ BEGIN
       AND bp.status='paid' AND (bp.currency IS NULL OR bp.currency !~ '^[A-Z]{3}$')
       AND bp.period_start <= v_payment.created_at::date AND bp.period_end >= v_payment.created_at::date) THEN
       RAISE EXCEPTION 'refund_payout_currency_reconciliation_required' USING ERRCODE='P0001';
+    END IF;
+    -- Overlapping same-currency paid periods are ambiguous without an explicit
+    -- payment-to-payout ledger link. Never choose an arbitrary candidate.
+    IF (SELECT COUNT(*) FROM public.business_payouts bp
+        WHERE bp.business_id=v_refund.business_id AND bp.status='paid'
+          AND bp.currency=v_payment_currency
+          AND bp.period_start <= v_payment.created_at::date
+          AND bp.period_end >= v_payment.created_at::date) > 1 THEN
+      RAISE EXCEPTION 'refund_payout_allocation_ambiguous' USING ERRCODE='P0001';
     END IF;
     SELECT bp.id INTO v_paid_payout FROM public.business_payouts bp
     WHERE bp.business_id=v_refund.business_id AND bp.status='paid'
