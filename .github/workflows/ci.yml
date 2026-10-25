@@ -4096,6 +4096,38 @@ jobs:
           fi
           echo "✅ M444 reject payout RPC DB tests complete — zero skips, zero failures."
 
+      # M468: Exercise original M159 -> M466 -> M468 SQL on isolated PostgreSQL.
+      # Fail on skipped tests. Never reuse staging, production or the shared CI fixture.
+      - name: M468 payout currency uniqueness (disposable PG)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m468_test
+          createdb --maintenance-db=waaiio_test waaiio_m468_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m468_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m468_test
+          export REQUIRE_PG_TESTS=true
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/m468-payout-dedup.pg.test.ts 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$CODE" -ne 0 ]; then exit "$CODE"; fi
+          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* skipped'; then
+            echo "M468 required PostgreSQL test was skipped"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q 'passed'; then
+            echo "M468 produced no passing tests"
+            exit 1
+          fi
+          echo "M468 index tests passed — zero skips."
+
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
