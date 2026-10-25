@@ -154,6 +154,25 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
   expect((await finish(rid)).rows[0].result.finalized).toBe(true);
   expect((await run('SELECT count(*)::int n FROM public.payout_adjustments')).rows[0].n).toBe(0);
  });
+ it('supports single-payment legacy booking fee without changing its payment_id',async()=>{
+  const pid=await payment('USD');
+  await run('UPDATE public.platform_fees SET payment_id=NULL,fee_percentage=10 WHERE payment_id=$1',[pid]);
+  const rid=await refund(pid,20);
+  expect((await finish(rid)).rows[0].result.finalized).toBe(true);
+  const f=(await run('SELECT payment_id,fee_total FROM public.platform_fees')).rows[0];
+  expect(f.payment_id).toBeNull();
+  expect(Number(f.fee_total)).toBe(8);
+ });
+ it('blocks ambiguous legacy fee linked to a shared booking',async()=>{
+  const pid=await payment('USD');
+  const booking=(await run('SELECT booking_id FROM public.payments WHERE id=$1',[pid])).rows[0].booking_id;
+  await run('UPDATE public.platform_fees SET payment_id=NULL WHERE payment_id=$1',[pid]);
+  await run("INSERT INTO public.payments(id,business_id,booking_id,currency,amount,status,gateway_reference,created_at) VALUES($1,$2,$3,'USD',100,'paid','SECOND','2026-10-02')",[randomUUID(),B,booking]);
+  const rid=await refund(pid,20);
+  await expect(finish(rid)).rejects.toThrow(/refund_fee_payment_provenance_required/);
+  expect((await run('SELECT refund_amount FROM public.payments WHERE id=$1',[pid])).rows[0].refund_amount).toBeNull();
+  expect((await run('SELECT status FROM public.refunds WHERE id=$1',[rid])).rows[0].status).toBe('provider_success_unfinalized');
+ });
  it('refund missing currency rolls back payment and remains unfinalized',async()=>{
   const pid=await payment(null);const rid=await refund(pid);
   await expect(finish(rid)).rejects.toThrow(/refund_currency_unclassified/);
