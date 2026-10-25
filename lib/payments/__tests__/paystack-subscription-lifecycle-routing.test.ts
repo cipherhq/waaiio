@@ -24,6 +24,7 @@ import { createHmac } from 'crypto';
 type MockRow = Record<string, unknown> | null;
 let platformResult: { data: MockRow; error: { message: string } | null } = { data: null, error: null };
 let customerResult: { data: MockRow; error: { message: string } | null } = { data: null, error: null };
+let chargeResult: { data: MockRow; error: { message: string } | null } = { data: null, error: null };
 let claimResult: { data: unknown; error: unknown } = { data: { claimed: true, claim_token: 'tok-1' }, error: null };
 
 const rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> = [];
@@ -35,6 +36,7 @@ const notifyCalls: Array<Record<string, unknown>> = [];
 function reset() {
   platformResult = { data: null, error: null };
   customerResult = { data: null, error: null };
+  chargeResult = { data: null, error: null };
   claimResult = { data: { claimed: true, claim_token: 'tok-1' }, error: null };
   rpcCalls.length = 0;
   updateCalls.length = 0;
@@ -67,6 +69,7 @@ const mockSupabase = {
     chain.maybeSingle = vi.fn(async () => {
       if (table === 'subscriptions') return platformResult;
       if (table === 'customer_subscriptions') return customerResult;
+      if (table === 'subscription_charges') return chargeResult;
       return { data: null, error: null };
     });
     chain.update = vi.fn((data: Record<string, unknown>, opts?: Record<string, unknown>) => {
@@ -555,5 +558,93 @@ describe('CTO-required additional coverage', () => {
     const update = updateCalls.find(c => c.table === 'customer_subscriptions');
     expect(update!.data.cancelled_at).toBeTruthy();
     expect(update!.data).not.toHaveProperty('status');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 25–27. Idempotent failure counting (CTO blocker)
+// ═══════════════════════════════════════════════════════════
+
+describe('Idempotent customer failure counting', () => {
+  const customerSub = {
+    id: 'cs_idem', business_id: 'cb_idem', user_id: 'cu_idem', service_id: 'sv_idem',
+    amount: '5000', currency: 'NGN', customer_phone: '+2341234567890',
+    customer_name: 'Idem Customer', failure_count: 1,
+    gateway_subscription_code: 'SUB_IDEM', next_charge_at: '2026-11-15',
+    status: 'active',
+  };
+
+  it('25. Crash-replay: failure_count increments exactly once', async () => {
+    // FIRST ATTEMPT: fresh event, no existing charge record
+    customerResult = { data: { ...customerSub }, error: null };
+    chargeResult = { data: null, error: null }; // No existing charge
+    const res1 = await POST(makeReq('invoice.payment_failed', {
+      subscription_code: 'SUB_IDEM',
+      invoice_code: 'INV_IDEM_1',
+    }) as never);
+    expect(res1.status).toBe(200);
+    // First attempt: charge inserted + failure_count incremented
+    const chargeInsert1 = insertCalls.find(c => c.table === 'subscription_charges');
+    expect(chargeInsert1).toBeTruthy();
+    expect(chargeInsert1!.data.gateway_reference).toContain('paystack-invoice.payment_failed-SUB_IDEM-INV_IDEM_1');
+    const update1 = updateCalls.find(c => c.table === 'customer_subscriptions');
+    expect(update1!.data.failure_count).toBe(2); // 1 + 1
+
+    // SECOND ATTEMPT (replay): same event, charge record now exists
+    reset();
+    customerResult = { data: { ...customerSub, failure_count: 2 }, error: null }; // DB already updated
+    chargeResult = { data: { id: 'existing-charge-id' }, error: null }; // Charge exists!
+    claimResult = { data: { claimed: true, claim_token: 'tok-replay' }, error: null };
+    const res2 = await POST(makeReq('invoice.payment_failed', {
+      subscription_code: 'SUB_IDEM',
+      invoice_code: 'INV_IDEM_1', // Same invoice
+    }) as never);
+    expect(res2.status).toBe(200);
+    // Replay: NO increment, NO charge insert, NO notification
+    const update2 = updateCalls.find(c => c.table === 'customer_subscriptions');
+    expect(update2).toBeUndefined(); // No update on replay
+    const chargeInsert2 = insertCalls.find(c => c.table === 'subscription_charges');
+    expect(chargeInsert2).toBeUndefined(); // No duplicate charge
+  });
+
+  it('26. Replay does not send duplicate customer notification', async () => {
+    // Simulate replay where charge record already exists
+    customerResult = { data: { ...customerSub }, error: null };
+    chargeResult = { data: { id: 'existing-charge' }, error: null };
+    await POST(makeReq('invoice.payment_failed', {
+      subscription_code: 'SUB_IDEM',
+      invoice_code: 'INV_IDEM_2',
+    }) as never);
+    // No notification on replay
+    expect(notifyCalls).toHaveLength(0);
+    // No alert on replay
+    expect(alertCalls).toHaveLength(0);
+  });
+
+  it('27. Charge insert failure prevents failure_count increment', async () => {
+    // Simulate charge insert failing
+    const originalFrom = mockSupabase.from;
+    mockSupabase.from = vi.fn((table: string) => {
+      const result = originalFrom(table);
+      if (table === 'subscription_charges') {
+        const origInsert = result.insert;
+        result.insert = vi.fn(() => ({ error: { message: 'write conflict' } }));
+        // Keep maybeSingle working for the charge lookup
+        result.maybeSingle = vi.fn(async () => chargeResult);
+      }
+      return result;
+    });
+    customerResult = { data: { ...customerSub }, error: null };
+    chargeResult = { data: null, error: null }; // No existing charge
+    const res = await POST(makeReq('invoice.payment_failed', {
+      subscription_code: 'SUB_IDEM',
+      invoice_code: 'INV_IDEM_3',
+    }) as never);
+    // Should return 500 — charge insert failed, cannot safely increment
+    expect(res.status).toBe(500);
+    // failure_count NOT incremented (no durable marker)
+    const update = updateCalls.find(c => c.table === 'customer_subscriptions');
+    expect(update).toBeUndefined();
+    mockSupabase.from = originalFrom;
   });
 });

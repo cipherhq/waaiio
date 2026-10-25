@@ -388,26 +388,32 @@ export async function POST(request: NextRequest) {
             // Cron retry-failed-charges retries past_due subs; cancels at failure_count >= 3.
             const cs = customerResult.data!;
             if (['active', 'past_due'].includes(cs.status)) {
-              const newFailCount = (cs.failure_count || 0) + 1;
+              // ── Idempotent failure recording ──
+              // If a previous attempt incremented failure_count but crashed before
+              // complete_webhook_event, the claim becomes stale and Paystack retries.
+              // Use the charge record (keyed by subEventId in gateway_reference) as
+              // the durable marker: if it exists, this event was already processed.
+              const { data: existingCharge, error: chargeLookupErr } = await supabase
+                .from('subscription_charges')
+                .select('id')
+                .eq('gateway_reference', subEventId)
+                .maybeSingle();
 
-              // Durable state change: failure_count + status escalation.
-              // Uses the webhook claim as the idempotency boundary —
-              // a retry that reclaims this event will re-read the current
-              // failure_count from DB, so it converges correctly.
-              const { error: updateErr } = await supabase
-                .from('customer_subscriptions')
-                .update({
-                  failure_count: newFailCount,
-                  status: newFailCount >= 3 ? 'past_due' : cs.status,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', cs.id);
-
-              if (updateErr) {
-                logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer update failed', { error: updateErr.message, subscriptionId: cs.id });
-                // processingSucceeded stays false — event retried
+              if (chargeLookupErr) {
+                logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: charge lookup failed', { error: chargeLookupErr.message });
+                // Cannot determine if already processed — fail safely for retry
+              } else if (existingCharge) {
+                // Already processed by a prior attempt that crashed before completion.
+                // Skip increment and side effects — just complete the webhook event.
+                processingSucceeded = true;
+                logger.info('[PAYSTACK-WEBHOOK] invoice.payment_failed: idempotent replay — charge record exists', {
+                  subCode, subscriptionId: cs.id, chargeId: existingCharge.id,
+                });
               } else {
-                // Log failed charge (best-effort — update already durable)
+                // First time processing this event.
+                // Insert the charge record FIRST (durable marker), then increment failure_count.
+                const newFailCount = (cs.failure_count || 0) + 1;
+
                 const { error: chargeErr } = await supabase.from('subscription_charges').insert({
                   subscription_id: cs.id,
                   business_id: cs.business_id || '',
@@ -416,53 +422,75 @@ export async function POST(request: NextRequest) {
                   currency: (data.currency as string) || 'NGN',
                   status: 'failed',
                   gateway: 'paystack',
+                  gateway_reference: subEventId,
                   failure_reason: (data.gateway_response as string) || 'Payment failed',
                   created_at: new Date().toISOString(),
                 });
+
                 if (chargeErr) {
-                  logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed: charge log insert failed (non-critical)', { error: chargeErr.message });
-                }
+                  logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: charge insert failed', { error: chargeErr.message });
+                  // Cannot safely increment without durable marker — fail for retry
+                } else {
+                  // Charge record is durable — now safe to increment failure_count.
+                  // On replay, the charge lookup above will detect the existing record.
+                  const { error: updateErr } = await supabase
+                    .from('customer_subscriptions')
+                    .update({
+                      failure_count: newFailCount,
+                      status: newFailCount >= 3 ? 'past_due' : cs.status,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', cs.id);
 
-                // Alert business owner (best-effort)
-                if (cs.business_id) {
-                  try {
-                    await createAlert(supabase, {
-                      businessId: cs.business_id,
-                      type: 'subscription_payment_failed',
-                      severity: newFailCount >= 3 ? 'critical' : 'warning',
-                      title: 'Subscription Payment Failed',
-                      message: `Recurring payment failed (attempt ${newFailCount}). ${newFailCount >= 3 ? 'Subscription is now past due.' : 'We will retry.'}`,
-                      metadata: { subscriptionId: cs.id, failureCount: newFailCount, gateway: 'paystack' },
-                    });
-                  } catch (alertErr) {
-                    logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer alert failed (non-critical)', {
-                      error: alertErr instanceof Error ? alertErr.message : 'unknown',
+                  if (updateErr) {
+                    logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer update failed', { error: updateErr.message, subscriptionId: cs.id });
+                    // Charge record exists but failure_count not incremented.
+                    // On retry, charge lookup finds existing record → skips increment.
+                    // This leaves failure_count potentially under-counted by 1 for this event,
+                    // but avoids double-increment. Manual reconciliation if needed.
+                  } else {
+                    // Alert business owner (best-effort — durable state already committed)
+                    if (cs.business_id) {
+                      try {
+                        await createAlert(supabase, {
+                          businessId: cs.business_id,
+                          type: 'subscription_payment_failed',
+                          severity: newFailCount >= 3 ? 'critical' : 'warning',
+                          title: 'Subscription Payment Failed',
+                          message: `Recurring payment failed (attempt ${newFailCount}). ${newFailCount >= 3 ? 'Subscription is now past due.' : 'We will retry.'}`,
+                          metadata: { subscriptionId: cs.id, failureCount: newFailCount, gateway: 'paystack' },
+                        });
+                      } catch (alertErr) {
+                        logger.warn('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer alert failed (non-critical)', {
+                          error: alertErr instanceof Error ? alertErr.message : 'unknown',
+                        });
+                      }
+                    }
+
+                    // Notify customer via WhatsApp (best-effort)
+                    if (cs.customer_phone && cs.business_id) {
+                      try {
+                        await notifyCustomerChargeFailed(supabase, {
+                          subscriptionId: cs.id,
+                          businessId: cs.business_id,
+                          customerPhone: cs.customer_phone,
+                          amount: cs.amount,
+                          currency: cs.currency || 'NGN',
+                          serviceId: cs.service_id,
+                          gateway: 'paystack',
+                        });
+                      } catch (notifyErr) {
+                        logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer notification failed (non-critical)', notifyErr);
+                      }
+                    }
+
+                    processingSucceeded = true;
+                    logger.info('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer failure recorded', {
+                      subCode, subscriptionId: cs.id, failureCount: newFailCount,
+                      escalated: newFailCount >= 3,
                     });
                   }
                 }
-
-                // Notify customer via WhatsApp (best-effort)
-                if (cs.customer_phone && cs.business_id) {
-                  try {
-                    await notifyCustomerChargeFailed(supabase, {
-                      subscriptionId: cs.id,
-                      businessId: cs.business_id,
-                      customerPhone: cs.customer_phone,
-                      amount: cs.amount,
-                      currency: cs.currency || 'NGN',
-                      serviceId: cs.service_id,
-                      gateway: 'paystack',
-                    });
-                  } catch (notifyErr) {
-                    logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer notification failed (non-critical)', notifyErr);
-                  }
-                }
-
-                processingSucceeded = true;
-                logger.info('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer failure recorded', {
-                  subCode, subscriptionId: cs.id, failureCount: newFailCount,
-                  escalated: newFailCount >= 3,
-                });
               }
             } else {
               processingSucceeded = true; // Terminal state — accept idempotently
