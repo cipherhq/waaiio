@@ -7,6 +7,7 @@ import {
 import { handleCorrectionReentry } from './correction-reentry';
 import { getFlowCopy, fillFlowCopy } from '../flows/flow-localization';
 import { logger } from '@/lib/logger';
+import { deriveReentryProvenance } from '../reentry-context';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -26,35 +27,25 @@ export async function safeFlowCleanup(
   let ok = true;
 
   if (sessionData.booking_id) {
-    // Only cancel PENDING bookings during navigation cleanup.
-    // Confirmed bookings represent completed customer actions — they must not
-    // be undone by typing Menu/Cancel/Exit. The dedicated booking-management
-    // cancellation flow (my-bookings.ts) handles intentional confirmed-booking
-    // cancellation with its own authorization and refund rules.
-    const { data: booking } = await supabase
-      .from('bookings')
-      .select('id, status')
-      .eq('id', sessionData.booking_id as string)
-      .maybeSingle();
-
-    if (booking && booking.status === 'pending') {
-      const { data: result, error } = await supabase.rpc('cancel_booking_with_release', {
-        p_booking_id: sessionData.booking_id as string,
-        p_cancelled_by: 'guest',
-        p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
-      });
-      if (error) {
-        logger.error('[NAV-CLEANUP] cancel_booking_with_release RPC failed', { bookingId: sessionData.booking_id, error: error.message });
-        ok = false;
-      } else if (result && !result.cancelled) {
-        // RPC refused (ownership mismatch, concurrent status change, etc.)
-        logger.info('[NAV-CLEANUP] pending booking not cancellable', { bookingId: sessionData.booking_id, reason: result?.reason });
-      }
-    } else if (booking) {
-      // Confirmed/completed/cancelled — preserve, do not cancel via navigation
-      logger.info('[NAV-CLEANUP] booking is not pending, preserving', { bookingId: sessionData.booking_id, status: booking.status });
+    // Atomic pending-only cancellation via M467 RPC.
+    // The RPC locks the booking row with FOR UPDATE, checks status = 'pending',
+    // verifies ownership, then delegates to cancel_booking_with_release for
+    // canonical resource release. Confirmed bookings are atomically preserved.
+    const { data: result, error } = await supabase.rpc('cancel_pending_booking_for_navigation', {
+      p_booking_id: sessionData.booking_id as string,
+      p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
+    });
+    if (error) {
+      logger.error('[NAV-CLEANUP] cancel_pending_booking_for_navigation RPC failed', { bookingId: sessionData.booking_id, error: error.message });
+      ok = false;
+    } else if (result === null || result === undefined) {
+      // Unexpected NULL response — treat as failure, preserve session
+      logger.error('[NAV-CLEANUP] cancel_pending_booking_for_navigation returned null', { bookingId: sessionData.booking_id });
+      ok = false;
+    } else if (!result.cancelled) {
+      // not_pending, not_owner, not_found, missing_params — booking preserved
+      logger.info('[NAV-CLEANUP] booking preserved during navigation', { bookingId: sessionData.booking_id, reason: result.reason, status: result.status });
     }
-    // booking not found — nothing to clean up
   }
 
   if (sessionData.order_id) {
@@ -199,37 +190,39 @@ export async function handleEscapeHatch(
     // ── "cancel" → safely abandon flow and return to business menu ──
     if (isCancel && session.business_id) {
       const bizId = session.business_id;
+      // ACC-204: Preserve business provenance — prevents trust laundering via cancel
+      const cancelProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
       const cleanupOk = await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
 
       if (!cleanupOk) {
-        // RPC failed — don't tell the customer it succeeded. Keep session active.
         const lang = session.session_data?._detected_language as string || 'en';
         await messageSender.sendText({
           to: from,
-          text: getFlowCopy(lang, 'nav.cancel_retry') || 'Something went wrong while cancelling. Please try again or type "exit" to leave.',
+          text: getFlowCopy(lang, 'nav.cancel_retry'),
         });
         return { handled: true };
       }
 
       await deactivateSession(session.id);
-      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
+      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, cancelProvenance);
       return { handled: true };
     }
 
     // ── "menu" / "restart" / "start over" → restart current business menu ──
     if (isMenuWord && session.business_id) {
       const bizId = session.business_id;
+      const menuProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
       const menuCleanupOk = await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
       if (!menuCleanupOk) {
         const lang = session.session_data?._detected_language as string || 'en';
         await messageSender.sendText({
           to: from,
-          text: getFlowCopy(lang, 'nav.cancel_retry') || 'Something went wrong. Please try again or type "exit" to leave.',
+          text: getFlowCopy(lang, 'nav.cancel_retry'),
         });
         return { handled: true };
       }
       await deactivateSession(session.id);
-      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
+      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, menuProvenance);
       return { handled: true };
     }
 
@@ -321,7 +314,7 @@ export async function handleEscapeHatch(
         const lang = session.session_data?._detected_language as string || 'en';
         await messageSender.sendText({
           to: from,
-          text: getFlowCopy(lang, 'nav.cancel_retry') || 'Something went wrong. Please try again or type "exit" to leave.',
+          text: getFlowCopy(lang, 'nav.cancel_retry'),
         });
         return { handled: true };
       }

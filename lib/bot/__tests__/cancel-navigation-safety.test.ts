@@ -39,14 +39,13 @@ describe('recognizeNavigationCommand', () => {
 // ── 3. safeFlowCleanup uses authoritative RPCs ──
 
 describe('safeFlowCleanup — authoritative cancellation', () => {
-  it('calls cancel_booking_with_release for bookings', async () => {
+  it('calls cancel_pending_booking_for_navigation for bookings', async () => {
     const src = (await import('fs')).readFileSync('lib/bot/handlers/escape-hatches.ts', 'utf-8');
     // Find the safeFlowCleanup function
     const fnStart = src.indexOf('export async function safeFlowCleanup');
     const fnEnd = src.indexOf('\ntype TestableCommandPattern', fnStart);
     const fnBody = src.slice(fnStart, fnEnd);
-    expect(fnBody).toContain("cancel_booking_with_release");
-    expect(fnBody).toContain("p_cancelled_by: 'guest'");
+    expect(fnBody).toContain("cancel_pending_booking_for_navigation");
     // No direct booking status writes in safeFlowCleanup (select is OK, update is not)
     expect(fnBody).not.toMatch(/\.from\(['"]bookings['"]\)[\s\S]{0,30}\.update\(\s*\{[\s\S]{0,50}status/);
     expect(fnBody).not.toMatch(/\.from\(['"]orders['"]\)[\s\S]*?\.update\(\s*\{[\s\S]*?status/);
@@ -199,15 +198,16 @@ describe('safeFlowCleanup — executable behavior', async () => {
     } as unknown as import('@supabase/supabase-js').SupabaseClient;
   }
 
-  it('calls cancel_booking_with_release with p_cancelled_by=guest (valid enum)', async () => {
+  it('calls cancel_pending_booking_for_navigation with correct params', async () => {
     const sb = mockSupabase({
-      cancel_booking_with_release: { data: { cancelled: true }, error: null },
+      cancel_pending_booking_for_navigation: { data: { cancelled: true }, error: null },
     });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-1' }, 'user-1');
     expect(ok).toBe(true);
-    expect(sb.rpc).toHaveBeenCalledWith('cancel_booking_with_release', expect.objectContaining({
-      p_cancelled_by: 'guest', // NOT 'customer' — verified against cancelled_by enum
-    }));
+    expect(sb.rpc).toHaveBeenCalledWith('cancel_pending_booking_for_navigation', {
+      p_booking_id: 'bk-1',
+      p_expected_user_id: 'user-1',
+    });
   });
 
   it('calls cancel_order_immediate with p_reason=customer_cancel', async () => {
@@ -224,7 +224,7 @@ describe('safeFlowCleanup — executable behavior', async () => {
 
   it('returns false when booking RPC fails (transport error)', async () => {
     const sb = mockSupabase({
-      cancel_booking_with_release: { data: null, error: { message: 'connection reset' } },
+      cancel_pending_booking_for_navigation: { data: null, error: { message: 'connection reset' } },
     });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-fail' }, 'user-1');
     expect(ok).toBe(false);
@@ -238,91 +238,50 @@ describe('safeFlowCleanup — executable behavior', async () => {
     expect(ok).toBe(false);
   });
 
-  it('skips confirmed bookings — only cancels pending (navigation safety)', async () => {
-    // Mock: booking query returns confirmed status → RPC should NOT be called
-    const rpcCalls: string[] = [];
-    const sb = {
-      rpc: vi.fn(async (fn: string) => { rpcCalls.push(fn); return { data: { cancelled: true }, error: null }; }),
-      from: vi.fn((table: string) => {
-        if (table === 'bookings') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                maybeSingle: vi.fn(async () => ({ data: { id: 'bk-confirmed', status: 'confirmed' }, error: null })),
-              })),
-            })),
-          };
-        }
-        return { update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: null })) })) })) };
-      }),
-    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+  it('preserves confirmed bookings atomically via RPC (not_pending response)', async () => {
+    // The RPC itself checks status atomically with FOR UPDATE
+    const sb = mockSupabase({
+      cancel_pending_booking_for_navigation: { data: { cancelled: false, reason: 'not_pending', status: 'confirmed' }, error: null },
+    });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-confirmed' }, 'user-1');
-    expect(ok).toBe(true);
-    expect(rpcCalls).not.toContain('cancel_booking_with_release'); // RPC NOT called
+    expect(ok).toBe(true); // Confirmed booking preserved — not a failure
+    expect(sb.rpc).toHaveBeenCalledWith('cancel_pending_booking_for_navigation', expect.anything());
   });
 
-  it('cancels pending bookings via RPC', async () => {
-    const rpcCalls: Array<{fn: string; params: Record<string, unknown>}> = [];
-    const sb = {
-      rpc: vi.fn(async (fn: string, params: Record<string, unknown>) => { rpcCalls.push({fn, params}); return { data: { cancelled: true }, error: null }; }),
-      from: vi.fn((table: string) => {
-        if (table === 'bookings') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                maybeSingle: vi.fn(async () => ({ data: { id: 'bk-pending', status: 'pending' }, error: null })),
-              })),
-            })),
-          };
-        }
-        return { update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: null })) })) })) };
-      }),
-    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+  it('cancels pending bookings via atomic RPC', async () => {
+    const sb = mockSupabase({
+      cancel_pending_booking_for_navigation: { data: { cancelled: true, session_released: false }, error: null },
+    });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-pending' }, 'user-1');
     expect(ok).toBe(true);
-    expect(rpcCalls.length).toBe(1);
-    expect(rpcCalls[0].fn).toBe('cancel_booking_with_release');
+    expect(sb.rpc).toHaveBeenCalledWith('cancel_pending_booking_for_navigation', {
+      p_booking_id: 'bk-pending',
+      p_expected_user_id: 'user-1',
+    });
   });
 
-  it('handles not_found booking gracefully', async () => {
-    const sb = {
-      rpc: vi.fn(async () => ({ data: null, error: null })),
-      from: vi.fn((table: string) => {
-        if (table === 'bookings') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                maybeSingle: vi.fn(async () => ({ data: null, error: null })), // not found
-              })),
-            })),
-          };
-        }
-        return { update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: null })) })) })) };
-      }),
-    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+  it('handles not_found booking from RPC gracefully', async () => {
+    const sb = mockSupabase({
+      cancel_pending_booking_for_navigation: { data: { cancelled: false, reason: 'not_found' }, error: null },
+    });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-gone' }, 'user-1');
-    expect(ok).toBe(true); // Not found = nothing to clean
-    expect(sb.rpc).not.toHaveBeenCalled();
+    expect(ok).toBe(true); // Not found = booking preserved, not a cleanup failure
   });
 
   it('handles RPC not_owner response without false success', async () => {
-    const sb = {
-      rpc: vi.fn(async () => ({ data: { cancelled: false, reason: 'not_owner' }, error: null })),
-      from: vi.fn((table: string) => {
-        if (table === 'bookings') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                maybeSingle: vi.fn(async () => ({ data: { id: 'bk-other', status: 'pending' }, error: null })),
-              })),
-            })),
-          };
-        }
-        return { update: vi.fn(() => ({ eq: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: null })) })) })) };
-      }),
-    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+    const sb = mockSupabase({
+      cancel_pending_booking_for_navigation: { data: { cancelled: false, reason: 'not_owner' }, error: null },
+    });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-other' }, 'user-1');
     expect(ok).toBe(true); // not_owner = booking preserved, not a cleanup failure
+  });
+
+  it('handles null RPC response as failure', async () => {
+    const sb = mockSupabase({
+      cancel_pending_booking_for_navigation: { data: null, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-null' }, 'user-1');
+    expect(ok).toBe(false); // Null response = treat as failure
   });
 
   it('returns true when order has successful payment (preserved)', async () => {
@@ -342,7 +301,7 @@ describe('safeFlowCleanup — executable behavior', async () => {
 
   it('handles both booking AND order in same session', async () => {
     const sb = mockSupabase({
-      cancel_booking_with_release: { data: { cancelled: true }, error: null },
+      cancel_pending_booking_for_navigation: { data: { cancelled: true }, error: null },
       cancel_order_immediate: { data: { cancelled: true, stock_restored: true }, error: null },
     });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-both', order_id: 'ord-both' }, 'user-1');
@@ -352,7 +311,7 @@ describe('safeFlowCleanup — executable behavior', async () => {
 
   it('booking failure does not prevent order cleanup attempt', async () => {
     const sb = mockSupabase({
-      cancel_booking_with_release: { data: null, error: { message: 'db error' } },
+      cancel_pending_booking_for_navigation: { data: null, error: { message: 'db error' } },
       cancel_order_immediate: { data: { cancelled: true }, error: null },
     });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-err', order_id: 'ord-ok' }, 'user-1');
