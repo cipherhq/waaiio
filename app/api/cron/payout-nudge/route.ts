@@ -91,12 +91,12 @@ export async function GET(request: NextRequest) {
       }));
 
       const [{ data: oldPayouts, error: oldPayoutError }, { data: oldAdjustments, error: oldAdjustmentError }] = await Promise.all([
-        supabase.from('business_payouts').select('id').eq('business_id', biz.id).is('currency', null).limit(1),
-        supabase.from('payout_adjustments').select('id').eq('business_id', biz.id).is('currency', null).limit(1),
+        supabase.from('business_payouts').select('id').eq('business_id', biz.id).is('currency', null).maybeSingle(),
+        supabase.from('payout_adjustments').select('id').eq('business_id', biz.id).is('currency', null).maybeSingle(),
       ]);
       const currencies = getEligibleCurrencies(fees);
       const primaryCurrency = ({ US: 'USD', GB: 'GBP', CA: 'CAD', NG: 'NGN', GH: 'GHS' } as Record<string, string>)[biz.country_code || ''];
-      if (feesError || oldPayoutError || oldAdjustmentError || oldPayouts?.length || oldAdjustments?.length ||
+      if (feesError || oldPayoutError || oldAdjustmentError || oldPayouts || oldAdjustments ||
           fees.some(f => f.is_direct_transfer === false && !f.currency) ||
           !primaryCurrency || currencies.length !== 1 || currencies[0] !== primaryCurrency) continue;
       const { eligible, netAvailable: balance } = computePlatformHeldTotals(fees, primaryCurrency);

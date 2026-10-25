@@ -90,10 +90,10 @@ export async function POST(request: NextRequest) {
       }
       // Never generate for a merchant with unresolved historical currency.
       const [{ data: legacyPayouts, error: legacyPayoutError }, { data: legacyAdjustments, error: legacyAdjustmentError }] = await Promise.all([
-        supabase.from('business_payouts').select('id').eq('business_id', biz.id).is('currency', null).limit(1),
-        supabase.from('payout_adjustments').select('id').eq('business_id', biz.id).is('currency', null).limit(1),
+        supabase.from('business_payouts').select('id').eq('business_id', biz.id).is('currency', null).maybeSingle(),
+        supabase.from('payout_adjustments').select('id').eq('business_id', biz.id).is('currency', null).maybeSingle(),
       ]);
-      if (legacyPayoutError || legacyAdjustmentError || legacyPayouts?.length || legacyAdjustments?.length) {
+      if (legacyPayoutError || legacyAdjustmentError || legacyPayouts || legacyAdjustments) {
         logger.warn('[PAYOUT] Historical currency requires reconciliation', { business_id: biz.id });
         failed++;
         continue;
