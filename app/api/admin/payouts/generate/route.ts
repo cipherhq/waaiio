@@ -77,11 +77,10 @@ export async function POST(request: NextRequest) {
       // Check if payout already exists for this period
       const { data: existing, error: existingError } = await supabase
         .from('business_payouts')
-        .select('id')
+        .select('id, currency')
         .eq('business_id', biz.id)
         .eq('period_start', periodStartStr)
-        .eq('period_end', periodEndStr)
-        .maybeSingle();
+        .eq('period_end', periodEndStr);
 
       // Fail closed: if we can't check for duplicates, count as failed
       if (existingError) {
@@ -89,7 +88,16 @@ export async function POST(request: NextRequest) {
         failed++;
         continue;
       }
-      if (existing) continue;
+      // Never generate for a merchant with unresolved historical currency.
+      const [{ data: legacyPayouts, error: legacyPayoutError }, { data: legacyAdjustments, error: legacyAdjustmentError }] = await Promise.all([
+        supabase.from('business_payouts').select('id').eq('business_id', biz.id).is('currency', null).limit(1),
+        supabase.from('payout_adjustments').select('id').eq('business_id', biz.id).is('currency', null).limit(1),
+      ]);
+      if (legacyPayoutError || legacyAdjustmentError || legacyPayouts?.length || legacyAdjustments?.length) {
+        logger.warn('[PAYOUT] Historical currency requires reconciliation', { business_id: biz.id });
+        failed++;
+        continue;
+      }
 
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
       // Exclude direct transfers — Waaiio never holds those funds (money goes straight to business bank account)
@@ -158,8 +166,10 @@ export async function POST(request: NextRequest) {
       if (currencies.length === 0) continue;
 
       for (const currency of currencies) {
+      if (existing?.some(row => row.currency === currency)) continue;
+      const currencyAdjustments = (adjustments || []).filter(row => row.currency === currency);
       const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable: net } =
-        computePlatformHeldTotals(feesWithCurrency, currency, adjustments || []);
+        computePlatformHeldTotals(feesWithCurrency, currency, currencyAdjustments);
 
       if (gross <= 0) continue;
 
@@ -212,15 +222,23 @@ export async function POST(request: NextRequest) {
         status = 'held';
       }
 
+      // Hold non-home currencies for separate provider/limit verification.
+      const homeCurrency = ({ US: 'USD', GB: 'GBP', CA: 'CAD', NG: 'NGN', GH: 'GHS' } as Record<string, string>)[biz.country_code || ''];
+      if (!homeCurrency || currency !== homeCurrency) {
+        flags.push({ type: 'currency_review', message: 'Payout currency requires manual provider/limit verification', severity: 'critical' });
+        status = 'held';
+      }
+
       // --- PAYOUT LIMIT CHECK ---
       const monthlyLimit = Number(biz.payout_limit_monthly || 0);
-      if (monthlyLimit > 0 && monthlyLimit < 999999999) {
+      if (currency === homeCurrency && monthlyLimit > 0 && monthlyLimit < 999999999) {
         // Check total payouts this month
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
         const { data: monthPayouts } = await supabase
           .from('business_payouts')
           .select('net_amount')
           .eq('business_id', biz.id)
+          .eq('currency', currency)
           .in('status', ['pending', 'approved', 'processing', 'paid'])
           .gte('created_at', monthStart);
 
@@ -272,9 +290,9 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
-      if (adjustments && adjustments.length > 0) {
+      if (currencyAdjustments.length > 0) {
         // --- Adjustment-linked payout: INSERT held → link → promote ---
-        const adjIds = [...new Set(adjustments.map(a => a.id))];
+        const adjIds = [...new Set(currencyAdjustments.map(a => a.id))];
         const intendedStatus = status; // remember the computed status
 
         const insertFlags: Flag[] = [...flags, {

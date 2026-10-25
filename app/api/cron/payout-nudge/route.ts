@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
 
       // Check if they have accumulated payments
       // M466: Include currency via payments join
-      const { data: feesRaw } = await supabase
+      const { data: feesRaw, error: feesError } = await supabase
         .from('platform_fees')
         .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
         .eq('business_id', biz.id)
@@ -90,10 +90,15 @@ export async function GET(request: NextRequest) {
         currency: (f as unknown as { payments: { currency: string } }).payments?.currency ?? null,
       }));
 
-      // M466: Use primary eligible currency for nudge threshold
+      const [{ data: oldPayouts, error: oldPayoutError }, { data: oldAdjustments, error: oldAdjustmentError }] = await Promise.all([
+        supabase.from('business_payouts').select('id').eq('business_id', biz.id).is('currency', null).limit(1),
+        supabase.from('payout_adjustments').select('id').eq('business_id', biz.id).is('currency', null).limit(1),
+      ]);
       const currencies = getEligibleCurrencies(fees);
-      const primaryCurrency = currencies[0];
-      if (!primaryCurrency) continue;
+      const primaryCurrency = ({ US: 'USD', GB: 'GBP', CA: 'CAD', NG: 'NGN', GH: 'GHS' } as Record<string, string>)[biz.country_code || ''];
+      if (feesError || oldPayoutError || oldAdjustmentError || oldPayouts?.length || oldAdjustments?.length ||
+          fees.some(f => f.is_direct_transfer === false && !f.currency) ||
+          !primaryCurrency || currencies.length !== 1 || currencies[0] !== primaryCurrency) continue;
       const { eligible, netAvailable: balance } = computePlatformHeldTotals(fees, primaryCurrency);
       const paymentCount = eligible.length;
 

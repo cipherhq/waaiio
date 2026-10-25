@@ -55,7 +55,7 @@ export function getUnclassifiedFeeRows<T extends PayableFeeRow>(rows: T[]): T[] 
  * These block payout generation for the affected business (fail-closed).
  */
 export function getUnknownCurrencyFeeRows<T extends PayableFeeRow>(rows: T[]): T[] {
-  return rows.filter(f => f.is_direct_transfer === false && !f.currency);
+  return rows.filter(f => f.is_direct_transfer === false && (!f.currency || !/^[A-Z]{3}$/.test(f.currency)));
 }
 
 /**
@@ -63,7 +63,7 @@ export function getUnknownCurrencyFeeRows<T extends PayableFeeRow>(rows: T[]): T
  * Used by generate/auto-payout to create one payout per currency.
  */
 export function getEligibleCurrencies(fees: PayableFeeRow[]): string[] {
-  const eligible = fees.filter(f => f.is_direct_transfer === false && f.currency);
+  const eligible = fees.filter(f => f.is_direct_transfer === false && f.currency && /^[A-Z]{3}$/.test(f.currency));
   return [...new Set(eligible.map(f => f.currency!))];
 }
 
@@ -117,4 +117,13 @@ export function computePlatformHeldTotals(
 
   const netAvailable = Math.max(0, gross - totalFees - gatewayFees + adjustmentSum - priorPaidOut);
   return { eligible, gross, totalFees, gatewayFees, adjustmentSum, priorPaidOut, netAvailable };
+}
+
+// M468: Historical money with unknown currency requires reconciliation.
+// Never attribute an unclassified historical amount to any currency.
+export function hasUnreconciledCurrencyRecords(
+  payouts: Array<{ currency?: string | null }> = [],
+  adjustments: Array<{ currency?: string | null }> = [],
+): boolean {
+  return [...payouts, ...adjustments].some(row => !row.currency || !/^[A-Z]{3}$/.test(row.currency));
 }

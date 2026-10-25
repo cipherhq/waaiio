@@ -184,6 +184,15 @@ export async function POST(
     }
   }
 
+  // M468: unknown historical money cannot be attributed to payout currency.
+  const [{ data: unknownPayouts, error: unknownPayoutError }, { data: unknownAdjustments, error: unknownAdjustmentError }] = await Promise.all([
+    serviceClient.from('business_payouts').select('id').eq('business_id', payout.business_id).is('currency', null).limit(1),
+    serviceClient.from('payout_adjustments').select('id').eq('business_id', payout.business_id).is('currency', null).limit(1),
+  ]);
+  if (unknownPayoutError || unknownAdjustmentError || unknownPayouts?.length || unknownAdjustments?.length) {
+    return NextResponse.json({ error: 'Cannot approve: historical payout currency requires reconciliation' }, { status: 409 });
+  }
+
   // ── Balance verification (includes review_required as reserved) ──
   // M466: Include currency via payments join for currency-scoped balance
   const { data: balancePaymentsRaw, error: balanceError } = await serviceClient
