@@ -77,13 +77,13 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
     actor_id UUID NOT NULL, action TEXT, entity_type TEXT, entity_id UUID,details JSONB);
    CREATE UNIQUE INDEX idx_business_payouts_period_unique ON public.business_payouts(business_id,period_start,period_end)
      WHERE status NOT IN ('rejected','failed');
-   CREATE FUNCTION public.confirm_manual_settlement(uuid,text,boolean,uuid) RETURNS TABLE(confirmed_id uuid)
-     LANGUAGE plpgsql AS $$ BEGIN RETURN; END $$;
-   CREATE FUNCTION public.force_settle_executed_transfer(uuid,text,text,boolean,uuid)
+   CREATE FUNCTION public.confirm_manual_settlement(p_payout_id uuid,p_transfer_ref text,p_attestation boolean,p_admin_id uuid) RETURNS TABLE(confirmed_id uuid)
+     LANGUAGE plpgsql AS $$ BEGIN RETURN; END; $$;
+   CREATE FUNCTION public.force_settle_executed_transfer(p_payout_id uuid,p_transfer_ref text,p_reason text,p_attestation boolean,p_admin_id uuid)
      RETURNS TABLE(settled_id uuid,adjustment_amount numeric)
-     LANGUAGE plpgsql AS $$ BEGIN RETURN; END $$;
-   CREATE FUNCTION public.finalize_refund_execution(uuid) RETURNS jsonb
-     LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;
+     LANGUAGE plpgsql AS $$ BEGIN RETURN; END; $$;
+   CREATE FUNCTION public.finalize_refund_execution(p_refund_id uuid) RETURNS jsonb
+     LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
   `);
   await run(sqlFile('466_payout_currency_authority.sql'));
   await run(sqlFile('468_payout_dedup_currency_authority.sql'));
