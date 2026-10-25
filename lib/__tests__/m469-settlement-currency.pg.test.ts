@@ -156,12 +156,18 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
  });
  it('supports single-payment legacy booking fee without changing its payment_id',async()=>{
   const pid=await payment('USD');
+  const paidId=await payout(70,'USD','paid');
   await run('UPDATE public.platform_fees SET payment_id=NULL,fee_percentage=10 WHERE payment_id=$1',[pid]);
   const rid=await refund(pid,20);
   expect((await finish(rid)).rows[0].result.finalized).toBe(true);
   const f=(await run('SELECT payment_id,fee_total FROM public.platform_fees')).rows[0];
   expect(f.payment_id).toBeNull();
   expect(Number(f.fee_total)).toBe(8);
+  const adj=(await run('SELECT payout_id,currency,amount FROM public.payout_adjustments')).rows;
+  expect(adj).toHaveLength(1);
+  expect(adj[0].payout_id).toBe(paidId);
+  expect(adj[0].currency).toBe('USD');
+  expect(Number(adj[0].amount)).toBe(-20);
  });
  it('blocks ambiguous legacy fee linked to a shared booking',async()=>{
   const pid=await payment('USD');
