@@ -56,10 +56,14 @@ export async function safeFlowCleanup(
 
   // Cancel pending bank transfers (simple status write — no inventory/slot/payment authority needed)
   if (sessionData.bank_transfer_reference) {
-    await supabase.from('pending_transfers')
+    const { error: transferErr } = await supabase.from('pending_transfers')
       .update({ status: 'cancelled' })
       .eq('reference_code', sessionData.bank_transfer_reference as string)
       .eq('status', 'pending');
+    if (transferErr) {
+      logger.error('[NAV-CLEANUP] pending_transfers cancel failed', { ref: sessionData.bank_transfer_reference, error: transferErr.message });
+      ok = false;
+    }
   }
 
   return ok;
@@ -198,7 +202,15 @@ export async function handleEscapeHatch(
     // ── "menu" / "restart" / "start over" → restart current business menu ──
     if (isMenuWord && session.business_id) {
       const bizId = session.business_id;
-      await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
+      const menuCleanupOk = await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
+      if (!menuCleanupOk) {
+        const lang = session.session_data?._detected_language as string || 'en';
+        await messageSender.sendText({
+          to: from,
+          text: getFlowCopy(lang, 'nav.cancel_retry') || 'Something went wrong. Please try again or type "exit" to leave.',
+        });
+        return { handled: true };
+      }
       await deactivateSession(session.id);
       await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
       return { handled: true };
@@ -287,7 +299,15 @@ export async function handleEscapeHatch(
 
     // ── "exit" / "quit" / "stop" → leave business ──
     if (isExitWord) {
-      await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
+      const exitCleanupOk = await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
+      if (!exitCleanupOk) {
+        const lang = session.session_data?._detected_language as string || 'en';
+        await messageSender.sendText({
+          to: from,
+          text: getFlowCopy(lang, 'nav.cancel_retry') || 'Something went wrong. Please try again or type "exit" to leave.',
+        });
+        return { handled: true };
+      }
       await deactivateSession(session.id);
 
       // Find the business — from session or from history

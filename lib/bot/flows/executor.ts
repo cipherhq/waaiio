@@ -453,7 +453,13 @@ export class FlowExecutor {
     const RESTART_WORDS = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
     if (CANCEL_WORDS.includes(lowerInput)) {
       // Clean up pending reservations via authoritative RPCs
-      await safeFlowCleanup(this.supabase, session.session_data || {}, session.user_id);
+      const cancelCleanupOk = await safeFlowCleanup(this.supabase, session.session_data || {}, session.user_id);
+      if (!cancelCleanupOk) {
+        const errLang = this.resolveCopyLang(session, entitlement);
+        const errMsg = getFlowCopy(errLang, 'nav.cancel_retry') || 'Something went wrong. Please try again.';
+        await this.sendText(from, errMsg, scopedSender);
+        return;
+      }
       const cancelLang = this.resolveCopyLang(session, entitlement);
       const cancelMsg = getFlowCopy(cancelLang, 'nav.cancelled');
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
@@ -465,7 +471,13 @@ export class FlowExecutor {
     }
     if (RESTART_WORDS.includes(lowerInput)) {
       // Clean up pending reservations via authoritative RPCs
-      await safeFlowCleanup(this.supabase, session.session_data || {}, session.user_id);
+      const restartCleanupOk = await safeFlowCleanup(this.supabase, session.session_data || {}, session.user_id);
+      if (!restartCleanupOk) {
+        const errLang = this.resolveCopyLang(session, entitlement);
+        const errMsg = getFlowCopy(errLang, 'nav.cancel_retry') || 'Something went wrong. Please try again.';
+        await this.sendText(from, errMsg, scopedSender);
+        return;
+      }
       const restartLang = this.resolveCopyLang(session, entitlement);
       const restartMsg = getFlowCopy(restartLang, 'nav.no_problem');
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });

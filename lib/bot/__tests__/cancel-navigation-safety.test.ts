@@ -266,4 +266,65 @@ describe('safeFlowCleanup — executable behavior', async () => {
     expect(ok).toBe(false); // Overall failed because booking cleanup failed
     expect(sb.rpc).toHaveBeenCalledTimes(2); // But order cleanup was still attempted
   });
+
+  it('bank transfer update failure returns false', async () => {
+    const sb = {
+      rpc: vi.fn(async () => ({ data: null, error: null })),
+      from: vi.fn(() => ({
+        update: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => Promise.resolve({ error: { message: 'connection reset' } })),
+          })),
+        })),
+      })),
+    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+    const ok = await safeFlowCleanup(sb, { bank_transfer_reference: 'WA-BT-001' }, 'user-1');
+    expect(ok).toBe(false);
+  });
+
+  it('bank transfer success returns true', async () => {
+    const sb = mockSupabase({});
+    const ok = await safeFlowCleanup(sb, { bank_transfer_reference: 'WA-BT-002' }, 'user-1');
+    expect(ok).toBe(true);
+  });
+});
+
+// ── 8. All callers check cleanup result ──
+
+describe('all navigation callers check safeFlowCleanup result', () => {
+  it('cancel handler checks cleanupOk', async () => {
+    const src = (await import('fs')).readFileSync('lib/bot/handlers/escape-hatches.ts', 'utf-8');
+    const block = src.slice(src.indexOf('isCancel && session.business_id'), src.indexOf("// ── \"menu\""));
+    expect(block).toContain('cleanupOk');
+    expect(block).toContain('!cleanupOk');
+  });
+
+  it('menu handler checks menuCleanupOk', async () => {
+    const src = (await import('fs')).readFileSync('lib/bot/handlers/escape-hatches.ts', 'utf-8');
+    const block = src.slice(src.indexOf('isMenuWord && session.business_id'), src.indexOf("// ── \"back\""));
+    expect(block).toContain('menuCleanupOk');
+    expect(block).toContain('!menuCleanupOk');
+  });
+
+  it('exit handler checks exitCleanupOk', async () => {
+    const src = (await import('fs')).readFileSync('lib/bot/handlers/escape-hatches.ts', 'utf-8');
+    const block = src.slice(src.indexOf('"exit" / "quit" / "stop"'), src.indexOf('// Find the business'));
+    expect(block).toContain('exitCleanupOk');
+    expect(block).toContain('!exitCleanupOk');
+  });
+
+  it('executor cancel checks cancelCleanupOk', async () => {
+    const src = (await import('fs')).readFileSync('lib/bot/flows/executor.ts', 'utf-8');
+    const block = src.slice(src.indexOf('CANCEL_WORDS.includes(lowerInput)'), src.indexOf('RESTART_WORDS.includes(lowerInput)'));
+    expect(block).toContain('cancelCleanupOk');
+    expect(block).toContain('!cancelCleanupOk');
+  });
+
+  it('executor restart checks restartCleanupOk', async () => {
+    const src = (await import('fs')).readFileSync('lib/bot/flows/executor.ts', 'utf-8');
+    const restartStart = src.indexOf('RESTART_WORDS.includes(lowerInput)');
+    const block = src.slice(restartStart, src.indexOf('const restartLang', restartStart));
+    expect(block).toContain('restartCleanupOk');
+    expect(block).toContain('!restartCleanupOk');
+  });
 });
