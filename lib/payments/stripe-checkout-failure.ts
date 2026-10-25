@@ -61,3 +61,19 @@ export function mayFallbackFromSaveCardOptions(data: unknown, hadSavedCardOption
     || evidence.param === 'saved_payment_method_options[allow_redisplay_filters]'
     || /^saved_payment_method_options\[allow_redisplay_filters\]\[[0-9]{1,4}\]$/.test(evidence.param);
 }
+
+/**
+ * Stripe API 2026-09-30.endive removed `payment_method_types` on Checkout
+ * creation. A scoped 400-validation retry must retain the card-only policy by
+ * replacing this field with Endive's `allowed_payment_method_types` array.
+ *
+ * Older API versions must continue using the pre-Endive parameter, which is
+ * why we only switch on provider-confirmed, parameter-scoped rejection.
+ */
+export function mayFallbackFromLegacyPaymentMethodTypes(data: unknown, hasLegacyTypes: boolean): boolean {
+  if (!hasLegacyTypes) return false;
+  const evidence = stripeCheckoutErrorEvidence(data);
+  if (evidence.httpStatus !== 400 || evidence.type !== 'invalid_request_error') return false;
+  return evidence.param === 'payment_method_types'
+    || /^payment_method_types\\[[0-9]{1,4}\\]$/.test(evidence.param || '');
+}
