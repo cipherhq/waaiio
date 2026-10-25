@@ -31,6 +31,7 @@ AS $$
 DECLARE
   v_biz RECORD;
   v_owner_id UUID;
+  v_phone_confirmed_at TIMESTAMPTZ;
   v_decision_time TIMESTAMPTZ;
   v_config RECORD;
   v_gate_value JSONB;
@@ -68,6 +69,17 @@ BEGIN
   END IF;
 
   v_owner_id := v_biz.owner_id;
+
+  -- 1b. [M465] Verify owner has a confirmed phone identity.
+  -- Supabase Auth sets phone_confirmed_at when phone OTP is verified
+  -- (see app/api/auth/otp/verify/route.ts: phone_confirm: true).
+  -- Users authenticated only via email or Facebook do not have this set.
+  SELECT phone_confirmed_at INTO v_phone_confirmed_at
+  FROM auth.users WHERE id = v_owner_id;
+
+  IF v_phone_confirmed_at IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'phone_not_verified');
+  END IF;
 
   -- 2. Verify: subscription_tier = 'free'
   IF v_biz.subscription_tier <> 'free' THEN
@@ -373,6 +385,15 @@ BEGIN
       AND prosecdef = true
   ) THEN
     RAISE EXCEPTION 'M465: activate_trial_if_eligible not found or not SECURITY DEFINER';
+  END IF;
+
+  -- Function body contains the phone verification check
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname = 'activate_trial_if_eligible'
+      AND prosrc LIKE '%phone_not_verified%'
+  ) THEN
+    RAISE EXCEPTION 'M465: phone verification check not found in function body';
   END IF;
 
   -- Function body contains the owner dedup check
