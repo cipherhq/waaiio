@@ -298,36 +298,70 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
     expect(body).toContain('phone_confirmed_at');
   });
 
-  // ── Cron starvation test ──
+  // ── Cron queue filter tests ──
 
-  it('10. terminally denied businesses with metadata.trial_ineligible are excluded from cron query', () => {
-    // Simulate what the cron does: select businesses WHERE trial_ends_at IS NULL
-    // AND metadata->>trial_ineligible != 'true'. Businesses marked as permanently
-    // ineligible should not appear in the result set.
-
-    // BIZ_VA2 was denied in test 2 (owner_already_has_trial).
-    // Simulate the cron marking it as trial_ineligible:
-    psql(`UPDATE businesses SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{trial_ineligible}', 'true')
-          WHERE id = '${BIZ_VA2}';`);
-
-    // BIZ_UV1 was denied in test 4 (phone_not_verified).
-    psql(`UPDATE businesses SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{trial_ineligible}', 'true')
-          WHERE id = '${BIZ_UV1}';`);
-
-    // Cron query: should NOT return BIZ_VA2 or BIZ_UV1
-    const eligible = psql(`
+  it('10. NULL-inclusive exclusion: empty/default metadata businesses are included in cron query', () => {
+    // The cron filter must include businesses with NULL metadata, empty {},
+    // and explicit false — only exclude explicit 'true'.
+    const cronQuery = `
       SELECT id FROM businesses
       WHERE subscription_tier = 'free'
         AND status = 'active'
         AND trial_ends_at IS NULL
         AND (whatsapp_channel_id IS NOT NULL OR wa_method = 'shared')
-        AND NOT (metadata->>'trial_ineligible' = 'true')
+        AND (metadata->>'trial_ineligible' IS NULL OR metadata->>'trial_ineligible' != 'true')
       ORDER BY created_at
       LIMIT 100;
-    `);
+    `;
 
-    // BIZ_VA2 and BIZ_UV1 should be excluded
-    expect(eligible).not.toContain(BIZ_VA2);
-    expect(eligible).not.toContain(BIZ_UV1);
+    // BIZ_UV1 has default metadata ({}) and trial_ends_at IS NULL — must be included
+    // (phone_not_verified is NOT terminal; it's retryable after OTP completion)
+    const eligible = psql(cronQuery);
+    expect(eligible).toContain(BIZ_UV1);
+
+    // Now mark BIZ_VA2 as ineligible using the atomic RPC
+    psql(`SELECT mark_trial_ineligible('${BIZ_VA2}', 'owner_already_has_trial');`);
+
+    // BIZ_VA2 should now be excluded
+    const afterMark = psql(cronQuery);
+    expect(afterMark).not.toContain(BIZ_VA2);
+
+    // BIZ_UV1 (unverified phone, NOT marked) still included
+    expect(afterMark).toContain(BIZ_UV1);
+  });
+
+  it('11. mark_trial_ineligible preserves unrelated metadata keys', () => {
+    // Set unrelated metadata on BIZ_VA2 first
+    psql(`UPDATE businesses SET metadata = '{"custom_key": "custom_value", "trial_ineligible": "true"}'::jsonb
+          WHERE id = '${BIZ_VA2}';`);
+
+    // Re-mark with the RPC
+    psql(`SELECT mark_trial_ineligible('${BIZ_VA2}', 'owner_already_has_trial');`);
+
+    // Verify custom_key is preserved
+    const meta = psql(`SELECT metadata->>'custom_key' FROM businesses WHERE id = '${BIZ_VA2}';`);
+    expect(meta).toBe('custom_value');
+
+    // Verify trial_ineligible is set
+    const flag = psql(`SELECT metadata->>'trial_ineligible' FROM businesses WHERE id = '${BIZ_VA2}';`);
+    expect(flag).toBe('true');
+  });
+
+  it('12. phone_not_verified is retryable: verified-later owner gets trial', () => {
+    // BIZ_UV1's owner (OWNER_UNVERIFIED) has phone_confirmed_at = NULL.
+    // Test 4 proved it was denied. Now simulate OTP completion:
+    psql(`UPDATE auth.users SET phone_confirmed_at = NOW() WHERE id = '${OWNER_UNVERIFIED}';`);
+
+    // Now trial should activate (phone verified, no prior grant for this owner)
+    const result = psqlJson(`SELECT activate_trial_if_eligible('${BIZ_UV1}');`);
+    expect(result.activated).toBe(true);
+    expect(result.amount_minor).toBe(400);
+
+    // Reset for cleanup
+    psqlCleanup(`DELETE FROM messaging_allowance_events WHERE allowance_id IN (SELECT id FROM messaging_allowances WHERE business_id = '${BIZ_UV1}');`);
+    psqlCleanup(`DELETE FROM messaging_allowances WHERE business_id = '${BIZ_UV1}';`);
+    psqlCleanup(`UPDATE businesses SET trial_ends_at = NULL WHERE id = '${BIZ_UV1}';`);
+    // Restore unverified state for clean afterAll
+    psql(`UPDATE auth.users SET phone_confirmed_at = NULL WHERE id = '${OWNER_UNVERIFIED}';`);
   });
 });

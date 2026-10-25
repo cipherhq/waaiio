@@ -374,6 +374,38 @@ REVOKE ALL ON FUNCTION public.activate_trial_if_eligible(UUID) FROM anon;
 REVOKE ALL ON FUNCTION public.activate_trial_if_eligible(UUID) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.activate_trial_if_eligible(UUID) TO service_role;
 
+-- ══════════════════════════════════════════════════════════
+-- mark_trial_ineligible: atomic JSONB key update for cron
+-- ══════════════════════════════════════════════════════════
+-- Sets metadata.trial_ineligible and metadata.trial_ineligible_reason
+-- without replacing the entire JSONB object. Preserves all other keys.
+-- Used by the trial-activation cron to exclude permanently denied
+-- businesses from future batches.
+
+CREATE OR REPLACE FUNCTION public.mark_trial_ineligible(
+  p_business_id UUID,
+  p_reason TEXT DEFAULT 'owner_already_has_trial'
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  UPDATE public.businesses
+  SET metadata = jsonb_set(
+    jsonb_set(COALESCE(metadata, '{}'), '{trial_ineligible}', '"true"'),
+    '{trial_ineligible_reason}', to_jsonb(p_reason)
+  )
+  WHERE id = p_business_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.mark_trial_ineligible(UUID, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.mark_trial_ineligible(UUID, TEXT) FROM anon;
+REVOKE ALL ON FUNCTION public.mark_trial_ineligible(UUID, TEXT) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.mark_trial_ineligible(UUID, TEXT) TO service_role;
+
 -- ── Verification ──
 DO $$
 BEGIN
@@ -420,6 +452,16 @@ BEGIN
   END IF;
   IF has_function_privilege('authenticated', 'public.activate_trial_if_eligible(uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'M465: authenticated must NOT execute activate_trial_if_eligible';
+  END IF;
+
+  -- mark_trial_ineligible helper exists
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname = 'mark_trial_ineligible'
+      AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      AND prosecdef = true
+  ) THEN
+    RAISE EXCEPTION 'M465: mark_trial_ineligible not found or not SECURITY DEFINER';
   END IF;
 
   RAISE NOTICE 'M465: Trial one-per-phone-identity enforcement verified';
