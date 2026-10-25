@@ -129,6 +129,12 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
  });
  it('refund links to correct-currency, same-period paid payout',async()=>{
   const pid=await payment('USD');
+  const booking=(await run('SELECT booking_id FROM public.payments WHERE id=$1',[pid])).rows[0].booking_id;
+  await run('UPDATE public.platform_fees SET fee_percentage=10 WHERE payment_id=$1',[pid]);
+  // Different-currency payment for the SAME booking must not have its fee reversed.
+  const otherPayment=randomUUID();
+  await run("INSERT INTO public.payments(id,business_id,booking_id,currency,amount,status,gateway_reference,created_at) VALUES($1,$2,$3,'NGN',100,'paid','NGN-2','2026-10-02')",[otherPayment,B,booking]);
+  await run("INSERT INTO public.platform_fees(id,business_id,payment_id,booking_id,transaction_amount,fee_total,gateway_fee,fee_percentage,fee_flat,waived,is_direct_transfer) VALUES($1,$2,$3,$4,100,10,0,0,0,false,false)",[randomUUID(),B,otherPayment,booking]);
   await payout(400,'NGN','paid');
   const matched=await payout(80,'USD','paid');
   const rid=await refund(pid,20);
@@ -138,6 +144,9 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
   expect(x[0].payout_id).toBe(matched);
   expect(x[0].currency).toBe('USD');
   expect(Number(x[0].amount)).toBe(-20);
+  const fees=(await run('SELECT payment_id,fee_total FROM public.platform_fees')).rows;
+  expect(Number(fees.find(f=>f.payment_id===pid).fee_total)).toBe(8);
+  expect(Number(fees.find(f=>f.payment_id===otherPayment).fee_total)).toBe(10);
  });
  it('direct-split refunds never create platform-held adjustments',async()=>{
   const pid=await payment('USD',true);await payout(70,'USD','paid');
@@ -156,6 +165,11 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
   const rid=await refund(pid);
   await expect(finish(rid)).rejects.toThrow(/refund_payout_currency_reconciliation_required/);
   expect((await run('SELECT refund_amount FROM public.payments WHERE id=$1',[pid])).rows[0].refund_amount).toBeNull();
+  expect((await run('SELECT count(*)::int n FROM public.payout_adjustments')).rows[0].n).toBe(0);
+  await run('DELETE FROM public.business_payouts');
+  await payout(80,'USD','paid');
+  await run("INSERT INTO public.business_payouts(id,business_id,net_amount,currency,status,transfer_method,period_start,period_end) VALUES($1,$2,75,'USD','paid','manual_bank','2026-09-30','2026-10-08')",[randomUUID(),B]);
+  await expect(finish(rid)).rejects.toThrow(/refund_payout_allocation_ambiguous/);
   expect((await run('SELECT count(*)::int n FROM public.payout_adjustments')).rows[0].n).toBe(0);
  });
  it('settlement audit failure rolls back paid transition',async()=>{
