@@ -383,7 +383,7 @@ BEGIN
   IF v_fee_entity_col IS NOT NULL THEN
     EXECUTE format('SELECT COUNT(*) FROM public.payments WHERE business_id=$1 AND %I=$2',v_fee_entity_col)
       INTO v_entity_payment_count USING v_refund.business_id,v_fee_entity_val;
-    EXECUTE format('SELECT COUNT(*),MIN(id) FROM public.platform_fees WHERE business_id=$1 AND %I=$2 AND payment_id IS NULL',v_fee_entity_col)
+    EXECUTE format('SELECT COUNT(*),MIN(id::text)::uuid FROM public.platform_fees WHERE business_id=$1 AND %I=$2 AND payment_id IS NULL',v_fee_entity_col)
       INTO v_legacy_fee_count,v_legacy_fee_id USING v_refund.business_id,v_fee_entity_val;
     IF v_legacy_fee_count > 0 AND
        (v_legacy_fee_count <> 1 OR v_entity_payment_count <> 1) THEN
