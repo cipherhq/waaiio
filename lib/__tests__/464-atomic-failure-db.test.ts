@@ -7,17 +7,19 @@
  *   docker run --rm -d --name m464-test -p 54324:5432 -e POSTGRES_PASSWORD=test postgres:16
  *   TEST_DATABASE_URL=postgresql://postgres:test@localhost:54324/postgres npx vitest run lib/__tests__/464-atomic-failure-db.test.ts
  *
- * Proves against REAL PostgreSQL:
+ * Proves against REAL PostgreSQL with true concurrent connections:
  *   1. Single call: one charge record + exactly one failure_count increment
  *   2. Idempotent replay: already_processed=true, no mutation
- *   3. Concurrent calls (same gateway_reference): exactly one winner
- *   4. Transaction rollback: clean retry after failure
+ *   3. TRUE CONCURRENT calls via two psql sessions with pg_sleep contention
+ *   4. TRUE ROLLBACK: explicit ROLLBACK mid-transaction, verify cleanup, then retry
  *   5. Terminal status: accepted without mutation
  *   6. Input validation: null subscription_id / empty gateway_reference
- *   7. SECURITY DEFINER + search_path verified
+ *   7. Escalation at threshold
+ *   8. UNIQUE index prevents duplicate charge records
+ *   9. NULL gateway_reference not constrained by partial UNIQUE index
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -38,13 +40,28 @@ function psqlJson(sql: string): unknown {
   return raw ? JSON.parse(raw) : null;
 }
 
+/** Spawn an independent psql connection (for true concurrent testing) */
+function psqlAsync(sql: string): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve) => {
+    const child = spawn('psql', [dbUrl!, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
+    child.stdin.write(sql);
+    child.stdin.end();
+  });
+}
+
 const describePg = dbUrl ? describe : describe.skip;
 
 describePg('M464: Atomic customer subscription failure (real PG)', () => {
   beforeAll(() => {
-    // Create minimal schema for the test
+    // Create minimal schema
     psql(`
-      -- customer_subscriptions (minimal)
       CREATE TABLE IF NOT EXISTS customer_subscriptions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         business_id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -64,7 +81,6 @@ describePg('M464: Atomic customer subscription failure (real PG)', () => {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- subscription_charges (minimal)
       CREATE TABLE IF NOT EXISTS subscription_charges (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         subscription_id UUID NOT NULL,
@@ -111,7 +127,6 @@ describePg('M464: Atomic customer subscription failure (real PG)', () => {
     expect(result.new_failure_count).toBe(1);
     expect(result.escalated).toBe(false);
 
-    // Verify DB state
     const failCount = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${subId}'`);
     expect(failCount).toBe('1');
     const chargeCount = psql(`SELECT count(*) FROM subscription_charges WHERE gateway_reference = 'evt-single-001'`);
@@ -124,7 +139,7 @@ describePg('M464: Atomic customer subscription failure (real PG)', () => {
     // First call
     psql(`SELECT record_customer_subscription_failure('${subId}'::uuid, gen_random_uuid(), gen_random_uuid(), 'NGN', 'paystack', 'evt-replay-001', 'Failed', 3)`);
 
-    // Second call (replay) — same gateway_reference
+    // Second call (replay)
     const result = psqlJson(`
       SELECT record_customer_subscription_failure(
         '${subId}'::uuid, gen_random_uuid(), gen_random_uuid(),
@@ -135,56 +150,102 @@ describePg('M464: Atomic customer subscription failure (real PG)', () => {
     expect(result.success).toBe(true);
     expect(result.already_processed).toBe(true);
 
-    // failure_count should be 1 (not 2)
     const failCount = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${subId}'`);
     expect(failCount).toBe('1');
-    // Only one charge record
     const chargeCount = psql(`SELECT count(*) FROM subscription_charges WHERE gateway_reference = 'evt-replay-001'`);
     expect(chargeCount).toBe('1');
   });
 
-  it('3. Concurrent calls: exactly one winner, one charge, one increment', () => {
+  it('3. TRUE CONCURRENT: two psql sessions, same gateway_reference, one winner', async () => {
+    // Create a subscription
     const subId = psql(`INSERT INTO customer_subscriptions (status, failure_count) VALUES ('active', 0) RETURNING id`);
-    const ref = 'evt-concurrent-001';
+    const ref = 'evt-concurrent-real-001';
 
-    // Use advisory lock to synchronize two sessions.
-    // Session A: begin, lock sub row, try insert
-    // Session B: begin, wait for lock, try insert → ON CONFLICT
-    // We simulate this by running two calls sequentially in the same transaction
-    // (which is what happens when the FOR UPDATE serializes them).
+    // Session A: call RPC inside a transaction with pg_sleep(2) to hold the FOR UPDATE lock
+    const sessionA = psqlAsync(`
+      BEGIN;
+      SELECT record_customer_subscription_failure(
+        '${subId}'::uuid, gen_random_uuid(), gen_random_uuid(),
+        'NGN', 'paystack', '${ref}', 'Session A', 3
+      );
+      SELECT pg_sleep(2);
+      COMMIT;
+    `);
 
-    // Actually, the best test: run two calls from separate connections concurrently.
-    // We can simulate via psql with two transactions.
-    // Simpler: just call the RPC twice and verify only one increment.
-    psql(`SELECT record_customer_subscription_failure('${subId}'::uuid, gen_random_uuid(), gen_random_uuid(), 'NGN', 'paystack', '${ref}', 'Failed', 3)`);
-    const result2 = psqlJson(`SELECT record_customer_subscription_failure('${subId}'::uuid, gen_random_uuid(), gen_random_uuid(), 'NGN', 'paystack', '${ref}', 'Failed', 3)`) as Record<string, unknown>;
+    // Session B: fires 300ms after A, same gateway_reference.
+    // B will block on FOR UPDATE until A releases the lock after pg_sleep.
+    // After A commits: B acquires the lock, but INSERT ON CONFLICT finds A's charge → already_processed.
+    await new Promise(r => setTimeout(r, 300));
+    const bStart = Date.now();
+    const sessionB = psqlAsync(`
+      SELECT record_customer_subscription_failure(
+        '${subId}'::uuid, gen_random_uuid(), gen_random_uuid(),
+        'NGN', 'paystack', '${ref}', 'Session B', 3
+      );
+    `);
 
-    expect(result2.already_processed).toBe(true);
+    const [resultA, resultB] = await Promise.all([sessionA, sessionB]);
+    const bDuration = Date.now() - bStart;
 
-    // Exactly one increment
+    // Prove real contention: B waited >1s (blocked on A's FOR UPDATE during pg_sleep)
+    expect(bDuration).toBeGreaterThan(1000);
+
+    // A succeeded (committed)
+    expect(resultA.code).toBe(0);
+    expect(resultA.stdout).toContain('"success": true');
+    expect(resultA.stdout).toContain('"already_processed": false');
+
+    // B got already_processed (A's charge record detected)
+    expect(resultB.code).toBe(0);
+    expect(resultB.stdout).toContain('"already_processed": true');
+
+    // Exactly one failure_count increment
     const failCount = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${subId}'`);
     expect(failCount).toBe('1');
-    // Exactly one charge
+
+    // Exactly one charge record
     const chargeCount = psql(`SELECT count(*) FROM subscription_charges WHERE gateway_reference = '${ref}'`);
     expect(chargeCount).toBe('1');
-  });
+  }, 15000); // 15s timeout for pg_sleep contention
 
-  it('4. Successful retry after rollback', () => {
+  it('4. TRUE ROLLBACK: explicit ROLLBACK cleans up, retry succeeds', () => {
     const subId = psql(`INSERT INTO customer_subscriptions (status, failure_count) VALUES ('active', 0) RETURNING id`);
+    const ref = 'evt-rollback-001';
 
-    // Simulate a rolled-back transaction by using a savepoint
-    // (The RPC itself handles rollback via PL/pgSQL exception handling;
-    //  we test the retry-after-clean-state path)
+    // Call RPC inside a transaction that we explicitly ROLLBACK
+    // The ROLLBACK undoes both the charge insert and the failure_count increment.
+    psql(`
+      BEGIN;
+      SELECT record_customer_subscription_failure(
+        '${subId}'::uuid, gen_random_uuid(), gen_random_uuid(),
+        'NGN', 'paystack', '${ref}', 'Will be rolled back', 3
+      );
+      ROLLBACK;
+    `);
+
+    // Verify ROLLBACK actually cleaned up: no charge, failure_count still 0
+    const chargeAfterRollback = psql(`SELECT count(*) FROM subscription_charges WHERE gateway_reference = '${ref}'`);
+    expect(chargeAfterRollback).toBe('0');
+    const failAfterRollback = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${subId}'`);
+    expect(failAfterRollback).toBe('0');
+
+    // Now retry — should succeed as if first time
     const result = psqlJson(`
       SELECT record_customer_subscription_failure(
         '${subId}'::uuid, gen_random_uuid(), gen_random_uuid(),
-        'NGN', 'paystack', 'evt-retry-001', 'Retry test', 3
+        'NGN', 'paystack', '${ref}', 'Retry after rollback', 3
       )
     `) as Record<string, unknown>;
 
     expect(result.success).toBe(true);
     expect(result.already_processed).toBe(false);
     expect(result.new_failure_count).toBe(1);
+
+    // Verify: one charge, failure_count = 1
+    const chargeAfterRetry = psql(`SELECT count(*) FROM subscription_charges WHERE gateway_reference = '${ref}'`);
+    expect(chargeAfterRetry).toBe('1');
+    const failAfterRetry = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${subId}'`);
+    expect(failAfterRetry).toBe('1');
   });
 
   it('5. Terminal status: accepted without mutation', () => {
@@ -199,7 +260,6 @@ describePg('M464: Atomic customer subscription failure (real PG)', () => {
 
     expect(result.success).toBe(true);
     expect(result.reason).toBe('terminal_status');
-    // failure_count unchanged
     const failCount = psql(`SELECT failure_count FROM customer_subscriptions WHERE id = '${subId}'`);
     expect(failCount).toBe('3');
   });
@@ -250,10 +310,8 @@ describePg('M464: Atomic customer subscription failure (real PG)', () => {
   });
 
   it('8. UNIQUE index prevents duplicate charge records', () => {
-    // Direct INSERT to verify the index independently of the RPC
     psql(`INSERT INTO subscription_charges (subscription_id, gateway_reference) VALUES (gen_random_uuid(), 'evt-unique-test-001')`);
 
-    // Second insert with same gateway_reference should fail
     try {
       psql(`INSERT INTO subscription_charges (subscription_id, gateway_reference) VALUES (gen_random_uuid(), 'evt-unique-test-001')`);
       expect.unreachable('Should have thrown unique violation');
@@ -263,7 +321,6 @@ describePg('M464: Atomic customer subscription failure (real PG)', () => {
   });
 
   it('9. NULL gateway_reference is not constrained by UNIQUE index', () => {
-    // Multiple NULL gateway_reference rows should be allowed
     psql(`INSERT INTO subscription_charges (subscription_id, gateway_reference) VALUES (gen_random_uuid(), NULL)`);
     psql(`INSERT INTO subscription_charges (subscription_id, gateway_reference) VALUES (gen_random_uuid(), NULL)`);
     const count = psql(`SELECT count(*) FROM subscription_charges WHERE gateway_reference IS NULL`);
