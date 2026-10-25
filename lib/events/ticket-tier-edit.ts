@@ -22,7 +22,7 @@ export function validateTicketTierEdit(
   original?: TicketTierInventory,
 ): TicketTierValidation {
   const name = draft.name.trim();
-  if (name.length < 1 || name.length > 100 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(name)) {
+  if (name.length < 1 || name.length > 100 || /[\u0000-\u001f\u007f]/u.test(name)) {
     return { ok: false, error: 'Ticket type name must be 1–100 characters and contain no control characters.' };
   }
   if (!Number.isSafeInteger(draft.price) || draft.price < 0 || draft.price > 2147483647) {
