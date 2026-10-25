@@ -26,6 +26,11 @@ let platformResult: { data: MockRow; error: { message: string } | null } = { dat
 let customerResult: { data: MockRow; error: { message: string } | null } = { data: null, error: null };
 let chargeResult: { data: MockRow; error: { message: string } | null } = { data: null, error: null };
 let claimResult: { data: unknown; error: unknown } = { data: { claimed: true, claim_token: 'tok-1' }, error: null };
+// Default: fresh failure, not already processed
+let failureRpcResult: { data: unknown; error: unknown } = {
+  data: { success: true, already_processed: false, charge_id: 'ch-1', new_failure_count: 1, new_status: 'active', escalated: false },
+  error: null,
+};
 
 const rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> = [];
 const updateCalls: Array<{ table: string; data: Record<string, unknown>; filters: string[] }> = [];
@@ -38,6 +43,10 @@ function reset() {
   customerResult = { data: null, error: null };
   chargeResult = { data: null, error: null };
   claimResult = { data: { claimed: true, claim_token: 'tok-1' }, error: null };
+  failureRpcResult = {
+    data: { success: true, already_processed: false, charge_id: 'ch-1', new_failure_count: 1, new_status: 'active', escalated: false },
+    error: null,
+  };
   rpcCalls.length = 0;
   updateCalls.length = 0;
   insertCalls.length = 0;
@@ -52,6 +61,7 @@ const mockSupabase = {
     if (fn === 'claim_webhook_event') return claimResult;
     if (fn === 'complete_webhook_event') return { data: true, error: null };
     if (fn === 'fail_webhook_event') return { data: true, error: null };
+    if (fn === 'record_customer_subscription_failure') return failureRpcResult;
     return { data: null, error: null };
   }),
   from: vi.fn((table: string) => {
@@ -216,8 +226,12 @@ describe('Customer subscription routing', () => {
     status: 'active',
   };
 
-  it('5. invoice.payment_failed increments failure_count', async () => {
+  it('5. invoice.payment_failed calls atomic RPC with correct params', async () => {
     customerResult = { data: { ...customerSub }, error: null };
+    failureRpcResult = {
+      data: { success: true, already_processed: false, charge_id: 'ch-5', new_failure_count: 1, new_status: 'active', escalated: false },
+      error: null,
+    };
     const res = await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_C1',
       invoice_code: 'INV_C1',
@@ -225,30 +239,41 @@ describe('Customer subscription routing', () => {
       currency: 'NGN',
     }) as never);
     expect(res.status).toBe(200);
-    const update = updateCalls.find(c => c.table === 'customer_subscriptions');
-    expect(update).toBeTruthy();
-    expect(update!.data.failure_count).toBe(1);
-    // Not past_due yet (< 3 failures)
-    expect(update!.data.status).toBe('active');
+    const rpc = rpcCalls.find(c => c.fn === 'record_customer_subscription_failure');
+    expect(rpc).toBeTruthy();
+    expect(rpc!.params.p_subscription_id).toBe('cs1');
+    expect(rpc!.params.p_gateway).toBe('paystack');
+    expect(rpc!.params.p_failure_reason).toBe('Insufficient Funds');
+    expect(rpc!.params.p_currency).toBe('NGN');
+    // gateway_reference contains the webhook event ID for idempotency
+    expect(rpc!.params.p_gateway_reference).toContain('paystack-invoice.payment_failed-SUB_C1-INV_C1');
   });
 
-  it('6. invoice.payment_failed logs to subscription_charges', async () => {
+  it('6. invoice.payment_failed — RPC handles charge + increment atomically', async () => {
     customerResult = { data: { ...customerSub }, error: null };
-    await POST(makeReq('invoice.payment_failed', {
+    failureRpcResult = {
+      data: { success: true, already_processed: false, charge_id: 'ch-6', new_failure_count: 1, new_status: 'active', escalated: false },
+      error: null,
+    };
+    const res = await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_C1',
       invoice_code: 'INV_C2',
       gateway_response: 'Card declined',
-      currency: 'NGN',
     }) as never);
-    const chargeInsert = insertCalls.find(c => c.table === 'subscription_charges');
-    expect(chargeInsert).toBeTruthy();
-    expect(chargeInsert!.data.status).toBe('failed');
-    expect(chargeInsert!.data.failure_reason).toBe('Card declined');
-    expect(chargeInsert!.data.gateway).toBe('paystack');
+    expect(res.status).toBe(200);
+    // No direct insert/update — all done atomically in RPC
+    const directInsert = insertCalls.find(c => c.table === 'subscription_charges');
+    expect(directInsert).toBeUndefined();
+    const directUpdate = updateCalls.find(c => c.table === 'customer_subscriptions');
+    expect(directUpdate).toBeUndefined();
   });
 
-  it('7. invoice.payment_failed creates business alert', async () => {
+  it('7. invoice.payment_failed creates business alert on first processing', async () => {
     customerResult = { data: { ...customerSub }, error: null };
+    failureRpcResult = {
+      data: { success: true, already_processed: false, charge_id: 'ch-7', new_failure_count: 1, new_status: 'active', escalated: false },
+      error: null,
+    };
     await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_C1',
       invoice_code: 'INV_C3',
@@ -258,21 +283,26 @@ describe('Customer subscription routing', () => {
     expect(alertCalls[0].severity).toBe('warning');
   });
 
-  it('8. invoice.payment_failed at 3 failures → past_due', async () => {
+  it('8. invoice.payment_failed at 3 failures → escalated alert', async () => {
     customerResult = { data: { ...customerSub, failure_count: 2 }, error: null };
+    failureRpcResult = {
+      data: { success: true, already_processed: false, charge_id: 'ch-8', new_failure_count: 3, new_status: 'past_due', escalated: true },
+      error: null,
+    };
     await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_C1',
       invoice_code: 'INV_C4',
     }) as never);
-    const update = updateCalls.find(c => c.table === 'customer_subscriptions');
-    expect(update!.data.failure_count).toBe(3);
-    expect(update!.data.status).toBe('past_due');
-    // Alert severity escalated
     expect(alertCalls[0].severity).toBe('critical');
+    expect((alertCalls[0].message as string)).toContain('past due');
   });
 
-  it('9. invoice.payment_failed sends WhatsApp notification', async () => {
+  it('9. invoice.payment_failed sends WhatsApp notification on first processing', async () => {
     customerResult = { data: { ...customerSub }, error: null };
+    failureRpcResult = {
+      data: { success: true, already_processed: false, charge_id: 'ch-9', new_failure_count: 1, new_status: 'active', escalated: false },
+      error: null,
+    };
     await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_C1',
       invoice_code: 'INV_C5',
@@ -455,22 +485,7 @@ describe('Existing contract preservation', () => {
 // ═══════════════════════════════════════════════════════════
 
 describe('CTO-required additional coverage', () => {
-  it('21. Customer invoice.payment_failed DB update error → processingSucceeded stays false', async () => {
-    // Override from() to return error on customer_subscriptions update
-    const originalFrom = mockSupabase.from;
-    mockSupabase.from = vi.fn((table: string) => {
-      const result = originalFrom(table);
-      if (table === 'customer_subscriptions') {
-        result.update = vi.fn(() => {
-          const chain: Record<string, ReturnType<typeof vi.fn>> = {};
-          chain.eq = vi.fn(() => chain);
-          (chain as Record<string, unknown>).then = (resolve: (v: unknown) => void) =>
-            resolve({ error: { message: 'write_conflict' }, count: 0 });
-          return chain;
-        });
-      }
-      return result;
-    });
+  it('21. Customer invoice.payment_failed RPC error → processingSucceeded stays false', async () => {
     customerResult = {
       data: {
         id: 'cs_fail', business_id: 'cb_fail', user_id: 'cu_fail', service_id: 'sv_fail',
@@ -479,15 +494,18 @@ describe('CTO-required additional coverage', () => {
       },
       error: null,
     };
+    // RPC returns error (transaction rolled back — nothing committed)
+    failureRpcResult = { data: null, error: { message: 'transaction_conflict' } };
     const res = await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_WRITE_FAIL',
       invoice_code: 'INV_WF',
     }) as never);
-    // Should return 500 because durable update failed
+    // Should return 500 — RPC failed, event retryable
     expect(res.status).toBe(500);
-    // fail_webhook_event called
     expect(rpcCalls.some(c => c.fn === 'fail_webhook_event')).toBe(true);
-    mockSupabase.from = originalFrom;
+    // No alert or notification sent (RPC failed before side effects)
+    expect(alertCalls).toHaveLength(0);
+    expect(notifyCalls).toHaveLength(0);
   });
 
   it('22. Platform subscription.create without existing code (initial linking)', async () => {
@@ -530,6 +548,10 @@ describe('CTO-required additional coverage', () => {
       },
       error: null,
     };
+    failureRpcResult = {
+      data: { success: true, already_processed: false, charge_id: 'ch-nested', new_failure_count: 1, new_status: 'active', escalated: false },
+      error: null,
+    };
     const res = await POST(makeReq('invoice.payment_failed', {
       // subscription_code nested under data.subscription (not top-level)
       subscription: { subscription_code: 'SUB_NESTED' },
@@ -537,10 +559,10 @@ describe('CTO-required additional coverage', () => {
       gateway_response: 'Declined',
     }) as never);
     expect(res.status).toBe(200);
-    // Should still route to customer subscription
-    const update = updateCalls.find(c => c.table === 'customer_subscriptions');
-    expect(update).toBeTruthy();
-    expect(update!.data.failure_count).toBe(1);
+    // Should still route to customer subscription via RPC
+    const rpc = rpcCalls.find(c => c.fn === 'record_customer_subscription_failure');
+    expect(rpc).toBeTruthy();
+    expect(rpc!.params.p_subscription_id).toBe('cs_nested');
   });
 
   it('24. Customer subscription.not_renew on paused sub → cancelled_at set', async () => {
@@ -562,10 +584,10 @@ describe('CTO-required additional coverage', () => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// 25–27. Idempotent failure counting (CTO blocker)
+// 25–28. Atomic failure counting via M463 RPC (CTO blocker)
 // ═══════════════════════════════════════════════════════════
 
-describe('Idempotent customer failure counting', () => {
+describe('Atomic customer failure counting (M463 RPC)', () => {
   const customerSub = {
     id: 'cs_idem', business_id: 'cb_idem', user_id: 'cu_idem', service_id: 'sv_idem',
     amount: '5000', currency: 'NGN', customer_phone: '+2341234567890',
@@ -574,77 +596,93 @@ describe('Idempotent customer failure counting', () => {
     status: 'active',
   };
 
-  it('25. Crash-replay: failure_count increments exactly once', async () => {
-    // FIRST ATTEMPT: fresh event, no existing charge record
+  it('25. Crash-replay: RPC returns already_processed, no side effects', async () => {
+    // FIRST ATTEMPT: RPC succeeds (fresh processing)
     customerResult = { data: { ...customerSub }, error: null };
-    chargeResult = { data: null, error: null }; // No existing charge
+    failureRpcResult = {
+      data: { success: true, already_processed: false, charge_id: 'ch-25', new_failure_count: 2, new_status: 'active', escalated: false },
+      error: null,
+    };
     const res1 = await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_IDEM',
       invoice_code: 'INV_IDEM_1',
     }) as never);
     expect(res1.status).toBe(200);
-    // First attempt: charge inserted + failure_count incremented
-    const chargeInsert1 = insertCalls.find(c => c.table === 'subscription_charges');
-    expect(chargeInsert1).toBeTruthy();
-    expect(chargeInsert1!.data.gateway_reference).toContain('paystack-invoice.payment_failed-SUB_IDEM-INV_IDEM_1');
-    const update1 = updateCalls.find(c => c.table === 'customer_subscriptions');
-    expect(update1!.data.failure_count).toBe(2); // 1 + 1
+    // First attempt: RPC called, alert + notification sent
+    expect(rpcCalls.filter(c => c.fn === 'record_customer_subscription_failure')).toHaveLength(1);
+    expect(alertCalls).toHaveLength(1);
+    expect(notifyCalls).toHaveLength(1);
 
-    // SECOND ATTEMPT (replay): same event, charge record now exists
+    // SECOND ATTEMPT (replay after crash before complete_webhook_event)
     reset();
-    customerResult = { data: { ...customerSub, failure_count: 2 }, error: null }; // DB already updated
-    chargeResult = { data: { id: 'existing-charge-id' }, error: null }; // Charge exists!
+    customerResult = { data: { ...customerSub, failure_count: 2 }, error: null };
     claimResult = { data: { claimed: true, claim_token: 'tok-replay' }, error: null };
+    // RPC detects existing charge record → returns already_processed
+    failureRpcResult = {
+      data: { success: true, already_processed: true, charge_id: 'ch-25' },
+      error: null,
+    };
     const res2 = await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_IDEM',
       invoice_code: 'INV_IDEM_1', // Same invoice
     }) as never);
     expect(res2.status).toBe(200);
-    // Replay: NO increment, NO charge insert, NO notification
-    const update2 = updateCalls.find(c => c.table === 'customer_subscriptions');
-    expect(update2).toBeUndefined(); // No update on replay
-    const chargeInsert2 = insertCalls.find(c => c.table === 'subscription_charges');
-    expect(chargeInsert2).toBeUndefined(); // No duplicate charge
+    // Replay: RPC called but returned already_processed — NO side effects
+    expect(alertCalls).toHaveLength(0); // No duplicate alert
+    expect(notifyCalls).toHaveLength(0); // No duplicate notification
   });
 
-  it('26. Replay does not send duplicate customer notification', async () => {
-    // Simulate replay where charge record already exists
+  it('26. RPC transaction failure → full rollback, safe to retry', async () => {
     customerResult = { data: { ...customerSub }, error: null };
-    chargeResult = { data: { id: 'existing-charge' }, error: null };
-    await POST(makeReq('invoice.payment_failed', {
+    // RPC returns error — transaction rolled back, nothing committed
+    failureRpcResult = { data: null, error: { message: 'deadlock detected' } };
+    const res = await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_IDEM',
       invoice_code: 'INV_IDEM_2',
     }) as never);
-    // No notification on replay
-    expect(notifyCalls).toHaveLength(0);
-    // No alert on replay
+    // Returns 500 — safe for Paystack retry
+    expect(res.status).toBe(500);
+    // No side effects (RPC failed before any commit)
     expect(alertCalls).toHaveLength(0);
+    expect(notifyCalls).toHaveLength(0);
+    // fail_webhook_event called
+    expect(rpcCalls.some(c => c.fn === 'fail_webhook_event')).toBe(true);
   });
 
-  it('27. Charge insert failure prevents failure_count increment', async () => {
-    // Simulate charge insert failing
-    const originalFrom = mockSupabase.from;
-    mockSupabase.from = vi.fn((table: string) => {
-      const result = originalFrom(table);
-      if (table === 'subscription_charges') {
-        const origInsert = result.insert;
-        result.insert = vi.fn(() => ({ error: { message: 'write conflict' } }));
-        // Keep maybeSingle working for the charge lookup
-        result.maybeSingle = vi.fn(async () => chargeResult);
-      }
-      return result;
-    });
+  it('27. Successful retry after failed transaction', async () => {
     customerResult = { data: { ...customerSub }, error: null };
-    chargeResult = { data: null, error: null }; // No existing charge
+    // Second attempt succeeds (Paystack retried after first failure)
+    failureRpcResult = {
+      data: { success: true, already_processed: false, charge_id: 'ch-27', new_failure_count: 2, new_status: 'active', escalated: false },
+      error: null,
+    };
     const res = await POST(makeReq('invoice.payment_failed', {
       subscription_code: 'SUB_IDEM',
-      invoice_code: 'INV_IDEM_3',
+      invoice_code: 'INV_IDEM_2',
     }) as never);
-    // Should return 500 — charge insert failed, cannot safely increment
-    expect(res.status).toBe(500);
-    // failure_count NOT incremented (no durable marker)
-    const update = updateCalls.find(c => c.table === 'customer_subscriptions');
-    expect(update).toBeUndefined();
-    mockSupabase.from = originalFrom;
+    expect(res.status).toBe(200);
+    // This time: RPC succeeded, side effects sent
+    expect(alertCalls).toHaveLength(1);
+    expect(notifyCalls).toHaveLength(1);
+  });
+
+  it('28. Concurrent same-event delivery — RPC row lock prevents double increment', async () => {
+    // The RPC uses FOR UPDATE on the customer_subscriptions row.
+    // If two workers claim the same event (should not happen due to claim_webhook_event,
+    // but belt-and-suspenders), the second RPC call sees the charge record
+    // inserted by the first and returns already_processed.
+    customerResult = { data: { ...customerSub }, error: null };
+    failureRpcResult = {
+      data: { success: true, already_processed: true, charge_id: 'ch-concurrent' },
+      error: null,
+    };
+    const res = await POST(makeReq('invoice.payment_failed', {
+      subscription_code: 'SUB_IDEM',
+      invoice_code: 'INV_CONCURRENT',
+    }) as never);
+    expect(res.status).toBe(200);
+    // Concurrent: RPC returned already_processed, no side effects
+    expect(alertCalls).toHaveLength(0);
+    expect(notifyCalls).toHaveLength(0);
   });
 });
