@@ -4,12 +4,17 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { generateInvoicePdf } from '@/lib/pdf/invoice-pdf-generator';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    // Rate limit: 10 PDF generations per IP per minute (PDF generation is expensive)
+    const rlResponse = await rateLimitResponseAsync(getRateLimitKey(request, 'invoice-pdf'), 10, 60_000);
+    if (rlResponse) return rlResponse;
+
     const { id } = await params;
     const { searchParams } = new URL(request.url);
     const tokenParam = searchParams.get('token');

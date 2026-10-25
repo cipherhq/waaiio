@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/bookings/public/[slug]
@@ -11,6 +12,10 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> },
 ) {
   try {
+    // Rate limit: 30 requests per IP per minute
+    const rlResponse = await rateLimitResponseAsync(getRateLimitKey(_request, 'public-booking'), 30, 60_000);
+    if (rlResponse) return rlResponse;
+
     const { slug } = await params;
 
     if (!slug || typeof slug !== 'string') {

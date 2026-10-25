@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/pay?ref=XXXX
@@ -12,6 +13,10 @@ import { createServiceClient } from '@/lib/supabase/service';
  * compatibility, especially WhatsApp in-app browser and Nigerian mobile networks.
  */
 export async function GET(request: NextRequest) {
+  // Rate limit: 30 lookups per IP per minute
+  const rlResponse = await rateLimitResponseAsync(getRateLimitKey(request, 'pay-lookup'), 30, 60_000);
+  if (rlResponse) return rlResponse;
+
   const ref = request.nextUrl.searchParams.get('ref');
   if (!ref || ref.length < 6) {
     return NextResponse.redirect(new URL('/', request.url), 302);
