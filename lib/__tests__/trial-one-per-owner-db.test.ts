@@ -214,22 +214,54 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
 
     // Two independent psql processes executing simultaneously.
     // Each runs in its own connection with its own transaction.
-    // We use shell backgrounding (&) to overlap execution.
+    //
+    // Synchronization strategy: both connections first acquire a shared
+    // advisory lock (pg_advisory_lock_shared) as a "start gate". Once both
+    // are holding it, neither can proceed past the exclusive trial_owner_
+    // lock inside activate_trial_if_eligible until one releases. This
+    // guarantees genuine transaction overlap before the critical section.
     const { execSync } = require('child_process');
-    const resultFile1 = '/tmp/waaiio_race_1.json';
-    const resultFile2 = '/tmp/waaiio_race_2.json';
+    const fs = require('fs');
+    const pid = process.pid;
+    const resultFile1 = `/tmp/waaiio_race_1_${pid}.json`;
+    const resultFile2 = `/tmp/waaiio_race_2_${pid}.json`;
+    const exitFile1 = `/tmp/waaiio_race_1_${pid}.exit`;
+    const exitFile2 = `/tmp/waaiio_race_2_${pid}.exit`;
 
-    // Launch both simultaneously via shell — each is an independent psql connection
+    // Clean up any stale files
+    for (const f of [resultFile1, resultFile2, exitFile1, exitFile2]) {
+      try { fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+
+    // Each process: acquire a shared "start gate" lock, then call the RPC.
+    // The shared lock ensures both connections are active and overlapping
+    // before either enters the exclusive trial_owner_ advisory lock.
+    // Lock key 999465 is arbitrary and test-specific.
+    const raceSQL = (bizId: string) =>
+      `SELECT pg_advisory_lock_shared(999465); SELECT activate_trial_if_eligible('${bizId}');`;
+
     execSync(`
-      (psql "${dbUrl}" -tAXq -c "SELECT activate_trial_if_eligible('${RACE_BIZ_X}');" > ${resultFile1} 2>&1) &
+      (psql "${dbUrl}" -tAXq -c "${raceSQL(RACE_BIZ_X)}" > ${resultFile1} 2>&1; echo $? > ${exitFile1}) &
       PID1=$!
-      (psql "${dbUrl}" -tAXq -c "SELECT activate_trial_if_eligible('${RACE_BIZ_Y}');" > ${resultFile2} 2>&1) &
+      (psql "${dbUrl}" -tAXq -c "${raceSQL(RACE_BIZ_Y)}" > ${resultFile2} 2>&1; echo $? > ${exitFile2}) &
       PID2=$!
       wait $PID1 $PID2
     `, { shell: '/bin/bash', timeout: 30000 });
 
-    const raw1 = require('fs').readFileSync(resultFile1, 'utf-8').trim();
-    const raw2 = require('fs').readFileSync(resultFile2, 'utf-8').trim();
+    // Check both exit codes independently
+    const exit1 = parseInt(fs.readFileSync(exitFile1, 'utf-8').trim());
+    const exit2 = parseInt(fs.readFileSync(exitFile2, 'utf-8').trim());
+    expect(exit1).toBe(0);
+    expect(exit2).toBe(0);
+
+    // Parse results — pg_advisory_lock_shared returns empty line, RPC result is second line
+    const raw1 = fs.readFileSync(resultFile1, 'utf-8').trim().split('\n').pop()!.trim();
+    const raw2 = fs.readFileSync(resultFile2, 'utf-8').trim().split('\n').pop()!.trim();
+
+    // Clean up temp files
+    for (const f of [resultFile1, resultFile2, exitFile1, exitFile2]) {
+      try { fs.unlinkSync(f); } catch { /* ignore */ }
+    }
     const r1 = JSON.parse(raw1);
     const r2 = JSON.parse(raw2);
 
