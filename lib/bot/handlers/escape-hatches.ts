@@ -127,18 +127,24 @@ export async function handleEscapeHatch(
       const d = session.session_data || {};
 
       // Cancel pending booking via authoritative RPC (releases slot capacity,
-      // package redemptions, checks ownership). Silently succeeds if booking
-      // is already cancelled/completed — the RPC handles all status guards.
+      // package redemptions, checks ownership). The RPC handles all status guards:
+      // - pending/confirmed → cancelled + slot released
+      // - already cancelled/completed → returns {cancelled: false, reason: ...}
+      // - paid deposit → RPC still cancels (deposit refund is a separate policy)
+      let cleanupFailed = false;
       if (d.booking_id) {
-        const { data: bookingResult } = await supabase.rpc('cancel_booking_with_release', {
+        const { data: bookingResult, error: bookingErr } = await supabase.rpc('cancel_booking_with_release', {
           p_booking_id: d.booking_id as string,
           p_cancelled_by: 'customer',
           p_expected_user_id: session.user_id || '00000000-0000-0000-0000-000000000000',
         });
-        if (bookingResult && !bookingResult.cancelled) {
-          // Not cancellable (already confirmed+paid, completed, etc.) — safe to proceed,
-          // the booking remains in its current state.
-          logger.info('[ESCAPE] cancel: booking not cancellable, preserving state', {
+        if (bookingErr) {
+          logger.error('[ESCAPE] cancel: booking RPC failed', { bookingId: d.booking_id, error: bookingErr.message });
+          cleanupFailed = true;
+        } else if (bookingResult && !bookingResult.cancelled) {
+          // Not cancellable (completed, etc.) — the booking stays in its current state.
+          // This is safe: the customer exits the flow, the reservation is preserved.
+          logger.info('[ESCAPE] cancel: booking not cancellable, preserving', {
             bookingId: d.booking_id, reason: bookingResult.reason,
           });
         }
@@ -148,18 +154,33 @@ export async function handleEscapeHatch(
       // promo reservations, voids pending payments, cancels pending transfers).
       // Refuses if a successful payment exists — the order stays confirmed.
       if (d.order_id) {
-        const { data: orderResult } = await supabase.rpc('cancel_order_immediate', {
+        const { data: orderResult, error: orderErr } = await supabase.rpc('cancel_order_immediate', {
           p_order_id: d.order_id as string,
           p_reason: 'customer_cancel',
         });
-        if (orderResult && !orderResult.cancelled) {
-          logger.info('[ESCAPE] cancel: order not cancellable, preserving state', {
+        if (orderErr) {
+          logger.error('[ESCAPE] cancel: order RPC failed', { orderId: d.order_id, error: orderErr.message });
+          cleanupFailed = true;
+        } else if (orderResult && !orderResult.cancelled) {
+          // Order has a successful payment or is already processed — preserved.
+          logger.info('[ESCAPE] cancel: order not cancellable, preserving', {
             orderId: d.order_id, reason: orderResult.reason,
           });
         }
       }
 
-      // Deactivate session AFTER cleanup so the RPCs can still read session context
+      if (cleanupFailed) {
+        // RPC failed — don't tell the customer it succeeded. Send a recovery message
+        // and keep the session active so they can retry or use "exit" to force-leave.
+        const lang = session.session_data?._detected_language as string || 'en';
+        await messageSender.sendText({
+          to: from,
+          text: getFlowCopy(lang, 'nav.cancel_retry') || 'Something went wrong while cancelling. Please try again or type "exit" to leave.',
+        });
+        return { handled: true };
+      }
+
+      // Cleanup succeeded — deactivate session and return to menu
       await deactivateSession(session.id);
       await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
       return { handled: true };
@@ -258,7 +279,7 @@ export async function handleEscapeHatch(
         if (biz) {
           await flowExecutor.execute(
             from,
-            navigationCommand === 'cancel' ? 'cancel' : 'back',
+            'back',
             session as unknown as BotSession,
             biz,
           );
