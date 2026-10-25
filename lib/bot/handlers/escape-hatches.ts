@@ -70,8 +70,11 @@ export async function handleEscapeHatch(
     if (correctionReentry.handled) return correctionReentry;
   }
 
-  // Simplified: cancel = back (go back one step)
-  const isCancelOrBack = navigationCommand === 'cancel' || navigationCommand === 'back';
+  // "cancel" = safely abandon the flow and return to business menu (Owner decision 2026-10-25).
+  // "back" = go back one step in the flow.
+  const isCancel = navigationCommand === 'cancel';
+  const isBack = navigationCommand === 'back';
+  const isCancelOrBack = isCancel || isBack;
   const isExitWord = navigationCommand === 'exit';
   const isMenuWord = navigationCommand === 'menu' || navigationCommand === 'restart';
   const isEscapeHatch = isCancelOrBack || isExitWord || isMenuWord;
@@ -108,12 +111,33 @@ export async function handleEscapeHatch(
     return { handled: true };
   }
 
-  // "back" or "cancel" in flow steps → existing executor remains the owner.
-  // For multilingual aliases, canonicalize to the executor's historical English
-  // command instead of duplicating its step-history/CAS transition here.
+  // "back" in flow steps → existing executor remains the owner.
+  // "cancel" → safely abandon the current flow and return to business menu.
 
   if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
     intelligence.resetAbuse(from);
+
+    // ── "cancel" → safely abandon flow and return to business menu ──
+    // Cancel pending bookings/orders but never touch completed payments.
+    if (isCancel && session.business_id) {
+      const bizId = session.business_id;
+      await deactivateSession(session.id);
+      const d = session.session_data || {};
+      if (d.booking_id) {
+        await supabase.from('bookings')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('id', d.booking_id as string)
+          .in('status', ['pending']);
+      }
+      if (d.order_id) {
+        await supabase.from('orders')
+          .update({ status: 'cancelled' })
+          .eq('id', d.order_id as string)
+          .eq('status', 'pending');
+      }
+      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
+      return { handled: true };
+    }
 
     // ── "menu" / "restart" / "start over" → restart current business menu ──
     if (isMenuWord && session.business_id) {
@@ -137,8 +161,8 @@ export async function handleEscapeHatch(
       return { handled: true };
     }
 
-    // ── "cancel" / "back" → go back one step ──
-    if (isCancelOrBack) {
+    // ── "back" → go back one step ──
+    if (isBack) {
       // For free-text steps (enter_amount, collect_name, etc.), the executor
       // won't intercept back/cancel. Handle it here instead.
       const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'];
@@ -198,7 +222,7 @@ export async function handleEscapeHatch(
       // Preserve the FlowExecutor as owner of ordinary step-history navigation.
       // Existing English forms fall through unchanged. Multilingual aliases are
       // converted to the canonical English command the executor already owns.
-      const legacyExecutorWords = new Set(['back', 'go back', 'previous', 'cancel']);
+      const legacyExecutorWords = new Set(['back', 'go back', 'previous']);
       if (!legacyExecutorWords.has(normalizedText) && session.business_id) {
         const { data: biz } = await supabase
           .from('businesses')

@@ -409,7 +409,7 @@ export class FlowExecutor {
 
     // ── Navigation: "back" command ──
     // Only intercept on non-free-text steps so users can literally type "back" as input
-    const BACK_WORDS = ['back', 'go back', 'previous', 'cancel'];
+    const BACK_WORDS = ['back', 'go back', 'previous'];
     const lowerInputTrimmed = input.toLowerCase().trim();
     if (BACK_WORDS.includes(lowerInputTrimmed) && !FREE_TEXT_STEPS.includes(stepId)) {
       const history = (session.session_data._step_history as string[]) || [];
@@ -448,7 +448,7 @@ export class FlowExecutor {
     // Global escape hatch: cancel / start over at any step
     // Supports English + Pidgin + Yoruba + French + Hausa + Twi
     const lowerInput = input.toLowerCase().trim();
-    const CANCEL_WORDS = ['stop', 'quit', 'exit', 'end', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
+    const CANCEL_WORDS = ['stop', 'quit', 'exit', 'end', 'cancel', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
     const RESTART_WORDS = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
     if (CANCEL_WORDS.includes(lowerInput)) {
       // Clean up any pending bank transfers before killing session
