@@ -224,7 +224,9 @@ jobs:
   # ── Admin Application ──
   admin-app:
     name: Admin App (install, build)
-    runs-on: ubuntu-latest
+    # Pin to ubuntu-24.04: Playwright 1.59.1 cannot install Chromium on ubuntu-latest (26.04).
+    # Remove this pin after upgrading Playwright to a version that supports 26.04.
+    runs-on: ubuntu-24.04
 
     defaults:
       run:

@@ -88,22 +88,25 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
           ON CONFLICT (id) DO UPDATE SET phone_confirmed_at = NULL;`);
 
     // Create profiles (handle_new_user trigger may not fire in test)
-    psql(`INSERT INTO profiles (id, role) VALUES ('${OWNER_VERIFIED_A}', 'user'), ('${OWNER_VERIFIED_B}', 'user'), ('${OWNER_UNVERIFIED}', 'user') ON CONFLICT DO NOTHING;`);
+    psql(`INSERT INTO profiles (id, role) VALUES ('${OWNER_VERIFIED_A}', 'restaurant_owner'), ('${OWNER_VERIFIED_B}', 'restaurant_owner'), ('${OWNER_UNVERIFIED}', 'restaurant_owner') ON CONFLICT DO NOTHING;`);
 
     // Shared channel
     psql(`INSERT INTO whatsapp_channels (id, country_code, phone_number, channel_type, is_active, provider)
           VALUES ('${CHANNEL_ID}', 'US', '12025554465', 'shared', true, 'meta_cloud')
           ON CONFLICT DO NOTHING;`);
 
-    // Config version with trial credit + financial gate
+    // Config version with trial credit + financial gate.
+    // Use clock_timestamp() (not NOW()) to ensure this config is the latest
+    // even after M372 tests insert their own configs in the shared CI database.
+    // DELETE first to ensure ON CONFLICT doesn't skip a stale row.
+    psqlCleanup(`DELETE FROM platform_config_versions WHERE id = '${CONFIG_ID}';`);
     psql(`INSERT INTO platform_config_versions (id, effective_from, config_snapshot)
-          VALUES ('${CONFIG_ID}', NOW() - INTERVAL '1 hour', '{
+          VALUES ('${CONFIG_ID}', clock_timestamp(), '{
             "trial_days": 14,
             "messaging_financial_gate": true,
             "trial_credit_minor_by_currency": {"USD": 400},
             "messaging_pricing": {"USD": {"rates": {"US": {"*": 1}}, "default_cost_minor": 1, "default_spend_cap_minor": 5000}}
-          }'::jsonb)
-          ON CONFLICT DO NOTHING;`);
+          }'::jsonb);`);
 
     // Businesses
     const bizInsert = (id: string, owner: string, name: string, slug: string) =>
@@ -206,7 +209,7 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
 
     psql(`INSERT INTO auth.users (id, email, phone, phone_confirmed_at, raw_app_meta_data)
           VALUES ('${RACE_OWNER}', 'race-owner-465@test.waaiio.com', '+12025559999', NOW(), '{}');`);
-    psql(`INSERT INTO profiles (id, role) VALUES ('${RACE_OWNER}', 'user') ON CONFLICT DO NOTHING;`);
+    psql(`INSERT INTO profiles (id, role) VALUES ('${RACE_OWNER}', 'restaurant_owner') ON CONFLICT DO NOTHING;`);
     psql(`INSERT INTO businesses (id, owner_id, name, slug, address, city, phone, country_code, category, subscription_tier, wa_method, status, assigned_channel_id)
           VALUES
             ('${RACE_BIZ_X}', '${RACE_OWNER}', 'RaceX', 'racex-465', '1 Race', 'NYC', '+12025550099', 'US', 'barber', 'free', 'shared', 'active', '${CHANNEL_ID}'),
@@ -293,5 +296,38 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
     expect(body).toContain('owner_already_has_trial');
     expect(body).toContain('trial_owner_');
     expect(body).toContain('phone_confirmed_at');
+  });
+
+  // ── Cron starvation test ──
+
+  it('10. terminally denied businesses with metadata.trial_ineligible are excluded from cron query', () => {
+    // Simulate what the cron does: select businesses WHERE trial_ends_at IS NULL
+    // AND metadata->>trial_ineligible != 'true'. Businesses marked as permanently
+    // ineligible should not appear in the result set.
+
+    // BIZ_VA2 was denied in test 2 (owner_already_has_trial).
+    // Simulate the cron marking it as trial_ineligible:
+    psql(`UPDATE businesses SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{trial_ineligible}', 'true')
+          WHERE id = '${BIZ_VA2}';`);
+
+    // BIZ_UV1 was denied in test 4 (phone_not_verified).
+    psql(`UPDATE businesses SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{trial_ineligible}', 'true')
+          WHERE id = '${BIZ_UV1}';`);
+
+    // Cron query: should NOT return BIZ_VA2 or BIZ_UV1
+    const eligible = psql(`
+      SELECT id FROM businesses
+      WHERE subscription_tier = 'free'
+        AND status = 'active'
+        AND trial_ends_at IS NULL
+        AND (whatsapp_channel_id IS NOT NULL OR wa_method = 'shared')
+        AND NOT (metadata->>'trial_ineligible' = 'true')
+      ORDER BY created_at
+      LIMIT 100;
+    `);
+
+    // BIZ_VA2 and BIZ_UV1 should be excluded
+    expect(eligible).not.toContain(BIZ_VA2);
+    expect(eligible).not.toContain(BIZ_UV1);
   });
 });

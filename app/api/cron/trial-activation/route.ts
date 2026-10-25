@@ -33,13 +33,18 @@ export async function GET(request: NextRequest) {
 
   try {
     // ── Phase 1: Fresh trial activation ──
+    // Exclude businesses with terminal trial denials (metadata.trial_ineligible)
+    // to prevent queue starvation by permanently ineligible businesses.
+    // Temporary denials (missing config, gate off) remain retryable.
     const { data: businesses, error: queryError } = await supabase
       .from('businesses')
-      .select('id, name')
+      .select('id, name, owner_id, metadata')
       .eq('subscription_tier', 'free')
       .eq('status', 'active')
       .is('trial_ends_at', null)
       .or('whatsapp_channel_id.not.is.null,wa_method.eq.shared')
+      .not('metadata->>trial_ineligible', 'eq', 'true')
+      .order('created_at', { ascending: true })
       .limit(100);
 
     if (queryError) {
@@ -67,6 +72,19 @@ export async function GET(request: NextRequest) {
         } else {
           pending++;
           const reason = parsed?.reason || 'unknown';
+
+          // Terminal denials: mark business as permanently ineligible so it
+          // exits the trial_ends_at IS NULL queue and doesn't starve eligible
+          // businesses. Uses metadata.trial_ineligible flag — does NOT set
+          // trial_ends_at (no fake trial clock). Temporary denials (config,
+          // gate) remain retryable and are NOT marked.
+          const TERMINAL_REASONS = ['owner_already_has_trial', 'phone_not_verified', 'not_free_tier'];
+          if (TERMINAL_REASONS.includes(reason)) {
+            const meta = (biz as Record<string, unknown>).metadata as Record<string, unknown> || {};
+            await supabase.from('businesses').update({
+              metadata: { ...meta, trial_ineligible: true, trial_ineligible_reason: reason },
+            }).eq('id', biz.id);
+          }
 
           if (
             reason === 'missing_trial_credit_config' ||
