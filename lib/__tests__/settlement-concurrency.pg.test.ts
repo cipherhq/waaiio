@@ -254,8 +254,8 @@ describeDb('M453: settlement/refund concurrency — real PostgreSQL', () => {
 
     // JS computation
     const fees = [
-      { transaction_amount: 5000, fee_total: 150, gateway_fee: 50, waived: false, is_direct_transfer: false as const },
-      { transaction_amount: 8000, fee_total: 240, gateway_fee: 80, waived: false, is_direct_transfer: false as const },
+      { transaction_amount: 5000, fee_total: 150, gateway_fee: 50, waived: false, is_direct_transfer: false as const, currency: C },
+      { transaction_amount: 8000, fee_total: 240, gateway_fee: 80, waived: false, is_direct_transfer: false as const, currency: C },
     ];
     const jsResult = computePlatformHeldTotals(fees, C, [], []);
     // gross=13000, fees=390, gw=130, adj=0, prior=0 → net=12480
