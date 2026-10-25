@@ -1,3 +1,11 @@
+### Audit NB-5: SECURITY DEFINER ACL hardening (2026-10-24)
+
+- **`supabase/migrations/463_secdef_acl_audit_hardening.sql`** (new): Hardens 6 exposed SECURITY DEFINER functions. `calculate_volume_discount`: adds missing `SET search_path = public`, REVOKEs anon+authenticated (bot-only via service client). `check_conversation_limit`: REVOKEs anon+authenticated (legacy function, no active TS callers). Dashboard revenue RPCs (`get_business_revenue`, `get_order_revenue`, `get_outstanding_invoices`): REVOKEs anon only (keeps authenticated for dashboard). `check_business_role`: REVOKEs anon only (keeps authenticated for RLS policies). Inline verification assertions validate all grants.
+- **`lib/__tests__/nb5-secdef-acl-hardening.test.ts`** (new): 25 tests verifying migration REVOKE/GRANT statements, search_path presence, assertion coverage, intentionally public functions not revoked, and application caller patterns.
+- **Affects**: Database function execution grants only. No schema changes. No application code changes. Backward compatible — all callers use service client.
+- **Could break**: Any hypothetical browser-side RPC call to `calculate_volume_discount` or `check_conversation_limit` (none exist in codebase). Dashboard RPCs still accessible to authenticated users.
+- **Requires**: Migration must be applied to staging/production after merge.
+
 ### #682 Launch: Disable Flutterwave merchant setup (2026-10-24)
 
 - **`lib/payments/gateway-resolver.ts`**: Added `SETUP_AVAILABLE_GATEWAYS = ['paystack', 'stripe']`. Shared constant gates new merchant gateway setup. Existing `VALID_GATEWAYS` unchanged (Flutterwave payment processing preserved).
