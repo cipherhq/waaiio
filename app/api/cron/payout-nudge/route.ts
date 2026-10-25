@@ -5,7 +5,7 @@ import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { computePlatformHeldTotals } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { assertMessagingAllowed, MessagingSuspendedError } from '@/lib/channels/send-guard';
 
 /**
@@ -79,14 +79,22 @@ export async function GET(request: NextRequest) {
       if (lastNudgeDate && (Date.now() - lastNudgeDate.getTime()) < 7 * 24 * 60 * 60 * 1000) continue;
 
       // Check if they have accumulated payments
-      const { data: fees } = await supabase
+      // M466: Include currency via payments join
+      const { data: feesRaw } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
         .eq('business_id', biz.id)
         .is('refunded_at', null);
+      const fees = (feesRaw || []).map(f => ({
+        ...f,
+        currency: (f as unknown as { payments: { currency: string } }).payments?.currency ?? null,
+      }));
 
-      // Canonical formula — same as generate/auto-payout
-      const { eligible, netAvailable: balance } = computePlatformHeldTotals(fees || []);
+      // M466: Use primary eligible currency for nudge threshold
+      const currencies = getEligibleCurrencies(fees);
+      const primaryCurrency = currencies[0];
+      if (!primaryCurrency) continue;
+      const { eligible, netAvailable: balance } = computePlatformHeldTotals(fees, primaryCurrency);
       const paymentCount = eligible.length;
 
       // Only nudge if they have actual money waiting

@@ -19,6 +19,8 @@ import { isEligiblePaystackAccount, isEligibleStripeAccount, type PayoutAccountR
 import { calculateFee, type FeeBasis, type FeeConfigSnapshot } from '@/lib/payments/calculateFee';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
 
+const C = 'NGN'; // Default test currency
+
 // ═══════════════════════════════════════════════════════════════════
 // Fixtures
 // ═══════════════════════════════════════════════════════════════════
@@ -38,6 +40,7 @@ function makePlatformFee(amount: number, feeTotal: number, gatewayFee: number = 
     gateway_fee: gatewayFee,
     waived: opts?.waived ?? false,
     is_direct_transfer: opts?.isDirectTransfer !== undefined ? opts.isDirectTransfer : false,
+    currency: C,
   };
 }
 
@@ -119,7 +122,7 @@ describe('Settlement Lifecycle: Fee → Payout Generation', () => {
       makePlatformFee(10000, 300, 50),  // ₦10,000 payment, ₦300 fee, ₦50 gateway
       makePlatformFee(5000, 150, 25),   // ₦5,000 payment, ₦150 fee, ₦25 gateway
     ];
-    const { gross, totalFees, gatewayFees, netAvailable } = computePlatformHeldTotals(fees);
+    const { gross, totalFees, gatewayFees, netAvailable } = computePlatformHeldTotals(fees, C);
     expect(gross).toBe(15000);
     expect(totalFees).toBe(450);
     expect(gatewayFees).toBe(75);
@@ -131,7 +134,7 @@ describe('Settlement Lifecycle: Fee → Payout Generation', () => {
       makePlatformFee(10000, 300, 50),                                    // platform-held
       makePlatformFee(8000, 200, 40, { isDirectTransfer: true }),         // direct split
     ];
-    const { gross, eligible } = computePlatformHeldTotals(fees);
+    const { gross, eligible } = computePlatformHeldTotals(fees, C);
     expect(eligible).toHaveLength(1);
     expect(gross).toBe(10000);  // only the platform-held fee
   });
@@ -141,7 +144,7 @@ describe('Settlement Lifecycle: Fee → Payout Generation', () => {
       makePlatformFee(10000, 300, 50),
       makePlatformFee(5000, 150, 25, { isDirectTransfer: null }),
     ];
-    const { eligible, gross } = computePlatformHeldTotals(fees);
+    const { eligible, gross } = computePlatformHeldTotals(fees, C);
     expect(eligible).toHaveLength(1);
     expect(gross).toBe(10000);
     expect(getUnclassifiedFeeRows(fees)).toHaveLength(1);
@@ -155,20 +158,20 @@ describe('Settlement Lifecycle: Fee → Payout Generation', () => {
       makePlatformFee(10000, 300, 50),
       makePlatformFee(5000, 150, 25),
     ];
-    const beforeRefund = computePlatformHeldTotals(feesBeforeRefund);
+    const beforeRefund = computePlatformHeldTotals(feesBeforeRefund, C);
     expect(beforeRefund.netAvailable).toBe(14475);
 
     // After full refund of the ₦5,000 payment: that fee row has refunded_at set
     // so it would be filtered out by the SQL query. Simulate by removing it.
     const feesAfterRefund = [makePlatformFee(10000, 300, 50)];
-    const afterRefund = computePlatformHeldTotals(feesAfterRefund);
+    const afterRefund = computePlatformHeldTotals(feesAfterRefund, C);
     expect(afterRefund.netAvailable).toBe(9650); // 10000 - 300 - 50
     expect(afterRefund.netAvailable).toBeLessThan(beforeRefund.netAvailable);
   });
 
   it('waived fees: fee_total excluded but gateway_fee still deducted', () => {
     const fees = [makePlatformFee(10000, 300, 50, { waived: true })];
-    const { totalFees, gatewayFees, netAvailable } = computePlatformHeldTotals(fees);
+    const { totalFees, gatewayFees, netAvailable } = computePlatformHeldTotals(fees, C);
     expect(totalFees).toBe(0);     // waived
     expect(gatewayFees).toBe(50);  // still deducted
     expect(netAvailable).toBe(9950);
@@ -180,15 +183,15 @@ describe('Settlement Lifecycle: Fee → Payout Generation', () => {
     const periodAFees = [makePlatformFee(10000, 300, 50)];
     const periodBFees = [makePlatformFee(5000, 150, 25)];
 
-    const payoutA = computePlatformHeldTotals(periodAFees);
-    const payoutB = computePlatformHeldTotals(periodBFees);
+    const payoutA = computePlatformHeldTotals(periodAFees, C);
+    const payoutB = computePlatformHeldTotals(periodBFees, C);
 
     expect(payoutA.netAvailable).toBe(9650);
     expect(payoutB.netAvailable).toBe(4825);
     // Total across both periods should equal processing them all at once...
     // but with prior payouts deducted for balance checks
     const allFees = [...periodAFees, ...periodBFees];
-    const allAtOnce = computePlatformHeldTotals(allFees, [], [{ net_amount: payoutA.netAvailable }]);
+    const allAtOnce = computePlatformHeldTotals(allFees, C, [], [{ net_amount: payoutA.netAvailable, currency: C }]);
     expect(allAtOnce.netAvailable).toBe(payoutB.netAvailable);
   });
 });
@@ -203,23 +206,23 @@ describe('Settlement Lifecycle: Balance Verification', () => {
       makePlatformFee(20000, 600, 100),
       makePlatformFee(10000, 300, 50),
     ];
-    const adj = [{ amount: -200 }];
+    const adj = [{ amount: -200, currency: C }];
 
     // Generate phase (period-specific, no prior payouts)
-    const generated = computePlatformHeldTotals(fees, adj);
+    const generated = computePlatformHeldTotals(fees, C, adj);
     // gross=30000, totalFees=900, gatewayFees=150, adj=-200
     // net = 30000 - 900 - 150 + (-200) = 28750
     expect(generated.netAvailable).toBe(28750);
 
     // Approve phase (lifetime balance, with the generated payout as prior)
-    const balance = computePlatformHeldTotals(fees, adj, [{ net_amount: generated.netAvailable }]);
+    const balance = computePlatformHeldTotals(fees, C, adj, [{ net_amount: generated.netAvailable, currency: C }]);
     expect(balance.netAvailable).toBe(0); // Exact match — no phantom balance
   });
 
   it('over-pay protection: payout amount exceeding balance is caught', () => {
     const fees = [makePlatformFee(10000, 300, 50)]; // net = 9650
-    const priorPayouts = [{ net_amount: 9000 }];
-    const { netAvailable } = computePlatformHeldTotals(fees, [], priorPayouts);
+    const priorPayouts = [{ net_amount: 9000, currency: C }];
+    const { netAvailable } = computePlatformHeldTotals(fees, C, [], priorPayouts);
     expect(netAvailable).toBe(650);
 
     // A payout of ₦5,000 would exceed: 5000 > 650
@@ -229,14 +232,14 @@ describe('Settlement Lifecycle: Balance Verification', () => {
 
   it('adjustment linkage: applied adjustments must be included in lifetime balance', () => {
     const fees = [makePlatformFee(10000, 300, 50)];
-    const adj = [{ amount: -500 }];
+    const adj = [{ amount: -500, currency: C }];
 
     // Generate: 10000 - 300 - 50 + (-500) = 9150
-    const gen = computePlatformHeldTotals(fees, adj);
+    const gen = computePlatformHeldTotals(fees, C, adj);
     expect(gen.netAvailable).toBe(9150);
 
     // After generate, adjustment is applied. Balance with all adjustments:
-    const bal = computePlatformHeldTotals(fees, adj, [{ net_amount: 9150 }]);
+    const bal = computePlatformHeldTotals(fees, C, adj, [{ net_amount: 9150, currency: C }]);
     expect(bal.netAvailable).toBe(0);
   });
 });
@@ -363,7 +366,7 @@ describe('Settlement Lifecycle: Direct-Split Model', () => {
     const directTransferFees = fees.filter(f => f.is_direct_transfer === true);
     expect(directTransferFees).toHaveLength(2);
 
-    const { netAvailable } = computePlatformHeldTotals(fees);
+    const { netAvailable } = computePlatformHeldTotals(fees, C);
     expect(netAvailable).toBe(2895);  // 3000 - 90 - 15 (only the platform-held fee)
   });
 
@@ -372,7 +375,7 @@ describe('Settlement Lifecycle: Direct-Split Model', () => {
       makePlatformFee(10000, 300, 50, { isDirectTransfer: true }),
       makePlatformFee(5000, 150, 25, { isDirectTransfer: true }),
     ];
-    const { gross, netAvailable } = computePlatformHeldTotals(fees);
+    const { gross, netAvailable } = computePlatformHeldTotals(fees, C);
     expect(gross).toBe(0);
     expect(netAvailable).toBe(0);
   });
@@ -436,16 +439,16 @@ describe('Settlement Lifecycle: Full Chain Simulation', () => {
 
     // Step 2: Generate payout for this period
     const periodFees = [feeRow];
-    const generated = computePlatformHeldTotals(periodFees);
+    const generated = computePlatformHeldTotals(periodFees, C);
     const expectedNet = 25000 - 375 - 187.50; // = 24437.50
     expect(generated.netAvailable).toBe(expectedNet);
 
     // Step 3: Balance check during approval
-    const balanceCheck = computePlatformHeldTotals(periodFees, [], [{ net_amount: expectedNet }]);
+    const balanceCheck = computePlatformHeldTotals(periodFees, C, [], [{ net_amount: expectedNet, currency: C }]);
     expect(balanceCheck.netAvailable).toBe(0);
 
     // Step 4: After paid, balance remains 0
-    const afterPaid = computePlatformHeldTotals(periodFees, [], [{ net_amount: expectedNet }]);
+    const afterPaid = computePlatformHeldTotals(periodFees, C, [], [{ net_amount: expectedNet, currency: C }]);
     expect(afterPaid.netAvailable).toBe(0);
   });
 
@@ -455,20 +458,20 @@ describe('Settlement Lifecycle: Full Chain Simulation', () => {
     const allFees = [fee1, fee2];
 
     // Generate: gross=25000, fees=750, gateway=125, net=24125
-    const gen = computePlatformHeldTotals(allFees);
+    const gen = computePlatformHeldTotals(allFees, C);
     expect(gen.netAvailable).toBe(24125);
 
     // Payout generated and paid
-    const paidPayout = { net_amount: gen.netAvailable };
+    const paidPayout = { net_amount: gen.netAvailable, currency: C };
 
     // Balance after payout = 0
-    const balAfterPayout = computePlatformHeldTotals(allFees, [], [paidPayout]);
+    const balAfterPayout = computePlatformHeldTotals(allFees, C, [], [paidPayout]);
     expect(balAfterPayout.netAvailable).toBe(0);
 
     // Payment 1 fully refunded: fee row removed from query (refunded_at set)
     // Only fee2 remains
     const feesAfterRefund = [fee2];
-    const balAfterRefund = computePlatformHeldTotals(feesAfterRefund, [], [paidPayout]);
+    const balAfterRefund = computePlatformHeldTotals(feesAfterRefund, C, [], [paidPayout]);
     // Now: gross=15000, fees=450, gateway=75 → net before prior = 14475
     // After prior payout of 24125: 14475 - 24125 = negative → clamped to 0
     expect(balAfterRefund.netAvailable).toBe(0);
@@ -479,7 +482,7 @@ describe('Settlement Lifecycle: Full Chain Simulation', () => {
   it('new period after refund: fresh fees are available', () => {
     // Period 1: ₦10,000 payment, payout generated and paid
     const period1Fee = makePlatformFee(10000, 300, 50);
-    const period1Gen = computePlatformHeldTotals([period1Fee]);
+    const period1Gen = computePlatformHeldTotals([period1Fee], C);
     expect(period1Gen.netAvailable).toBe(9650);
 
     // Period 1 payout paid, then payment refunded (fee row gets refunded_at)
@@ -490,8 +493,9 @@ describe('Settlement Lifecycle: Full Chain Simulation', () => {
     // Prior payouts: period1's 9650 was paid
     const lifetimeBalance = computePlatformHeldTotals(
       [period2Fee],               // only non-refunded fees
+      C,
       [],
-      [{ net_amount: 9650 }],     // period 1 payout that was already paid
+      [{ net_amount: 9650, currency: C }],     // period 1 payout that was already paid
     );
     // gross=20000, fees=600, gateway=100 → net=19300
     // minus prior 9650 → 9650 available

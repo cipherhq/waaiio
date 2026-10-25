@@ -98,7 +98,7 @@ describe('Approve route: verification limit enforcement', () => {
         chain.single = vi.fn().mockResolvedValue({
           data: {
             id: 'payout-1', business_id: 'biz-1', status: 'pending',
-            net_amount: 100_000, payout_account_id: 'pa-1', flags: [],
+            net_amount: 100_000, currency: 'NGN', payout_account_id: 'pa-1', flags: [],
             period_start: '2024-01-01', period_end: '2024-01-07',
           },
         });

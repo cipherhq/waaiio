@@ -80,7 +80,7 @@ function setupMocks() {
       chain.single = vi.fn().mockResolvedValue({
         data: {
           id: 'p1', business_id: 'b1', status: 'pending',
-          net_amount: 100, payout_account_id: 'pa1', flags: [],
+          net_amount: 100, currency: 'NGN', payout_account_id: 'pa1', flags: [],
           transfer_method: 'paystack_transfer',
         },
       });
@@ -111,7 +111,7 @@ function setupMocks() {
         chain.is = vi.fn().mockResolvedValue({ data: null, error: activeError });
       } else {
         chain.is = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 1000, fee_total: 50, gateway_fee: 10, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 1000, fee_total: 50, gateway_fee: 10, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       }

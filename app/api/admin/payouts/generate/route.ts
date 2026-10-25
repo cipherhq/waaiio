@@ -7,7 +7,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logAdminAudit } from '@/lib/admin-audit';
-import { computePlatformHeldTotals, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 
 interface Flag {
   type: string;
@@ -93,13 +93,20 @@ export async function POST(request: NextRequest) {
 
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
       // Exclude direct transfers — Waaiio never holds those funds (money goes straight to business bank account)
+      // M466: Join platform_fees → payments to get authoritative currency
       const { data: fees, error: feesError } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
+
+      // Flatten the joined currency into the fee row for payable-fees.ts
+      const feesWithCurrency = (fees || []).map(f => ({
+        ...f,
+        currency: (f as unknown as { payments: { currency: string } }).payments?.currency ?? null,
+      }));
 
       // Fail closed: if fee data is unavailable, count as failed (never generate with partial data)
       if (feesError) {
@@ -109,9 +116,10 @@ export async function POST(request: NextRequest) {
       }
 
       // Fetch adjustments before gross check — needed for shared formula
+      // M466: Include currency for currency-scoped calculations
       const { data: adjustments, error: adjQueryError } = await supabase
         .from('payout_adjustments')
-        .select('id, amount')
+        .select('id, amount, currency')
         .eq('business_id', biz.id)
         .is('applied_to_payout_id', null);
 
@@ -123,7 +131,7 @@ export async function POST(request: NextRequest) {
 
       // Canonical formula: only gateway payments (Waaiio holds these funds).
       // Direct transfers excluded — business already received those funds.
-      const unclassifiedFees = getUnclassifiedFeeRows(fees || []);
+      const unclassifiedFees = getUnclassifiedFeeRows(feesWithCurrency);
       if (unclassifiedFees.length > 0) {
         const amt = unclassifiedFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
         custodyUnclassifiedCount += unclassifiedFees.length;
@@ -134,8 +142,24 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // M466: Fail closed if any eligible fee row has unknown currency
+      const unknownCurrencyRows = getUnknownCurrencyFeeRows(feesWithCurrency);
+      if (unknownCurrencyRows.length > 0) {
+        Sentry.captureMessage('[PAYOUT-GENERATE] Fee rows with unknown currency — business skipped', {
+          level: 'warning',
+          extra: { business_id: biz.id, count: unknownCurrencyRows.length },
+        });
+        failed++;
+        continue;
+      }
+
+      // M466: Generate one payout per currency
+      const currencies = getEligibleCurrencies(feesWithCurrency);
+      if (currencies.length === 0) continue;
+
+      for (const currency of currencies) {
       const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable: net } =
-        computePlatformHeldTotals(fees || [], adjustments || []);
+        computePlatformHeldTotals(feesWithCurrency, currency, adjustments || []);
 
       if (gross <= 0) continue;
 
@@ -270,6 +294,7 @@ export async function POST(request: NextRequest) {
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
           net_amount: net,
+          currency,
           status: 'held',
           flags: insertFlags,
         }).select('id').single();
@@ -378,6 +403,7 @@ export async function POST(request: NextRequest) {
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
           net_amount: net,
+          currency,
           status,
           flags,
         }).select('id').single();
@@ -396,6 +422,7 @@ export async function POST(request: NextRequest) {
           created++;
         }
       }
+      } // end per-currency loop (M466)
     }
 
     // Audit log — uses service client (INSERT revoked from authenticated)

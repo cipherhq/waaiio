@@ -74,7 +74,7 @@ function setupMocks(config: MockConfig = {}) {
     reviewResult = [{ review_id: 'p1' }],
     payoutData = {
       id: 'p1', business_id: 'b1', status: 'pending',
-      net_amount: 100, payout_account_id: 'pa1',
+      net_amount: 100, currency: 'NGN', payout_account_id: 'pa1',
       period_start: '2024-01-01', period_end: '2024-01-07',
     },
     manualUpdateResult = [{ id: 'p1' }],
@@ -110,7 +110,7 @@ function setupMocks(config: MockConfig = {}) {
                 stripe_account_id: 'acct_test', gateway: payoutAccountGateway },
       });
     } else if (table === 'platform_fees') {
-      chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
+      chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false, payments: { currency: "NGN" }}] });
     } else if (table === 'profiles') {
       chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
     } else {
@@ -408,8 +408,7 @@ describe('FIN-002: Timeout → review_required', () => {
       });
       if (table === 'business_payouts') {
         chain.single = vi.fn().mockResolvedValue({
-          data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
-                  payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+          data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100, currency: 'NGN', payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
         });
       } else if (table === 'businesses') {
         chain.single = vi.fn().mockResolvedValue({ data: { verification_level: 'verified', country_code: 'NG' } });
@@ -417,7 +416,7 @@ describe('FIN-002: Timeout → review_required', () => {
         chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' } });
         chain.single = vi.fn().mockResolvedValue({ data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', gateway: 'paystack' } });
       } else if (table === 'platform_fees') {
-        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
+        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false, payments: { currency: "NGN" }}] });
       }
       chain.neq = vi.fn().mockResolvedValue({ data: [] });
       return chain;
@@ -491,8 +490,7 @@ describe('FIN-002: Provider response classification', () => {
       });
       if (table === 'business_payouts') {
         chain.single = vi.fn().mockResolvedValue({
-          data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
-                  payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+          data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100, currency: 'NGN', payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
         });
       } else if (table === 'businesses') {
         chain.single = vi.fn().mockResolvedValue({
@@ -506,7 +504,7 @@ describe('FIN-002: Provider response classification', () => {
           data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', stripe_account_id: 'acct_test', gateway: gw },
         });
       } else if (table === 'platform_fees') {
-        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
+        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false, payments: { currency: "NGN" }}] });
       } else if (table === 'profiles') {
         chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
       } else {
@@ -750,8 +748,7 @@ describe('FIN-002: Manual methods', () => {
           });
           if (table === 'business_payouts') {
             chain.single = vi.fn().mockResolvedValue({
-              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
-                      payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100, currency: 'NGN', payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
             });
             // Manual update chain
             const updateChain: Record<string, unknown> = {};
@@ -770,7 +767,7 @@ describe('FIN-002: Manual methods', () => {
               data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', gateway: 'paystack' },
             });
           } else if (table === 'platform_fees') {
-            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
+            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false, payments: { currency: "NGN" }}] });
           } else if (table === 'profiles') {
             chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
           } else if (table === 'notifications') {
@@ -1451,8 +1448,7 @@ describe('FIN-002: Paystack account_name required before claim', () => {
           });
           if (table === 'business_payouts') {
             chain.single = vi.fn().mockResolvedValue({
-              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
-                      payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100, currency: 'NGN', payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
             });
           } else if (table === 'businesses') {
             chain.single = vi.fn().mockResolvedValue({
@@ -1466,7 +1462,7 @@ describe('FIN-002: Paystack account_name required before claim', () => {
               data: { bank_code: '058', account_number: '0123456789', account_name: null, gateway: 'paystack' },
             });
           } else if (table === 'platform_fees') {
-            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
+            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false, payments: { currency: "NGN" }}] });
           }
           chain.neq = vi.fn().mockResolvedValue({ data: [] });
           return chain;
@@ -1496,8 +1492,7 @@ describe('FIN-002: Paystack account_name required before claim', () => {
           });
           if (table === 'business_payouts') {
             chain.single = vi.fn().mockResolvedValue({
-              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100,
-                      payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
+              data: { id: 'p1', business_id: 'b1', status: 'pending', net_amount: 100, currency: 'NGN', payout_account_id: 'pa1', period_start: '2024-01-01', period_end: '2024-01-07' },
             });
           } else if (table === 'businesses') {
             chain.single = vi.fn().mockResolvedValue({
@@ -1511,7 +1506,7 @@ describe('FIN-002: Paystack account_name required before claim', () => {
               data: { bank_code: '058', account_number: '0123456789', account_name: '   ', gateway: 'paystack' },
             });
           } else if (table === 'platform_fees') {
-            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
+            chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false, payments: { currency: "NGN" }}] });
           }
           chain.neq = vi.fn().mockResolvedValue({ data: [] });
           return chain;

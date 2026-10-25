@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
-import { computePlatformHeldTotals } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -116,14 +116,30 @@ export async function GET(request: NextRequest) {
     } else {
       // platform_managed: derive gross and net from custody-classified platform_fees rows.
       // This is the authoritative payout basis — matches generate and auto-payout exactly.
-      const { data: platformFees } = await supabase
+      // M466: Include currency via payments join
+      const { data: platformFeesRaw } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
         .eq('business_id', businessId)
         .is('refunded_at', null);
+      const platformFees = (platformFeesRaw || []).map(f => ({
+        ...f,
+        currency: (f as unknown as { payments: { currency: string } }).payments?.currency ?? null,
+      }));
 
-      const allPriorPayouts = [...(payouts || []), ...(pendingPayouts || [])];
-      const totals = computePlatformHeldTotals(platformFees || [], allAdjustments || [], allPriorPayouts);
+      const allPriorPayouts = [...(payouts || []), ...(pendingPayouts || [])].map(p => ({
+        ...p, currency: (p as unknown as { currency?: string }).currency ?? null,
+      }));
+      const adjRows = (allAdjustments || []).map(a => ({
+        ...a, currency: (a as unknown as { currency?: string }).currency ?? null,
+      }));
+
+      // M466: Use the primary currency for the business's eligible fees.
+      // If multiple currencies exist, use the first (dashboard shows aggregate; detailed
+      // per-currency breakdown available in Admin Finance).
+      const currencies = getEligibleCurrencies(platformFees);
+      const primaryCurrency = currencies[0] || 'NGN';
+      const totals = computePlatformHeldTotals(platformFees, primaryCurrency, adjRows, allPriorPayouts);
       gross = totals.gross;
       totalFees = totals.totalFees + totals.gatewayFees;
       netAvailable = totals.netAvailable;

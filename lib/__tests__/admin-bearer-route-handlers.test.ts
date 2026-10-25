@@ -603,7 +603,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
       businessesError: null,
       existingPayout: null,
       existingError: null,
-      feesData: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+      feesData: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
       feesError: null,
       paymentsError: null,
       insertResult: { data: { id: 'payout-1' }, error: null },
@@ -733,7 +733,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -827,7 +827,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -917,7 +917,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1019,7 +1019,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1123,7 +1123,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1225,7 +1225,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1293,7 +1293,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1975,7 +1975,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-ok', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+                  data: [{ business_id: 'biz-ok', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
                   error: null,
                 }),
               }),
@@ -2120,7 +2120,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+                  data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
                   error: null,
                 }),
               }),
@@ -2252,7 +2252,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-pf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+                  data: [{ business_id: 'biz-pf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
                   error: null,
                 }),
               }),
@@ -2368,7 +2368,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         chain.in = vi.fn().mockReturnValue({
           is: vi.fn().mockReturnValue({ gte: vi.fn().mockReturnValue({ lte: vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue({
-              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
               error: null,
             }),
           }) }) }),
@@ -2485,7 +2485,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-noAdj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+                  data: [{ business_id: 'biz-noAdj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
                   error: null,
                 }),
               }),

@@ -12,7 +12,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
-import { computePlatformHeldTotals, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
 
@@ -270,7 +270,7 @@ export async function GET(request: NextRequest) {
       // Platform fees for the period across all businesses
       supabase
         .from('platform_fees')
-        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
+        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
         .in('business_id', bizIds)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -279,7 +279,7 @@ export async function GET(request: NextRequest) {
       // Unapplied payout adjustments across all businesses
       supabase
         .from('payout_adjustments')
-        .select('id, business_id, amount')
+        .select('id, business_id, amount, currency')
         .in('business_id', bizIds)
         .is('applied_to_payout_id', null)
         .limit(10_000),
@@ -295,19 +295,20 @@ export async function GET(request: NextRequest) {
     // Build lookup structures from batch results
     const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
 
-    // Group fees by business_id
-    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean | null | undefined }[]>();
+    // M466: Group fees by business_id with flattened currency
+    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean | null | undefined; currency: string | null }[]>();
     for (const row of (allFeeRows || [])) {
+      const currency = (row as unknown as { payments: { currency: string } }).payments?.currency ?? null;
       const list = feesByBiz.get(row.business_id) ?? [];
-      list.push(row);
+      list.push({ ...row, currency });
       feesByBiz.set(row.business_id, list);
     }
 
-    // Group adjustments by business_id
-    const adjustmentsByBiz = new Map<string, { id: string; amount: number }[]>();
+    // Group adjustments by business_id (M466: includes currency)
+    const adjustmentsByBiz = new Map<string, { id: string; amount: number; currency: string | null }[]>();
     for (const row of (allAdjustmentRows || [])) {
       const list = adjustmentsByBiz.get(row.business_id) ?? [];
-      list.push(row);
+      list.push(row as { id: string; amount: number; currency: string | null });
       adjustmentsByBiz.set(row.business_id, list);
     }
 
@@ -340,8 +341,22 @@ export async function GET(request: NextRequest) {
         });
       }
       const adjustments = adjustmentsByBiz.get(biz.id) ?? [];
+
+      // M466: Skip businesses with unknown-currency fee rows
+      const unknownCurrRows = getUnknownCurrencyFeeRows(fees);
+      if (unknownCurrRows.length > 0) {
+        Sentry.captureMessage('[AUTO-PAYOUT] Fee rows with unknown currency — business skipped', {
+          level: 'warning',
+          extra: { business_id: biz.id, count: unknownCurrRows.length },
+        });
+        continue;
+      }
+
+      // M466: Generate one payout per currency
+      const currencies = getEligibleCurrencies(fees);
+      for (const currency of currencies) {
       const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable } =
-        computePlatformHeldTotals(fees, adjustments);
+        computePlatformHeldTotals(fees, currency, adjustments);
       let netAmount = netAvailable;
 
       if (netAmount <= 0) continue;
@@ -434,6 +449,7 @@ export async function GET(request: NextRequest) {
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
           net_amount: net,
+          currency,
           status: 'held',
           payout_account_id: payoutAccount?.id || null,
           flags: insertFlags,
@@ -548,6 +564,7 @@ export async function GET(request: NextRequest) {
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
           net_amount: net,
+          currency,
           status,
           payout_account_id: payoutAccount?.id || null,
           flags: insertFlags.length > 0 ? insertFlags : [],
@@ -571,6 +588,7 @@ export async function GET(request: NextRequest) {
           held++;
         }
       }
+      } // end per-currency loop (M466)
     }
 
     // ── Auto-release held payouts where blocking condition has expired ──
