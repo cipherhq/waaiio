@@ -112,7 +112,7 @@ export async function handleEscapeHatch(
   step: string,
   sendText: (to: string, text: string) => Promise<void>,
   deactivateSession: (sessionId: string) => Promise<void>,
-  handleMessage: (from: string, text: string, type: string, dest?: string, bizId?: string) => Promise<void>,
+  handleMessage: (from: string, text: string, type: string, dest?: string, bizId?: string, mediaUrl?: string, messageId?: string, provenance?: string) => Promise<void>,
   lang?: string,
 ): Promise<{ handled: boolean }> {
   const { supabase, messageSender, flowExecutor, intelligence } = ctx;
