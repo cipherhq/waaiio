@@ -189,7 +189,8 @@ export async function POST(request: NextRequest) {
       }
 
       // Minimum payout threshold — skip if amount too small
-      const minPayout = MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000;
+      const expectedCurrency = ({ US: 'USD', GB: 'GBP', CA: 'CAD', NG: 'NGN', GH: 'GHS' } as Record<string, string>)[biz.country_code || ''];
+      const minPayout = currency === expectedCurrency ? (MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000) : 0;
       if (net < minPayout) {
         skipped++;
         continue;

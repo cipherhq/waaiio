@@ -257,8 +257,8 @@ export async function GET(request: NextRequest) {
       { data: existingPayoutsForPeriod, error: existingPayoutError },
       { data: legacyPayouts, error: legacyPayoutError },
       { data: legacyAdjustments, error: legacyAdjustmentError },
-      { data: allFeeRows },
-      { data: allAdjustmentRows },
+      { data: allFeeRows, error: allFeeError },
+      { data: allAdjustmentRows, error: allAdjustmentError },
       { data: allPayoutAccountRows },
     ] = await Promise.all([
       // Existing payouts for this period
@@ -297,8 +297,9 @@ export async function GET(request: NextRequest) {
     ]);
 
     // Build lookup structures from batch results
-    if (existingPayoutError || legacyPayoutError || legacyAdjustmentError ||
-        (existingPayoutsForPeriod || []).length >= 5000 || (legacyPayouts || []).length >= 5000 || (legacyAdjustments || []).length >= 5000) {
+    if (existingPayoutError || legacyPayoutError || legacyAdjustmentError || allFeeError || allAdjustmentError ||
+        (existingPayoutsForPeriod || []).length >= 5000 || (legacyPayouts || []).length >= 5000 ||
+        (legacyAdjustments || []).length >= 5000 || (allFeeRows || []).length >= 100_000 || (allAdjustmentRows || []).length >= 10_000) {
       throw new Error('[AUTO-PAYOUT] Payout history not reliably enumerable; stopping safely');
     }
     const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(row => `${row.business_id}:${row.currency ?? '__legacy__'}`));
@@ -376,7 +377,8 @@ export async function GET(request: NextRequest) {
       if (netAmount <= 0) continue;
 
       // Minimum payout threshold — skip if amount too small, will accumulate for next period
-      const minPayout = MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000;
+      const minPayout = currency === getCurrencyCode(biz.country_code as CountryCode)
+        ? (MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000) : 0;
       if (netAmount < minPayout) continue;
 
       const net = netAmount;

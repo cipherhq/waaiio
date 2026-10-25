@@ -78,7 +78,7 @@ export async function POST(
   // Block payouts with adjustment linkage flags that require resolution
   const payoutFlags = Array.isArray(payout.flags) ? payout.flags : [];
   const hasLinkageFlag = payoutFlags.some(
-    (f: { type?: string }) => f.type === 'adjustment_link_pending' || f.type === 'adjustment_link_failed',
+    (f: { type?: string }) => f.type === 'adjustment_link_pending' || f.type === 'adjustment_link_failed' || f.type === 'currency_review',
   );
   if (hasLinkageFlag) {
     return NextResponse.json({
