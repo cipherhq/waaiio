@@ -212,14 +212,14 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
             ('${RACE_BIZ_X}', '${RACE_OWNER}', 'RaceX', 'racex-465', '1 Race', 'NYC', '+12025550099', 'US', 'barber', 'free', 'shared', 'active', '${CHANNEL_ID}'),
             ('${RACE_BIZ_Y}', '${RACE_OWNER}', 'RaceY', 'racey-465', '2 Race', 'NYC', '+12025550098', 'US', 'salon', 'free', 'shared', 'active', '${CHANNEL_ID}');`);
 
-    // Two independent psql processes executing simultaneously.
-    // Each runs in its own connection with its own transaction.
-    //
-    // Synchronization strategy: both connections first acquire a shared
-    // advisory lock (pg_advisory_lock_shared) as a "start gate". Once both
-    // are holding it, neither can proceed past the exclusive trial_owner_
-    // lock inside activate_trial_if_eligible until one releases. This
-    // guarantees genuine transaction overlap before the critical section.
+    // Two independent psql processes launched simultaneously via bash &.
+    // Each is a separate PostgreSQL connection with its own transaction.
+    // This is a concurrent regression test — it verifies correctness
+    // under overlapping execution, not guaranteed lock contention on
+    // every run. The advisory lock inside the RPC serializes if the
+    // processes do overlap; if they don't, one completes before the
+    // other starts, and the EXISTS check catches it instead.
+    // Either way, exactly one grant must be committed.
     const { execSync } = require('child_process');
     const fs = require('fs');
     const pid = process.pid;
@@ -228,22 +228,14 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
     const exitFile1 = `/tmp/waaiio_race_1_${pid}.exit`;
     const exitFile2 = `/tmp/waaiio_race_2_${pid}.exit`;
 
-    // Clean up any stale files
     for (const f of [resultFile1, resultFile2, exitFile1, exitFile2]) {
       try { fs.unlinkSync(f); } catch { /* ignore */ }
     }
 
-    // Each process: acquire a shared "start gate" lock, then call the RPC.
-    // The shared lock ensures both connections are active and overlapping
-    // before either enters the exclusive trial_owner_ advisory lock.
-    // Lock key 999465 is arbitrary and test-specific.
-    const raceSQL = (bizId: string) =>
-      `SELECT pg_advisory_lock_shared(999465); SELECT activate_trial_if_eligible('${bizId}');`;
-
     execSync(`
-      (psql "${dbUrl}" -tAXq -c "${raceSQL(RACE_BIZ_X)}" > ${resultFile1} 2>&1; echo $? > ${exitFile1}) &
+      (psql "${dbUrl}" -tAXq -c "SELECT activate_trial_if_eligible('${RACE_BIZ_X}');" > ${resultFile1} 2>&1; echo $? > ${exitFile1}) &
       PID1=$!
-      (psql "${dbUrl}" -tAXq -c "${raceSQL(RACE_BIZ_Y)}" > ${resultFile2} 2>&1; echo $? > ${exitFile2}) &
+      (psql "${dbUrl}" -tAXq -c "SELECT activate_trial_if_eligible('${RACE_BIZ_Y}');" > ${resultFile2} 2>&1; echo $? > ${exitFile2}) &
       PID2=$!
       wait $PID1 $PID2
     `, { shell: '/bin/bash', timeout: 30000 });
@@ -254,11 +246,9 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
     expect(exit1).toBe(0);
     expect(exit2).toBe(0);
 
-    // Parse results — pg_advisory_lock_shared returns empty line, RPC result is second line
-    const raw1 = fs.readFileSync(resultFile1, 'utf-8').trim().split('\n').pop()!.trim();
-    const raw2 = fs.readFileSync(resultFile2, 'utf-8').trim().split('\n').pop()!.trim();
+    const raw1 = fs.readFileSync(resultFile1, 'utf-8').trim();
+    const raw2 = fs.readFileSync(resultFile2, 'utf-8').trim();
 
-    // Clean up temp files
     for (const f of [resultFile1, resultFile2, exitFile1, exitFile2]) {
       try { fs.unlinkSync(f); } catch { /* ignore */ }
     }
