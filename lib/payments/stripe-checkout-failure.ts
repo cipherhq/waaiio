@@ -55,7 +55,7 @@ export function stripeCheckoutErrorEvidence(data: unknown): {
 export function mayFallbackFromSaveCardOptions(data: unknown, hadSavedCardOptions: boolean): boolean {
   if (!hadSavedCardOptions) return false;
   const evidence = stripeCheckoutErrorEvidence(data);
-  if (evidence.type !== 'invalid_request_error' || !evidence.param) return false;
+  if (evidence.type !== 'invalid_request_error' || evidence.httpStatus !== 400 || !evidence.param) return false;
   return evidence.param === 'saved_payment_method_options'
     || evidence.param === 'saved_payment_method_options[payment_method_save]'
     || evidence.param === 'saved_payment_method_options[allow_redisplay_filters]'
