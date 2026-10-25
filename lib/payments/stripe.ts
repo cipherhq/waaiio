@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
 import { normalizeError, safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
-import { mayFallbackFromSaveCardOptions, stripeCheckoutErrorEvidence } from './stripe-checkout-failure';
+import { mayFallbackFromLegacyPaymentMethodTypes, mayFallbackFromSaveCardOptions, stripeCheckoutErrorEvidence } from './stripe-checkout-failure';
 
 function getStripeKey(): string {
   return process.env.STRIPE_SECRET_KEY || '';
@@ -163,6 +163,28 @@ export class StripeGateway implements PaymentGateway {
         businessId: opts.businessId,
       }, () => stripeRequest('/checkout/sessions', sessionParams, idempotencyKey));
 
+      // Stripe Endive (2026-09-30) removed the legacy Checkout
+      // payment_method_types parameter. On a confirmed parameter-scoped HTTP
+      // 400 only, replace it with the *card-only* Endive allowlist; older
+      // Stripe API versions keep their existing, successful code path.
+      // A validated 400 means Stripe did not create a Checkout Session.
+      let activeSessionParams = sessionParams;
+      let activeIdempotencyKey = idempotencyKey;
+      if (mayFallbackFromLegacyPaymentMethodTypes(sessionData, Boolean(sessionParams['payment_method_types[0]']))) {
+        logger.warn('[STRIPE-CHECKOUT] Legacy payment_method_types rejected; using Endive card allowlist', {
+          ...stripeCheckoutErrorEvidence(sessionData),
+          businessId: opts.businessId,
+        });
+        activeSessionParams = { ...sessionParams };
+        delete activeSessionParams['payment_method_types[0]'];
+        activeSessionParams['allowed_payment_method_types[0]'] = 'card';
+        activeIdempotencyKey = idempotencyKey + '_endive_card';
+        sessionData = await observeProvider({
+          gateway: 'stripe', amount: opts.amount, currency: opts.currency,
+          businessId: opts.businessId,
+        }, () => stripeRequest('/checkout/sessions', activeSessionParams, activeIdempotencyKey));
+      }
+
       // Preserve checkout availability if Stripe explicitly rejects ONLY the
       // optional Save Card UI settings. Do not retry any other rejection:
       // checkout amounts, account authority, splits and payment safety must
@@ -172,7 +194,7 @@ export class StripeGateway implements PaymentGateway {
         logger.warn('[STRIPE-CHECKOUT] Optional saved-card parameter rejected; retrying regular Checkout', {
           ...stripeCheckoutErrorEvidence(sessionData), businessId: opts.businessId,
         });
-        const basicCheckoutParams = { ...sessionParams };
+        const basicCheckoutParams = { ...activeSessionParams };
         delete basicCheckoutParams['saved_payment_method_options[payment_method_save]'];
         delete basicCheckoutParams['saved_payment_method_options[allow_redisplay_filters][0]'];
         // A distinct key avoids a Stripe idempotency-parameters-mismatch.
@@ -180,7 +202,7 @@ export class StripeGateway implements PaymentGateway {
         sessionData = await observeProvider({
           gateway: 'stripe', amount: opts.amount, currency: opts.currency,
           businessId: opts.businessId,
-        }, () => stripeRequest('/checkout/sessions', basicCheckoutParams, idempotencyKey + '_without_save_options'));
+        }, () => stripeRequest('/checkout/sessions', basicCheckoutParams, activeIdempotencyKey + '_without_save_options'));
       }
 
       if (!sessionData.id || !sessionData.url) {
