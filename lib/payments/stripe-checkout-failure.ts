@@ -75,5 +75,5 @@ export function mayFallbackFromLegacyPaymentMethodTypes(data: unknown, hasLegacy
   const evidence = stripeCheckoutErrorEvidence(data);
   if (evidence.httpStatus !== 400 || evidence.type !== 'invalid_request_error') return false;
   return evidence.param === 'payment_method_types'
-    || /^payment_method_types\\[[0-9]{1,4}\\]$/.test(evidence.param || '');
+    || /^payment_method_types\[[0-9]{1,4}\]$/.test(evidence.param || '');
 }
