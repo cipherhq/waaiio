@@ -6,6 +6,7 @@ import {
 } from '../inbound-command-normalization';
 import { handleCorrectionReentry } from './correction-reentry';
 import { getFlowCopy, fillFlowCopy } from '../flows/flow-localization';
+import { logger } from '@/lib/logger';
 
 type TestableCommandPattern = { test(value: string): boolean };
 
@@ -118,23 +119,48 @@ export async function handleEscapeHatch(
     intelligence.resetAbuse(from);
 
     // ── "cancel" → safely abandon flow and return to business menu ──
-    // Cancel pending bookings/orders but never touch completed payments.
+    // Uses authoritative cancellation RPCs that handle slot release, stock
+    // restoration, promo reservation release, payment-state fencing, and
+    // pending-transfer cancellation. Never bypasses these authorities.
     if (isCancel && session.business_id) {
       const bizId = session.business_id;
-      await deactivateSession(session.id);
       const d = session.session_data || {};
+
+      // Cancel pending booking via authoritative RPC (releases slot capacity,
+      // package redemptions, checks ownership). Silently succeeds if booking
+      // is already cancelled/completed — the RPC handles all status guards.
       if (d.booking_id) {
-        await supabase.from('bookings')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('id', d.booking_id as string)
-          .in('status', ['pending']);
+        const { data: bookingResult } = await supabase.rpc('cancel_booking_with_release', {
+          p_booking_id: d.booking_id as string,
+          p_cancelled_by: 'customer',
+          p_expected_user_id: session.user_id || '00000000-0000-0000-0000-000000000000',
+        });
+        if (bookingResult && !bookingResult.cancelled) {
+          // Not cancellable (already confirmed+paid, completed, etc.) — safe to proceed,
+          // the booking remains in its current state.
+          logger.info('[ESCAPE] cancel: booking not cancellable, preserving state', {
+            bookingId: d.booking_id, reason: bookingResult.reason,
+          });
+        }
       }
+
+      // Cancel pending order via authoritative RPC (restores stock, releases
+      // promo reservations, voids pending payments, cancels pending transfers).
+      // Refuses if a successful payment exists — the order stays confirmed.
       if (d.order_id) {
-        await supabase.from('orders')
-          .update({ status: 'cancelled' })
-          .eq('id', d.order_id as string)
-          .eq('status', 'pending');
+        const { data: orderResult } = await supabase.rpc('cancel_order_immediate', {
+          p_order_id: d.order_id as string,
+          p_reason: 'customer_cancel',
+        });
+        if (orderResult && !orderResult.cancelled) {
+          logger.info('[ESCAPE] cancel: order not cancellable, preserving state', {
+            orderId: d.order_id, reason: orderResult.reason,
+          });
+        }
       }
+
+      // Deactivate session AFTER cleanup so the RPCs can still read session context
+      await deactivateSession(session.id);
       await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
       return { handled: true };
     }
