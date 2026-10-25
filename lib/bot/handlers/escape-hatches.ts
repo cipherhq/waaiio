@@ -26,18 +26,35 @@ export async function safeFlowCleanup(
   let ok = true;
 
   if (sessionData.booking_id) {
-    const { data: result, error } = await supabase.rpc('cancel_booking_with_release', {
-      p_booking_id: sessionData.booking_id as string,
-      p_cancelled_by: 'guest',
-      p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
-    });
-    if (error) {
-      logger.error('[NAV-CLEANUP] cancel_booking_with_release RPC failed', { bookingId: sessionData.booking_id, error: error.message });
-      ok = false;
-    } else if (result && !result.cancelled) {
-      // Already confirmed/paid/completed — the RPC correctly refused. Safe to proceed.
-      logger.info('[NAV-CLEANUP] booking not cancellable, preserving', { bookingId: sessionData.booking_id, reason: result.reason });
+    // Only cancel PENDING bookings during navigation cleanup.
+    // Confirmed bookings represent completed customer actions — they must not
+    // be undone by typing Menu/Cancel/Exit. The dedicated booking-management
+    // cancellation flow (my-bookings.ts) handles intentional confirmed-booking
+    // cancellation with its own authorization and refund rules.
+    const { data: booking } = await supabase
+      .from('bookings')
+      .select('id, status')
+      .eq('id', sessionData.booking_id as string)
+      .maybeSingle();
+
+    if (booking && booking.status === 'pending') {
+      const { data: result, error } = await supabase.rpc('cancel_booking_with_release', {
+        p_booking_id: sessionData.booking_id as string,
+        p_cancelled_by: 'guest',
+        p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
+      });
+      if (error) {
+        logger.error('[NAV-CLEANUP] cancel_booking_with_release RPC failed', { bookingId: sessionData.booking_id, error: error.message });
+        ok = false;
+      } else if (result && !result.cancelled) {
+        // RPC refused (ownership mismatch, concurrent status change, etc.)
+        logger.info('[NAV-CLEANUP] pending booking not cancellable', { bookingId: sessionData.booking_id, reason: result?.reason });
+      }
+    } else if (booking) {
+      // Confirmed/completed/cancelled — preserve, do not cancel via navigation
+      logger.info('[NAV-CLEANUP] booking is not pending, preserving', { bookingId: sessionData.booking_id, status: booking.status });
     }
+    // booking not found — nothing to clean up
   }
 
   if (sessionData.order_id) {
