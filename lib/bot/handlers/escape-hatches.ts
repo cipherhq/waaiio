@@ -28,7 +28,7 @@ export async function safeFlowCleanup(
   if (sessionData.booking_id) {
     const { data: result, error } = await supabase.rpc('cancel_booking_with_release', {
       p_booking_id: sessionData.booking_id as string,
-      p_cancelled_by: 'customer',
+      p_cancelled_by: 'guest',
       p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
     });
     if (error) {

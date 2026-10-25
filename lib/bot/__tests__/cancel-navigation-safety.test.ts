@@ -46,7 +46,7 @@ describe('safeFlowCleanup — authoritative cancellation', () => {
     const fnEnd = src.indexOf('\ntype TestableCommandPattern', fnStart);
     const fnBody = src.slice(fnStart, fnEnd);
     expect(fnBody).toContain("cancel_booking_with_release");
-    expect(fnBody).toContain("p_cancelled_by: 'customer'");
+    expect(fnBody).toContain("p_cancelled_by: 'guest'");
     // No direct status writes in safeFlowCleanup
     expect(fnBody).not.toMatch(/\.from\(['"]bookings['"]\)[\s\S]*?\.update\(\s*\{[\s\S]*?status/);
     expect(fnBody).not.toMatch(/\.from\(['"]orders['"]\)[\s\S]*?\.update\(\s*\{[\s\S]*?status/);
@@ -160,9 +160,110 @@ describe('cancel recovery on cleanup failure', () => {
     const cancelBlock = src.slice(cancelStart, cancelEnd);
     expect(cancelBlock).toContain('cleanupOk');
     expect(cancelBlock).toContain('cancel_retry');
-    // deactivateSession only called when cleanup succeeds
     const deactivatePos = cancelBlock.indexOf('deactivateSession');
     const failCheckPos = cancelBlock.indexOf('!cleanupOk');
     expect(deactivatePos).toBeGreaterThan(failCheckPos);
+  });
+});
+
+// ── 7. Executable safeFlowCleanup tests with mocked Supabase ──
+
+describe('safeFlowCleanup — executable behavior', async () => {
+  const { vi } = await import('vitest');
+  const { safeFlowCleanup } = await import('@/lib/bot/handlers/escape-hatches');
+
+  function mockSupabase(rpcResults: Record<string, { data: unknown; error: unknown }>) {
+    return {
+      rpc: vi.fn(async (fn: string, params: Record<string, unknown>) => {
+        return rpcResults[fn] || { data: null, error: null };
+      }),
+      from: vi.fn(() => ({
+        update: vi.fn(() => ({
+          eq: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: null })) })),
+        })),
+      })),
+    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+  }
+
+  it('calls cancel_booking_with_release with p_cancelled_by=guest (valid enum)', async () => {
+    const sb = mockSupabase({
+      cancel_booking_with_release: { data: { cancelled: true }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-1' }, 'user-1');
+    expect(ok).toBe(true);
+    expect(sb.rpc).toHaveBeenCalledWith('cancel_booking_with_release', expect.objectContaining({
+      p_cancelled_by: 'guest', // NOT 'customer' — verified against cancelled_by enum
+    }));
+  });
+
+  it('calls cancel_order_immediate with p_reason=customer_cancel', async () => {
+    const sb = mockSupabase({
+      cancel_order_immediate: { data: { cancelled: true, stock_restored: true }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { order_id: 'ord-1' }, 'user-1');
+    expect(ok).toBe(true);
+    expect(sb.rpc).toHaveBeenCalledWith('cancel_order_immediate', {
+      p_order_id: 'ord-1',
+      p_reason: 'customer_cancel',
+    });
+  });
+
+  it('returns false when booking RPC fails (transport error)', async () => {
+    const sb = mockSupabase({
+      cancel_booking_with_release: { data: null, error: { message: 'connection reset' } },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-fail' }, 'user-1');
+    expect(ok).toBe(false);
+  });
+
+  it('returns false when order RPC fails (transport error)', async () => {
+    const sb = mockSupabase({
+      cancel_order_immediate: { data: null, error: { message: 'timeout' } },
+    });
+    const ok = await safeFlowCleanup(sb, { order_id: 'ord-fail' }, 'user-1');
+    expect(ok).toBe(false);
+  });
+
+  it('returns true when booking is not cancellable (already paid)', async () => {
+    const sb = mockSupabase({
+      cancel_booking_with_release: { data: { cancelled: false, reason: 'not_cancellable' }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-paid' }, 'user-1');
+    expect(ok).toBe(true); // Non-cancellable is not a failure — the booking is preserved
+  });
+
+  it('returns true when order has successful payment (preserved)', async () => {
+    const sb = mockSupabase({
+      cancel_order_immediate: { data: { cancelled: false, reason: 'has_successful_payment' }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { order_id: 'ord-paid' }, 'user-1');
+    expect(ok).toBe(true); // Paid order preserved — not a cleanup failure
+  });
+
+  it('returns true when no booking or order exists (nothing to clean)', async () => {
+    const sb = mockSupabase({});
+    const ok = await safeFlowCleanup(sb, {}, 'user-1');
+    expect(ok).toBe(true);
+    expect(sb.rpc).not.toHaveBeenCalled();
+  });
+
+  it('handles both booking AND order in same session', async () => {
+    const sb = mockSupabase({
+      cancel_booking_with_release: { data: { cancelled: true }, error: null },
+      cancel_order_immediate: { data: { cancelled: true, stock_restored: true }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-both', order_id: 'ord-both' }, 'user-1');
+    expect(ok).toBe(true);
+    expect(sb.rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it('booking failure does not prevent order cleanup attempt', async () => {
+    const sb = mockSupabase({
+      cancel_booking_with_release: { data: null, error: { message: 'db error' } },
+      cancel_order_immediate: { data: { cancelled: true }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-err', order_id: 'ord-ok' }, 'user-1');
+    expect(ok).toBe(false); // Overall failed because booking cleanup failed
+    expect(sb.rpc).toHaveBeenCalledTimes(2); // But order cleanup was still attempted
   });
 });
