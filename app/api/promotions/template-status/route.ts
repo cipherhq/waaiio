@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
 
   if (!resolved) {
     return NextResponse.json({
-      template: PICKUP_TEMPLATE_NAME,
+      template: PICKUP_V2_TEMPLATE_NAME,
       status: 'unavailable' as TemplateReadiness,
       message: 'No WhatsApp channel available for this business.',
       managed: false,
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
   const meta = resolved.cloud;
   if (!meta) {
     return NextResponse.json({
-      template: PICKUP_TEMPLATE_NAME,
+      template: PICKUP_V2_TEMPLATE_NAME,
       status: 'unavailable' as TemplateReadiness,
       message: 'WhatsApp channel does not support template management.',
       managed: !isBusinessOwned,
@@ -108,17 +108,17 @@ export async function GET(request: NextRequest) {
         [WINNER_TEMPLATE_NAME]: { template: WINNER_TEMPLATE_NAME, ...winnerStatus },
         [FULFILLMENT_TEMPLATE_NAME]: { template: FULFILLMENT_TEMPLATE_NAME, ...fulfillmentStatus },
       },
-      // Backward compat: top-level fields use pickup v1 for existing callers
-      template: PICKUP_TEMPLATE_NAME,
-      status: pickupV1.status,
-      meta_status: pickupV1.meta_status,
-      message: pickupV1.message,
+      // Top-level readiness must match the V2 template used by the sender.
+      template: PICKUP_V2_TEMPLATE_NAME,
+      status: pickupV2.status,
+      meta_status: pickupV2.meta_status,
+      message: pickupV2.message,
       managed: !isBusinessOwned,
     });
   } catch (err) {
     logger.error('[PROMO-TEMPLATE] Status check failed:', err);
     return NextResponse.json({
-      template: PICKUP_TEMPLATE_NAME,
+      template: PICKUP_V2_TEMPLATE_NAME,
       status: 'unavailable' as TemplateReadiness,
       message: 'Could not check template status.',
       managed: !isBusinessOwned,

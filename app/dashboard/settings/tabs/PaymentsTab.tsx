@@ -7,6 +7,7 @@ import { getCountry } from '@/lib/countries';
 import { createClient } from '@/lib/supabase/client';
 import type { SettingsTabProps } from './types';
 import { t } from '@/lib/dashboard-i18n';
+import { SETUP_AVAILABLE_GATEWAYS } from '@/lib/payments/gateway-resolver';
 
 interface DeliveryZone {
   id?: string;
@@ -872,13 +873,12 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
             </p>
 
             <div className="mt-5 space-y-2">
-              {(['auto', 'paystack', 'stripe', 'flutterwave'] as const).map((gw) => {
+              {(['auto', ...SETUP_AVAILABLE_GATEWAYS] as const).map((gw) => {
                 const countryDefault = getCountry(country)?.payment_gateway;
                 const gwLabels: Record<string, { name: string; desc: string }> = {
                   auto: { name: 'Auto (Recommended)', desc: `Uses ${countryDefault || 'paystack'} based on your country (${country})` },
                   paystack: { name: 'Paystack', desc: 'Best for Nigeria and Ghana. Supports cards, bank transfer, USSD.' },
                   stripe: { name: 'Stripe', desc: 'Best for US, UK, Canada. Supports cards and wallets.' },
-                  flutterwave: { name: 'Flutterwave', desc: 'Supports Africa-wide payments. Cards, mobile money, bank transfer.' },
                 };
                 const info = gwLabels[gw];
                 return (
@@ -1042,8 +1042,8 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                   </svg>
                 </button>
 
-                {/* Flutterwave — manual key entry */}
-                <div className="rounded-lg border-2 border-gray-200">
+                {/* Flutterwave — manual key entry (hidden when not in SETUP_AVAILABLE_GATEWAYS) */}
+                {SETUP_AVAILABLE_GATEWAYS.includes('flutterwave') && <div className="rounded-lg border-2 border-gray-200">
                   <button
                     onClick={() => setShowFlutterwaveForm(!showFlutterwaveForm)}
                     className="flex w-full items-center gap-3 p-4 text-left transition hover:bg-gray-50"
@@ -1144,7 +1144,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                       </button>
                     </div>
                   )}
-                </div>
+                </div>}
               </div>
             )}
 

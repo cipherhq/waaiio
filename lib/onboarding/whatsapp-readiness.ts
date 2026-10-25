@@ -3,6 +3,7 @@
  * Treat unrecognized channel types as pending, not an implicit platform fallback.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isStagingTestMode } from '@/lib/staging-test-mode';
 
 export interface ReadinessBusiness {
   id: string;
@@ -20,16 +21,42 @@ export interface ReadinessChannel {
  * Explicit, owner-approved regional shared-channel fallbacks when a country
  * does not yet have a dedicated local platform shared number.
  * Businesses keep their authoritative country_code for currency, pricing, and gateway routing.
+ *
+ * Staging only: When WAAIIO_ENVIRONMENT === 'staging' (server-side), approved launch
+ * countries without a local shared channel fall back to US after all existing exact-country
+ * and production-approved cross-country candidates are exhausted. This does not change
+ * businesses.country_code, pricing, or gateway routing — only transport assignment.
+ *
+ * Production: Only the explicitly approved GH → NG fallback is active. Missing,
+ * malformed, or contradictory WAAIIO_ENVIRONMENT values never enable staging fallbacks.
  */
-export const SHARED_CHANNEL_FALLBACK_COUNTRIES: Readonly<Record<string, readonly string[]>> = {
-  GH: ['NG'],
-};
+export const SHARED_CHANNEL_FALLBACK_COUNTRIES: Readonly<Record<string, readonly string[]>> = (() => {
+  const base: Record<string, string[]> = { GH: ['NG'] };
+  // Only the authoritative server-side env var gates staging behavior.
+  // NEXT_PUBLIC_WAAIIO_ENVIRONMENT is intentionally NOT checked — client-side
+  // config must never enable staging-only routing policy.
+  // Belt-and-suspenders: also require canonical staging infrastructure identity
+  // (Vercel project ID + Supabase URL) to prevent contradictory configuration
+  // from enabling staging fallbacks on production infrastructure.
+  if (process.env.WAAIIO_ENVIRONMENT === 'staging' && isStagingTestMode()) {
+    base.GH.push('US');     // GH → try NG first, then US
+    base.NG = ['US'];       // NG → US (staging has no NG shared channel)
+    base.GB = ['US'];       // GB → US
+    base.CA = ['US'];       // CA → US
+  }
+  return base;
+})();
 
 export type SharedChannelFallbackPolicy = 'GH_TO_NG_SHARED' | 'EXACT_COUNTRY';
 
 export function getSharedChannelFallbackPolicy(
   businessCountry: string | null | undefined,
 ): SharedChannelFallbackPolicy {
+  // This value is bound into the step-up MFA parameter hash (SEC-005) for
+  // admin-assisted onboarding. It must match the admin client's expectation
+  // at WhatsAppAssistance.tsx — changing the return value breaks the MFA
+  // hash contract. Staging US fallbacks are transparent infrastructure;
+  // the admin-visible policy label remains EXACT_COUNTRY for non-GH.
   return businessCountry === 'GH' ? 'GH_TO_NG_SHARED' : 'EXACT_COUNTRY';
 }
 

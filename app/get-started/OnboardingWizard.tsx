@@ -225,7 +225,7 @@ function getQueryParam(key: string): string | null {
 }
 
 function OnboardingWizard() {
-  useCategoryConfig(); // trigger DB load for category templates
+  const { isLoaded: isCategoryConfigLoaded } = useCategoryConfig(); // #682: track DB load state
   const router = useRouter();
   const preselectedPlan = getQueryParam('plan') as SubscriptionTier | null;
   // #270: monthly-only — ignore legacy ?billing=annual query param
@@ -1149,7 +1149,10 @@ function OnboardingWizard() {
     { key: 'success', label: 'Live!' },
   ];
 
-  const stepIndex = steps.findIndex(s => s.key === step);
+  // Map intermediate steps (features, plan) to their nearest visible indicator stage
+  const intermediateSteps: string[] = ['features', 'plan'];
+  const indicatorKey = intermediateSteps.includes(step) ? 'category' : step;
+  const stepIndex = steps.findIndex(s => s.key === indicatorKey);
 
   // For shared numbers: wa.me/{waaiioNumber}?text={botCode}
   // For dedicated numbers (transfer/coexist): wa.me/{theirOwnNumber} (no bot code needed)
@@ -1368,6 +1371,7 @@ function OnboardingWizard() {
                 setSelectedCapabilities={setSelectedCapabilities}
                 setSelectedPlan={setSelectedPlan}
                 setStep={setStep}
+                isCategoryConfigLoaded={isCategoryConfigLoaded}
               />
             )}
 

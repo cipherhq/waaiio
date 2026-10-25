@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 import { CATEGORY_LABELS, BUSINESS_CATEGORIES, type BusinessCategoryKey, type FlowType } from '@/lib/constants';
 
@@ -56,12 +57,20 @@ function isFresh(): boolean {
 
 // ── Public API ──
 
-/** Fetch active categories from DB, populate cache */
-export async function loadCategories(): Promise<CategoryTemplate[]> {
+/**
+ * Fetch active categories from DB, populate cache.
+ *
+ * @param supabase  Optional Supabase client. Server-side callers (API routes)
+ *   should pass a service or server client — the default browser client resolves
+ *   as `anon` which lacks SELECT on `category_templates`.
+ *   Client-side callers (React hooks) omit this to use the browser client with
+ *   the authenticated user's session.
+ */
+export async function loadCategories(supabase?: SupabaseClient): Promise<CategoryTemplate[]> {
   if (isFresh()) return cache!;
   try {
-    const supabase = createClient();
-    const { data, error } = await supabase
+    const client = supabase ?? createClient();
+    const { data, error } = await client
       .from('category_templates')
       .select('*')
       .eq('is_active', true)
@@ -71,9 +80,34 @@ export async function loadCategories(): Promise<CategoryTemplate[]> {
     cacheTime = Date.now();
     return cache;
   } catch {
-    // On error, keep stale cache or return empty
+    // On error, keep stale cache or return empty.
+    // Client-side: graceful degradation to hardcoded list.
+    // Server-side: callers that need strict validation should use
+    // loadCategoriesStrict() instead.
     return cache ?? [];
   }
+}
+
+/**
+ * Strict variant for server-side validation. Throws on DB failure rather than
+ * silently falling back to the hardcoded list (which may be incomplete).
+ */
+export async function loadCategoriesStrict(supabase: SupabaseClient): Promise<CategoryTemplate[]> {
+  if (isFresh()) return cache!;
+  const { data, error } = await supabase
+    .from('category_templates')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true });
+  if (error) {
+    throw new Error(`Category configuration unavailable: ${error.message}`);
+  }
+  if (!data || data.length === 0) {
+    throw new Error('Category configuration unavailable: no active categories found');
+  }
+  cache = data as CategoryTemplate[];
+  cacheTime = Date.now();
+  return cache;
 }
 
 /** Clear cache (call after admin updates) */

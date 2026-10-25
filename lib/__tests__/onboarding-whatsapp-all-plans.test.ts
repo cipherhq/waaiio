@@ -264,6 +264,7 @@ vi.mock('@/lib/rate-limit', () => ({
 
 vi.mock('@/lib/categoryConfig', () => ({
   loadCategories: () => Promise.resolve(),
+  loadCategoriesStrict: () => Promise.resolve(),
   getAllCategoryKeys: () => ['salon', 'restaurant'],
 }));
 

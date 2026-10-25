@@ -121,7 +121,7 @@ describe('SEC-005 Layer 2: route coverage manifest', () => {
   it('every admin route (except step-up bootstrap and template-status) uses requirePlatformAdmin', () => {
     const exemptPaths = [
       'step-up/prepare', 'step-up/verify', // these DO use requirePlatformAdmin
-      'impersonate/end',                     // unauthenticated cookie-clear
+      'impersonate/end',                     // unconditional cookie-clear (path=/dashboard cookies not sent to /api)
       'impersonate/validate',                // token-based auth
       'template-status',                     // cron/internal-token
     ];

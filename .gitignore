@@ -52,6 +52,7 @@ next-env.d.ts
 playwright-report/
 test-results/
 graphify-out/
+graphify-out-*/
 
 # AI agent tooling
 .codex/

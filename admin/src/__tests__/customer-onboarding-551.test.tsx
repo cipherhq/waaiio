@@ -55,4 +55,21 @@ describe('#551 Admin customer onboarding journey', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(api.post).not.toHaveBeenCalled();
   });
+  it('keeps the UI category name contract for categories sourced from database labels', async () => {
+    // GET /api/admin/onboarding selects category_templates.label AS name.
+    // The client must continue rendering the mapped name in its category selector.
+    api.get.mockResolvedValueOnce(new Response(JSON.stringify({
+      onboardings: [],
+      options: { countries: [{ code: 'NG', name: 'Nigeria', dialing_code: '+234' }],
+        categories: [{ key: 'restaurant', name: 'Restaurant' }] },
+    }), { status: 200 }));
+    render(<CustomerOnboarding />);
+    await screen.findByLabelText('Owner email');
+    fireEvent.change(screen.getByLabelText('Owner first name'), { target: { value: 'Ada' } });
+    fireEvent.change(screen.getByLabelText('Owner last name'), { target: { value: 'Lovelace' } });
+    fireEvent.change(screen.getByLabelText('Owner email'), { target: { value: 'ada@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('option', { name: 'Restaurant' })).toBeInTheDocument();
+  });
+
 });

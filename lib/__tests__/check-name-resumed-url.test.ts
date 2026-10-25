@@ -119,7 +119,7 @@ vi.mock('@/lib/supabase/client', () => ({
 
 vi.mock('@/lib/supabase/safe-view-query', () => ({ queryChannelsPublic: vi.fn().mockResolvedValue({ data: null }) }));
 vi.mock('@/lib/posthog/client', () => ({ getPostHogClient: () => ({ capture: vi.fn(), identify: vi.fn() }) }));
-vi.mock('@/hooks/useCategoryConfig', () => ({ useCategoryConfig: () => {} }));
+vi.mock('@/hooks/useCategoryConfig', () => ({ useCategoryConfig: () => ({ isLoaded: true }) }));
 
 // Mock useOnboardingPersistence to restore a draft directly at the 'details' step.
 // This is deterministic — no heuristic UI button clicking needed.

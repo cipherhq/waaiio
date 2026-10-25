@@ -6,6 +6,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { buildContactsSearchFilter } from '@/lib/utils/sanitize';
 
 interface GrowthContact {
   id: string;
@@ -73,8 +74,8 @@ export default function GrowthContactsPage() {
     }
 
     if (search.trim()) {
-      const s = search.trim().replace(/[%_]/g, '\\$&');
-      query = query.or(`first_name.ilike.%${s}%,last_name.ilike.%${s}%,phone.ilike.%${s}%`);
+      const orFilter = buildContactsSearchFilter(search);
+      if (orFilter) query = query.or(orFilter);
     }
 
     const { data, count } = await query;

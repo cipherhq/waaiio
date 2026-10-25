@@ -81,7 +81,10 @@ export async function handleEscapeHatch(
   // "back" or "cancel" in booking management → go back to My Account menu
   if (isCancelOrBack && isBookingMgmt && !isChatMode) {
     // Route back to My Account menu (not restart completely) — use CAS to prevent stale overwrite
-    const newData = { ...session.session_data, active_capability: 'my_account' };
+    const newData: Record<string, unknown> = { ...session.session_data, active_capability: 'my_account' };
+    // Clear any pending language confirmation so it doesn't trap the next input
+    // after navigation completes (the executor receives '' and skips the pending handler).
+    delete newData._pending_language_switch;
     const { data: casResult } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id,
       p_expected_version: session.version ?? 0,
@@ -144,7 +147,10 @@ export async function handleEscapeHatch(
         if (history.length >= 2) {
           history.pop();
           const prevStep = history[history.length - 1];
-          const newData = { ...session.session_data, _step_history: history };
+          const newData: Record<string, unknown> = { ...session.session_data, _step_history: history };
+          // Clear any pending language confirmation so it doesn't trap the next input
+          // after navigation completes (the executor receives '' and skips the pending handler).
+          delete newData._pending_language_switch;
           const { data: casResult } = await supabase.rpc('update_session_cas', {
             p_session_id: session.id,
             p_expected_version: session.version ?? 0,

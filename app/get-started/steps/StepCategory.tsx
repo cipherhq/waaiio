@@ -271,6 +271,7 @@ export function StepCategory({
   setSelectedCapabilities,
   setSelectedPlan,
   setStep,
+  isCategoryConfigLoaded,
 }: StepCategoryProps) {
   const [searchQuery, setSearchQuery] = useState('');
   // Track which outcome was selected (for filtering subcategories)
@@ -377,7 +378,13 @@ export function StepCategory({
         </div>
       </div>
 
-      {!selectedOutcome ? (
+      {/* #682: Loading guard — prevent category selection until DB config loaded */}
+      {!isCategoryConfigLoaded ? (
+        <div className="mt-8 flex flex-col items-center justify-center py-12">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-brand" />
+          <p className="mt-3 text-sm text-gray-500">Loading business categories...</p>
+        </div>
+      ) : !selectedOutcome ? (
         /* ── Phase 1: Outcome-based selection ── */
         <div className="mt-8">
           <h2 className="text-2xl font-bold text-gray-900">What do your customers need?</h2>

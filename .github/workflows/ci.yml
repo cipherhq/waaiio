@@ -1611,6 +1611,64 @@ jobs:
           fi
           echo "✅ M443 payment credentials least-privilege grant tests complete."
 
+      - name: "M452 cancellation intent + charge gate (disposable PG)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+
+          # ── Complete migration: 16 checks (RPCs, permissions, claim/dispatch/finalize lifecycle) ──
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_migration
+          createdb --maintenance-db=waaiio_test waaiio_pr605_migration
+          echo "Running M452 complete migration tests..."
+          set +e
+          OUTPUT_MIG=$(TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_pr605_migration node tests/run-605-complete-migration.mjs 2>&1)
+          MIG_EXIT=$?
+          set -e
+          echo "$OUTPUT_MIG"
+          if [ $MIG_EXIT -ne 0 ]; then echo "❌ M452 migration tests failed."; exit $MIG_EXIT; fi
+          PASS_MIG=$(echo "$OUTPUT_MIG" | grep -c "^PASS ")
+          echo "✅ M452 migration: $PASS_MIG checks passed."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_migration
+
+          # ── Concurrency: cancel-vs-dispatch races (6 checks) ──
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_race
+          createdb --maintenance-db=waaiio_test waaiio_pr605_race
+          echo "Running M452 concurrency race tests..."
+          set +e
+          OUTPUT_RACE=$(TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_pr605_race node tests/run-605-concurrency.mjs 2>&1)
+          RACE_EXIT=$?
+          set -e
+          echo "$OUTPUT_RACE"
+          if [ $RACE_EXIT -ne 0 ]; then echo "❌ M452 concurrency tests failed."; exit $RACE_EXIT; fi
+          PASS_RACE=$(echo "$OUTPUT_RACE" | grep -c "^PASS ")
+          echo "✅ M452 concurrency: $PASS_RACE checks passed."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_race
+
+          # ── Finalizer: idempotency + deadlock safety (8 checks) ──
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_finalizer
+          createdb --maintenance-db=waaiio_test waaiio_pr605_finalizer
+          echo "Running M452 finalizer idempotency + concurrency tests..."
+          set +e
+          OUTPUT_FIN=$(TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_pr605_finalizer node tests/run-605-finalizer.mjs 2>&1)
+          FIN_EXIT=$?
+          set -e
+          echo "$OUTPUT_FIN"
+          if [ $FIN_EXIT -ne 0 ]; then echo "❌ M452 finalizer tests failed."; exit $FIN_EXIT; fi
+          PASS_FIN=$(echo "$OUTPUT_FIN" | grep -c "^PASS ")
+          echo "✅ M452 finalizer: $PASS_FIN checks passed."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pr605_finalizer
+
+          # ── Static + lock-order + provider-boundary (33 checks, no DB) ──
+          echo "Running M452 static and provider-boundary checks..."
+          node tests/verify-605-static.mjs
+          node tests/verify-finalizer-lock-order.mjs
+          node tests/verify-605-provider-boundary.mjs
+          echo "✅ M452 all disposable-PG and static checks complete."
+
       - name: "DB delta analysis (advisory)"
         env:
           PGHOST: localhost
@@ -3132,6 +3190,38 @@ jobs:
           fi
           echo "✅ Migration 371 runtime financial integration tests complete — zero skips, zero failures."
 
+      - name: "Migration 461 cross-border business-country billing tests (#Lane3)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 461 cross-border billing real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/cross-border-billing-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 461 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 461 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 461 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 461 cross-border billing tests complete — zero skips, zero failures."
+
       - name: "M430 populated-database migration replay + atomic rollback (#266)"
         env:
           PGHOST: localhost
@@ -4006,6 +4096,50 @@ jobs:
           fi
           echo "✅ M444 reject payout RPC DB tests complete — zero skips, zero failures."
 
+      # M464: Atomic customer subscription failure recording RPC + UNIQUE index tests
+      - name: M464 atomic subscription failure DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+
+          # Dedicated disposable database — never touches staging/production/shared
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m464_test
+          createdb --maintenance-db=waaiio_test waaiio_m464_test
+
+          cleanup() {
+            dropdb --maintenance-db=waaiio_test --if-exists waaiio_m464_test
+          }
+          trap cleanup EXIT
+
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m464_test
+
+          echo "Running M464 atomic subscription failure RPC tests (waaiio_m464_test)..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/464-atomic-failure-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M464 atomic failure DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M464 atomic failure DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M464 atomic failure DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M464 atomic subscription failure DB tests complete — zero skips, zero failures."
+
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
@@ -4401,3 +4535,95 @@ jobs:
             exit 1
           fi
           echo "✅ All .pg.test.ts tests executed (zero skipped, per-database isolation)"
+
+  engage-acl-tests:
+    name: Engage segments ACL tests (disposable PG)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test_runner
+          POSTGRES_PASSWORD: test_only_ephemeral
+          POSTGRES_DB: engage_acl_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_runner -d engage_acl_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pg driver
+        run: npm install --save-dev pg
+
+      - name: Provision Supabase-compatible roles and schemas
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+          PGDATABASE: engage_acl_test
+        run: |
+          psql <<'SETUP_SQL'
+            CREATE ROLE service_role NOLOGIN BYPASSRLS;
+            CREATE ROLE anon NOLOGIN;
+            CREATE ROLE authenticated NOLOGIN;
+            CREATE EXTENSION IF NOT EXISTS pgcrypto;
+            CREATE SCHEMA IF NOT EXISTS auth;
+            CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+              SELECT COALESCE(
+                current_setting('request.jwt.claim.sub', true)::uuid,
+                '00000000-0000-0000-0000-000000000000'::uuid
+              );
+            $$ LANGUAGE sql STABLE;
+            CREATE TABLE auth.users (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              instance_id UUID, aud VARCHAR(255), role VARCHAR(255),
+              email VARCHAR(255), encrypted_password VARCHAR(255),
+              created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE TABLE public.businesses (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              owner_id UUID REFERENCES auth.users(id),
+              name TEXT NOT NULL, slug TEXT UNIQUE,
+              category VARCHAR(50) DEFAULT 'shop', flow_type VARCHAR(50) DEFAULT 'ordering',
+              country_code VARCHAR(10) DEFAULT 'US', status VARCHAR(20) DEFAULT 'pending'
+            );
+            CREATE OR REPLACE FUNCTION public.update_updated_at() RETURNS TRIGGER AS $$
+            BEGIN NEW.updated_at = now(); RETURN NEW; END; $$ LANGUAGE plpgsql;
+            GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+            GRANT SELECT ON public.businesses TO service_role;
+            GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
+            GRANT SELECT ON auth.users TO service_role;
+            GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
+          SETUP_SQL
+          echo "✅ Disposable PG roles and schemas provisioned"
+
+      - name: Run ACL tests against disposable PG
+        env:
+          TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/engage_acl_test
+        shell: bash
+        run: |
+          set -o pipefail
+          npx vitest run lib/__tests__/m431-engage-segments-acl.test.ts --reporter=verbose 2>&1 | tee /tmp/engage-acl-output.txt
+
+      - name: Verify zero skipped DB tests
+        run: |
+          if grep -qE "[1-9][0-9]* skipped" /tmp/engage-acl-output.txt; then
+            echo "❌ DB tests were skipped — disposable PG connection failed"
+            exit 1
+          fi
+          echo "✅ All tests executed (zero skipped)"

@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 
 const ERR_HEADERS = { 'Cache-Control': 'no-store' } as const;
 const SHA_RE = /^[0-9a-f]{40}$/;
+const SUPABASE_REF_RE = /^[a-z]{20}$/;
 
 /**
  * GET /api/release-identity
@@ -50,12 +51,44 @@ export async function GET() {
     );
   }
 
+  // Supabase project ref — derived from the same NEXT_PUBLIC_SUPABASE_URL
+  // used by lib/supabase/server.ts and lib/supabase/service.ts.
+  // Reports only the 20-char project ref (already public), never keys.
+  // Parsed with URL constructor and validated with anchored hostname match
+  // to prevent substring/suffix spoofing (e.g. ref.supabase.co.evil.com).
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  let supabaseProjectRef = '';
+  try {
+    const parsed = new URL(supabaseUrl);
+    if (parsed.protocol !== 'https:') {
+      return NextResponse.json(
+        { error: 'NEXT_PUBLIC_SUPABASE_URL must use HTTPS' },
+        { status: 500, headers: ERR_HEADERS },
+      );
+    }
+    // Anchored match: hostname must be exactly <ref>.supabase.co
+    const hostMatch = parsed.hostname.match(/^([a-z]{20})\.supabase\.co$/);
+    if (!hostMatch) {
+      return NextResponse.json(
+        { error: 'NEXT_PUBLIC_SUPABASE_URL hostname is not a valid <ref>.supabase.co' },
+        { status: 500, headers: ERR_HEADERS },
+      );
+    }
+    supabaseProjectRef = hostMatch[1];
+  } catch {
+    return NextResponse.json(
+      { error: 'NEXT_PUBLIC_SUPABASE_URL is not a valid URL' },
+      { status: 500, headers: ERR_HEADERS },
+    );
+  }
+
   return NextResponse.json(
     {
       sha,
       projectId,
       deploymentId,
       vercelEnv,
+      supabaseProjectRef,
       timestamp: new Date().toISOString(),
     },
     { status: 200, headers: { 'Cache-Control': 'no-store' } },

@@ -53,6 +53,7 @@ vi.mock('@/lib/countries', () => ({
 
 vi.mock('@/lib/categoryConfig', () => ({
   loadCategories: () => Promise.resolve(),
+  loadCategoriesStrict: () => Promise.resolve(),
   getAllCategoryKeys: () => ['salon', 'restaurant'],
 }));
 

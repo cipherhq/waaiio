@@ -198,7 +198,11 @@ export default function FormsPage() {
     if (view === 'add') {
       await supabase.from('forms').insert({ ...payload, token: generateToken() });
     } else {
-      await supabase.from('forms').update(payload).eq('id', editId);
+      // business_id is immutable after INSERT — omit from UPDATE payload.
+      // Column-level UPDATE grants (M437) exclude business_id to prevent
+      // ownership transfer; including it would cause a permission error.
+      const { business_id: _omit, ...updatePayload } = payload;
+      await supabase.from('forms').update(updatePayload).eq('id', editId);
     }
     setSaving(false);
     setView('list');

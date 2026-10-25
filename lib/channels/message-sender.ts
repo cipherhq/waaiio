@@ -124,14 +124,17 @@ async function withRetry<T>(
       // Retrying would create a fresh attempt+reservation and potentially emit after the
       // original reservation was released by expiry.
       const isGateBlock = err instanceof GateBlockError;
+      // Lane 3: Financial authorization denials are business-logic errors, not Meta API failures.
+      // They must NOT contribute to the circuit breaker or trigger retries.
+      const isFinancialDenial = err instanceof Error && errMsg.startsWith('Financial authorization');
 
       // Only record failure for server errors (5xx) or network errors, not client errors or suspensions
-      if (!is4xx && !isSuspended && !isAmbiguous && !isWamidFailure && !isGateBlock) {
+      if (!is4xx && !isSuspended && !isAmbiguous && !isWamidFailure && !isGateBlock && !isFinancialDenial) {
         recordFailure(CIRCUIT_KEY);
       }
 
-      // Don't retry: client errors, suspension blocks, ambiguous, WAMID persistence, gate blocks, or last attempt
-      if (is4xx || isSuspended || isAmbiguous || isWamidFailure || isGateBlock || i === retries) throw err;
+      // Don't retry: client errors, suspension blocks, ambiguous, WAMID persistence, gate blocks, financial denials, or last attempt
+      if (is4xx || isSuspended || isAmbiguous || isWamidFailure || isGateBlock || isFinancialDenial || i === retries) throw err;
       await new Promise(r => setTimeout(r, delay * (i + 1)));
     }
   }
@@ -297,16 +300,26 @@ export class MetaCloudSender implements MessageSender {
       throw new GateBlockError('Business send requires attempt authority (Supabase client unavailable) — zero Meta emission');
     }
 
-    // 1. Create pre-WAMID attempt (before guard)
+    // 1. Create pre-WAMID attempt with authoritative pricing context.
+    // Populate it on INSERT: the financial RPC must never depend on a later
+    // best-effort update to obtain the recipient country or message category.
+    const recipientCountryCode = !isPlatform ? resolveRecipientCountry(params.recipientPhone) : null;
+    const messageCategory = params.messageCategory || null;
     const attemptId = this._supabase
-      ? await createAttempt(this._supabase, { ...params, businessId: this._businessId || null, attemptScope: scope })
+      ? await createAttempt(this._supabase, {
+          ...params,
+          recipientCountryCode: recipientCountryCode || undefined,
+          messageCategory: messageCategory || undefined,
+          businessId: this._businessId || null,
+          attemptScope: scope,
+        })
       : null;
 
     // #261: Resolve recipient country and update attempt context
     let wasReserved = false;
     if (attemptId && this._supabase && !isPlatform) {
-      const recipientCountryCode = resolveRecipientCountry(params.recipientPhone);
-      const messageCategory = params.messageCategory || null;
+      // Keep the existing context-update path for compatibility; INSERT already
+      // supplies both fields so an update failure cannot erase billing context.
       await updateAttemptContext(this._supabase, attemptId, recipientCountryCode, messageCategory);
     }
 

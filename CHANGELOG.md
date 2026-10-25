@@ -1,7 +1,206 @@
+### Audit NB-5: SECURITY DEFINER ACL hardening (2026-10-24)
+
+- **`supabase/migrations/463_secdef_acl_audit_hardening.sql`** (new): Hardens 6 exposed SECURITY DEFINER functions. `calculate_volume_discount`: adds missing `SET search_path = public`, REVOKEs anon+authenticated (bot-only via service client). `check_conversation_limit`: REVOKEs anon+authenticated (legacy function, no active TS callers). Dashboard revenue RPCs (`get_business_revenue`, `get_order_revenue`, `get_outstanding_invoices`): REVOKEs anon only (keeps authenticated for dashboard). `check_business_role`: REVOKEs anon only (keeps authenticated for RLS policies). Inline verification assertions validate all grants.
+- **`lib/__tests__/nb5-secdef-acl-hardening.test.ts`** (new): 25 tests verifying migration REVOKE/GRANT statements, search_path presence, assertion coverage, intentionally public functions not revoked, and application caller patterns.
+- **Affects**: Database function execution grants only. No schema changes. No application code changes. Backward compatible — all callers use service client.
+- **Could break**: Any hypothetical browser-side RPC call to `calculate_volume_discount` or `check_conversation_limit` (none exist in codebase). Dashboard RPCs still accessible to authenticated users.
+- **Requires**: Migration must be applied to staging/production after merge.
+
+### #682 Launch: Disable Flutterwave merchant setup (2026-10-24)
+
+- **`lib/payments/gateway-resolver.ts`**: Added `SETUP_AVAILABLE_GATEWAYS = ['paystack', 'stripe']`. Shared constant gates new merchant gateway setup. Existing `VALID_GATEWAYS` unchanged (Flutterwave payment processing preserved).
+- **`app/api/settings/payment-credentials/route.ts`**: Server-side gate rejects `gateway === 'flutterwave'` for new BYO connections with clear message.
+- **`app/dashboard/settings/tabs/PaymentsTab.tsx`**: Gateway selection radio uses `SETUP_AVAILABLE_GATEWAYS` (Flutterwave option removed). BYO Flutterwave form conditionally hidden.
+- **Affects**: New merchant gateway selection only. Existing Flutterwave merchants, credentials, transactions, webhooks, refunds, and reconciliation are fully preserved.
+- **Re-enable**: Add `'flutterwave'` to `SETUP_AVAILABLE_GATEWAYS` array.
+
+### Lane 3 — Cross-border messaging financial authorization fix (2026-10-24)
+
+- **`supabase/migrations/461_cross_border_business_country_billing.sql`** (new): Replaces both overloads of `authorize_message_send` (1-arg and 3-arg). Currency resolution now uses `businesses.country_code` (business country) instead of `message_send_attempts.recipient_country_code` (recipient country). Adds Step 3b: JOIN businesses to resolve `v_business_country`. `v_country` assignment changed from `v_attempt.recipient_country_code` to `v_business_country`. `recipient_country_code` preserved on attempt record for WhatsApp delivery analytics. New rejection reason `business_country_not_found` if business lacks country_code.
+- **`lib/channels/message-sender.ts`**: Added `isFinancialDenial` check in `withRetry` — errors starting with `'Financial authorization'` are now excluded from `recordFailure(CIRCUIT_KEY)` and from retry attempts. Prevents insufficient-balance denials from opening the Meta Cloud circuit breaker.
+- **`lib/__tests__/cross-border-billing-db.test.ts`** (new): 9 real-PostgreSQL tests: NG→US charges NGN, US→NG charges USD, GH→US charges GHS, same-country preservation, recipient country analytics preservation, unconfigured business country rejection, depleted balance rejection, 3-arg overload cross-border consistency.
+- **`lib/__tests__/circuit-breaker-financial-exclusion.test.ts`** (new): 3 tests proving financial denials don't trigger `recordFailure`, financial RPC errors don't trigger it either, but real Meta 5xx errors still do.
+- **Affects**: Financial authorization billing currency resolution (authorize_message_send RPC), circuit breaker error classification. No changes to payment gateways, subscription pricing, purchased balances, rate configuration, expiry policies, or WhatsApp delivery routing.
+- **Could break**: Existing tests that assume recipient_country_code drives currency (tests 3, 8, 23 in financial-authorization-db.test.ts create attempts with recipient country matching the allowance currency — those still pass because the test businesses default to NG country_code with NGN allowances).
+
+### #682 Bot Recovery — Messaging reliability fixes (2026-10-24)
+
+- **`lib/bot/conversation-guard.ts`**: Added `trackInboundMessage()` with 24h-window new-conversation detection (`isNewConversation()`). Fixed `trackOutboundMessage()` to accept `isNewConv` parameter instead of hardcoded `false`. Added `checkSpendThresholds()` for non-blocking threshold alert insertion (50/75/90/100%).
+- **`lib/bot/bot.service.ts`**: Added inbound message tracking for both resumed sessions (line ~731) and new sessions (line ~2155). Added financial denial detection in outer catch — sends rate-limited customer message via platform scope instead of generic crash message.
+- **`lib/bot/flows/executor.ts`**: Added `checkSpendThresholds` import and non-blocking call after outbound tracking.
+- **`app/dashboard/billing/page.tsx`**: Fixed null-currency crash in `formatCurrency()` and `formatSmallestUnit()` — now safely handles null/undefined currency parameter.
+- **Test mocks updated**: `pidgin-executor-switching`, `slice-a-localization-boundary`, `slice-559-executor-reroute`, `p0-executor-cas-regression`, `cas-003-route-integration` — added `checkSpendThresholds` and/or `trackInboundMessage` to conversation-guard mocks.
+- **`lib/__tests__/bot-recovery-messaging-682.test.ts`** (new): 38 tests covering isNewConversation (7), trackInboundMessage (3), trackOutboundMessage (3), null-currency safety (2), checkSpendThresholds (2), financial denial detection (9), isApproachingLimit (3), duplicate webhook resilience (1), conversation-window boundary conditions (8 — rolling-inactivity model, concurrent messages, RPC failure non-blocking, session expiration).
+- **Affects**: Bot messaging accounting, financial denial UX, billing page crash safety, spend threshold monitoring. No changes to payment flows, subscription logic, WhatsApp routing, or message classification.
+- **Could break**: Nothing — all changes are additive (new tracking), defensive (null-safety), or error-handling improvements. Existing `trackOutboundMessage` callers are backward-compatible (new param defaults to `false`).
+
+### #671 QA Phase B — CTO R3 final corrections (2026-10-22)
+
+- **`app/api/release-identity/route.ts`** (B1): Replace unanchored regex with `new URL()` parsing + anchored hostname match `^[a-z]{20}\.supabase\.co$`. Enforces HTTPS scheme. Rejects spoofed hostnames like `ref.supabase.co.evil.com` or ref-in-path attacks.
+- **`e2e/fixtures/staging-guard.ts`** (B3): Switch from `page.route()` to `page.context().route()` for context-level interception covering popups/new pages. Sanitize blocked-request diagnostics to `scheme://host/path` only (no query params, fragments, or userinfo).
+- **`e2e/staging/auth-boundaries.spec.ts`** (B3): Add `test.use({ serviceWorkers: 'block' })` for unauthenticated tests.
+- **`.github/workflows/staging-qa.yml`** (B4): Replace inline Python heredoc with tested `scripts/parse-evidence.py`. Summary checks `evidence_valid`, `timed_out`, `interrupted` — not just `failed`.
+- **`scripts/parse-evidence.py`** (new, B4): Extracted standalone evidence parser. Fails closed (exit 1) on ANY: parse errors, unknown statuses, timedOut, interrupted, missing reports, empty results. Tested by actual Python execution in unit tests.
+- **Tests**: Expanded to cover B1 hostname spoof regression (anchored regex, spoofed hostnames), B3 service-worker/URL-sanitization contracts, B4 actual Python parser execution (passed, retry, timedOut, interrupted, unknown, missing, malformed, all-skipped, nested suites).
+- Codex: UNAVAILABLE (usage limit). CTO is reviewer of record.
+
+### #671 QA Phase B — CTO R2 corrections (2026-10-22)
+
+- **`app/api/release-identity/route.ts`** (B1): Add `supabaseProjectRef` derived from `NEXT_PUBLIC_SUPABASE_URL` — reports only the 20-char project ref (already public), fail-closed if absent/malformed. Configuration-identity check, not DB reachability proof.
+- **`e2e/fixtures/staging-guard.ts`** (B1, B5): `verifyStagingIdentity()` now requires `supabaseProjectRef === staging ref` before navigation. `expectedSha` is now required (not optional) for remote targets — rejects empty/malformed SHA.
+- **`e2e/fixtures/auth.ts`** (B3): Block service workers in both worker-scoped and test-scoped contexts via `serviceWorkers: 'block'`.
+- **`e2e/staging/auth-boundaries.spec.ts`** (B2, B3): Use POST for `/api/dashboard/switch-business` (was GET, route exports POST only — GET would 405). Install request guard on ALL page-navigation tests (was only first test). API tests use `maxRedirects: 0` to prevent cross-origin redirect following.
+- **`.github/workflows/staging-qa.yml`** (B1, B4): Workflow identity step verifies `supabaseProjectRef`. Evidence parser uses LAST result for retries (not first), `auth_tests_executed` requires at least one non-skipped test, empty/missing files fail closed, malformed reports fail closed.
+- **`scripts/qa-staging.sh`** (B5): Require valid 40-hex `E2E_DEPLOYMENT_SHA` for non-loopback targets.
+- **`lib/__tests__/qa-staging-guard.test.ts`**: Expanded to 38 tests covering B1 (wrong/missing/production supabaseProjectRef), B2 (route method regression), B3 (guard coverage, service worker blocking), B4 (retry truthfulness, all-skipped detection), B5 (SHA requirement).
+- Codex: UNAVAILABLE (usage limit). CTO is reviewer of record.
+
+### #671 QA Phase B — staging fixture/workflow hardening (2026-10-22)
+
+- **`e2e/fixtures/staging-guard.ts`**: (1) Enforce HTTPS for non-loopback staging targets. (2) Add `verifyStagingIdentity()` — verifies Vercel deployment projectId, vercelEnv, and SHA via `/api/release-identity`. Documented limitation: this is deployment identity only, NOT database identity (see Phase C follow-up).
+- **`e2e/fixtures/auth.ts`**: (1) Refactor `merchantPage` to worker-scoped auth — login once per worker, reuse `storageState` in memory across tests (avoids repeated session-bind writes and notification emails). (2) Request guard violations now throw (fail-closed) instead of logging warnings. (3) Inherit project device settings (viewport, userAgent) from config in test contexts.
+- **`e2e/staging/auth-boundaries.spec.ts`**: (1) Add `verifyStagingIdentity()` in `beforeAll` for remote targets. (2) Install request guard and verify redirect origin stays on staging. (3) Replace non-existent `/api/businesses` route with real `/api/dashboard/switch-business`. (4) Rename admin test to "unauthenticated" (honest label; authenticated merchant check deferred to Phase C).
+- **`e2e/staging/navigation.spec.ts`**: Add `response.status()` check — 4xx/5xx responses now fail tests.
+- **`e2e/staging/catalog.spec.ts`**: Scope content assertions to `main` element to avoid sidebar false positives.
+- **`e2e/staging/customers.spec.ts`**: Add limitation comment about env-var-name vs JWT-structure detection.
+- **`.github/workflows/staging-qa.yml`**: (1) Replace all `${{ inputs.* }}` in shell `run:` blocks with env vars (command injection prevention). (2) Add HTTPS enforcement in guard step. (3) Add deployment identity verification step via `/api/release-identity`. (4) Use JSON reporter with allowlisted per-test evidence artifact (title, status, duration only — no error text, URLs, or credentials). (5) Summary now distinguishes "all passed" from "auth tests not executed".
+- **`scripts/qa-staging.sh`**: (1) Add `--config=e2e/playwright.staging.config.ts` to all Playwright invocations. (2) Enforce HTTPS for non-loopback. (3) Fix Python URL parsing to use positional args instead of string interpolation.
+- **`lib/__tests__/qa-staging-guard.test.ts`** (new): 25 unit tests covering HTTPS enforcement, identity verification (positive/negative), target validation, and constants.
+- **Not changed**: Application code, database, existing CI merge gate, Playwright staging config, or other 6 staging spec files.
+- **Affects**: Staging QA workflow safety, test fixtures, and evidence reporting only. No runtime application behavior changed.
+- **Known limitation**: Database identity (which Supabase project the server connects to) is NOT verified. Requires a minimal app-code change to `/api/release-identity` to report `NEXT_PUBLIC_SUPABASE_URL` — presented as Phase C follow-up.
+
+## 2026-10-21 — Parties Phase B1: slug fix, guest tags, table seating (#661)
+
+### Attendee-capacity enforcement (527d8b66)
+- **Owner policy**: 1 invite + N plus_ones = (1+N) attendees against party and table capacity.
+- **5 code paths updated**: invite API, web RSVP API, bot RSVP flow, dashboard capacity bar, table capacity trigger.
+- **M457 trigger architecture**: STATEMENT trigger checks final state; RPCs use `pg_advisory_xact_lock` (M304 pattern) for concurrent serialization.
+- **Tests**: 140 passed, 0 skipped, 0 failed — including 16 real PostgreSQL tests with zero skips.
+
+### CTO corrections (b7e4b349)
+- **M457 rewritten**: Added ROW trigger (`trg_validate_invite_table`) for party membership + business isolation on ALL write paths. Added STATEMENT trigger (`trg_enforce_table_capacity`) with `FOR UPDATE` on `party_tables` to serialize concurrent assignments (M451 pattern). RPCs `assign_guest_to_table` and `bulk_assign_guests_to_table` (SECURITY INVOKER) provide clean JSON API. Self-check block validates all components.
+- **`table-assignment.ts` rewritten**: All assignment operations now go through RPCs. No direct UPDATE of `table_id` from application code.
+- **28 lifecycle tests** (`party-b1-lifecycle.test.ts`): slug lifecycle, required fields, ownership, error handling, guest preservation, URL validity, capacity, backward compat.
+- **14 disposable PG tests** (`party-b1-seat-authority.pg.test.ts`): concurrent seat race, cross-business denial, cross-party denial, bulk all-or-nothing, direct SQL bypass caught by triggers.
+
+### What changed
+- **M455**: Added `slug` VARCHAR(100) UNIQUE and `updated_at` TIMESTAMPTZ with auto-update trigger to `parties` table. Backfills existing rows with auto-generated slugs. Fixes P2 bug where dashboard generated share URLs referencing a non-existent `slug` column.
+- **M456**: Added `tags TEXT[] DEFAULT '{}'` to `event_invites` with partial GIN index for efficient tag-based filtering.
+- **M457**: Created `party_tables` table (RLS, capacity CHECK 1-500, UNIQUE party_id+name, admin read policy via `has_admin_role`). Added `table_id` and `seat_number` to `event_invites` (ON DELETE SET NULL).
+- **`lib/parties/slug.ts`**: Slug generation utility — `slugify(name)-random6` format with collision retry.
+- **`lib/parties/table-assignment.ts`**: Manual assign, unassign, reassign, bulk-assign-by-tag, and auto-assign (capacity-aware, fills by sort_order).
+- **`lib/actions/party-persistence.ts`**: `createParty` now auto-generates slug and returns `id`/`slug`. `updateParty` strips slug from payload (immutable once set).
+- **`app/api/events/invite/route.ts`**: Added `max_guests` capacity enforcement — rejects new invites with 409 when party is at capacity.
+- **`app/dashboard/parties/page.tsx`**: Guest tag management (inline editor, bulk tag, filter-by-tag), table CRUD, per-guest table assignment dropdown, auto-assign button, capacity indicators, CSV export includes tags.
+- **`lib/__tests__/issue-493-staging-readiness.test.ts`**: Updated `createParty` mock to match new `.insert().select().single()` chain.
+
+### Tests
+- 37 new tests in 3 files: `party-b1-foundation.test.ts` (14), `party-b1-tags.test.ts` (14), `party-b1-tables.test.ts` (9)
+- 78/78 affected tests pass. Build clean (0 type errors).
+
+### What could break
+- Code that calls `createParty` without handling the new `id`/`slug` return fields (backward compatible — old code just ignores them).
+- Queries on `event_invites` that `SELECT *` will now include `tags`, `table_id`, `seat_number` — existing code handles unknown columns gracefully.
+- Dashboard code references `party.slug` which now exists — share URLs will use slugs instead of UUIDs for new parties.
+- **Migrations not yet applied.** Until M455-457 are applied, `slug`/`tags`/`table_id`/`seat_number` columns don't exist and new features won't work.
+
+### Not included (deferred to B2)
+- Named plus-ones with individual QR passes
+- Check-in system with HMAC-signed tokens
+- Custom RSVP questions
+- Party messaging/broadcasting
+
+### 2026-10-22 — Lean engineering execution contract (governance-only)
+
+- **`CLAUDE.md`**: Require a short proven-need/acceptance contract, smallest justified diff, and stop-at-definition-of-done discipline. Bug allegations use existing independent evidence verification; new features follow approved requirements.
+- **`WAAIIO_ENGINEERING_OPERATING_ORDER.md`**: Canonical three-step proof/minimal-scope/completion rule within existing Phase A, CTO, and Owner gates; no extra approval round.
+- **Impact:** Agent instructions and review scope only. No application logic, migrations, runtime configuration, or provider behavior changed. **Potential risk:** Narrower change scope may defer unrelated cleanups; genuine critical findings still escalate under existing rules.
+
+### #596 Finance UI reconciliation — fix schema mismatch, error handling, currency safety (2026-10-20)
+
+- **`admin/src/pages/Finance.tsx`**: (1) Fixed `business_payouts` query selecting nonexistent `currency` column — now selects real columns (`business_id, net_amount, platform_fee, gateway_fee, status, created_at`) with currency inferred from business country_code via `bizCurrencyMap`. (2) Added `Promise.allSettled` error handling with degraded-state banner and retry — prevents indefinite loading spinner or silent zeros on query failure. (3) Applied country filter to payout metrics (previously ignored). (4) Payout metric cards now use business-inferred currency (same pattern as Admin Payouts page) instead of reading nonexistent column. (5) Changed category ranking from cross-currency sum to transaction count. (6) Monthly rollup now uses filtered data and removes unverifiable payout column (no business_id to infer currency in rollup). (7) Country breakdown uses per-currency `formatMultiCurrency()` instead of single-currency assumption. (8) CSV export disabled pending server-side complete export implementation. (9) Labels corrected: "Revenue" → "Payment Volume" where appropriate.
+- **`admin/src/pages/Dashboard.tsx`**: Removed intermediate cross-currency `revenue` sum field from category breakdown state. Added exported `CategoryPaymentValue` component for per-currency display. Table header "Revenue" → "Payment Volume". Subtitle updated with unreconciled caveat.
+- **`admin/src/pages/Payouts.tsx`**: Removed `flutterwave_transfer` from transfer method dropdown — option always fails server-side (`ALLOWED_TRANSFER_METHODS` excludes it).
+- **Not changed**: Settlement engine from PR #665 (confirm-settlement, approve, atomic RPCs, M453/M454) — verified as fully satisfying Owner-approved merchant settlement workflow. `manual_cash` correctly absent per #665.
+- Affects: Admin Finance dashboard display, admin Payouts approval dropdown. Does NOT affect settlement logic, payment processing, or payout calculations.
+- Could break: Category chart now ranks by tx count not mixed-currency sum. CSV is temporarily disabled. Monthly rollup excludes payout column.
+
+### PR #605 offline payment cancellation gate candidate (2026-10-19)
+- Proposed M452 (NOT applied): cancellation intent + Paystack/Flutterwave claim and dispatch gates with subscription-first locking.
+- Retry cron: executable Paystack pre-provider guard and bounded post-cancellation reconciliation of in-flight attempts using existing verify_attempts CAS rotation.
+- Flutterwave post-cancellation reconciliation: read-only work queue via `list_cancelled_flutterwave_claims` RPC + verification-only recovery in `flutterwave-cancellation-reconciliation.ts`.
+- Tests: Paystack provider-boundary executable regressions, Flutterwave renewal pre-charge cancellation checks, Flutterwave cancelled-claim reconciliation, disposable-PG race harness.
+- Fix: `tests/run-605-complete-migration.mjs` line 121 used single quotes instead of backticks for `stableRef`, causing literal `${FLW}` in SQL instead of the UUID constant — broke Flutterwave reconciliation queue tests.
+- Fix: `lib/__tests__/paystack-split-recurring.test.ts` source-string test referenced removed `chargeResult.status` marker; updated to `chargeDecision.action` matching refactored cron route.
+- Fix: `app/api/cron/retry-failed-charges/route.ts:163` — added `async` to `rereadSubscription` lambda to satisfy TypeScript's Promise type constraint for the Supabase builder chain.
+- Risk: provider network calls are non-atomic with Postgres; already-dispatched charges may settle and must reconcile. Owner approval required before migration/deploy.
+
 # Changelog
 
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
+
+## 2026-10-20 — M432 engage_segments corrective ACL migration (replaces PR #581)
+
+### What changed
+- **New migration** (`supabase/migrations/432_engage_segments_acl.sql`): Companion to M431 (which remains unchanged). Adds explicit `REVOKE ALL FROM anon, authenticated` and `GRANT SELECT, INSERT, UPDATE, DELETE TO service_role`. Includes a 13-assertion verification block checking all 4 CRUD ops for service_role (allowed), anon (denied), authenticated (denied), plus RLS enabled.
+- **Tests** (`lib/__tests__/m431-engage-segments-acl.test.ts`): 27 tests total — 11 static migration SQL analysis (always run), 10 real PostgreSQL role CRUD + denial tests (run in dedicated CI `engage-acl-tests` job with ephemeral Postgres), 6 API route authorization contract tests. DB tests refuse to operate if `engage_segments` already exists (prevents accidental execution against populated databases).
+- **CI job** (`.github/workflows/ci.yml` `engage-acl-tests`): Dedicated job provisioning a disposable `postgres:15-alpine` service container with Supabase-compatible roles. Runs all 27 tests with zero skips, uses `set -o pipefail` for fail-closed CI, and verifies the result.
+
+### Why
+On Supabase, there are NO default ACL entries for public schema tables — `service_role` gets ZERO table privileges without explicit grants. The Engage API routes use `createServiceClient()` (service_role) for `.from('engage_segments')` queries. M431 was committed without grants; M432 fixes this as a companion migration to be applied atomically with M431.
+
+### What could break
+- Nothing. Neither M431 nor M432 has been applied to any environment. M431 is unchanged. M432 is a new file. No application code changed.
+
+## 2026-10-19 — feat(payouts): settlement closure — Paystack auto-payout dedup, manual settlement evidence gate, lifecycle tests
+
+### What changed
+- Extracted duplicated Paystack transfer code in auto-payout cron into shared `executeAutoTransfer()` helper.
+- `manual_cash` removed from transfer methods. `manual_bank` approval now sets `approved` (not `paid`).
+- New `/confirm-settlement` endpoint: requires `transfer_reference`, server-enforced `attestation`, SEC-005 step-up, atomic audit. Rebalances against refunds before confirming.
+- 51+ new settlement tests. Codex P1 findings resolved: kill switch, gateway authority, row verification, step-up allowlist + DB constraint.
+
+## 2026-10-10 — #591 Phase 2 CTO R2: answer/option alignment, channel boundary, registry
+
+### What changed
+- submission-handler.ts: Reject empty/null form fields before INSERT (mandatory validation). Accept compiler-generated option IDs (option_1, option_2) alongside display titles. Reject non-object/array/oversized response_json.
+- submission-handler.ts: Enforce all ResolvedChannel fields (businessId, channelId, phoneNumberId) are non-empty.
+- docs/MIGRATION_REGISTRY.md: Added reservation rows with correct branch names for M436/M437/M438.
+
+### What it affects / could break
+- Native form submissions with empty field schemas now rejected (previously silently accepted any answers).
+- Option validation now accepts both display titles (web) and compiler-generated IDs (native).
+
+## 2026-10-10 — #591 Phase 2 CTO R1: channel authority, phone normalization, answer validation
+
+### What changed
+- submission-handler.ts: Replaced WABA-based business resolution with pre-resolved channel contract (phone_number_id authority from webhook). Shared/unbound channels fail closed.
+- flow-token.ts: Added normalizePhone() to strip leading '+' before signing/verifying, matching Meta webhook msg.from format.
+- submission-handler.ts: Added validateAnswersAgainstSchema() — rejects unknown fields, enforces required, validates options, bounds answer size.
+- submission-handler.ts: Replaced read-modify-write response_count with atomic increment_form_response_count RPC.
+- docs/MIGRATION_REGISTRY.md: Recorded M436/M437/M438 reservations.
+
+### What it affects / could break
+- Submission handler now requires a pre-resolved channel object, not WABA ID. Webhook integration (future) must pass the resolved channel.
+- Phone numbers are canonicalized (strip +) before token signing — existing tokens from Phase 2 (never issued in production) are not affected.
+
+## 2026-10-09 — #591 Phase 2: Native WhatsApp Forms infrastructure
+
+### What changed
+- `supabase/migrations/437_native_whatsapp_forms.sql`: Extends `forms` table with `meta_flow_id` (VARCHAR 64), `meta_flow_status` (VARCHAR 20, CHECK draft/published/deprecated/blocked/throttled), `native_flow_json` (JSONB). Extends `form_responses` table with `submission_source` (VARCHAR 10, CHECK web/native), `flow_token_hash` (VARCHAR 128), `consent_given` (BOOLEAN). Adds partial unique index on `flow_token_hash` WHERE NOT NULL for replay prevention. No new RLS policies (existing row-level policies cover new columns). No SECURITY DEFINER functions. Idempotent with IF NOT EXISTS.
+- `lib/whatsapp-forms/flow-token.ts`: HMAC-SHA256 signed one-time flow tokens binding a form send to a specific recipient, form, and business. 30-minute TTL. Generates, verifies (with constant-time signature comparison), and hashes nonces for DB replay prevention.
+- `lib/whatsapp-forms/meta-flow-asset.ts`: Typed service abstraction for Meta WhatsApp Flows lifecycle API (create, upload, publish, get status, deprecate). All functions validate inputs then throw "provider calls not authorized" — no live API calls in this phase.
+- `lib/whatsapp-forms/submission-handler.ts`: Secure handler for nfm_reply webhook messages. Resolves business_id from channel (NEVER from Flow payload), customer_phone from webhook envelope (NEVER from Flow payload). Verifies signed flow_token, rejects expired/forged/replayed tokens before any INSERT. Persists to form_responses with submission_source='native' and nonce-derived replay hash. Records marketing consent only when form has published consent prompt. Normalizes compiler option IDs to display titles. No booking creation, no payment, no scheduling RPC.
+- `app/api/forms/native-flow/send/route.ts`: Owner-scoped POST endpoint to construct a WhatsApp native Flow send payload. Verifies auth, business ownership, form published status, schema drift detection. Generates signed flow_token. Returns constructed payload with `queued: false, reason: 'provider_send_not_authorized'` — does NOT send. Real sending requires separate provider authorization.
+- `lib/__tests__/native-forms-phase2-591.test.ts`: 78 executable tests covering flow token lifecycle, submission handler security, consent proof, option normalization, send API, Meta asset service, and migration contract.
+
+### What it affects / could break
+- New columns on forms and form_responses tables — existing web form code unaffected (new columns have defaults or are nullable). Existing RLS policies cover new columns without modification.
+- No Meta API calls, no WhatsApp message sends, no webhook interception wired. All provider operations gated.
+- Does not modify existing native-flow.ts compiler or preview route from Phase 1.
+- Does not touch financial code, payment flows, or scheduling.
 
 ## 2026-10-15 — feat(admin): assisted shared-number and owner WABA connection (#652)
 
@@ -14,6 +213,31 @@ If something breaks, check this log to find what changed and when.
 ### What it affects / could break
 - Manual admin-created "active" channel records are no longer available; new channels require legitimate provider verification. Shared allocation requires an eligible existing active channel.
 - No migration or live Meta action. Dedicated WABA authorization and staging messaging/financial gate acceptance remain owner-controlled and release-gated.
+
+## 2026-10-10 — #597 F3: OTP-bound recurring cancellation authority
+
+### What changed
+- `app/api/recurring/cancel/route.ts`: Rewritten to require HMAC-signed cancellation proof issued by `/api/recurring/verify` after successful OTP verification. Previously accepted only phone + subscription UUID (both public identifiers) with no authentication.
+  - Rejects missing/expired/forged/cross-subscription proofs (HTTP 403)
+  - Checks provider cancellation result before DB update (was: silently swallowed)
+  - Returns 503 if provider refuses cancellation (was: returned success regardless)
+  - CAS-guarded DB update with error checking (was: fire-and-forget)
+  - Handles ambiguous provider-cancel-success/DB-failure case explicitly
+  - Paystack/Stripe subscriptions missing provider code/credentials return 422 (not silent DB-only cancel)
+  - Only Flutterwave (cron-managed) may do DB-only cancellation
+  - Re-read after zero-row CAS checks actual state; fail-closed on DB errors
+  - Validates JSON body is object, UUID format, input types before processing
+- `app/recurring/manage/page.tsx`: Updated to send `cancellationProof` from the verified subscription data. Added error display in list view with re-verify link for expired proofs.
+- `lib/payments/paystack-recurring.ts`: Added `getSubscriptionStatus` for provider-state verification on cancel retry.
+- `lib/payments/stripe-recurring.ts`: Added `getSubscriptionStatus` and GET method support for provider verification.
+- `lib/__tests__/recurring-cancel-auth-597.test.ts`: 40 tests — 7 proof helper tests + 33 executable handler tests covering: authorization (403), input validation, gateway classification (unknown/missing-code/missing-token→422), provider failures (refuses/throws→503), DB failures (lookup/update→503), CAS (zero-row re-read), provider-success/DB-failure→503, Paystack/Stripe/Flutterwave convergence via provider status verification, two-request stateful recovery, and Paystack `completed` terminal status.
+- **KNOWN LIMITATION:** If provider cancellation succeeds but local DB update fails and the customer does not retry, the subscription may remain locally `active`/`past_due` while the provider subscription is disabled. The billing cron charges via `chargeAuthorization` (Transaction API), which is independent of subscription status — charges may still succeed. A durable `cancellation_requested_at` intent column and billing-claim gate is proposed but requires a forward-only migration coordinated with #597.
+
+### What it affects / could break
+- Public recurring cancellation now requires OTP verification first. Customers must go through the verify flow before cancelling.
+- Existing authenticated business-owner cancellation via `/api/recurring/manage` is NOT affected (separate route with Supabase auth).
+- WhatsApp bot cancellation via `recurring-manage.flow.ts` is NOT affected (separate code path).
+- No migration. No provider calls during implementation.
 
 ## 2026-10-18 — fix(ticketing): race-loss error handling — DB errors and cancellation race
 

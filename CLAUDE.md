@@ -18,6 +18,14 @@ Read and follow both documents before any substantive work. The Operating Order 
 4. **No unauthorized merge/deploy/production mutation.** Deployment and production/database mutation are separate authorization phases. Testing authorization is not merge/deploy authorization.
 5. **GitHub-first.** Substantive audits, evidence, and handoffs go to GitHub issues/PRs, not chat. Chat is for short status and owner decisions only.
 
+## Lean implementation discipline — three mandatory habits
+
+These habits **supplement**, not replace, the Evidence Verification Agent gate, security invariants, existing tests, or Owner approval gates. They add no new reviewer or serial approval round.
+
+1. **Prove the need before coding.** Write a one-paragraph implementation contract in the existing issue/PR: requested outcome, current behavior, affected path, what must remain unchanged, and specific executable acceptance criteria. For an alleged defect, first establish a reproducible failure or decisive current-code/schema trace at the exact SHA, following the Operating Order's evidence-status rules. An unverified hypothesis is an investigation, not a mandate to edit. For a new feature, use approved requirements as the contract; a pre-existing failing test is not required.
+2. **Keep the diff surgical.** Make the smallest change that fulfills the approved contract and necessary security/correctness invariants. Explain why every changed file is needed; preserve working behavior and existing APIs. Do not silently refactor adjacent code, introduce speculative abstractions, or implement optional enhancements. Record unrelated findings separately; flag opportunities for reuse without performing unrelated DRY refactors.
+3. **Stop when done.** Check the agreed acceptance tests, affected regression tests, and required exact-SHA CI/review evidence. Report satisfied criteria and any actual residual risks, then stop for the existing CTO/Owner gates. Do not broaden scope, repeat audits with no new evidence, or invent follow-on work after the agreed definition of done. Escalate newly verified critical findings through the normal governance process rather than ignoring them.
+
 ## Owner-approved payment custody and settlement model — MUST NOT CHANGE
 
 Read [`docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`](./docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md) before any payment, payout, fee, provider integration, admin finance, refund, migration, bot checkout or settlement change. This is a **standing Owner product decision**, not an implementation suggestion:

@@ -58,6 +58,8 @@ vi.mock('@/lib/bot/flows/shared/payment', () => ({
 
 vi.mock('@/lib/bot/conversation-guard', () => ({
   checkConversationLimit: vi.fn().mockResolvedValue({ allowed: true, used: 0, limit: 1000 }),
+  trackOutboundMessage: vi.fn().mockResolvedValue(undefined),
+  checkSpendThresholds: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@/lib/email/client', () => ({

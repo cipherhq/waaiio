@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
     if (action === 'save_refs') {
       stepUpParams.plan_refs = body.plan_refs ?? null;
       stepUpParams.expected_version_id = body.expected_version_id ?? null;
+      stepUpParams.tier_prices = body.tier_prices ?? null; // M458: included in step-up hash for atomic price+plan cutover
     } else if (action === 'switch_provider') {
       stepUpParams.new_gateway = body.new_gateway ?? null;
       stepUpParams.expected_version_id = body.expected_version_id ?? null;
@@ -90,8 +91,9 @@ export async function POST(request: NextRequest) {
   }
 
   // ═══ save_refs: save provider plan refs with MANDATORY server-side preflight ═══
+  // M458: optional tier_prices enables atomic price + plan-code cutover for Paystack countries.
   if (action === 'save_refs') {
-    const { country_code, plan_refs, expected_version_id } = body;
+    const { country_code, plan_refs, expected_version_id, tier_prices } = body;
 
     if (!country_code || !plan_refs || !expected_version_id) {
       return respond({ error: 'Missing required fields: country_code, plan_refs, expected_version_id' }, { status: 400 });
@@ -100,21 +102,63 @@ export async function POST(request: NextRequest) {
       return respond({ error: 'plan_refs must be an object' }, { status: 400 });
     }
 
-    // Read authoritative country pricing/currency from DB
+    // Validate tier_prices if provided (M458 atomic cutover)
+    if (tier_prices !== undefined && tier_prices !== null) {
+      if (typeof tier_prices !== 'object' || Array.isArray(tier_prices)) {
+        return respond({ error: 'tier_prices must be an object' }, { status: 400 });
+      }
+      for (const [tier, val] of Object.entries(tier_prices as Record<string, unknown>)) {
+        if (tier !== 'growth' && tier !== 'business') {
+          return respond({ error: `tier_prices: only growth and business allowed, got "${tier}"` }, { status: 400 });
+        }
+        const obj = val as Record<string, unknown> | null;
+        if (!obj || typeof obj !== 'object' || typeof obj.price !== 'number' || obj.price <= 0) {
+          return respond({ error: `tier_prices.${tier}.price must be a positive number` }, { status: 400 });
+        }
+        // M458 atomicity: every tier with a price change MUST have a plan ref
+        // for the country's ACTIVE gateway — prevents updating price without
+        // verifying the matching provider plan, or with a wrong-gateway ref.
+        const tierRefs = (plan_refs as Record<string, Record<string, string>>)[tier];
+        if (!tierRefs || Object.keys(tierRefs).length === 0) {
+          return respond({ error: `tier_prices.${tier} requires a matching plan_refs entry for atomic cutover` }, { status: 400 });
+        }
+        // Verify the ref is for the country's active gateway (read from DB below)
+        // — deferred to after country DB read
+      }
+    }
+
+    // Read authoritative country pricing/currency/gateway from DB
     const { data: country, error: countryErr } = await service
-      .from('countries').select('currency_code, pricing').eq('code', country_code).single();
+      .from('countries').select('currency_code, pricing, payment_gateway').eq('code', country_code).single();
     if (countryErr || !country) {
       return respond({ error: `Country "${country_code}" not found` }, { status: 404 });
     }
     const dbCurrency = country.currency_code as string;
     const dbPricing = country.pricing as Record<string, Record<string, unknown>> | null;
+    const dbGateway = country.payment_gateway as string;
 
-    // Preflight every ref against the provider BEFORE calling save RPC
+    // M458 atomicity: verify tier_prices refs are for the country's active gateway
+    if (tier_prices) {
+      for (const tier of Object.keys(tier_prices as Record<string, unknown>)) {
+        const tierRefs = (plan_refs as Record<string, Record<string, string>>)[tier];
+        if (!tierRefs?.[dbGateway]) {
+          return respond({
+            error: `tier_prices.${tier} requires a ${dbGateway} plan reference for ${country_code} (active gateway)`,
+          }, { status: 400 });
+        }
+      }
+    }
+
+    // Preflight every ref against the provider BEFORE calling save RPC.
+    // M458: When tier_prices is provided, preflight uses the NEW price (from the request)
+    // instead of the current DB price, because the RPC updates prices before plan refs.
     for (const tier of ['growth', 'business'] as const) {
       const tierRefs = (plan_refs as Record<string, Record<string, string>>)[tier];
       if (!tierRefs) continue;
 
-      const tierPrice = (dbPricing?.[tier]?.price as number) || 0;
+      // Resolve the effective price for preflight: new price if provided, else current DB price
+      const newTierPrice = (tier_prices as Record<string, Record<string, number>> | undefined)?.[tier]?.price;
+      const tierPrice = newTierPrice ?? ((dbPricing?.[tier]?.price as number) || 0);
       if (tierPrice <= 0) {
         return respond({ error: `No price configured for tier "${tier}" in ${country_code}` }, { status: 400 });
       }
@@ -143,12 +187,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // All preflights passed — call M378 RPC with exact parameter names
+    // All preflights passed — call RPC with exact parameter names (M458: includes p_tier_prices)
     const { data, error } = await service.rpc('save_provider_plan_refs', {
       p_country_code: country_code,
       p_plan_refs: plan_refs,
       p_expected_version_id: expected_version_id,
       p_actor_id: admin.userId,
+      ...(tier_prices ? { p_tier_prices: tier_prices } : {}),
     });
 
     if (error) {

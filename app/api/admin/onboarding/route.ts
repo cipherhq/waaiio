@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(100),
     service.from('countries').select('code, name, dialing_code').eq('is_active', true).order('sort_order'),
-    service.from('category_templates').select('key, name').eq('is_active', true).order('name'),
+    service.from('category_templates').select('key, name:label').eq('is_active', true).order('label'),
   ]);
   if (actionableError || terminalResult.error || countriesResult.error || categoriesResult.error) {
     return NextResponse.json({ error: 'Unable to load onboarding queue and authority options' }, { status: 500 });

@@ -90,10 +90,10 @@ export async function POST(
 
   const supabase = createServiceClient();
 
-  // Verify invite exists and fetch it
+  // Verify invite exists and fetch it with party context for capacity check
   const { data: invite, error: fetchError } = await supabase
     .from('event_invites')
-    .select('id, status')
+    .select('id, status, plus_ones, party_id, business_id')
     .eq('invite_token', token)
     .single();
 
@@ -101,9 +101,44 @@ export async function POST(
     return NextResponse.json({ error: 'Invite not found' }, { status: 404 });
   }
 
+  const requestedPlusOnes = body.status === 'accepted' ? (body.plus_ones ?? 0) : 0;
+
+  // ── Attendee capacity enforcement on plus_ones (#661) ──
+  // Check if increasing plus_ones would exceed party max_guests
+  if (invite.party_id && requestedPlusOnes > (invite.plus_ones || 0)) {
+    const { data: party } = await supabase
+      .from('parties')
+      .select('max_guests')
+      .eq('id', invite.party_id)
+      .single();
+
+    if (party?.max_guests && party.max_guests > 0) {
+      const { data: attendeeData } = await supabase
+        .from('event_invites')
+        .select('plus_ones')
+        .eq('party_id', invite.party_id)
+        .eq('business_id', invite.business_id)
+        .in('status', ['accepted', 'pending', 'maybe'])
+        .neq('id', invite.id); // exclude this invite — we'll add the new count
+
+      const othersAttendees = (attendeeData || []).reduce(
+        (sum, inv) => sum + 1 + (inv.plus_ones || 0), 0
+      );
+      // This guest's new total: 1 (self) + requestedPlusOnes
+      const thisGuestTotal = 1 + requestedPlusOnes;
+
+      if (othersAttendees + thisGuestTotal > party.max_guests) {
+        const remaining = Math.max(0, party.max_guests - othersAttendees - 1);
+        return NextResponse.json({
+          error: `Party is near capacity. You can bring at most ${remaining} plus-one${remaining !== 1 ? 's' : ''}.`,
+        }, { status: 409 });
+      }
+    }
+  }
+
   const updateData: Record<string, unknown> = {
     status: body.status,
-    plus_ones: body.status === 'accepted' ? (body.plus_ones ?? 0) : 0,
+    plus_ones: requestedPlusOnes,
     responded_at: new Date().toISOString(),
   };
 

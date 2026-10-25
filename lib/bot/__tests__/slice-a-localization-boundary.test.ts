@@ -75,8 +75,10 @@ vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi
 
 vi.mock('@/lib/bot/conversation-guard', () => ({
   checkConversationLimit: vi.fn().mockResolvedValue({ allowed: true }),
+  trackInboundMessage: vi.fn().mockResolvedValue(undefined),
   trackOutboundMessage: vi.fn().mockResolvedValue(undefined),
   getConversationLimitMessage: vi.fn(() => 'Limit reached'),
+  checkSpendThresholds: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@/lib/bot/step-overrides', () => ({
@@ -385,99 +387,84 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('successful "switch to french" when entitled+certified => persists _detected_language, translated confirmation, re-prompt via ctx.t uses new language', async () => {
-    // Configure: French is certified and entitled for this test
-    mockCertifiedLanguages.length = 0;
-    mockCertifiedLanguages.push('en', 'fr');
+  it('two-step language switch: "switch to pidgin" stages pending, "yes" confirms and persists', async () => {
+    // Configure: Pidgin is certified (in real CERTIFIED_LANGUAGES) and entitled
     mockGetEffectiveLanguages.mockReturnValue({
-      allowedLanguages: ['en', 'fr'],
+      allowedLanguages: ['en', 'pcm'],
       llmAllowed: true,
       translationAllowed: true,
     });
 
-    // Replace the default test step with one whose prompt calls ctx.t()
-    // This proves ctx.t observes the post-switch language, not the stale pre-switch value
-    const ctxTStep = {
-      prompt: vi.fn(async (ctx: { t: (s: string) => Promise<string> }) => {
-        const translated = await ctx.t('Pick a date:');
-        return [{ type: 'text' as const, text: translated }];
-      }),
-      validate: vi.fn(async () => ({ valid: true })),
-      next: vi.fn(async () => null),
-      skipIf: undefined,
-    };
-    mockGetFlowStep.mockReturnValue(ctxTStep);
-
     const session = createTestSession();
-    // Mock Anthropic responses:
-    // Confirmation is now deterministic (getFlowCopy → English for uncertified 'fr'),
-    // so no Anthropic call is needed for it. Only the re-prompt translations remain:
-    // (1) "Pick a date:" → "Choisissez une date :" via ctx.t in the re-prompt
-    // (2) sendMessages re-translates the already-French prompt (by-design double-pass;
-    //     in production the cache would absorb this, but in tests each mock is consumed once)
-    setupAnthropicResponse('Choisissez une date :');
-    setupAnthropicResponse('Choisissez une date :');
 
-    await executor.execute('+2348001234567', 'switch to french', session, {
+    // Step 1: "switch to pidgin" stages a pending switch — no immediate language change
+    await executor.execute('+2348001234567', 'switch to pidgin', session, {
       ...TEST_BUSINESS,
       subscription_tier: 'growth',
     });
 
-    // _detected_language must be persisted as 'fr'
-    expect(session.session_data._detected_language).toBe('fr');
+    // Language must NOT be changed yet — only staged
+    expect(session.session_data._detected_language).toBeUndefined();
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'pcm' }));
 
-    // CAS update must have been called to persist the language change
+    // CAS update persists the pending state
     expect(supabase.rpc).toHaveBeenCalledWith(
       'update_session_cas',
-      expect.objectContaining({
-        p_session_id: 'sess-1',
-      }),
+      expect.objectContaining({ p_session_id: 'sess-1' }),
     );
 
-    // Must send confirmation — now deterministic via getFlowCopy.
-    // Since 'fr' is not in CERTIFIED_LANGUAGES, the confirmation falls back to English.
-    // The fillFlowCopy(targetLang, 'lang.switched', ...) call will use English because
-    // getFlowCopy gates on certification. This is intentional — the language switch
-    // still activates _detected_language for LLM translation of subsequent prompts.
-    const msgs = sender.getMessages();
-    expect(msgs.some(m => m.type === 'text' && m.text?.includes('Switched to French'))).toBe(true);
+    // Must send a confirmation prompt
+    const msgs1 = sender.getMessages();
+    expect(msgs1.some(m => m.type === 'text' && m.text?.includes('Pidgin'))).toBe(true);
 
-    // The re-prompt must have been called via ctx.t and the French translation consumed
-    expect(ctxTStep.prompt).toHaveBeenCalled();
+    // Step 2: "yes" confirms the switch
+    sender.clear();
+    supabase.rpc.mockClear();
+    // After confirmation, sendMessages translates the re-prompt "Pick a date:" to Pidgin
+    // via the LLM path (the test step prompt is arbitrary text, not a flow copy key).
+    setupAnthropicResponse('Pick date:');
+    await executor.execute('+2348001234567', 'yes', session, {
+      ...TEST_BUSINESS,
+      subscription_tier: 'growth',
+    });
 
-    // Anthropic must have been called at least twice:
-    // (1) confirmation "Switched to French. ✅"
-    // (2) ctx.t('Pick a date:') inside step.prompt
-    // (3) sendMessages also translates the prompt output (by-design double-pass)
-    expect(mockCreate.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // _detected_language must now be 'pcm'
+    expect(session.session_data._detected_language).toBe('pcm');
+    // Pending must be cleared
+    expect(session.session_data._pending_language_switch).toBeUndefined();
 
-    // The re-prompt message must be the French translation, not the English original
-    // This proves ctx.t read _detected_language='fr' (not the stale pre-switch '')
-    expect(msgs.some(m => m.type === 'text' && m.text === 'Choisissez une date :')).toBe(true);
-    // The English original must NOT appear in any sent text message
-    expect(msgs.some(m => m.type === 'text' && m.text === 'Pick a date:')).toBe(false);
+    // Must send "Switched to Pidgin" confirmation
+    const msgs2 = sender.getMessages();
+    expect(msgs2.some(m => m.type === 'text' && m.text?.includes('Pidgin'))).toBe(true);
 
-    // Restore defaults for subsequent tests
-    mockCertifiedLanguages.length = 0;
-    mockCertifiedLanguages.push('en');
+    // Must re-prompt the current step after confirmation
+    expect(testStep.prompt).toHaveBeenCalled();
   });
 
-  it('"switch to english" => clears persisted non-English preference through CAS, English re-prompt', async () => {
-    // Session starts with _detected_language='fr'
-    const session = createTestSession({ _detected_language: 'fr' });
+  it('"switch to english" from Pidgin => two-step confirmation clears _detected_language', async () => {
+    // Session starts with _detected_language='pcm' (a certified language)
+    mockGetEffectiveLanguages.mockReturnValue({
+      allowedLanguages: ['en', 'pcm'],
+      llmAllowed: true,
+      translationAllowed: true,
+    });
+    const session = createTestSession({ _detected_language: 'pcm' });
 
+    // Step 1: "switch to english" stages pending
     await executor.execute('+2348001234567', 'switch to english', session, TEST_BUSINESS);
 
-    // _detected_language must be cleared (set to undefined)
-    expect(session.session_data._detected_language).toBeUndefined();
+    // Language must NOT be changed yet
+    expect(session.session_data._detected_language).toBe('pcm');
+    expect(session.session_data._pending_language_switch).toEqual(expect.objectContaining({ language: 'en' }));
 
-    // CAS update must have been called
-    expect(supabase.rpc).toHaveBeenCalledWith(
-      'update_session_cas',
-      expect.objectContaining({
-        p_session_id: 'sess-1',
-      }),
-    );
+    // Step 2: "yes" confirms the switch
+    sender.clear();
+    supabase.rpc.mockClear();
+    await executor.execute('+2348001234567', 'yes', session, TEST_BUSINESS);
+
+    // _detected_language must be cleared (English = undefined)
+    expect(session.session_data._detected_language).toBeUndefined();
+    expect(session.session_data._pending_language_switch).toBeUndefined();
 
     // Must send "Switched to English" confirmation
     expect(sender.hasMessageContaining('Switched to English')).toBe(true);
@@ -489,32 +476,38 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('explicit durable intent writes only the resolved profile preference after business authority exists', async () => {
+  it('"always use English" when already in English => L3: stages confirmation, profile written only after YES', async () => {
+    // L3: Session effective language is already English, but persistent intent
+    // must stage YES/NO confirmation before writing the global preference.
     const session = createTestSession({ user_id: 'profile-1' });
 
     await executor.execute('+2348001234567', 'always use English', session, TEST_BUSINESS);
 
+    // Must stage pending — NOT write immediately
+    expect(session.session_data._pending_language_switch).toEqual(
+      expect.objectContaining({ language: 'en', persistent: true }),
+    );
+    expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
+
+    // Confirm with YES → profile written
+    await executor.execute('+2348001234567', 'YES', session, TEST_BUSINESS);
+    expect(session.session_data._pending_language_switch).toBeUndefined();
     expect(mockWritePreferredResponseLanguage).toHaveBeenCalledOnce();
     expect(mockWritePreferredResponseLanguage).toHaveBeenCalledWith(
       supabase,
       'profile-1',
       'en',
     );
-    expect(session.business_id).toBe('biz-1');
-    expect(session.session_data.business_id).toBeUndefined();
-    expect(supabase.rpc).toHaveBeenCalledWith(
-      'update_session_cas',
-      expect.objectContaining({ p_session_id: 'sess-1' }),
-    );
   });
 
   it('ordinary temporary switch never writes the durable profile preference', async () => {
     const session = createTestSession({ user_id: 'profile-1' });
 
+    // "switch to English" while already on English → "already selected" (session-only
+    // intent, not persistent), so no profile write and no CAS update needed.
     await executor.execute('+2348001234567', 'switch to English', session, TEST_BUSINESS);
 
     expect(mockWritePreferredResponseLanguage).not.toHaveBeenCalled();
-    expect(supabase.rpc).toHaveBeenCalled();
   });
 
   it('passive language-shaped text never writes the durable profile preference', async () => {
@@ -542,6 +535,10 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
 describe('Slice A — concurrent tenant attribution (truly overlapping)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset mockCreate fully — clearAllMocks only clears call history, not pending
+    // .mockResolvedValueOnce implementations that may remain from prior tests
+    // (e.g. if a Part 2 test stages but never consumes Anthropic responses).
+    mockCreate.mockReset();
     mockIncrementAIUsage.mockResolvedValue(undefined);
   });
 

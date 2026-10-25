@@ -1000,6 +1000,21 @@ describe('Onboarding verify: paid subscription failure paths', () => {
                     return errProxy;
                   }
                 }
+                // #682: businesses update now chains .select('id, status') — return row data
+                if (table === 'businesses') {
+                  const bizUpdateProxy: Record<string, unknown> = new Proxy({} as Record<string, unknown>, {
+                    get(_, p: string) {
+                      if (p === 'select') return vi.fn(() => ({
+                        then: (resolve: (v: unknown) => void) =>
+                          resolve({ data: [{ id: 'biz-test-1', status: 'active' }], error: null }),
+                      }));
+                      if (p === 'then') return (resolve: (v: unknown) => void) =>
+                        resolve({ data: [{ id: 'biz-test-1', status: 'active' }], error: null });
+                      return vi.fn(() => bizUpdateProxy);
+                    },
+                  });
+                  return bizUpdateProxy;
+                }
                 return proxy;
               });
             }
@@ -1021,6 +1036,10 @@ describe('Onboarding verify: paid subscription failure paths', () => {
         }
         if (fn === 'activate_trial_if_eligible') {
           return Promise.resolve({ data: null, error: null });
+        }
+        // #682: reconcile_paid_allowance may be called after status update
+        if (fn === 'reconcile_paid_allowance') {
+          return Promise.resolve({ data: { reconciled: true }, error: null });
         }
         return Promise.resolve({ data: null, error: null });
       }),
