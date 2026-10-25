@@ -192,10 +192,15 @@ export async function POST(request: NextRequest) {
       p_guest_phone: guestPhone || '',
       p_guest_email: guestEmail.toLowerCase(),
       p_total_amount: totalAmount,
+      p_expected_price: unitPrice, // RPC re-checks under row lock if organizer edits price mid-checkout
       p_channel: 'web',
     });
 
   if (rpcError) {
+    // Do not charge a stale client quote after an organizer changes ticket price.
+    if (rpcError.message?.includes('price_changed')) {
+      return NextResponse.json({ error: 'Ticket price changed. Refresh and confirm the new price.' }, { status: 409 });
+    }
     logger.withContext({ op: 'event-purchase.rpc', ...safeLogErrorContext(rpcError) }).error('[EVENT-PURCHASE] RPC error');
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 });
   }
