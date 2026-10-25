@@ -142,6 +142,8 @@ export interface StepSuccessProps {
   waMethod: WhatsAppMethod;
   waLink: string;
   selectedCapabilities: CapabilityId[];
+  category: BusinessCategoryKey | '';
+  businessName: string;
   error: string;
   setStep: (v: WizardStep) => void;
   setError: (v: string) => void;

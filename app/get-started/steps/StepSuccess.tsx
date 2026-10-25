@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import type { StepSuccessProps } from './types';
+import { PromotionTips } from './PromotionTips';
 
 export function StepSuccess({
   loading,
@@ -10,6 +11,8 @@ export function StepSuccess({
   waMethod,
   waLink,
   selectedCapabilities,
+  category,
+  businessName,
   error,
   setStep,
   setError,
@@ -174,6 +177,8 @@ export function StepSuccess({
               Test on WhatsApp
             </a>
           </div>
+
+          <PromotionTips category={category} capabilities={selectedCapabilities} businessName={businessName} waLink={waLink} />
 
           {/* ── What to set up next ── */}
           <div className="mt-8 text-left">
