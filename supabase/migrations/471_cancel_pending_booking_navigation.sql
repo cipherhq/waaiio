@@ -1,4 +1,4 @@
--- M467: Atomic pending-only booking cancellation for navigation cleanup
+-- M471: Atomic pending-only booking cancellation for navigation cleanup
 --
 -- Navigation commands (Cancel, Menu, Exit, Restart) must only cancel
 -- PENDING bookings — confirmed bookings represent completed customer
@@ -70,6 +70,6 @@ BEGIN
   SELECT COUNT(*) INTO v_count FROM pg_proc
   WHERE proname = 'cancel_pending_booking_for_navigation' AND pronamespace = 'public'::regnamespace;
   IF v_count <> 1 THEN
-    RAISE EXCEPTION 'M467: Expected 1 cancel_pending_booking_for_navigation, found %', v_count;
+    RAISE EXCEPTION 'M471: Expected 1 cancel_pending_booking_for_navigation, found %', v_count;
   END IF;
 END $$;

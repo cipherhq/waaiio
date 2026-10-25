@@ -27,7 +27,7 @@ export async function safeFlowCleanup(
   let ok = true;
 
   if (sessionData.booking_id) {
-    // Atomic pending-only cancellation via M467 RPC.
+    // Atomic pending-only cancellation via M471 RPC.
     // The RPC locks the booking row with FOR UPDATE, checks status = 'pending',
     // verifies ownership, then delegates to cancel_booking_with_release for
     // canonical resource release. Confirmed bookings are atomically preserved.
@@ -59,6 +59,24 @@ export async function safeFlowCleanup(
     } else if (result && !result.cancelled) {
       // Has successful payment or already processed — the RPC correctly refused.
       logger.info('[NAV-CLEANUP] order not cancellable, preserving', { orderId: sessionData.order_id, reason: result.reason });
+    }
+  }
+
+  // Cancel pending property reservations — simple conditional status update.
+  // No slot/inventory counters to release (property_blocked_dates are merchant-managed).
+  // Follows the same pattern as the reservation flow itself (reservation.flow.ts:1377).
+  if (sessionData.reservation_id) {
+    const { error: resErr, count: resCount } = await supabase
+      .from('reservations')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'guest' } as Record<string, unknown>, { count: 'exact' })
+      .eq('id', sessionData.reservation_id as string)
+      .in('status', ['pending']); // Only cancel pending — confirmed/paid preserved
+    if (resErr) {
+      logger.error('[NAV-CLEANUP] reservation cancel failed', { reservationId: sessionData.reservation_id, error: resErr.message });
+      ok = false;
+    } else if (resCount === 0) {
+      // Not pending (confirmed/paid/completed) — preserved, not a failure
+      logger.info('[NAV-CLEANUP] reservation not pending, preserving', { reservationId: sessionData.reservation_id });
     }
   }
 
