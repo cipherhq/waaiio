@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
 import { normalizeError, safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
+import { mayFallbackFromSaveCardOptions, stripeCheckoutErrorEvidence } from './stripe-checkout-failure';
 
 function getStripeKey(): string {
   return process.env.STRIPE_SECRET_KEY || '';
@@ -25,7 +26,18 @@ async function stripeRequest(path: string, body: Record<string, string>, idempot
     body: new URLSearchParams(body).toString(),
     signal: AbortSignal.timeout(15000),
   });
-  return response.json() as Promise<Record<string, unknown>>;
+  const payload = await response.json() as Record<string, unknown>;
+  // Stripe error text can include sensitive data. Persist only safe bounded
+  // request metadata that will be allowlisted before it is logged.
+  if (response.ok === false && payload && typeof payload.error === 'object') {
+    const headerId = response.headers?.get?.('request-id');
+    return {
+      ...payload,
+      __waaiio_http_status: response.status,
+      ...(headerId && { __waaiio_request_id: headerId }),
+    };
+  }
+  return payload;
 }
 
 async function stripeGet(path: string): Promise<Record<string, unknown>> {
@@ -145,11 +157,31 @@ export class StripeGateway implements PaymentGateway {
         sessionParams['payment_intent_data[transfer_data][destination]'] = opts.stripeAccountId;
       }
 
-      const sessionData = await observeProvider({
+      let sessionData = await observeProvider({
         gateway: 'stripe',
         amount: opts.amount, currency: opts.currency,
         businessId: opts.businessId,
       }, () => stripeRequest('/checkout/sessions', sessionParams, idempotencyKey));
+
+      // Preserve checkout availability if Stripe explicitly rejects ONLY the
+      // optional Save Card UI settings. Do not retry any other rejection:
+      // checkout amounts, account authority, splits and payment safety must
+      // always fail closed. The first response is a validation failure.
+      const hasSavedCardOptions = Boolean(sessionParams['saved_payment_method_options[payment_method_save]']);
+      if (mayFallbackFromSaveCardOptions(sessionData, hasSavedCardOptions)) {
+        logger.warn('[STRIPE-CHECKOUT] Optional saved-card parameter rejected; retrying regular Checkout', {
+          ...stripeCheckoutErrorEvidence(sessionData), businessId: opts.businessId,
+        });
+        const basicCheckoutParams = { ...sessionParams };
+        delete basicCheckoutParams['saved_payment_method_options[payment_method_save]'];
+        delete basicCheckoutParams['saved_payment_method_options[allow_redisplay_filters][0]'];
+        // A distinct key avoids a Stripe idempotency-parameters-mismatch.
+        // A strict 4xx validation failure has not created a Checkout Session.
+        sessionData = await observeProvider({
+          gateway: 'stripe', amount: opts.amount, currency: opts.currency,
+          businessId: opts.businessId,
+        }, () => stripeRequest('/checkout/sessions', basicCheckoutParams, idempotencyKey + '_without_save_options'));
+      }
 
       if (!sessionData.id || !sessionData.url) {
         // Store detailed error for debug endpoint
@@ -159,6 +191,13 @@ export class StripeGateway implements PaymentGateway {
           amount: sessionParams['line_items[0][price_data][unit_amount]'],
         };
         logger.error('Stripe session creation failed:', safeProviderError(sessionData));
+        logger.error('[STRIPE-CHECKOUT] Rejection evidence (redacted)', {
+          ...stripeCheckoutErrorEvidence(sessionData),
+          businessId: opts.businessId,
+          currency: opts.currency,
+          hadSavedCardOptions: hasSavedCardOptions,
+          hadCustomer: Boolean(sessionParams.customer),
+        });
         return null;
       }
 
