@@ -7,6 +7,63 @@ import {
 import { handleCorrectionReentry } from './correction-reentry';
 import { getFlowCopy, fillFlowCopy } from '../flows/flow-localization';
 import { logger } from '@/lib/logger';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+/**
+ * Safely clean up pending reservations when abandoning a conversational flow.
+ * Uses authoritative cancellation RPCs that handle slot release, stock restoration,
+ * promo reservation release, payment-state fencing, and ownership verification.
+ *
+ * NEVER bypasses these authorities with direct status writes.
+ *
+ * Returns false if any RPC call fails (caller should not tell customer cancellation succeeded).
+ */
+export async function safeFlowCleanup(
+  supabase: SupabaseClient,
+  sessionData: Record<string, unknown>,
+  userId: string | null,
+): Promise<boolean> {
+  let ok = true;
+
+  if (sessionData.booking_id) {
+    const { data: result, error } = await supabase.rpc('cancel_booking_with_release', {
+      p_booking_id: sessionData.booking_id as string,
+      p_cancelled_by: 'customer',
+      p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
+    });
+    if (error) {
+      logger.error('[NAV-CLEANUP] cancel_booking_with_release RPC failed', { bookingId: sessionData.booking_id, error: error.message });
+      ok = false;
+    } else if (result && !result.cancelled) {
+      // Already confirmed/paid/completed — the RPC correctly refused. Safe to proceed.
+      logger.info('[NAV-CLEANUP] booking not cancellable, preserving', { bookingId: sessionData.booking_id, reason: result.reason });
+    }
+  }
+
+  if (sessionData.order_id) {
+    const { data: result, error } = await supabase.rpc('cancel_order_immediate', {
+      p_order_id: sessionData.order_id as string,
+      p_reason: 'customer_cancel',
+    });
+    if (error) {
+      logger.error('[NAV-CLEANUP] cancel_order_immediate RPC failed', { orderId: sessionData.order_id, error: error.message });
+      ok = false;
+    } else if (result && !result.cancelled) {
+      // Has successful payment or already processed — the RPC correctly refused.
+      logger.info('[NAV-CLEANUP] order not cancellable, preserving', { orderId: sessionData.order_id, reason: result.reason });
+    }
+  }
+
+  // Cancel pending bank transfers (simple status write — no inventory/slot/payment authority needed)
+  if (sessionData.bank_transfer_reference) {
+    await supabase.from('pending_transfers')
+      .update({ status: 'cancelled' })
+      .eq('reference_code', sessionData.bank_transfer_reference as string)
+      .eq('status', 'pending');
+  }
+
+  return ok;
+}
 
 type TestableCommandPattern = { test(value: string): boolean };
 
@@ -119,59 +176,12 @@ export async function handleEscapeHatch(
     intelligence.resetAbuse(from);
 
     // ── "cancel" → safely abandon flow and return to business menu ──
-    // Uses authoritative cancellation RPCs that handle slot release, stock
-    // restoration, promo reservation release, payment-state fencing, and
-    // pending-transfer cancellation. Never bypasses these authorities.
     if (isCancel && session.business_id) {
       const bizId = session.business_id;
-      const d = session.session_data || {};
+      const cleanupOk = await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
 
-      // Cancel pending booking via authoritative RPC (releases slot capacity,
-      // package redemptions, checks ownership). The RPC handles all status guards:
-      // - pending/confirmed → cancelled + slot released
-      // - already cancelled/completed → returns {cancelled: false, reason: ...}
-      // - paid deposit → RPC still cancels (deposit refund is a separate policy)
-      let cleanupFailed = false;
-      if (d.booking_id) {
-        const { data: bookingResult, error: bookingErr } = await supabase.rpc('cancel_booking_with_release', {
-          p_booking_id: d.booking_id as string,
-          p_cancelled_by: 'customer',
-          p_expected_user_id: session.user_id || '00000000-0000-0000-0000-000000000000',
-        });
-        if (bookingErr) {
-          logger.error('[ESCAPE] cancel: booking RPC failed', { bookingId: d.booking_id, error: bookingErr.message });
-          cleanupFailed = true;
-        } else if (bookingResult && !bookingResult.cancelled) {
-          // Not cancellable (completed, etc.) — the booking stays in its current state.
-          // This is safe: the customer exits the flow, the reservation is preserved.
-          logger.info('[ESCAPE] cancel: booking not cancellable, preserving', {
-            bookingId: d.booking_id, reason: bookingResult.reason,
-          });
-        }
-      }
-
-      // Cancel pending order via authoritative RPC (restores stock, releases
-      // promo reservations, voids pending payments, cancels pending transfers).
-      // Refuses if a successful payment exists — the order stays confirmed.
-      if (d.order_id) {
-        const { data: orderResult, error: orderErr } = await supabase.rpc('cancel_order_immediate', {
-          p_order_id: d.order_id as string,
-          p_reason: 'customer_cancel',
-        });
-        if (orderErr) {
-          logger.error('[ESCAPE] cancel: order RPC failed', { orderId: d.order_id, error: orderErr.message });
-          cleanupFailed = true;
-        } else if (orderResult && !orderResult.cancelled) {
-          // Order has a successful payment or is already processed — preserved.
-          logger.info('[ESCAPE] cancel: order not cancellable, preserving', {
-            orderId: d.order_id, reason: orderResult.reason,
-          });
-        }
-      }
-
-      if (cleanupFailed) {
-        // RPC failed — don't tell the customer it succeeded. Send a recovery message
-        // and keep the session active so they can retry or use "exit" to force-leave.
+      if (!cleanupOk) {
+        // RPC failed — don't tell the customer it succeeded. Keep session active.
         const lang = session.session_data?._detected_language as string || 'en';
         await messageSender.sendText({
           to: from,
@@ -180,7 +190,6 @@ export async function handleEscapeHatch(
         return { handled: true };
       }
 
-      // Cleanup succeeded — deactivate session and return to menu
       await deactivateSession(session.id);
       await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
       return { handled: true };
@@ -189,21 +198,8 @@ export async function handleEscapeHatch(
     // ── "menu" / "restart" / "start over" → restart current business menu ──
     if (isMenuWord && session.business_id) {
       const bizId = session.business_id;
+      await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
       await deactivateSession(session.id);
-      // Cancel any pending booking/order
-      const d = session.session_data || {};
-      if (d.booking_id) {
-        await supabase.from('bookings')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('id', d.booking_id as string)
-          .in('status', ['pending']);
-      }
-      if (d.order_id) {
-        await supabase.from('orders')
-          .update({ status: 'cancelled' })
-          .eq('id', d.order_id as string)
-          .eq('status', 'pending');
-      }
       await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
       return { handled: true };
     }
@@ -291,22 +287,8 @@ export async function handleEscapeHatch(
 
     // ── "exit" / "quit" / "stop" → leave business ──
     if (isExitWord) {
+      await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
       await deactivateSession(session.id);
-
-      // Cancel any pending booking/order created during this session
-      const d = session.session_data || {};
-      if (d.booking_id) {
-        await supabase.from('bookings')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('id', d.booking_id as string)
-          .in('status', ['pending']);
-      }
-      if (d.order_id) {
-        await supabase.from('orders')
-          .update({ status: 'cancelled' })
-          .eq('id', d.order_id as string)
-          .eq('status', 'pending');
-      }
 
       // Find the business — from session or from history
       let escBizId = session.business_id;
