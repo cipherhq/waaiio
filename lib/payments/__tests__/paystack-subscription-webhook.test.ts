@@ -177,7 +177,7 @@ describe('subscription.create matching', () => {
 
 describe('subscription.not_renew — paid-through', () => {
   it('records cancelled_at without status change or business suspension', async () => {
-    mockSubResult = { id: 'snr', business_id: 'bnr', current_period_end: '2026-11-01T00:00:00Z' };
+    mockSubResult = { id: 'snr', business_id: 'bnr', current_period_end: '2026-11-01T00:00:00Z', status: 'active' };
     await POST(makeReq('subscription.not_renew', { subscription_code: 'SUB_nr', customer: { customer_code: 'CUS_nr' } }) as never);
     const subUpdate = updateCalls.find(c => c.table === 'subscriptions' && c.data.cancelled_at);
     expect(subUpdate).toBeDefined();
@@ -230,7 +230,7 @@ describe('invoice.payment_failed — R5-1 corrected', () => {
 describe('R5-2: subsequent lifecycle events after payment failure', () => {
   it('cancellation matches past_due subscriptions (failure → cancel sequence)', async () => {
     // Simulate a subscription that was manually set to past_due (legacy)
-    mockSubResult = { id: 'spd', business_id: 'bpd', current_period_end: '2026-11-01T00:00:00Z' };
+    mockSubResult = { id: 'spd', business_id: 'bpd', current_period_end: '2026-11-01T00:00:00Z', status: 'past_due' };
     await POST(makeReq('subscription.not_renew', { subscription_code: 'SUB_pd_cancel', customer: { customer_code: 'CUS_pd' } }) as never);
     const subUpdate = updateCalls.find(c => c.table === 'subscriptions' && c.data.cancelled_at);
     expect(subUpdate).toBeDefined();
@@ -238,7 +238,7 @@ describe('R5-2: subsequent lifecycle events after payment failure', () => {
   });
 
   it('invoice failure matches past_due subscriptions (repeated failure)', async () => {
-    mockSubResult = { id: 'spd2', business_id: 'bpd2' };
+    mockSubResult = { id: 'spd2', business_id: 'bpd2', status: 'past_due' };
     const res = await POST(makeReq('invoice.payment_failed', { subscription_code: 'SUB_pd_fail', invoice_code: 'INV_cycle2' }) as never);
     expect(res.status).toBe(200); // Matched and completed
     expect(rpcCalls.find(c => c.fn === 'complete_webhook_event')).toBeDefined();
@@ -422,7 +422,7 @@ describe('R6: durable completion and retry policy', () => {
   });
 
   it('R8: subscription.not_renew WITH data.reference preserves paid-through', async () => {
-    mockSubResult = { id: 'snr_ref', business_id: 'bnr_ref', current_period_end: '2026-11-15T00:00:00Z' };
+    mockSubResult = { id: 'snr_ref', business_id: 'bnr_ref', current_period_end: '2026-11-15T00:00:00Z', status: 'active' };
     await POST(makeReq('subscription.not_renew', {
       subscription_code: 'SUB_nr_ref',
       reference: 'T_nr_ref',
