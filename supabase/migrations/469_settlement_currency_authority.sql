@@ -329,6 +329,9 @@ DECLARE
   v_fee RECORD; v_fee_reduction NUMERIC;
   v_paid_payout RECORD;
   v_payment_currency VARCHAR(3);
+  v_legacy_fee_id UUID;
+  v_legacy_fee_count INTEGER;
+  v_entity_payment_count INTEGER;
 BEGIN
   SELECT r.* INTO v_refund FROM public.refunds r WHERE r.id = p_refund_id FOR UPDATE;
   IF NOT FOUND THEN RETURN jsonb_build_object('finalized', false, 'reason', 'refund_not_found'); END IF;
@@ -366,26 +369,38 @@ BEGIN
     UPDATE public.reservations SET deposit_status = 'refunded' WHERE id = v_payment.reservation_id;
   END IF;
 
-  -- Scope fee reversal to the ORIGINAL payment, never every payment linked to
-  -- the same booking, invoice or order (possibly a different currency).
-  IF EXISTS (
-    SELECT 1 FROM public.platform_fees f
-    WHERE f.business_id=v_refund.business_id AND f.payment_id IS NULL
-      AND ((v_payment.booking_id IS NOT NULL AND f.booking_id=v_payment.booking_id)
-        OR (v_payment.invoice_id IS NOT NULL AND f.invoice_id=v_payment.invoice_id)
-        OR (v_payment.order_id IS NOT NULL AND f.order_id=v_payment.order_id))
-  ) THEN
-    RAISE EXCEPTION 'refund_fee_payment_provenance_required' USING ERRCODE='P0001';
+  -- Scope fee reversal to the original payment. Legacy fees with a NULL
+  -- payment_id may be used only when there is exactly one fee and one payment
+  -- for the same business and whitelisted entity. Do not backfill payment_id.
+  IF v_payment.booking_id IS NOT NULL THEN
+    v_fee_entity_col := 'booking_id'; v_fee_entity_val := v_payment.booking_id;
+  ELSIF v_payment.invoice_id IS NOT NULL THEN
+    v_fee_entity_col := 'invoice_id'; v_fee_entity_val := v_payment.invoice_id;
+  ELSIF v_payment.order_id IS NOT NULL THEN
+    v_fee_entity_col := 'order_id'; v_fee_entity_val := v_payment.order_id;
+  END IF;
+
+  IF v_fee_entity_col IS NOT NULL THEN
+    EXECUTE format('SELECT COUNT(*) FROM public.payments WHERE business_id=$1 AND %I=$2',v_fee_entity_col)
+      INTO v_entity_payment_count USING v_refund.business_id,v_fee_entity_val;
+    EXECUTE format('SELECT COUNT(*),MIN(id) FROM public.platform_fees WHERE business_id=$1 AND %I=$2 AND payment_id IS NULL',v_fee_entity_col)
+      INTO v_legacy_fee_count,v_legacy_fee_id USING v_refund.business_id,v_fee_entity_val;
+    IF v_legacy_fee_count > 0 AND
+       (v_legacy_fee_count <> 1 OR v_entity_payment_count <> 1) THEN
+      RAISE EXCEPTION 'refund_fee_payment_provenance_required' USING ERRCODE='P0001';
+    END IF;
   END IF;
 
   IF v_is_fully_refunded THEN
     UPDATE public.platform_fees SET fee_total=0,refunded_at=now()
-    WHERE payment_id=v_payment.id AND business_id=v_refund.business_id
+    WHERE business_id=v_refund.business_id
+      AND (payment_id=v_payment.id OR id=v_legacy_fee_id)
       AND refunded_at IS NULL;
   ELSE
     FOR v_fee IN SELECT id,fee_total,fee_percentage,fee_flat,transaction_amount
       FROM public.platform_fees
-      WHERE payment_id=v_payment.id AND business_id=v_refund.business_id
+      WHERE business_id=v_refund.business_id
+        AND (payment_id=v_payment.id OR id=v_legacy_fee_id)
         AND refunded_at IS NULL
     LOOP
       IF v_fee.transaction_amount > 0 THEN
