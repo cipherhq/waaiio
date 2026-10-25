@@ -4172,6 +4172,38 @@ jobs:
           fi
           echo "M468 index tests passed — zero skips."
 
+
+      # M469: real executable settlement/refund SQL, isolated database, no skips.
+      - name: M469 settlement/refund currency (disposable PG)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m469_test
+          createdb --maintenance-db=waaiio_test waaiio_m469_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m469_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m469_test
+          export REQUIRE_PG_TESTS=true
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/m469-settlement-currency.pg.test.ts 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$CODE" -ne 0 ]; then exit "$CODE"; fi
+          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* skipped'; then
+            echo "M469 required PostgreSQL test skipped — failing CI"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q '12 passed'; then
+            echo "M469 expected twelve passing tests"
+            exit 1
+          fi
+          echo "M469 settlement and refund PostgreSQL tests passed — zero skips."
+
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
