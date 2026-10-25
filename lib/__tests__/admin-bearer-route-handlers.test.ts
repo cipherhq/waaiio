@@ -2030,7 +2030,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-ok', business_id: 'biz-ok', amount: -100 }],
+                data: [{ id: 'adj-ok', business_id: 'biz-ok', amount: -100, currency: 'NGN' }],
                 error: null,
               }),
             }),
@@ -2188,7 +2188,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-1', business_id: 'biz-adj', amount: -200 }],
+                data: [{ id: 'adj-1', business_id: 'biz-adj', amount: -200, currency: 'NGN' }],
                 error: null,
               }),
             }),
@@ -2334,7 +2334,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-pf', business_id: 'biz-pf', amount: -100 }],
+                data: [{ id: 'adj-pf', business_id: 'biz-pf', amount: -100, currency: 'NGN' }],
                 error: null,
               }),
             }),
@@ -2462,7 +2462,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-0row', business_id: 'biz-0row', amount: -200 }],
+                data: [{ id: 'adj-0row', business_id: 'biz-0row', amount: -200, currency: 'NGN' }],
                 error: null,
               }),
             }),
