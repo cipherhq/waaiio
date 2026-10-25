@@ -184,18 +184,6 @@ export async function POST(
     }
   }
 
-  // M468: inspect all historical payout currencies before allowing approval.
-  // This cannot use the status-filtered prior-payout balance query below:
-  // rejected, held or other historical rows still require currency reconciliation.
-  const { data: historicalCurrencies, error: historyError } = await serviceClient
-    .from('business_payouts')
-    .select('currency')
-    .eq('business_id', payout.business_id)
-    .neq('id', id);
-  if (historyError || (historicalCurrencies || []).some(row => !row.currency)) {
-    return NextResponse.json({ error: 'Cannot approve: historical payout currency requires reconciliation' }, { status: 409 });
-  }
-
   // ── Balance verification (includes review_required as reserved) ──
   // M466: Include currency via payments join for currency-scoped balance
   const { data: balancePaymentsRaw, error: balanceError } = await serviceClient
@@ -244,6 +232,18 @@ export async function POST(
       payout_id: id, business_id: payout.business_id, ...safeLogErrorContext(balAdjError),
     });
     return NextResponse.json({ error: 'Failed to load adjustment data' }, { status: 500 });
+  }
+
+  // M468: inspect all historical payout currencies before allowing approval.
+  // This cannot use the status-filtered prior-payout balance query below:
+  // rejected, held or other historical rows still require currency reconciliation.
+  const { data: historicalCurrencies, error: historyError } = await serviceClient
+    .from('business_payouts')
+    .select('currency')
+    .eq('business_id', payout.business_id)
+    .neq('id', id);
+  if (historyError || (historicalCurrencies || []).some(row => !row.currency)) {
+    return NextResponse.json({ error: 'Cannot approve: historical payout currency requires reconciliation' }, { status: 409 });
   }
 
   // Unknown-currency adjustments are not deductions in any known currency.

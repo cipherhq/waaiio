@@ -89,11 +89,10 @@ export async function POST(request: NextRequest) {
         continue;
       }
       // Never generate for a merchant with unresolved historical currency.
-      const [{ data: legacyPayouts, error: legacyPayoutError }, { data: legacyAdjustments, error: legacyAdjustmentError }] = await Promise.all([
-        supabase.from('business_payouts').select('id').eq('business_id', biz.id).is('currency', null).maybeSingle(),
-        supabase.from('payout_adjustments').select('id').eq('business_id', biz.id).is('currency', null).maybeSingle(),
-      ]);
-      if (legacyPayoutError || legacyAdjustmentError || legacyPayouts || legacyAdjustments) {
+      const { data: legacyPayouts, error: legacyPayoutError } = await supabase
+        .from('business_payouts').select('id')
+        .eq('business_id', biz.id).is('currency', null).maybeSingle();
+      if (legacyPayoutError || legacyPayouts) {
         logger.warn('[PAYOUT] Historical currency requires reconciliation', { business_id: biz.id });
         failed++;
         continue;
@@ -133,6 +132,12 @@ export async function POST(request: NextRequest) {
 
       if (adjQueryError) {
         logger.error('[PAYOUT] Adjustments query failed for business', { business_id: biz.id, error: adjQueryError.message });
+        failed++;
+        continue;
+      }
+      // An unapplied adjustment with unknown currency cannot be attributed to a payout.
+      if ((adjustments || []).some(row => !row.currency)) {
+        logger.warn('[PAYOUT] Unclassified adjustment requires reconciliation', { business_id: biz.id });
         failed++;
         continue;
       }
