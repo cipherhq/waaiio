@@ -677,10 +677,11 @@ describe('DB-level CREATE_NEW idempotency', () => {
     expect(source).toContain('p_bot_session_id: ctx.session.id');
   });
 
-  it('ticketing INSERT includes bot_session_id', async () => {
+  it('ticketing uses atomic RPC with bot_session_id', async () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/flows/ticketing.flow.ts'), 'utf-8');
-    expect(source).toContain('bot_session_id: ctx.session.id');
-    expect(source).toContain("eq('bot_session_id', ctx.session.id)");
+    // #716: ticketing now uses create_ticket_booking_checked RPC (DB-atomic fence)
+    expect(source).toContain("rpc('create_ticket_booking_checked'");
+    expect(source).toContain('p_bot_session_id: ctx.session.id');
   });
 
   it('scheduling passes bot_session_id to book_slot_atomic', async () => {

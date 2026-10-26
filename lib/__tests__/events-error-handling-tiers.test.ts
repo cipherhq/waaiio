@@ -82,8 +82,14 @@ describe('Events page: error handling contracts', () => {
   });
 
   describe('removeTicketType (edit mode)', () => {
-    it('captures delete error and alerts', () => {
-      expect(src).toContain("Failed to remove ticket type: ${error.message}");
+    it('pauses persisted tiers instead of deleting them, preserving in-flight references', () => {
+      const start = src.indexOf('async function removeTicketType');
+      const end = src.indexOf('function beginSavedTierEdit', start);
+      const fn = src.slice(start, end);
+      expect(fn).toContain(".update({ is_active: false })");
+      expect(fn).toContain(".eq('event_id', form.id)");
+      expect(fn).toContain("Failed to pause ticket type:");
+      expect(fn).not.toContain('.delete()');
     });
   });
 });

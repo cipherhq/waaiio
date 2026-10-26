@@ -292,7 +292,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       UPDATE products SET stock_quantity = 30 WHERE id = '${PRODUCT_B}';
       UPDATE product_variants SET stock_quantity = 15 WHERE id = '${VARIANT_A1}';
       UPDATE events SET tickets_sold = 95, price = 3000, total_tickets = 100, status = 'published' WHERE id = '${EVENT_A}';
-      UPDATE event_ticket_types SET tickets_sold = 18, price = 5000, total_tickets = 20 WHERE id = '${TICKET_TYPE}';
+      DELETE FROM event_ticket_types WHERE id = '${TICKET_TYPE}';
+      INSERT INTO event_ticket_types (id, event_id, name, price, total_tickets, tickets_sold)
+        VALUES ('${TICKET_TYPE}', '${EVENT_A}', 'VIP', 5000, 20, 18);
     `);
   }
 
@@ -1489,10 +1491,12 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     });
 
     it('46. ticket server-authoritative total: DB price × qty persisted, not caller total', () => {
+      // M470: tiered events require a ticket type ID. Use the ticket type's price for authority test.
       psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price) VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test Event', CURRENT_DATE + 30, 'published', 100, 0, 1500) ON CONFLICT (id) DO UPDATE SET status = 'published', tickets_sold = 0, price = 1500;`);
+      psql(`DELETE FROM event_ticket_types WHERE id = '${TT_ID}'; INSERT INTO event_ticket_types (id, event_id, name, price, total_tickets, tickets_sold, is_active) VALUES ('${TT_ID}', '${EVENT_ID}', 'VIP', 1500, 50, 0, true);`);
       const sessId = '00000000-0000-0000-0383-00000000b046';
-      // Caller sends p_total_amount=9999 (forged), but DB price=1500, qty=2 → committed should be 3000
-      const r = psql(`SET ROLE service_role; SELECT * FROM purchase_tickets_atomic('${BIZ_ID}', '${EVENT_ID}', NULL, 2, '${USER_ID}', 'Test', '2340000000005', 'test@test.com', 9999, 'whatsapp', '${sessId}', NULL);`);
+      // Caller sends p_total_amount=9999 (forged), but DB tier price=1500, qty=2 → committed should be 3000
+      const r = psql(`SET ROLE service_role; SELECT * FROM purchase_tickets_atomic('${BIZ_ID}', '${EVENT_ID}', '${TT_ID}', 2, '${USER_ID}', 'Test', '2340000000005', 'test@test.com', 9999, 'whatsapp', '${sessId}', NULL);`);
       const parts = r.split('|');
       const bookingId = parts[0];
       const total = psql(`SELECT total_amount FROM bookings WHERE id = '${bookingId}';`);
@@ -1629,6 +1633,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     it('55. event-level ticket race — two sessions racing for last event ticket', async () => {
       // Set event to 1 ticket remaining (99 sold of 100), reset price to original
       psql(`UPDATE events SET tickets_sold = 99, total_tickets = 100, price = 3000, status = 'published' WHERE id = '${EVENT_A}';`);
+      // M470: remove ticket types so this event is treated as tierless (tests event-level race, not tier-level)
+      psql(`DELETE FROM event_ticket_types WHERE event_id = '${EVENT_A}';`);
 
       const sessA = '00000000-0000-0000-0383-000000000c56';
       const sessB = '00000000-0000-0000-0383-000000000c57';
@@ -1664,7 +1670,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
 
     it('56. ticket-type race — two sessions racing for last ticket-type unit', async () => {
       // Set ticket type to 1 remaining (19 sold of 20), reset price to original fixture
-      psql(`UPDATE event_ticket_types SET tickets_sold = 19, total_tickets = 20, price = 5000 WHERE id = '${TICKET_TYPE}';`);
+      // Use DELETE+INSERT to avoid M470 capacity-decrease trigger (total_tickets may have been
+      // increased by a prior test; the trigger correctly blocks decreases on saved tiers).
+      psql(`DELETE FROM event_ticket_types WHERE id = '${TICKET_TYPE}'; INSERT INTO event_ticket_types (id, event_id, name, price, total_tickets, tickets_sold) VALUES ('${TICKET_TYPE}', '${EVENT_A}', 'VIP', 5000, 20, 19);`);
       // Ensure event has capacity and correct price/status
       psql(`UPDATE events SET tickets_sold = 90, total_tickets = 100, price = 3000, status = 'published' WHERE id = '${EVENT_A}';`);
 
