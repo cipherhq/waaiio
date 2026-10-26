@@ -27,10 +27,11 @@ const PROACTIVE_SEND_FILES = [
   'lib/payments/saved-card-delivery.ts',
   'lib/payments/recurring-offer.ts',
   'lib/payments/recurring-setup.ts',
+  'lib/bot/automation/sealed-rule-actions.ts',
 ];
 
 /** Matches a line that opens a sender.send* call */
-const SEND_OPEN_RE = /sender\.send(?:Text|Buttons|Image|Document|List|Audio)\(/;
+const SEND_OPEN_RE = /sender\.send(?:Text|Buttons|Image|Document|List|Audio|Template)[!]?\(/;
 
 describe('#721: Post-payment sends include messageCategory', () => {
   for (const relPath of PROACTIVE_SEND_FILES) {

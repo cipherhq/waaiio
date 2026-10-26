@@ -62,11 +62,11 @@ async function executeFrozenAction(
     priority: 0,
   };
   const sendMessage = sender
-    ? async (phone: string, text: string) => { await sender.sendText({ to: phone, text }); }
+    ? async (phone: string, text: string) => { await sender.sendText({ to: phone, text, messageCategory: 'utility' }); }
     : undefined;
   const sendTemplate = sender?.sendTemplate
     ? async (phone: string, templateName: string, templateParams: string[]) => {
-      await sender.sendTemplate!({ to: phone, templateName, templateParams });
+      await sender.sendTemplate!({ to: phone, templateName, templateParams, messageCategory: 'utility' });
     }
     : undefined;
 

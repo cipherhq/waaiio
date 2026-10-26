@@ -115,7 +115,7 @@ describe('sealed Phase-A rule execution', () => {
     await expect(runSealedRuleActions(params)).resolves.toEqual({ actionCount: 1, terminalCount: 1 });
 
     expect(sendText).toHaveBeenCalledOnce();
-    expect(sendText).toHaveBeenCalledWith({ to: '15551234567', text: 'winner Ada' });
+    expect(sendText).toHaveBeenCalledWith({ to: '15551234567', text: 'winner Ada', messageCategory: 'utility' });
     expect(store.getBotRuleReads()).toBe(0);
   });
 
