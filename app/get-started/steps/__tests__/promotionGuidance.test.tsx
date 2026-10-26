@@ -81,3 +81,56 @@ describe('Signup success promotion guidance', () => {
     expect(screen.getByText('Set up your bot')).toBeTruthy();
   });
 });
+
+describe('URL safety guard', () => {
+  it('accepts a valid wa.me link with encoded query parameters', () => {
+    const validLink = 'https://wa.me/2348001234567?text=Hello%20World%26Order';
+    render(<StepSuccess {...props} waLink={validLink} />);
+    expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy Link' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy message' })).toBeTruthy();
+    expect(screen.queryByText(/link is being set up/i)).toBeNull();
+  });
+
+  it('accepts a plain wa.me link without query parameters', () => {
+    render(<StepSuccess {...props} waLink="https://wa.me/15551234567" />);
+    expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
+  });
+
+  it.each([
+    ['javascript:alert(1)', 'javascript scheme'],
+    ['data:text/html,<script>alert(1)</script>', 'data scheme'],
+    ['http://wa.me/1234567890', 'non-HTTPS'],
+    ['https://evil.com/1234567890', 'unexpected host'],
+    ['https://wa.me.evil.com/1234567890', 'host suffix attack'],
+    ['https://user:pass@wa.me/1234567890', 'credentials in URL'],
+    ['https://wa.me:8080/1234567890', 'unexpected port'],
+    ['https://wa.me/1234567890/extra/path', 'trailing path content'],
+    ['https://wa.me/', 'missing phone number'],
+    ['https://wa.me/abc', 'non-digit phone path'],
+    ['not-a-url', 'unparseable string'],
+    ['', 'empty string'],
+  ])('rejects %s (%s) — hides sharing actions, shows explanation', (_url, _reason) => {
+    render(<StepSuccess {...props} waLink={_url} />);
+    // Sharing actions must not be rendered
+    expect(screen.queryByRole('link', { name: 'Test on WhatsApp' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy Link' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Download QR Code' })).toBeNull();
+    // Explanation is shown
+    expect(screen.getByText(/link is being set up/i)).toBeTruthy();
+    // Existing non-sharing actions are preserved
+    expect(screen.getByRole('link', { name: /Connect WhatsApp Number/ })).toBeTruthy();
+    expect(screen.getByText('Set up your bot')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Go to Dashboard' })).toBeTruthy();
+  });
+
+  it('preserves encoded query params through the full copy chain', async () => {
+    const encoded = 'https://wa.me/2348001234567?text=A%20B%26C';
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    render(<StepSuccess {...props} waLink={encoded} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Link' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(encoded));
+  });
+});
