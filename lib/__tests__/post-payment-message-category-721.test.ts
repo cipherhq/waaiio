@@ -26,7 +26,9 @@ const PROACTIVE_SEND_FILES = [
   'lib/payments/saved-card-offer.ts',
   'lib/payments/saved-card-delivery.ts',
   'lib/payments/recurring-offer.ts',
-  'lib/payments/recurring-setup.ts',
+  // recurring-setup.ts is intentionally excluded: its sends are inbound button-tap
+  // replies within the 24-hour service window, not proactive webhook sends.
+  // The inbound sender defaults to 'service' category — no override needed.
   'lib/bot/automation/sealed-rule-actions.ts',
 ];
 
