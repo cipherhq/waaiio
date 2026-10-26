@@ -105,23 +105,28 @@ describe.skipIf(!canRun)('M471: fixture setup', () => {
         ('${RV_WRONG_OWNER}',    '${BIZ_ID}', '${USER_B}', CURRENT_DATE, CURRENT_DATE + 1, 1, 5000, 5000, 'pending')
       ON CONFLICT (id) DO NOTHING;
 
-      -- Payments: linked to specific bookings/reservations
-      INSERT INTO payments (id, booking_id, user_id, amount, currency, gateway_reference, status)
-      VALUES
-        ('${PAY_SUCCESS_BK}', '${BK_PENDING_PAID}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-001', 'success'),
-        ('${PAY_PENDING_BK}', '${BK_PENDING_PEND_PAY}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-003', 'pending')
-      ON CONFLICT (id) DO NOTHING;
+    `);
 
-      -- Payment with active finalization (processing_at within 5 min window)
-      INSERT INTO payments (id, booking_id, user_id, amount, currency, gateway_reference, status, finalization_processing_at)
-      VALUES
-        ('${PAY_FINALIZING_BK}', '${BK_PENDING_FINALIZ}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-002', 'pending', NOW())
+    // Payment fixtures — each INSERT isolated so errors are visible.
+    // gateway_reference is UNIQUE NOT NULL.
+    psql(`
+      INSERT INTO payments (id, booking_id, user_id, amount, currency, gateway_reference, gateway_status, status)
+      VALUES ('${PAY_SUCCESS_BK}', '${BK_PENDING_PAID}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-001', 'success', 'success')
       ON CONFLICT (id) DO NOTHING;
-
-      -- Successful payment linked to reservation
-      INSERT INTO payments (id, reservation_id, user_id, amount, currency, gateway_reference, status)
-      VALUES
-        ('${PAY_SUCCESS_RV}', '${RV_PENDING_PAID}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-004', 'success')
+    `);
+    psql(`
+      INSERT INTO payments (id, booking_id, user_id, amount, currency, gateway_reference, gateway_status, status)
+      VALUES ('${PAY_PENDING_BK}', '${BK_PENDING_PEND_PAY}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-003', 'pending', 'pending')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    psql(`
+      INSERT INTO payments (id, booking_id, user_id, amount, currency, gateway_reference, gateway_status, status, finalization_processing_at)
+      VALUES ('${PAY_FINALIZING_BK}', '${BK_PENDING_FINALIZ}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-002', 'pending', 'pending', NOW())
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    psql(`
+      INSERT INTO payments (id, reservation_id, user_id, amount, currency, gateway_reference, gateway_status, status)
+      VALUES ('${PAY_SUCCESS_RV}', '${RV_PENDING_PAID}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-004', 'success', 'success')
       ON CONFLICT (id) DO NOTHING;
     `);
   });
