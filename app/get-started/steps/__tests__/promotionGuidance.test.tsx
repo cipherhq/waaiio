@@ -38,9 +38,9 @@ describe('Signup success promotion guidance', () => {
     ['barber', ['appointment'], 'Instagram booking bio', 'Book with us'],
     ['events', ['ticketing'], 'Flyers & posters', 'Find our events'],
     ['church', ['giving'], 'Bulletins & programs', 'Support us'],
-    ['other', ['ordering'], 'Packaging & receipts', 'Shop with us'],
-    ['other', ['scheduling'], 'Front desk & Google profile', 'Book with us'],
-    ['other', [], 'WhatsApp Status', 'Reach us'],
+    ['', ['ordering'], 'Packaging & receipts', 'Shop with us'],
+    ['', ['scheduling'], 'Front desk & Google profile', 'Book with us'],
+    ['', [], 'WhatsApp Status', 'Reach us'],
   ] as const)('adapts %s / %s guidance', (category, capabilities, suggestedPlace, captionStart) => {
     const guidance = getPromotionGuidance(category, [...capabilities], link);
     expect(guidance.tips.some(tip => tip.title === suggestedPlace)).toBe(true);
@@ -69,7 +69,7 @@ describe('Signup success promotion guidance', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     render(<StepSuccess {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
-    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/couldn't copy/i));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/couldn't copy/i));
     expect(screen.queryByText('Message copied!')).toBeNull();
   });
 

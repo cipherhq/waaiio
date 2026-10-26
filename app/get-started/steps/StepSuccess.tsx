@@ -20,7 +20,10 @@ export function StepSuccess({
   const [qrLoaded, setQrLoaded] = useState(false);
   const qrRef = useRef<{ SVG: React.ComponentType<any>; Canvas: React.ComponentType<any> } | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<'link' | 'message' | 'error' | null>(null);
-  const promotion = getPromotionGuidance(category, selectedCapabilities, waLink);
+
+  // Safe-link guard: only HTTPS wa.me links are clickable/shareable.
+  const safeWaLink = /^https:\/\/wa\.me\/\d+/.test(waLink) ? waLink : '';
+  const promotion = getPromotionGuidance(category, selectedCapabilities, safeWaLink);
 
   useEffect(() => {
     import('qrcode.react').then(mod => {
@@ -108,7 +111,7 @@ export function StepSuccess({
               <>
                 <div className="flex justify-center">
                   {React.createElement(qrRef.current.SVG, {
-                    value: waLink,
+                    value: safeWaLink,
                     size: 220,
                     level: 'M',
                   })}
@@ -116,7 +119,7 @@ export function StepSuccess({
                 {/* Hidden canvas for download */}
                 <div id="qr-download-canvas" className="hidden">
                   {React.createElement(qrRef.current.Canvas, {
-                    value: waLink,
+                    value: safeWaLink,
                     size: 512,
                     level: 'M',
                   })}
@@ -131,7 +134,7 @@ export function StepSuccess({
             <div className="mt-4 flex gap-2 justify-center">
               <button
                 type="button"
-                onClick={() => void handleCopy(waLink, 'link')}
+                onClick={() => void handleCopy(safeWaLink, 'link')}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -194,7 +197,7 @@ export function StepSuccess({
               </button>
             </div>
             {copyFeedback === 'error' && (
-              <p role="status" className="mt-2 text-xs text-red-600">
+              <p role="alert" className="mt-2 text-xs text-red-600">
                 We couldn't copy automatically. Select the text above to copy it.
               </p>
             )}
@@ -203,7 +206,7 @@ export function StepSuccess({
           {/* Test on WhatsApp */}
           <div className="mt-6">
             <a
-              href={waLink}
+              href={safeWaLink}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 rounded-xl border-2 border-whatsapp px-5 py-2.5 text-sm font-bold text-whatsapp hover:bg-green-50 transition"
