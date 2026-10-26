@@ -178,10 +178,100 @@ jobs:
           echo "Release delta from live production:"
           echo "$CHANGED"
 
-          if echo "$CHANGED" | grep -qE '^supabase/migrations/'; then
-            echo "❌ ABORT: production app deployment contains database migration files."
-            echo "   Database mutation is a separate Owner authorization gate."
-            exit 1
+          MIGRATION_FILES=$(echo "$CHANGED" | grep -E '^supabase/migrations/' || true)
+          if [ -n "$MIGRATION_FILES" ]; then
+            echo "Migration files in release delta:"
+            echo "$MIGRATION_FILES"
+            echo ""
+
+            # ── Migration-attestation gate ──
+            # Every migration file in the delta must be verified as applied to
+            # production via .release/migration-attestation.json. The attestation
+            # records the file's SHA-256 and the Supabase migration ledger version.
+            # At deploy time, the workflow queries the LIVE production ledger to
+            # confirm each version exists. Fails closed on any mismatch.
+            ATTESTATION=".release/migration-attestation.json"
+            if [ ! -f "$ATTESTATION" ]; then
+              echo "❌ ABORT: migration files in delta but no attestation file at $ATTESTATION."
+              echo "   Create the attestation after applying migrations to production."
+              exit 1
+            fi
+
+            # Validate attestation is well-formed JSON with required fields
+            if ! node -e "
+              const a = JSON.parse(require('fs').readFileSync('$ATTESTATION','utf8'));
+              if (typeof a !== 'object' || a === null || Array.isArray(a)) process.exit(1);
+              for (const [k,v] of Object.entries(a)) {
+                if (!v.sha256 || !v.ledger_version) { console.error('Missing sha256/ledger_version for '+k); process.exit(1); }
+                if (!/^[0-9a-f]{64}$/.test(v.sha256)) { console.error('Invalid sha256 for '+k); process.exit(1); }
+              }
+            " 2>&1; then
+              echo "❌ ABORT: attestation file is malformed or missing required fields."
+              exit 1
+            fi
+
+            # Verify every migration file: hash matches AND ledger version exists
+            FAILED=0
+            while IFS= read -r mf; do
+              [ -z "$mf" ] && continue
+              FILE_HASH=$(sha256sum "$mf" | cut -d' ' -f1)
+              ATTESTED=$(node -e "
+                const a=JSON.parse(require('fs').readFileSync('$ATTESTATION','utf8'));
+                const e=a[process.argv[1]];
+                if(!e){console.log('MISSING');process.exit(0);}
+                console.log(e.sha256+'|'+e.ledger_version);
+              " "$mf")
+
+              if [ "$ATTESTED" = "MISSING" ]; then
+                echo "❌ $mf: not attested in $ATTESTATION"
+                FAILED=1; continue
+              fi
+
+              ATTESTED_HASH=$(echo "$ATTESTED" | cut -d'|' -f1)
+              LEDGER_VERSION=$(echo "$ATTESTED" | cut -d'|' -f2)
+
+              if [ "$FILE_HASH" != "$ATTESTED_HASH" ]; then
+                echo "❌ $mf: hash mismatch (file=${FILE_HASH:0:16}… attested=${ATTESTED_HASH:0:16}…)"
+                FAILED=1; continue
+              fi
+
+              # Query production Supabase migration ledger for this version
+              LEDGER_CHECK=$(curl -sS -f \
+                -H "Authorization: Bearer ${{ secrets.SUPABASE_ACCESS_TOKEN }}" \
+                -H "Content-Type: application/json" \
+                -d "{\"query\":\"SELECT version FROM supabase_migrations.schema_migrations WHERE version='${LEDGER_VERSION}' LIMIT 1\"}" \
+                "https://api.supabase.com/v1/projects/${{ secrets.SUPABASE_PROJECT_REF }}/database/query" 2>/dev/null) || {
+                echo "❌ $mf: failed to query production migration ledger"
+                FAILED=1; continue
+              }
+
+              if ! echo "$LEDGER_CHECK" | node -e "
+                const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+                if(!Array.isArray(r)||r.length===0||r[0].version!=='${LEDGER_VERSION}') process.exit(1);
+              " 2>/dev/null; then
+                echo "❌ $mf: ledger version '${LEDGER_VERSION}' NOT FOUND in production database"
+                FAILED=1; continue
+              fi
+
+              echo "✅ $mf: hash verified, ledger version ${LEDGER_VERSION} confirmed"
+            done <<< "$MIGRATION_FILES"
+
+            # Reject renames/deletes: files removed between live and target
+            DELETED_MIGRATIONS=$(git diff --name-only --diff-filter=D "$LIVE_SHA..${{ env.TARGET_SHA }}" -- supabase/migrations/ || true)
+            if [ -n "$DELETED_MIGRATIONS" ]; then
+              echo "❌ ABORT: migration files were deleted or renamed between live and target:"
+              echo "$DELETED_MIGRATIONS"
+              FAILED=1
+            fi
+
+            if [ "$FAILED" -ne 0 ]; then
+              echo ""
+              echo "❌ ABORT: migration attestation failed. Apply migrations to production first,"
+              echo "   then create $ATTESTATION with verified hashes and ledger versions."
+              exit 1
+            fi
+
+            echo "✅ All migration files attested and verified in production ledger."
           fi
 
           echo "PREV_DEPLOYMENT_ID=$PREV_ID" >> "$GITHUB_ENV"
