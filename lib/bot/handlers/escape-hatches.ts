@@ -62,21 +62,22 @@ export async function safeFlowCleanup(
     }
   }
 
-  // Cancel pending property reservations — simple conditional status update.
-  // No slot/inventory counters to release (property_blocked_dates are merchant-managed).
-  // Follows the same pattern as the reservation flow itself (reservation.flow.ts:1377).
+  // Cancel pending property reservations via M471 atomic RPC.
+  // The RPC locks the reservation, checks status=pending, verifies ownership,
+  // and fences successful payments — same pattern as bookings.
   if (sessionData.reservation_id) {
-    const { error: resErr, count: resCount } = await supabase
-      .from('reservations')
-      .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'guest' } as Record<string, unknown>, { count: 'exact' })
-      .eq('id', sessionData.reservation_id as string)
-      .in('status', ['pending']); // Only cancel pending — confirmed/paid preserved
+    const { data: resResult, error: resErr } = await supabase.rpc('cancel_pending_reservation_for_navigation', {
+      p_reservation_id: sessionData.reservation_id as string,
+      p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
+    });
     if (resErr) {
-      logger.error('[NAV-CLEANUP] reservation cancel failed', { reservationId: sessionData.reservation_id, error: resErr.message });
+      logger.error('[NAV-CLEANUP] cancel_pending_reservation_for_navigation RPC failed', { reservationId: sessionData.reservation_id, error: resErr.message });
       ok = false;
-    } else if (resCount === 0) {
-      // Not pending (confirmed/paid/completed) — preserved, not a failure
-      logger.info('[NAV-CLEANUP] reservation not pending, preserving', { reservationId: sessionData.reservation_id });
+    } else if (resResult === null || resResult === undefined) {
+      logger.error('[NAV-CLEANUP] reservation RPC returned null', { reservationId: sessionData.reservation_id });
+      ok = false;
+    } else if (!resResult.cancelled) {
+      logger.info('[NAV-CLEANUP] reservation preserved during navigation', { reservationId: sessionData.reservation_id, reason: resResult.reason });
     }
   }
 
