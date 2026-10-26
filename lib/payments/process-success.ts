@@ -229,7 +229,11 @@ export async function processSuccessfulPayment(
   // 3. Process campaign donation
   if (payment.campaign_id) {
     try {
-      await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee, paymentRouting);
+      await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee, {
+        feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
+        transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
+        paymentRouting,
+      });
     } catch (err) {
       criticalErrors.push('campaign_donation_failed');
       logger.withContext({ op: 'process-success.campaign', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Campaign donation error');
@@ -867,7 +871,7 @@ export async function processCampaignDonation(
   campaignId: string,
   amount: number,
   gatewayFee?: number,
-  paymentRouting?: 'platform' | 'byo' | 'connect',
+  feePolicy?: { feePolicyVersion?: number; configVersionId?: string; transactionCategory?: string; feeBasis?: Record<string, unknown>; paymentRouting?: 'platform' | 'byo' | 'connect' },
 ): Promise<void> {
   const { data: result, error: rpcError } = await supabase.rpc('apply_campaign_donation', {
     p_campaign_id: campaignId,
@@ -902,7 +906,9 @@ export async function processCampaignDonation(
           businessId: campaign.business_id,
           paymentAmount: authoritativeAmount,
           gatewayFee,
-          paymentRouting,
+          paymentRouting: feePolicy?.paymentRouting,
+          feePolicyVersion: feePolicy?.feePolicyVersion, configVersionId: feePolicy?.configVersionId,
+          transactionCategory: feePolicy?.transactionCategory, feeBasis: feePolicy?.feeBasis,
         });
       }
     } else {
