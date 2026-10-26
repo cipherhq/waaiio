@@ -1,18 +1,28 @@
 /**
- * Navigation Cancellation — Real PostgreSQL Tests
+ * M471 Navigation Cancellation — Real PostgreSQL Payment-Safety Tests
  *
- * Tests cancel_pending_booking_for_navigation and
- * cancel_pending_reservation_for_navigation RPCs against
- * a disposable PostgreSQL with all migrations applied.
+ * Deterministic fixtures with known UUIDs. Tests prove:
+ * - Pending unpaid entities are cancelled
+ * - Paid entities (successful payment) are atomically preserved
+ * - Active finalization (processing_at within 5 min) preserves the entity
+ * - Confirmed entities are preserved (not_pending)
+ * - Ownership mismatch is rejected (not_owner)
+ * - NULL params and nonexistent entities are rejected
+ * - Pending-only payments don't block cancellation
+ * - Idempotency: re-cancelling returns not_pending
+ * - RPC existence, SECURITY DEFINER, and least-privilege grants
  *
- * Covers: pending cancellation, payment fencing, confirmed preservation,
- * ownership, idempotency, and RPC grants.
+ * Lock ordering: entity FOR UPDATE → payments FOR UPDATE
+ * (same as cancel_order_immediate; see M471 migration header).
  *
- * TEST_DATABASE_URL=postgresql://localhost:5432/waaiio_test \
- *   npx vitest run lib/bot/__tests__/navigation-cancellation-db.test.ts
+ * Requires: TEST_DATABASE_URL pointing to a disposable PG with all
+ * migrations applied (ci-bootstrap-test-db.sh).
+ *
+ * CI step (shard-a) creates waaiio_m471_test, bootstraps, runs this
+ * file, and enforces zero skips.
  */
 import { execSync } from 'child_process';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -22,18 +32,116 @@ function psql(sql: string): string {
     input: sql, encoding: 'utf-8', timeout: 30000,
   }).trim();
 }
-function psqlMayFail(sql: string): string {
-  try {
-    return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
-      input: sql, encoding: 'utf-8', timeout: 30000,
-    }).trim();
-  } catch (e: unknown) { return (e as { stderr?: string }).stderr || String(e); }
-}
+
+// ── Deterministic UUIDs ──
+
+const BIZ_ID    = 'a0000000-0000-0000-0000-000000000001';
+const USER_A    = 'a0000000-0000-0000-0000-000000000010'; // owner
+const USER_B    = 'a0000000-0000-0000-0000-000000000020'; // wrong owner
+const NONEXIST  = 'a0000000-0000-0000-0000-ffffffffffff';
+
+// Bookings
+const BK_PENDING_UNPAID   = 'b0000000-0000-0000-0000-000000000001';
+const BK_PENDING_PAID     = 'b0000000-0000-0000-0000-000000000002';
+const BK_PENDING_FINALIZ  = 'b0000000-0000-0000-0000-000000000003';
+const BK_CONFIRMED        = 'b0000000-0000-0000-0000-000000000004';
+const BK_WRONG_OWNER      = 'b0000000-0000-0000-0000-000000000005';
+const BK_PENDING_PEND_PAY = 'b0000000-0000-0000-0000-000000000006';
+
+// Reservations (property)
+const RV_PENDING_UNPAID   = 'c0000000-0000-0000-0000-000000000001';
+const RV_PENDING_PAID     = 'c0000000-0000-0000-0000-000000000002';
+const RV_CONFIRMED        = 'c0000000-0000-0000-0000-000000000003';
+const RV_WRONG_OWNER      = 'c0000000-0000-0000-0000-000000000004';
+
+// Payments
+const PAY_SUCCESS_BK      = 'p0000000-0000-0000-0000-000000000001';
+const PAY_FINALIZING_BK   = 'p0000000-0000-0000-0000-000000000002';
+const PAY_PENDING_BK      = 'p0000000-0000-0000-0000-000000000003';
+const PAY_SUCCESS_RV      = 'p0000000-0000-0000-0000-000000000004';
+
+// ── Seed deterministic fixtures ──
+
+describe.skipIf(!canRun)('M471: fixture setup', () => {
+  beforeAll(() => {
+    // Use service_role to bypass RLS for fixture insertion
+    psql(`
+      SET ROLE service_role;
+
+      -- Business
+      INSERT INTO businesses (id, name, owner_id, category, subscription_tier, trial_ends_at)
+      VALUES ('${BIZ_ID}', 'Test Nav Biz', '${USER_A}', 'restaurant', 'growth', NOW() + INTERVAL '30 days')
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Profiles (users)
+      INSERT INTO auth.users (id, email) VALUES
+        ('${USER_A}', 'nav-user-a@test.local'),
+        ('${USER_B}', 'nav-user-b@test.local')
+      ON CONFLICT (id) DO NOTHING;
+
+      INSERT INTO profiles (id, email) VALUES
+        ('${USER_A}', 'nav-user-a@test.local'),
+        ('${USER_B}', 'nav-user-b@test.local')
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Bookings: pending unpaid, pending with successful payment, pending with finalization,
+      --           confirmed, wrong owner, pending with only pending payment
+      INSERT INTO bookings (id, business_id, user_id, date, time, party_size, status, reference_code)
+      VALUES
+        ('${BK_PENDING_UNPAID}',   '${BIZ_ID}', '${USER_A}', CURRENT_DATE, '10:00', 2, 'pending',   'BW-T001'),
+        ('${BK_PENDING_PAID}',     '${BIZ_ID}', '${USER_A}', CURRENT_DATE, '11:00', 2, 'pending',   'BW-T002'),
+        ('${BK_PENDING_FINALIZ}',  '${BIZ_ID}', '${USER_A}', CURRENT_DATE, '12:00', 2, 'pending',   'BW-T003'),
+        ('${BK_CONFIRMED}',        '${BIZ_ID}', '${USER_A}', CURRENT_DATE, '13:00', 2, 'confirmed', 'BW-T004'),
+        ('${BK_WRONG_OWNER}',      '${BIZ_ID}', '${USER_B}', CURRENT_DATE, '14:00', 2, 'pending',   'BW-T005'),
+        ('${BK_PENDING_PEND_PAY}', '${BIZ_ID}', '${USER_A}', CURRENT_DATE, '15:00', 2, 'pending',   'BW-T006')
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Reservations (property)
+      INSERT INTO reservations (id, business_id, user_id, check_in, check_out, guests, nightly_rate, total_amount, status)
+      VALUES
+        ('${RV_PENDING_UNPAID}', '${BIZ_ID}', '${USER_A}', CURRENT_DATE, CURRENT_DATE + 1, 1, 5000, 5000, 'pending'),
+        ('${RV_PENDING_PAID}',   '${BIZ_ID}', '${USER_A}', CURRENT_DATE, CURRENT_DATE + 1, 1, 5000, 5000, 'pending'),
+        ('${RV_CONFIRMED}',      '${BIZ_ID}', '${USER_A}', CURRENT_DATE, CURRENT_DATE + 1, 1, 5000, 5000, 'confirmed'),
+        ('${RV_WRONG_OWNER}',    '${BIZ_ID}', '${USER_B}', CURRENT_DATE, CURRENT_DATE + 1, 1, 5000, 5000, 'pending')
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Payments: linked to specific bookings/reservations
+      INSERT INTO payments (id, booking_id, user_id, amount, currency, gateway_reference, status)
+      VALUES
+        ('${PAY_SUCCESS_BK}', '${BK_PENDING_PAID}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-001', 'success'),
+        ('${PAY_PENDING_BK}', '${BK_PENDING_PEND_PAY}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-003', 'pending')
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Payment with active finalization (processing_at within 5 min window)
+      INSERT INTO payments (id, booking_id, user_id, amount, currency, gateway_reference, status, finalization_processing_at)
+      VALUES
+        ('${PAY_FINALIZING_BK}', '${BK_PENDING_FINALIZ}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-002', 'pending', NOW())
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Successful payment linked to reservation
+      INSERT INTO payments (id, reservation_id, user_id, amount, currency, gateway_reference, status)
+      VALUES
+        ('${PAY_SUCCESS_RV}', '${RV_PENDING_PAID}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-004', 'success')
+      ON CONFLICT (id) DO NOTHING;
+
+      RESET ROLE;
+    `);
+  });
+
+  it('fixtures seeded correctly', () => {
+    const bkCount = psql(`SELECT COUNT(*) FROM bookings WHERE id IN ('${BK_PENDING_UNPAID}','${BK_PENDING_PAID}','${BK_PENDING_FINALIZ}','${BK_CONFIRMED}','${BK_WRONG_OWNER}','${BK_PENDING_PEND_PAY}')`);
+    expect(Number(bkCount)).toBe(6);
+    const rvCount = psql(`SELECT COUNT(*) FROM reservations WHERE id IN ('${RV_PENDING_UNPAID}','${RV_PENDING_PAID}','${RV_CONFIRMED}','${RV_WRONG_OWNER}')`);
+    expect(Number(rvCount)).toBe(4);
+    const payCount = psql(`SELECT COUNT(*) FROM payments WHERE id IN ('${PAY_SUCCESS_BK}','${PAY_FINALIZING_BK}','${PAY_PENDING_BK}','${PAY_SUCCESS_RV}')`);
+    expect(Number(payCount)).toBe(4);
+  });
+});
 
 // ── RPC existence and grants ──
 
 describe.skipIf(!canRun)('M471: RPC existence and grants', () => {
-  it('cancel_pending_booking_for_navigation exists with correct security', () => {
+  it('cancel_pending_booking_for_navigation is SECURITY DEFINER with safe search_path', () => {
     const result = psql(`
       SELECT prosecdef, proconfig FROM pg_proc
       WHERE proname = 'cancel_pending_booking_for_navigation' AND pronamespace = 'public'::regnamespace;
@@ -42,7 +150,7 @@ describe.skipIf(!canRun)('M471: RPC existence and grants', () => {
     expect(result).toContain('search_path=public');
   });
 
-  it('cancel_pending_reservation_for_navigation exists with correct security', () => {
+  it('cancel_pending_reservation_for_navigation is SECURITY DEFINER with safe search_path', () => {
     const result = psql(`
       SELECT prosecdef, proconfig FROM pg_proc
       WHERE proname = 'cancel_pending_reservation_for_navigation' AND pronamespace = 'public'::regnamespace;
@@ -51,106 +159,156 @@ describe.skipIf(!canRun)('M471: RPC existence and grants', () => {
     expect(result).toContain('search_path=public');
   });
 
-  it('only service_role can execute booking RPC', () => {
-    const grants = psql(`
-      SELECT grantee FROM information_schema.routine_privileges
-      WHERE routine_name = 'cancel_pending_booking_for_navigation' AND routine_schema = 'public';
-    `);
-    expect(grants).not.toContain('anon');
-    expect(grants).not.toContain('authenticated');
+  it('booking RPC: service_role can execute, anon/authenticated cannot', () => {
+    expect(psql(`SELECT has_function_privilege('service_role', 'public.cancel_pending_booking_for_navigation(uuid,uuid)', 'EXECUTE')`)).toBe('t');
+    expect(psql(`SELECT has_function_privilege('anon', 'public.cancel_pending_booking_for_navigation(uuid,uuid)', 'EXECUTE')`)).toBe('f');
+    expect(psql(`SELECT has_function_privilege('authenticated', 'public.cancel_pending_booking_for_navigation(uuid,uuid)', 'EXECUTE')`)).toBe('f');
   });
 
-  it('only service_role can execute reservation RPC', () => {
-    const grants = psql(`
-      SELECT grantee FROM information_schema.routine_privileges
-      WHERE routine_name = 'cancel_pending_reservation_for_navigation' AND routine_schema = 'public';
-    `);
-    expect(grants).not.toContain('anon');
-    expect(grants).not.toContain('authenticated');
+  it('reservation RPC: service_role can execute, anon/authenticated cannot', () => {
+    expect(psql(`SELECT has_function_privilege('service_role', 'public.cancel_pending_reservation_for_navigation(uuid,uuid)', 'EXECUTE')`)).toBe('t');
+    expect(psql(`SELECT has_function_privilege('anon', 'public.cancel_pending_reservation_for_navigation(uuid,uuid)', 'EXECUTE')`)).toBe('f');
+    expect(psql(`SELECT has_function_privilege('authenticated', 'public.cancel_pending_reservation_for_navigation(uuid,uuid)', 'EXECUTE')`)).toBe('f');
   });
 });
 
-// ── Booking cancellation tests ──
+// ── Booking cancellation: payment safety ──
 
 describe.skipIf(!canRun)('M471: Booking payment-safe cancellation', () => {
   it('cancels pending unpaid booking', () => {
-    const result = psqlMayFail(`
-      SET ROLE service_role;
-      SELECT cancel_pending_booking_for_navigation(
-        (SELECT id FROM bookings WHERE status = 'pending' LIMIT 1),
-        (SELECT user_id FROM bookings WHERE status = 'pending' LIMIT 1)
-      );
-    `);
-    // May return cancelled:true or not_found if no pending bookings in test DB
-    expect(result).not.toContain('ERROR');
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation('${BK_PENDING_UNPAID}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(true);
+    // Verify the booking is actually cancelled in DB
+    const status = psql(`SELECT status FROM bookings WHERE id = '${BK_PENDING_UNPAID}'`);
+    expect(status).toBe('cancelled');
   });
 
-  it('preserves confirmed booking', () => {
-    const result = psqlMayFail(`
-      SET ROLE service_role;
-      SELECT cancel_pending_booking_for_navigation(
-        (SELECT id FROM bookings WHERE status = 'confirmed' LIMIT 1),
-        (SELECT user_id FROM bookings WHERE status = 'confirmed' LIMIT 1)
-      );
-    `);
-    if (result.includes('"cancelled"')) {
-      expect(result).toContain('"cancelled": false');
-      expect(result).toContain('not_pending');
-    }
+  it('preserves pending booking with successful payment', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation('${BK_PENDING_PAID}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('has_successful_payment');
+    // Booking still pending
+    const status = psql(`SELECT status FROM bookings WHERE id = '${BK_PENDING_PAID}'`);
+    expect(status).toBe('pending');
+  });
+
+  it('preserves pending booking with active finalization (processing within 5 min)', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation('${BK_PENDING_FINALIZ}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('has_successful_payment');
+    const status = psql(`SELECT status FROM bookings WHERE id = '${BK_PENDING_FINALIZ}'`);
+    expect(status).toBe('pending');
+  });
+
+  it('preserves confirmed booking (not_pending)', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation('${BK_CONFIRMED}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('not_pending');
+    expect(result.status).toBe('confirmed');
   });
 
   it('rejects wrong owner', () => {
-    const result = psqlMayFail(`
-      SET ROLE service_role;
-      SELECT cancel_pending_booking_for_navigation(
-        (SELECT id FROM bookings LIMIT 1),
-        '99999999-9999-9999-9999-999999999999'::uuid
-      );
-    `);
-    if (result.includes('"cancelled"')) {
-      expect(result).toContain('"cancelled": false');
-    }
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation('${BK_WRONG_OWNER}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('not_owner');
+    // Booking still pending — not modified
+    const status = psql(`SELECT status FROM bookings WHERE id = '${BK_WRONG_OWNER}'`);
+    expect(status).toBe('pending');
+  });
+
+  it('cancels pending booking with only pending payments (no success, no finalization)', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation('${BK_PENDING_PEND_PAY}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(true);
+    const status = psql(`SELECT status FROM bookings WHERE id = '${BK_PENDING_PEND_PAY}'`);
+    expect(status).toBe('cancelled');
   });
 
   it('handles NULL params', () => {
-    const result = psql(`
-      SET ROLE service_role;
-      SELECT cancel_pending_booking_for_navigation(NULL, NULL);
-    `);
-    expect(result).toContain('missing_params');
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation(NULL, NULL);`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('missing_params');
   });
 
   it('handles nonexistent booking', () => {
-    const result = psql(`
-      SET ROLE service_role;
-      SELECT cancel_pending_booking_for_navigation(
-        '00000000-0000-0000-0000-000000000099'::uuid,
-        '00000000-0000-0000-0000-000000000001'::uuid
-      );
-    `);
-    expect(result).toContain('not_found');
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation('${NONEXIST}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('not_found');
+  });
+
+  it('idempotency: re-cancelling returns not_pending', () => {
+    // BK_PENDING_UNPAID was cancelled in the first test
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_booking_for_navigation('${BK_PENDING_UNPAID}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('not_pending');
+    expect(result.status).toBe('cancelled');
   });
 });
 
-// ── Reservation cancellation tests ──
+// ── Reservation cancellation: payment safety ──
 
 describe.skipIf(!canRun)('M471: Reservation payment-safe cancellation', () => {
+  it('cancels pending unpaid reservation', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_reservation_for_navigation('${RV_PENDING_UNPAID}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(true);
+    const status = psql(`SELECT status FROM reservations WHERE id = '${RV_PENDING_UNPAID}'`);
+    expect(status).toBe('cancelled');
+  });
+
+  it('preserves pending reservation with successful payment', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_reservation_for_navigation('${RV_PENDING_PAID}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('has_successful_payment');
+    const status = psql(`SELECT status FROM reservations WHERE id = '${RV_PENDING_PAID}'`);
+    expect(status).toBe('pending');
+  });
+
+  it('preserves confirmed reservation (not_pending)', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_reservation_for_navigation('${RV_CONFIRMED}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('not_pending');
+    expect(result.status).toBe('confirmed');
+  });
+
+  it('rejects wrong owner', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_reservation_for_navigation('${RV_WRONG_OWNER}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('not_owner');
+    const status = psql(`SELECT status FROM reservations WHERE id = '${RV_WRONG_OWNER}'`);
+    expect(status).toBe('pending');
+  });
+
   it('handles NULL params', () => {
-    const result = psql(`
-      SET ROLE service_role;
-      SELECT cancel_pending_reservation_for_navigation(NULL, NULL);
-    `);
-    expect(result).toContain('missing_params');
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_reservation_for_navigation(NULL, NULL);`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('missing_params');
   });
 
   it('handles nonexistent reservation', () => {
-    const result = psql(`
-      SET ROLE service_role;
-      SELECT cancel_pending_reservation_for_navigation(
-        '00000000-0000-0000-0000-000000000099'::uuid,
-        '00000000-0000-0000-0000-000000000001'::uuid
-      );
-    `);
-    expect(result).toContain('not_found');
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_reservation_for_navigation('${NONEXIST}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('not_found');
+  });
+
+  it('idempotency: re-cancelling returns not_pending', () => {
+    const raw = psql(`SET ROLE service_role; SELECT cancel_pending_reservation_for_navigation('${RV_PENDING_UNPAID}', '${USER_A}');`);
+    const result = JSON.parse(raw);
+    expect(result.cancelled).toBe(false);
+    expect(result.reason).toBe('not_pending');
+    expect(result.status).toBe('cancelled');
   });
 });

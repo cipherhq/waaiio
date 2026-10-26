@@ -75,7 +75,7 @@ describe('safeFlowCleanup — authoritative cancellation', () => {
     const fnEnd = src.indexOf('\ntype TestableCommandPattern', fnStart);
     const fnBody = src.slice(fnStart, fnEnd);
     expect(fnBody).toContain('!result.cancelled');
-    expect(fnBody).toContain('not cancellable, preserving');
+    expect(fnBody).toContain('cleanup uncertain');
   });
 });
 
@@ -260,20 +260,44 @@ describe('safeFlowCleanup — executable behavior', async () => {
     });
   });
 
-  it('handles not_found booking from RPC gracefully', async () => {
+  it('treats not_found booking as cleanup failure', async () => {
     const sb = mockSupabase({
       cancel_pending_booking_for_navigation: { data: { cancelled: false, reason: 'not_found' }, error: null },
     });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-gone' }, 'user-1');
-    expect(ok).toBe(true); // Not found = booking preserved, not a cleanup failure
+    expect(ok).toBe(false); // Session references a missing entity — uncertain state
   });
 
-  it('handles RPC not_owner response without false success', async () => {
+  it('treats not_owner booking as cleanup failure', async () => {
     const sb = mockSupabase({
       cancel_pending_booking_for_navigation: { data: { cancelled: false, reason: 'not_owner' }, error: null },
     });
     const ok = await safeFlowCleanup(sb, { booking_id: 'bk-other' }, 'user-1');
-    expect(ok).toBe(true); // not_owner = booking preserved, not a cleanup failure
+    expect(ok).toBe(false); // Session/entity mismatch — uncertain state
+  });
+
+  it('treats missing_params booking as cleanup failure', async () => {
+    const sb = mockSupabase({
+      cancel_pending_booking_for_navigation: { data: { cancelled: false, reason: 'missing_params' }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-bad' }, 'user-1');
+    expect(ok).toBe(false); // Code bug — uncertain state
+  });
+
+  it('treats unknown reason as cleanup failure', async () => {
+    const sb = mockSupabase({
+      cancel_pending_booking_for_navigation: { data: { cancelled: false, reason: 'some_future_reason' }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-unknown' }, 'user-1');
+    expect(ok).toBe(false); // Unrecognized reason — fail safe
+  });
+
+  it('preserves booking with has_successful_payment (safe terminal)', async () => {
+    const sb = mockSupabase({
+      cancel_pending_booking_for_navigation: { data: { cancelled: false, reason: 'has_successful_payment' }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { booking_id: 'bk-paid' }, 'user-1');
+    expect(ok).toBe(true); // Paid booking preserved — known safe state
   });
 
   it('handles null RPC response as failure', async () => {
@@ -290,6 +314,30 @@ describe('safeFlowCleanup — executable behavior', async () => {
     });
     const ok = await safeFlowCleanup(sb, { order_id: 'ord-paid' }, 'user-1');
     expect(ok).toBe(true); // Paid order preserved — not a cleanup failure
+  });
+
+  it('returns true when order is in non-pending state (confirmed)', async () => {
+    const sb = mockSupabase({
+      cancel_order_immediate: { data: { cancelled: false, reason: 'confirmed' }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { order_id: 'ord-confirmed' }, 'user-1');
+    expect(ok).toBe(true); // Non-pending order — known safe state
+  });
+
+  it('treats null order result as cleanup failure', async () => {
+    const sb = mockSupabase({
+      cancel_order_immediate: { data: null, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { order_id: 'ord-null' }, 'user-1');
+    expect(ok).toBe(false); // Null response — uncertain state
+  });
+
+  it('treats not_found order as cleanup failure', async () => {
+    const sb = mockSupabase({
+      cancel_order_immediate: { data: { cancelled: false, reason: 'not_found' }, error: null },
+    });
+    const ok = await safeFlowCleanup(sb, { order_id: 'ord-missing' }, 'user-1');
+    expect(ok).toBe(false); // Session references missing order — uncertain
   });
 
   it('returns true when no booking or order exists (nothing to clean)', async () => {

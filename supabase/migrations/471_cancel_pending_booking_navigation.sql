@@ -10,6 +10,14 @@
 -- are atomically preserved. Existing intentional booking-management
 -- cancellation (cancel_booking_with_release) retains full authority.
 --
+-- Lock ordering: entity FOR UPDATE → payments FOR UPDATE (same as cancel_order_immediate).
+-- claim_payment_finalization locks payments first in a SEPARATE transaction
+-- (webhook → claim → app-level entity update), so no nested deadlock.
+-- Concurrent payment INSERT after lock: a new 'pending' payment does not block
+-- cancellation — the gateway has not confirmed it yet. If the gateway later
+-- confirms (webhook → status='success'), finalization finds a cancelled entity
+-- and handles it at the application layer.
+--
 -- Related: #671, PR #708
 -- Invariants: DB-003 (no new tables), DB-001 (no digest calls)
 

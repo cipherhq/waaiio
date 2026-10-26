@@ -43,8 +43,18 @@ export async function safeFlowCleanup(
       logger.error('[NAV-CLEANUP] cancel_pending_booking_for_navigation returned null', { bookingId: sessionData.booking_id });
       ok = false;
     } else if (!result.cancelled) {
-      // not_pending, not_owner, not_found, missing_params — booking preserved
-      logger.info('[NAV-CLEANUP] booking preserved during navigation', { bookingId: sessionData.booking_id, reason: result.reason, status: result.status });
+      const reason = result.reason as string;
+      // Safe terminal outcomes: entity is paid or already in a non-pending state.
+      // These are expected and mean the entity is correctly preserved.
+      const safeReasons = ['has_successful_payment', 'not_pending'];
+      if (safeReasons.includes(reason)) {
+        logger.info('[NAV-CLEANUP] booking preserved during navigation', { bookingId: sessionData.booking_id, reason, status: result.status });
+      } else {
+        // not_owner, not_found, missing_params, or unknown — something unexpected.
+        // Treat as cleanup failure to preserve the session.
+        logger.error('[NAV-CLEANUP] booking cleanup uncertain', { bookingId: sessionData.booking_id, reason });
+        ok = false;
+      }
     }
   }
 
@@ -56,9 +66,21 @@ export async function safeFlowCleanup(
     if (error) {
       logger.error('[NAV-CLEANUP] cancel_order_immediate RPC failed', { orderId: sessionData.order_id, error: error.message });
       ok = false;
-    } else if (result && !result.cancelled) {
-      // Has successful payment or already processed — the RPC correctly refused.
-      logger.info('[NAV-CLEANUP] order not cancellable, preserving', { orderId: sessionData.order_id, reason: result.reason });
+    } else if (result === null || result === undefined) {
+      logger.error('[NAV-CLEANUP] cancel_order_immediate returned null', { orderId: sessionData.order_id });
+      ok = false;
+    } else if (!result.cancelled) {
+      const reason = result.reason as string;
+      // cancel_order_immediate returns 'not_found' or 'has_successful_payment'
+      // or the order's current status (e.g. 'confirmed','processing','delivered','cancelled').
+      // 'not_found' means session references a missing order — uncertain, fail safe.
+      if (reason === 'not_found') {
+        logger.error('[NAV-CLEANUP] order cleanup uncertain', { orderId: sessionData.order_id, reason });
+        ok = false;
+      } else {
+        // has_successful_payment or non-pending status — order is in a known safe state
+        logger.info('[NAV-CLEANUP] order preserved during navigation', { orderId: sessionData.order_id, reason });
+      }
     }
   }
 
@@ -77,7 +99,14 @@ export async function safeFlowCleanup(
       logger.error('[NAV-CLEANUP] reservation RPC returned null', { reservationId: sessionData.reservation_id });
       ok = false;
     } else if (!resResult.cancelled) {
-      logger.info('[NAV-CLEANUP] reservation preserved during navigation', { reservationId: sessionData.reservation_id, reason: resResult.reason });
+      const reason = resResult.reason as string;
+      const safeReasons = ['has_successful_payment', 'not_pending'];
+      if (safeReasons.includes(reason)) {
+        logger.info('[NAV-CLEANUP] reservation preserved during navigation', { reservationId: sessionData.reservation_id, reason, status: resResult.status });
+      } else {
+        logger.error('[NAV-CLEANUP] reservation cleanup uncertain', { reservationId: sessionData.reservation_id, reason });
+        ok = false;
+      }
     }
   }
 
