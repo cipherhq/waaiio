@@ -1475,6 +1475,7 @@ function OnboardingWizard() {
                 waMethod={waMethod}
                 waLink={waLink}
                 selectedCapabilities={selectedCapabilities}
+                category={category}
                 error={error}
                 setStep={setStep}
                 setError={setError}
