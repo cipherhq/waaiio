@@ -4,8 +4,9 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 // ---------------------------------------------------------------------------
-// Resource ceilings
+// Resource ceilings — rationale documented with each constant
 // ---------------------------------------------------------------------------
+
 // Download: 10 MB — generous for any product/event image stored in Supabase.
 // WhatsApp image API limit is 5 MB; Supabase free-tier max upload is 50 MB.
 // 10 MB gives headroom while preventing multi-GB downloads.
@@ -15,18 +16,28 @@ const MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024;
 // Vercel serverless default is 60 s; 15 s is a safe interior bound.
 const FETCH_TIMEOUT_MS = 15_000;
 
-// Sharp pixel limit: 100 megapixels (e.g. 10 000 × 10 000).
-// Default Sharp limit is 268 MP; tightening prevents decompression bombs.
-const MAX_INPUT_PIXELS = 100_000_000;
+// Sharp pixel limit: 36 megapixels (e.g. 6 000 × 6 000).
+// A 36 MP image decoded to RGBA uses ~144 MB; with Sharp processing overhead
+// and concurrent requests, this fits safely within Vercel Pro 3 GB memory.
+// Covers all standard DSLR photos (typical max 24 MP) and phone cameras.
+// Previous 100 MP could consume ~400 MB per decode, risking OOM under concurrency.
+const MAX_INPUT_PIXELS = 36_000_000;
 
 // Max input dimension on either axis.
-const MAX_INPUT_DIMENSION = 10_000;
+const MAX_INPUT_DIMENSION = 8_000;
 
 // JPEG output quality — matches existing behavior.
 const JPEG_QUALITY = 85;
 
+// Reduced quality for retry when output exceeds WhatsApp size limit.
+const JPEG_QUALITY_REDUCED = 65;
+
 // Output dimension ceiling — resize oversized images to fit within this.
 const MAX_OUTPUT_DIMENSION = 4096;
+
+// WhatsApp Cloud API image size limit is 5 MB. Use 4.5 MB as safe margin
+// to account for transport encoding overhead.
+const MAX_OUTPUT_BYTES = 4_608_000; // 4.5 MB
 
 // ---------------------------------------------------------------------------
 // URL allowlist (preserved from PR #649)
@@ -59,10 +70,42 @@ function isAllowedStorageUrl(input: string): boolean {
 // Bounded streaming download
 // ---------------------------------------------------------------------------
 
+class SizeExceededError extends Error {
+  constructor(public readonly receivedBytes: number) {
+    super(`Image exceeds maximum allowed size`);
+    this.name = 'SizeExceededError';
+  }
+}
+
+class TimeoutError extends Error {
+  constructor() {
+    super('Upstream request timed out');
+    this.name = 'TimeoutError';
+  }
+}
+
+/** True when an error was caused by AbortController.abort(). */
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === 'AbortError') return true;
+  // Node fetch may wrap abort as a generic Error with 'ABORT_ERR'
+  if (err instanceof Error && err.name === 'AbortError') return true;
+  return false;
+}
+
 /**
- * Download up to `maxBytes` from the response body, aborting if exceeded.
+ * Cancel/discard a Response body to release the underlying network socket.
+ * Safe to call on any response, including those with no body.
+ */
+function discardResponseBody(response: Response): void {
+  try {
+    response.body?.cancel().catch(() => {});
+  } catch { /* no body or already consumed */ }
+}
+
+/**
+ * Download up to `maxBytes` from the response body.
  * Does NOT trust Content-Length — enforces the limit on actual received bytes.
- * Returns the concatenated buffer, or throws on size/timeout/stream errors.
+ * Throws SizeExceededError, TimeoutError, or generic Error.
  */
 async function downloadBounded(
   response: Response,
@@ -100,22 +143,21 @@ async function downloadBounded(
       }
       chunks.push(value);
     }
+  } catch (err) {
+    // Re-classify: if the AbortController fired (timeout), wrap as TimeoutError
+    // so the caller can distinguish timeout from stream failure.
+    if (err instanceof SizeExceededError) throw err;
+    if (isAbortError(err) && abortController.signal.aborted) {
+      throw new TimeoutError();
+    }
+    throw err;
   } finally {
-    // Always release the reader lock — enables garbage collection of the
-    // underlying connection even if an error was thrown above.
+    // Always release the reader lock and cancel the body to free the socket.
     try { reader.releaseLock(); } catch { /* already released */ }
-    // Cancel any remaining body to free the socket.
     try { body.cancel().catch(() => {}); } catch { /* no-op */ }
   }
 
   return Buffer.concat(chunks, received);
-}
-
-class SizeExceededError extends Error {
-  constructor(public readonly receivedBytes: number) {
-    super(`Image exceeds maximum allowed size (received ${receivedBytes} bytes)`);
-    this.name = 'SizeExceededError';
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -152,8 +194,8 @@ export async function GET(request: NextRequest) {
     });
   } catch (err) {
     clearTimeout(timeout);
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      logger.warn('image-convert: upstream fetch timed out', { url: url.substring(0, 120) });
+    if (isAbortError(err)) {
+      logger.warn('image-convert: upstream timeout', { phase: 'connect' });
       return NextResponse.json({ error: 'Upstream timeout' }, { status: 504 });
     }
     return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
@@ -161,7 +203,9 @@ export async function GET(request: NextRequest) {
 
   if (!response.ok) {
     clearTimeout(timeout);
-    logger.warn('image-convert: upstream returned non-OK status', { status: response.status });
+    // Discard the body of rejected responses to release the network socket
+    discardResponseBody(response);
+    logger.warn('image-convert: upstream error', { status: response.status });
     return NextResponse.json({ error: 'Failed to fetch image' }, { status: 502 });
   }
 
@@ -172,10 +216,14 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     clearTimeout(timeout);
     if (err instanceof SizeExceededError) {
-      logger.warn('image-convert: rejected oversized image', { receivedBytes: err.receivedBytes });
+      logger.warn('image-convert: size exceeded', { phase: 'download' });
       return NextResponse.json({ error: 'Image too large' }, { status: 413 });
     }
-    logger.warn('image-convert: download stream error');
+    if (err instanceof TimeoutError) {
+      logger.warn('image-convert: upstream timeout', { phase: 'download' });
+      return NextResponse.json({ error: 'Upstream timeout' }, { status: 504 });
+    }
+    logger.warn('image-convert: download failed', { phase: 'download' });
     return NextResponse.json({ error: 'Failed to download image' }, { status: 502 });
   }
   clearTimeout(timeout);
@@ -190,23 +238,43 @@ export async function GET(request: NextRequest) {
 
     // Reject images with extreme dimensions even if under pixel limit
     if (
-      metadata.width && metadata.width > MAX_INPUT_DIMENSION ||
-      metadata.height && metadata.height > MAX_INPUT_DIMENSION
+      (metadata.width && metadata.width > MAX_INPUT_DIMENSION) ||
+      (metadata.height && metadata.height > MAX_INPUT_DIMENSION)
     ) {
-      logger.warn('image-convert: rejected oversized dimensions', {
-        width: metadata.width ?? 0,
-        height: metadata.height ?? 0,
+      logger.warn('image-convert: dimension limit', {
+        w: metadata.width ?? 0,
+        h: metadata.height ?? 0,
       });
       return NextResponse.json({ error: 'Image dimensions too large' }, { status: 413 });
     }
 
-    const jpeg = await image
+    // First encode attempt at standard quality
+    let jpeg = await image
       .resize(MAX_OUTPUT_DIMENSION, MAX_OUTPUT_DIMENSION, {
         fit: 'inside',
         withoutEnlargement: true,
       })
       .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
       .toBuffer();
+
+    // If output exceeds WhatsApp limit, try reduced quality once
+    if (jpeg.byteLength > MAX_OUTPUT_BYTES) {
+      jpeg = await sharp(imageBuffer, { limitInputPixels: MAX_INPUT_PIXELS })
+        .resize(MAX_OUTPUT_DIMENSION, MAX_OUTPUT_DIMENSION, {
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .jpeg({ quality: JPEG_QUALITY_REDUCED, mozjpeg: true })
+        .toBuffer();
+
+      // If still over limit, reject rather than loop
+      if (jpeg.byteLength > MAX_OUTPUT_BYTES) {
+        logger.warn('image-convert: output size exceeded', {
+          outputBytes: jpeg.byteLength,
+        });
+        return NextResponse.json({ error: 'Converted image too large for delivery' }, { status: 413 });
+      }
+    }
 
     return new NextResponse(new Uint8Array(jpeg), {
       headers: {
@@ -216,7 +284,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (err) {
     // Sharp throws for corrupt/unsupported input — return safe error
-    logger.warn('image-convert: sharp processing failed');
+    logger.warn('image-convert: processing failed', { phase: 'sharp' });
     return NextResponse.json({ error: 'Invalid image' }, { status: 400 });
   }
 }

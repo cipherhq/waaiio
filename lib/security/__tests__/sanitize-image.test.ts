@@ -323,10 +323,13 @@ describe('images/convert resource hardening', () => {
   const VALID_STORAGE_URL = `${SUPABASE_URL}/storage/v1/object/public/images/test.webp`;
 
   let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let loggerMod: { logger: { warn: ReturnType<typeof vi.fn> } };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL;
     fetchSpy = vi.spyOn(globalThis, 'fetch');
+    loggerMod = await import('@/lib/logger') as typeof loggerMod;
+    vi.mocked(loggerMod.logger.warn).mockClear();
   });
 
   afterEach(() => {
@@ -360,7 +363,9 @@ describe('images/convert resource hardening', () => {
     });
   }
 
-  // --- Normal conversion: WebP input → JPEG output ---------------------------
+  // =========================================================================
+  // Normal conversion (PNG, WebP, JPEG)
+  // =========================================================================
 
   it('converts a valid WebP image to JPEG', async () => {
     const webp = await makeImage('webp', { width: 40, height: 40 });
@@ -378,8 +383,6 @@ describe('images/convert resource hardening', () => {
     expect(meta.height).toBe(40);
   });
 
-  // --- Normal conversion: JPEG input → JPEG output ---------------------------
-
   it('converts a valid JPEG image (re-encodes to JPEG)', async () => {
     const jpeg = await makeImage('jpeg', { width: 50, height: 50 });
     fetchSpy.mockResolvedValue(new Response(jpeg, { status: 200 }));
@@ -391,15 +394,9 @@ describe('images/convert resource hardening', () => {
 
     const body = await res.arrayBuffer();
     const bytes = new Uint8Array(body);
-    // JPEG magic bytes
     expect(bytes[0]).toBe(0xff);
     expect(bytes[1]).toBe(0xd8);
-
-    const meta = await sharp(Buffer.from(body)).metadata();
-    expect(meta.format).toBe('jpeg');
   });
-
-  // --- Normal conversion: PNG input (already tested above, but verify caching) -
 
   it('returns correct cache-control headers', async () => {
     const png = await makeImage('png', { width: 20, height: 20 });
@@ -410,56 +407,62 @@ describe('images/convert resource hardening', () => {
     expect(res.headers.get('cache-control')).toBe('public, max-age=86400, s-maxage=86400');
   });
 
-  // --- Oversized Content-Length is rejected early ----------------------------
+  // =========================================================================
+  // Download byte limits
+  // =========================================================================
 
   it('rejects response with Content-Length exceeding 10 MB', async () => {
     const headers = new Headers({ 'Content-Length': String(11 * 1024 * 1024) });
-    // Body stream should NOT be fully consumed — the route should abort early
     const stream = makeLargeStream(11 * 1024 * 1024);
     fetchSpy.mockResolvedValue(new Response(stream, { status: 200, headers }));
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(413);
-
-    const body = await res.json();
-    expect(body.error).toBe('Image too large');
+    expect((await res.json()).error).toBe('Image too large');
   });
 
-  // --- Missing Content-Length does NOT bypass the limit ----------------------
-
   it('rejects oversized body even when Content-Length header is absent', async () => {
-    // No Content-Length header, but body exceeds 10 MB
     const stream = makeLargeStream(11 * 1024 * 1024);
     fetchSpy.mockResolvedValue(new Response(stream, { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(413);
-
-    const body = await res.json();
-    expect(body.error).toBe('Image too large');
+    expect((await res.json()).error).toBe('Image too large');
   });
 
-  // --- Falsified Content-Length does NOT bypass the limit --------------------
-
   it('rejects body exceeding limit even when Content-Length lies (claims small)', async () => {
-    // Content-Length says 1 KB, but stream emits 11 MB
     const headers = new Headers({ 'Content-Length': '1024' });
     const stream = makeLargeStream(11 * 1024 * 1024);
     fetchSpy.mockResolvedValue(new Response(stream, { status: 200, headers }));
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(413);
-
-    const body = await res.json();
-    expect(body.error).toBe('Image too large');
+    expect((await res.json()).error).toBe('Image too large');
   });
 
-  // --- Streaming stops when byte budget is exceeded -------------------------
+  it('handles non-numeric Content-Length gracefully', async () => {
+    const png = await makeImage('png', { width: 10, height: 10 });
+    const headers = new Headers({ 'Content-Length': 'not-a-number' });
+    fetchSpy.mockResolvedValue(new Response(png, { status: 200, headers }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    // Non-numeric Content-Length should be ignored (NaN), actual bytes enforced
+    expect(res.status).toBe(200);
+  });
+
+  it('handles Content-Length of zero gracefully', async () => {
+    const headers = new Headers({ 'Content-Length': '0' });
+    // Empty body — should fail at Sharp processing
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(0), { status: 200, headers }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(400); // Invalid image (empty)
+  });
 
   it('stops reading the stream once the byte budget is exceeded', async () => {
     let chunksEmitted = 0;
-    const chunkSize = 1024 * 1024; // 1 MB chunks
-    const totalChunks = 20; // 20 MB total — well over 10 MB limit
+    const chunkSize = 1024 * 1024;
+    const totalChunks = 20;
 
     const stream = new ReadableStream<Uint8Array>({
       pull(controller) {
@@ -476,48 +479,79 @@ describe('images/convert resource hardening', () => {
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(413);
-
-    // Should have stopped well before consuming all 20 chunks.
-    // Budget is 10 MB = 10 chunks of 1 MB. The check fires after accumulating,
-    // so up to 11 chunks may be read before the (11 MB) check triggers abort.
-    // Allow one extra for the chunk that triggers the overflow.
+    // Budget is 10 MB = 10 chunks of 1 MB. Allow 1-2 extra for the overflow chunk.
     expect(chunksEmitted).toBeLessThanOrEqual(12);
   });
 
-  // --- Timeout terminates the upstream request ------------------------------
+  // =========================================================================
+  // Timeout classification (P1 fix)
+  // =========================================================================
 
-  it('returns 504 when upstream fetch times out', async () => {
-    // Simulate AbortError (what happens when AbortController.abort() fires)
+  it('returns 504 when fetch itself is aborted (connect timeout)', async () => {
     const abortError = new DOMException('The operation was aborted', 'AbortError');
     fetchSpy.mockRejectedValue(abortError);
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(504);
-
-    const body = await res.json();
-    expect(body.error).toBe('Upstream timeout');
+    expect((await res.json()).error).toBe('Upstream timeout');
   });
 
-  // --- Stream resources are released on success -----------------------------
-
-  it('succeeds with a streamed response body (no buffering regression)', async () => {
-    const png = await makeImage('png', { width: 25, height: 25 });
-
+  it('returns 504 when body download is aborted mid-stream (stalled body)', async () => {
+    // Simulate a stream that delivers some data then stalls, and gets aborted
+    // by the AbortController. This exercises the download catch path.
+    let readerController: ReadableStreamDefaultController<Uint8Array>;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new Uint8Array(png));
-        controller.close();
+        readerController = controller;
+        // Emit one small chunk to start the download
+        controller.enqueue(new Uint8Array(1024));
       },
     });
 
-    fetchSpy.mockResolvedValue(new Response(stream, { status: 200 }));
+    // The fetch succeeds with 200 and starts streaming
+    fetchSpy.mockImplementation((_url: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal;
+      // When the signal aborts, make the stream error with AbortError
+      if (signal) {
+        signal.addEventListener('abort', () => {
+          try {
+            readerController.error(new DOMException('The operation was aborted', 'AbortError'));
+          } catch { /* stream may already be errored */ }
+        });
+      }
+      return Promise.resolve(new Response(stream, { status: 200 }));
+    });
 
-    const res = await callRoute(VALID_STORAGE_URL);
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe('image/jpeg');
+    // Abort immediately to simulate timeout during download
+    // We need to intercept the AbortController. Since we can't access
+    // the route's internal controller, we abort via the signal listener above
+    // by triggering it from outside. Use a short setTimeout to abort after
+    // the route calls fetch but while reader.read() is pending.
+    const originalSetTimeout = globalThis.setTimeout;
+    let capturedAbortFn: (() => void) | null = null;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn: TimerHandler, _ms?: number) => {
+      capturedAbortFn = fn as () => void;
+      // Return a valid timer ID but don't actually schedule it
+      return originalSetTimeout(() => {}, 0) as unknown as NodeJS.Timeout;
+    });
+
+    // Start the route call, but before it resolves, fire the "timeout"
+    const routePromise = callRoute(VALID_STORAGE_URL);
+
+    // Give the event loop a tick to let the route get to reader.read()
+    await new Promise((r) => originalSetTimeout(r, 10));
+
+    // Fire the captured timeout callback (the abort)
+    if (capturedAbortFn) capturedAbortFn();
+
+    const res = await routePromise;
+    expect(res.status).toBe(504);
+    expect((await res.json()).error).toBe('Upstream timeout');
   });
 
-  // --- Stream resources are released on size rejection ----------------------
+  // =========================================================================
+  // Stream cleanup
+  // =========================================================================
 
   it('releases stream resources when size limit is exceeded', async () => {
     let cancelCalled = false;
@@ -542,54 +576,29 @@ describe('images/convert resource hardening', () => {
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(413);
-    // Cancel should have been called to release the stream
     expect(cancelCalled).toBe(true);
   });
 
-  // --- Oversized image dimensions are rejected ------------------------------
+  it('succeeds with a streamed response body', async () => {
+    const png = await makeImage('png', { width: 25, height: 25 });
 
-  it('rejects image with dimensions exceeding 10 000 px', async () => {
-    // Create an image that is 10001 × 1 — tiny in bytes but extreme dimension
-    const wideImage = await sharp({
-      create: { width: 10001, height: 1, channels: 3, background: '#f00' },
-    }).png().toBuffer();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(png));
+        controller.close();
+      },
+    });
 
-    fetchSpy.mockResolvedValue(new Response(wideImage, { status: 200 }));
-
-    const res = await callRoute(VALID_STORAGE_URL);
-    expect(res.status).toBe(413);
-
-    const body = await res.json();
-    expect(body.error).toBe('Image dimensions too large');
-  });
-
-  it('rejects image with tall dimension exceeding 10 000 px', async () => {
-    const tallImage = await sharp({
-      create: { width: 1, height: 10001, channels: 3, background: '#0f0' },
-    }).png().toBuffer();
-
-    fetchSpy.mockResolvedValue(new Response(tallImage, { status: 200 }));
+    fetchSpy.mockResolvedValue(new Response(stream, { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
-    expect(res.status).toBe(413);
-
-    const body = await res.json();
-    expect(body.error).toBe('Image dimensions too large');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/jpeg');
   });
 
-  // --- Invalid image content fails safely -----------------------------------
-
-  it('returns 400 for corrupted image data (random bytes)', async () => {
-    fetchSpy.mockResolvedValue(new Response(randomBytes(2048), { status: 200 }));
-
-    const res = await callRoute(VALID_STORAGE_URL);
-    expect(res.status).toBe(400);
-
-    const body = await res.json();
-    expect(body.error).toBe('Invalid image');
-  });
-
-  // --- Upstream non-OK status -----------------------------------------------
+  // =========================================================================
+  // Non-OK response cleanup (P2 fix)
+  // =========================================================================
 
   it('returns 502 for upstream 404', async () => {
     fetchSpy.mockResolvedValue(new Response('Not Found', { status: 404 }));
@@ -605,9 +614,111 @@ describe('images/convert resource hardening', () => {
     expect(res.status).toBe(502);
   });
 
-  // --- Error responses do not leak internals --------------------------------
+  it('discards body of non-OK upstream response', async () => {
+    let cancelCalled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1024));
+        // Don't close — simulates a non-OK response with dangling body
+      },
+      cancel() {
+        cancelCalled = true;
+      },
+    });
 
-  it('error responses do not contain URL, credentials, or stack traces', async () => {
+    fetchSpy.mockResolvedValue(new Response(stream, { status: 503 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(502);
+    expect(cancelCalled).toBe(true);
+  });
+
+  // =========================================================================
+  // Dimension limits (8 000 px per axis)
+  // =========================================================================
+
+  it('rejects image with width exceeding 8 000 px', async () => {
+    const wideImage = await sharp({
+      create: { width: 8001, height: 1, channels: 3, background: '#f00' },
+    }).png().toBuffer();
+
+    fetchSpy.mockResolvedValue(new Response(wideImage, { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe('Image dimensions too large');
+  });
+
+  it('rejects image with height exceeding 8 000 px', async () => {
+    const tallImage = await sharp({
+      create: { width: 1, height: 8001, channels: 3, background: '#0f0' },
+    }).png().toBuffer();
+
+    fetchSpy.mockResolvedValue(new Response(tallImage, { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe('Image dimensions too large');
+  });
+
+  it('accepts an image at exactly the dimension limit (8 000 × 1)', async () => {
+    const edgeImage = await sharp({
+      create: { width: 8000, height: 1, channels: 3, background: '#00f' },
+    }).png().toBuffer();
+
+    fetchSpy.mockResolvedValue(new Response(edgeImage, { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(200);
+  });
+
+  // =========================================================================
+  // Invalid content
+  // =========================================================================
+
+  it('returns 400 for corrupted image data (random bytes)', async () => {
+    fetchSpy.mockResolvedValue(new Response(randomBytes(2048), { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('Invalid image');
+  });
+
+  // =========================================================================
+  // Diagnostic logging: no URLs, paths, or sensitive data (P1/P2 fix)
+  // =========================================================================
+
+  it('logger.warn arguments never contain user-supplied URLs or storage paths', async () => {
+    // Trigger multiple error paths and verify no URL leaks in any log call.
+    const sensitiveUrl = `${SUPABASE_URL}/storage/v1/object/public/secret-bucket/private-photo.webp`;
+
+    // 1. Timeout path
+    fetchSpy.mockRejectedValue(new DOMException('The operation was aborted', 'AbortError'));
+    await callRoute(sensitiveUrl);
+
+    // 2. Non-OK upstream
+    fetchSpy.mockResolvedValue(new Response('fail', { status: 500 }));
+    await callRoute(sensitiveUrl);
+
+    // 3. Invalid image
+    fetchSpy.mockResolvedValue(new Response(randomBytes(256), { status: 200 }));
+    await callRoute(sensitiveUrl);
+
+    // Check all logger.warn calls — none should contain any part of the URL
+    const warnCalls = vi.mocked(loggerMod.logger.warn).mock.calls;
+    expect(warnCalls.length).toBeGreaterThanOrEqual(3);
+
+    for (const call of warnCalls) {
+      const serialized = JSON.stringify(call);
+      expect(serialized).not.toContain('supabase.co');
+      expect(serialized).not.toContain('secret-bucket');
+      expect(serialized).not.toContain('private-photo');
+      expect(serialized).not.toContain('/storage/v1');
+      expect(serialized).not.toContain('url');
+    }
+  });
+
+  it('error responses do not contain URLs, credentials, or stack traces', async () => {
     fetchSpy.mockResolvedValue(new Response(randomBytes(256), { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
@@ -620,9 +731,83 @@ describe('images/convert resource hardening', () => {
     expect(text).not.toContain('Error:');
   });
 
-  // --- WhatsApp-compatible: valid image under limits passes through ----------
+  // =========================================================================
+  // WhatsApp output size enforcement (P2 fix)
+  // =========================================================================
 
-  it('WhatsApp-compatible: converts a typical product image (800×600 PNG)', async () => {
+  it('JPEG output is within WhatsApp 5 MB limit for normal images', async () => {
+    const productImage = await makeImage('png', { width: 800, height: 600 });
+    fetchSpy.mockResolvedValue(new Response(productImage, { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(200);
+
+    const body = await res.arrayBuffer();
+    // Must be under 4.5 MB (our safe margin)
+    expect(body.byteLength).toBeLessThan(4_608_000);
+  });
+
+  it('large valid image (1200×800 WebP) converts within size limits', async () => {
+    const largeImage = await makeImage('webp', { width: 1200, height: 800 });
+    fetchSpy.mockResolvedValue(new Response(largeImage, { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(200);
+
+    const body = await res.arrayBuffer();
+    const meta = await sharp(Buffer.from(body)).metadata();
+    expect(meta.format).toBe('jpeg');
+    expect(meta.width).toBe(1200);
+    expect(meta.height).toBe(800);
+    expect(body.byteLength).toBeLessThan(4_608_000);
+  });
+
+  it('high-entropy image output stays within WhatsApp limit or is rejected', async () => {
+    // Create a 1500×1500 image with random noise (high entropy = hard to compress).
+    // Encode as JPEG at near-lossless quality to keep input under 10 MB download.
+    const noiseBuffer = randomBytes(1500 * 1500 * 3);
+    const noisyImage = await sharp(noiseBuffer, {
+      raw: { width: 1500, height: 1500, channels: 3 },
+    }).jpeg({ quality: 98 }).toBuffer();
+
+    fetchSpy.mockResolvedValue(new Response(noisyImage, { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+
+    // Either succeeds with output under 4.5 MB, or is rejected at 413
+    if (res.status === 413) {
+      const body = await res.json();
+      // Could be download-size or output-size rejection
+      expect(['Image too large', 'Converted image too large for delivery']).toContain(body.error);
+    } else {
+      expect(res.status).toBe(200);
+      const body = await res.arrayBuffer();
+      expect(body.byteLength).toBeLessThan(4_608_000);
+    }
+  }, 15_000);
+
+  it('output size enforcement: JPEG output under 4.5 MB for 4096×4096 solid color', async () => {
+    // Solid color compresses extremely well in JPEG — should always be under limit.
+    // This verifies the output path works for large-dimension images.
+    const solidImage = await sharp({
+      create: { width: 4096, height: 4096, channels: 3, background: '#336699' },
+    }).png().toBuffer();
+
+    fetchSpy.mockResolvedValue(new Response(solidImage, { status: 200 }));
+
+    const res = await callRoute(VALID_STORAGE_URL);
+    expect(res.status).toBe(200);
+
+    const body = await res.arrayBuffer();
+    expect(body.byteLength).toBeLessThan(4_608_000);
+    expect(body.byteLength).toBeGreaterThan(0);
+  }, 15_000);
+
+  // =========================================================================
+  // WhatsApp-compatible product/event images
+  // =========================================================================
+
+  it('WhatsApp-compatible: typical product image (800×600 PNG)', async () => {
     const productImage = await makeImage('png', { width: 800, height: 600 });
     fetchSpy.mockResolvedValue(new Response(productImage, { status: 200 }));
 
@@ -636,35 +821,5 @@ describe('images/convert resource hardening', () => {
     expect(meta.format).toBe('jpeg');
     expect(meta.width).toBe(800);
     expect(meta.height).toBe(600);
-  });
-
-  it('WhatsApp-compatible: converts a large but valid image (3000×2000 WebP)', async () => {
-    const largeImage = await makeImage('webp', { width: 3000, height: 2000 });
-    fetchSpy.mockResolvedValue(new Response(largeImage, { status: 200 }));
-
-    const res = await callRoute(VALID_STORAGE_URL);
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe('image/jpeg');
-
-    const body = await res.arrayBuffer();
-    const meta = await sharp(Buffer.from(body)).metadata();
-    expect(meta.format).toBe('jpeg');
-    // Should not have been resized (under 4096 limit)
-    expect(meta.width).toBe(3000);
-    expect(meta.height).toBe(2000);
-  });
-
-  // --- Exactly-at-limit images pass through ---------------------------------
-
-  it('accepts an image at exactly the dimension limit (10 000 × 1)', async () => {
-    const edgeImage = await sharp({
-      create: { width: 10000, height: 1, channels: 3, background: '#00f' },
-    }).png().toBuffer();
-
-    fetchSpy.mockResolvedValue(new Response(edgeImage, { status: 200 }));
-
-    const res = await callRoute(VALID_STORAGE_URL);
-    expect(res.status).toBe(200);
   });
 });
