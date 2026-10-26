@@ -292,7 +292,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       UPDATE products SET stock_quantity = 30 WHERE id = '${PRODUCT_B}';
       UPDATE product_variants SET stock_quantity = 15 WHERE id = '${VARIANT_A1}';
       UPDATE events SET tickets_sold = 95, price = 3000, total_tickets = 100, status = 'published' WHERE id = '${EVENT_A}';
-      UPDATE event_ticket_types SET tickets_sold = 18, price = 5000, total_tickets = 20 WHERE id = '${TICKET_TYPE}';
+      DELETE FROM event_ticket_types WHERE id = '${TICKET_TYPE}';
+      INSERT INTO event_ticket_types (id, event_id, name, price, total_tickets, tickets_sold)
+        VALUES ('${TICKET_TYPE}', '${EVENT_A}', 'VIP', 5000, 20, 18);
     `);
   }
 
@@ -1664,7 +1666,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
 
     it('56. ticket-type race — two sessions racing for last ticket-type unit', async () => {
       // Set ticket type to 1 remaining (19 sold of 20), reset price to original fixture
-      psql(`UPDATE event_ticket_types SET tickets_sold = 19, total_tickets = 20, price = 5000 WHERE id = '${TICKET_TYPE}';`);
+      // Use DELETE+INSERT to avoid M470 capacity-decrease trigger (total_tickets may have been
+      // increased by a prior test; the trigger correctly blocks decreases on saved tiers).
+      psql(`DELETE FROM event_ticket_types WHERE id = '${TICKET_TYPE}'; INSERT INTO event_ticket_types (id, event_id, name, price, total_tickets, tickets_sold) VALUES ('${TICKET_TYPE}', '${EVENT_A}', 'VIP', 5000, 20, 19);`);
       // Ensure event has capacity and correct price/status
       psql(`UPDATE events SET tickets_sold = 90, total_tickets = 100, price = 3000, status = 'published' WHERE id = '${EVENT_A}';`);
 
