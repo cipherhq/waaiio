@@ -4298,6 +4298,37 @@ jobs:
           fi
           echo "M469 settlement and refund PostgreSQL tests passed — zero skips."
 
+      # M712: Production-shaped migration sequence regression (M425→M439→M472).
+      - name: M712 production migration sequence (disposable PG)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m712_test
+          createdb --maintenance-db=waaiio_test waaiio_m712_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m712_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m712_test
+          export REQUIRE_PG_TESTS=true
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/m712-production-migration-sequence.pg.test.ts 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$CODE" -ne 0 ]; then exit "$CODE"; fi
+          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* skipped'; then
+            echo "M712 production sequence test skipped — failing CI"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q '16 passed'; then
+            echo "M712 expected sixteen passing tests"
+            exit 1
+          fi
+          echo "M712 production migration sequence tests passed — zero skips."
+
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
