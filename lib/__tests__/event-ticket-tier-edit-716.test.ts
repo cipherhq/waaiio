@@ -101,16 +101,23 @@ describe('Issue #716 — integration boundaries', () => {
     expect(botFlow).toContain('tt && !tt.is_active');
     expect(botFlow).toContain('this ticket type is no longer available');
   });
-  it('WhatsApp bot re-checks is_active before booking INSERT in process_tickets', () => {
-    // process_tickets must re-check is_active right before creating a new booking
+  it('WhatsApp bot uses atomic create_ticket_booking_checked RPC in process_tickets', () => {
     const processStep = botFlow.indexOf("id: 'process_tickets'");
     expect(processStep).toBeGreaterThan(-1);
-    // The check must appear between process_tickets start and the booking INSERT
-    const checkIdx = botFlow.indexOf('ticketTypeId716', processStep);
-    const insertIdx = botFlow.indexOf("from('bookings')", processStep);
-    expect(checkIdx).toBeGreaterThan(processStep);
-    expect(insertIdx).toBeGreaterThan(checkIdx);
-    // Must not block existing bookings (idempotent recovery)
-    expect(botFlow).toContain('!(d.booking_id && d.reference_code)');
+    // Must call the atomic RPC, not a direct INSERT
+    expect(botFlow).toContain("rpc('create_ticket_booking_checked'");
+    // Must handle tier_paused and all_tiers_paused from the RPC
+    expect(botFlow).toContain("rpcErr.message?.includes('tier_paused')");
+    expect(botFlow).toContain("rpcErr.message?.includes('all_tiers_paused')");
+  });
+  it('WhatsApp bot clears stale tier state on event change', () => {
+    // select_ticket_type.skipIf must clear _all_tiers_paused and _ticket_types
+    expect(botFlow).toContain("delete ctx.session.session_data._all_tiers_paused");
+    expect(botFlow).toContain("delete ctx.session.session_data._ticket_types");
+  });
+  it('WhatsApp bot treats tier lookup errors as errors (fail closed)', () => {
+    // Query errors should not be interpreted as "no tiers"
+    expect(botFlow).toContain('tierErr');
+    expect(botFlow).toContain('activeErr');
   });
 });

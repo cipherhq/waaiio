@@ -245,6 +245,153 @@ END;
 $$;
 
 -- ═══════════════════════════════════════════════════════
+-- Part 2b: Atomic ticket booking fence for bot paid-ticket path
+-- ═══════════════════════════════════════════════════════
+-- The bot creates pending bookings for paid events BEFORE payment.
+-- Unlike purchase_tickets_atomic (which increments tickets_sold at
+-- creation), this function creates a pending booking WITHOUT
+-- incrementing sold counters. Inventory is committed later by
+-- finalize_free_ticket_booking after payment succeeds.
+--
+-- Crucially, it acquires a FOR UPDATE lock on the tier row and
+-- checks is_active + availability atomically, closing the TOCTOU
+-- gap between the bot's application-level read and INSERT.
+
+CREATE OR REPLACE FUNCTION public.create_ticket_booking_checked(
+  p_business_id UUID,
+  p_event_id UUID,
+  p_ticket_type_id UUID,    -- NULL for tierless events
+  p_quantity INT,
+  p_user_id UUID,
+  p_total_amount INT,
+  p_guest_name TEXT,
+  p_guest_phone TEXT,
+  p_bot_session_id UUID,
+  p_expected_price INT DEFAULT NULL
+) RETURNS TABLE(booking_id UUID, reference_code TEXT, success BOOLEAN)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_booking_id UUID;
+  v_ref TEXT;
+  v_event_date DATE;
+  v_event_time TIME;
+  v_event_name TEXT;
+  v_event_status TEXT;
+  v_event_biz UUID;
+  v_available INT;
+  v_has_tiers BOOLEAN;
+  v_tt_price INT;
+  v_tt_event_id UUID;
+  v_tt_active BOOLEAN;
+  v_existing_id UUID;
+  v_existing_ref TEXT;
+BEGIN
+  -- Bot session idempotency: return existing booking if present
+  IF p_bot_session_id IS NOT NULL THEN
+    SELECT id, bookings.reference_code INTO v_existing_id, v_existing_ref
+    FROM bookings
+    WHERE bot_session_id = p_bot_session_id
+      AND status IN ('pending', 'confirmed')
+    LIMIT 1;
+    IF FOUND THEN
+      RETURN QUERY SELECT v_existing_id, v_existing_ref, true;
+      RETURN;
+    END IF;
+  END IF;
+
+  -- Lock event
+  SELECT date, time, name, status::text, business_id
+  INTO v_event_date, v_event_time, v_event_name, v_event_status, v_event_biz
+  FROM events WHERE id = p_event_id FOR UPDATE;
+
+  IF NOT FOUND OR v_event_biz != p_business_id OR v_event_status != 'published' THEN
+    RETURN QUERY SELECT NULL::UUID, NULL::TEXT, false;
+    RETURN;
+  END IF;
+
+  -- Tier validation (mirrors purchase_tickets_atomic logic)
+  IF p_ticket_type_id IS NOT NULL THEN
+    SELECT price, event_id, is_active INTO v_tt_price, v_tt_event_id, v_tt_active
+    FROM event_ticket_types WHERE id = p_ticket_type_id FOR UPDATE;
+
+    IF v_tt_price IS NULL OR v_tt_event_id != p_event_id THEN
+      RETURN QUERY SELECT NULL::UUID, NULL::TEXT, false;
+      RETURN;
+    END IF;
+    IF NOT v_tt_active THEN
+      RAISE EXCEPTION 'tier_paused:Ticket type % is not currently available for sale', p_ticket_type_id;
+    END IF;
+    IF p_expected_price IS NOT NULL AND v_tt_price != p_expected_price THEN
+      RAISE EXCEPTION 'price_changed:Ticket price changed from % to %', p_expected_price, v_tt_price;
+    END IF;
+
+    SELECT (total_tickets - tickets_sold) INTO v_available
+    FROM event_ticket_types WHERE id = p_ticket_type_id;
+  ELSE
+    -- All-paused guard for null-tier
+    SELECT EXISTS (SELECT 1 FROM event_ticket_types WHERE event_id = p_event_id) INTO v_has_tiers;
+    IF v_has_tiers THEN
+      IF NOT EXISTS (SELECT 1 FROM event_ticket_types WHERE event_id = p_event_id AND is_active = true) THEN
+        RAISE EXCEPTION 'all_tiers_paused:All ticket types for this event are currently unavailable';
+      ELSE
+        RAISE EXCEPTION 'tier_required:This event requires a ticket type selection';
+      END IF;
+    END IF;
+
+    SELECT (total_tickets - tickets_sold) INTO v_available FROM events WHERE id = p_event_id;
+  END IF;
+
+  IF v_available IS NULL OR v_available < p_quantity THEN
+    RETURN QUERY SELECT NULL::UUID, NULL::TEXT, false;
+    RETURN;
+  END IF;
+
+  -- Create PENDING booking WITHOUT incrementing tickets_sold.
+  -- Inventory commitment deferred to finalize_free_ticket_booking after payment.
+  INSERT INTO bookings (
+    business_id, user_id, event_id, date, time, party_size, quantity,
+    flow_type, channel, deposit_amount, deposit_status, status,
+    total_amount, guest_name, guest_phone, notes, bot_session_id
+  ) VALUES (
+    p_business_id, p_user_id, p_event_id,
+    v_event_date, COALESCE(v_event_time, '00:00'::TIME),
+    p_quantity, p_quantity,
+    'ticketing'::flow_type, 'whatsapp'::booking_channel,
+    p_total_amount,
+    CASE WHEN p_total_amount > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
+    CASE WHEN p_total_amount > 0 THEN 'pending'::reservation_status ELSE 'confirmed'::reservation_status END,
+    p_total_amount, p_guest_name, p_guest_phone,
+    'Tickets for: ' || v_event_name, p_bot_session_id
+  ) RETURNING id, bookings.reference_code INTO v_booking_id, v_ref;
+
+  RETURN QUERY SELECT v_booking_id, v_ref, true;
+END;
+$$;
+
+-- ACL for create_ticket_booking_checked (service_role only)
+DO $$
+BEGIN
+  REVOKE ALL ON FUNCTION public.create_ticket_booking_checked(
+    uuid, uuid, uuid, integer, uuid, integer, text, text, uuid, integer
+  ) FROM PUBLIC;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    REVOKE ALL ON FUNCTION public.create_ticket_booking_checked(
+      uuid, uuid, uuid, integer, uuid, integer, text, text, uuid, integer
+    ) FROM anon;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON FUNCTION public.create_ticket_booking_checked(
+      uuid, uuid, uuid, integer, uuid, integer, text, text, uuid, integer
+    ) FROM authenticated;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    GRANT EXECUTE ON FUNCTION public.create_ticket_booking_checked(
+      uuid, uuid, uuid, integer, uuid, integer, text, text, uuid, integer
+    ) TO service_role;
+  END IF;
+END $$;
+
+-- ═══════════════════════════════════════════════════════
 -- Part 3: Re-apply ACL (CREATE OR REPLACE resets grants)
 -- ═══════════════════════════════════════════════════════
 

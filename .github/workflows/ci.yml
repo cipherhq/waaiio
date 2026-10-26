@@ -2806,6 +2806,38 @@ jobs:
           fi
           echo "✅ Ticket purchase security tests complete — zero skips, zero failures."
 
+      - name: M470 Ticket tier guards tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M470 ticket tier guards DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/ticket-tier-guards-m470-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M470 ticket tier guards tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M470 tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M470 tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M470 ticket tier guards tests complete — zero skips, zero failures."
+
       - name: Migration 356 Customer360/Financials tests
         env:
           PGHOST: localhost
