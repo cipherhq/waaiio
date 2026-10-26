@@ -1,11 +1,30 @@
 -- M467b: Install 5-arg save_provider_plan_refs with p_tier_prices support.
 --
--- Extracted from M458 Section B. Enables atomic price + plan-code cutover
--- for Paystack countries without touching existing subscription prices.
+-- Extracted from M458 Section B (lines 121-277). Enables atomic price +
+-- plan-code cutover for Paystack countries without touching existing
+-- subscription prices, fees, or trialDays.
 --
--- Prerequisites: platform_config_versions table, countries table with pricing JSONB.
--- Production has the 4-arg version from M378; this replaces it.
--- Idempotent: CREATE OR REPLACE is a no-op if M458 already installed the same body.
+-- Why not apply M458 directly? M458 Section A embeds obsolete Stripe-market
+-- prices (US $15/$40) that would temporarily break new checkouts until M467
+-- overwrites them. This migration installs only the RPC upgrade.
+--
+-- Prerequisites (all present in production without M458):
+--   - platform_config_versions table (M359/M377)
+--   - countries table with pricing JSONB (M092/M377)
+--   - platform_settings table with commercial keys (M377)
+-- Production has the 4-arg version from M378; this drops it and creates
+-- the 5-arg version. The 5-arg version accepts all 4-arg calls unchanged
+-- (p_tier_prices DEFAULT NULL).
+--
+-- Idempotent: CREATE OR REPLACE is a no-op if M458 already ran.
+-- Sort order: 467b runs after 467 and before 468 (alphabetic).
+--
+-- Rollback: CREATE OR REPLACE back to the 4-arg signature is NOT safe
+-- because PostgreSQL cannot change parameter counts via REPLACE. Safe
+-- rollback requires: (1) DROP the 5-arg, (2) CREATE the 4-arg, in a
+-- single transaction. The admin tier_prices UI gracefully omits
+-- p_tier_prices for Stripe countries, so the 4-arg version is backward
+-- compatible for ref-only saves.
 BEGIN;
 
 -- Drop the 4-arg version if it exists (production state)

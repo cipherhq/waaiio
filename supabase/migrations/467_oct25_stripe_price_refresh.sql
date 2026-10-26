@@ -1,5 +1,10 @@
 -- M467: October 25 owner-approved subscription price refresh (Stripe markets)
--- DEPENDS ON M458: countries.pricing is the pricing source of truth.
+--
+-- Actual dependencies (verified on production-shaped disposable PG):
+--   - countries table with code, is_active, pricing JSONB, payment_gateway columns
+--   - trg_guard_country_activation trigger (created by M377, not M458)
+-- M458 is NOT required. M467 was tested standalone against production schema.
+--
 -- This migration deliberately does NOT reprice NG/GH: their Paystack plan codes
 -- must be created and preflighted before an atomic Admin save_refs cutover.
 -- Existing subscriptions are not mutated. New Stripe checkouts use inline price_data.
@@ -26,7 +31,7 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
--- M458 temporarily disables this readiness trigger during already-active price changes.
+-- Temporarily disable the readiness trigger during already-active price changes.
 ALTER TABLE public.countries DISABLE TRIGGER trg_guard_country_activation;
 UPDATE public.countries AS c SET pricing =
   jsonb_set(jsonb_set(c.pricing, '{growth,price}', to_jsonb(v.growth_price), false),
