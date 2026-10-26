@@ -6,6 +6,124 @@ import {
 } from '../inbound-command-normalization';
 import { handleCorrectionReentry } from './correction-reentry';
 import { getFlowCopy, fillFlowCopy } from '../flows/flow-localization';
+import { logger } from '@/lib/logger';
+import { deriveReentryProvenance } from '../reentry-context';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+/**
+ * Safely clean up pending reservations when abandoning a conversational flow.
+ * Uses authoritative cancellation RPCs that handle slot release, stock restoration,
+ * promo reservation release, payment-state fencing, and ownership verification.
+ *
+ * NEVER bypasses these authorities with direct status writes.
+ *
+ * Returns false if any RPC call fails (caller should not tell customer cancellation succeeded).
+ */
+export async function safeFlowCleanup(
+  supabase: SupabaseClient,
+  sessionData: Record<string, unknown>,
+  userId: string | null,
+): Promise<boolean> {
+  let ok = true;
+
+  if (sessionData.booking_id) {
+    // Atomic pending-only cancellation via M471 RPC.
+    // The RPC locks the booking row with FOR UPDATE, checks status = 'pending',
+    // verifies ownership, then delegates to cancel_booking_with_release for
+    // canonical resource release. Confirmed bookings are atomically preserved.
+    const { data: result, error } = await supabase.rpc('cancel_pending_booking_for_navigation', {
+      p_booking_id: sessionData.booking_id as string,
+      p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
+    });
+    if (error) {
+      logger.error('[NAV-CLEANUP] cancel_pending_booking_for_navigation RPC failed', { bookingId: sessionData.booking_id, error: error.message });
+      ok = false;
+    } else if (result === null || result === undefined) {
+      // Unexpected NULL response — treat as failure, preserve session
+      logger.error('[NAV-CLEANUP] cancel_pending_booking_for_navigation returned null', { bookingId: sessionData.booking_id });
+      ok = false;
+    } else if (!result.cancelled) {
+      const reason = result.reason as string;
+      // Safe terminal outcomes: entity is paid or already in a non-pending state.
+      // These are expected and mean the entity is correctly preserved.
+      const safeReasons = ['has_successful_payment', 'not_pending'];
+      if (safeReasons.includes(reason)) {
+        logger.info('[NAV-CLEANUP] booking preserved during navigation', { bookingId: sessionData.booking_id, reason, status: result.status });
+      } else {
+        // not_owner, not_found, missing_params, or unknown — something unexpected.
+        // Treat as cleanup failure to preserve the session.
+        logger.error('[NAV-CLEANUP] booking cleanup uncertain', { bookingId: sessionData.booking_id, reason });
+        ok = false;
+      }
+    }
+  }
+
+  if (sessionData.order_id) {
+    const { data: result, error } = await supabase.rpc('cancel_order_immediate', {
+      p_order_id: sessionData.order_id as string,
+      p_reason: 'customer_cancel',
+    });
+    if (error) {
+      logger.error('[NAV-CLEANUP] cancel_order_immediate RPC failed', { orderId: sessionData.order_id, error: error.message });
+      ok = false;
+    } else if (result === null || result === undefined) {
+      logger.error('[NAV-CLEANUP] cancel_order_immediate returned null', { orderId: sessionData.order_id });
+      ok = false;
+    } else if (!result.cancelled) {
+      const reason = result.reason as string;
+      // cancel_order_immediate returns 'not_found' or 'has_successful_payment'
+      // or the order's current status (e.g. 'confirmed','processing','delivered','cancelled').
+      // 'not_found' means session references a missing order — uncertain, fail safe.
+      if (reason === 'not_found') {
+        logger.error('[NAV-CLEANUP] order cleanup uncertain', { orderId: sessionData.order_id, reason });
+        ok = false;
+      } else {
+        // has_successful_payment or non-pending status — order is in a known safe state
+        logger.info('[NAV-CLEANUP] order preserved during navigation', { orderId: sessionData.order_id, reason });
+      }
+    }
+  }
+
+  // Cancel pending property reservations via M471 atomic RPC.
+  // The RPC locks the reservation, checks status=pending, verifies ownership,
+  // and fences successful payments — same pattern as bookings.
+  if (sessionData.reservation_id) {
+    const { data: resResult, error: resErr } = await supabase.rpc('cancel_pending_reservation_for_navigation', {
+      p_reservation_id: sessionData.reservation_id as string,
+      p_expected_user_id: userId || '00000000-0000-0000-0000-000000000000',
+    });
+    if (resErr) {
+      logger.error('[NAV-CLEANUP] cancel_pending_reservation_for_navigation RPC failed', { reservationId: sessionData.reservation_id, error: resErr.message });
+      ok = false;
+    } else if (resResult === null || resResult === undefined) {
+      logger.error('[NAV-CLEANUP] reservation RPC returned null', { reservationId: sessionData.reservation_id });
+      ok = false;
+    } else if (!resResult.cancelled) {
+      const reason = resResult.reason as string;
+      const safeReasons = ['has_successful_payment', 'not_pending'];
+      if (safeReasons.includes(reason)) {
+        logger.info('[NAV-CLEANUP] reservation preserved during navigation', { reservationId: sessionData.reservation_id, reason, status: resResult.status });
+      } else {
+        logger.error('[NAV-CLEANUP] reservation cleanup uncertain', { reservationId: sessionData.reservation_id, reason });
+        ok = false;
+      }
+    }
+  }
+
+  // Cancel pending bank transfers (simple status write — no inventory/slot/payment authority needed)
+  if (sessionData.bank_transfer_reference) {
+    const { error: transferErr } = await supabase.from('pending_transfers')
+      .update({ status: 'cancelled' })
+      .eq('reference_code', sessionData.bank_transfer_reference as string)
+      .eq('status', 'pending');
+    if (transferErr) {
+      logger.error('[NAV-CLEANUP] pending_transfers cancel failed', { ref: sessionData.bank_transfer_reference, error: transferErr.message });
+      ok = false;
+    }
+  }
+
+  return ok;
+}
 
 type TestableCommandPattern = { test(value: string): boolean };
 
@@ -42,7 +160,7 @@ export async function handleEscapeHatch(
   step: string,
   sendText: (to: string, text: string) => Promise<void>,
   deactivateSession: (sessionId: string) => Promise<void>,
-  handleMessage: (from: string, text: string, type: string, dest?: string, bizId?: string) => Promise<void>,
+  handleMessage: (from: string, text: string, type: string, dest?: string, bizId?: string, mediaUrl?: string, messageId?: string, provenance?: string) => Promise<void>,
   lang?: string,
 ): Promise<{ handled: boolean }> {
   const { supabase, messageSender, flowExecutor, intelligence } = ctx;
@@ -70,8 +188,11 @@ export async function handleEscapeHatch(
     if (correctionReentry.handled) return correctionReentry;
   }
 
-  // Simplified: cancel = back (go back one step)
-  const isCancelOrBack = navigationCommand === 'cancel' || navigationCommand === 'back';
+  // "cancel" = safely abandon the flow and return to business menu (Owner decision 2026-10-25).
+  // "back" = go back one step in the flow.
+  const isCancel = navigationCommand === 'cancel';
+  const isBack = navigationCommand === 'back';
+  const isCancelOrBack = isCancel || isBack;
   const isExitWord = navigationCommand === 'exit';
   const isMenuWord = navigationCommand === 'menu' || navigationCommand === 'restart';
   const isEscapeHatch = isCancelOrBack || isExitWord || isMenuWord;
@@ -108,37 +229,53 @@ export async function handleEscapeHatch(
     return { handled: true };
   }
 
-  // "back" or "cancel" in flow steps → existing executor remains the owner.
-  // For multilingual aliases, canonicalize to the executor's historical English
-  // command instead of duplicating its step-history/CAS transition here.
+  // "back" in flow steps → existing executor remains the owner.
+  // "cancel" → safely abandon the current flow and return to business menu.
 
   if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
     intelligence.resetAbuse(from);
 
-    // ── "menu" / "restart" / "start over" → restart current business menu ──
-    if (isMenuWord && session.business_id) {
+    // ── "cancel" → safely abandon flow and return to business menu ──
+    if (isCancel && session.business_id) {
       const bizId = session.business_id;
+      // ACC-204: Preserve business provenance — prevents trust laundering via cancel
+      const cancelProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
+      const cleanupOk = await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
+
+      if (!cleanupOk) {
+        const lang = session.session_data?._detected_language as string || 'en';
+        await messageSender.sendText({
+          to: from,
+          text: getFlowCopy(lang, 'nav.cancel_retry'),
+        });
+        return { handled: true };
+      }
+
       await deactivateSession(session.id);
-      // Cancel any pending booking/order
-      const d = session.session_data || {};
-      if (d.booking_id) {
-        await supabase.from('bookings')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('id', d.booking_id as string)
-          .in('status', ['pending']);
-      }
-      if (d.order_id) {
-        await supabase.from('orders')
-          .update({ status: 'cancelled' })
-          .eq('id', d.order_id as string)
-          .eq('status', 'pending');
-      }
-      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
+      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, cancelProvenance);
       return { handled: true };
     }
 
-    // ── "cancel" / "back" → go back one step ──
-    if (isCancelOrBack) {
+    // ── "menu" / "restart" / "start over" → restart current business menu ──
+    if (isMenuWord && session.business_id) {
+      const bizId = session.business_id;
+      const menuProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
+      const menuCleanupOk = await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
+      if (!menuCleanupOk) {
+        const lang = session.session_data?._detected_language as string || 'en';
+        await messageSender.sendText({
+          to: from,
+          text: getFlowCopy(lang, 'nav.cancel_retry'),
+        });
+        return { handled: true };
+      }
+      await deactivateSession(session.id);
+      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, menuProvenance);
+      return { handled: true };
+    }
+
+    // ── "back" → go back one step ──
+    if (isBack) {
       // For free-text steps (enter_amount, collect_name, etc.), the executor
       // won't intercept back/cancel. Handle it here instead.
       const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'];
@@ -198,7 +335,7 @@ export async function handleEscapeHatch(
       // Preserve the FlowExecutor as owner of ordinary step-history navigation.
       // Existing English forms fall through unchanged. Multilingual aliases are
       // converted to the canonical English command the executor already owns.
-      const legacyExecutorWords = new Set(['back', 'go back', 'previous', 'cancel']);
+      const legacyExecutorWords = new Set(['back', 'go back', 'previous']);
       if (!legacyExecutorWords.has(normalizedText) && session.business_id) {
         const { data: biz } = await supabase
           .from('businesses')
@@ -208,7 +345,7 @@ export async function handleEscapeHatch(
         if (biz) {
           await flowExecutor.execute(
             from,
-            navigationCommand === 'cancel' ? 'cancel' : 'back',
+            'back',
             session as unknown as BotSession,
             biz,
           );
@@ -220,22 +357,16 @@ export async function handleEscapeHatch(
 
     // ── "exit" / "quit" / "stop" → leave business ──
     if (isExitWord) {
+      const exitCleanupOk = await safeFlowCleanup(supabase, session.session_data || {}, session.user_id);
+      if (!exitCleanupOk) {
+        const lang = session.session_data?._detected_language as string || 'en';
+        await messageSender.sendText({
+          to: from,
+          text: getFlowCopy(lang, 'nav.cancel_retry'),
+        });
+        return { handled: true };
+      }
       await deactivateSession(session.id);
-
-      // Cancel any pending booking/order created during this session
-      const d = session.session_data || {};
-      if (d.booking_id) {
-        await supabase.from('bookings')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('id', d.booking_id as string)
-          .in('status', ['pending']);
-      }
-      if (d.order_id) {
-        await supabase.from('orders')
-          .update({ status: 'cancelled' })
-          .eq('id', d.order_id as string)
-          .eq('status', 'pending');
-      }
 
       // Find the business — from session or from history
       let escBizId = session.business_id;
