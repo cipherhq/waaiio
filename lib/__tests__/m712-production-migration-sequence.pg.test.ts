@@ -24,8 +24,9 @@ suite('PR #712 production migration sequence — M425 baseline', () => {
       DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END $$;
-      CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), raw_app_meta_data JSONB DEFAULT '{}');`);
-    await run("INSERT INTO auth.users (id,raw_app_meta_data) VALUES ($1,'{\"role\":\"admin\"}'::jsonb) ON CONFLICT DO NOTHING", [AID]);
+      CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), raw_app_meta_data JSONB DEFAULT '{}');
+      ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS raw_app_meta_data JSONB DEFAULT '{}';`);
+    await run("INSERT INTO auth.users (id,raw_app_meta_data) VALUES ($1,'{\"role\":\"admin\"}'::jsonb) ON CONFLICT (id) DO UPDATE SET raw_app_meta_data=EXCLUDED.raw_app_meta_data", [AID]);
     await exec("CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID LANGUAGE plpgsql STABLE AS $$ BEGIN RETURN COALESCE(nullif(current_setting('auth.test_uid',true),'')::uuid,NULL); END; $$");
     await exec("CREATE OR REPLACE FUNCTION auth.jwt() RETURNS JSONB LANGUAGE plpgsql STABLE AS $$ DECLARE v text; BEGIN v:=current_setting('auth.jwt_aal',true); IF v IS NULL OR v='' THEN v:='aal1'; END IF; RETURN jsonb_build_object('aal',v); END; $$");
     await exec("CREATE OR REPLACE FUNCTION public.is_admin() RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$ DECLARE r text; BEGIN SELECT raw_app_meta_data->>'role' INTO r FROM auth.users WHERE id=auth.uid(); RETURN COALESCE(r='admin',false); EXCEPTION WHEN OTHERS THEN RETURN false; END; $$");
