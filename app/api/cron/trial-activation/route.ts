@@ -86,14 +86,19 @@ export async function GET(request: NextRequest) {
           // complete OTP later or a subscription can change. These remain
           // retryable (the cron re-attempts them each run).
           if (reason === 'owner_already_has_trial') {
-            await supabase.rpc('mark_trial_ineligible', {
-              p_business_id: biz.id,
-              p_reason: reason,
-            }).catch((err: unknown) => {
-              // Best-effort: denial is already enforced by M465 RPC.
-              // If marking fails, business stays in queue but RPC blocks grant.
-              console.warn(`[TRIAL-ACTIVATION-CRON] mark_trial_ineligible failed for ${biz.id}:`, err);
-            });
+            try {
+              const { error: markErr } = await supabase.rpc('mark_trial_ineligible', {
+                p_business_id: biz.id,
+                p_reason: reason,
+              });
+              if (markErr) {
+                // Best-effort: denial is already enforced by M465 RPC.
+                // If marking fails, business stays in queue but RPC blocks grant.
+                console.warn(`[TRIAL-ACTIVATION-CRON] mark_trial_ineligible error for ${biz.id}:`, markErr.message);
+              }
+            } catch (markExc) {
+              console.warn(`[TRIAL-ACTIVATION-CRON] mark_trial_ineligible exception for ${biz.id}:`, markExc);
+            }
           }
 
           if (

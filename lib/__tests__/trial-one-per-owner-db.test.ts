@@ -301,8 +301,8 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
   // ── Cron queue filter tests ──
 
   it('10. NULL-inclusive exclusion: empty/default metadata businesses are included in cron query', () => {
-    // The cron filter must include businesses with NULL metadata, empty {},
-    // and explicit false — only exclude explicit 'true'.
+    // The cron filter uses ->> (text extraction). JSON boolean true becomes text 'true'.
+    // NULL (missing key or null metadata) must be included, not excluded.
     const cronQuery = `
       SELECT id FROM businesses
       WHERE subscription_tier = 'free'
@@ -315,14 +315,17 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
     `;
 
     // BIZ_UV1 has default metadata ({}) and trial_ends_at IS NULL — must be included
-    // (phone_not_verified is NOT terminal; it's retryable after OTP completion)
     const eligible = psql(cronQuery);
     expect(eligible).toContain(BIZ_UV1);
 
-    // Now mark BIZ_VA2 as ineligible using the atomic RPC
+    // Mark BIZ_VA2 using the atomic RPC (has DB-authoritative precondition)
     psql(`SELECT mark_trial_ineligible('${BIZ_VA2}', 'owner_already_has_trial');`);
 
-    // BIZ_VA2 should now be excluded
+    // Verify JSON boolean (not string) was written
+    const flagType = psql(`SELECT jsonb_typeof(metadata->'trial_ineligible') FROM businesses WHERE id = '${BIZ_VA2}';`);
+    expect(flagType).toBe('boolean');
+
+    // BIZ_VA2 should now be excluded (text extraction of boolean true = 'true')
     const afterMark = psql(cronQuery);
     expect(afterMark).not.toContain(BIZ_VA2);
 
@@ -330,21 +333,28 @@ describePg('M465: Trial one-per-verified-phone-identity', () => {
     expect(afterMark).toContain(BIZ_UV1);
   });
 
-  it('11. mark_trial_ineligible preserves unrelated metadata keys', () => {
-    // Set unrelated metadata on BIZ_VA2 first
-    psql(`UPDATE businesses SET metadata = '{"custom_key": "custom_value", "trial_ineligible": "true"}'::jsonb
-          WHERE id = '${BIZ_VA2}';`);
+  it('11. mark_trial_ineligible preserves unrelated metadata and validates precondition', () => {
+    // Set unrelated metadata on BIZ_VA2
+    psql(`UPDATE businesses SET metadata = '{"custom_key": "custom_value"}'::jsonb WHERE id = '${BIZ_VA2}';`);
 
-    // Re-mark with the RPC
+    // Re-mark with the RPC — precondition passes (owner already has trial on BIZ_VA1)
     psql(`SELECT mark_trial_ineligible('${BIZ_VA2}', 'owner_already_has_trial');`);
 
-    // Verify custom_key is preserved
+    // custom_key preserved
     const meta = psql(`SELECT metadata->>'custom_key' FROM businesses WHERE id = '${BIZ_VA2}';`);
     expect(meta).toBe('custom_value');
 
-    // Verify trial_ineligible is set
+    // trial_ineligible is JSON boolean true
     const flag = psql(`SELECT metadata->>'trial_ineligible' FROM businesses WHERE id = '${BIZ_VA2}';`);
     expect(flag).toBe('true');
+
+    // RPC rejects non-permanent reasons
+    const invalidReason = psqlCleanup(`SELECT mark_trial_ineligible('${BIZ_UV1}', 'phone_not_verified');`);
+    // Should raise exception — psqlCleanup tolerates it
+
+    // BIZ_UV1 should NOT be marked (precondition: owner has no trial elsewhere)
+    const uvFlag = psql(`SELECT metadata->>'trial_ineligible' FROM businesses WHERE id = '${BIZ_UV1}';`);
+    expect(uvFlag).toBeFalsy(); // NULL or empty — not 'true'
   });
 
   it('12. phone_not_verified is retryable: verified-later owner gets trial', () => {

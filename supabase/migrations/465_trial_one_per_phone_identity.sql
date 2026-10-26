@@ -392,9 +392,34 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 BEGIN
+  -- Restrict to the only genuinely permanent denial reason.
+  -- Prevents stale or incorrect callers from permanently suppressing
+  -- a business entitled to its first trial grant.
+  IF p_reason <> 'owner_already_has_trial' THEN
+    RAISE EXCEPTION 'mark_trial_ineligible: only owner_already_has_trial is a valid permanent reason, got %', p_reason;
+  END IF;
+
+  -- Verify the business actually has an owner who already received a trial
+  -- elsewhere. This is a DB-authoritative precondition, not just trusting
+  -- the caller's assertion.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.messaging_allowances ma
+    JOIN public.businesses b2 ON b2.id = ma.business_id
+    JOIN public.businesses b_target ON b_target.id = p_business_id
+    WHERE b2.owner_id = b_target.owner_id
+      AND ma.type = 'trial_grant'
+      AND ma.source_ref = 'trial_v2'
+      AND b2.id <> p_business_id
+  ) THEN
+    -- Owner does NOT actually have a trial elsewhere — do not mark.
+    -- This prevents incorrect permanent exclusion.
+    RETURN;
+  END IF;
+
+  -- Atomic JSONB key update — uses JSON boolean true (not string "true")
   UPDATE public.businesses
   SET metadata = jsonb_set(
-    jsonb_set(COALESCE(metadata, '{}'), '{trial_ineligible}', '"true"'),
+    jsonb_set(COALESCE(metadata, '{}'), '{trial_ineligible}', 'true'),
     '{trial_ineligible_reason}', to_jsonb(p_reason)
   )
   WHERE id = p_business_id;
