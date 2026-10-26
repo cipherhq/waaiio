@@ -21,7 +21,7 @@ async function payment(currency: string | null, direct=false, business=B, gross=
  const id=randomUUID(), booking=randomUUID();
  await run("INSERT INTO public.bookings(id,deposit_status) VALUES($1,'paid')",[booking]);
  await run("INSERT INTO public.payments(id,business_id,booking_id,currency,amount,status,gateway_reference,created_at) VALUES($1,$2,$3,$4,$5,'paid',$6,'2026-10-02')",[id,business,booking,currency,gross,'T-'+id]);
- await run("INSERT INTO public.platform_fees(id,business_id,payment_id,booking_id,transaction_amount,fee_total,gateway_fee,fee_percentage,fee_flat,waived,is_direct_transfer) VALUES($1,$2,$3,$4,$5,$6,0,0,0,false,$7)",[randomUUID(),business,id,booking,gross,fee,direct]);
+ await run("INSERT INTO public.platform_fees(id,business_id,payment_id,booking_id,transaction_amount,fee_total,gateway_fee,fee_percentage,fee_flat,waived,is_direct_transfer,created_at) VALUES($1,$2,$3,$4,$5,$6,0,0,0,false,$7,'2026-10-02')",[randomUUID(),business,id,booking,gross,fee,direct]);
  return id;
 }
 async function payout(net:number,currency:string|null,status='approved',business=B) {
@@ -67,7 +67,8 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
     booking_id UUID,invoice_id UUID,order_id UUID,
     transaction_amount NUMERIC NOT NULL,fee_total NUMERIC DEFAULT 0,gateway_fee NUMERIC DEFAULT 0,
     fee_percentage NUMERIC DEFAULT 0,fee_flat NUMERIC DEFAULT 0,
-    waived BOOLEAN DEFAULT false,is_direct_transfer BOOLEAN,refunded_at TIMESTAMPTZ);
+    waived BOOLEAN DEFAULT false,is_direct_transfer BOOLEAN,refunded_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now());
    CREATE TABLE public.refunds (
     id UUID PRIMARY KEY,business_id UUID NOT NULL,payment_id UUID NOT NULL,
     status TEXT NOT NULL,amount NUMERIC NOT NULL,reason TEXT,initiated_by UUID,finalized_at TIMESTAMPTZ);
@@ -217,6 +218,25 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
    expect(p==='paid' || f==='success').toBe(true);
   }finally{await a.end();await b.end();}
  },30000);
+ it('refund adjustment uses fee allocation time, not payment initiation time, for period matching',async()=>{
+  // P1-4 regression: payment created Sunday, fee recorded Monday (next period)
+  const pid=randomUUID(), booking=randomUUID();
+  await run("INSERT INTO public.bookings(id,deposit_status) VALUES($1,'paid')",[booking]);
+  // Payment initiated Sunday (period A: Oct 1-7)
+  await run("INSERT INTO public.payments(id,business_id,booking_id,currency,amount,status,gateway_reference,created_at) VALUES($1,$2,$3,'USD',100,'paid',$4,'2026-10-07')",[pid,B,booking,'T-'+pid]);
+  // Fee recorded Monday (period B: Oct 8-14) — webhook delayed across period boundary
+  await run("INSERT INTO public.platform_fees(id,business_id,payment_id,booking_id,transaction_amount,fee_total,gateway_fee,fee_percentage,fee_flat,waived,is_direct_transfer,created_at) VALUES($1,$2,$3,$4,100,10,0,10,0,false,false,'2026-10-08')",[randomUUID(),B,pid,booking]);
+  // Only period B has a paid payout (the fee landed in period B)
+  const periodB=await payout(80,'USD','paid');
+  await run("UPDATE public.business_payouts SET period_start='2026-10-08',period_end='2026-10-14' WHERE id=$1",[periodB]);
+  const rid=await refund(pid,50);
+  expect((await finish(rid)).rows[0].result.finalized).toBe(true);
+  const adj=(await run('SELECT payout_id,currency,amount FROM public.payout_adjustments')).rows;
+  expect(adj).toHaveLength(1);
+  expect(adj[0].payout_id).toBe(periodB);
+  expect(adj[0].currency).toBe('USD');
+  expect(Number(adj[0].amount)).toBe(-50);
+ });
  it('never grants privileged settlement to anonymous or authenticated database roles',async()=>{
   const q=await run("SELECT has_function_privilege('anon','public.confirm_manual_settlement(uuid,text,boolean,uuid)','EXECUTE') AS anon, has_function_privilege('authenticated','public.force_settle_executed_transfer(uuid,text,text,boolean,uuid)','EXECUTE') AS member, has_function_privilege('service_role','public.finalize_refund_execution(uuid)','EXECUTE') AS svc");
   expect(q.rows[0]).toMatchObject({anon:false,member:false,svc:true});
