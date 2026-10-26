@@ -90,8 +90,12 @@ async function executeFrozenAction(
     action_payload: payload,
     priority: 0,
   };
+  // Merchant-authored rule text: do NOT force a category. The inbound sender's
+  // default applies for in-window replies; proactive sends without a category
+  // are blocked by the financial gate (fail-closed) until the rules engine
+  // supports explicit category classification for merchant-authored content.
   const sendMessage = sender
-    ? async (phone: string, text: string) => { await sender.sendText({ to: phone, text, messageCategory: 'utility' }); }
+    ? async (phone: string, text: string) => { await sender.sendText({ to: phone, text }); }
     : undefined;
   const sendTemplate = sender?.sendTemplate
     ? async (phone: string, templateName: string, templateParams: string[]) => {

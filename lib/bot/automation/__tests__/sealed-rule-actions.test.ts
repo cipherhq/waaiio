@@ -115,7 +115,8 @@ describe('sealed Phase-A rule execution', () => {
     await expect(runSealedRuleActions(params)).resolves.toEqual({ actionCount: 1, terminalCount: 1 });
 
     expect(sendText).toHaveBeenCalledOnce();
-    expect(sendText).toHaveBeenCalledWith({ to: '15551234567', text: 'winner Ada', messageCategory: 'utility' });
+    // Merchant-authored freeform text: no forced messageCategory (fail-closed at gate)
+    expect(sendText).toHaveBeenCalledWith({ to: '15551234567', text: 'winner Ada' });
     expect(store.getBotRuleReads()).toBe(0);
   });
 
@@ -219,7 +220,7 @@ describe('sealed Phase-A rule execution', () => {
     expect(store.getRows()[0].status).toBe('indeterminate');
   });
 
-  it('legacy freeform template (no template_name) sends as utility text', async () => {
+  it('legacy freeform template (no template_name) sends as text without forced category', async () => {
     const store = raceStore();
     await sealRuleActions(store.supabase, 'payment-tmpl-legacy', [{
       rule_id: 'tmpl-legacy-rule',
@@ -240,7 +241,8 @@ describe('sealed Phase-A rule execution', () => {
     // Legacy path uses sendText (freeform), not sendTemplate
     expect(sendTemplate).not.toHaveBeenCalled();
     expect(sendText).toHaveBeenCalledOnce();
-    expect(sendText).toHaveBeenCalledWith({ to: '15551234567', text: 'Thank you Bob!', messageCategory: 'utility' });
+    // Merchant-authored freeform: no forced category (gate decides)
+    expect(sendText).toHaveBeenCalledWith({ to: '15551234567', text: 'Thank you Bob!' });
   });
 
   it('fails closed when live rule discovery errors before the initial seal', async () => {

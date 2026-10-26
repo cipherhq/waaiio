@@ -456,9 +456,11 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     } else {
       // Legacy path: no paymentId, execute rules directly
       await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
+      // Merchant-authored rule text: do NOT force a category. Proactive sends
+      // without a category are blocked by the financial gate (fail-closed).
       const sendMsg = async (to: string, text: string) => {
         if (!sender) throw new Error('rule_sender_unavailable');
-        await sender.sendText({ to, text, messageCategory: 'utility' });
+        await sender.sendText({ to, text });
       };
       await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
     }

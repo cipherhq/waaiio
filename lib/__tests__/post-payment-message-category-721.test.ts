@@ -26,10 +26,9 @@ const PROACTIVE_SEND_FILES = [
   'lib/payments/saved-card-offer.ts',
   'lib/payments/saved-card-delivery.ts',
   'lib/payments/recurring-offer.ts',
-  // recurring-setup.ts is intentionally excluded: its sends are inbound button-tap
-  // replies within the 24-hour service window, not proactive webhook sends.
-  // The inbound sender defaults to 'service' category — no override needed.
-  'lib/bot/automation/sealed-rule-actions.ts',
+  // recurring-setup.ts: excluded — inbound button-tap replies, sender defaults to 'service'
+  // sealed-rule-actions.ts: excluded — sendMessage is merchant-authored (no forced category),
+  //   sendTemplate resolves from TEMPLATE_CATEGORY_MAP (tested separately in sealed-rule-actions.test.ts)
 ];
 
 /** Matches a line that opens a sender.send* call */
@@ -44,6 +43,10 @@ describe('#721: Post-payment sends include messageCategory', () => {
 
       for (let i = 0; i < lines.length; i++) {
         if (!SEND_OPEN_RE.test(lines[i])) continue;
+
+        // Skip merchant-authored rule callbacks (intentionally no forced category)
+        const prevLines = lines.slice(Math.max(0, i - 5), i).join(' ');
+        if (prevLines.includes('Merchant-authored')) continue;
 
         // Single-line call: check this line
         if (lines[i].includes('messageCategory')) continue;
