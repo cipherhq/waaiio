@@ -721,12 +721,21 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       const capturedVersion = versionId;
       const capturedRefs = planRefs;
 
-      // Build tier_prices for Paystack atomic cutover (only when both prices are set)
+      // Build tier_prices for Paystack atomic cutover
       let capturedTierPrices: Record<string, { price: number }> | null = null;
-      if (activeGateway === 'paystack' && typeof pskGrowthPrice === 'number' && typeof pskBusinessPrice === 'number' && pskGrowthPrice > 0 && pskBusinessPrice > 0) {
+      const hasPskRefs = !!(pskGrowthRef.trim() || pskBusinessRef.trim());
+      if (activeGateway === 'paystack' && hasPskRefs) {
+        // When Paystack plan refs are present, both prices MUST be valid positive finite numbers
+        const gp = typeof pskGrowthPrice === 'number' && Number.isFinite(pskGrowthPrice) && pskGrowthPrice > 0 ? pskGrowthPrice : null;
+        const bp = typeof pskBusinessPrice === 'number' && Number.isFinite(pskBusinessPrice) && pskBusinessPrice > 0 ? pskBusinessPrice : null;
+        if (!gp || !bp) {
+          setError('Both Growth and Business prices are required when saving Paystack plan codes.');
+          setSaving(false);
+          return;
+        }
         capturedTierPrices = {
-          growth: { price: pskGrowthPrice },
-          business: { price: pskBusinessPrice },
+          growth: { price: gp },
+          business: { price: bp },
         };
       }
 
