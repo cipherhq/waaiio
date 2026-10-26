@@ -158,6 +158,21 @@ export const ticketingFlow: FlowDefinition = {
       id: 'select_ticket_type',
       async skipIf(ctx: FlowContext): Promise<boolean> {
         const eventId = ctx.session.session_data.event_id as string;
+
+        // #716: Distinguish tierless events from tiered events with all tiers paused.
+        // First check if ANY tiers exist (active or not) for this event.
+        const { data: allTiers } = await ctx.supabase
+          .from('event_ticket_types')
+          .select('id, is_active')
+          .eq('event_id', eventId)
+          .limit(1);
+
+        if (!allTiers || allTiers.length === 0) {
+          // Genuinely tierless event — use event-level price
+          return true;
+        }
+
+        // Event has configured tiers — only show active ones
         const { data: types } = await ctx.supabase
           .from('event_ticket_types')
           .select('id, name, price, total_tickets, tickets_sold, is_active')
@@ -165,11 +180,27 @@ export const ticketingFlow: FlowDefinition = {
           .eq('is_active', true)
           .order('sort_order');
 
-        if (!types || types.length === 0) return true; // No types — use event-level price
+        if (!types || types.length === 0) {
+          // All tiers paused — mark as unavailable, do NOT fall through to event-level
+          ctx.session.session_data._all_tiers_paused = true;
+          return false; // proceed to prompt which will show unavailable message
+        }
         ctx.session.session_data._ticket_types = types;
         return false;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        // #716: All tiers paused — show unavailable, don't fall through to event-level
+        if (ctx.session.session_data._all_tiers_paused) {
+          return [{
+            type: 'buttons',
+            body: 'Sorry, tickets for this event are currently unavailable. The organizer has paused all ticket types.',
+            buttons: [
+              { id: 'back_to_events', title: getFlowCopy(ctx.copyLang, 'ticketing.other_events') },
+              { id: 'cancel_tickets', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
+            ],
+          }];
+        }
+
         const types = ctx.session.session_data._ticket_types as Array<{ id: string; name: string; price: number; total_tickets: number; tickets_sold: number }>;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 

@@ -60,6 +60,14 @@ describe('M470 — purchase_tickets_atomic is_active guard (structural)', () => 
     expect(migration).toContain("'ticket_type_not_found:");
     expect(migration).toContain("'ticket_type_wrong_event:");
   });
+
+  it('guards null-tier purchase on tiered events (all_tiers_paused + tier_required)', () => {
+    expect(migration).toContain("'all_tiers_paused:");
+    expect(migration).toContain("'tier_required:");
+    // The all-paused guard block must exist in the function body
+    expect(migration).toContain('ALL-PAUSED GUARD');
+    expect(migration).toContain('IF v_has_configured_tiers THEN');
+  });
 });
 
 describe('M470 — capacity guard structural', () => {
@@ -431,6 +439,218 @@ describe('M470 DB — capacity guard (CHECK + trigger)', () => {
     `);
     expect(r.stderr).not.toContain('PAUSE_FAILED');
     expect(r.stderr).not.toContain('REACTIVATE_FAILED');
+    expect(r.exitCode).toBe(0);
+  });
+});
+
+describe('M470 DB — all-paused and tierless event guards in purchase_tickets_atomic', () => {
+
+  it('rejects null-tier purchase when all tiers are paused (all_tiers_paused)', () => {
+    const r = runSQL(`
+      DO $$
+      DECLARE v_biz_id uuid; v_event_id uuid; v_user_id uuid; v_tt_id uuid;
+      BEGIN
+        v_biz_id := (SELECT id FROM businesses LIMIT 1);
+        v_user_id := (SELECT id FROM auth.users LIMIT 1);
+        IF v_biz_id IS NULL OR v_user_id IS NULL THEN RAISE EXCEPTION 'NO_SEED_DATA'; END IF;
+
+        INSERT INTO events (business_id, name, date, price, total_tickets, tickets_sold, status)
+        VALUES (v_biz_id, '__m470_allpaused', CURRENT_DATE + 30, 1000, 100, 0, 'published')
+        RETURNING id INTO v_event_id;
+
+        -- Create a tier, then pause it
+        INSERT INTO event_ticket_types (event_id, name, price, total_tickets, tickets_sold, is_active)
+        VALUES (v_event_id, '__m470_ap_tier', 2000, 50, 0, false)
+        RETURNING id INTO v_tt_id;
+
+        -- Attempt purchase with NULL tier ID (the bypass vector)
+        BEGIN
+          PERFORM purchase_tickets_atomic(
+            v_biz_id, v_event_id, NULL, 1, v_user_id,
+            'Test', '+2340000000099', 'test@test.com', 1000, 'web', NULL, 1000
+          );
+          RAISE EXCEPTION 'ALL_PAUSED_NOT_BLOCKED';
+        EXCEPTION
+          WHEN raise_exception THEN
+            IF SQLERRM LIKE 'all_tiers_paused%' THEN
+              RAISE NOTICE 'PASS: all-paused null-tier purchase blocked';
+            ELSE
+              RAISE;
+            END IF;
+        END;
+
+        DELETE FROM event_ticket_types WHERE id = v_tt_id;
+        DELETE FROM events WHERE id = v_event_id;
+      END $$;
+    `);
+    expect(r.stderr).not.toContain('ALL_PAUSED_NOT_BLOCKED');
+    expect(r.exitCode).toBe(0);
+  });
+
+  it('allows null-tier purchase on genuinely tierless events', () => {
+    const r = runSQL(`
+      DO $$
+      DECLARE v_biz_id uuid; v_event_id uuid; v_user_id uuid; v_result RECORD;
+      BEGIN
+        v_biz_id := (SELECT id FROM businesses LIMIT 1);
+        v_user_id := (SELECT id FROM auth.users LIMIT 1);
+        IF v_biz_id IS NULL OR v_user_id IS NULL THEN RAISE EXCEPTION 'NO_SEED_DATA'; END IF;
+
+        INSERT INTO events (business_id, name, date, price, total_tickets, tickets_sold, status)
+        VALUES (v_biz_id, '__m470_tierless', CURRENT_DATE + 30, 500, 100, 0, 'published')
+        RETURNING id INTO v_event_id;
+
+        -- No tiers configured — call with NULL tier (legitimate legacy event)
+        SELECT * INTO v_result FROM purchase_tickets_atomic(
+          v_biz_id, v_event_id, NULL, 1, v_user_id,
+          'Test', '+2340000000098', 'test@test.com', 500, 'web', NULL, 500
+        );
+
+        IF NOT v_result.tickets_available THEN
+          RAISE EXCEPTION 'TIERLESS_PURCHASE_FAILED';
+        END IF;
+        RAISE NOTICE 'PASS: tierless event purchase succeeded (booking_id=%)', v_result.booking_id;
+
+        -- Cleanup
+        DELETE FROM bookings WHERE id = v_result.booking_id;
+        DELETE FROM events WHERE id = v_event_id;
+      END $$;
+    `);
+    expect(r.stderr).not.toContain('TIERLESS_PURCHASE_FAILED');
+    expect(r.exitCode).toBe(0);
+  });
+
+  it('rejects null-tier purchase when active tiers exist (tier_required)', () => {
+    const r = runSQL(`
+      DO $$
+      DECLARE v_biz_id uuid; v_event_id uuid; v_user_id uuid; v_tt_id uuid;
+      BEGIN
+        v_biz_id := (SELECT id FROM businesses LIMIT 1);
+        v_user_id := (SELECT id FROM auth.users LIMIT 1);
+        IF v_biz_id IS NULL OR v_user_id IS NULL THEN RAISE EXCEPTION 'NO_SEED_DATA'; END IF;
+
+        INSERT INTO events (business_id, name, date, price, total_tickets, tickets_sold, status)
+        VALUES (v_biz_id, '__m470_tiered', CURRENT_DATE + 30, 1000, 100, 0, 'published')
+        RETURNING id INTO v_event_id;
+
+        INSERT INTO event_ticket_types (event_id, name, price, total_tickets, tickets_sold, is_active)
+        VALUES (v_event_id, '__m470_active_tier', 2000, 50, 0, true)
+        RETURNING id INTO v_tt_id;
+
+        -- Attempt null-tier purchase on a tiered event
+        BEGIN
+          PERFORM purchase_tickets_atomic(
+            v_biz_id, v_event_id, NULL, 1, v_user_id,
+            'Test', '+2340000000097', 'test@test.com', 1000, 'web', NULL, 1000
+          );
+          RAISE EXCEPTION 'TIER_REQUIRED_NOT_BLOCKED';
+        EXCEPTION
+          WHEN raise_exception THEN
+            IF SQLERRM LIKE 'tier_required%' THEN
+              RAISE NOTICE 'PASS: null-tier on tiered event blocked with tier_required';
+            ELSE
+              RAISE;
+            END IF;
+        END;
+
+        DELETE FROM event_ticket_types WHERE id = v_tt_id;
+        DELETE FROM events WHERE id = v_event_id;
+      END $$;
+    `);
+    expect(r.stderr).not.toContain('TIER_REQUIRED_NOT_BLOCKED');
+    expect(r.exitCode).toBe(0);
+  });
+
+  it('rejects purchase of a specific paused tier (tier_paused)', () => {
+    const r = runSQL(`
+      DO $$
+      DECLARE v_biz_id uuid; v_event_id uuid; v_user_id uuid; v_tt_id uuid;
+      BEGIN
+        v_biz_id := (SELECT id FROM businesses LIMIT 1);
+        v_user_id := (SELECT id FROM auth.users LIMIT 1);
+        IF v_biz_id IS NULL OR v_user_id IS NULL THEN RAISE EXCEPTION 'NO_SEED_DATA'; END IF;
+
+        INSERT INTO events (business_id, name, date, price, total_tickets, tickets_sold, status)
+        VALUES (v_biz_id, '__m470_paused_tier', CURRENT_DATE + 30, 1000, 100, 0, 'published')
+        RETURNING id INTO v_event_id;
+
+        INSERT INTO event_ticket_types (event_id, name, price, total_tickets, tickets_sold, is_active)
+        VALUES (v_event_id, '__m470_pt', 3000, 50, 0, false)
+        RETURNING id INTO v_tt_id;
+
+        BEGIN
+          PERFORM purchase_tickets_atomic(
+            v_biz_id, v_event_id, v_tt_id, 1, v_user_id,
+            'Test', '+2340000000096', 'test@test.com', 3000, 'web', NULL, 3000
+          );
+          RAISE EXCEPTION 'PAUSED_TIER_NOT_BLOCKED';
+        EXCEPTION
+          WHEN raise_exception THEN
+            IF SQLERRM LIKE 'tier_paused%' THEN
+              RAISE NOTICE 'PASS: paused tier purchase blocked';
+            ELSE
+              RAISE;
+            END IF;
+        END;
+
+        DELETE FROM event_ticket_types WHERE id = v_tt_id;
+        DELETE FROM events WHERE id = v_event_id;
+      END $$;
+    `);
+    expect(r.stderr).not.toContain('PAUSED_TIER_NOT_BLOCKED');
+    expect(r.exitCode).toBe(0);
+  });
+
+  it('idempotent recovery preserves committed booking regardless of tier state', () => {
+    const r = runSQL(`
+      DO $$
+      DECLARE v_biz_id uuid; v_event_id uuid; v_user_id uuid; v_tt_id uuid;
+              v_session_id uuid := gen_random_uuid();
+              v_result1 RECORD; v_result2 RECORD;
+      BEGIN
+        v_biz_id := (SELECT id FROM businesses LIMIT 1);
+        v_user_id := (SELECT id FROM auth.users LIMIT 1);
+        IF v_biz_id IS NULL OR v_user_id IS NULL THEN RAISE EXCEPTION 'NO_SEED_DATA'; END IF;
+
+        INSERT INTO events (business_id, name, date, price, total_tickets, tickets_sold, status)
+        VALUES (v_biz_id, '__m470_idempotent', CURRENT_DATE + 30, 1000, 100, 0, 'published')
+        RETURNING id INTO v_event_id;
+
+        INSERT INTO event_ticket_types (event_id, name, price, total_tickets, tickets_sold, is_active)
+        VALUES (v_event_id, '__m470_id_tier', 2000, 50, 0, true)
+        RETURNING id INTO v_tt_id;
+
+        -- First purchase succeeds (tier is active)
+        SELECT * INTO v_result1 FROM purchase_tickets_atomic(
+          v_biz_id, v_event_id, v_tt_id, 1, v_user_id,
+          'Test', '+2340000000095', 'test@test.com', 2000, 'web', v_session_id, 2000
+        );
+        IF NOT v_result1.tickets_available THEN
+          RAISE EXCEPTION 'FIRST_PURCHASE_FAILED';
+        END IF;
+
+        -- Now pause the tier
+        UPDATE event_ticket_types SET is_active = false WHERE id = v_tt_id;
+
+        -- Idempotent retry with same bot_session_id — must return existing booking
+        SELECT * INTO v_result2 FROM purchase_tickets_atomic(
+          v_biz_id, v_event_id, v_tt_id, 1, v_user_id,
+          'Test', '+2340000000095', 'test@test.com', 2000, 'web', v_session_id, 2000
+        );
+
+        IF v_result2.booking_id != v_result1.booking_id THEN
+          RAISE EXCEPTION 'IDEMPOTENT_MISMATCH: expected %, got %', v_result1.booking_id, v_result2.booking_id;
+        END IF;
+        RAISE NOTICE 'PASS: idempotent recovery returned existing booking despite paused tier';
+
+        DELETE FROM bookings WHERE id = v_result1.booking_id;
+        DELETE FROM event_ticket_types WHERE id = v_tt_id;
+        UPDATE events SET tickets_sold = 0 WHERE id = v_event_id;
+        DELETE FROM events WHERE id = v_event_id;
+      END $$;
+    `);
+    expect(r.stderr).not.toContain('FIRST_PURCHASE_FAILED');
+    expect(r.stderr).not.toContain('IDEMPOTENT_MISMATCH');
     expect(r.exitCode).toBe(0);
   });
 });

@@ -93,6 +93,7 @@ DECLARE
   v_event_price INT;
   v_tt_event_id UUID;
   v_tt_is_active BOOLEAN;          -- ← NEW: track tier active state
+  v_has_configured_tiers BOOLEAN;  -- ← NEW: detect tiered vs tierless events
   v_committed_total INT;
   v_existing_booking_id UUID;
   v_existing_ref TEXT;
@@ -134,6 +135,28 @@ BEGIN
   -- Event must be published
   IF v_event_status != 'published' THEN
     RAISE EXCEPTION 'event_not_published:Event % is not published (status=%)', p_event_id, v_event_status;
+  END IF;
+
+  -- ▼ ALL-PAUSED GUARD: distinguish tiered events (all paused) from legacy tierless events.
+  -- A tiered event with zero active tiers must not fall through to event-level pricing.
+  IF p_ticket_type_id IS NULL THEN
+    SELECT EXISTS (
+      SELECT 1 FROM event_ticket_types WHERE event_id = p_event_id
+    ) INTO v_has_configured_tiers;
+
+    IF v_has_configured_tiers THEN
+      -- Event has configured tiers but caller sent no tier ID.
+      -- Check if ANY tier is active — if none, the event is fully paused.
+      IF NOT EXISTS (
+        SELECT 1 FROM event_ticket_types WHERE event_id = p_event_id AND is_active = true
+      ) THEN
+        RAISE EXCEPTION 'all_tiers_paused:All ticket types for this event are currently unavailable';
+      ELSE
+        -- Active tiers exist but caller didn't select one — require selection.
+        RAISE EXCEPTION 'tier_required:This event requires a ticket type selection';
+      END IF;
+    END IF;
+    -- No configured tiers at all → legitimate tierless event, proceed with event-level pricing
   END IF;
 
   -- Price validation + server-authoritative total

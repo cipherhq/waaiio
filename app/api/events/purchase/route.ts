@@ -205,6 +205,10 @@ export async function POST(request: NextRequest) {
     if (rpcError.message?.includes('tier_paused')) {
       return NextResponse.json({ error: 'This ticket type is no longer available. Please refresh and try another.' }, { status: 409 });
     }
+    // All ticket types paused or tier selection required for a tiered event.
+    if (rpcError.message?.includes('all_tiers_paused') || rpcError.message?.includes('tier_required')) {
+      return NextResponse.json({ error: 'Tickets are currently unavailable for this event.' }, { status: 409 });
+    }
     logger.withContext({ op: 'event-purchase.rpc', ...safeLogErrorContext(rpcError) }).error('[EVENT-PURCHASE] RPC error');
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 });
   }
