@@ -144,6 +144,105 @@ describe('sealed Phase-A rule execution', () => {
     expect(store.getBotRuleReads()).toBe(0);
   });
 
+  it('utility template sends with messageCategory utility', async () => {
+    const store = raceStore();
+    await sealRuleActions(store.supabase, 'payment-tmpl-u', [{
+      rule_id: 'tmpl-utility-rule',
+      action_type: 'send_template',
+      action_payload: { template_name: 'booking_confirmation', template_params: ['Alice', 'Spa', 'Dec 1', '10am', 'Massage', 'BK-001'] },
+      action_fingerprint: 'fp-tmpl-u',
+    }]);
+    const sendTemplate = vi.fn().mockResolvedValue(undefined);
+    await runSealedRuleActions({
+      supabase: store.supabase,
+      paymentId: 'payment-tmpl-u',
+      businessId: 'business-1',
+      event: 'payment_received',
+      context: { customer_phone: '+15551234567' },
+      sender: { sendText: vi.fn(), sendTemplate } as never,
+    });
+    expect(sendTemplate).toHaveBeenCalledOnce();
+    expect(sendTemplate).toHaveBeenCalledWith({
+      to: '15551234567',
+      templateName: 'booking_confirmation',
+      templateParams: ['Alice', 'Spa', 'Dec 1', '10am', 'Massage', 'BK-001'],
+      messageCategory: 'utility',
+    });
+  });
+
+  it('marketing template sends with messageCategory marketing', async () => {
+    const store = raceStore();
+    await sealRuleActions(store.supabase, 'payment-tmpl-m', [{
+      rule_id: 'tmpl-marketing-rule',
+      action_type: 'send_template',
+      action_payload: { template_name: 'business_promotion', template_params: ['Fresh Cuts', '20% off!'] },
+      action_fingerprint: 'fp-tmpl-m',
+    }]);
+    const sendTemplate = vi.fn().mockResolvedValue(undefined);
+    await runSealedRuleActions({
+      supabase: store.supabase,
+      paymentId: 'payment-tmpl-m',
+      businessId: 'business-1',
+      event: 'payment_received',
+      context: { customer_phone: '+15559876543' },
+      sender: { sendText: vi.fn(), sendTemplate } as never,
+    });
+    expect(sendTemplate).toHaveBeenCalledOnce();
+    expect(sendTemplate).toHaveBeenCalledWith({
+      to: '15559876543',
+      templateName: 'business_promotion',
+      templateParams: ['Fresh Cuts', '20% off!'],
+      messageCategory: 'marketing',
+    });
+  });
+
+  it('unknown template fails closed — no provider emission, action goes indeterminate', async () => {
+    const store = raceStore();
+    await sealRuleActions(store.supabase, 'payment-tmpl-unk', [{
+      rule_id: 'tmpl-unknown-rule',
+      action_type: 'send_template',
+      action_payload: { template_name: 'totally_unknown_template', template_params: [] },
+      action_fingerprint: 'fp-tmpl-unk',
+    }]);
+    const sendTemplate = vi.fn();
+    await runSealedRuleActions({
+      supabase: store.supabase,
+      paymentId: 'payment-tmpl-unk',
+      businessId: 'business-1',
+      event: 'payment_received',
+      context: { customer_phone: '+15551234567' },
+      sender: { sendText: vi.fn(), sendTemplate } as never,
+    });
+    // Template must NOT have been called — fail-closed before emission
+    expect(sendTemplate).not.toHaveBeenCalled();
+    // Action must be terminal (indeterminate, since it crossed the sending fence)
+    expect(store.getRows()[0].status).toBe('indeterminate');
+  });
+
+  it('legacy freeform template (no template_name) sends as utility text', async () => {
+    const store = raceStore();
+    await sealRuleActions(store.supabase, 'payment-tmpl-legacy', [{
+      rule_id: 'tmpl-legacy-rule',
+      action_type: 'send_template',
+      action_payload: { template: 'Thank you {{customer_name}}!' },
+      action_fingerprint: 'fp-tmpl-legacy',
+    }]);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const sendTemplate = vi.fn();
+    await runSealedRuleActions({
+      supabase: store.supabase,
+      paymentId: 'payment-tmpl-legacy',
+      businessId: 'business-1',
+      event: 'payment_received',
+      context: { customer_phone: '+15551234567', customer_name: 'Bob' },
+      sender: { sendText, sendTemplate } as never,
+    });
+    // Legacy path uses sendText (freeform), not sendTemplate
+    expect(sendTemplate).not.toHaveBeenCalled();
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(sendText).toHaveBeenCalledWith({ to: '15551234567', text: 'Thank you Bob!', messageCategory: 'utility' });
+  });
+
   it('fails closed when live rule discovery errors before the initial seal', async () => {
     const supabase = {
       from: vi.fn((table: string) => {

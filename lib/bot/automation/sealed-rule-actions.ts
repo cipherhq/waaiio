@@ -19,6 +19,35 @@ import {
 const EXTERNAL_ACTIONS = new Set(['send_message', 'send_template', 'notify_owner']);
 const TERMINAL_ACTION_STATES = new Set(['completed', 'failed', 'indeterminate']);
 
+/**
+ * Authoritative Meta-approved template category map.
+ * Mirrors the provisioned categories in app/api/whatsapp/templates/provision/route.ts.
+ * Used to supply the correct messageCategory for financial authorization pricing.
+ * Unknown templates MUST fail closed — never default to 'utility'.
+ */
+const TEMPLATE_CATEGORY_MAP: Record<string, 'utility' | 'marketing' | 'authentication'> = {
+  // Scheduling / Reminders
+  booking_confirmation: 'utility',
+  booking_reminder: 'utility',
+  // Ordering
+  order_status_update: 'utility',
+  // Invoice
+  invoice_payment_request: 'utility',
+  // Broadcast
+  business_update: 'utility',
+  business_reminder: 'utility',
+  business_event: 'utility',
+  business_promotion: 'marketing',
+  // Feedback
+  feedback_request: 'marketing',
+  // WhatsApp Sign
+  document_signature_request: 'utility',
+  // Promo verification
+  promo_pickup_verification_v2: 'utility',
+  promo_winner_status_v1: 'utility',
+  promo_fulfillment_status_v1: 'utility',
+};
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -66,7 +95,11 @@ async function executeFrozenAction(
     : undefined;
   const sendTemplate = sender?.sendTemplate
     ? async (phone: string, templateName: string, templateParams: string[]) => {
-      await sender.sendTemplate!({ to: phone, templateName, templateParams, messageCategory: 'utility' });
+      const category = TEMPLATE_CATEGORY_MAP[templateName];
+      if (!category) {
+        throw new Error(`sealed_template_category_unknown:${templateName}`);
+      }
+      await sender.sendTemplate!({ to: phone, templateName, templateParams, messageCategory: category });
     }
     : undefined;
 
