@@ -332,6 +332,7 @@ DECLARE
   v_legacy_fee_id UUID;
   v_legacy_fee_count INTEGER;
   v_entity_payment_count INTEGER;
+  v_fee_allocated_at DATE;
 BEGIN
   SELECT r.* INTO v_refund FROM public.refunds r WHERE r.id = p_refund_id FOR UPDATE;
   IF NOT FOUND THEN RETURN jsonb_build_object('finalized', false, 'reason', 'refund_not_found'); END IF;
@@ -418,9 +419,17 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.platform_fees f WHERE
     (f.payment_id=v_payment.id OR f.id=v_legacy_fee_id)
     AND f.business_id=v_refund.business_id AND f.is_direct_transfer=false) THEN
+    -- Use the fee's created_at (allocation time) for payout-period matching,
+    -- not payments.created_at. Payout generators filter by platform_fees.created_at,
+    -- so that timestamp determines which period the fee was allocated to.
+    SELECT f.created_at::date INTO v_fee_allocated_at FROM public.platform_fees f
+    WHERE (f.payment_id=v_payment.id OR f.id=v_legacy_fee_id)
+      AND f.business_id=v_refund.business_id AND f.is_direct_transfer=false
+    ORDER BY f.created_at LIMIT 1;
+    IF v_fee_allocated_at IS NULL THEN v_fee_allocated_at := v_payment.created_at::date; END IF;
     IF EXISTS (SELECT 1 FROM public.business_payouts bp WHERE bp.business_id=v_refund.business_id
       AND bp.status='paid' AND (bp.currency IS NULL OR bp.currency !~ '^[A-Z]{3}$')
-      AND bp.period_start <= v_payment.created_at::date AND bp.period_end >= v_payment.created_at::date) THEN
+      AND bp.period_start <= v_fee_allocated_at AND bp.period_end >= v_fee_allocated_at) THEN
       RAISE EXCEPTION 'refund_payout_currency_reconciliation_required' USING ERRCODE='P0001';
     END IF;
     -- Overlapping same-currency paid periods are ambiguous without an explicit
@@ -428,14 +437,14 @@ BEGIN
     IF (SELECT COUNT(*) FROM public.business_payouts bp
         WHERE bp.business_id=v_refund.business_id AND bp.status='paid'
           AND bp.currency=v_payment_currency
-          AND bp.period_start <= v_payment.created_at::date
-          AND bp.period_end >= v_payment.created_at::date) > 1 THEN
+          AND bp.period_start <= v_fee_allocated_at
+          AND bp.period_end >= v_fee_allocated_at) > 1 THEN
       RAISE EXCEPTION 'refund_payout_allocation_ambiguous' USING ERRCODE='P0001';
     END IF;
     SELECT bp.id INTO v_paid_payout FROM public.business_payouts bp
     WHERE bp.business_id=v_refund.business_id AND bp.status='paid'
       AND bp.currency=v_payment_currency
-      AND bp.period_start <= v_payment.created_at::date AND bp.period_end >= v_payment.created_at::date
+      AND bp.period_start <= v_fee_allocated_at AND bp.period_end >= v_fee_allocated_at
     ORDER BY bp.period_end DESC,bp.id LIMIT 1;
     IF FOUND THEN
       INSERT INTO public.payout_adjustments(business_id,payout_id,amount,reason,payment_id,currency)

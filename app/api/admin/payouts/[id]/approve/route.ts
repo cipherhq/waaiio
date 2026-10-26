@@ -188,7 +188,7 @@ export async function POST(
   // M466: Include currency via payments join for currency-scoped balance
   const { data: balancePaymentsRaw, error: balanceError } = await serviceClient
     .from('platform_fees')
-    .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
+    .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
     .eq('business_id', payout.business_id)
     .is('refunded_at', null);
   const balancePayments = (balancePaymentsRaw || []).map(f => ({

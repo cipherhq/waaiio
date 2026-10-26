@@ -274,7 +274,7 @@ export async function GET(request: NextRequest) {
       // Platform fees for the period across all businesses
       supabase
         .from('platform_fees')
-        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
+        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .in('business_id', bizIds)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -436,7 +436,16 @@ export async function GET(request: NextRequest) {
       if ((biz.verification_level || 'unverified') === 'unverified') holdReasons.push('Business not verified');
 
       const decision = decideAutoPayoutOutcome({ canAutoApprove, limitCheck, holdReasons });
-      const { status, overLimit } = decision;
+      let { status } = decision;
+      const { overLimit } = decision;
+
+      // Non-home-currency payouts require manual provider/limit verification
+      // (mirrors the currency_review flag from manual generate route).
+      if (currency !== bizCurrency) {
+        decision.structuredFlags.push({ type: 'currency_review', message: 'Payout currency requires manual provider/limit verification', severity: 'critical' });
+        if (decision.flags) decision.flags.push('currency_review: manual provider/limit verification required');
+        status = 'held';
+      }
 
       // ── Create payout record ──
       // Two paths: with adjustments (three-phase INSERT→link→promote) and

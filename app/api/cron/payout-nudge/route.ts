@@ -3,8 +3,9 @@ import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { loadCountries } from '@/lib/countries';
 import { computePlatformHeldTotals, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { assertMessagingAllowed, MessagingSuspendedError } from '@/lib/channels/send-guard';
 
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
   try {
+    await loadCountries();
     // Find businesses with no active payout account
     const { data: businesses } = await supabase
       .from('businesses')
@@ -82,7 +84,7 @@ export async function GET(request: NextRequest) {
       // M466: Include currency via payments join
       const { data: feesRaw, error: feesError } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .eq('business_id', biz.id)
         .is('refunded_at', null);
       const fees = (feesRaw || []).map(f => ({
@@ -95,7 +97,8 @@ export async function GET(request: NextRequest) {
         supabase.from('payout_adjustments').select('id').eq('business_id', biz.id).is('currency', null).maybeSingle(),
       ]);
       const currencies = getEligibleCurrencies(fees);
-      const primaryCurrency = ({ US: 'USD', GB: 'GBP', CA: 'CAD', NG: 'NGN', GH: 'GHS' } as Record<string, string>)[biz.country_code || ''];
+      let primaryCurrency: string | undefined;
+      try { primaryCurrency = getCurrencyCode((biz.country_code || '') as CountryCode); } catch { /* unknown country */ }
       if (feesError || oldPayoutError || oldAdjustmentError || oldPayouts || oldAdjustments ||
           fees.some(f => f.is_direct_transfer === false && !f.currency) ||
           !primaryCurrency || currencies.length !== 1 || currencies[0] !== primaryCurrency) continue;

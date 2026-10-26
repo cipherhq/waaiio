@@ -8,6 +8,8 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logAdminAudit } from '@/lib/admin-audit';
 import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
+import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
 
 interface Flag {
   type: string;
@@ -35,6 +37,7 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
+    await loadCountries();
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const COOLING_PERIOD_DAYS = settings.payout_cooling_period_days;
     const VELOCITY_THRESHOLD = settings.fraud_velocity_threshold;
@@ -103,7 +106,7 @@ export async function POST(request: NextRequest) {
       // M466: Join platform_fees → payments to get authoritative currency
       const { data: fees, error: feesError } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -194,7 +197,8 @@ export async function POST(request: NextRequest) {
       }
 
       // Minimum payout threshold — skip if amount too small
-      const expectedCurrency = ({ US: 'USD', GB: 'GBP', CA: 'CAD', NG: 'NGN', GH: 'GHS' } as Record<string, string>)[biz.country_code || ''];
+      let expectedCurrency: string | undefined;
+      try { expectedCurrency = getCurrencyCode((biz.country_code || '') as CountryCode); } catch { /* unknown country */ }
       const minPayout = currency === expectedCurrency ? (MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000) : 0;
       if (net < minPayout) {
         skipped++;
@@ -229,7 +233,8 @@ export async function POST(request: NextRequest) {
       }
 
       // Hold non-home currencies for separate provider/limit verification.
-      const homeCurrency = ({ US: 'USD', GB: 'GBP', CA: 'CAD', NG: 'NGN', GH: 'GHS' } as Record<string, string>)[biz.country_code || ''];
+      let homeCurrency: string | undefined;
+      try { homeCurrency = getCurrencyCode((biz.country_code || '') as CountryCode); } catch { /* unknown country */ }
       if (!homeCurrency || currency !== homeCurrency) {
         flags.push({ type: 'currency_review', message: 'Payout currency requires manual provider/limit verification', severity: 'critical' });
         status = 'held';

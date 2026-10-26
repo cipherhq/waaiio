@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { computePlatformHeldTotals, getEligibleCurrencies, getUnknownCurrencyFeeRows, hasUnreconciledCurrencyRecords } from '@/lib/payments/payable-fees';
+import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -29,6 +31,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    await loadCountries();
     // Total business revenue from completed bookings/orders/invoices (display metric — all modes)
     const [{ data: bookingPayments }, { data: orderPayments }, { data: invoicePayments }] = await Promise.all([
       supabase
@@ -123,7 +126,7 @@ export async function GET(request: NextRequest) {
       // M466: Include currency via payments join
       const { data: platformFeesRaw, error: platformFeesError } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments!inner(currency)')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .eq('business_id', businessId)
         .is('refunded_at', null);
       const platformFees = (platformFeesRaw || []).map(f => ({
@@ -141,8 +144,8 @@ export async function GET(request: NextRequest) {
       // M468: A scalar balance must never silently mix or omit monetary currencies.
       // Mixed-currency merchants require a dedicated per-currency dashboard contract.
       const currencies = getEligibleCurrencies(platformFees);
-      const currencyByCountry: Record<string, string> = { US: 'USD', GB: 'GBP', CA: 'CAD', NG: 'NGN', GH: 'GHS' };
-      const homeCurrency = currencyByCountry[biz.country_code || ''];
+      let homeCurrency: string | undefined;
+      try { homeCurrency = getCurrencyCode((biz.country_code || '') as CountryCode); } catch { /* unknown country */ }
       if (platformFeesError || !homeCurrency || getUnknownCurrencyFeeRows(platformFees).length > 0 ||
           currencies.length > 1 || (currencies.length === 1 && currencies[0] !== homeCurrency) ||
           hasUnreconciledCurrencyRecords(allPriorPayouts, adjRows)) {

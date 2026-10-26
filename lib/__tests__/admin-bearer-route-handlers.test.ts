@@ -43,9 +43,17 @@ vi.mock('@/lib/constants', () => ({
   getPayoutLimit: vi.fn(() => 500000),
   formatPayoutLimit: vi.fn(() => '₦500,000'),
   formatCurrency: vi.fn(() => '₦100'),
+  getCurrencyCode: vi.fn((cc: string) => {
+    const map: Record<string, string> = { NG: 'NGN', US: 'USD', GB: 'GBP', CA: 'CAD', GH: 'GHS' };
+    if (map[cc]) return map[cc];
+    throw new Error(`unknown country: ${cc}`);
+  }),
   getDocTypeLabel: vi.fn((cc: string, d: string) => d),
   CountryCode: {},
   VerificationLevel: {},
+}));
+vi.mock('@/lib/countries', () => ({
+  loadCountries: vi.fn(),
 }));
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -553,6 +561,20 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/admin-step-up', () => ({
       consumeStepUp: vi.fn().mockResolvedValue(true),
       StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
+    }));
+    vi.doMock('@/lib/countries', () => ({ loadCountries: vi.fn() }));
+    vi.doMock('@/lib/constants', () => ({
+      getPayoutLimit: vi.fn(() => 500000),
+      formatPayoutLimit: vi.fn(() => '₦500,000'),
+      formatCurrency: vi.fn(() => '₦100'),
+      getCurrencyCode: vi.fn((cc: string) => {
+        const map: Record<string, string> = { NG: 'NGN', US: 'USD', GB: 'GBP', CA: 'CAD', GH: 'GHS' };
+        if (map[cc]) return map[cc];
+        throw new Error(`unknown country: ${cc}`);
+      }),
+      getDocTypeLabel: vi.fn((cc: string, d: string) => d),
+      CountryCode: {},
+      VerificationLevel: {},
     }));
     vi.doMock('@/lib/platformSettings', () => ({
       loadPlatformSettings: vi.fn().mockResolvedValue({
