@@ -1,7 +1,12 @@
 /**
  * Regression test for #721: All proactive post-payment WhatsApp sends must
- * include messageCategory: 'utility' so the financial authorization gate
+ * include a messageCategory so the financial authorization gate
  * (M370/M371 authorize_message_send) does not reject with missing_message_category.
+ *
+ * Free-form transactional sends use 'service' (correct rate for service-window
+ * messages; Meta rejects out-of-window free-form sends regardless of category).
+ * Engagement CTAs (saved-card offer, recurring offer) use 'marketing'.
+ * Template sends resolve category from Meta API per WABA (not static map).
  *
  * This is a structural assertion — it reads source files and verifies every
  * sender.send*(…) call site includes messageCategory within its argument block.

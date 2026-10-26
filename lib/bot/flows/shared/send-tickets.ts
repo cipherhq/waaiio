@@ -259,7 +259,7 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
           documentUrl: signedUrlData.signedUrl,
           filename: `${eventName.replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 40)} - Tickets.pdf`,
           caption: fillFlowCopy(ticketCopyLang, 'notification.ticket_pdf_caption', { quantity: String(quantity), ticketLabel, eventName }),
-          messageCategory: 'utility',
+          messageCategory: 'service',
         });
         logger.info('[TICKETS] PDF sent to', phone);
       }
@@ -278,12 +278,12 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
     const imageUrl = `${appUrl}/api/tickets/image?code=${encodeURIComponent(ticket.ticketCode)}`;
 
     try {
-      await sender.sendImage({ to: phone, imageUrl, caption, messageCategory: 'utility' });
+      await sender.sendImage({ to: phone, imageUrl, caption, messageCategory: 'service' });
       logger.info('[TICKETS] Ticket image sent for', ticket.ticketCode);
     } catch (err) {
       logger.error('[TICKETS] Ticket image send failed for', ticket.ticketCode, ':', err);
       // A successful text fallback still preserves a usable ticket/verification URL.
-      await sender.sendText({ to: phone, text: await t(caption), messageCategory: 'utility' });
+      await sender.sendText({ to: phone, text: await t(caption), messageCategory: 'service' });
     }
   }
   logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);

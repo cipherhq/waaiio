@@ -3,6 +3,20 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runSealedRuleActions } from '../sealed-rule-actions';
 import { sealRuleActions, type FrozenRuleAction } from '@/lib/payments/terminal-effects';
 
+/**
+ * Mock template category resolver simulating Meta API responses.
+ * Maps template names to their APPROVED Meta categories.
+ * Unknown templates return null (fail-closed).
+ */
+const MOCK_TEMPLATE_CATEGORIES: Record<string, 'utility' | 'marketing' | 'authentication'> = {
+  booking_confirmation: 'utility',
+  business_promotion: 'marketing',
+  waaiio_event_invite: 'marketing',
+  feedback_request: 'marketing',
+};
+const mockCategoryResolver = async (_s: SupabaseClient, _b: string, templateName: string) =>
+  MOCK_TEMPLATE_CATEGORIES[templateName] || null;
+
 type Candidate = {
   rule_id: string;
   action_type: string;
@@ -55,6 +69,18 @@ function raceStore() {
         const chain = {
           select: vi.fn(() => chain),
           eq: vi.fn(async () => ({ data: rows.map(row => ({ ...row })), error: null })),
+        };
+        return chain;
+      }
+      if (table === 'whatsapp_channels') {
+        // Return a mock channel with WABA credentials for template resolution
+        const chain = {
+          select: vi.fn(() => chain),
+          eq: vi.fn(() => chain),
+          maybeSingle: vi.fn(async () => ({
+            data: { waba_id: 'test-waba-123', meta_access_token: 'test-token-abc' },
+            error: null,
+          })),
         };
         return chain;
       }
@@ -161,6 +187,7 @@ describe('sealed Phase-A rule execution', () => {
       event: 'payment_received',
       context: { customer_phone: '+15551234567' },
       sender: { sendText: vi.fn(), sendTemplate } as never,
+      _resolveTemplateCategory: mockCategoryResolver,
     });
     expect(sendTemplate).toHaveBeenCalledOnce();
     expect(sendTemplate).toHaveBeenCalledWith({
@@ -187,6 +214,7 @@ describe('sealed Phase-A rule execution', () => {
       event: 'payment_received',
       context: { customer_phone: '+15559876543' },
       sender: { sendText: vi.fn(), sendTemplate } as never,
+      _resolveTemplateCategory: mockCategoryResolver,
     });
     expect(sendTemplate).toHaveBeenCalledOnce();
     expect(sendTemplate).toHaveBeenCalledWith({
@@ -213,6 +241,7 @@ describe('sealed Phase-A rule execution', () => {
       event: 'payment_received',
       context: { customer_phone: '+15551234567' },
       sender: { sendText: vi.fn(), sendTemplate } as never,
+      _resolveTemplateCategory: mockCategoryResolver,
     });
     // Template must NOT have been called — fail-closed before emission
     expect(sendTemplate).not.toHaveBeenCalled();
@@ -237,12 +266,66 @@ describe('sealed Phase-A rule execution', () => {
       event: 'payment_received',
       context: { customer_phone: '+15551234567', customer_name: 'Bob' },
       sender: { sendText, sendTemplate } as never,
+      _resolveTemplateCategory: mockCategoryResolver,
     });
     // Legacy path uses sendText (freeform), not sendTemplate
     expect(sendTemplate).not.toHaveBeenCalled();
     expect(sendText).toHaveBeenCalledOnce();
     // Merchant-authored freeform: no forced category (gate decides)
     expect(sendText).toHaveBeenCalledWith({ to: '15551234567', text: 'Thank you Bob!' });
+  });
+
+  it('waaiio_event_invite template resolves as marketing', async () => {
+    const store = raceStore();
+    await sealRuleActions(store.supabase, 'payment-tmpl-evt', [{
+      rule_id: 'tmpl-event-invite-rule',
+      action_type: 'send_template',
+      action_payload: { template_name: 'waaiio_event_invite', template_params: ['Event details', 'https://example.com/rsvp'] },
+      action_fingerprint: 'fp-tmpl-evt',
+    }]);
+    const sendTemplate = vi.fn().mockResolvedValue(undefined);
+    await runSealedRuleActions({
+      supabase: store.supabase,
+      paymentId: 'payment-tmpl-evt',
+      businessId: 'business-1',
+      event: 'payment_received',
+      context: { customer_phone: '+15551234567' },
+      sender: { sendText: vi.fn(), sendTemplate } as never,
+      _resolveTemplateCategory: mockCategoryResolver,
+    });
+    expect(sendTemplate).toHaveBeenCalledOnce();
+    expect(sendTemplate).toHaveBeenCalledWith({
+      to: '15551234567',
+      templateName: 'waaiio_event_invite',
+      templateParams: ['Event details', 'https://example.com/rsvp'],
+      messageCategory: 'marketing',
+    });
+  });
+
+  it('template category resolver failure → fail closed, no emission', async () => {
+    const store = raceStore();
+    await sealRuleActions(store.supabase, 'payment-tmpl-fail', [{
+      rule_id: 'tmpl-fail-rule',
+      action_type: 'send_template',
+      action_payload: { template_name: 'booking_confirmation', template_params: [] },
+      action_fingerprint: 'fp-tmpl-fail',
+    }]);
+    const sendTemplate = vi.fn();
+    // Resolver throws (simulating Meta API failure)
+    const failResolver = async () => { throw new Error('Meta API timeout'); };
+    await runSealedRuleActions({
+      supabase: store.supabase,
+      paymentId: 'payment-tmpl-fail',
+      businessId: 'business-1',
+      event: 'payment_received',
+      context: { customer_phone: '+15551234567' },
+      sender: { sendText: vi.fn(), sendTemplate } as never,
+      _resolveTemplateCategory: failResolver as never,
+    });
+    // No provider emission on resolver failure
+    expect(sendTemplate).not.toHaveBeenCalled();
+    // Action goes indeterminate (crossed sending fence but failed before emission)
+    expect(store.getRows()[0].status).toBe('indeterminate');
   });
 
   it('fails closed when live rule discovery errors before the initial seal', async () => {

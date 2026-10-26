@@ -244,7 +244,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
                 documentUrl: signedUrlData.signedUrl,
                 filename: `receipt-${referenceCode || paymentId.slice(0, 8)}.pdf`,
                 caption: getFlowCopy(receiptLang, 'notification.receipt_caption'),
-                messageCategory: 'utility',
+                messageCategory: 'service',
               });
               return true;
             },
@@ -269,7 +269,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
             documentUrl: signedUrlData.signedUrl,
             filename: `receipt-${referenceCode || 'payment'}.pdf`,
             caption: getFlowCopy(receiptLang, 'notification.receipt_caption'),
-            messageCategory: 'utility',
+            messageCategory: 'service',
           });
         }
       }
@@ -320,7 +320,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           const notifyResult = await driveExternalEffect(
             supabase, paymentId, 'customer_loyalty_whatsapp', claimToken,
             async () => {
-              await sender.sendText({ to: customerPhone, text: await t(loyaltyMsg), messageCategory: 'utility' });
+              await sender.sendText({ to: customerPhone, text: await t(loyaltyMsg), messageCategory: 'service' });
               return true;
             },
           );
@@ -358,7 +358,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
         if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
         else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
-        if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated, messageCategory: 'utility' })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
+        if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated, messageCategory: 'service' })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.loyalty', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Loyalty error');

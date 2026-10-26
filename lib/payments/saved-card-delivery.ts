@@ -112,7 +112,7 @@ export async function sendWithFencedDelivery(params: FencedDeliveryParams): Prom
   let messageId: string | undefined;
   try {
     const to = customerPhone.replace(/^\+/, '');
-    const result = await resolved.sender.sendText({ to, text: messageText, messageCategory: 'utility' });
+    const result = await resolved.sender.sendText({ to, text: messageText, messageCategory: 'service' });
     messageId = (result as { messageId?: string })?.messageId;
   } catch (sendErr: unknown) {
     if (isProvenPreEmission(sendErr)) {

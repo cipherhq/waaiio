@@ -15,38 +15,68 @@ import {
   type RuleCondition,
   type RuleContext,
 } from './rules-engine';
+import { MetaCloudService } from '@/lib/channels/meta-cloud';
+import { logger } from '@/lib/logger';
 
 const EXTERNAL_ACTIONS = new Set(['send_message', 'send_template', 'notify_owner']);
 const TERMINAL_ACTION_STATES = new Set(['completed', 'failed', 'indeterminate']);
 
+/** Supported internal categories for financial authorization. */
+type FinancialCategory = 'utility' | 'marketing' | 'authentication';
+
+/** Normalize Meta's uppercase category to internal lowercase. */
+function normalizeMetaCategory(metaCategory: string): FinancialCategory | null {
+  const upper = metaCategory.toUpperCase();
+  if (upper === 'UTILITY') return 'utility';
+  if (upper === 'MARKETING') return 'marketing';
+  if (upper === 'AUTHENTICATION') return 'authentication';
+  return null;
+}
+
 /**
- * Authoritative Meta-approved template category map.
- * Mirrors the provisioned categories in app/api/whatsapp/templates/provision/route.ts.
- * Used to supply the correct messageCategory for financial authorization pricing.
- * Unknown templates MUST fail closed — never default to 'utility'.
+ * Resolve a template's approved category from the business's WABA via Meta API.
+ * Uses existing MetaCloudService.getTemplates() — no new infrastructure.
+ * Fail closed: returns null if channel unavailable, template not found,
+ * template not APPROVED, or category unrecognized.
  */
-const TEMPLATE_CATEGORY_MAP: Record<string, 'utility' | 'marketing' | 'authentication'> = {
-  // Scheduling / Reminders
-  booking_confirmation: 'utility',
-  booking_reminder: 'utility',
-  // Ordering
-  order_status_update: 'utility',
-  // Invoice
-  invoice_payment_request: 'utility',
-  // Broadcast
-  business_update: 'utility',
-  business_reminder: 'utility',
-  business_event: 'utility',
-  business_promotion: 'marketing',
-  // Feedback
-  feedback_request: 'marketing',
-  // WhatsApp Sign
-  document_signature_request: 'utility',
-  // Promo verification
-  promo_pickup_verification_v2: 'utility',
-  promo_winner_status_v1: 'utility',
-  promo_fulfillment_status_v1: 'utility',
-};
+export async function resolveTemplateCategory(
+  supabase: SupabaseClient,
+  businessId: string,
+  templateName: string,
+): Promise<FinancialCategory | null> {
+  try {
+    // 1. Get the business's active Meta Cloud channel credentials
+    const { data: channel, error: channelErr } = await supabase
+      .from('whatsapp_channels')
+      .select('waba_id, meta_access_token')
+      .eq('business_id', businessId)
+      .eq('provider', 'meta_cloud')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (channelErr || !channel?.waba_id || !channel?.meta_access_token) {
+      // No dedicated channel — try shared WABA from env
+      const sharedWabaId = process.env.META_CLOUD_WABA_ID;
+      const sharedToken = process.env.META_CLOUD_ACCESS_TOKEN;
+      if (!sharedWabaId || !sharedToken) return null;
+
+      const meta = new MetaCloudService({ accessToken: sharedToken, phoneNumberId: '', wabaId: sharedWabaId });
+      const { data: templates } = await meta.getTemplates({ fields: 'name,status,category' });
+      const match = templates.find(t => t.name === templateName && t.status === 'APPROVED');
+      return match ? normalizeMetaCategory(match.category) : null;
+    }
+
+    // 2. Query the business's dedicated WABA for the template
+    const meta = new MetaCloudService({ accessToken: channel.meta_access_token, phoneNumberId: '', wabaId: channel.waba_id });
+    const { data: templates } = await meta.getTemplates({ fields: 'name,status,category' });
+    const match = templates.find(t => t.name === templateName && t.status === 'APPROVED');
+    return match ? normalizeMetaCategory(match.category) : null;
+  } catch (err) {
+    logger.withContext({ op: 'sealed-rule-actions.resolve-template-category', templateName, businessId })
+      .error('[SEALED-RULES] Template category resolution failed — fail closed');
+    return null;
+  }
+}
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -70,6 +100,7 @@ async function executeFrozenAction(
   row: FrozenRuleAction,
   context: RuleContext,
   sender?: MessageSender,
+  categoryResolver: (s: SupabaseClient, b: string, t: string) => Promise<FinancialCategory | null> = resolveTemplateCategory,
 ): Promise<void> {
   if (row.status === 'sending') {
     // The provider boundary was crossed by a prior worker. Reconcile to the
@@ -99,9 +130,12 @@ async function executeFrozenAction(
     : undefined;
   const sendTemplate = sender?.sendTemplate
     ? async (phone: string, templateName: string, templateParams: string[]) => {
-      const category = TEMPLATE_CATEGORY_MAP[templateName];
+      // Resolve actual Meta-approved category from the business's WABA.
+      // Fail closed before any provider emission or financial reservation
+      // if template is not APPROVED or category is unrecognized.
+      const category = await categoryResolver(supabase, businessId, templateName);
       if (!category) {
-        throw new Error(`sealed_template_category_unknown:${templateName}`);
+        throw new Error(`sealed_template_category_unresolved:${templateName}`);
       }
       await sender.sendTemplate!({ to: phone, templateName, templateParams, messageCategory: category });
     }
@@ -149,8 +183,11 @@ export async function runSealedRuleActions(params: {
   event: string;
   context: RuleContext;
   sender?: MessageSender;
+  /** @internal Test-only override for template category resolution. */
+  _resolveTemplateCategory?: (supabase: SupabaseClient, businessId: string, templateName: string) => Promise<FinancialCategory | null>;
 }): Promise<{ actionCount: number; terminalCount: number }> {
   const { supabase, paymentId, businessId, event, context, sender } = params;
+  const categoryResolver = params._resolveTemplateCategory || resolveTemplateCategory;
   const existing = await readRuleActionManifest(supabase, paymentId);
   if (!existing.ok) throw new Error(`rule_manifest_lookup_failed:${existing.error}`);
 
@@ -190,7 +227,7 @@ export async function runSealedRuleActions(params: {
   }
 
   for (const row of frozen.rows) {
-    await executeFrozenAction(supabase, paymentId, businessId, row, context, sender);
+    await executeFrozenAction(supabase, paymentId, businessId, row, context, sender, categoryResolver);
   }
 
   const finalRows = await readFrozenRuleActions(supabase, paymentId);
