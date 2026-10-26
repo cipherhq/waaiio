@@ -57,7 +57,15 @@ CREATE TRIGGER trg_prevent_ticket_capacity_decrease
 -- Part 2: Replace purchase_tickets_atomic with is_active guard
 -- ═══════════════════════════════════════════════════════
 
--- Same 12-arg signature as M383 — CREATE OR REPLACE, no DROP needed.
+-- Defensively drop old 10-arg signature from M149 (M383 already does this,
+-- but if this migration is applied in non-standard order — e.g. the R90 test
+-- which skips M383 — the old overload would coexist and fail the stale-
+-- overload assertion below).
+DROP FUNCTION IF EXISTS public.purchase_tickets_atomic(
+  uuid, uuid, uuid, integer, uuid, text, text, text, integer, text
+);
+
+-- Same 12-arg signature as M383 — CREATE OR REPLACE.
 CREATE OR REPLACE FUNCTION public.purchase_tickets_atomic(
   p_business_id UUID,
   p_event_id UUID,
