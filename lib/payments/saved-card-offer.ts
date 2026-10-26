@@ -193,7 +193,7 @@ export async function checkAndOfferSavedCard(
 
     // D5: Error classification using real error classes from attempt-recording
     try {
-      const result = await sender.sendButtons({ to, body, buttons, messageCategory: 'utility' });
+      const result = await sender.sendButtons({ to, body, buttons, messageCategory: 'marketing' });
       const wamid = result?.messageId;
       if (!wamid) {
         // D5: Missing WAMID — conservatively ambiguous (may have emitted)

@@ -265,7 +265,7 @@ async function sendRecurringOfferCTA(
         { id: `recurring_setup:${intentId}`, title: 'Set Up Recurring' },
         { id: `recurring_decline:${intentId}`, title: 'No Thanks' },
       ],
-      messageCategory: 'utility',
+      messageCategory: 'marketing',
     });
     logger.info(`${logPrefix} Recurring offer CTA sent for intent ${intentId}`);
   } catch (sendErr) {
