@@ -375,6 +375,86 @@ describe('M458 atomic cutover — tier_prices', () => {
   });
 });
 
+// ═══ PR #711: NG Paystack repricing — atomic plan+price cutover ═══
+describe('PR #711: NG Paystack repricing (growth ₦49,000 / business ₦99,000)', () => {
+  it('exact NG repricing: both tiers pass preflight and reach RPC with correct prices', async () => {
+    mockFetch
+      .mockResolvedValueOnce(psPlanOk(49000))    // growth: ₦49,000 → 4,900,000 kobo
+      .mockResolvedValueOnce(psPlanOk(99000));    // business: ₦99,000 → 9,900,000 kobo
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: {
+        growth: { paystack: 'PLN_l1b69o734nv8kbv' },
+        business: { paystack: 'PLN_63lo0fsxzs6ev6z' },
+      },
+      expected_version_id: 'uuid-ng-reprice',
+      tier_prices: { growth: { price: 49000 }, business: { price: 99000 } },
+    }) as never);
+    expect(res.status).toBe(200);
+    const saveCall = rpcCalls.find(c => c.fn === 'save_provider_plan_refs');
+    expect(saveCall).toBeDefined();
+    expect(saveCall!.params.p_tier_prices).toEqual({ growth: { price: 49000 }, business: { price: 99000 } });
+    expect(saveCall!.params.p_country_code).toBe('NG');
+  });
+
+  it('NG repricing: mismatched growth amount → preflight blocks, zero RPC', async () => {
+    // Plan says ₦49,000 but we send ₦48,000 — must reject
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: true, data: { is_archived: false, interval: 'monthly', currency: 'NGN', amount: 4900000 } }) });
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: { growth: { paystack: 'PLN_l1b69o734nv8kbv' } },
+      expected_version_id: 'uuid-ng-mismatch',
+      tier_prices: { growth: { price: 48000 } },  // wrong: doesn't match plan
+    }) as never);
+    // Preflight uses tier_prices price (48000), Paystack plan has 4900000 kobo (49000 major)
+    // 48000 * 100 = 4800000 ≠ 4900000 → mismatch
+    expect(res.status).toBe(400);
+    expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
+  });
+
+  it('NG repricing: missing business ref when both tier_prices set → atomicity guard', async () => {
+    const res = await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: { growth: { paystack: 'PLN_l1b69o734nv8kbv' } },  // only growth, no business ref
+      expected_version_id: 'uuid-ng-missing',
+      tier_prices: { growth: { price: 49000 }, business: { price: 99000 } },
+    }) as never);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('requires a matching plan_refs entry');
+    expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
+  });
+
+  it('NG repricing: step-up hash binds exact plan codes and prices', async () => {
+    mockFetch
+      .mockResolvedValueOnce(psPlanOk(49000))
+      .mockResolvedValueOnce(psPlanOk(99000));
+    await POST(makeReq({
+      action: 'save_refs',
+      country_code: 'NG',
+      plan_refs: {
+        growth: { paystack: 'PLN_l1b69o734nv8kbv' },
+        business: { paystack: 'PLN_63lo0fsxzs6ev6z' },
+      },
+      expected_version_id: 'uuid-ng-stepup',
+      tier_prices: { growth: { price: 49000 }, business: { price: 99000 } },
+    }) as never);
+    const stepUpCall = vi.mocked(consumeStepUp).mock.calls.find(
+      c => c[2] === 'provider_config' && c[3] === 'save_refs'
+    );
+    expect(stepUpCall).toBeDefined();
+    const params = stepUpCall![4] as Record<string, unknown>;
+    expect(params.plan_refs).toEqual({
+      growth: { paystack: 'PLN_l1b69o734nv8kbv' },
+      business: { paystack: 'PLN_63lo0fsxzs6ev6z' },
+    });
+    expect(params.tier_prices).toEqual({ growth: { price: 49000 }, business: { price: 99000 } });
+  });
+});
+
 // ═══ CORS tests ═══
 describe('CORS handling', () => {
   it('OPTIONS preflight for configured Admin origin succeeds with required headers', async () => {
