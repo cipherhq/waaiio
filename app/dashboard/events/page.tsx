@@ -11,6 +11,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
+import { TicketTypeEditForm } from './TicketTypeEditForm';
+import { validateTicketTierEdit, type TicketTierEditable } from '@/lib/events/ticket-tier-edit';
 
 interface EventItem {
   id: string;
@@ -60,6 +62,14 @@ export default function EventsPage() {
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
   const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
+  const [editingTier, setEditingTier] = useState<
+    { kind: 'saved'; original: TicketType } | { kind: 'pending'; index: number } | null
+  >(null);
+  const [tierDraft, setTierDraft] = useState<TicketTierEditable>({
+    name: '', price: 0, total_tickets: 1, sort_order: 0, is_active: true,
+  });
+  const [tierSaving, setTierSaving] = useState(false);
+  const [tierEditError, setTierEditError] = useState<string | null>(null);
   const [newTypeName, setNewTypeName] = useState('');
   const [newTypePrice, setNewTypePrice] = useState(0);
   const [newTypeTotal, setNewTypeTotal] = useState(100);
@@ -132,15 +142,80 @@ export default function EventsPage() {
     loadTicketTypes(form.id);
   }
 
+  // Pause persisted tiers instead of deleting: pending checkouts may still
+  // reference the tier ID before their tickets_sold counter is finalized.
   async function removeTicketType(typeId: string) {
-    if (!confirm('Remove this ticket type?')) return;
+    if (!form.id || !confirm('Pause this tier for new customers? Existing purchases are preserved.')) return;
     const supabase = createClient();
-    const { error } = await supabase.from('event_ticket_types').delete().eq('id', typeId);
-    if (error) {
-      alert(`Failed to remove ticket type: ${error.message}`);
+    const { data, error } = await supabase.from('event_ticket_types')
+      .update({ is_active: false })
+      .eq('id', typeId).eq('event_id', form.id)
+      .eq('is_active', true)
+      .select('id').maybeSingle();
+    if (error || !data) {
+      alert('Failed to pause ticket type: ' + (error?.message || 'Ticket type not found. Refresh and try again.'));
       return;
     }
-    loadTicketTypes(form.id);
+    await loadTicketTypes(form.id);
+  }
+
+  function beginSavedTierEdit(original: TicketType) {
+    setEditingTier({ kind: 'saved', original });
+    setTierDraft({
+      name: original.name, price: Number(original.price), total_tickets: original.total_tickets,
+      sort_order: original.sort_order, is_active: original.is_active,
+    });
+    setTierEditError(null);
+  }
+
+  function beginPendingTierEdit(index: number) {
+    const tier = pendingTicketTypes[index];
+    if (!tier) return;
+    setEditingTier({ kind: 'pending', index });
+    setTierDraft({
+      name: tier.name, price: tier.price, total_tickets: tier.total_tickets,
+      sort_order: tier.sort_order ?? index, is_active: tier.is_active ?? true,
+    });
+    setTierEditError(null);
+  }
+
+  async function saveTicketTierEdit() {
+    if (!editingTier || tierSaving) return;
+    const original = editingTier.kind === 'saved' ? editingTier.original : undefined;
+    const validation = validateTicketTierEdit(tierDraft, original);
+    if (!validation.ok) { setTierEditError(validation.error); return; }
+    if (editingTier.kind === 'pending') {
+      const index = editingTier.index;
+      setPendingTicketTypes(prev => prev.map((tier, i) => i === index ? { ...tier, ...validation.value } : tier));
+      setEditingTier(null);
+      setTierEditError(null);
+      return;
+    }
+    if (!form.id) { setTierEditError('Event not found. Reopen and try again.'); return; }
+    setTierSaving(true);
+    const supabase = createClient();
+    // Row-conditional UPDATE = atomic compare-and-swap: concurrent purchase
+    // changes tickets_sold and prevents stale edits from overwriting inventory.
+    const { data, error } = await supabase.from('event_ticket_types')
+      .update(validation.value)
+      .eq('id', original!.id).eq('event_id', form.id)
+      .eq('tickets_sold', original!.tickets_sold)
+      .eq('total_tickets', original!.total_tickets)
+      .eq('price', original!.price)
+      .eq('name', original!.name)
+      .eq('is_active', original!.is_active)
+      .eq('sort_order', original!.sort_order)
+      .select('id,event_id,name,price,total_tickets,tickets_sold,sort_order,is_active')
+      .maybeSingle();
+    setTierSaving(false);
+    if (error || !data) {
+      setTierEditError(error?.message || 'This tier was changed by someone else or you no longer have access. Refresh and retry.');
+      await loadTicketTypes(form.id);
+      return;
+    }
+    await loadTicketTypes(form.id);
+    setEditingTier(null);
+    setTierEditError(null);
   }
 
   function addPendingTicketType() {
@@ -156,6 +231,9 @@ export default function EventsPage() {
   }
 
   function removePendingTicketType(index: number) {
+    // Avoid editing a shifted index if a different buffered tier is removed.
+    setEditingTier(null);
+    setTierEditError(null);
     setPendingTicketTypes(prev => prev.filter((_, i) => i !== index));
   }
 
@@ -208,6 +286,8 @@ export default function EventsPage() {
     setTicketTypes([]);
     setPendingTicketTypes([]);
     setTierRecoveryPending(false);
+    setEditingTier(null);
+    setTierEditError(null);
     setView('add');
   }
 
@@ -230,6 +310,8 @@ export default function EventsPage() {
     setOriginalDate(event.date);
     setPendingTicketTypes([]);
     setTierRecoveryPending(false);
+    setEditingTier(null);
+    setTierEditError(null);
     setView('edit');
     loadTicketTypes(event.id);
   }
@@ -577,8 +659,12 @@ export default function EventsPage() {
                         <span className="text-sm font-medium text-gray-900">{tt.name}</span>
                         <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(tt.price, country)}</span>
                         <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">{tt.tickets_sold}/{tt.total_tickets} sold</span>
+                        {!tt.is_active && <span className="ml-2 text-xs text-amber-700">Paused</span>}
                       </div>
-                      <button onClick={() => removeTicketType(tt.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                      <div className="flex gap-3">
+                        <button type="button" disabled={tierSaving} onClick={() => beginSavedTierEdit(tt)} className="text-xs font-semibold text-brand hover:underline">Edit</button>
+                        {tt.is_active && <button type="button" disabled={tierSaving} onClick={() => void removeTicketType(tt.id)} className="text-xs text-red-600 hover:underline">Pause</button>}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -600,7 +686,10 @@ export default function EventsPage() {
                           <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(pt.price, country)}</span>
                           <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">{pt.total_tickets} tickets</span>
                         </div>
-                        <button onClick={() => removePendingTicketType(idx)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                        <div className="flex gap-3">
+                          <button type="button" onClick={() => beginPendingTierEdit(idx)} className="text-xs font-semibold text-brand hover:underline">Edit</button>
+                          <button type="button" onClick={() => removePendingTicketType(idx)} className="text-xs text-red-500 hover:underline">Remove</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -616,6 +705,18 @@ export default function EventsPage() {
                 </div>
               )}
 
+              {editingTier && (
+                <TicketTypeEditForm
+                  draft={tierDraft}
+                  onChange={setTierDraft}
+                  onSave={() => void saveTicketTierEdit()}
+                  onCancel={() => { setEditingTier(null); setTierEditError(null); }}
+                  saved={editingTier.kind === 'saved'}
+                  minCapacity={editingTier.kind === 'saved' ? editingTier.original.total_tickets : 1}
+                  busy={tierSaving}
+                  error={tierEditError}
+                />
+              )}
               <div className="flex flex-wrap items-end gap-2">
                 <div className="flex-1 min-w-[120px]">
                   <input

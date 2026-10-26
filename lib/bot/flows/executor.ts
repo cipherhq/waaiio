@@ -13,6 +13,7 @@ import {
   resolveEffectiveResponseLanguage,
 } from '@/lib/bot/language-preference';
 import type { StandaloneService } from '@/lib/bot/standalone.service';
+import { safeFlowCleanup } from '@/lib/bot/handlers/escape-hatches';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import type { FlowContext, PromptMessage } from './types';
 import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants';
@@ -409,7 +410,7 @@ export class FlowExecutor {
 
     // ── Navigation: "back" command ──
     // Only intercept on non-free-text steps so users can literally type "back" as input
-    const BACK_WORDS = ['back', 'go back', 'previous', 'cancel'];
+    const BACK_WORDS = ['back', 'go back', 'previous'];
     const lowerInputTrimmed = input.toLowerCase().trim();
     if (BACK_WORDS.includes(lowerInputTrimmed) && !FREE_TEXT_STEPS.includes(stepId)) {
       const history = (session.session_data._step_history as string[]) || [];
@@ -448,17 +449,16 @@ export class FlowExecutor {
     // Global escape hatch: cancel / start over at any step
     // Supports English + Pidgin + Yoruba + French + Hausa + Twi
     const lowerInput = input.toLowerCase().trim();
-    const CANCEL_WORDS = ['stop', 'quit', 'exit', 'end', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
+    const CANCEL_WORDS = ['stop', 'quit', 'exit', 'end', 'cancel', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
     const RESTART_WORDS = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
     if (CANCEL_WORDS.includes(lowerInput)) {
-      // Clean up any pending bank transfers before killing session
-      const transferRef = session.session_data?.bank_transfer_reference;
-      if (transferRef) {
-        await this.supabase
-          .from('pending_transfers')
-          .update({ status: 'cancelled' })
-          .eq('reference_code', transferRef as string)
-          .eq('status', 'pending');
+      // Clean up pending reservations via authoritative RPCs
+      const cancelCleanupOk = await safeFlowCleanup(this.supabase, session.session_data || {}, session.user_id);
+      if (!cancelCleanupOk) {
+        const errLang = this.resolveCopyLang(session, entitlement);
+        const errMsg = getFlowCopy(errLang, 'nav.cancel_retry') || 'Something went wrong. Please try again.';
+        await this.sendText(from, errMsg, scopedSender);
+        return;
       }
       const cancelLang = this.resolveCopyLang(session, entitlement);
       const cancelMsg = getFlowCopy(cancelLang, 'nav.cancelled');
@@ -470,14 +470,13 @@ export class FlowExecutor {
       return;
     }
     if (RESTART_WORDS.includes(lowerInput)) {
-      // Clean up any pending bank transfers before killing session
-      const transferRef = session.session_data?.bank_transfer_reference;
-      if (transferRef) {
-        await this.supabase
-          .from('pending_transfers')
-          .update({ status: 'cancelled' })
-          .eq('reference_code', transferRef as string)
-          .eq('status', 'pending');
+      // Clean up pending reservations via authoritative RPCs
+      const restartCleanupOk = await safeFlowCleanup(this.supabase, session.session_data || {}, session.user_id);
+      if (!restartCleanupOk) {
+        const errLang = this.resolveCopyLang(session, entitlement);
+        const errMsg = getFlowCopy(errLang, 'nav.cancel_retry') || 'Something went wrong. Please try again.';
+        await this.sendText(from, errMsg, scopedSender);
+        return;
       }
       const restartLang = this.resolveCopyLang(session, entitlement);
       const restartMsg = getFlowCopy(restartLang, 'nav.no_problem');
