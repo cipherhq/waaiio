@@ -64,16 +64,11 @@ const PAY_SUCCESS_RV      = 'p0000000-0000-0000-0000-000000000004';
 
 describe.skipIf(!canRun)('M471: fixture setup', () => {
   beforeAll(() => {
-    // Use service_role to bypass RLS for fixture insertion
+    // Insert fixtures as postgres superuser (service_role lacks table INSERT grants
+    // in disposable PG; RPCs are SECURITY DEFINER so they run as owner).
+    // Order: auth.users → profiles → businesses → bookings/reservations → payments
     psql(`
-      SET ROLE service_role;
-
-      -- Business
-      INSERT INTO businesses (id, name, owner_id, category, subscription_tier, trial_ends_at)
-      VALUES ('${BIZ_ID}', 'Test Nav Biz', '${USER_A}', 'restaurant', 'growth', NOW() + INTERVAL '30 days')
-      ON CONFLICT (id) DO NOTHING;
-
-      -- Profiles (users)
+      -- Users (must exist before businesses.owner_id FK and bookings.user_id FK)
       INSERT INTO auth.users (id, email) VALUES
         ('${USER_A}', 'nav-user-a@test.local'),
         ('${USER_B}', 'nav-user-b@test.local')
@@ -82,6 +77,11 @@ describe.skipIf(!canRun)('M471: fixture setup', () => {
       INSERT INTO profiles (id, email) VALUES
         ('${USER_A}', 'nav-user-a@test.local'),
         ('${USER_B}', 'nav-user-b@test.local')
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Business (references profiles.id via owner_id)
+      INSERT INTO businesses (id, name, slug, owner_id, category, subscription_tier, trial_ends_at, address, city, neighborhood, phone)
+      VALUES ('${BIZ_ID}', 'Test Nav Biz', 'test-nav-biz-m471', '${USER_A}', 'restaurant', 'growth', NOW() + INTERVAL '30 days', '1 Test St', 'Lagos', 'VI', '+2340000000000')
       ON CONFLICT (id) DO NOTHING;
 
       -- Bookings: pending unpaid, pending with successful payment, pending with finalization,
@@ -123,8 +123,6 @@ describe.skipIf(!canRun)('M471: fixture setup', () => {
       VALUES
         ('${PAY_SUCCESS_RV}', '${RV_PENDING_PAID}', '${USER_A}', 5000, 'NGN', 'PAY-NAV-004', 'success')
       ON CONFLICT (id) DO NOTHING;
-
-      RESET ROLE;
     `);
   });
 
