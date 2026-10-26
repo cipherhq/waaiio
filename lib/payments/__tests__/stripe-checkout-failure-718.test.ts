@@ -316,3 +316,77 @@ describe('#718 — Timeout and exception safety (CTO review)', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('#718 — Confirmed BalaShop Endive rejection (req_a59sfkx0BETXtl)', () => {
+  // Exact error shape from the confirmed Stripe request log:
+  // param: "payment_method_types" (bare name, not indexed), type: invalid_request_error, HTTP 400
+  const confirmedEndiveError = {
+    ok: false,
+    status: 400,
+    headers: { get: (key: string) => key === 'request-id' ? 'req_a59sfkx0BETXtl' : null },
+    json: async () => ({
+      error: {
+        type: 'invalid_request_error',
+        code: 'parameter_unknown',
+        param: 'payment_method_types',
+        message: 'REDACTED — never logged',
+      },
+    }),
+  };
+
+  it('matches the confirmed rejected parameter and triggers card-only Endive fallback', async () => {
+    mockFetch.mockResolvedValueOnce(confirmedEndiveError).mockResolvedValueOnce(providerSuccess);
+
+    const result = await new StripeGateway().initializePayment({
+      ...checkoutInput,
+      referenceCode: 'WA-TK-1940',
+      amount: 50,
+      currency: 'USD',
+    });
+
+    expect(result).toEqual({
+      url: 'https://checkout.stripe.com/c/pay/cs_test_bala_ok',
+      reference: 'cs_test_bala_ok',
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    const original = new URLSearchParams(mockFetch.mock.calls[0][1].body);
+    const endive = new URLSearchParams(mockFetch.mock.calls[1][1].body);
+
+    // Legacy parameter removed, Endive replacement applied
+    expect(original.get('payment_method_types[0]')).toBe('card');
+    expect(endive.get('payment_method_types[0]')).toBeNull();
+    expect(endive.get('allowed_payment_method_types[0]')).toBe('card');
+
+    // $50 USD preserved
+    expect(endive.get('line_items[0][price_data][unit_amount]')).toBe('5000');
+    expect(endive.get('line_items[0][price_data][currency]')).toBe('usd');
+
+    // Customer, booking reference, and save-card options preserved
+    expect(endive.get('customer')).toBe('cus_test_bala');
+    expect(endive.get('client_reference_id')).toBe('WA-TK-1940');
+    expect(endive.get('saved_payment_method_options[payment_method_save]')).toBe('enabled');
+    expect(endive.get('saved_payment_method_options[allow_redisplay_filters][0]')).toBe('always');
+    expect(endive.get('metadata[booking_id]')).toBe('bk_bala');
+
+    // Distinct idempotency key
+    const key1 = mockFetch.mock.calls[0][1].headers['Idempotency-Key'];
+    const key2 = mockFetch.mock.calls[1][1].headers['Idempotency-Key'];
+    expect(key2).toBe(key1 + '_endive_card');
+  });
+
+  it('captures the confirmed request ID in safe evidence', () => {
+    const evidence = stripeCheckoutErrorEvidence({
+      error: { type: 'invalid_request_error', code: 'parameter_unknown', param: 'payment_method_types' },
+      __waaiio_http_status: 400,
+      __waaiio_request_id: 'req_a59sfkx0BETXtl',
+    });
+    expect(evidence).toEqual({
+      type: 'invalid_request_error',
+      code: 'parameter_unknown',
+      param: 'payment_method_types',
+      httpStatus: 400,
+      requestId: 'req_a59sfkx0BETXtl',
+    });
+  });
+});
