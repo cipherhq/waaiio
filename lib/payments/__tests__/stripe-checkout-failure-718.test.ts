@@ -241,3 +241,78 @@ describe('#718 — Stripe Endive 2026-09-30 removed payment_method_types', () =>
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('#718 — Error shape edge cases: missing or absent param (CTO review)', () => {
+  it('no-param HTTP 400 invalid_request_error does not trigger either fallback gate', () => {
+    // Stripe sometimes returns errors without a param field (e.g., resource_missing)
+    const noParam = { error: { type: 'invalid_request_error', code: 'resource_missing' }, __waaiio_http_status: 400 };
+    expect(mayFallbackFromSaveCardOptions(noParam, true)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(noParam, true)).toBe(false);
+  });
+
+  it('null param does not trigger either fallback gate', () => {
+    const nullParam = { error: { type: 'invalid_request_error', param: null }, __waaiio_http_status: 400 };
+    expect(mayFallbackFromSaveCardOptions(nullParam, true)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(nullParam, true)).toBe(false);
+  });
+
+  it('empty-string param does not trigger either fallback gate', () => {
+    const emptyParam = { error: { type: 'invalid_request_error', param: '' }, __waaiio_http_status: 400 };
+    expect(mayFallbackFromSaveCardOptions(emptyParam, true)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(emptyParam, true)).toBe(false);
+  });
+
+  it('non-object error body does not trigger either fallback gate', () => {
+    const stringError = { error: 'something went wrong', __waaiio_http_status: 400 };
+    expect(mayFallbackFromSaveCardOptions(stringError, true)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(stringError, true)).toBe(false);
+  });
+
+  it('missing __waaiio_http_status does not trigger either fallback gate', () => {
+    const noStatus = { error: { type: 'invalid_request_error', param: 'payment_method_types[0]' } };
+    expect(mayFallbackFromLegacyPaymentMethodTypes(noStatus, true)).toBe(false);
+    expect(mayFallbackFromSaveCardOptions(
+      { error: { type: 'invalid_request_error', param: 'saved_payment_method_options' } }, true,
+    )).toBe(false);
+  });
+
+  it('integration: no-param 400 returns null with single fetch call, no retry', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false, status: 400,
+      headers: { get: () => null },
+      json: async () => ({ error: { type: 'invalid_request_error', code: 'resource_missing' } }),
+    });
+    const result = await new StripeGateway().initializePayment(checkoutInput);
+    expect(result).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('#718 — Timeout and exception safety (CTO review)', () => {
+  it('network timeout on initial request returns null with no retry', async () => {
+    mockFetch.mockRejectedValueOnce(new DOMException('The operation was aborted', 'AbortError'));
+    const result = await new StripeGateway().initializePayment(checkoutInput);
+    expect(result).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('network timeout on Endive retry returns null — no save-card fallback attempt', async () => {
+    mockFetch
+      .mockResolvedValueOnce(providerError('payment_method_types[0]'))
+      .mockRejectedValueOnce(new DOMException('The operation was aborted', 'AbortError'));
+    const result = await new StripeGateway().initializePayment(checkoutInput);
+    expect(result).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('JSON parse error on provider response returns null with no retry', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false, status: 400,
+      headers: { get: () => null },
+      json: async () => { throw new SyntaxError('Unexpected token'); },
+    });
+    const result = await new StripeGateway().initializePayment(checkoutInput);
+    expect(result).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
