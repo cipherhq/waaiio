@@ -134,7 +134,7 @@ export async function checkAndOfferSavedCard(
   paymentId: string,
   customerPhone: string,
   businessId: string,
-  sender: { sendButtons: (msg: { to: string; body: string; buttons: Array<{ id: string; title: string }> }) => Promise<{ messageId?: string }> } | null,
+  sender: { sendButtons: (msg: { to: string; body: string; buttons: Array<{ id: string; title: string }>; messageCategory?: string }) => Promise<{ messageId?: string }> } | null,
   channelId?: string | null,
 ): Promise<void> {
   if (!sender) return;
@@ -193,7 +193,7 @@ export async function checkAndOfferSavedCard(
 
     // D5: Error classification using real error classes from attempt-recording
     try {
-      const result = await sender.sendButtons({ to, body, buttons });
+      const result = await sender.sendButtons({ to, body, buttons, messageCategory: 'utility' });
       const wamid = result?.messageId;
       if (!wamid) {
         // D5: Missing WAMID — conservatively ambiguous (may have emitted)
@@ -605,7 +605,7 @@ export async function checkStripeConsentAndOffer(
   paymentId: string,
   customerPhone: string,
   businessId: string,
-  sender: { sendText: (opts: { to: string; text: string }) => Promise<unknown> } | null,
+  sender: { sendText: (opts: { to: string; text: string; messageCategory?: string }) => Promise<unknown> } | null,
 ): Promise<void> {
   const logPrefix = '[STRIPE-SAVED-CARD-OFFER]';
 

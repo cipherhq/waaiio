@@ -746,7 +746,7 @@ export async function sendProactiveConfirmation(
         if (sendAuth?.authorized) {
           sideEffectsMayHaveOccurred = true;
           try {
-            const sendResult = await resolved.sender.sendText({ to: phone, text: localizedText });
+            const sendResult = await resolved.sender.sendText({ to: phone, text: localizedText, messageCategory: 'utility' });
             const wamid = sendResult?.messageId;
 
             if (wamid) {

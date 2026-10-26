@@ -176,6 +176,7 @@ async function handleFrequencySelection(
           { id: `recurring_freq:weekly:${intent.id}`, title: 'Weekly' },
           { id: `recurring_freq:monthly:${intent.id}`, title: 'Monthly' },
         ],
+        messageCategory: 'utility',
       });
     }
     return { handled: true };
@@ -230,6 +231,7 @@ async function showConsentPrompt(
         { id: `recurring_consent:accept:${intent.id}`, title: 'I Accept' },
         { id: `recurring_consent:decline:${intent.id}`, title: 'Cancel' },
       ],
+      messageCategory: 'utility',
     });
   }
 
@@ -318,7 +320,7 @@ async function handleProviderSetup(
   // Send a "setting up" message
   if (sender) {
     const phoneTo = phone.startsWith('+') ? phone.slice(1) : phone;
-    await sender.sendText({ to: phoneTo, text: '\u{23F3} Setting up your recurring payment... Please wait.' });
+    await sender.sendText({ to: phoneTo, text: '\u{23F3} Setting up your recurring payment... Please wait.', messageCategory: 'utility' });
   }
 
   try {
@@ -764,7 +766,7 @@ async function sendSetupMessage(
   if (!sender) return;
   try {
     const phoneTo = phone.startsWith('+') ? phone.slice(1) : phone;
-    await sender.sendText({ to: phoneTo, text });
+    await sender.sendText({ to: phoneTo, text, messageCategory: 'utility' });
   } catch {
     // Non-critical — setup state is already persisted in DB
   }
