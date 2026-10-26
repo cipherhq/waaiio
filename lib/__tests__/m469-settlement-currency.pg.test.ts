@@ -241,28 +241,56 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
   const q=await run("SELECT has_function_privilege('anon','public.confirm_manual_settlement(uuid,text,boolean,uuid)','EXECUTE') AS anon, has_function_privilege('authenticated','public.force_settle_executed_transfer(uuid,text,text,boolean,uuid)','EXECUTE') AS member, has_function_privilege('service_role','public.finalize_refund_execution(uuid)','EXECUTE') AS svc");
   expect(q.rows[0]).toMatchObject({anon:false,member:false,svc:true});
  });
- it('M472 reconciliation: applying fix on top of old M469 produces correct fee-allocation-time behavior',async()=>{
-  // Verify M472 is idempotent on top of M469 (already applied in beforeAll)
+ it('M472 reconciliation: old function misses cross-period adjustment, M472 fixes it',async()=>{
+  // Step 1: Downgrade to the pre-P1-4 function body (the stale staging state).
+  // Remove v_fee_allocated_at and revert period matching to v_payment.created_at::date.
+  const corrected=(await run("SELECT prosrc FROM pg_proc WHERE oid='public.finalize_refund_execution(uuid)'::regprocedure")).rows[0].prosrc;
+  expect(corrected).toContain('v_fee_allocated_at');
+  const oldBody=corrected
+    .replace(/\s*v_fee_allocated_at\s+DATE;/,'')
+    .replace(/-- Use the fee.*?IF v_fee_allocated_at IS NULL THEN v_fee_allocated_at := v_payment\.created_at::date; END IF;\n/s,'')
+    .replace(/v_fee_allocated_at/g,'v_payment.created_at::date');
+  await run("CREATE OR REPLACE FUNCTION public.finalize_refund_execution(p_refund_id UUID) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$"+oldBody+"$fn$");
+  const downgraded=(await run("SELECT prosrc FROM pg_proc WHERE oid='public.finalize_refund_execution(uuid)'::regprocedure")).rows[0].prosrc;
+  expect(downgraded).not.toContain('v_fee_allocated_at');
+
+  // Step 2: Cross-period scenario — payment Sunday, fee Monday, payout covers Monday week.
+  const pid1=randomUUID(), bk1=randomUUID();
+  await run("INSERT INTO public.bookings(id,deposit_status) VALUES($1,'paid')",[bk1]);
+  await run("INSERT INTO public.payments(id,business_id,booking_id,currency,amount,status,gateway_reference,created_at) VALUES($1,$2,$3,'USD',100,'paid',$4,'2026-10-07')",[pid1,B,bk1,'T-'+pid1]);
+  await run("INSERT INTO public.platform_fees(id,business_id,payment_id,booking_id,transaction_amount,fee_total,gateway_fee,fee_percentage,fee_flat,waived,is_direct_transfer,created_at) VALUES($1,$2,$3,$4,100,10,0,10,0,false,false,'2026-10-08')",[randomUUID(),B,pid1,bk1]);
+  const payB1=await payout(80,'USD','paid');
+  await run("UPDATE public.business_payouts SET period_start='2026-10-08',period_end='2026-10-14' WHERE id=$1",[payB1]);
+  const rid1=await refund(pid1,30);
+  // OLD behavior: uses payment.created_at (Oct 7) — no payout covers Oct 7 → no adjustment
+  expect((await finish(rid1)).rows[0].result.finalized).toBe(true);
+  expect((await run('SELECT count(*)::int n FROM public.payout_adjustments')).rows[0].n).toBe(0);
+
+  // Step 3: Apply M472 reconciliation migration.
   await run(sqlFile('472_refund_fee_allocation_period_fix.sql'));
-  // Verify the function now has v_fee_allocated_at
-  const src=(await run("SELECT prosrc FROM pg_proc WHERE oid='public.finalize_refund_execution(uuid)'::regprocedure")).rows[0].prosrc;
-  expect(src).toContain('v_fee_allocated_at');
-  expect(src).toContain('f.created_at::date INTO v_fee_allocated_at');
-  // Verify grants preserved after M472
-  const grants=await run("SELECT has_function_privilege('anon','public.finalize_refund_execution(uuid)','EXECUTE') AS anon, has_function_privilege('service_role','public.finalize_refund_execution(uuid)','EXECUTE') AS svc");
-  expect(grants.rows[0]).toMatchObject({anon:false,svc:true});
-  // Verify cross-period refund still works after M472 re-apply
-  const pid=randomUUID(), booking=randomUUID();
-  await run("INSERT INTO public.bookings(id,deposit_status) VALUES($1,'paid')",[booking]);
-  await run("INSERT INTO public.payments(id,business_id,booking_id,currency,amount,status,gateway_reference,created_at) VALUES($1,$2,$3,'USD',100,'paid',$4,'2026-10-07')",[pid,B,booking,'T-'+pid]);
-  await run("INSERT INTO public.platform_fees(id,business_id,payment_id,booking_id,transaction_amount,fee_total,gateway_fee,fee_percentage,fee_flat,waived,is_direct_transfer,created_at) VALUES($1,$2,$3,$4,100,10,0,10,0,false,false,'2026-10-08')",[randomUUID(),B,pid,booking]);
-  const payoutB=await payout(80,'USD','paid');
-  await run("UPDATE public.business_payouts SET period_start='2026-10-08',period_end='2026-10-14' WHERE id=$1",[payoutB]);
-  const rid=await refund(pid,30);
-  expect((await finish(rid)).rows[0].result.finalized).toBe(true);
-  const adj=(await run('SELECT payout_id,currency FROM public.payout_adjustments')).rows;
+  const fixed=(await run("SELECT prosrc FROM pg_proc WHERE oid='public.finalize_refund_execution(uuid)'::regprocedure")).rows[0].prosrc;
+  expect(fixed).toContain('v_fee_allocated_at');
+  expect(fixed).toContain('f.created_at::date INTO v_fee_allocated_at');
+
+  // Step 4: Verify grants preserved after M472.
+  const grants=await run("SELECT has_function_privilege('anon','public.finalize_refund_execution(uuid)','EXECUTE') AS anon, has_function_privilege('authenticated','public.finalize_refund_execution(uuid)','EXECUTE') AS auth, has_function_privilege('service_role','public.finalize_refund_execution(uuid)','EXECUTE') AS svc");
+  expect(grants.rows[0]).toMatchObject({anon:false,auth:false,svc:true});
+
+  // Step 5: Same cross-period scenario — NOW should produce the correct adjustment.
+  await run("TRUNCATE public.payout_adjustments,public.refunds,public.platform_fees,public.payments,public.bookings,public.business_payouts");
+  const pid2=randomUUID(), bk2=randomUUID();
+  await run("INSERT INTO public.bookings(id,deposit_status) VALUES($1,'paid')",[bk2]);
+  await run("INSERT INTO public.payments(id,business_id,booking_id,currency,amount,status,gateway_reference,created_at) VALUES($1,$2,$3,'USD',100,'paid',$4,'2026-10-07')",[pid2,B,bk2,'T-'+pid2]);
+  await run("INSERT INTO public.platform_fees(id,business_id,payment_id,booking_id,transaction_amount,fee_total,gateway_fee,fee_percentage,fee_flat,waived,is_direct_transfer,created_at) VALUES($1,$2,$3,$4,100,10,0,10,0,false,false,'2026-10-08')",[randomUUID(),B,pid2,bk2]);
+  const payB2=await payout(80,'USD','paid');
+  await run("UPDATE public.business_payouts SET period_start='2026-10-08',period_end='2026-10-14' WHERE id=$1",[payB2]);
+  const rid2=await refund(pid2,30);
+  // NEW behavior: uses fee.created_at (Oct 8) — payout covers Oct 8 → adjustment created
+  expect((await finish(rid2)).rows[0].result.finalized).toBe(true);
+  const adj=(await run('SELECT payout_id,currency,amount FROM public.payout_adjustments')).rows;
   expect(adj).toHaveLength(1);
-  expect(adj[0].payout_id).toBe(payoutB);
+  expect(adj[0].payout_id).toBe(payB2);
   expect(adj[0].currency).toBe('USD');
+  expect(Number(adj[0].amount)).toBe(-30);
  });
 });
