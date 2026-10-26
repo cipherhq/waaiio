@@ -82,9 +82,9 @@ describe('White-label off for launch', () => {
 describe('Country subscription prices (major units)', () => {
   const EXPECTED: Record<string, { growth: number; business: number }> = {
     NG: { growth: 15_000, business: 45_000 },
-    US: { growth: 15, business: 40 },
-    GB: { growth: 12, business: 32 },
-    CA: { growth: 20, business: 50 },
+    US: { growth: 49, business: 89.99 },
+    GB: { growth: 30, business: 80 },
+    CA: { growth: 49, business: 89.99 },
     GH: { growth: 150, business: 400 },
   };
 
