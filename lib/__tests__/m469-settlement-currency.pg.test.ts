@@ -241,4 +241,28 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
   const q=await run("SELECT has_function_privilege('anon','public.confirm_manual_settlement(uuid,text,boolean,uuid)','EXECUTE') AS anon, has_function_privilege('authenticated','public.force_settle_executed_transfer(uuid,text,text,boolean,uuid)','EXECUTE') AS member, has_function_privilege('service_role','public.finalize_refund_execution(uuid)','EXECUTE') AS svc");
   expect(q.rows[0]).toMatchObject({anon:false,member:false,svc:true});
  });
+ it('M472 reconciliation: applying fix on top of old M469 produces correct fee-allocation-time behavior',async()=>{
+  // Verify M472 is idempotent on top of M469 (already applied in beforeAll)
+  await run(sqlFile('472_refund_fee_allocation_period_fix.sql'));
+  // Verify the function now has v_fee_allocated_at
+  const src=(await run("SELECT prosrc FROM pg_proc WHERE oid='public.finalize_refund_execution(uuid)'::regprocedure")).rows[0].prosrc;
+  expect(src).toContain('v_fee_allocated_at');
+  expect(src).toContain('f.created_at::date INTO v_fee_allocated_at');
+  // Verify grants preserved after M472
+  const grants=await run("SELECT has_function_privilege('anon','public.finalize_refund_execution(uuid)','EXECUTE') AS anon, has_function_privilege('service_role','public.finalize_refund_execution(uuid)','EXECUTE') AS svc");
+  expect(grants.rows[0]).toMatchObject({anon:false,svc:true});
+  // Verify cross-period refund still works after M472 re-apply
+  const pid=randomUUID(), booking=randomUUID();
+  await run("INSERT INTO public.bookings(id,deposit_status) VALUES($1,'paid')",[booking]);
+  await run("INSERT INTO public.payments(id,business_id,booking_id,currency,amount,status,gateway_reference,created_at) VALUES($1,$2,$3,'USD',100,'paid',$4,'2026-10-07')",[pid,B,booking,'T-'+pid]);
+  await run("INSERT INTO public.platform_fees(id,business_id,payment_id,booking_id,transaction_amount,fee_total,gateway_fee,fee_percentage,fee_flat,waived,is_direct_transfer,created_at) VALUES($1,$2,$3,$4,100,10,0,10,0,false,false,'2026-10-08')",[randomUUID(),B,pid,booking]);
+  const payoutB=await payout(80,'USD','paid');
+  await run("UPDATE public.business_payouts SET period_start='2026-10-08',period_end='2026-10-14' WHERE id=$1",[payoutB]);
+  const rid=await refund(pid,30);
+  expect((await finish(rid)).rows[0].result.finalized).toBe(true);
+  const adj=(await run('SELECT payout_id,currency FROM public.payout_adjustments')).rows;
+  expect(adj).toHaveLength(1);
+  expect(adj[0].payout_id).toBe(payoutB);
+  expect(adj[0].currency).toBe('USD');
+ });
 });
