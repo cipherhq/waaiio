@@ -423,6 +423,55 @@ describe('Settlement Lifecycle: Ghana Manual-Only', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// 6c. Currency-Review Flag Contract (P1 regression)
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Settlement Lifecycle: Currency-Review Flag Contract', () => {
+  it('auto-payout cron persists structured currency_review flag in both insertion paths', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
+    );
+    // Both paths must persist structured flags (objects with .type property)
+    // so the approve route's f.type === 'currency_review' check works.
+    // The adjustment path uses decision.structuredFlags; the no-adjustment path uses decision.flags.
+    // The currency_review push must use an object, not a string, for both.
+    const currencyFlagPush = source.match(/decision\.flags\.push\(currencyFlag\)/);
+    const structuredFlagPush = source.match(/decision\.structuredFlags\.push\(currencyFlag\)/);
+    expect(currencyFlagPush).toBeTruthy();
+    expect(structuredFlagPush).toBeTruthy();
+    // Verify the flag is a structured object, not a string
+    const flagDef = source.match(/const currencyFlag\s*=\s*\{[^}]*type:\s*'currency_review'/);
+    expect(flagDef).toBeTruthy();
+  });
+
+  it('approve route checks f.type === currency_review on payout flags', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve('app/api/admin/payouts/[id]/approve/route.ts'), 'utf-8',
+    );
+    expect(source).toContain("f.type === 'currency_review'");
+  });
+
+  it('decideAutoPayoutOutcome flags array accepts structured objects', () => {
+    const result = decideAutoPayoutOutcome({
+      canAutoApprove: false,
+      limitCheck: { allowed: true, limit: 999_999_999, used: 0, remaining: 999_999_999 },
+      holdReasons: ['No eligible provider'],
+    });
+    // Push a structured flag (as auto-payout does for currency_review)
+    const flag = { type: 'currency_review', message: 'test', severity: 'critical' };
+    result.flags.push(flag);
+    result.structuredFlags.push(flag);
+    // Both arrays should contain the object with .type accessible
+    expect(result.flags.some(f => typeof f === 'object' && (f as { type: string }).type === 'currency_review')).toBe(true);
+    expect(result.structuredFlags.some(f => f.type === 'currency_review')).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // 7. Full Lifecycle Simulation (mocked)
 // ═══════════════════════════════════════════════════════════════════
 

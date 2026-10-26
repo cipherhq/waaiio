@@ -442,8 +442,9 @@ export async function GET(request: NextRequest) {
       // Non-home-currency payouts require manual provider/limit verification
       // (mirrors the currency_review flag from manual generate route).
       if (currency !== bizCurrency) {
-        decision.structuredFlags.push({ type: 'currency_review', message: 'Payout currency requires manual provider/limit verification', severity: 'critical' });
-        if (decision.flags) decision.flags.push('currency_review: manual provider/limit verification required');
+        const currencyFlag = { type: 'currency_review', message: 'Payout currency requires manual provider/limit verification', severity: 'critical' };
+        decision.structuredFlags.push(currencyFlag);
+        decision.flags.push(currencyFlag);
         status = 'held';
       }
 
