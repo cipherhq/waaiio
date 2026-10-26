@@ -222,9 +222,9 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 // No flat fee component — percentage only
 const COUNTRY_PRICING: Record<string, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
   NG: { free: { price: 0, feeFlat: 0 }, growth: { price: 15_000, feeFlat: 0 }, business: { price: 45_000, feeFlat: 0 } },
-  US: { free: { price: 0, feeFlat: 0 }, growth: { price: 15, feeFlat: 0 }, business: { price: 40, feeFlat: 0 } },
-  GB: { free: { price: 0, feeFlat: 0 }, growth: { price: 12, feeFlat: 0 }, business: { price: 32, feeFlat: 0 } },
-  CA: { free: { price: 0, feeFlat: 0 }, growth: { price: 20, feeFlat: 0 }, business: { price: 50, feeFlat: 0 } },
+  US: { free: { price: 0, feeFlat: 0 }, growth: { price: 49, feeFlat: 0 }, business: { price: 89.99, feeFlat: 0 } },
+  GB: { free: { price: 0, feeFlat: 0 }, growth: { price: 30, feeFlat: 0 }, business: { price: 80, feeFlat: 0 } },
+  CA: { free: { price: 0, feeFlat: 0 }, growth: { price: 49, feeFlat: 0 }, business: { price: 89.99, feeFlat: 0 } },
   GH: { free: { price: 0, feeFlat: 0 }, growth: { price: 150, feeFlat: 0 }, business: { price: 400, feeFlat: 0 } },
 };
 
