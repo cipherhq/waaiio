@@ -231,10 +231,10 @@ describe('sealed Phase-A rule execution', () => {
       sender: { sendText: vi.fn(), sendTemplate } as never,
       _resolveTemplateCategory: mockCategoryResolver,
     });
-    // Template must NOT have been called — fail-closed before emission
+    // Template must NOT have been called — fail-closed before emission fence
     expect(sendTemplate).not.toHaveBeenCalled();
-    // Action must be terminal (indeterminate, since it crossed the sending fence)
-    expect(store.getRows()[0].status).toBe('indeterminate');
+    // Action stays retryable (failed, not indeterminate) — emission never occurred
+    expect(store.getRows()[0].status).toBe('failed');
   });
 
   it('legacy freeform template (no template_name) sends as text without forced category', async () => {
@@ -312,8 +312,8 @@ describe('sealed Phase-A rule execution', () => {
     });
     // No provider emission on resolver failure
     expect(sendTemplate).not.toHaveBeenCalled();
-    // Action goes indeterminate (crossed sending fence but failed before emission)
-    expect(store.getRows()[0].status).toBe('indeterminate');
+    // Action stays retryable (failed) — emission fence was never crossed
+    expect(store.getRows()[0].status).toBe('failed');
   });
 
   it('fails closed when live rule discovery errors before the initial seal', async () => {

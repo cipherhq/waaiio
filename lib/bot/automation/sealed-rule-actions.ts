@@ -109,12 +109,32 @@ async function executeFrozenAction(
   const sendMessage = sender
     ? async (phone: string, text: string) => { await sender.sendText({ to: phone, text }); }
     : undefined;
+  // For send_template: resolve category BEFORE the sending fence so transient
+  // lookup failures remain retryable (pending→failed, not pending→sending→indeterminate).
+  let preResolvedCategory: FinancialCategory | undefined;
+  if (row.action_type === 'send_template' && payload.template_name) {
+    try {
+      const resolved = await categoryResolver(cloud, payload.template_name as string);
+      if (!resolved) {
+        // Template not APPROVED or category unrecognized — fail before emission fence.
+        // 'failed' is non-terminal for the caller to retry after template approval.
+        const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
+        if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
+        return;
+      }
+      preResolvedCategory = resolved;
+    } catch (lookupErr) {
+      // Transient Meta API error — fail retryably, no emission fence crossed
+      const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
+      if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
+      return;
+    }
+  }
+
   const sendTemplate = sender?.sendTemplate
     ? async (phone: string, templateName: string, templateParams: string[]) => {
-      // Resolve actual Meta-approved category from the business's WABA.
-      // Fail closed before any provider emission or financial reservation
-      // if template is not APPROVED or category is unrecognized.
-      const category = await categoryResolver(cloud, templateName);
+      // Category was pre-resolved before the sending fence — safe to emit.
+      const category = preResolvedCategory;
       if (!category) {
         throw new Error(`sealed_template_category_unresolved:${templateName}`);
       }
