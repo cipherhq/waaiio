@@ -2695,7 +2695,9 @@ export const schedulingFlow: FlowDefinition = {
                 p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
                 p_status: totalDeposit > 0 ? 'pending' : 'confirmed',
                 p_total_amount: bookingTotalAmount,
-                p_expected_deposit: (d._seating_deposit as number) ?? null,
+                // When prepay_mode='free', don't pass expected deposit — RPC would
+                // restore the configured amount and create an unpayable pending booking
+                p_expected_deposit: totalDeposit > 0 ? ((d._seating_deposit as number) ?? null) : null,
                 p_expected_duration: (d._seating_duration as number) ?? null,
               })
               .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };

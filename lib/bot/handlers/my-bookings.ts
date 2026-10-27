@@ -541,13 +541,20 @@ export async function handleModifyBooking(
     // Fetch booking details to populate session for rescheduling
     const { data: booking } = await supabase
       .from('bookings')
-      .select('id, business_id, service_id, party_size, services (id, name, price, deposit_amount)')
+      .select('id, business_id, service_id, party_size, flow_type, services (id, name, price, deposit_amount)')
       .eq('id', bookingId)
       .eq('user_id', session.user_id!)
       .single();
 
     if (!booking || !booking.business_id) {
       await sendText(from, 'Could not load booking details. Send *my bookings* to try again.');
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
+      return;
+    }
+
+    // Block table reservation reschedule — RPC lacks resource overlap check
+    if (booking.flow_type === 'table_reservation') {
+      await sendText(from, 'Table reservations cannot be rescheduled yet. You can cancel and make a new reservation.\n\nSend *my bookings* to manage.');
       await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }

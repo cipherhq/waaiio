@@ -40,7 +40,13 @@ CREATE TABLE IF NOT EXISTS public.seating_resources (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  CONSTRAINT seating_min_lte_max CHECK (min_party_size <= capacity)
+  CONSTRAINT seating_min_lte_max CHECK (min_party_size <= capacity),
+  -- Reject overnight availability windows (e.g. 22:00-06:00).
+  -- Overnight policy is not authorized — requires Owner decision.
+  CONSTRAINT seating_no_overnight CHECK (
+    available_from IS NULL OR available_to IS NULL
+    OR available_from < available_to
+  )
 );
 
 -- Indexes
@@ -169,13 +175,17 @@ DECLARE
   v_b_start_min INTEGER;
   v_b_end_min INTEGER;
 BEGIN
-  -- ── Bot session idempotency (with matching guard) ──
+  -- ── Bot session idempotency (full selection match) ──
   IF p_bot_session_id IS NOT NULL THEN
     SELECT b.id, b.reference_code INTO v_booking_id, v_ref
     FROM bookings b
     WHERE b.bot_session_id = p_bot_session_id
       AND b.business_id = p_business_id
       AND b.user_id = p_user_id
+      AND b.seating_resource_id = p_seating_resource_id
+      AND b.date = p_date
+      AND b.time = p_time::TIME
+      AND b.party_size = p_party_size
       AND b.status IN ('pending', 'confirmed')
     LIMIT 1;
     IF FOUND THEN

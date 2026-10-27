@@ -205,15 +205,18 @@ describe('#730: Migration 472 SQL structure', () => {
     expect(sql).not.toMatch(/v_req_end\s*>\s*v_resource\.available_to/);
   });
 
-  it('idempotency check includes business_id and user_id match', async () => {
+  it('idempotency check matches full reservation identity', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
-    // Idempotency must match business and user, not just bot_session_id
+    // Idempotency must match full reservation identity
     expect(sql).toMatch(/bot_session_id = p_bot_session_id[\s\S]*?business_id = p_business_id/);
     expect(sql).toMatch(/bot_session_id = p_bot_session_id[\s\S]*?user_id = p_user_id/);
+    expect(sql).toMatch(/bot_session_id = p_bot_session_id[\s\S]*?seating_resource_id = p_seating_resource_id/);
+    expect(sql).toMatch(/bot_session_id = p_bot_session_id[\s\S]*?date = p_date/);
+    expect(sql).toMatch(/bot_session_id = p_bot_session_id[\s\S]*?party_size = p_party_size/);
   });
 
   it('flat deposit: v_committed_total = v_committed_deposit (not multiplied)', async () => {
@@ -482,6 +485,34 @@ describe('#730: Admin API and security', () => {
     expect(code).toContain('ALLOWED_FIELDS');
     expect(code).not.toMatch(/\.update\(updates\)/);
     expect(code).toContain('.update(filtered)');
+  });
+
+  it('WhatsApp my-bookings blocks table_reservation reschedule', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/handlers/my-bookings.ts'), 'utf-8');
+
+    expect(code).toContain("booking.flow_type === 'table_reservation'");
+    expect(code).toContain('Table reservations cannot be rescheduled yet');
+  });
+
+  it('free-prepay does not pass expected deposit to RPC', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts'), 'utf-8');
+
+    // When totalDeposit is 0 (free prepay), expected_deposit should be null
+    expect(code).toContain('totalDeposit > 0 ?');
+    expect(code).toContain('p_expected_deposit:');
+  });
+
+  it('migration rejects overnight availability windows', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql'), 'utf-8');
+
+    expect(sql).toContain('seating_no_overnight');
+    expect(sql).toContain('available_from < available_to');
   });
 
   it('reschedule route blocks table_reservation bookings', async () => {
