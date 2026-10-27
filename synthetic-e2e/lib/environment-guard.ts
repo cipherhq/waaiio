@@ -176,18 +176,24 @@ export function assertTestModePayments(config: Pick<
 /**
  * Validates that no real Meta Cloud API credentials are configured for outbound use.
  * Issue #728 safety gate 3: No real WhatsApp send.
+ *
+ * CTO R2 Fix 4: FAIL-CLOSED — rejects tokens that appear real, does not just warn.
+ * Accepted token prefixes: absent, empty, 'test_*', 'dummy_*', 'synth_*'.
+ * Any other token > 20 chars is rejected as potentially real.
  */
 export function assertNoRealMetaOutbound(accessToken?: string): void {
-  // A real Meta access token is typically a long alphanumeric string.
-  // We check that it is either absent or explicitly set to a test/dummy value.
-  if (accessToken && accessToken.length > 20 && !accessToken.startsWith('test_') && !accessToken.startsWith('dummy_')) {
-    // Note: we can't definitively tell real vs fake tokens by format alone.
-    // The transport capture layer (capture-transport.ts) is the actual safety mechanism.
-    // This is a defense-in-depth warning.
-    console.warn(
-      'WARNING: META_CLOUD_ACCESS_TOKEN appears to be a real token. ' +
-      'The capture transport will intercept all outbound sends, but ' +
-      'consider using a test/dummy value for additional safety.'
+  if (!accessToken || accessToken.length === 0) return; // Absent — safe
+
+  const safeTokenPrefixes = ['test_', 'dummy_', 'synth_'];
+  if (safeTokenPrefixes.some(p => accessToken.startsWith(p))) return; // Explicitly test token
+
+  if (accessToken.length > 20) {
+    throw new Error(
+      `FAIL-CLOSED: META_CLOUD_ACCESS_TOKEN appears to be a real token ` +
+      `(${accessToken.length} chars, no test/dummy/synth prefix). ` +
+      `Synthetic tests require absent or test-prefixed tokens. ` +
+      `The CapturingMessageSender and network-deny layer provide defense-in-depth ` +
+      `but the preflight rejects potentially real credentials.`
     );
   }
 }

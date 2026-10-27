@@ -46,12 +46,10 @@ export interface CleanupDbClient {
 export async function executeCleanup(
   db: CleanupDbClient,
   tracker: CleanupTracker,
-  options: { dryRun: boolean; supabaseRef?: string },
+  options: { dryRun: boolean; supabaseRef: string },
 ): Promise<CleanupResult> {
-  // Verify staging connection
-  if (options.supabaseRef) {
-    assertStagingSupabase(options.supabaseRef);
-  }
+  // CTO R2 Fix 3: Staging ref is REQUIRED, not optional. Fail-closed.
+  assertStagingSupabase(options.supabaseRef);
 
   const manifest = tracker.getManifest();
   const deletionOrder = tracker.getDeletionOrder();
@@ -199,17 +197,43 @@ async function main() {
 
   console.log(`[CLEANUP] Staging Supabase ref verified: ${supabaseRef}`);
 
+  // CTO R2 Fix 3: --verify and --execute require staging DB credentials.
+  // Fail-closed with nonzero exit if credentials are missing.
+  const supabaseUrl = process.env.SYNTH_SUPABASE_URL;
+  const supabaseKey = process.env.SYNTH_SUPABASE_KEY;
+
   if (isVerify && runIdIdx >= 0) {
     const runId = args[runIdIdx + 1];
+    if (!runId) {
+      console.error('FAIL-CLOSED: --verify requires --run-id <id>');
+      process.exit(1);
+    }
+    if (!supabaseUrl || !supabaseKey) {
+      console.error(
+        'FAIL-CLOSED: --verify requires SYNTH_SUPABASE_URL and SYNTH_SUPABASE_KEY. ' +
+        'Cannot verify zero synthetic rows without staging DB access.'
+      );
+      process.exit(1);
+    }
     console.log(`[CLEANUP] Verification mode for run: ${runId}`);
-    console.log('[CLEANUP] Note: Requires SYNTH_SUPABASE_URL and SYNTH_SUPABASE_KEY env vars for DB connection.');
-    console.log('[CLEANUP] This is a placeholder — actual DB connection requires staging credentials.');
-    process.exit(0);
+    console.log(`[CLEANUP] Connecting to staging Supabase: ${supabaseRef}`);
+    // Actual DB verification would happen here with real credentials.
+    // Not implemented because staging deletion is not authorized by CTO R2.
+    console.error('FAIL-CLOSED: Staging DB verification not yet authorized. Exit nonzero.');
+    process.exit(1);
   }
 
   if ((isDryRun || isExecute) && manifestIdx >= 0) {
     const manifestPath = args[manifestIdx + 1];
-    const { readFileSync } = await import('fs');
+    if (!manifestPath) {
+      console.error('FAIL-CLOSED: --manifest requires a file path');
+      process.exit(1);
+    }
+    const { readFileSync, existsSync } = await import('fs');
+    if (!existsSync(manifestPath)) {
+      console.error(`FAIL-CLOSED: Manifest file not found: ${manifestPath}`);
+      process.exit(1);
+    }
     const json = readFileSync(manifestPath, 'utf-8');
     const tracker = CleanupTracker.fromJSON(json);
     const manifest = tracker.getManifest();
@@ -225,14 +249,22 @@ async function main() {
         console.log(`  DELETE FROM ${item.table} WHERE ${item.pkColumn} = '${item.id}'`);
       }
       console.log('\n[CLEANUP] Dry-run complete. No rows deleted.');
-    } else {
-      console.log('[CLEANUP] Note: Actual execution requires staging Supabase connection.');
-      console.log('[CLEANUP] Set SYNTH_SUPABASE_URL and SYNTH_SUPABASE_KEY env vars.');
+      process.exit(0);
     }
-    process.exit(0);
+
+    // --execute mode: fail-closed without staging credentials
+    if (!supabaseUrl || !supabaseKey) {
+      console.error(
+        'FAIL-CLOSED: --execute requires SYNTH_SUPABASE_URL and SYNTH_SUPABASE_KEY. ' +
+        'Cannot delete synthetic rows without staging DB access.'
+      );
+      process.exit(1);
+    }
+    console.error('FAIL-CLOSED: Staging DB execution not yet authorized. Exit nonzero.');
+    process.exit(1);
   }
 
-  console.error('Missing required arguments. See usage above.');
+  console.error('FAIL-CLOSED: Missing required arguments. See usage above.');
   process.exit(1);
 }
 
