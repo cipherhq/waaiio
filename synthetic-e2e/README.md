@@ -9,7 +9,7 @@ Automated end-to-end testing that simulates complete merchant signup, customer W
 All code enforces fail-closed staging isolation:
 
 - **Production URLs rejected** — `waaiio.com`, `app.waaiio.com`, production Supabase ref
-- **Live payment keys rejected** — `sk_live_*`, `pk_live_*` prefixes abort immediately
+- **Live payment keys rejected** — live-mode key prefixes abort immediately
 - **No real WhatsApp sends** — Capture transport intercepts all outbound Meta API calls
 - **No real Meta API traffic** — `graph.facebook.com` requests are blocked and counted
 - **Synthetic data tagged** — Every created entity has a run_id for targeted cleanup
