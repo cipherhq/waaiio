@@ -52,22 +52,23 @@ synthetic-e2e/
 npx vitest run synthetic-e2e/__tests__/
 ```
 
-**Test inventory (133 tests, 12 files):**
+**Test inventory (139 tests, 13 files):**
 
 | File | Tests | What it proves |
 |------|-------|---------------|
-| `environment-guard.test.ts` | 19 | Production URLs, Supabase refs, live keys, Meta tokens rejected |
+| `environment-guard.test.ts` | 30 | Production URLs, Supabase refs, live keys, Meta tokens, preflight |
 | `hmac-signer.test.ts` | 10 | HMAC signing matches Meta format |
 | `capture-transport.test.ts` | 10 | Capture transport isolates sends |
-| `synthetic-identity.test.ts` | 12 | Identities use reserved ranges |
+| `synthetic-identity.test.ts` | 15 | Identities use reserved ranges, markers, extraction |
 | `cleanup-manifest.test.ts` | 10 | Ordering, dedup, executeCleanup fail-closed, allowlist, verify gate |
 | `audit-logger.test.ts` | 10 | Event recording, Markdown, redaction |
-| `capturing-sender.test.ts` | 13 | All MessageSender methods captured at boundary |
+| `capturing-sender.test.ts` | 11 | All MessageSender methods captured at boundary |
 | `network-deny.test.ts` | 7 | Meta fetch blocked, local-only, counters |
-| `bot-stop-start.test.ts` | 7 | BotService STOP/safety with captures |
-| `bot-stop-start-stateful.test.ts` | 3 | STOP→START→re-STOP lifecycle, B unchanged, write failure |
+| `bot-stop-start.test.ts` | 9 | BotService STOP/safety with captures, authorization proof |
+| `bot-stop-start-stateful.test.ts` | 3 | Deferred-mutation STOP→START→re-STOP, B unchanged, write failure |
 | `sender-authorization-boundary.test.ts` | 5 | Real MetaCloudSender: deny→0 calls, authorize→1 call |
-| `remote-simulation-safety.test.ts` | 13 | Locust/Promptfoo/WebhookClient cannot reach remote hosts, redirect blocked |
+| `remote-simulation-safety.test.ts` | 13 | Locust/Promptfoo/WebhookClient source + runtime fail-closed |
+| `locust-runtime-safety.test.ts` | 6 | Python validate_host runtime: remote rejected, loopback accepted, 302 not followed |
 
 ### Cleanup CLI (intentionally unsupported)
 
