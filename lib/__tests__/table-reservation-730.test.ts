@@ -358,8 +358,8 @@ describe('#730: Deposit authority — table reservation financial path', () => {
     expect(code).toContain('_is_table_reservation');
     expect(code).toContain('FLAT deposit per reservation');
     expect(code).toContain('_seating_deposit');
-    // Total must equal flat deposit (not multiplied)
-    expect(code).toMatch(/bookingTotalAmount\s*=\s*totalDeposit/);
+    // Table reservation total = totalDeposit (flat, via ternary)
+    expect(code).toMatch(/_is_table_reservation[\s\S]*?\?\s*totalDeposit/);
   });
 
   it('zero-deposit table reservation: no payment needed', async () => {
