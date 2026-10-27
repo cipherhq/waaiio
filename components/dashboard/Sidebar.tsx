@@ -109,6 +109,13 @@ const navItems: NavItem[] = [
     section: 'manage',
   },
   {
+    href: '/dashboard/seating',
+    label: 'Seating',
+    icon: 'M3 10h18M3 14h18M12 3v18M7 3v4M17 3v4M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z',
+    capabilities: ['table_reservation'],
+    section: 'manage',
+  },
+  {
     href: '/dashboard/events',
     label: 'Events',
     icon: 'M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z',

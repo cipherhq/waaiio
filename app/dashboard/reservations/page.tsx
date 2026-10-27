@@ -57,6 +57,8 @@ interface Booking {
   service_id: string | null;
   refund_amount: number | null;
   guest_list: Array<{ name: string }> | null;
+  flow_type: string | null;
+  seating_resource_id: string | null;
   _isReservation?: boolean;
 }
 
@@ -129,10 +131,12 @@ export default function BookingsPage() {
   // Determine default booking type based on capabilities
   const hasSchedulingCapability = business.capabilities?.includes('scheduling' as any) || business.capabilities?.includes('appointment' as any);
   const hasReservationCap = business.capabilities?.includes('reservation' as any) || business.flow_type === 'reservation';
-  const defaultBookingType: 'reservations' | 'bookings' = hasReservationCap && !hasSchedulingCapability ? 'reservations' : 'bookings';
-  const hasBothTypes = hasReservationCap && hasSchedulingCapability && business.flow_type !== 'reservation';
+  const hasTableReservationCap = business.capabilities?.includes('table_reservation' as any);
+  const defaultBookingType: 'reservations' | 'bookings' | 'table_reservations' = hasReservationCap && !hasSchedulingCapability && !hasTableReservationCap ? 'reservations' : (hasTableReservationCap && !hasSchedulingCapability ? 'table_reservations' : 'bookings');
+  const hasBothTypes = hasReservationCap && (hasSchedulingCapability || hasTableReservationCap) && business.flow_type !== 'reservation';
+  const hasMultipleTypes = [hasSchedulingCapability, hasReservationCap, hasTableReservationCap].filter(Boolean).length > 1;
 
-  const [bookingType, setBookingType] = useState<'reservations' | 'bookings'>(defaultBookingType);
+  const [bookingType, setBookingType] = useState<'reservations' | 'bookings' | 'table_reservations'>(defaultBookingType);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState('');
@@ -361,9 +365,10 @@ export default function BookingsPage() {
   }, [selected?.id, selected?._isReservation, selected?.total_amount]);
 
   // Filter by booking type tab (no "All" tab — show one type at a time)
-  const filteredByType = !hasBothTypes ? bookings
+  const filteredByType = !hasMultipleTypes ? bookings
     : bookingType === 'reservations' ? bookings.filter(b => b._isReservation)
-    : bookings.filter(b => !b._isReservation);
+    : bookingType === 'table_reservations' ? bookings.filter(b => !b._isReservation && b.flow_type === 'table_reservation')
+    : bookings.filter(b => !b._isReservation && b.flow_type !== 'table_reservation');
 
   const totalPages = Math.max(1, Math.ceil(filteredByType.length / perPage));
   const pageItems = filteredByType.slice((page - 1) * perPage, page * perPage);
@@ -446,6 +451,8 @@ export default function BookingsPage() {
             original_time: null,
             seated_at: r.checked_in_at,
             completed_at: r.checked_out_at,
+            flow_type: 'reservation',
+            seating_resource_id: null,
             _isReservation: true,
           };
         }) as Booking[];
@@ -462,7 +469,7 @@ export default function BookingsPage() {
       // Query bookings table (appointments + on-demand services)
       let query = supabase
         .from('bookings')
-        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list')
+        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list, flow_type, seating_resource_id')
         .eq('business_id', business.id)
         .neq('flow_type', 'payment')
         .order('date', { ascending: false })
@@ -716,12 +723,13 @@ export default function BookingsPage() {
         );
       })()}
 
-      {/* Booking type tabs — only show when business has both types */}
-      {hasBothTypes && (
+      {/* Booking type tabs — only show when business has multiple booking types */}
+      {hasMultipleTypes && (
         <div className="mt-4 flex gap-1 border-b border-gray-200 dark:border-gray-700">
           {([
-            { id: 'bookings' as const, label: 'Appointments' },
-            { id: 'reservations' as const, label: 'Reservations' },
+            ...(hasSchedulingCapability ? [{ id: 'bookings' as const, label: 'Appointments' }] : []),
+            ...(hasTableReservationCap ? [{ id: 'table_reservations' as const, label: 'Table Reservations' }] : []),
+            ...(hasReservationCap ? [{ id: 'reservations' as const, label: 'Stays' }] : []),
           ]).map(tab => (
             <button key={tab.id} onClick={() => { setBookingType(tab.id); setPage(1); }}
               className={`px-4 py-2.5 text-sm font-medium transition border-b-2 -mb-px ${
@@ -729,7 +737,9 @@ export default function BookingsPage() {
               }`}>
               {tab.label}
               <span className="ml-1.5 text-xs text-gray-400">
-                {tab.id === 'reservations' ? bookings.filter(b => b._isReservation).length : bookings.filter(b => !b._isReservation).length}
+                {tab.id === 'reservations' ? bookings.filter(b => b._isReservation).length
+                  : tab.id === 'table_reservations' ? bookings.filter(b => !b._isReservation && b.flow_type === 'table_reservation').length
+                  : bookings.filter(b => !b._isReservation && b.flow_type !== 'table_reservation').length}
               </span>
             </button>
           ))}

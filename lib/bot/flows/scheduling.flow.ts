@@ -1672,6 +1672,30 @@ export const schedulingFlow: FlowDefinition = {
           }];
         }
 
+        // Table reservation: use seating capacity bounds
+        const isTableReservation = ctx.session.session_data._is_table_reservation === true;
+        if (isTableReservation) {
+          const maxCap = (ctx.session.session_data._seating_capacity as number) || 10;
+          const minCap = (ctx.session.session_data._seating_min_party as number) || 1;
+          const buttons = maxCap <= 3
+            ? [
+                ...(minCap <= 1 ? [{ id: '1', title: '1 guest' }] : []),
+                ...(minCap <= 2 && maxCap >= 2 ? [{ id: '2', title: '2 guests' }] : []),
+                ...(maxCap >= 3 ? [{ id: '3', title: '3 guests' }] : []),
+              ]
+            : [
+                { id: '2', title: '2 guests' },
+                { id: '4', title: '4 guests' },
+                ...(maxCap >= 6 ? [{ id: '6', title: '6 guests' }] : [{ id: String(maxCap), title: `${maxCap} guests` }]),
+              ];
+          const rangeLabel = minCap === 1 ? `1-${maxCap}` : `${minCap}-${maxCap}`;
+          return [{
+            type: 'buttons',
+            body: `How many guests will be dining?\n\nType a number (${rangeLabel}).`,
+            buttons: buttons.length > 0 ? buttons : [{ id: String(minCap), title: `${minCap} guest${minCap > 1 ? 's' : ''}` }],
+          }];
+        }
+
         // Normal service: use category-appropriate or neutral terminology
         const category = ctx.business?.category || 'restaurant';
         const labels = getCategoryLabels(category);
@@ -1697,11 +1721,20 @@ export const schedulingFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const isClass = ctx.session.session_data._service_is_class;
+        const isTableReservation = ctx.session.session_data._is_table_reservation === true;
         const remaining = (ctx.session.session_data._class_remaining_spots as number) || undefined;
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
-        const maxQty = isClass
-          ? Math.min(remaining || 10, 10)
-          : ((meta.max_party_size as number) || getMaxQuantity(ctx.business?.category || 'restaurant'));
+
+        let maxQty: number;
+        let minQty = 1;
+        if (isTableReservation) {
+          maxQty = (ctx.session.session_data._seating_capacity as number) || 10;
+          minQty = (ctx.session.session_data._seating_min_party as number) || 1;
+        } else if (isClass) {
+          maxQty = Math.min(remaining || 10, 10);
+        } else {
+          maxQty = (meta.max_party_size as number) || getMaxQuantity(ctx.business?.category || 'restaurant');
+        }
 
         let size = parseInt(input, 10);
         // Try natural language extraction if bare parseInt failed ("for 3 guests", "table for 4", "we are 5")
@@ -1710,9 +1743,9 @@ export const schedulingFlow: FlowDefinition = {
           const entities = extractEntitiesOnly(input);
           if (entities.quantity) size = entities.quantity;
         }
-        if (isNaN(size) || size < 1 || size > maxQty) {
-          const unit = isClass ? 'spots' : 'people';
-          return { valid: false, errorMessage: `Please enter a number between 1 and ${maxQty} ${unit}.` };
+        if (isNaN(size) || size < minQty || size > maxQty) {
+          const unit = isClass ? 'spots' : 'guests';
+          return { valid: false, errorMessage: `Please enter a number between ${minQty} and ${maxQty} ${unit}.` };
         }
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { party_size: size } };
@@ -2607,7 +2640,7 @@ export const schedulingFlow: FlowDefinition = {
         } else {
           // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW booking
           const { requireCurrentCapability } = await import('./shared/capability-guard');
-          const activeCap = (d.active_capability as string) || (d._is_appointment ? 'appointment' : 'scheduling');
+          const activeCap = (d.active_capability as string) || (d._is_table_reservation ? 'table_reservation' : (d._is_appointment ? 'appointment' : 'scheduling'));
           const capGuard = await requireCurrentCapability(ctx.supabase, {
             session: { id: ctx.session.id, version: ctx.session.version, session_data: ctx.session.session_data },
             businessId: ctx.business!.id,
@@ -2624,7 +2657,47 @@ export const schedulingFlow: FlowDefinition = {
           const guestName = d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim();
           const guestPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
 
-          if (packageEnrollmentId) {
+          if (d._is_table_reservation) {
+            // ── Table reservation: use dedicated book_table_atomic RPC ──
+            const { data: tableResult, error: tableError } = await ctx.supabase
+              .rpc('book_table_atomic' as string, {
+                p_bot_session_id: ctx.session.id,
+                p_business_id: ctx.business!.id,
+                p_user_id: userId,
+                p_seating_resource_id: (d.seating_resource_id as string),
+                p_date: d.date as string,
+                p_time: d.time as string,
+                p_party_size: partySize,
+                p_duration_minutes: (d._seating_duration as number) || 90,
+                p_guest_name: guestName,
+                p_guest_phone: guestPhone,
+                p_guest_email: (d.email as string) || null,
+                p_special_requests: (d.special_requests as string) || null,
+                p_deposit_amount: totalDeposit,
+                p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
+                p_status: totalDeposit > 0 ? 'pending' : 'confirmed',
+                p_total_amount: bookingTotalAmount,
+              })
+              .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
+
+            if (tableError || !tableResult) {
+              const pgError = tableError as { code?: string; message?: string } | null;
+              if (pgError?.message?.includes('party_too_small') || pgError?.message?.includes('party_too_large')) {
+                return [{ type: 'text', text: await ctx.t(`Sorry, that table doesn't accommodate a party of ${partySize}. Send *Hi* to start over.`) }];
+              }
+              logger.withContext({ op: 'scheduling.create-table-reservation', ...safeLogErrorContext(tableError) }).error('[SCHEDULING] Failed to create table reservation');
+              return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
+            }
+
+            if (!tableResult.slot_available) {
+              return [{ type: 'text', text: await ctx.t('Sorry, that table is already reserved for this time. Send *Hi* to pick a different time or table.') }];
+            }
+
+            booking = { id: tableResult.booking_id, reference_code: tableResult.reference_code };
+            d.booking_id = tableResult.booking_id;
+            d.reference_code = tableResult.reference_code;
+            d.service_name = d.seating_resource_name; // For confirmation message
+          } else if (packageEnrollmentId) {
             // ── Atomic package booking: booking + claim in ONE PostgreSQL transaction ──
             const { data: pkgResult, error: pkgError } = await ctx.supabase
               .rpc('book_with_package_atomic' as string, {

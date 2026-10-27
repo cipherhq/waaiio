@@ -18,6 +18,7 @@ import { invoiceFlow } from './invoice.flow';
 import { surveyFlow } from './survey.flow';
 import { pollFlow } from './poll.flow';
 import { rsvpFlow } from './rsvp.flow';
+import { tableReservationFlow } from './table-reservation.flow';
 
 const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   scheduling: schedulingFlow,
@@ -27,6 +28,7 @@ const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   ticketing: ticketingFlow,
   reservation: reservationFlow,
   queue: queueCheckinFlow,
+  table_reservation: tableReservationFlow,
 };
 
 /** Extended registry including pseudo-flows */
@@ -44,6 +46,7 @@ const EXTENDED_REGISTRY: Record<string, FlowDefinition> = {
   survey: surveyFlow,
   poll: pollFlow,
   rsvp: rsvpFlow,
+  'table-reservation': tableReservationFlow,
 };
 
 export function getFlowDefinition(type: FlowType): FlowDefinition {

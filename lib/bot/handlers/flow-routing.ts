@@ -12,6 +12,7 @@ export function getFirstStep(flowType: FlowType): string {
     case 'ticketing': return 'select_event';
     case 'queue': return 'queue_start';
     case 'reservation': return 'select_apartment';
+    case 'table_reservation': return 'select_table';
     default: return 'select_service';
   }
 }
@@ -64,7 +65,7 @@ export function capabilityToFirstStep(cap: CapabilityId): string {
   switch (cap) {
     case 'appointment': return 'select_appointment';
     case 'scheduling': return 'select_service';
-    case 'table_reservation': return 'select_service'; // Reuses scheduling flow
+    case 'table_reservation': return 'select_table'; // Dedicated seating flow
     case 'giving': return 'select_category';
     case 'payment': return 'select_category';
     case 'ordering': return 'browse_catalog';

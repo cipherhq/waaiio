@@ -1,3 +1,20 @@
+### #730 — Booking/Reservation UX: Table Reservation Architecture (2026-10-27)
+
+- **`supabase/migrations/472_seating_resources_table_reservation.sql`** (new): Extends `flow_type` enum with `table_reservation`. Creates `seating_resources` table (tables, booths, sections, VIP areas) with capacity, party-size bounds, duration, deposit, available-days/hours, RLS, and service_role ACL. Adds `seating_resource_id` FK on `bookings`. Creates `book_table_atomic` RPC with advisory-lock concurrency, bot-session idempotency, resource validation, party-size bounds, time-overlap prevention, and self-check block.
+- **`lib/bot/flows/table-reservation.flow.ts`** (new): Dedicated WhatsApp bot flow for table/seating reservations. Queries `seating_resources` instead of `services`. Auto-selects when single resource. Routes into scheduling's shared date/time/confirm steps via cross-flow handoff.
+- **`lib/bot/flows/scheduling.flow.ts`**: Added `_is_table_reservation` branch before `book_slot_atomic` in confirm_booking step — calls `book_table_atomic` RPC instead. Modified `select_quantity` step to enforce seating capacity min/max bounds. Updated `activeCap` resolution to handle table_reservation.
+- **`lib/constants.ts`**: Added `'table_reservation'` to `FlowType` union.
+- **`lib/bot/flows/registry.ts`**: Registered `tableReservationFlow` in both FLOW_REGISTRY and EXTENDED_REGISTRY.
+- **`lib/bot/handlers/flow-routing.ts`**: Mapped `table_reservation` to `select_table` step (was `select_service`).
+- **`lib/bot/flows/capability-selection.flow.ts`**: Changed `table_reservation` backing-data check from `services` to `seating_resources` (fixes F-1 duplicate with scheduling). Added `select_table` to `getFirstStepForCapability`.
+- **`app/dashboard/seating/page.tsx`** (new): Merchant CRUD page for seating resources with type, capacity, section, duration, deposit, available days/hours, active toggle.
+- **`components/dashboard/Sidebar.tsx`**: Added Seating nav item gated on `table_reservation` capability.
+- **`app/dashboard/reservations/page.tsx`**: Added Table Reservations tab, `flow_type`/`seating_resource_id` to booking query and Booking interface.
+- **`app/api/seating-resources/route.ts`** (new): GET/POST/PATCH for seating resources with RLS-enforced ownership.
+- **`lib/__tests__/table-reservation-730.test.ts`** (new): 16 tests covering FlowType, routing, registry, F-1 fix, capability definitions, migration structure, and non-regression.
+- **Affects**: `table_reservation` capability routing, food/dining category defaults. Businesses without configured seating fail closed (capability hidden from WhatsApp menu).
+- **Does NOT affect**: existing `book_slot_atomic`, scheduling/appointment/stays/ordering/ticketing flows, payment pipeline, existing bookings data.
+
 ### #721 — STOP P1 corrections: consent-routing, provenance, Option C (2026-10-27)
 
 - **`lib/bot/bot.service.ts`**: Fixed 5 CTO-identified P1 findings on PR #727:

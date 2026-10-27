@@ -82,8 +82,8 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
           return [cap, (count || 0) > 0];
         }
         case 'table_reservation': {
-          const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
-            .eq('business_id', businessId).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null);
+          const { count } = await ctx.supabase.from('seating_resources').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true);
           return [cap, (count || 0) > 0];
         }
         case 'waiver': {
@@ -134,6 +134,7 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'loyalty': return 'loyalty_menu';
     case 'invoice': return 'invoice_list';
     case 'class_booking': return 'select_service';
+    case 'table_reservation': return 'select_table';
     case 'promo_verification': return 'promo_entry'; // Dedicated entry step — prevents select_capability recursion
     default: return 'select_service';
   }
