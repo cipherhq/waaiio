@@ -1,6 +1,14 @@
 """
 Locust load testing for Waaiio staging-only synthetic E2E.
 
+CTO R3: DISABLED — This file sends signed HTTP requests to deployed staging
+webhook endpoints. Server-side Meta interception is not proven for remote
+Vercel targets. Do NOT run this against any deployed environment until:
+1. Server-side Meta interception is independently verified
+2. Separate CTO/Owner staging-load authorization is obtained
+
+The file is preserved as infrastructure for future authorized load testing.
+
 Issue #728 Phase 3: Controlled load testing with:
 - Pre-defined safe ramp profiles
 - Request-rate, concurrency, and duration ceilings
@@ -10,7 +18,7 @@ Issue #728 Phase 3: Controlled load testing with:
 
 SAFETY: Never launch unbounded load or hit real providers.
 
-Usage:
+Usage (REQUIRES SEPARATE AUTHORIZATION):
     locust -f synthetic-e2e/locust/locustfile.py \
         --host https://staging.waaiio.com \
         --users 5 --spawn-rate 1 --run-time 60s \
@@ -135,6 +143,16 @@ _start_time = None
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     """Validate host and enforce safety limits before any requests."""
+    # CTO R3: Fail-closed — remote load testing requires explicit authorization
+    if not os.environ.get("SYNTH_LOAD_TEST_AUTHORIZED"):
+        print(
+            "FAIL-CLOSED: Load testing against deployed staging is not authorized. "
+            "Set SYNTH_LOAD_TEST_AUTHORIZED=true after obtaining CTO/Owner approval "
+            "and proving server-side Meta interception.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     global _start_time
     _start_time = time.time()
 

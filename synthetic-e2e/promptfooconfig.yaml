@@ -1,12 +1,18 @@
 # Promptfoo configuration for Waaiio synthetic customer persona evaluations.
 #
-# Runs multi-turn conversation evaluations against the staging webhook endpoint.
-# Uses the WebhookClient to send HMAC-signed messages.
+# CTO R3: DISABLED — This config targets deployed staging webhook endpoints.
+# Server-side Meta interception is not proven for remote Vercel targets.
+# Do NOT run `npx promptfoo eval` against deployed staging until:
+# 1. Server-side Meta interception is independently verified
+# 2. Separate CTO/Owner authorization is obtained
+#
+# The persona definitions and assertion patterns are preserved as
+# infrastructure for future authorized evaluation runs.
 #
 # Issue #728: Promptfoo for multi-turn persona evaluations, grading,
 # and bounded red-team prompt-injection/authorization-abuse checks.
 #
-# Usage:
+# Usage (REQUIRES SEPARATE AUTHORIZATION):
 #   npx promptfoo eval --config synthetic-e2e/promptfooconfig.yaml
 #   npx promptfoo view  # View results in browser
 #

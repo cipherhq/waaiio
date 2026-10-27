@@ -41,14 +41,36 @@ export interface CleanupDbClient {
 // ── Executor ──
 
 /**
+ * Allowlisted tables that cleanup may touch.
+ * CTO R3 Fix 4: Prevents arbitrary table deletion via manifest manipulation.
+ */
+const CLEANUP_ALLOWED_TABLES = new Set([
+  'businesses',
+  'profiles',
+  'bot_sessions',
+  'messaging_opt_outs',
+  'launch_subscribers',
+  'whatsapp_channels',
+  'products',
+  'services',
+]);
+
+/**
  * Execute cleanup of manifest-owned synthetic data.
+ *
+ * CTO R3 Fix 4: Execution and verification are intentionally unsupported
+ * until staging deletion is separately authorized. This function is gated
+ * with table allowlists, mandatory synthetic markers, and staging identity.
+ *
+ * Callers must use the CLI entry point, which exits nonzero without
+ * staging credentials and authorization.
  */
 export async function executeCleanup(
   db: CleanupDbClient,
   tracker: CleanupTracker,
   options: { dryRun: boolean; supabaseRef: string },
 ): Promise<CleanupResult> {
-  // CTO R2 Fix 3: Staging ref is REQUIRED, not optional. Fail-closed.
+  // Staging ref is REQUIRED. Fail-closed.
   assertStagingSupabase(options.supabaseRef);
 
   const manifest = tracker.getManifest();
@@ -64,10 +86,23 @@ export async function executeCleanup(
     remainingSyntheticRows: -1,
   };
 
+  // Validate all tables are in the allowlist BEFORE any deletion
+  for (const item of deletionOrder) {
+    if (!CLEANUP_ALLOWED_TABLES.has(item.table)) {
+      result.failed.push({
+        table: item.table,
+        id: item.id,
+        error: `FAIL-CLOSED: Table "${item.table}" is not in cleanup allowlist`,
+      });
+    }
+  }
+  if (result.failed.length > 0) {
+    return result; // Abort — do not proceed with partial deletion
+  }
+
   if (options.dryRun) {
-    console.log(`[CLEANUP DRY-RUN] Would delete ${deletionOrder.length} rows:`);
     for (const item of deletionOrder) {
-      console.log(`  - ${item.table}.${item.pkColumn} = ${item.id}`);
+      console.log(`  [DRY-RUN] DELETE FROM ${item.table} WHERE ${item.pkColumn} = '${item.id}'`);
     }
     return result;
   }
@@ -75,7 +110,6 @@ export async function executeCleanup(
   // Execute deletions in order
   for (const item of deletionOrder) {
     try {
-      // Verify the row exists and belongs to the run before deleting
       const { data: existing, error: readError } = await db
         .from(item.table)
         .select('*')
@@ -86,27 +120,28 @@ export async function executeCleanup(
         result.failed.push({
           table: item.table,
           id: item.id,
-          error: `Row not found (may already be deleted): ${readError ? JSON.stringify(readError) : 'null result'}`,
+          error: `Row not found: ${readError ? JSON.stringify(readError) : 'null'}`,
         });
         continue;
       }
 
-      // Ownership verification: check for synthetic markers
-      const name = existing.name || existing.business_name || '';
-      const email = existing.email || '';
-      if (typeof name === 'string' && name && !isSyntheticBusinessName(name)) {
-        if (typeof email === 'string' && email && !isSyntheticEmail(email)) {
-          result.failed.push({
-            table: item.table,
-            id: item.id,
-            error: `FAIL-CLOSED: Row does not appear to be synthetic (name="${name}", email="${email}")`,
-          });
-          continue;
-        }
+      // CTO R3 Fix 4: Ownership verification — REQUIRE at least one synthetic marker.
+      // Fail-closed: rows with NO identifiable synthetic marker are rejected.
+      const name = String(existing.name || existing.business_name || '');
+      const email = String(existing.email || '');
+      const hasSyntheticName = name && isSyntheticBusinessName(name);
+      const hasSyntheticEmail = email && isSyntheticEmail(email);
+
+      if (!hasSyntheticName && !hasSyntheticEmail) {
+        result.failed.push({
+          table: item.table,
+          id: item.id,
+          error: `FAIL-CLOSED: Row has no synthetic marker (name="${name}", email="${email}"). Refusing to delete.`,
+        });
+        continue;
       }
 
-      // Delete the row
-      const { error: deleteError } = await db
+      const { error: deleteError, count } = await db
         .from(item.table)
         .delete()
         .eq(item.pkColumn, item.id);
@@ -118,7 +153,16 @@ export async function executeCleanup(
           error: `Delete failed: ${JSON.stringify(deleteError)}`,
         });
       } else {
-        result.deleted++;
+        // CTO R3: Track affected-row count for verification
+        if (count !== null && count !== 1) {
+          result.failed.push({
+            table: item.table,
+            id: item.id,
+            error: `Unexpected affected rows: expected 1, got ${count}`,
+          });
+        } else {
+          result.deleted++;
+        }
       }
     } catch (err) {
       result.failed.push({
@@ -134,42 +178,53 @@ export async function executeCleanup(
 
 /**
  * Verify that zero synthetic rows remain after cleanup.
- * Checks known tables for synthetic email/name patterns.
+ * Checks known tables for run-specific synthetic patterns.
+ *
+ * CTO R3 Fix 4: Propagates query errors instead of swallowing them.
+ * Uses run-specific patterns, not broad non-run-specific scans.
  */
 export async function verifyZeroSyntheticRows(
   db: CleanupDbClient,
   runId: string,
-): Promise<{ clean: boolean; remainingCount: number; details: Array<{ table: string; count: number }> }> {
+): Promise<{ clean: boolean; remainingCount: number; details: Array<{ table: string; count: number }>; errors: string[] }> {
+  if (!runId || runId.length < 8) {
+    throw new Error('FAIL-CLOSED: verifyZeroSyntheticRows requires a valid run ID');
+  }
+
+  // Use run-specific patterns to avoid matching unrelated data
   const tablesToCheck = [
-    { table: 'businesses', column: 'name', pattern: 'SynthBiz %' },
-    { table: 'profiles', column: 'email', pattern: 'synth-e2e-%' },
-    { table: 'bot_sessions', column: 'metadata', pattern: `%${runId}%` },
+    { table: 'businesses', column: 'name', pattern: `%${runId.slice(-12)}%` },
+    { table: 'profiles', column: 'email', pattern: `%${runId.slice(-12)}%` },
   ];
 
   let totalRemaining = 0;
   const details: Array<{ table: string; count: number }> = [];
+  const errors: string[] = [];
 
   for (const check of tablesToCheck) {
-    try {
-      const { data } = await db
-        .from(check.table)
-        .select(check.column)
-        .ilike(check.column, check.pattern);
+    const { data, error } = await db
+      .from(check.table)
+      .select(check.column)
+      .ilike(check.column, check.pattern);
 
-      const count = data?.length || 0;
-      if (count > 0) {
-        details.push({ table: check.table, count });
-        totalRemaining += count;
-      }
-    } catch {
-      // Table may not exist or column may not support ilike — skip
+    // CTO R3: Propagate errors instead of swallowing
+    if (error) {
+      errors.push(`Query error on ${check.table}: ${JSON.stringify(error)}`);
+      continue;
+    }
+
+    const count = data?.length || 0;
+    if (count > 0) {
+      details.push({ table: check.table, count });
+      totalRemaining += count;
     }
   }
 
   return {
-    clean: totalRemaining === 0,
+    clean: totalRemaining === 0 && errors.length === 0,
     remainingCount: totalRemaining,
     details,
+    errors,
   };
 }
 

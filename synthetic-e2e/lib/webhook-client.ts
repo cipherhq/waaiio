@@ -1,10 +1,13 @@
 /**
  * Webhook client for sending synthetic inbound WhatsApp messages.
  *
- * Sends properly HMAC-signed webhook requests to the staging webhook endpoint.
- * Captures bot responses via the capture transport.
+ * CTO R3 Fix 3: FAIL-CLOSED — All remote send methods throw by default.
+ * Remote webhook delivery to deployed staging is disabled until server-side
+ * Meta interception is independently proven and separately authorized.
  *
- * Issue #728 safety: Only sends to verified staging URLs.
+ * The safe isolated BotService test runner (bot-test-harness.ts) does NOT
+ * use this client — it invokes BotService.handleMessage directly with
+ * CapturingMessageSender.
  */
 
 import {
@@ -16,6 +19,19 @@ import {
 } from './hmac-signer';
 import { assertStagingUrl } from './environment-guard';
 import type { AuditLogger } from './audit-logger';
+
+/**
+ * FAIL-CLOSED: Throws unless remote webhook delivery has been
+ * independently proven safe and explicitly authorized.
+ */
+function assertRemoteWebhookAuthorized(): void {
+  throw new Error(
+    'FAIL-CLOSED: Remote webhook delivery to deployed staging is disabled. ' +
+    'Server-side Meta interception is not proven for remote Vercel targets. ' +
+    'Use the isolated BotService test runner (bot-test-harness.ts) instead. ' +
+    'Remote delivery requires separate CTO/Owner authorization.'
+  );
+}
 
 // ── Types ──
 
@@ -57,8 +73,10 @@ export class WebhookClient {
 
   /**
    * Send a text message as a synthetic customer.
+   * FAIL-CLOSED: Throws unless remote delivery is authorized.
    */
   async sendText(from: string, text: string): Promise<WebhookResponse> {
+    assertRemoteWebhookAuthorized(); // CTO R3: fail-closed
     const payload = buildTextMessagePayload({
       from,
       to: this.config.phoneNumberId,
@@ -72,8 +90,10 @@ export class WebhookClient {
 
   /**
    * Send a button reply as a synthetic customer.
+   * FAIL-CLOSED: Throws unless remote delivery is authorized.
    */
   async sendButtonReply(from: string, buttonId: string, buttonTitle: string): Promise<WebhookResponse> {
+    assertRemoteWebhookAuthorized(); // CTO R3: fail-closed
     const payload = buildButtonReplyPayload({
       from,
       to: this.config.phoneNumberId,
@@ -88,8 +108,10 @@ export class WebhookClient {
 
   /**
    * Send a list reply as a synthetic customer.
+   * FAIL-CLOSED: Throws unless remote delivery is authorized.
    */
   async sendListReply(from: string, listId: string, listTitle: string): Promise<WebhookResponse> {
+    assertRemoteWebhookAuthorized(); // CTO R3: fail-closed
     const payload = buildListReplyPayload({
       from,
       to: this.config.phoneNumberId,

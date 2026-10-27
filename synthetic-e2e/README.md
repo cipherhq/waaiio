@@ -66,18 +66,22 @@ npx vitest run synthetic-e2e/__tests__/
 | `network-deny.test.ts` | 7 | Meta fetch blocked, counters, restore |
 | `bot-stop-start.test.ts` | 7+ | Real BotService STOP/START with captures |
 
-### Cleanup CLI (fail-closed)
+### Cleanup CLI (intentionally unsupported)
+
+Staging database execution and verification are **intentionally unsupported** until separately authorized. The CLI exits nonzero for `--execute` and `--verify` regardless of credentials.
 
 ```bash
-# Dry-run: prints deletion plan, no DB access needed
+# Dry-run: prints deletion plan, no DB access needed — the only supported mode
 npx tsx synthetic-e2e/lib/cleanup-executor.ts --dry-run --manifest <path>
 
-# Execute: REQUIRES staging credentials, exits nonzero without them
+# Execute: intentionally exits nonzero — staging deletion not authorized
 npx tsx synthetic-e2e/lib/cleanup-executor.ts --execute --manifest <path>
 
-# Verify: REQUIRES staging credentials, exits nonzero without them
+# Verify: intentionally exits nonzero — staging verification not authorized
 npx tsx synthetic-e2e/lib/cleanup-executor.ts --verify --run-id <id>
 ```
+
+The exported `executeCleanup()` function is gated with a table allowlist, mandatory synthetic markers on every row, staging project identity verification, and affected-row count checks. `verifyZeroSyntheticRows()` uses run-specific patterns and propagates query errors.
 
 ## Authorization Boundary
 

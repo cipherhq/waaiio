@@ -196,6 +196,13 @@ export const SCENARIOS: Record<string, ConversationScenario> = {
 
 /**
  * Execute a conversation scenario and record results.
+ *
+ * CTO R3 Fix 3: FAIL-CLOSED — This function uses WebhookClient which sends
+ * signed HTTP requests to deployed staging. It is disabled until server-side
+ * Meta interception is independently proven.
+ *
+ * For safe bot-logic testing, use bot-test-harness.ts which invokes
+ * BotService.handleMessage directly with CapturingMessageSender.
  */
 export async function executeConversation(
   client: WebhookClient,
