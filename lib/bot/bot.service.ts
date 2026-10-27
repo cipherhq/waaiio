@@ -24,6 +24,7 @@ import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { ensurePlus } from '@/lib/utils/phone';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
@@ -4993,7 +4994,7 @@ export class BotService {
       const { data: updated, error: resubErr } = await this.supabase
         .from('messaging_opt_outs')
         .update({ resubscribed_at: new Date().toISOString() })
-        .eq('phone', from)
+        .eq('phone', ensurePlus(from))
         .eq('business_id', preResolvedBusinessId)
         .eq('channel', 'whatsapp')
         .is('resubscribed_at', null)
@@ -5019,7 +5020,7 @@ export class BotService {
       const { data: updated, error: resubErr } = await this.supabase
         .from('messaging_opt_outs')
         .update({ resubscribed_at: new Date().toISOString() })
-        .eq('phone', from)
+        .eq('phone', ensurePlus(from))
         .eq('business_id', candidates[0].id)
         .eq('channel', 'whatsapp')
         .is('resubscribed_at', null)
@@ -5046,10 +5047,13 @@ export class BotService {
    * Returns true only when the row is provably persisted (returned row ID).
    */
   private async _recordMerchantOptOut(from: string, businessId: string): Promise<boolean> {
+    // Normalize phone to +E.164 for consistent storage and suppression matching.
+    // Meta inbound sends digits-only; broadcast recipients may use +E.164.
+    const normalizedPhone = ensurePlus(from);
     const { data: inserted, error: insertErr } = await this.supabase
       .from('messaging_opt_outs')
       .insert({
-        phone: from,
+        phone: normalizedPhone,
         business_id: businessId,
         channel: 'whatsapp',
         opt_out_type: 'all',
@@ -5067,7 +5071,7 @@ export class BotService {
       const { count } = await this.supabase
         .from('messaging_opt_outs')
         .select('id', { count: 'exact', head: true })
-        .eq('phone', from)
+        .eq('phone', normalizedPhone)
         .eq('business_id', businessId)
         .eq('channel', 'whatsapp')
         .is('resubscribed_at', null);

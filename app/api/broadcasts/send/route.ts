@@ -7,6 +7,7 @@ import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
+import { ensurePlus } from '@/lib/utils/phone';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 export const maxDuration = 60;
@@ -144,10 +145,11 @@ export async function POST(request: NextRequest) {
     for (const phone of phones) {
       try {
         // Check opt-out before sending promotional message (scoped to this business)
+        // Normalize phone to +E.164 — STOP records are stored with ensurePlus (#721)
         const { count: optOutCount, error: optOutErr } = await service
           .from('messaging_opt_outs')
           .select('id', { count: 'exact', head: true })
-          .eq('phone', phone)
+          .eq('phone', ensurePlus(phone))
           .eq('business_id', business_id)
           .eq('channel', 'whatsapp')
           .is('resubscribed_at', null);

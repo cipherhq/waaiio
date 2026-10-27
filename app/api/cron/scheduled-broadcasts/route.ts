@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { ensurePlus } from '@/lib/utils/phone';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -85,7 +86,7 @@ export async function GET(request: NextRequest) {
           const { count: optOutCount, error: optOutErr } = await supabase
             .from('messaging_opt_outs')
             .select('id', { count: 'exact', head: true })
-            .eq('phone', phone)
+            .eq('phone', ensurePlus(phone))
             .eq('business_id', broadcast.business_id)
             .eq('channel', 'whatsapp')
             .is('resubscribed_at', null);

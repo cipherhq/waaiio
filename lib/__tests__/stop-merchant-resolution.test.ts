@@ -264,3 +264,36 @@ describe('#721 STOP: Data / Replay Safety (P1)', () => {
     expect(earlyBody).toContain('!preResolvedBusinessId');
   });
 });
+
+describe('Phone normalization (#721 Codex P1)', () => {
+  it('STOP handler normalizes phone with ensurePlus before persisting', () => {
+    const recordIdx = src.indexOf('_recordMerchantOptOut');
+    const recordEnd = src.indexOf('\n  }', src.indexOf('private async _recordMerchantOptOut'));
+    const recordBody = src.slice(recordIdx, recordEnd);
+    expect(recordBody).toContain('ensurePlus(from)');
+    expect(recordBody).toContain("phone: normalizedPhone");
+  });
+
+  it('START handler normalizes phone with ensurePlus', () => {
+    const startIdx = src.indexOf('_handleStartRequest');
+    const startEnd = src.indexOf('\n  }', src.indexOf('private async _handleStartRequest') + 100);
+    const startBody = src.slice(startIdx, startEnd);
+    expect(startBody).toContain('ensurePlus(from)');
+  });
+
+  const broadcastSrc = readFileSync(resolve(__dirname, '../../app/api/broadcasts/send/route.ts'), 'utf-8');
+  const scheduledSrc = readFileSync(resolve(__dirname, '../../app/api/cron/scheduled-broadcasts/route.ts'), 'utf-8');
+  const growthSrc = readFileSync(resolve(__dirname, '../growth/eligibility-service.ts'), 'utf-8');
+
+  it('Broadcast consumer normalizes phone with ensurePlus', () => {
+    expect(broadcastSrc).toContain('ensurePlus(phone)');
+  });
+
+  it('Scheduled broadcast consumer normalizes phone with ensurePlus', () => {
+    expect(scheduledSrc).toContain('ensurePlus(phone)');
+  });
+
+  it('Growth eligibility normalizes phone with ensurePlus', () => {
+    expect(growthSrc).toContain('ensurePlus(phone)');
+  });
+});
