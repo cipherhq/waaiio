@@ -90,16 +90,12 @@ describePg('#721: STOP opt-out persistence', () => {
 
     // Clean test data
     psqlCleanup(`DELETE FROM messaging_opt_outs WHERE phone = '${PHONE}';`);
-    psqlCleanup(`DELETE FROM bot_sessions WHERE whatsapp_number = '${PHONE}';`);
+    // Only clean tables known to exist — CI PG may lack bot_sessions/whatsapp_channels/profiles
     psqlCleanup(`DELETE FROM businesses WHERE id IN ('${BIZ_A}','${BIZ_B}');`);
-    psqlCleanup(`DELETE FROM whatsapp_channels WHERE id = '${CHANNEL_ID}';`);
     psqlCleanup(`DELETE FROM auth.users WHERE id = '${OWNER_A}';`);
-    psqlCleanup(`DELETE FROM profiles WHERE id = '${OWNER_A}';`);
 
-    // Create test owner
-    psql(`INSERT INTO auth.users (id, email, raw_app_meta_data)
-          VALUES ('${OWNER_A}', 'stop-test-721@test.waaiio.com', '{}')
-          ON CONFLICT (id) DO NOTHING;`);
+    // Create test owner (CI auth.users may lack optional columns — use minimal INSERT)
+    psql(`INSERT INTO auth.users (id) VALUES ('${OWNER_A}') ON CONFLICT (id) DO NOTHING;`);
 
     // Create test businesses
     psql(`INSERT INTO businesses (id, name, owner_id, slug, category, status, bot_code)
@@ -112,11 +108,9 @@ describePg('#721: STOP opt-out persistence', () => {
 
   afterAll(() => {
     psqlCleanup(`DELETE FROM messaging_opt_outs WHERE phone = '${PHONE}';`);
-    psqlCleanup(`DELETE FROM bot_sessions WHERE whatsapp_number = '${PHONE}';`);
+    // Only clean tables known to exist — CI PG may lack bot_sessions/whatsapp_channels/profiles
     psqlCleanup(`DELETE FROM businesses WHERE id IN ('${BIZ_A}','${BIZ_B}');`);
-    psqlCleanup(`DELETE FROM whatsapp_channels WHERE id = '${CHANNEL_ID}';`);
     psqlCleanup(`DELETE FROM auth.users WHERE id = '${OWNER_A}';`);
-    psqlCleanup(`DELETE FROM profiles WHERE id = '${OWNER_A}';`);
   });
 
   it('1. INSERT first STOP (business_id = BIZ_A) - row exists', () => {

@@ -632,8 +632,23 @@ export class BotService {
             logger.warn('[STOP] Early dispatcher CAS claim failed:', casResult?.reason || casErr?.message);
             return false;
           }
-          pendingSession.version = casResult.version; // Update for subsequent deactivation
+          pendingSession.version = casResult.version; // Update for subsequent operations
           return true;
+        };
+
+        // Helper: CAS release claim on failed persistence — allows customer retry.
+        // Conditional: only clears _claimed if version still matches (no concurrent intervening claim).
+        const _casReleaseClaim = async (): Promise<void> => {
+          const releaseData = { ...pendingSession.session_data };
+          delete (releaseData as Record<string, unknown>)._claimed;
+          await this.supabase.rpc('update_session_cas', {
+            p_session_id: pendingSession.id,
+            p_expected_version: pendingSession.version ?? 0,
+            p_current_step: pendingSession.current_step,
+            p_session_data: releaseData,
+          }).then(({ data }) => {
+            if (data?.success) pendingSession.version = data.version;
+          }, () => {}); // Best-effort release — session will expire naturally if this fails
         };
 
         // Helper: CAS-deactivate session after successful persistence
@@ -693,7 +708,8 @@ export class BotService {
                   await this.sendPlatformText(from, `You have been unsubscribed from *${choiceData.merchantName || 'this business'}*. You will no longer receive their messages. Send START to resubscribe.`);
                 }
               } else {
-                // Persistence failed — keep session active so customer can retry
+                // Persistence failed — release claim so customer can retry
+                await _casReleaseClaim();
                 await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
               }
               return;
@@ -711,7 +727,8 @@ export class BotService {
                 await this.sendPlatformText(from, 'You have been unsubscribed from Waaiio launch updates.');
               }
             } else {
-              // Persistence failed — keep session active so customer can retry
+              // Persistence failed — release claim so customer can retry
+              await _casReleaseClaim();
               await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
             }
             return;
@@ -765,7 +782,8 @@ export class BotService {
                 await this.sendPlatformText(from, `You have been unsubscribed from *${selectedBiz.name}*. You will no longer receive their messages. Send START to resubscribe.`);
               }
             } else {
-              // Persistence failed — keep session active so customer can retry
+              // Persistence failed — release claim so customer can retry
+              await _casReleaseClaim();
               await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
             }
             return;
@@ -3768,6 +3786,19 @@ export class BotService {
           session.version = casResult.version;
           return true;
         };
+        // Helper: CAS release claim on failed persistence — allows customer retry
+        const _fallbackCasReleaseClaim = async (): Promise<void> => {
+          const releaseData = { ...session.session_data };
+          delete (releaseData as Record<string, unknown>)._claimed;
+          await this.supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: session.current_step,
+            p_session_data: releaseData,
+          }).then(({ data }) => {
+            if (data?.success) session.version = data.version;
+          }, () => {});
+        };
         // Helper: CAS-deactivate session after successful persistence
         const _fallbackCasDeactivate = async () => {
           const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
@@ -3797,7 +3828,8 @@ export class BotService {
                 await this.sendPlatformText(from, `You have been unsubscribed from *${choiceData.merchantName || 'this business'}*. You will no longer receive their messages. Send START to resubscribe.`);
               }
             } else {
-              // Persistence failed — keep session active so customer can retry
+              // Persistence failed — release claim so customer can retry
+                await _fallbackCasReleaseClaim();
               await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
             }
           } else if (choiceData.candidates && choiceData.candidates.length > 0) {
@@ -3836,7 +3868,8 @@ export class BotService {
               await this.sendPlatformText(from, 'You have been unsubscribed from Waaiio launch updates.');
             }
           } else {
-            // Persistence failed — keep session active so customer can retry
+            // Persistence failed — release claim so customer can retry
+                await _fallbackCasReleaseClaim();
             await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
           }
           return;
@@ -3914,7 +3947,8 @@ export class BotService {
               await this.sendPlatformText(from, `You have been unsubscribed from *${selectedBiz.name}*. You will no longer receive their messages. Send START to resubscribe.`);
             }
           } else {
-            // Persistence failed — keep session active so customer can retry
+            // Persistence failed — release claim so customer can retry
+                await _fallbackCasReleaseClaim();
             await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
           }
           return;
@@ -4954,6 +4988,12 @@ export class BotService {
     } else {
       // Shared channel — resolve from recent sessions
       const resolved = await this._resolveStopCandidates(from, destinationPhone);
+      if (resolved.error) {
+        // DB read error — fail closed, do not proceed with any consent mutation
+        logger.error('[STOP] Merchant resolution failed — not proceeding with consent change');
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true;
+      }
       candidates = resolved.candidates;
       // Only auto-select a single candidate when channel-verified (Tier 1).
       // Tier 2 (cross-channel history) must always show picker — never auto-mutate consent.
@@ -5100,6 +5140,11 @@ export class BotService {
     // Shared channel: resolve merchant context same as STOP, then resubscribe that merchant only.
     // Per Owner decision: START is merchant-specific. Do NOT resubscribe all businesses or platform.
     const resolved = await this._resolveStopCandidates(from, _destinationPhone);
+    if (resolved.error) {
+      logger.error('[START] Merchant resolution failed — not proceeding with consent change');
+      await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+      return true;
+    }
     // Only auto-resubscribe when channel-verified (same provenance safety as STOP)
     if (resolved.candidates.length === 1 && resolved.channelVerified) {
       const { data: updated, error: resubErr } = await this.supabase
@@ -5224,7 +5269,7 @@ export class BotService {
   private async _resolveStopCandidates(
     from: string,
     destinationPhone: string | undefined,
-  ): Promise<{ candidates: Array<{ id: string; name: string; bot_code: string }>; channelVerified: boolean }> {
+  ): Promise<{ candidates: Array<{ id: string; name: string; bot_code: string }>; channelVerified: boolean; error?: boolean }> {
     // Resolve channel ID from destinationPhone
     let channelId: string | null = null;
     if (destinationPhone) {
@@ -5236,8 +5281,7 @@ export class BotService {
         .maybeSingle();
       if (chErr) {
         logger.error('[STOP] _resolveStopCandidates: channel lookup error:', chErr.message);
-        // Return empty — caller will show "not subscribed" or fall through safely
-        return { candidates: [], channelVerified: false };
+        return { candidates: [], channelVerified: false, error: true };
       }
       channelId = ch?.id || null;
     }
@@ -5254,7 +5298,7 @@ export class BotService {
         .limit(10);
       if (t1Err) {
         logger.error('[STOP] _resolveStopCandidates: tier1 session query error:', t1Err.message);
-        return { candidates: [], channelVerified: false };
+        return { candidates: [], channelVerified: false, error: true };
       }
       if (tier1 && tier1.length > 0) {
         const bizIds = [...new Set(tier1.map(s => s.business_id).filter(Boolean))] as string[];
