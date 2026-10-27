@@ -112,7 +112,7 @@ describe('#721 STOP: Early Dispatcher (CONSENT-ROUTING P1)', () => {
     const earlyIdx = src.indexOf('Early pending-STOP dispatcher');
     const earlyEnd = src.indexOf('BOT-PERF: Single round-trip context bootstrap');
     const earlyBody = src.slice(earlyIdx, earlyEnd);
-    expect(earlyBody).toContain('choiceData.candidates && choiceData.candidates.length > 1');
+    expect(earlyBody).toContain('choiceData.candidates && choiceData.candidates.length >= 1');
     expect(earlyBody).toContain('_pending_stop: true');
     expect(earlyBody).toContain('Which business would you like to unsubscribe from?');
   });

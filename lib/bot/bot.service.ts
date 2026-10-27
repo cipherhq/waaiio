@@ -578,7 +578,7 @@ export class BotService {
     if (_pendingStopInputs.test(text)) {
       const { data: pendingSession, error: pendingErr } = await this.supabase
         .from('bot_sessions')
-        .select('id, session_data, version, whatsapp_number')
+        .select('id, session_data, version, whatsapp_number, current_step')
         .eq('whatsapp_number', from)
         .is('business_id', null)
         .eq('is_active', true)
@@ -592,7 +592,8 @@ export class BotService {
       }
 
       if (pendingSession?.session_data &&
-          (pendingSession.session_data._pending_stop || pendingSession.session_data._pending_stop_choice)) {
+          (pendingSession.session_data._pending_stop || pendingSession.session_data._pending_stop_choice) &&
+          !pendingSession.session_data._claimed) { // Reject already-claimed sessions (concurrent winner)
         // ── Channel provenance: resolve current channelId and verify match ──
         let currentChannelId: string | null = null;
         if (destinationPhone) {
@@ -658,8 +659,8 @@ export class BotService {
             merchantId?: string; merchantName?: string; candidates?: Array<{ id: string; name: string; bot_code: string }>;
           };
           if (text === 'stop_merchant') {
-            if (choiceData.candidates && choiceData.candidates.length > 1) {
-              // Multi-merchant + platform: user chose merchant → show picker (no opt-out yet, CAS first)
+            if (choiceData.candidates && choiceData.candidates.length >= 1) {
+              // Merchant(s) + platform: user chose merchant → show picker for explicit selection (no auto-select)
               const casClaimed = await _casDeactivate();
               if (!casClaimed) return;
               const sugSess = await this.createNullBizSuggestionSession(from, null, {

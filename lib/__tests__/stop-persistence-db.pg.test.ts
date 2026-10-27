@@ -52,14 +52,39 @@ const describePg = canRun ? describe : describe.skip;
 
 describePg('#721: STOP opt-out persistence', () => {
   beforeAll(() => {
-    // Guard: fail (not skip) if messaging_opt_outs table doesn't exist
+    // Create test-only schema fixture if not present (CI clean PG may lack migrations)
     const tableExists = psqlMaybe(
       `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'messaging_opt_outs';`
     );
     if (!tableExists) {
+      // Create the table + index matching migration 237_opt_out_suppression.sql
+      psql(`
+        CREATE TABLE IF NOT EXISTS messaging_opt_outs (
+          id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+          phone TEXT NOT NULL,
+          business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+          channel TEXT DEFAULT 'whatsapp',
+          opt_out_type TEXT DEFAULT 'all' CHECK (opt_out_type IN ('all', 'marketing', 'promotional')),
+          opted_out_at TIMESTAMPTZ DEFAULT NOW(),
+          source_message_id TEXT,
+          resubscribed_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_opt_out_unique
+          ON messaging_opt_outs(phone, COALESCE(business_id, '00000000-0000-0000-0000-000000000000'::UUID), channel)
+          WHERE resubscribed_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_opt_out_phone ON messaging_opt_outs(phone, channel);
+      `);
+    }
+
+    // Verify table now exists — fail hard if fixture creation failed
+    const verified = psqlMaybe(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'messaging_opt_outs';`
+    );
+    if (!verified) {
       throw new Error(
-        'messaging_opt_outs table does not exist in test database. ' +
-        'Migrations must be applied before running this test.'
+        'messaging_opt_outs table could not be created in test database. ' +
+        'Check test database permissions and parent table dependencies.'
       );
     }
 
