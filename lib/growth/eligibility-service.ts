@@ -27,13 +27,25 @@ export async function getEligibility(
 ): Promise<EligibilityResult> {
   try {
     // 1. Check opt-out
-    const { data: optOut } = await supabase
+    const { data: optOut, error: optOutErr } = await supabase
       .from('messaging_opt_outs')
       .select('id')
       .eq('phone', phone)
       .eq('business_id', businessId)
       .is('resubscribed_at', null)
       .maybeSingle();
+
+    if (optOutErr) {
+      logger.error('[ELIGIBILITY] Opt-out check failed — fail closed:', optOutErr.message);
+      return {
+        status: 'opted_out',
+        reason: 'Opt-out check failed — fail closed',
+        recommendedChannel: 'blocked',
+        canSendWhatsApp: false,
+        canSendSMS: false,
+        canSendEmail: false,
+      };
+    }
 
     if (optOut) {
       return {

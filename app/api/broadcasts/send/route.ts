@@ -143,16 +143,20 @@ export async function POST(request: NextRequest) {
 
     for (const phone of phones) {
       try {
-        // Check opt-out before sending promotional message
-        const { data: optedOut } = await service
+        // Check opt-out before sending promotional message (scoped to this business)
+        const { count: optOutCount, error: optOutErr } = await service
           .from('messaging_opt_outs')
-          .select('id')
+          .select('id', { count: 'exact', head: true })
           .eq('phone', phone)
-          .is('resubscribed_at', null)
-          .maybeSingle();
-
-        if (optedOut) {
-          // Skip — customer opted out
+          .eq('business_id', business_id)
+          .eq('channel', 'whatsapp')
+          .is('resubscribed_at', null);
+        if (optOutErr || optOutCount === null) {
+          logger.error('[BROADCAST] Opt-out check failed — suppressing send:', optOutErr?.message);
+          continue;
+        }
+        if (optOutCount > 0) {
+          // Skip — customer opted out of this business
           continue;
         }
 

@@ -109,6 +109,21 @@ export class BotService {
       return; // Silently drop — excessively long messages are never legitimate
     }
 
+    // ── STOP/START compliance — BEFORE rate limit so opt-out is never throttled ──
+    const STOP_WORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out'];
+    const START_WORDS = ['start', 'subscribe', 'opt in', 'opt-in'];
+    const normalizedInput = text?.toLowerCase().trim() || '';
+
+    if (STOP_WORDS.includes(normalizedInput)) {
+      const stopHandled = await this._handleStopRequest(from, preResolvedBusinessId, destinationPhone);
+      if (stopHandled) return;
+    }
+
+    if (START_WORDS.includes(normalizedInput)) {
+      const startHandled = await this._handleStartRequest(from, preResolvedBusinessId, destinationPhone);
+      if (startHandled) return;
+    }
+
     // Pre-checks: rate limit + maintenance mode + country cache (independent — run in parallel)
     const [botSettings, maintResult] = await Promise.all([
       loadPlatformSettings({ useServiceClient: true }),
@@ -129,43 +144,6 @@ export class BotService {
 
     if (maintResult.data?.value === true) {
       await this.sendPlatformText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
-      return;
-    }
-
-    // STOP/UNSUBSCRIBE compliance — check before any other processing
-    const STOP_WORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out'];
-    const START_WORDS = ['start', 'subscribe', 'opt in', 'opt-in'];
-    const normalizedInput = text?.toLowerCase().trim() || '';
-
-    if (STOP_WORDS.includes(normalizedInput)) {
-      // Record opt-out
-      await this.supabase.from('messaging_opt_outs').upsert({
-        phone: from,
-        business_id: preResolvedBusinessId || null,
-        channel: 'whatsapp',
-        opt_out_type: 'all',
-        opted_out_at: new Date().toISOString(),
-      }, { onConflict: 'phone,business_id,channel' }).select();
-
-      // #397: Also mark launch subscriber as opted-out (non-blocking, isolated)
-      this.supabase.from('launch_subscribers')
-        .update({ opt_in_status: 'opted_out', notification_status: 'skipped', updated_at: new Date().toISOString() })
-        .eq('wa_number', from)
-        .eq('opt_in_status', 'active')
-        .then(() => {}, () => {}); // fire-and-forget, never blocks commerce STOP
-
-      await this.sendPlatformText(from, 'You have been unsubscribed. You will no longer receive promotional messages. Send START to resubscribe.');
-      return;
-    }
-
-    if (START_WORDS.includes(normalizedInput)) {
-      // Resubscribe
-      await this.supabase.from('messaging_opt_outs')
-        .update({ resubscribed_at: new Date().toISOString() })
-        .eq('phone', from)
-        .is('resubscribed_at', null);
-
-      await this.sendPlatformText(from, 'You have been resubscribed. You will receive messages again.');
       return;
     }
 
@@ -3544,6 +3522,142 @@ export class BotService {
       // S-1: No business is bound in this step — all replies must be platform-scoped
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
+
+      // ── Pending-STOP: Option C disambiguation (stop_merchant / stop_platform) ──
+      // P1 Codex fix: validate inbound channel + atomic CAS claim before mutation
+      if (session.session_data._pending_stop_choice) {
+        const choiceData = session.session_data._pending_stop_choice as {
+          merchantId: string; merchantName: string; channelId?: string;
+        };
+        // Channel provenance check: reject cross-channel replay
+        if (choiceData.channelId && destinationPhone) {
+          const { data: currentCh } = await this.supabase
+            .from('whatsapp_channels').select('id')
+            .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+          if (currentCh && currentCh.id !== choiceData.channelId) {
+            logger.warn('[STOP] Cross-channel Option C replay rejected', { stored: choiceData.channelId, current: currentCh.id });
+            return;
+          }
+        }
+        if (text === 'stop_merchant' || text === 'stop_platform') {
+          // Atomic CAS claim: deactivate session with version check — only the first concurrent reply wins
+          const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: 'complete',
+            p_session_data: { ...session.session_data, is_active: false },
+          });
+          if (casErr || !casResult?.success) {
+            // CAS failed — another concurrent reply already claimed this session
+            if (casResult?.reason === 'version_conflict') return;
+            logger.warn('[STOP] Option C CAS claim failed:', casResult?.reason || casErr?.message);
+            return;
+          }
+          await this.deactivateSession(session.id);
+
+          if (text === 'stop_merchant') {
+            const persisted = await this._recordMerchantOptOut(from, choiceData.merchantId);
+            if (persisted) {
+              const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+              if (noticeLimit.allowed) {
+                await this.sendPlatformText(from, `You have been unsubscribed from *${choiceData.merchantName}*. You will no longer receive their messages. Send START to resubscribe.`);
+              }
+            } else {
+              await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+            }
+          } else {
+            const persisted = await this._recordPlatformOptOut(from);
+            if (persisted) {
+              const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+              if (noticeLimit.allowed) {
+                await this.sendPlatformText(from, 'You have been unsubscribed from Waaiio launch updates.');
+              }
+            } else {
+              await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+            }
+          }
+          return;
+        }
+        // Unrecognized reply to Option C — reprompt
+        await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
+          { id: 'stop_merchant', title: truncTitle(choiceData.merchantName) },
+          { id: 'stop_platform', title: 'Waaiio updates' },
+        ]);
+        return;
+      }
+
+      // ── Pending-STOP: merchant picker (user selects which merchant to stop) ──
+      // P1 Codex fix: validate inbound channel + atomic CAS claim before mutation
+      if (session.session_data._pending_stop) {
+        // Channel provenance check
+        const storedChannelId = session.session_data._pending_stop_channel_id as string | undefined;
+        if (storedChannelId && destinationPhone) {
+          const { data: currentCh } = await this.supabase
+            .from('whatsapp_channels').select('id')
+            .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+          if (currentCh && currentCh.id !== storedChannelId) {
+            logger.warn('[STOP] Cross-channel picker replay rejected', { stored: storedChannelId, current: currentCh.id });
+            return;
+          }
+        }
+
+        let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
+        const btnMatch = text.match(/^biz_(\d+)$/i);
+        if (btnMatch) {
+          const idx = parseInt(btnMatch[1], 10);
+          selectedBiz = suggestions[idx] || null;
+        }
+        if (!selectedBiz) {
+          const numMatch = text.match(/^(\d+)$/);
+          if (numMatch) {
+            const idx = parseInt(numMatch[1], 10) - 1;
+            selectedBiz = suggestions[idx] || null;
+          }
+        }
+        if (selectedBiz) {
+          // Atomic CAS claim: version-gated deactivation — first concurrent reply wins
+          const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: 'complete',
+            p_session_data: { ...session.session_data, is_active: false },
+          });
+          if (casErr || !casResult?.success) {
+            if (casResult?.reason === 'version_conflict') return;
+            logger.warn('[STOP] Picker CAS claim failed:', casResult?.reason || casErr?.message);
+            return;
+          }
+          await this.deactivateSession(session.id);
+
+          // Verify selected business is in the stored candidate list
+          const candidateIds = new Set(suggestions.map(s => s.id));
+          if (!candidateIds.has(selectedBiz.id)) {
+            logger.warn('[STOP] Selected business not in candidates:', selectedBiz.id);
+            return;
+          }
+
+          const persisted = await this._recordMerchantOptOut(from, selectedBiz.id);
+          if (persisted) {
+            const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+            if (noticeLimit.allowed) {
+              await this.sendPlatformText(from, `You have been unsubscribed from *${selectedBiz.name}*. You will no longer receive their messages. Send START to resubscribe.`);
+            }
+          } else {
+            await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+          }
+          return;
+        }
+        // Cancel/abort pending stop
+        if (/^(cancel|exit|nevermind|no)$/i.test(text)) {
+          await this.deactivateSession(session.id);
+          await this.sendPlatformText(from, 'No problem. You have not been unsubscribed.');
+          return;
+        }
+        // Unrecognized — reprompt
+        await this.sendPlatformText(from, 'Please select a business from the list above, or send *cancel* to abort.');
+        return;
+      }
+
       let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
 
       // Handle navigation commands at suggestion step (no business_id, so escape hatch guard skips these)
@@ -4524,5 +4638,320 @@ export class BotService {
     messageText: string,
   ): Promise<void> {
     return _forwardToBusinessOwner(this.ctx, businessId, customerPhone, customerName, messageText);
+  }
+
+  /**
+   * #721 STOP handler: resolves merchant context, records opt-out with proven persistence.
+   * Returns true if the STOP was handled (caller should return), false if not a STOP scenario.
+   */
+  private async _handleStopRequest(
+    from: string,
+    preResolvedBusinessId: string | undefined,
+    destinationPhone: string | undefined,
+  ): Promise<boolean> {
+    // 1. Resolve merchant context
+    let merchantId: string | null = null;
+    let merchantName: string | null = null;
+    let candidates: Array<{ id: string; name: string; bot_code: string }> = [];
+
+    if (preResolvedBusinessId) {
+      // Dedicated channel — merchant is known
+      merchantId = preResolvedBusinessId;
+      const { data: biz } = await this.supabase
+        .from('businesses').select('name').eq('id', preResolvedBusinessId).single();
+      merchantName = biz?.name || 'this business';
+    } else {
+      // Shared channel — resolve from recent sessions
+      candidates = await this._resolveStopCandidates(from, destinationPhone);
+      if (candidates.length === 1) {
+        merchantId = candidates[0].id;
+        merchantName = candidates[0].name;
+      }
+    }
+
+    // 2. Check platform (launch subscriber) context
+    const { data: launchSub } = await this.supabase
+      .from('launch_subscribers').select('id')
+      .eq('wa_number', from).eq('opt_in_status', 'active').maybeSingle();
+    const hasLaunchSub = !!launchSub;
+
+    // 3. Route to the correct path
+    if (merchantId && !hasLaunchSub) {
+      // Merchant only — record opt-out
+      const persisted = await this._recordMerchantOptOut(from, merchantId);
+      if (persisted) {
+        await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+        await this.sendPlatformText(from, `You have been unsubscribed from *${merchantName}*. You will no longer receive their messages. Send START to resubscribe.`);
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+      }
+      return true;
+    }
+
+    if (!merchantId && candidates.length === 0 && hasLaunchSub) {
+      // Platform only — record launch opt-out
+      const persisted = await this._recordPlatformOptOut(from);
+      if (persisted) {
+        await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+        await this.sendPlatformText(from, 'You have been unsubscribed from Waaiio launch updates. Send START to resubscribe.');
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+      }
+      return true;
+    }
+
+    if (merchantId && hasLaunchSub) {
+      // Option C: both merchant and platform — ask which to stop
+      const sugSess = await this.createNullBizSuggestionSession(from, null, {
+        suggestions: [],
+        _pending_stop_choice: { merchantId, merchantName, channelId: destinationPhone },
+      });
+      if (sugSess) {
+        await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
+          { id: 'stop_merchant', title: truncTitle(merchantName || 'This business') },
+          { id: 'stop_platform', title: 'Waaiio updates' },
+        ]);
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+      }
+      return true;
+    }
+
+    if (!merchantId && candidates.length > 1) {
+      // Ambiguous merchant — show picker
+      const sugSess = await this.createNullBizSuggestionSession(from, null, {
+        suggestions: candidates.slice(0, 10),
+        _pending_stop: true,
+        _pending_stop_channel_id: destinationPhone,
+      });
+      if (sugSess) {
+        if (candidates.length <= 3) {
+          await this.sendPlatformButtons(from, 'Which business would you like to unsubscribe from?',
+            candidates.slice(0, 3).map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+        } else {
+          const list = candidates.slice(0, 10).map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+          await this.sendPlatformText(from, `Which business would you like to unsubscribe from?\n\n${list}\n\nReply with the number to select, or send *cancel* to abort.`);
+        }
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+      }
+      return true;
+    }
+
+    if (!merchantId && candidates.length === 0 && !hasLaunchSub) {
+      // No context at all — acknowledge but nothing to do
+      await this.sendPlatformText(from, 'You are not currently subscribed to any messages. No action needed.');
+      return true;
+    }
+
+    return true;
+  }
+
+  /**
+   * #721 START handler: scoped to identified merchant.
+   */
+  private async _handleStartRequest(
+    from: string,
+    preResolvedBusinessId: string | undefined,
+    _destinationPhone: string | undefined,
+  ): Promise<boolean> {
+    if (preResolvedBusinessId) {
+      // Resubscribe for this specific merchant
+      const { data: updated, error: resubErr } = await this.supabase
+        .from('messaging_opt_outs')
+        .update({ resubscribed_at: new Date().toISOString() })
+        .eq('phone', from)
+        .eq('business_id', preResolvedBusinessId)
+        .eq('channel', 'whatsapp')
+        .is('resubscribed_at', null)
+        .select('id');
+
+      if (resubErr) {
+        logger.error('[BOT] START resubscribe error:', resubErr.message);
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true;
+      }
+      if (updated && updated.length > 0) {
+        await this.sendPlatformText(from, 'You have been resubscribed. You will receive messages from this business again.');
+      } else {
+        await this.sendPlatformText(from, 'You are already subscribed. No action needed.');
+      }
+      return true;
+    }
+
+    // Shared channel: resolve merchant context same as STOP, then resubscribe that merchant only.
+    // Per Owner decision: START is merchant-specific. Do NOT resubscribe all businesses or platform.
+    const candidates = await this._resolveStopCandidates(from, _destinationPhone);
+    if (candidates.length === 1) {
+      const { data: updated, error: resubErr } = await this.supabase
+        .from('messaging_opt_outs')
+        .update({ resubscribed_at: new Date().toISOString() })
+        .eq('phone', from)
+        .eq('business_id', candidates[0].id)
+        .eq('channel', 'whatsapp')
+        .is('resubscribed_at', null)
+        .select('id');
+      if (resubErr) {
+        logger.error('[BOT] START resubscribe error:', resubErr.message);
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true;
+      }
+      if (updated && updated.length > 0) {
+        await this.sendPlatformText(from, `You have been resubscribed to *${candidates[0].name}*. You will receive their messages again.`);
+      } else {
+        await this.sendPlatformText(from, 'You are already subscribed. No action needed.');
+      }
+      return true;
+    }
+    // Multiple or zero candidates — inform customer
+    await this.sendPlatformText(from, 'To resubscribe, please message the business first, then send START.');
+    return true;
+  }
+
+  /**
+   * Record merchant opt-out using INSERT + 23505 conflict detection.
+   * Returns true only when the row is provably persisted (returned row ID).
+   */
+  private async _recordMerchantOptOut(from: string, businessId: string): Promise<boolean> {
+    const { data: inserted, error: insertErr } = await this.supabase
+      .from('messaging_opt_outs')
+      .insert({
+        phone: from,
+        business_id: businessId,
+        channel: 'whatsapp',
+        opt_out_type: 'all',
+        opted_out_at: new Date().toISOString(),
+      })
+      .select('id');
+
+    if (!insertErr && inserted && inserted.length > 0) {
+      logger.info('[BOT] STOP opt-out recorded:', inserted[0].id, 'for business:', businessId);
+      return true;
+    }
+
+    if (insertErr?.code === '23505') {
+      // Already opted out (unique index conflict) — verify the row exists
+      const { count } = await this.supabase
+        .from('messaging_opt_outs')
+        .select('id', { count: 'exact', head: true })
+        .eq('phone', from)
+        .eq('business_id', businessId)
+        .eq('channel', 'whatsapp')
+        .is('resubscribed_at', null);
+      if (count && count > 0) {
+        logger.info('[BOT] STOP opt-out already exists for business:', businessId);
+        return true;
+      }
+    }
+
+    logger.error('[BOT] STOP opt-out INSERT failed:', insertErr?.message, insertErr?.code);
+    return false;
+  }
+
+  /**
+   * Record platform (launch subscriber) opt-out.
+   * Returns true only when provably persisted.
+   */
+  private async _recordPlatformOptOut(from: string): Promise<boolean> {
+    const { data: updated, error: updateErr } = await this.supabase
+      .from('launch_subscribers')
+      .update({
+        opt_in_status: 'opted_out',
+        notification_status: 'skipped',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('wa_number', from)
+      .eq('opt_in_status', 'active')
+      .select('id');
+
+    if (!updateErr && updated && updated.length > 0) {
+      logger.info('[BOT] Platform STOP recorded for:', from);
+      return true;
+    }
+
+    if (updateErr) {
+      logger.error('[BOT] Platform STOP update failed:', updateErr.message);
+      return false;
+    }
+
+    // No rows updated — might already be opted out
+    const { data: existing } = await this.supabase
+      .from('launch_subscribers')
+      .select('opt_in_status')
+      .eq('wa_number', from)
+      .maybeSingle();
+    if (existing?.opt_in_status === 'opted_out') {
+      logger.info('[BOT] Platform STOP already opted out for:', from);
+      return true;
+    }
+
+    logger.warn('[BOT] Platform STOP: no launch_subscribers row found for:', from);
+    return false;
+  }
+
+  /**
+   * Resolve merchant candidates for STOP on shared channels.
+   * Tier 1: active sessions with matching channel. Tier 2: recent sessions for this phone.
+   */
+  private async _resolveStopCandidates(
+    from: string,
+    destinationPhone: string | undefined,
+  ): Promise<Array<{ id: string; name: string; bot_code: string }>> {
+    // Resolve channel ID from destinationPhone
+    let channelId: string | null = null;
+    if (destinationPhone) {
+      const { data: ch } = await this.supabase
+        .from('whatsapp_channels')
+        .select('id')
+        .eq('phone_number_id', destinationPhone)
+        .eq('is_active', true)
+        .maybeSingle();
+      channelId = ch?.id || null;
+    }
+
+    // Tier 1: active sessions where _inbound_channel_id matches
+    if (channelId) {
+      const { data: tier1 } = await this.supabase
+        .from('bot_sessions')
+        .select('business_id')
+        .eq('whatsapp_number', from)
+        .not('business_id', 'is', null)
+        .eq('session_data->>_inbound_channel_id', channelId)
+        .eq('is_active', true)
+        .limit(10);
+      if (tier1 && tier1.length > 0) {
+        const bizIds = [...new Set(tier1.map(s => s.business_id).filter(Boolean))] as string[];
+        return this._fetchBizSummaries(bizIds);
+      }
+    }
+
+    // Tier 2: recent sessions for this phone (any status) with non-null business_id
+    const { data: tier2 } = await this.supabase
+      .from('bot_sessions')
+      .select('business_id')
+      .eq('whatsapp_number', from)
+      .not('business_id', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(20);
+    if (tier2 && tier2.length > 0) {
+      const bizIds = [...new Set(tier2.map(s => s.business_id).filter(Boolean))] as string[];
+      return this._fetchBizSummaries(bizIds.slice(0, 10));
+    }
+
+    return [];
+  }
+
+  private async _fetchBizSummaries(
+    bizIds: string[],
+  ): Promise<Array<{ id: string; name: string; bot_code: string }>> {
+    if (bizIds.length === 0) return [];
+    const { data: businesses } = await this.supabase
+      .from('businesses')
+      .select('id, name, bot_code')
+      .in('id', bizIds)
+      .eq('status', 'active');
+    return (businesses || []).map(b => ({
+      id: b.id, name: b.name, bot_code: b.bot_code || '',
+    }));
   }
 }

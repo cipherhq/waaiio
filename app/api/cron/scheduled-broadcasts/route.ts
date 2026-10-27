@@ -81,16 +81,20 @@ export async function GET(request: NextRequest) {
 
       for (const phone of broadcast.phones) {
         try {
-          // Check opt-out before sending promotional message
-          const { data: optedOut } = await supabase
+          // Check opt-out before sending promotional message (scoped to this business)
+          const { count: optOutCount, error: optOutErr } = await supabase
             .from('messaging_opt_outs')
-            .select('id')
+            .select('id', { count: 'exact', head: true })
             .eq('phone', phone)
-            .is('resubscribed_at', null)
-            .maybeSingle();
-
-          if (optedOut) {
-            // Skip — customer opted out
+            .eq('business_id', broadcast.business_id)
+            .eq('channel', 'whatsapp')
+            .is('resubscribed_at', null);
+          if (optOutErr || optOutCount === null) {
+            logger.error('[SCHEDULED-BROADCAST] Opt-out check failed — suppressing send:', optOutErr?.message);
+            continue;
+          }
+          if (optOutCount > 0) {
+            // Skip — customer opted out of this business
             continue;
           }
 
