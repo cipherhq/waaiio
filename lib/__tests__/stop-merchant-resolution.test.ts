@@ -136,12 +136,12 @@ describe('#721 STOP: Tenant Provenance (P1)', () => {
     const earlyIdx = src.indexOf('Early pending-STOP dispatcher');
     const earlyEnd = src.indexOf('BOT-PERF: Single round-trip context bootstrap');
     const earlyBody = src.slice(earlyIdx, earlyEnd);
-    expect(earlyBody).toContain('cross-channel replay rejected');
+    expect(earlyBody).toContain('channel provenance mismatch/missing');
     expect(earlyBody).toContain('storedChannelId !== currentChannelId');
 
-    // Fallback session handler also checks
-    expect(src).toContain('Cross-channel Option C replay rejected');
-    expect(src).toContain('Cross-channel picker replay rejected');
+    // Fallback session handler also checks — fail closed on missing/null provenance
+    expect(src).toContain('Cross-channel Option C replay rejected or missing provenance');
+    expect(src).toContain('Cross-channel picker replay rejected or missing provenance');
   });
 
   it('20b. Channel lookup failure → fail closed (not proceed as success)', () => {

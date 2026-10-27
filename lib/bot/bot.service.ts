@@ -611,10 +611,29 @@ export class BotService {
         }
         const storedChannelId = (pendingSession.session_data._pending_stop_channel_id as string | undefined)
           || (pendingSession.session_data._pending_stop_choice as { channelId?: string } | undefined)?.channelId;
-        if (storedChannelId && storedChannelId !== currentChannelId) {
-          logger.warn('[STOP] Early dispatcher: cross-channel replay rejected', { stored: storedChannelId, current: currentChannelId });
+        // P1 Codex fix: fail closed on missing/null channel provenance — reject unless both exist and match
+        if (!storedChannelId || storedChannelId !== currentChannelId) {
+          logger.warn('[STOP] Early dispatcher: channel provenance mismatch/missing', { stored: storedChannelId, current: currentChannelId });
           return;
         }
+
+        // Helper: CAS atomic intent claim — bumps version to prevent concurrent double-write.
+        // Called BEFORE opt-out persistence. If claim fails, concurrent reply already won.
+        const _casClaim = async (): Promise<boolean> => {
+          const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: pendingSession.id,
+            p_expected_version: pendingSession.version ?? 0,
+            p_current_step: pendingSession.current_step,
+            p_session_data: { ...pendingSession.session_data, _claimed: true },
+          });
+          if (casErr || !casResult?.success) {
+            if (casResult?.reason === 'version_conflict') return false;
+            logger.warn('[STOP] Early dispatcher CAS claim failed:', casResult?.reason || casErr?.message);
+            return false;
+          }
+          pendingSession.version = casResult.version; // Update for subsequent deactivation
+          return true;
+        };
 
         // Helper: CAS-deactivate session after successful persistence
         const _casDeactivate = async () => {
@@ -622,11 +641,11 @@ export class BotService {
             p_session_id: pendingSession.id,
             p_expected_version: pendingSession.version ?? 0,
             p_current_step: 'complete',
-            p_session_data: { ...pendingSession.session_data, is_active: false },
+            p_session_data: { ...pendingSession.session_data, is_active: false, _claimed: true },
           });
           if (casErr || !casResult?.success) {
             if (casResult?.reason === 'version_conflict') return false;
-            logger.warn('[STOP] Early dispatcher CAS failed:', casResult?.reason || casErr?.message);
+            logger.warn('[STOP] Early dispatcher CAS deactivate failed:', casResult?.reason || casErr?.message);
             return false;
           }
           await this.deactivateSession(pendingSession.id);
@@ -661,8 +680,10 @@ export class BotService {
               }
               return;
             }
-            // Single merchant Option C: persist BEFORE deactivating session
+            // Single merchant Option C: CAS-claim first (prevents concurrent double-write), then persist
             if (choiceData.merchantId) {
+              const claimed = await _casClaim();
+              if (!claimed) return; // Concurrent reply already won
               const persisted = await this._recordMerchantOptOut(from, choiceData.merchantId);
               if (persisted) {
                 await _casDeactivate(); // Session cleanup — opt-out already safe
@@ -678,7 +699,9 @@ export class BotService {
             }
           }
           if (text === 'stop_platform') {
-            // Persist BEFORE deactivating session
+            // CAS-claim first (prevents concurrent double-write), then persist
+            const claimed = await _casClaim();
+            if (!claimed) return; // Concurrent reply already won
             const persisted = await this._recordPlatformOptOut(from);
             if (persisted) {
               await _casDeactivate(); // Session cleanup — opt-out already safe
@@ -730,7 +753,9 @@ export class BotService {
               logger.warn('[STOP] Early dispatcher: selected biz not in candidates:', selectedBiz.id);
               return;
             }
-            // Persist BEFORE deactivating session
+            // CAS-claim first (prevents concurrent double-write), then persist
+            const claimed = await _casClaim();
+            if (!claimed) return; // Concurrent reply already won
             const persisted = await this._recordMerchantOptOut(from, selectedBiz.id);
             if (persisted) {
               await _casDeactivate(); // Session cleanup — opt-out already safe
@@ -3720,22 +3745,39 @@ export class BotService {
             logger.warn('[STOP] Fallback Option C: channel lookup failed, rejecting', { err: chErr?.message });
             return; // Fail closed
           }
-          if (choiceData.channelId && currentCh.id !== choiceData.channelId) {
-            logger.warn('[STOP] Cross-channel Option C replay rejected', { stored: choiceData.channelId, current: currentCh.id });
+          // P1 Codex fix: fail closed on missing/null channel provenance
+        if (!choiceData.channelId || currentCh.id !== choiceData.channelId) {
+            logger.warn('[STOP] Cross-channel Option C replay rejected or missing provenance', { stored: choiceData.channelId, current: currentCh.id });
             return;
           }
         }
+        // Helper: CAS atomic intent claim (version bump, no deactivation)
+        const _fallbackCasClaim = async (): Promise<boolean> => {
+          const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: session.current_step,
+            p_session_data: { ...session.session_data, _claimed: true },
+          });
+          if (casErr || !casResult?.success) {
+            if (casResult?.reason === 'version_conflict') return false;
+            logger.warn('[STOP] Fallback CAS claim failed:', casResult?.reason || casErr?.message);
+            return false;
+          }
+          session.version = casResult.version;
+          return true;
+        };
         // Helper: CAS-deactivate session after successful persistence
         const _fallbackCasDeactivate = async () => {
           const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
             p_session_id: session.id,
             p_expected_version: session.version ?? 0,
             p_current_step: 'complete',
-            p_session_data: { ...session.session_data, is_active: false },
+            p_session_data: { ...session.session_data, is_active: false, _claimed: true },
           });
           if (casErr || !casResult?.success) {
             if (casResult?.reason === 'version_conflict') return false;
-            logger.warn('[STOP] Option C CAS claim failed:', casResult?.reason || casErr?.message);
+            logger.warn('[STOP] Fallback CAS deactivate failed:', casResult?.reason || casErr?.message);
             return false;
           }
           await this.deactivateSession(session.id);
@@ -3743,7 +3785,9 @@ export class BotService {
         };
         if (text === 'stop_merchant') {
           if (choiceData.merchantId) {
-            // Single merchant Option C: persist BEFORE deactivating session
+            // CAS-claim first (prevents concurrent double-write), then persist
+            const claimed = await _fallbackCasClaim();
+            if (!claimed) return;
             const persisted = await this._recordMerchantOptOut(from, choiceData.merchantId);
             if (persisted) {
               await _fallbackCasDeactivate(); // Session cleanup — opt-out already safe
@@ -3780,7 +3824,9 @@ export class BotService {
           return;
         }
         if (text === 'stop_platform') {
-          // Persist BEFORE deactivating session
+          // CAS-claim first, then persist
+          const claimed = await _fallbackCasClaim();
+          if (!claimed) return;
           const persisted = await this._recordPlatformOptOut(from);
           if (persisted) {
             await _fallbackCasDeactivate(); // Session cleanup — opt-out already safe
@@ -3816,8 +3862,9 @@ export class BotService {
             logger.warn('[STOP] Fallback picker: channel lookup failed, rejecting', { err: chErr?.message });
             return; // Fail closed
           }
-          if (storedChannelId && currentCh.id !== storedChannelId) {
-            logger.warn('[STOP] Cross-channel picker replay rejected', { stored: storedChannelId, current: currentCh.id });
+          // P1 Codex fix: fail closed on missing/null channel provenance
+          if (!storedChannelId || currentCh.id !== storedChannelId) {
+            logger.warn('[STOP] Cross-channel picker replay rejected or missing provenance', { stored: storedChannelId, current: currentCh.id });
             return;
           }
         }
@@ -3843,7 +3890,9 @@ export class BotService {
             return;
           }
 
-          // Persist BEFORE deactivating session — if persistence fails, customer can retry
+          // CAS-claim first (prevents concurrent double-write), then persist
+          const claimed = await _fallbackCasClaim();
+          if (!claimed) return; // Concurrent reply already won
           const persisted = await this._recordMerchantOptOut(from, selectedBiz.id);
           if (persisted) {
             // CAS-deactivate session after successful persistence
