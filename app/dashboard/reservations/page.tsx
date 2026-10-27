@@ -1579,7 +1579,7 @@ export default function BookingsPage() {
               </div>
 
               {/* Reschedule — only for non-reservation pending/confirmed bookings */}
-              {!selected._isReservation && ['pending', 'confirmed'].includes(selected.status) && (
+              {!selected._isReservation && selected.flow_type !== 'table_reservation' && ['pending', 'confirmed'].includes(selected.status) && (
                 <div className="border-t border-gray-100 pt-4">
                   {!showReschedule ? (
                     <button

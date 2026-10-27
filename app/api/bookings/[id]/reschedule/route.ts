@@ -60,13 +60,21 @@ export async function POST(
 
     // Block table reservation reschedule until reschedule_booking_atomic supports
     // seating_resource_id overlap checks (CTO R2 finding: unsafe integration path)
-    const { data: bookingCheck } = await service
+    const { data: bookingCheck, error: lookupError } = await service
       .from('bookings')
       .select('flow_type')
       .eq('id', id)
       .eq('business_id', businessId)
       .maybeSingle();
-    if (bookingCheck?.flow_type === 'table_reservation') {
+    // Fail closed: DB error or missing row must not proceed to unguarded RPC
+    if (lookupError) {
+      logger.error('[RESCHEDULE] Booking lookup failed', { id, businessId, error: lookupError.message });
+      return NextResponse.json({ error: 'Failed to verify booking type' }, { status: 500 });
+    }
+    if (!bookingCheck) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+    if (bookingCheck.flow_type === 'table_reservation') {
       return NextResponse.json(
         { error: 'Table reservations cannot be rescheduled yet. Cancel and create a new reservation instead.' },
         { status: 422 },

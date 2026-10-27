@@ -273,6 +273,11 @@ BEGIN
     END IF;
   END IF;
 
+  -- Reject any reservation extending past midnight (no overnight policy authorized)
+  IF v_req_end_min > 1440 THEN
+    RAISE EXCEPTION 'past_midnight:Reservation would extend past midnight';
+  END IF;
+
   IF v_resource.available_to IS NOT NULL THEN
     v_to_min := EXTRACT(HOUR FROM v_resource.available_to)::int * 60
               + EXTRACT(MINUTE FROM v_resource.available_to)::int;

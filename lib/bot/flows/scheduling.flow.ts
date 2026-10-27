@@ -2540,8 +2540,13 @@ export const schedulingFlow: FlowDefinition = {
         if (d._is_table_reservation) {
           // ── Table reservation: FLAT deposit per reservation (Owner decision 2026-10-27) ──
           // Not multiplied by party_size. The resource deposit IS the total payable.
-          const flatDeposit = (d._seating_deposit as number) || serviceDeposit || 0;
-          totalDeposit = prepayMode === 'free' ? 0 : flatDeposit;
+          const flatDeposit = (d._seating_deposit as number) ?? serviceDeposit ?? 0;
+          if (prepayMode === 'free' && flatDeposit > 0) {
+            // Commercial-policy conflict: business set free prepay but resource has deposit.
+            // Fail closed — do not create a booking with inconsistent payment state.
+            return [{ type: 'text', text: await ctx.t('This table requires a deposit but the business has free-prepay enabled. Please contact the business directly.') }];
+          }
+          totalDeposit = flatDeposit;
         } else if (packageEnrollmentId) {
           // Package covers this booking — no upfront charge (matches canonical non-package free behavior)
           totalDeposit = 0;
@@ -2695,9 +2700,9 @@ export const schedulingFlow: FlowDefinition = {
                 p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
                 p_status: totalDeposit > 0 ? 'pending' : 'confirmed',
                 p_total_amount: bookingTotalAmount,
-                // When prepay_mode='free', don't pass expected deposit — RPC would
-                // restore the configured amount and create an unpayable pending booking
-                p_expected_deposit: totalDeposit > 0 ? ((d._seating_deposit as number) ?? null) : null,
+                // Always pass expected values so RPC validates against current DB state.
+                // Includes zero — a stale-zero→positive change must be caught.
+                p_expected_deposit: (d._seating_deposit as number) ?? 0,
                 p_expected_duration: (d._seating_duration as number) ?? null,
               })
               .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };

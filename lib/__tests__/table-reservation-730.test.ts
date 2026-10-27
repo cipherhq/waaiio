@@ -496,23 +496,57 @@ describe('#730: Admin API and security', () => {
     expect(code).toContain('Table reservations cannot be rescheduled yet');
   });
 
-  it('free-prepay does not pass expected deposit to RPC', async () => {
+  it('free-prepay with positive deposit fails closed (not silently waived)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts'), 'utf-8');
 
-    // When totalDeposit is 0 (free prepay), expected_deposit should be null
-    expect(code).toContain('totalDeposit > 0 ?');
-    expect(code).toContain('p_expected_deposit:');
+    // Must fail closed on prepay_mode='free' + positive deposit
+    expect(code).toContain("prepayMode === 'free' && flatDeposit > 0");
+    // Always pass expected deposit (including zero) for commit-time revalidation
+    expect(code).toContain("p_expected_deposit: (d._seating_deposit as number) ?? 0");
   });
 
-  it('migration rejects overnight availability windows', async () => {
+  it('migration rejects overnight availability windows and past-midnight reservations', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql'), 'utf-8');
 
     expect(sql).toContain('seating_no_overnight');
     expect(sql).toContain('available_from < available_to');
+    // Unconditional midnight guard (even when available_to is null)
+    expect(sql).toContain('v_req_end_min > 1440');
+    expect(sql).toContain('past_midnight');
+  });
+
+  it('reschedule route fails closed on lookup error and missing rows', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/api/bookings/[id]/reschedule/route.ts'), 'utf-8');
+
+    // Must check for both error AND null
+    expect(code).toContain('if (lookupError)');
+    expect(code).toContain('if (!bookingCheck)');
+    // Must return error responses, not continue
+    expect(code).toContain("status: 500");
+    expect(code).toContain("status: 404");
+  });
+
+  it('dashboard hides reschedule for table_reservation bookings', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
+
+    expect(code).toContain("flow_type !== 'table_reservation'");
+  });
+
+  it('WhatsApp hides reschedule button for table reservations', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/handlers/my-bookings.ts'), 'utf-8');
+
+    expect(code).toContain('isTableReservation');
+    expect(code).toContain("!isTableReservation");
   });
 
   it('reschedule route blocks table_reservation bookings', async () => {
