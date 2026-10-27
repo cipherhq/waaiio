@@ -569,6 +569,163 @@ export class BotService {
       return _cachedProfile;
     };
 
+    // ── #721 P1 CONSENT-ROUTING: Early pending-STOP dispatcher ──
+    // Runs BEFORE get_bot_context. Directly queries bot_sessions for pending-STOP
+    // picker/Option-C sessions. On match: execute opt-out with CAS + channel verification.
+    // On no match: fall through to normal get_bot_context flow.
+    const _pendingStopInputs = /^(stop_merchant|stop_platform|biz_\d+|[1-9])$/i;
+    if (_pendingStopInputs.test(text) && !preResolvedBusinessId) {
+      const { data: pendingSession } = await this.supabase
+        .from('bot_sessions')
+        .select('id, session_data, version, whatsapp_number')
+        .eq('whatsapp_number', from)
+        .is('business_id', null)
+        .eq('is_active', true)
+        .eq('current_step', 'select_business_suggestion')
+        .limit(1)
+        .maybeSingle();
+
+      if (pendingSession?.session_data &&
+          (pendingSession.session_data._pending_stop || pendingSession.session_data._pending_stop_choice)) {
+        // ── Channel provenance: resolve current channelId and verify match ──
+        let currentChannelId: string | null = null;
+        if (destinationPhone) {
+          const { data: ch, error: chErr } = await this.supabase
+            .from('whatsapp_channels').select('id')
+            .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+          if (chErr || !ch) {
+            logger.warn('[STOP] Early dispatcher: channel lookup failed, rejecting', { destinationPhone, err: chErr?.message });
+            return; // Fail closed: no active channel → reject
+          }
+          currentChannelId = ch.id;
+        }
+        const storedChannelId = (pendingSession.session_data._pending_stop_channel_id as string | undefined)
+          || (pendingSession.session_data._pending_stop_choice as { channelId?: string } | undefined)?.channelId;
+        if (storedChannelId && currentChannelId && storedChannelId !== currentChannelId) {
+          logger.warn('[STOP] Early dispatcher: cross-channel replay rejected', { stored: storedChannelId, current: currentChannelId });
+          return;
+        }
+
+        // ── CAS atomic claim: version-gated deactivation ──
+        const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+          p_session_id: pendingSession.id,
+          p_expected_version: pendingSession.version ?? 0,
+          p_current_step: 'complete',
+          p_session_data: { ...pendingSession.session_data, is_active: false },
+        });
+        if (casErr || !casResult?.success) {
+          if (casResult?.reason === 'version_conflict') return; // Another reply already claimed it
+          logger.warn('[STOP] Early dispatcher CAS failed:', casResult?.reason || casErr?.message);
+          return;
+        }
+        await this.deactivateSession(pendingSession.id);
+
+        // ── Option C: stop_merchant / stop_platform ──
+        if (pendingSession.session_data._pending_stop_choice) {
+          const choiceData = pendingSession.session_data._pending_stop_choice as {
+            merchantId?: string; merchantName?: string; candidates?: Array<{ id: string; name: string; bot_code: string }>;
+          };
+          if (text === 'stop_merchant') {
+            if (choiceData.candidates && choiceData.candidates.length > 1) {
+              // Multi-merchant + platform: user chose merchant → show picker
+              const sugSess = await this.createNullBizSuggestionSession(from, null, {
+                suggestions: choiceData.candidates,
+                _pending_stop: true,
+                _pending_stop_channel_id: currentChannelId || storedChannelId,
+              });
+              if (sugSess) {
+                if (choiceData.candidates.length <= 3) {
+                  await this.sendPlatformButtons(from, 'Which business would you like to unsubscribe from?',
+                    choiceData.candidates.slice(0, 3).map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+                } else {
+                  const list = choiceData.candidates.slice(0, 10).map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+                  await this.sendPlatformText(from, `Which business would you like to unsubscribe from?\n\n${list}\n\nReply with the number to select, or send *cancel* to abort.`);
+                }
+              } else {
+                await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+              }
+              return;
+            }
+            // Single merchant Option C
+            if (choiceData.merchantId) {
+              const persisted = await this._recordMerchantOptOut(from, choiceData.merchantId);
+              if (persisted) {
+                const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+                if (noticeLimit.allowed) {
+                  await this.sendPlatformText(from, `You have been unsubscribed from *${choiceData.merchantName || 'this business'}*. You will no longer receive their messages. Send START to resubscribe.`);
+                }
+              } else {
+                await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+              }
+              return;
+            }
+          }
+          if (text === 'stop_platform') {
+            const persisted = await this._recordPlatformOptOut(from);
+            if (persisted) {
+              const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+              if (noticeLimit.allowed) {
+                await this.sendPlatformText(from, 'You have been unsubscribed from Waaiio launch updates.');
+              }
+            } else {
+              await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+            }
+            return;
+          }
+          // Unrecognized reply to Option C — reprompt (re-create session)
+          const repromptData: Record<string, unknown> = {
+            suggestions: [],
+            _pending_stop_choice: { ...choiceData, channelId: currentChannelId || storedChannelId },
+          };
+          const sugSess = await this.createNullBizSuggestionSession(from, null, repromptData);
+          if (sugSess) {
+            await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
+              { id: 'stop_merchant', title: truncTitle(choiceData.merchantName || 'Business') },
+              { id: 'stop_platform', title: 'Waaiio updates' },
+            ]);
+          }
+          return;
+        }
+
+        // ── Merchant picker: biz_N or numeric reply ──
+        if (pendingSession.session_data._pending_stop) {
+          const suggestions = (pendingSession.session_data.suggestions || []) as Array<{ id: string; name: string; bot_code: string }>;
+          let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
+          const btnMatch = text.match(/^biz_(\d+)$/i);
+          if (btnMatch) {
+            const idx = parseInt(btnMatch[1], 10);
+            selectedBiz = suggestions[idx] || null;
+          }
+          if (!selectedBiz) {
+            const numMatch = text.match(/^(\d+)$/);
+            if (numMatch) {
+              const idx = parseInt(numMatch[1], 10) - 1;
+              selectedBiz = suggestions[idx] || null;
+            }
+          }
+          if (selectedBiz) {
+            // Verify selected business is in stored candidates
+            const candidateIds = new Set(suggestions.map(s => s.id));
+            if (!candidateIds.has(selectedBiz.id)) {
+              logger.warn('[STOP] Early dispatcher: selected biz not in candidates:', selectedBiz.id);
+              return;
+            }
+            const persisted = await this._recordMerchantOptOut(from, selectedBiz.id);
+            if (persisted) {
+              const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+              if (noticeLimit.allowed) {
+                await this.sendPlatformText(from, `You have been unsubscribed from *${selectedBiz.name}*. You will no longer receive their messages. Send START to resubscribe.`);
+              }
+            } else {
+              await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+            }
+            return;
+          }
+          // No match in picker — fall through to normal flow (cancel/unrecognized handled by session handler)
+        }
+      }
+    }
+
     // ── BOT-PERF: Single round-trip context bootstrap ──
     // When preResolvedBusinessId is available (inbound webhook with trusted channel),
     // use get_bot_context RPC to collapse session + business + capabilities + overrides
@@ -3524,17 +3681,23 @@ export class BotService {
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
 
       // ── Pending-STOP: Option C disambiguation (stop_merchant / stop_platform) ──
+      // FALLBACK path — primary handling is the early dispatcher above get_bot_context.
       // P1 Codex fix: validate inbound channel + atomic CAS claim before mutation
       if (session.session_data._pending_stop_choice) {
         const choiceData = session.session_data._pending_stop_choice as {
-          merchantId: string; merchantName: string; channelId?: string;
+          merchantId?: string; merchantName?: string; channelId?: string;
+          candidates?: Array<{ id: string; name: string; bot_code: string }>;
         };
-        // Channel provenance check: reject cross-channel replay
-        if (choiceData.channelId && destinationPhone) {
-          const { data: currentCh } = await this.supabase
+        // Channel provenance check: resolve and reject cross-channel replay; fail closed on lookup error
+        if (destinationPhone) {
+          const { data: currentCh, error: chErr } = await this.supabase
             .from('whatsapp_channels').select('id')
             .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
-          if (currentCh && currentCh.id !== choiceData.channelId) {
+          if (chErr || !currentCh) {
+            logger.warn('[STOP] Fallback Option C: channel lookup failed, rejecting', { err: chErr?.message });
+            return; // Fail closed
+          }
+          if (choiceData.channelId && currentCh.id !== choiceData.channelId) {
             logger.warn('[STOP] Cross-channel Option C replay rejected', { stored: choiceData.channelId, current: currentCh.id });
             return;
           }
@@ -3556,14 +3719,36 @@ export class BotService {
           await this.deactivateSession(session.id);
 
           if (text === 'stop_merchant') {
-            const persisted = await this._recordMerchantOptOut(from, choiceData.merchantId);
-            if (persisted) {
-              const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
-              if (noticeLimit.allowed) {
-                await this.sendPlatformText(from, `You have been unsubscribed from *${choiceData.merchantName}*. You will no longer receive their messages. Send START to resubscribe.`);
+            if (choiceData.merchantId) {
+              // Single merchant Option C
+              const persisted = await this._recordMerchantOptOut(from, choiceData.merchantId);
+              if (persisted) {
+                const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+                if (noticeLimit.allowed) {
+                  await this.sendPlatformText(from, `You have been unsubscribed from *${choiceData.merchantName || 'this business'}*. You will no longer receive their messages. Send START to resubscribe.`);
+                }
+              } else {
+                await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
               }
-            } else {
-              await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+            } else if (choiceData.candidates && choiceData.candidates.length > 0) {
+              // Multi-merchant Option C → show picker
+              const cands = choiceData.candidates;
+              const sugSess = await this.createNullBizSuggestionSession(from, null, {
+                suggestions: cands,
+                _pending_stop: true,
+                _pending_stop_channel_id: choiceData.channelId,
+              });
+              if (sugSess) {
+                if (cands.length <= 3) {
+                  await this.sendPlatformButtons(from, 'Which business would you like to unsubscribe from?',
+                    cands.slice(0, 3).map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+                } else {
+                  const list = cands.slice(0, 10).map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+                  await this.sendPlatformText(from, `Which business would you like to unsubscribe from?\n\n${list}\n\nReply with the number to select, or send *cancel* to abort.`);
+                }
+              } else {
+                await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+              }
             }
           } else {
             const persisted = await this._recordPlatformOptOut(from);
@@ -3580,22 +3765,27 @@ export class BotService {
         }
         // Unrecognized reply to Option C — reprompt
         await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
-          { id: 'stop_merchant', title: truncTitle(choiceData.merchantName) },
+          { id: 'stop_merchant', title: truncTitle(choiceData.merchantName || 'Business') },
           { id: 'stop_platform', title: 'Waaiio updates' },
         ]);
         return;
       }
 
       // ── Pending-STOP: merchant picker (user selects which merchant to stop) ──
+      // FALLBACK path — primary handling is the early dispatcher above get_bot_context.
       // P1 Codex fix: validate inbound channel + atomic CAS claim before mutation
       if (session.session_data._pending_stop) {
-        // Channel provenance check
+        // Channel provenance check: fail closed on lookup error
         const storedChannelId = session.session_data._pending_stop_channel_id as string | undefined;
-        if (storedChannelId && destinationPhone) {
-          const { data: currentCh } = await this.supabase
+        if (destinationPhone) {
+          const { data: currentCh, error: chErr } = await this.supabase
             .from('whatsapp_channels').select('id')
             .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
-          if (currentCh && currentCh.id !== storedChannelId) {
+          if (chErr || !currentCh) {
+            logger.warn('[STOP] Fallback picker: channel lookup failed, rejecting', { err: chErr?.message });
+            return; // Fail closed
+          }
+          if (storedChannelId && currentCh.id !== storedChannelId) {
             logger.warn('[STOP] Cross-channel picker replay rejected', { stored: storedChannelId, current: currentCh.id });
             return;
           }
@@ -4649,6 +4839,20 @@ export class BotService {
     preResolvedBusinessId: string | undefined,
     destinationPhone: string | undefined,
   ): Promise<boolean> {
+    // P1 TENANT PROVENANCE: resolve authenticated channelId from destinationPhone
+    let resolvedChannelId: string | null = null;
+    if (destinationPhone) {
+      const { data: ch, error: chErr } = await this.supabase
+        .from('whatsapp_channels').select('id')
+        .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+      if (chErr) {
+        logger.error('[STOP] Channel lookup error — fail closed:', chErr.message);
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true; // Fail closed: DB error on channel lookup
+      }
+      resolvedChannelId = ch?.id || null;
+    }
+
     // 1. Resolve merchant context
     let merchantId: string | null = null;
     let merchantName: string | null = null;
@@ -4657,8 +4861,13 @@ export class BotService {
     if (preResolvedBusinessId) {
       // Dedicated channel — merchant is known
       merchantId = preResolvedBusinessId;
-      const { data: biz } = await this.supabase
+      const { data: biz, error: bizErr } = await this.supabase
         .from('businesses').select('name').eq('id', preResolvedBusinessId).single();
+      if (bizErr) {
+        logger.error('[STOP] Business lookup failed — fail closed:', bizErr.message);
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true; // P1 DATA: fail closed on read error
+      }
       merchantName = biz?.name || 'this business';
     } else {
       // Shared channel — resolve from recent sessions
@@ -4670,9 +4879,14 @@ export class BotService {
     }
 
     // 2. Check platform (launch subscriber) context
-    const { data: launchSub } = await this.supabase
+    const { data: launchSub, error: launchErr } = await this.supabase
       .from('launch_subscribers').select('id')
       .eq('wa_number', from).eq('opt_in_status', 'active').maybeSingle();
+    if (launchErr) {
+      logger.error('[STOP] Launch subscriber lookup failed — fail closed:', launchErr.message);
+      await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+      return true; // P1 DATA: fail closed on read error
+    }
     const hasLaunchSub = !!launchSub;
 
     // 3. Route to the correct path
@@ -4701,10 +4915,11 @@ export class BotService {
     }
 
     if (merchantId && hasLaunchSub) {
-      // Option C: both merchant and platform — ask which to stop
+      // Option C: single merchant + platform — ask which to stop
+      // P1 TENANT PROVENANCE: store resolved channelId, not raw destinationPhone
       const sugSess = await this.createNullBizSuggestionSession(from, null, {
         suggestions: [],
-        _pending_stop_choice: { merchantId, merchantName, channelId: destinationPhone },
+        _pending_stop_choice: { merchantId, merchantName, channelId: resolvedChannelId },
       });
       if (sugSess) {
         await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
@@ -4717,12 +4932,30 @@ export class BotService {
       return true;
     }
 
+    // P1 OWNER OPTION C: multi-merchant + platform → show Option C first, then picker
+    if (!merchantId && candidates.length > 1 && hasLaunchSub) {
+      const sugSess = await this.createNullBizSuggestionSession(from, null, {
+        suggestions: candidates.slice(0, 10),
+        _pending_stop_choice: { candidates: candidates.slice(0, 10), channelId: resolvedChannelId },
+      });
+      if (sugSess) {
+        await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
+          { id: 'stop_merchant', title: 'A business' },
+          { id: 'stop_platform', title: 'Waaiio updates' },
+        ]);
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+      }
+      return true;
+    }
+
     if (!merchantId && candidates.length > 1) {
-      // Ambiguous merchant — show picker
+      // Ambiguous merchant (no platform sub) — show picker directly
+      // P1 TENANT PROVENANCE: store resolved channelId, not raw destinationPhone
       const sugSess = await this.createNullBizSuggestionSession(from, null, {
         suggestions: candidates.slice(0, 10),
         _pending_stop: true,
-        _pending_stop_channel_id: destinationPhone,
+        _pending_stop_channel_id: resolvedChannelId,
       });
       if (sugSess) {
         if (candidates.length <= 3) {
