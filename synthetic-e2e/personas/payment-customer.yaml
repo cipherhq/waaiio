@@ -1,0 +1,43 @@
+# Promptfoo persona: Payment Customer (Paystack test-mode)
+#
+# Simulates a customer going through a Paystack test-mode checkout.
+# Tests the "I've Paid" verification step.
+#
+# Issue #728: Required persona for Paystack test-mode checkout.
+
+description: "Customer completing a Paystack test-mode payment"
+
+vars:
+  customer_name: "SynthCustomer 0004"
+  business_name: "SynthBiz"
+
+prompts:
+  - role: user
+    content: "Hi"
+  - role: user
+    content: "I want to book"
+  - role: user
+    content: "Tomorrow at 10am"
+  - role: user
+    content: "Yes"
+  # After payment link is sent
+  - role: user
+    content: "I've paid"
+
+assertions:
+  - type: contains-any
+    value:
+      - "payment"
+      - "pay"
+      - "checkout"
+      - "link"
+    description: "Bot should provide a payment link or instructions"
+  - type: not-contains
+    value: "sk_live_"
+    description: "Bot must never expose live payment keys"
+  - type: not-contains
+    value: "pk_live_"
+    description: "Bot must never expose live payment keys"
+  - type: cost
+    threshold: 0.10
+    description: "AI cost should be reasonable"

@@ -1,0 +1,40 @@
+# Promptfoo persona: STOP/START Customer
+#
+# Simulates a customer who cancels mid-flow and restarts.
+# Tests escape hatches and session management.
+#
+# Issue #728: Required persona for cancellations/STOP/START.
+
+description: "Customer who cancels mid-conversation and restarts"
+
+vars:
+  customer_name: "SynthCustomer 0005"
+  business_name: "SynthBiz"
+
+prompts:
+  - role: user
+    content: "Hi"
+  - role: user
+    content: "I want to book"
+  - role: user
+    content: "cancel"
+  - role: user
+    content: "start over"
+  - role: user
+    content: "I want to order instead"
+
+assertions:
+  - type: contains-any
+    value:
+      - "cancel"
+      - "stopped"
+      - "start"
+      - "fresh"
+      - "menu"
+    description: "Bot should acknowledge cancellation"
+  - type: not-contains
+    value: "error"
+    description: "Bot should not show internal errors"
+  - type: not-contains
+    value: "undefined"
+    description: "Bot should handle cancellation cleanly"
