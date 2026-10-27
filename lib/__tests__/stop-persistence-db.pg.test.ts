@@ -97,12 +97,12 @@ describePg('#721: STOP opt-out persistence', () => {
     // Create test owner (CI auth.users may lack optional columns — use minimal INSERT)
     psql(`INSERT INTO auth.users (id) VALUES ('${OWNER_A}') ON CONFLICT (id) DO NOTHING;`);
 
-    // Create test businesses
-    psql(`INSERT INTO businesses (id, name, owner_id, slug, category, status, bot_code)
-          VALUES ('${BIZ_A}', 'Stop Test Biz A', '${OWNER_A}', 'stop-test-a-721', 'restaurant', 'active', 'STOPA721')
+    // Create test businesses — minimal columns only (CI disposable PG may lack optional columns like bot_code)
+    psql(`INSERT INTO businesses (id, name, owner_id, slug, category, status)
+          VALUES ('${BIZ_A}', 'Stop Test Biz A', '${OWNER_A}', 'stop-test-a-721', 'restaurant', 'active')
           ON CONFLICT (id) DO NOTHING;`);
-    psql(`INSERT INTO businesses (id, name, owner_id, slug, category, status, bot_code)
-          VALUES ('${BIZ_B}', 'Stop Test Biz B', '${OWNER_A}', 'stop-test-b-721', 'restaurant', 'active', 'STOPB721')
+    psql(`INSERT INTO businesses (id, name, owner_id, slug, category, status)
+          VALUES ('${BIZ_B}', 'Stop Test Biz B', '${OWNER_A}', 'stop-test-b-721', 'restaurant', 'active')
           ON CONFLICT (id) DO NOTHING;`);
   });
 

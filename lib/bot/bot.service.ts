@@ -637,18 +637,24 @@ export class BotService {
         };
 
         // Helper: CAS release claim on failed persistence — allows customer retry.
-        // Conditional: only clears _claimed if version still matches (no concurrent intervening claim).
-        const _casReleaseClaim = async (): Promise<void> => {
+        // Returns true if claim was successfully released, false if release failed.
+        const _casReleaseClaim = async (): Promise<boolean> => {
           const releaseData = { ...pendingSession.session_data };
           delete (releaseData as Record<string, unknown>)._claimed;
-          await this.supabase.rpc('update_session_cas', {
-            p_session_id: pendingSession.id,
-            p_expected_version: pendingSession.version ?? 0,
-            p_current_step: pendingSession.current_step,
-            p_session_data: releaseData,
-          }).then(({ data }) => {
-            if (data?.success) pendingSession.version = data.version;
-          }, () => {}); // Best-effort release — session will expire naturally if this fails
+          try {
+            const { data } = await this.supabase.rpc('update_session_cas', {
+              p_session_id: pendingSession.id,
+              p_expected_version: pendingSession.version ?? 0,
+              p_current_step: pendingSession.current_step,
+              p_session_data: releaseData,
+            });
+            if (data?.success) { pendingSession.version = data.version; return true; }
+            logger.warn('[STOP] CAS release failed:', data?.reason);
+            return false;
+          } catch (err) {
+            logger.warn('[STOP] CAS release error:', err);
+            return false;
+          }
         };
 
         // Helper: CAS-deactivate session after successful persistence
@@ -709,8 +715,10 @@ export class BotService {
                 }
               } else {
                 // Persistence failed — release claim so customer can retry
-                await _casReleaseClaim();
-                await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+                const released = await _casReleaseClaim();
+                await this.sendPlatformText(from, released
+                  ? 'Something went wrong recording your unsubscribe. Please try again.'
+                  : 'Something went wrong. Please send STOP again to restart.');
               }
               return;
             }
@@ -3787,17 +3795,19 @@ export class BotService {
           return true;
         };
         // Helper: CAS release claim on failed persistence — allows customer retry
-        const _fallbackCasReleaseClaim = async (): Promise<void> => {
+        const _fallbackCasReleaseClaim = async (): Promise<boolean> => {
           const releaseData = { ...session.session_data };
           delete (releaseData as Record<string, unknown>)._claimed;
-          await this.supabase.rpc('update_session_cas', {
-            p_session_id: session.id,
-            p_expected_version: session.version ?? 0,
-            p_current_step: session.current_step,
-            p_session_data: releaseData,
-          }).then(({ data }) => {
-            if (data?.success) session.version = data.version;
-          }, () => {});
+          try {
+            const { data } = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version ?? 0,
+              p_current_step: session.current_step,
+              p_session_data: releaseData,
+            });
+            if (data?.success) { session.version = data.version; return true; }
+            return false;
+          } catch { return false; }
         };
         // Helper: CAS-deactivate session after successful persistence
         const _fallbackCasDeactivate = async () => {
@@ -3829,8 +3839,10 @@ export class BotService {
               }
             } else {
               // Persistence failed — release claim so customer can retry
-                await _fallbackCasReleaseClaim();
-              await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+                const released = await _fallbackCasReleaseClaim();
+              await this.sendPlatformText(from, released
+                ? 'Something went wrong recording your unsubscribe. Please try again.'
+                : 'Something went wrong. Please send STOP again to restart.');
             }
           } else if (choiceData.candidates && choiceData.candidates.length > 0) {
             // Multi-merchant Option C → show picker (no opt-out yet, CAS first)
@@ -3869,8 +3881,10 @@ export class BotService {
             }
           } else {
             // Persistence failed — release claim so customer can retry
-                await _fallbackCasReleaseClaim();
-            await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+                const released2 = await _fallbackCasReleaseClaim();
+            await this.sendPlatformText(from, released2
+              ? 'Something went wrong recording your unsubscribe. Please try again.'
+              : 'Something went wrong. Please send STOP again to restart.');
           }
           return;
         }
@@ -3948,8 +3962,10 @@ export class BotService {
             }
           } else {
             // Persistence failed — release claim so customer can retry
-                await _fallbackCasReleaseClaim();
-            await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+                const released3 = await _fallbackCasReleaseClaim();
+            await this.sendPlatformText(from, released3
+              ? 'Something went wrong recording your unsubscribe. Please try again.'
+              : 'Something went wrong. Please send STOP again to restart.');
           }
           return;
         }
