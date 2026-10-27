@@ -5302,7 +5302,9 @@ export class BotService {
       }
       if (tier1 && tier1.length > 0) {
         const bizIds = [...new Set(tier1.map(s => s.business_id).filter(Boolean))] as string[];
-        return { candidates: await this._fetchBizSummaries(bizIds), channelVerified: true };
+        try {
+          return { candidates: await this._fetchBizSummaries(bizIds), channelVerified: true };
+        } catch { return { candidates: [], channelVerified: false, error: true }; }
       }
     }
 
@@ -5317,11 +5319,13 @@ export class BotService {
       .limit(20);
     if (t2Err) {
       logger.error('[STOP] _resolveStopCandidates: tier2 session query error:', t2Err.message);
-      return { candidates: [], channelVerified: false };
+      return { candidates: [], channelVerified: false, error: true };
     }
     if (tier2 && tier2.length > 0) {
       const bizIds = [...new Set(tier2.map(s => s.business_id).filter(Boolean))] as string[];
-      return { candidates: await this._fetchBizSummaries(bizIds.slice(0, 10)), channelVerified: false };
+      try {
+        return { candidates: await this._fetchBizSummaries(bizIds.slice(0, 10)), channelVerified: false };
+      } catch { return { candidates: [], channelVerified: false, error: true }; }
     }
 
     return { candidates: [], channelVerified: false };
@@ -5331,11 +5335,15 @@ export class BotService {
     bizIds: string[],
   ): Promise<Array<{ id: string; name: string; bot_code: string }>> {
     if (bizIds.length === 0) return [];
-    const { data: businesses } = await this.supabase
+    const { data: businesses, error: bizErr } = await this.supabase
       .from('businesses')
       .select('id, name, bot_code')
       .in('id', bizIds)
       .eq('status', 'active');
+    if (bizErr) {
+      logger.error('[STOP] _fetchBizSummaries: business query error:', bizErr.message);
+      throw new Error('STOP_CANDIDATE_FETCH_ERROR'); // Propagate to caller for fail-closed handling
+    }
     return (businesses || []).map(b => ({
       id: b.id, name: b.name, bot_code: b.bot_code || '',
     }));
