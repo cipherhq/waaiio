@@ -2687,6 +2687,8 @@ export const schedulingFlow: FlowDefinition = {
                 p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
                 p_status: totalDeposit > 0 ? 'pending' : 'confirmed',
                 p_total_amount: bookingTotalAmount,
+                p_expected_deposit: (d._seating_deposit as number) ?? null,
+                p_expected_duration: (d._seating_duration as number) ?? null,
               })
               .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
@@ -2694,6 +2696,12 @@ export const schedulingFlow: FlowDefinition = {
               const pgError = tableError as { code?: string; message?: string } | null;
               if (pgError?.message?.includes('party_too_small') || pgError?.message?.includes('party_too_large')) {
                 return [{ type: 'text', text: await ctx.t(`Sorry, that table doesn't accommodate a party of ${partySize}. Send *Hi* to start over.`) }];
+              }
+              if (pgError?.message?.includes('deposit_changed') || pgError?.message?.includes('duration_changed')) {
+                return [{ type: 'text', text: await ctx.t('The reservation terms have been updated. Send *Hi* to start over with the current pricing.') }];
+              }
+              if (pgError?.message?.includes('day_unavailable') || pgError?.message?.includes('before_opening') || pgError?.message?.includes('after_closing')) {
+                return [{ type: 'text', text: await ctx.t('That time is no longer available for this table. Send *Hi* to pick a different time.') }];
               }
               logger.withContext({ op: 'scheduling.create-table-reservation', ...safeLogErrorContext(tableError) }).error('[SCHEDULING] Failed to create table reservation');
               return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];

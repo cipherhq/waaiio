@@ -166,6 +166,15 @@ describe('#730: Migration 472 SQL structure', () => {
     // Advisory lock serializes on resource+date (not time) to prevent overlap race
     expect(sql).not.toMatch(/v_lock_key.*p_time/);
 
+    // Commit-time revalidation (Codex R2 P1)
+    expect(sql).toContain('p_expected_deposit');
+    expect(sql).toContain('p_expected_duration');
+    expect(sql).toContain('deposit_changed');
+    expect(sql).toContain('duration_changed');
+    expect(sql).toContain('v_committed_deposit');
+    expect(sql).toContain('v_committed_duration');
+    expect(sql).toContain('v_committed_total');
+
     // Self-check
     expect(sql).toContain('472 SELF-CHECK PASSED');
   });
@@ -313,6 +322,28 @@ describe('#730: Shared flow adaptations', () => {
     const code = fs.readFileSync(flowPath, 'utf-8');
 
     expect(code).toContain('if (d._is_table_reservation) return true;');
+  });
+
+  it('scheduling passes expected deposit/duration for commit-time revalidation', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const flowPath = path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts');
+    const code = fs.readFileSync(flowPath, 'utf-8');
+
+    expect(code).toContain('p_expected_deposit');
+    expect(code).toContain('p_expected_duration');
+    expect(code).toContain('_seating_deposit');
+    expect(code).toContain('_seating_duration');
+  });
+
+  it('scheduling handles deposit_changed/duration_changed errors', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const flowPath = path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts');
+    const code = fs.readFileSync(flowPath, 'utf-8');
+
+    expect(code).toContain("pgError?.message?.includes('deposit_changed')");
+    expect(code).toContain("pgError?.message?.includes('duration_changed')");
   });
 
   it('scheduling select_time filters by seating_resource_id for table reservations', async () => {

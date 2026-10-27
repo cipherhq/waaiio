@@ -143,7 +143,9 @@ CREATE OR REPLACE FUNCTION public.book_table_atomic(
   p_deposit_amount INTEGER DEFAULT 0,
   p_deposit_status TEXT DEFAULT 'none',
   p_status TEXT DEFAULT 'confirmed',
-  p_total_amount INTEGER DEFAULT 0
+  p_total_amount INTEGER DEFAULT 0,
+  p_expected_deposit INTEGER DEFAULT NULL,
+  p_expected_duration INTEGER DEFAULT NULL
 )
 RETURNS TABLE(booking_id UUID, reference_code TEXT, slot_available BOOLEAN)
 LANGUAGE plpgsql
@@ -160,6 +162,9 @@ DECLARE
   v_req_end TIME;
   v_biz_tz TEXT;
   v_day_name TEXT;
+  v_committed_deposit INTEGER;
+  v_committed_duration INTEGER;
+  v_committed_total INTEGER;
 BEGIN
   -- ── Bot session idempotency ──
   IF p_bot_session_id IS NOT NULL THEN
@@ -185,7 +190,7 @@ BEGIN
 
   -- ── Validate seating resource ──
   SELECT sr.id, sr.business_id, sr.capacity, sr.min_party_size,
-         sr.is_active, sr.reservation_duration_minutes,
+         sr.is_active, sr.reservation_duration_minutes, sr.deposit_amount,
          sr.available_days, sr.available_from, sr.available_to
   INTO v_resource
   FROM seating_resources sr
@@ -202,6 +207,24 @@ BEGIN
     RAISE EXCEPTION 'seating_resource_wrong_business:Resource % does not belong to business %',
       p_seating_resource_id, p_business_id;
   END IF;
+
+  -- ── Commit-time deposit/duration revalidation (M383 pattern) ──
+  IF p_expected_deposit IS NOT NULL AND v_resource.deposit_amount != p_expected_deposit THEN
+    RAISE EXCEPTION 'deposit_changed:Resource deposit changed from % to %',
+      p_expected_deposit, v_resource.deposit_amount;
+  END IF;
+  IF p_expected_duration IS NOT NULL AND v_resource.reservation_duration_minutes != p_expected_duration THEN
+    RAISE EXCEPTION 'duration_changed:Resource duration changed from % to %',
+      p_expected_duration, v_resource.reservation_duration_minutes;
+  END IF;
+
+  -- Use DB-authoritative values when revalidation is active
+  v_committed_deposit := CASE WHEN p_expected_deposit IS NOT NULL
+    THEN v_resource.deposit_amount ELSE p_deposit_amount END;
+  v_committed_duration := CASE WHEN p_expected_duration IS NOT NULL
+    THEN v_resource.reservation_duration_minutes ELSE COALESCE(p_duration_minutes, v_resource.reservation_duration_minutes) END;
+  v_committed_total := CASE WHEN p_expected_deposit IS NOT NULL
+    THEN v_resource.deposit_amount ELSE p_total_amount END;
 
   -- ── Party size validation ──
   IF p_party_size < v_resource.min_party_size THEN
@@ -231,7 +254,7 @@ BEGIN
     RAISE EXCEPTION 'before_opening:Earliest reservation time is %', v_resource.available_from::text;
   END IF;
 
-  v_req_end := v_req_start + make_interval(mins => COALESCE(p_duration_minutes, v_resource.reservation_duration_minutes));
+  v_req_end := v_req_start + make_interval(mins => v_committed_duration);
 
   IF v_resource.available_to IS NOT NULL AND v_req_end > v_resource.available_to THEN
     RAISE EXCEPTION 'after_closing:Reservation would extend past closing time %', v_resource.available_to::text;
@@ -270,12 +293,12 @@ BEGIN
     p_business_id, p_user_id, p_seating_resource_id,
     p_date, p_time::TIME, p_party_size,
     'table_reservation'::flow_type, 'whatsapp'::booking_channel,
-    p_deposit_amount, p_deposit_status::deposit_status,
-    p_status::reservation_status,
+    v_committed_deposit, p_deposit_status::deposit_status,
+    CASE WHEN v_committed_deposit > 0 THEN 'pending'::reservation_status ELSE p_status::reservation_status END,
     p_guest_name, p_guest_phone, p_guest_email,
-    p_special_requests, p_total_amount, p_party_size,
+    p_special_requests, v_committed_total, p_party_size,
     p_bot_session_id,
-    jsonb_build_object('duration_minutes', COALESCE(p_duration_minutes, v_resource.reservation_duration_minutes))
+    jsonb_build_object('duration_minutes', v_committed_duration)
   )
   RETURNING bookings.id, bookings.reference_code
   INTO v_booking_id, v_ref;
@@ -287,19 +310,23 @@ $$;
 -- ACL: service_role only (matches book_slot_atomic pattern)
 REVOKE ALL ON FUNCTION public.book_table_atomic(
   UUID, UUID, UUID, UUID, DATE, TEXT, INTEGER, INTEGER,
-  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER
+  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER,
+  INTEGER, INTEGER
 ) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.book_table_atomic(
   UUID, UUID, UUID, UUID, DATE, TEXT, INTEGER, INTEGER,
-  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER
+  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER,
+  INTEGER, INTEGER
 ) FROM anon;
 REVOKE ALL ON FUNCTION public.book_table_atomic(
   UUID, UUID, UUID, UUID, DATE, TEXT, INTEGER, INTEGER,
-  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER
+  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER,
+  INTEGER, INTEGER
 ) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.book_table_atomic(
   UUID, UUID, UUID, UUID, DATE, TEXT, INTEGER, INTEGER,
-  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER
+  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER,
+  INTEGER, INTEGER
 ) TO service_role;
 
 -- ═══════════════════════════════════════════════════════
