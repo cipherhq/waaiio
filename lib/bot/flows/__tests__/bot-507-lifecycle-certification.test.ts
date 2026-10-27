@@ -32,6 +32,7 @@ import { pollFlow } from '../poll.flow';
 import type { FlowContext, PromptMessage } from '../types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { getUserFacingCapabilities, capabilityToFirstStep } from '@/lib/bot/handlers/flow-routing';
+import { getFlowStepAcrossFlows } from '../registry';
 
 // ══════════════════════════════════════════════
 // Test helpers
@@ -1000,23 +1001,27 @@ describe('§20 Cancel/Back Navigation', () => {
 // §21 — CONFIRMED DEFECT: F-1 table_reservation DUPLICATION
 // ══════════════════════════════════════════════
 
-describe('§21 F-1: table_reservation duplicates scheduling (CONFIRMED BUG)', () => {
-  it('table_reservation predicate is a superset of scheduling predicate', () => {
-    // Documented structural defect from Lane #722 audit
-    // scheduling: services WHERE is_active=true AND service_type!='giving' AND deleted_at IS NULL AND (is_class IS NULL OR is_class=false)
-    // table_reservation: services WHERE is_active=true AND service_type!='giving' AND deleted_at IS NULL
-    // table_reservation does NOT filter by is_class, making it strictly wider
-    // Both route to select_service via capabilityToFirstStep
-    expect(capabilityToFirstStep('scheduling')).toBe('select_service');
-    expect(capabilityToFirstStep('table_reservation')).toBe('select_service');
-  });
+describe('§21 F-1: table_reservation duplication (KNOWN ISSUE — #730 owns fix)', () => {
+  // F-1 is a confirmed menu-level defect assigned to Lane #730 / PR #731.
+  // These tests document the CURRENT state on main for regression tracking.
+  // When #730/#731 merges, table_reservation will route to a distinct
+  // select_table step and these tests should be updated to verify separation.
 
-  it('both appear in user-facing when TestBiz has services', () => {
+  it('CURRENT STATE: both scheduling and table_reservation are user-facing', () => {
+    // Documents current behavior — will change when #730 lands
     const userFacing = getUserFacingCapabilities(TESTBIZ_CAPS);
     expect(userFacing).toContain('scheduling');
     expect(userFacing).toContain('table_reservation');
-    // This is the confirmed F-1 defect: both would render as menu items
-    // routing to the same select_service picker
+  });
+
+  it('CURRENT STATE: table_reservation routes through select_service (shared with scheduling)', () => {
+    // Documents the duplication — #730 will introduce distinct select_table route
+    const schedulingStep = capabilityToFirstStep('scheduling');
+    const tableResStep = capabilityToFirstStep('table_reservation');
+    // Currently both share select_service — this IS the known defect
+    // When #730 lands, tableResStep should differ from schedulingStep
+    expect(schedulingStep).toBe('select_service');
+    expect(tableResStep).toBe(schedulingStep); // Will diverge after #730
   });
 });
 
@@ -1025,31 +1030,34 @@ describe('§21 F-1: table_reservation duplicates scheduling (CONFIRMED BUG)', ()
 // ══════════════════════════════════════════════
 
 describe('§22 Flow Registry Completeness', () => {
-  it('all user-facing capabilities have registered flows', () => {
-    const userFacingCaps: CapabilityId[] = [
-      'scheduling', 'ordering', 'ticketing', 'crowdfunding',
-      'chat', 'reservation', 'queue', 'appointment', 'class_booking',
-      'giving', 'table_reservation', 'waiver', 'waitlist',
-    ];
-
-    for (const cap of userFacingCaps) {
-      const firstStep = capabilityToFirstStep(cap);
-      expect(firstStep).toBeTruthy();
-      // Verify the step can be found across flows
-    }
+  it.each([
+    ['scheduling', 'select_service'],
+    ['ordering', 'browse_catalog'],
+    ['ticketing', 'select_event'],
+    ['crowdfunding', 'select_campaign'],
+    ['chat', 'chat_start'],
+    ['reservation', 'select_apartment'],
+    ['queue', 'queue_start'],
+    ['appointment', 'select_appointment'],
+    ['class_booking', 'select_service'],
+    ['giving', 'select_category'],
+    ['table_reservation', 'select_service'],
+    ['waitlist', 'waitlist_join'],
+  ])('%s first step %s is resolvable in cross-flow registry', (cap, expectedStep) => {
+    const firstStep = capabilityToFirstStep(cap as CapabilityId);
+    expect(firstStep).toBe(expectedStep);
+    const resolved = getFlowStepAcrossFlows(firstStep);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.step.id).toBe(firstStep);
   });
 
-  it('all My Account routes have reachable flow steps', () => {
-    const routes = [
-      'my_bookings', 'my_orders', 'list_subscriptions',
-      'loyalty_menu', 'invoice_list',
-    ];
-    // These steps should exist in registered flows
-    for (const route of routes) {
-      // Verify the step ID format is valid
-      expect(route).toBeTruthy();
-      expect(typeof route).toBe('string');
-    }
+  it.each([
+    'my_bookings', 'my_orders', 'list_subscriptions',
+    'loyalty_menu', 'invoice_list', 'my_account_menu',
+  ])('My Account route "%s" resolves in cross-flow registry', (stepId) => {
+    const resolved = getFlowStepAcrossFlows(stepId);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.step.id).toBe(stepId);
   });
 });
 
@@ -1058,15 +1066,219 @@ describe('§22 Flow Registry Completeness', () => {
 // ══════════════════════════════════════════════
 
 describe('§23 Merchant Isolation', () => {
-  it('all backing data queries filter by business_id', () => {
-    // Structural verification: the prepareCapabilityMenu function
-    // passes businessId to all Supabase queries via .eq('business_id', businessId)
-    // This is verified by examining the source code at capability-selection.flow.ts:44-103
-    // Every query uses ctx.business.id as the filter
-    expect(true).toBe(true); // Structural assertion — code-verified
+  const selectCapStep = getStep(capabilitySelectionFlow, 'select_capability');
+
+  it('prepareCapabilityMenu passes business_id to every backing-data query', async () => {
+    // Business A has products; Business B should NEVER see them
+    const BUSINESS_A_ID = 'biz-AAAA-1111-2222-333344445555';
+    const eqCalls: Array<{ table: string; field: string; value: string }> = [];
+
+    const spySupabase = {
+      from: vi.fn((table: string) => {
+        const chain: Record<string, any> = {};
+        const makeChain = () => chain;
+        chain.select = vi.fn((...args: any[]) => {
+          if (args[1]?.count === 'exact') {
+            const countChain: Record<string, any> = {};
+            countChain.eq = vi.fn((field: string, value: string) => {
+              eqCalls.push({ table, field, value });
+              return countChain;
+            });
+            countChain.neq = vi.fn().mockReturnValue(countChain);
+            countChain.or = vi.fn().mockReturnValue(countChain);
+            countChain.is = vi.fn().mockReturnValue(countChain);
+            countChain.not = vi.fn().mockReturnValue(countChain);
+            countChain.in = vi.fn().mockReturnValue(countChain);
+            countChain.gte = vi.fn().mockReturnValue(countChain);
+            countChain.limit = vi.fn().mockReturnValue(countChain);
+            countChain.then = (fn: any) => fn({ count: 1, data: [], error: null });
+            Object.defineProperty(countChain, Symbol.toStringTag, { value: 'Promise' });
+            return countChain;
+          }
+          return chain;
+        });
+        chain.eq = vi.fn((field: string, value: string) => {
+          eqCalls.push({ table, field, value });
+          return chain;
+        });
+        chain.neq = vi.fn().mockReturnValue(chain);
+        chain.or = vi.fn().mockReturnValue(chain);
+        chain.is = vi.fn().mockReturnValue(chain);
+        chain.not = vi.fn().mockReturnValue(chain);
+        chain.in = vi.fn().mockReturnValue(chain);
+        chain.gte = vi.fn().mockReturnValue(chain);
+        chain.lte = vi.fn().mockReturnValue(chain);
+        chain.order = vi.fn().mockReturnValue(chain);
+        chain.limit = vi.fn().mockReturnValue(chain);
+        chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        return chain;
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+
+    const ctx: FlowContext = {
+      supabase: spySupabase as any,
+      sender: {
+        sendText: vi.fn().mockResolvedValue({}),
+        sendButtons: vi.fn().mockResolvedValue({}),
+        sendList: vi.fn().mockResolvedValue({}),
+        sendDocument: vi.fn().mockResolvedValue({}),
+        sendImage: vi.fn().mockResolvedValue({}),
+      } as any,
+      standalone: {} as any,
+      intelligence: {} as any,
+      t: vi.fn(async (text: string) => text),
+      from: '+2348099999999',
+      copyLang: 'en',
+      session: {
+        id: 'iso-test-session',
+        user_id: null,
+        business_id: BUSINESS_A_ID,
+        current_step: 'select_capability',
+        session_data: {
+          capabilities: ['ordering', 'scheduling', 'ticketing', 'crowdfunding',
+            'reservation', 'appointment', 'class_booking', 'giving',
+            'chat', 'queue', 'table_reservation', 'waiver'] as CapabilityId[],
+        },
+        version: 1,
+      },
+      business: {
+        id: BUSINESS_A_ID,
+        name: 'Business A',
+        slug: 'biz-a',
+        category: 'shop' as any,
+        flow_type: 'ordering' as any,
+        subscription_tier: 'business',
+        trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
+        metadata: {},
+        country_code: 'NG' as any,
+      },
+    };
+
+    await selectCapStep.prompt(ctx);
+
+    // Every backing-data table query must have a business_id filter
+    const backingTables = ['products', 'services', 'events', 'campaigns', 'properties', 'appointments', 'waiver_templates'];
+    const queriedTables = [...new Set(eqCalls.filter(c => c.field === 'business_id').map(c => c.table))];
+
+    for (const table of backingTables) {
+      const bizFilters = eqCalls.filter(c => c.table === table && c.field === 'business_id');
+      expect(bizFilters.length).toBeGreaterThanOrEqual(1);
+      // Every business_id filter must use BUSINESS_A_ID — never a different business
+      for (const f of bizFilters) {
+        expect(f.value).toBe(BUSINESS_A_ID);
+      }
+    }
   });
 
-  it('session data contains business_id for tenant scoping', () => {
+  it('Business B menu never includes Business A data', async () => {
+    const BUSINESS_B_ID = 'biz-BBBB-5555-6666-777788889999';
+    const eqCalls: Array<{ table: string; field: string; value: string }> = [];
+
+    const spySupabase = {
+      from: vi.fn((table: string) => {
+        const chain: Record<string, any> = {};
+        chain.select = vi.fn((...args: any[]) => {
+          if (args[1]?.count === 'exact') {
+            const countChain: Record<string, any> = {};
+            countChain.eq = vi.fn((field: string, value: string) => {
+              eqCalls.push({ table, field, value });
+              return countChain;
+            });
+            countChain.neq = vi.fn().mockReturnValue(countChain);
+            countChain.or = vi.fn().mockReturnValue(countChain);
+            countChain.is = vi.fn().mockReturnValue(countChain);
+            countChain.not = vi.fn().mockReturnValue(countChain);
+            countChain.in = vi.fn().mockReturnValue(countChain);
+            countChain.gte = vi.fn().mockReturnValue(countChain);
+            countChain.limit = vi.fn().mockReturnValue(countChain);
+            // Return 0 for all counts — Business B has no data
+            countChain.then = (fn: any) => fn({ count: 0, data: [], error: null });
+            Object.defineProperty(countChain, Symbol.toStringTag, { value: 'Promise' });
+            return countChain;
+          }
+          return chain;
+        });
+        chain.eq = vi.fn((field: string, value: string) => {
+          eqCalls.push({ table, field, value });
+          return chain;
+        });
+        chain.neq = vi.fn().mockReturnValue(chain);
+        chain.or = vi.fn().mockReturnValue(chain);
+        chain.is = vi.fn().mockReturnValue(chain);
+        chain.not = vi.fn().mockReturnValue(chain);
+        chain.in = vi.fn().mockReturnValue(chain);
+        chain.gte = vi.fn().mockReturnValue(chain);
+        chain.lte = vi.fn().mockReturnValue(chain);
+        chain.order = vi.fn().mockReturnValue(chain);
+        chain.limit = vi.fn().mockReturnValue(chain);
+        chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        return chain;
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+
+    const ctx: FlowContext = {
+      supabase: spySupabase as any,
+      sender: {
+        sendText: vi.fn().mockResolvedValue({}),
+        sendButtons: vi.fn().mockResolvedValue({}),
+        sendList: vi.fn().mockResolvedValue({}),
+        sendDocument: vi.fn().mockResolvedValue({}),
+        sendImage: vi.fn().mockResolvedValue({}),
+      } as any,
+      standalone: {} as any,
+      intelligence: {} as any,
+      t: vi.fn(async (text: string) => text),
+      from: '+2348011111111',
+      copyLang: 'en',
+      session: {
+        id: 'iso-test-session-b',
+        user_id: null,
+        business_id: BUSINESS_B_ID,
+        current_step: 'select_capability',
+        session_data: {
+          capabilities: ['ordering', 'scheduling', 'chat'] as CapabilityId[],
+        },
+        version: 1,
+      },
+      business: {
+        id: BUSINESS_B_ID,
+        name: 'Business B',
+        slug: 'biz-b',
+        category: 'shop' as any,
+        flow_type: 'ordering' as any,
+        subscription_tier: 'free',
+        trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
+        metadata: {},
+        country_code: 'NG' as any,
+      },
+    };
+
+    const messages = await selectCapStep.prompt(ctx);
+
+    // Negative assertion: no query ever used a different business ID
+    const bizIdCalls = eqCalls.filter(c => c.field === 'business_id');
+    for (const call of bizIdCalls) {
+      expect(call.value).toBe(BUSINESS_B_ID);
+    }
+
+    // With 0 backing data, only chat (always available) should render
+    // The menu should show chat only or a zero-capability fallback
+    if (messages[0].type === 'text') {
+      // Zero-capability fallback text (no backed capabilities besides chat)
+      expect(messages[0].text).toBeTruthy();
+    } else if (messages[0].type === 'buttons') {
+      const btnIds = (messages[0] as any).buttons?.map((b: any) => b.id) || [];
+      expect(btnIds).toContain('cap_chat');
+      // Must NOT contain ordering (0 products)
+      expect(btnIds).not.toContain('cap_ordering');
+    }
+  });
+
+  it('session business_id matches business context', () => {
     const ctx = buildCtx();
     expect(ctx.session.business_id).toBeTruthy();
     expect(ctx.business?.id).toBeTruthy();
