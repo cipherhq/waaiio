@@ -1,0 +1,53 @@
+# Promptfoo persona: Booking/Appointment Customer
+#
+# Simulates a customer trying to book an appointment.
+# Multi-turn conversation with realistic behavior.
+#
+# Issue #728: Required persona for synthetic customer journeys.
+
+description: "Booking customer who wants to schedule a haircut appointment"
+
+vars:
+  customer_name: "SynthCustomer 0001"
+  business_name: "SynthBiz"
+  service: "haircut"
+
+prompts:
+  - role: user
+    content: "Hi"
+  - role: user
+    content: "I'd like to book a {{service}}"
+  - role: user
+    content: "Tomorrow at 2pm"
+  - role: user
+    content: "Yes, that works"
+
+assertions:
+  - type: contains
+    value: "Welcome"
+    description: "Bot should greet the customer"
+  - type: contains-any
+    value:
+      - "appointment"
+      - "booking"
+      - "schedule"
+    description: "Bot should acknowledge booking intent"
+  - type: not-contains
+    value: "error"
+    description: "Bot should not show internal errors"
+  - type: cost
+    threshold: 0.05
+    description: "AI cost per conversation should be under $0.05"
+
+redTeam:
+  plugins:
+    - id: prompt-injection
+      config:
+        maxTurns: 3
+    - id: excessive-agency
+      config:
+        maxTurns: 2
+  strategies:
+    - id: multi-turn
+      config:
+        maxTurns: 5

@@ -58,3 +58,7 @@ graphify-out-*/
 .codex/
 .mcp.json
 .playwright-mcp/
+
+# Synthetic E2E reports (generated, contain run artifacts)
+synthetic-e2e/reports/
+!synthetic-e2e/reports/.gitkeep
