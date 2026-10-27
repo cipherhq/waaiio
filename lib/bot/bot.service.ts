@@ -125,6 +125,30 @@ export class BotService {
       if (startHandled) return;
     }
 
+    // ── R6 fix: Pending STOP/Option-C selections must complete even during rate limit/maintenance ──
+    // Check if input matches pending-STOP patterns AND a pending session exists.
+    // If so, the full early dispatcher (after rate limit) will handle it.
+    // Store the pre-resolved session so the dispatcher doesn't re-query.
+    let _preResolvedPendingStop: Record<string, unknown> | null = null;
+    const _pendingStopInputsPre = /^(stop_merchant|stop_platform|biz_\d+|[1-9]|10)$/i;
+    if (_pendingStopInputsPre.test(text)) {
+      const { data: prePendingSession } = await this.supabase
+        .from('bot_sessions')
+        .select('id, session_data, version, whatsapp_number, current_step')
+        .eq('whatsapp_number', from)
+        .is('business_id', null)
+        .eq('is_active', true)
+        .eq('current_step', 'select_business_suggestion')
+        .gte('expires_at', new Date().toISOString())
+        .limit(1)
+        .maybeSingle();
+      if (prePendingSession?.session_data &&
+          (prePendingSession.session_data._pending_stop || prePendingSession.session_data._pending_stop_choice) &&
+          !prePendingSession.session_data._claimed) {
+        _preResolvedPendingStop = prePendingSession as Record<string, unknown>;
+      }
+    }
+
     // Pre-checks: rate limit + maintenance mode + country cache (independent — run in parallel)
     const [botSettings, maintResult] = await Promise.all([
       loadPlatformSettings({ useServiceClient: true }),
@@ -132,7 +156,8 @@ export class BotService {
       loadCountries().catch(() => []), // Best-effort country cache warm; authoritative helpers check cache
     ]);
     const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, botSettings.bot_rate_limit_per_minute, 60_000);
-    if (!phoneRateLimit.allowed) {
+    if (!phoneRateLimit.allowed && !_preResolvedPendingStop) {
+      // R6: pending STOP selections bypass rate limit (completing an approved consent action)
       logger.warn(`[BOT] Rate limited phone ${from} — ${phoneRateLimit.remaining} remaining`);
       return; // Silently drop — don't even send a response (saves WhatsApp outbound cost)
     }
@@ -143,7 +168,8 @@ export class BotService {
       this.messageSender.bindBusiness(preResolvedBusinessId);
     }
 
-    if (maintResult.data?.value === true) {
+    if (maintResult.data?.value === true && !_preResolvedPendingStop) {
+      // R6: pending STOP selections bypass maintenance (completing an approved consent action)
       await this.sendPlatformText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
       return;
     }
@@ -575,17 +601,26 @@ export class BotService {
     // picker/Option-C sessions. On match: execute opt-out with CAS + channel verification.
     // On no match: fall through to normal get_bot_context flow.
     const _pendingStopInputs = /^(stop_merchant|stop_platform|biz_\d+|[1-9]|10)$/i;
-    if (_pendingStopInputs.test(text)) {
-      const { data: pendingSession, error: pendingErr } = await this.supabase
-        .from('bot_sessions')
-        .select('id, session_data, version, whatsapp_number, current_step')
-        .eq('whatsapp_number', from)
-        .is('business_id', null)
-        .eq('is_active', true)
-        .eq('current_step', 'select_business_suggestion')
-        .gte('expires_at', new Date().toISOString())
-        .limit(1)
-        .maybeSingle();
+    // R6 fix: use labeled block so channel-mismatch falls through to normal flow
+    // instead of dropping the message (which would block legitimate ordering input "1" etc)
+    pendingStopDispatch: if (_pendingStopInputs.test(text)) {
+      // Use pre-resolved session from before rate limit if available (avoids redundant query)
+      let pendingSession = _preResolvedPendingStop as typeof _preResolvedPendingStop & { id: string; session_data: Record<string, unknown>; version: number; whatsapp_number: string; current_step: string } | null;
+      let pendingErr: { message: string } | null = null;
+      if (!pendingSession) {
+        const result = await this.supabase
+          .from('bot_sessions')
+          .select('id, session_data, version, whatsapp_number, current_step')
+          .eq('whatsapp_number', from)
+          .is('business_id', null)
+          .eq('is_active', true)
+          .eq('current_step', 'select_business_suggestion')
+          .gte('expires_at', new Date().toISOString())
+          .limit(1)
+          .maybeSingle();
+        pendingSession = result.data as typeof pendingSession;
+        pendingErr = result.error;
+      }
       if (pendingErr) {
         logger.warn('[STOP] Early dispatcher: session query error', { err: pendingErr.message });
         // Fall through to normal flow — don't silently swallow
@@ -607,15 +642,15 @@ export class BotService {
           currentChannelId = ch.id;
         }
         if (!currentChannelId) {
-          logger.warn('[STOP] Early dispatcher: no channel resolved, rejecting');
-          return; // Fail closed: no channel = reject
+          logger.warn('[STOP] Early dispatcher: no channel resolved — fall through to normal flow');
+          break pendingStopDispatch; // Let normal bot flow handle this input
         }
         const storedChannelId = (pendingSession.session_data._pending_stop_channel_id as string | undefined)
           || (pendingSession.session_data._pending_stop_choice as { channelId?: string } | undefined)?.channelId;
-        // P1 Codex fix: fail closed on missing/null channel provenance — reject unless both exist and match
+        // Channel mismatch: fall through to normal flow (input may be an order quantity etc on different channel)
         if (!storedChannelId || storedChannelId !== currentChannelId) {
-          logger.warn('[STOP] Early dispatcher: channel provenance mismatch/missing', { stored: storedChannelId, current: currentChannelId });
-          return;
+          logger.warn('[STOP] Early dispatcher: channel mismatch — fall through to normal flow', { stored: storedChannelId, current: currentChannelId });
+          break pendingStopDispatch;
         }
 
         // Helper: CAS atomic intent claim — bumps version to prevent concurrent double-write.
@@ -3758,7 +3793,7 @@ export class BotService {
       // ── Pending-STOP: Option C disambiguation (stop_merchant / stop_platform) ──
       // FALLBACK path — primary handling is the early dispatcher above get_bot_context.
       // P1 Codex fix: validate inbound channel + atomic CAS claim before mutation
-      if (session.session_data._pending_stop_choice) {
+      if (session.session_data._pending_stop_choice && !session.session_data._claimed) {
         const choiceData = session.session_data._pending_stop_choice as {
           merchantId?: string; merchantName?: string; channelId?: string;
           candidates?: Array<{ id: string; name: string; bot_code: string }>;
@@ -3899,7 +3934,7 @@ export class BotService {
       // ── Pending-STOP: merchant picker (user selects which merchant to stop) ──
       // FALLBACK path — primary handling is the early dispatcher above get_bot_context.
       // P1 Codex fix: validate inbound channel + atomic CAS claim before mutation
-      if (session.session_data._pending_stop) {
+      if (session.session_data._pending_stop && !session.session_data._claimed) {
         // Channel provenance check: fail closed on lookup error
         const storedChannelId = session.session_data._pending_stop_channel_id as string | undefined;
         if (destinationPhone) {
@@ -5311,6 +5346,7 @@ export class BotService {
         .not('business_id', 'is', null)
         .eq('session_data->>_inbound_channel_id', channelId)
         .eq('is_active', true)
+        .gte('expires_at', new Date().toISOString())
         .limit(10);
       if (t1Err) {
         logger.error('[STOP] _resolveStopCandidates: tier1 session query error:', t1Err.message);

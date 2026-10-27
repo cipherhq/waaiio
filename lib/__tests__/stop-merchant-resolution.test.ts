@@ -136,8 +136,9 @@ describe('#721 STOP: Tenant Provenance (P1)', () => {
     const earlyIdx = src.indexOf('Early pending-STOP dispatcher');
     const earlyEnd = src.indexOf('BOT-PERF: Single round-trip context bootstrap');
     const earlyBody = src.slice(earlyIdx, earlyEnd);
-    expect(earlyBody).toContain('channel provenance mismatch/missing');
-    expect(earlyBody).toContain('storedChannelId !== currentChannelId');
+    // R6: cross-channel mismatch falls through to normal flow (not silent drop)
+    expect(earlyBody).toContain('channel mismatch');
+    expect(earlyBody).toContain('break pendingStopDispatch');
 
     // Fallback session handler also checks — fail closed on missing/null provenance
     expect(src).toContain('Cross-channel Option C replay rejected or missing provenance');
