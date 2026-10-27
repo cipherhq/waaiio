@@ -42,24 +42,61 @@ function normalizeMetaCategory(metaCategory: string): FinancialCategory | null {
  * Fail closed: returns null if cloud unavailable, template not found on this WABA,
  * template not APPROVED, or category unrecognized.
  */
+/**
+ * Attempt a paginated template lookup against the WABA.
+ * Returns the normalized category if found and APPROVED, null if definitively not found.
+ * Throws on transient API errors so the caller can distinguish and retry.
+ */
+async function lookupTemplateCategory(
+  cloud: MetaCloudService,
+  templateName: string,
+): Promise<FinancialCategory | null> {
+  let after: string | undefined;
+  const MAX_PAGES = 10;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    // Let API errors propagate — caller handles retry vs definitive failure
+    const result = await cloud.getTemplates({ fields: 'name,status,category', after });
+    const match = result.data.find(t => t.name === templateName && t.status === 'APPROVED');
+    if (match) return normalizeMetaCategory(match.category);
+    if (!result.paging?.next || !result.paging?.cursors?.after) break;
+    after = result.paging.cursors.after;
+  }
+  return null; // Exhausted all pages — template not found or not APPROVED
+}
+
+const LOOKUP_RETRIES = 2;
+const LOOKUP_RETRY_DELAY_MS = 1500;
+
+/**
+ * Resolve a template's approved category from the sender's actual WABA via Meta API.
+ *
+ * Retries transient Meta API errors (timeout, 5xx) up to LOOKUP_RETRIES times with
+ * backoff. This handles the common case where Meta's control-plane is momentarily
+ * unavailable but recovers quickly.
+ *
+ * Returns null (definitive not-found) only after all retries succeed without finding
+ * the template. Throws only if all retries are exhausted on API errors, so the caller
+ * can distinguish "definitely not approved" from "couldn't reach Meta."
+ */
 export async function resolveTemplateCategory(
   cloud: MetaCloudService | undefined | null,
   templateName: string,
 ): Promise<FinancialCategory | null> {
   if (!cloud) return null;
-  // Paginate through all template pages until the target is found or exhausted.
-  // Meta API defaults to 100 per page; businesses with many templates need pagination.
-  let after: string | undefined;
-  const MAX_PAGES = 10; // Safety limit to prevent infinite pagination
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const result = await cloud.getTemplates({ fields: 'name,status,category', after });
-    const match = result.data.find(t => t.name === templateName && t.status === 'APPROVED');
-    if (match) return normalizeMetaCategory(match.category);
-    // Check for next page
-    if (!result.paging?.next || !result.paging?.cursors?.after) break;
-    after = result.paging.cursors.after;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= LOOKUP_RETRIES; attempt++) {
+    try {
+      return await lookupTemplateCategory(cloud, templateName);
+    } catch (err) {
+      lastError = err;
+      if (attempt < LOOKUP_RETRIES) {
+        await new Promise(r => setTimeout(r, LOOKUP_RETRY_DELAY_MS * (attempt + 1)));
+      }
+    }
   }
-  return null; // Not found or not APPROVED after exhausting all pages
+  // All retries exhausted on API errors — throw so caller knows this is transient,
+  // not a definitive "template does not exist" (which returns null).
+  throw lastError;
 }
 
 function canonicalJson(value: unknown): string {
@@ -113,27 +150,30 @@ async function executeFrozenAction(
   const sendMessage = sender
     ? async (phone: string, text: string) => { await sender.sendText({ to: phone, text }); }
     : undefined;
-  // For send_template: resolve category BEFORE the sending fence so transient
-  // lookup failures remain retryable (pending→failed, not pending→sending→indeterminate).
+  // For send_template: resolve category BEFORE the sending fence.
+  // resolveTemplateCategory retries transient Meta API errors (2 retries with backoff).
+  // - Returns a category: lookup succeeded, proceed to emission
+  // - Returns null: template definitively not APPROVED on this WABA → mark failed
+  // - Throws: all retries exhausted on API errors → mark failed (retries were attempted)
+  // Both null and throw mark the action as 'failed' (terminal, pre-emission).
+  // The existing lifecycle has no pending→pending retry path, so inline retry inside
+  // resolveTemplateCategory is the recovery mechanism for transient Meta failures.
   let preResolvedCategory: FinancialCategory | undefined;
   if (row.action_type === 'send_template' && payload.template_name) {
     try {
       const resolved = await categoryResolver(cloud, payload.template_name as string);
       if (!resolved) {
         // Template not APPROVED or category unrecognized — definitive rejection.
-        // Mark as 'failed' (terminal). Template won't become approved by retrying.
         const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
         if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
         return;
       }
       preResolvedCategory = resolved;
     } catch (lookupErr) {
-      // Meta API error (transient or permanent) — mark failed before emission fence.
-      // No provider emission or financial reservation occurred. 'failed' is the correct
-      // pre-emission terminal state. Throwing would permanently suppress the outer
-      // automation_rule_handoff effect via driveInternalEffect's terminal skip.
+      // All inline retries exhausted — Meta API persistently unavailable.
+      // Mark failed (pre-emission terminal). No emission or financial reservation occurred.
       logger.withContext({ op: 'sealed-rule-actions.pre-fence-lookup', ruleId: row.rule_id })
-        .error('[SEALED-RULES] Template category lookup error — marking failed');
+        .error('[SEALED-RULES] Template category lookup failed after retries — marking failed');
       const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
       if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
       return;
