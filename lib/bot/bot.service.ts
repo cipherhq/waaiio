@@ -24,6 +24,7 @@ import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { ensurePlus } from '@/lib/utils/phone';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
@@ -109,6 +110,60 @@ export class BotService {
       return; // Silently drop — excessively long messages are never legitimate
     }
 
+    // ── STOP/START compliance — BEFORE rate limit so opt-out is never throttled ──
+    const STOP_WORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out'];
+    const START_WORDS = ['start', 'subscribe', 'opt in', 'opt-in'];
+    const normalizedInput = text?.toLowerCase().trim() || '';
+
+    if (STOP_WORDS.includes(normalizedInput)) {
+      const stopHandled = await this._handleStopRequest(from, preResolvedBusinessId, destinationPhone);
+      if (stopHandled) return;
+    }
+
+    if (START_WORDS.includes(normalizedInput)) {
+      const startHandled = await this._handleStartRequest(from, preResolvedBusinessId, destinationPhone);
+      if (startHandled) return;
+    }
+
+    // ── R6 fix: Pending STOP/Option-C selections must complete even during rate limit/maintenance ──
+    // Check if input matches pending-STOP patterns AND a pending session exists.
+    // If so, the full early dispatcher (after rate limit) will handle it.
+    // Store the pre-resolved session so the dispatcher doesn't re-query.
+    let _preResolvedPendingStop: Record<string, unknown> | null = null;
+    const _pendingStopInputsPre = /^(stop_merchant|stop_platform|biz_\d+|[1-9]|10)$/i;
+    if (_pendingStopInputsPre.test(text)) {
+      const { data: prePendingSession } = await this.supabase
+        .from('bot_sessions')
+        .select('id, session_data, version, whatsapp_number, current_step')
+        .eq('whatsapp_number', from)
+        .is('business_id', null)
+        .eq('is_active', true)
+        .eq('current_step', 'select_business_suggestion')
+        .gte('expires_at', new Date().toISOString())
+        .limit(1)
+        .maybeSingle();
+      if (prePendingSession?.session_data &&
+          (prePendingSession.session_data._pending_stop || prePendingSession.session_data._pending_stop_choice) &&
+          !prePendingSession.session_data._claimed) {
+        // R7 fix: verify channel provenance BEFORE granting rate-limit/maintenance bypass.
+        // Only bypass gates when the pending session belongs to the SAME inbound channel.
+        const storedChId = (prePendingSession.session_data._pending_stop_channel_id as string | undefined)
+          || (prePendingSession.session_data._pending_stop_choice as { channelId?: string } | undefined)?.channelId;
+        if (storedChId && destinationPhone) {
+          const { data: preCh } = await this.supabase
+            .from('whatsapp_channels').select('id')
+            .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+          if (preCh && preCh.id === storedChId) {
+            _preResolvedPendingStop = prePendingSession as Record<string, unknown>;
+          }
+          // Channel mismatch or lookup failure: _preResolvedPendingStop stays null →
+          // normal rate-limit/maintenance gates apply. The later early dispatcher
+          // will also fall through on mismatch, routing to normal flow.
+        }
+        // Missing stored channelId or destinationPhone: don't bypass gates.
+      }
+    }
+
     // Pre-checks: rate limit + maintenance mode + country cache (independent — run in parallel)
     const [botSettings, maintResult] = await Promise.all([
       loadPlatformSettings({ useServiceClient: true }),
@@ -116,7 +171,8 @@ export class BotService {
       loadCountries().catch(() => []), // Best-effort country cache warm; authoritative helpers check cache
     ]);
     const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, botSettings.bot_rate_limit_per_minute, 60_000);
-    if (!phoneRateLimit.allowed) {
+    if (!phoneRateLimit.allowed && !_preResolvedPendingStop) {
+      // R6: pending STOP selections bypass rate limit (completing an approved consent action)
       logger.warn(`[BOT] Rate limited phone ${from} — ${phoneRateLimit.remaining} remaining`);
       return; // Silently drop — don't even send a response (saves WhatsApp outbound cost)
     }
@@ -127,45 +183,9 @@ export class BotService {
       this.messageSender.bindBusiness(preResolvedBusinessId);
     }
 
-    if (maintResult.data?.value === true) {
+    if (maintResult.data?.value === true && !_preResolvedPendingStop) {
+      // R6: pending STOP selections bypass maintenance (completing an approved consent action)
       await this.sendPlatformText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
-      return;
-    }
-
-    // STOP/UNSUBSCRIBE compliance — check before any other processing
-    const STOP_WORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out'];
-    const START_WORDS = ['start', 'subscribe', 'opt in', 'opt-in'];
-    const normalizedInput = text?.toLowerCase().trim() || '';
-
-    if (STOP_WORDS.includes(normalizedInput)) {
-      // Record opt-out
-      await this.supabase.from('messaging_opt_outs').upsert({
-        phone: from,
-        business_id: preResolvedBusinessId || null,
-        channel: 'whatsapp',
-        opt_out_type: 'all',
-        opted_out_at: new Date().toISOString(),
-      }, { onConflict: 'phone,business_id,channel' }).select();
-
-      // #397: Also mark launch subscriber as opted-out (non-blocking, isolated)
-      this.supabase.from('launch_subscribers')
-        .update({ opt_in_status: 'opted_out', notification_status: 'skipped', updated_at: new Date().toISOString() })
-        .eq('wa_number', from)
-        .eq('opt_in_status', 'active')
-        .then(() => {}, () => {}); // fire-and-forget, never blocks commerce STOP
-
-      await this.sendPlatformText(from, 'You have been unsubscribed. You will no longer receive promotional messages. Send START to resubscribe.');
-      return;
-    }
-
-    if (START_WORDS.includes(normalizedInput)) {
-      // Resubscribe
-      await this.supabase.from('messaging_opt_outs')
-        .update({ resubscribed_at: new Date().toISOString() })
-        .eq('phone', from)
-        .is('resubscribed_at', null);
-
-      await this.sendPlatformText(from, 'You have been resubscribed. You will receive messages again.');
       return;
     }
 
@@ -176,9 +196,9 @@ export class BotService {
     );
     if (launchHandled) return;
 
-    // Pre-check 1: Timeout
+    // Pre-check 1: Timeout — exempt verified same-channel pending STOP selections
     const timeoutCheck = this.intelligence.isTimedOut(from);
-    if (timeoutCheck.timedOut) {
+    if (timeoutCheck.timedOut && !_preResolvedPendingStop) {
       await this.sendPlatformText(from, `You can message again in ${timeoutCheck.remaining} minute${timeoutCheck.remaining !== 1 ? 's' : ''}. 🙏`);
       return;
     }
@@ -590,6 +610,246 @@ export class BotService {
       _cachedProfile = data;
       return _cachedProfile;
     };
+
+    // ── #721 P1 CONSENT-ROUTING: Early pending-STOP dispatcher ──
+    // Runs BEFORE get_bot_context. Directly queries bot_sessions for pending-STOP
+    // picker/Option-C sessions. On match: execute opt-out with CAS + channel verification.
+    // On no match: fall through to normal get_bot_context flow.
+    const _pendingStopInputs = /^(stop_merchant|stop_platform|biz_\d+|[1-9]|10)$/i;
+    // R6 fix: use labeled block so channel-mismatch falls through to normal flow
+    // instead of dropping the message (which would block legitimate ordering input "1" etc)
+    pendingStopDispatch: if (_pendingStopInputs.test(text)) {
+      // Use pre-resolved session from before rate limit if available (avoids redundant query)
+      let pendingSession = _preResolvedPendingStop as typeof _preResolvedPendingStop & { id: string; session_data: Record<string, unknown>; version: number; whatsapp_number: string; current_step: string } | null;
+      let pendingErr: { message: string } | null = null;
+      if (!pendingSession) {
+        const result = await this.supabase
+          .from('bot_sessions')
+          .select('id, session_data, version, whatsapp_number, current_step')
+          .eq('whatsapp_number', from)
+          .is('business_id', null)
+          .eq('is_active', true)
+          .eq('current_step', 'select_business_suggestion')
+          .gte('expires_at', new Date().toISOString())
+          .limit(1)
+          .maybeSingle();
+        pendingSession = result.data as typeof pendingSession;
+        pendingErr = result.error;
+      }
+      if (pendingErr) {
+        logger.warn('[STOP] Early dispatcher: session query error', { err: pendingErr.message });
+        // Fall through to normal flow — don't silently swallow
+      }
+
+      if (pendingSession?.session_data &&
+          (pendingSession.session_data._pending_stop || pendingSession.session_data._pending_stop_choice) &&
+          !pendingSession.session_data._claimed) { // Reject already-claimed sessions (concurrent winner)
+        // ── Channel provenance: resolve current channelId and verify match ──
+        let currentChannelId: string | null = null;
+        if (destinationPhone) {
+          const { data: ch, error: chErr } = await this.supabase
+            .from('whatsapp_channels').select('id')
+            .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+          if (chErr || !ch) {
+            logger.warn('[STOP] Early dispatcher: channel lookup failed, rejecting', { destinationPhone, err: chErr?.message });
+            return; // Fail closed: no active channel → reject
+          }
+          currentChannelId = ch.id;
+        }
+        if (!currentChannelId) {
+          logger.warn('[STOP] Early dispatcher: no channel resolved — fall through to normal flow');
+          break pendingStopDispatch; // Let normal bot flow handle this input
+        }
+        const storedChannelId = (pendingSession.session_data._pending_stop_channel_id as string | undefined)
+          || (pendingSession.session_data._pending_stop_choice as { channelId?: string } | undefined)?.channelId;
+        // Channel mismatch: fall through to normal flow (input may be an order quantity etc on different channel)
+        if (!storedChannelId || storedChannelId !== currentChannelId) {
+          logger.warn('[STOP] Early dispatcher: channel mismatch — fall through to normal flow', { stored: storedChannelId, current: currentChannelId });
+          break pendingStopDispatch;
+        }
+
+        // Helper: CAS atomic intent claim — bumps version to prevent concurrent double-write.
+        // Called BEFORE opt-out persistence. If claim fails, concurrent reply already won.
+        const _casClaim = async (): Promise<boolean> => {
+          const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: pendingSession.id,
+            p_expected_version: pendingSession.version ?? 0,
+            p_current_step: pendingSession.current_step,
+            p_session_data: { ...pendingSession.session_data, _claimed: true },
+          });
+          if (casErr || !casResult?.success) {
+            if (casResult?.reason === 'version_conflict') return false;
+            logger.warn('[STOP] Early dispatcher CAS claim failed:', casResult?.reason || casErr?.message);
+            return false;
+          }
+          pendingSession.version = casResult.version; // Update for subsequent operations
+          return true;
+        };
+
+        // Helper: CAS release claim on failed persistence — allows customer retry.
+        // Returns true if claim was successfully released, false if release failed.
+        const _casReleaseClaim = async (): Promise<boolean> => {
+          const releaseData = { ...pendingSession.session_data };
+          delete (releaseData as Record<string, unknown>)._claimed;
+          try {
+            const { data } = await this.supabase.rpc('update_session_cas', {
+              p_session_id: pendingSession.id,
+              p_expected_version: pendingSession.version ?? 0,
+              p_current_step: pendingSession.current_step,
+              p_session_data: releaseData,
+            });
+            if (data?.success) { pendingSession.version = data.version; return true; }
+            logger.warn('[STOP] CAS release failed:', data?.reason);
+            return false;
+          } catch (err) {
+            logger.warn('[STOP] CAS release error:', err);
+            return false;
+          }
+        };
+
+        // Helper: CAS-deactivate session after successful persistence
+        const _casDeactivate = async () => {
+          const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: pendingSession.id,
+            p_expected_version: pendingSession.version ?? 0,
+            p_current_step: 'complete',
+            p_session_data: { ...pendingSession.session_data, is_active: false, _claimed: true },
+          });
+          if (casErr || !casResult?.success) {
+            if (casResult?.reason === 'version_conflict') return false;
+            logger.warn('[STOP] Early dispatcher CAS deactivate failed:', casResult?.reason || casErr?.message);
+            return false;
+          }
+          await this.deactivateSession(pendingSession.id);
+          return true;
+        };
+
+        // ── Option C: stop_merchant / stop_platform ──
+        if (pendingSession.session_data._pending_stop_choice) {
+          const choiceData = pendingSession.session_data._pending_stop_choice as {
+            merchantId?: string; merchantName?: string; candidates?: Array<{ id: string; name: string; bot_code: string }>;
+          };
+          if (text === 'stop_merchant') {
+            if (choiceData.candidates && choiceData.candidates.length >= 1) {
+              // Merchant(s) + platform: user chose merchant → show picker for explicit selection (no auto-select)
+              const casClaimed = await _casDeactivate();
+              if (!casClaimed) return;
+              const sugSess = await this.createNullBizSuggestionSession(from, null, {
+                suggestions: choiceData.candidates,
+                _pending_stop: true,
+                _pending_stop_channel_id: currentChannelId || storedChannelId,
+              });
+              if (sugSess) {
+                if (choiceData.candidates.length <= 3) {
+                  await this.sendPlatformButtons(from, 'Which business would you like to unsubscribe from?',
+                    choiceData.candidates.slice(0, 3).map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+                } else {
+                  const list = choiceData.candidates.slice(0, 10).map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+                  await this.sendPlatformText(from, `Which business would you like to unsubscribe from?\n\n${list}\n\nReply with the number to select, or send *cancel* to abort.`);
+                }
+              } else {
+                await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+              }
+              return;
+            }
+            // Single merchant Option C: CAS-claim first (prevents concurrent double-write), then persist
+            if (choiceData.merchantId) {
+              const claimed = await _casClaim();
+              if (!claimed) return; // Concurrent reply already won
+              const persisted = await this._recordMerchantOptOut(from, choiceData.merchantId);
+              if (persisted) {
+                await _casDeactivate(); // Session cleanup — opt-out already safe
+                const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+                if (noticeLimit.allowed) {
+                  await this.sendPlatformText(from, `You have been unsubscribed from *${choiceData.merchantName || 'this business'}*. You will no longer receive their messages. Send START to resubscribe.`);
+                }
+              } else {
+                // Persistence failed — release claim so customer can retry
+                const released = await _casReleaseClaim();
+                await this.sendPlatformText(from, released
+                  ? 'Something went wrong recording your unsubscribe. Please try again.'
+                  : 'Something went wrong. Please send STOP again to restart.');
+              }
+              return;
+            }
+          }
+          if (text === 'stop_platform') {
+            // CAS-claim first (prevents concurrent double-write), then persist
+            const claimed = await _casClaim();
+            if (!claimed) return; // Concurrent reply already won
+            const persisted = await this._recordPlatformOptOut(from);
+            if (persisted) {
+              await _casDeactivate(); // Session cleanup — opt-out already safe
+              const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+              if (noticeLimit.allowed) {
+                await this.sendPlatformText(from, 'You have been unsubscribed from Waaiio launch updates.');
+              }
+            } else {
+              // Persistence failed — release claim so customer can retry
+              await _casReleaseClaim();
+              await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+            }
+            return;
+          }
+          // Unrecognized reply to Option C — reprompt (re-create session)
+          const repromptData: Record<string, unknown> = {
+            suggestions: [],
+            _pending_stop_choice: { ...choiceData, channelId: currentChannelId || storedChannelId },
+          };
+          const sugSess = await this.createNullBizSuggestionSession(from, null, repromptData);
+          if (sugSess) {
+            await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
+              { id: 'stop_merchant', title: truncTitle(choiceData.merchantName || 'Business') },
+              { id: 'stop_platform', title: 'Waaiio updates' },
+            ]);
+          }
+          return;
+        }
+
+        // ── Merchant picker: biz_N or numeric reply ──
+        if (pendingSession.session_data._pending_stop) {
+          const suggestions = (pendingSession.session_data.suggestions || []) as Array<{ id: string; name: string; bot_code: string }>;
+          let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
+          const btnMatch = text.match(/^biz_(\d+)$/i);
+          if (btnMatch) {
+            const idx = parseInt(btnMatch[1], 10);
+            selectedBiz = suggestions[idx] || null;
+          }
+          if (!selectedBiz) {
+            const numMatch = text.match(/^(\d+)$/);
+            if (numMatch) {
+              const idx = parseInt(numMatch[1], 10) - 1;
+              selectedBiz = suggestions[idx] || null;
+            }
+          }
+          if (selectedBiz) {
+            // Verify selected business is in stored candidates
+            const candidateIds = new Set(suggestions.map(s => s.id));
+            if (!candidateIds.has(selectedBiz.id)) {
+              logger.warn('[STOP] Early dispatcher: selected biz not in candidates:', selectedBiz.id);
+              return;
+            }
+            // CAS-claim first (prevents concurrent double-write), then persist
+            const claimed = await _casClaim();
+            if (!claimed) return; // Concurrent reply already won
+            const persisted = await this._recordMerchantOptOut(from, selectedBiz.id);
+            if (persisted) {
+              await _casDeactivate(); // Session cleanup — opt-out already safe
+              const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+              if (noticeLimit.allowed) {
+                await this.sendPlatformText(from, `You have been unsubscribed from *${selectedBiz.name}*. You will no longer receive their messages. Send START to resubscribe.`);
+              }
+            } else {
+              // Persistence failed — release claim so customer can retry
+              await _casReleaseClaim();
+              await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+            }
+            return;
+          }
+          // No match in picker — fall through to normal flow (cancel/unrecognized handled by session handler)
+        }
+      }
+    }
 
     // ── BOT-PERF: Single round-trip context bootstrap ──
     // When preResolvedBusinessId is available (inbound webhook with trusted channel),
@@ -3544,6 +3804,229 @@ export class BotService {
       // S-1: No business is bound in this step — all replies must be platform-scoped
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
+
+      // Shared CAS helpers for pending-STOP handling (used by both Option C and picker blocks)
+      const _fallbackCasClaim = async (): Promise<boolean> => {
+        const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+          p_session_id: session.id,
+          p_expected_version: session.version ?? 0,
+          p_current_step: session.current_step,
+          p_session_data: { ...session.session_data, _claimed: true },
+        });
+        if (casErr || !casResult?.success) {
+          if (casResult?.reason === 'version_conflict') return false;
+          logger.warn('[STOP] Fallback CAS claim failed:', casResult?.reason || casErr?.message);
+          return false;
+        }
+        session.version = casResult.version;
+        return true;
+      };
+      const _fallbackCasReleaseClaim = async (): Promise<boolean> => {
+        const releaseData = { ...session.session_data };
+        delete (releaseData as Record<string, unknown>)._claimed;
+        try {
+          const { data } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: session.current_step,
+            p_session_data: releaseData,
+          });
+          if (data?.success) { session.version = data.version; return true; }
+          return false;
+        } catch { return false; }
+      };
+      const _fallbackCasDeactivate = async () => {
+        const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+          p_session_id: session.id,
+          p_expected_version: session.version ?? 0,
+          p_current_step: 'complete',
+          p_session_data: { ...session.session_data, is_active: false, _claimed: true },
+        });
+        if (casErr || !casResult?.success) {
+          if (casResult?.reason === 'version_conflict') return false;
+          logger.warn('[STOP] Fallback CAS deactivate failed:', casResult?.reason || casErr?.message);
+          return false;
+        }
+        await this.deactivateSession(session.id);
+        return true;
+      };
+
+      // ── Pending-STOP: Option C disambiguation (stop_merchant / stop_platform) ──
+      // FALLBACK path — primary handling is the early dispatcher above get_bot_context.
+      if (session.session_data._pending_stop_choice && !session.session_data._claimed) {
+        const choiceData = session.session_data._pending_stop_choice as {
+          merchantId?: string; merchantName?: string; channelId?: string;
+          candidates?: Array<{ id: string; name: string; bot_code: string }>;
+        };
+        // Channel provenance check: resolve and reject cross-channel replay; fail closed on lookup error
+        if (destinationPhone) {
+          const { data: currentCh, error: chErr } = await this.supabase
+            .from('whatsapp_channels').select('id')
+            .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+          if (chErr || !currentCh) {
+            logger.warn('[STOP] Fallback Option C: channel lookup failed, rejecting', { err: chErr?.message });
+            return; // Fail closed
+          }
+          if (!choiceData.channelId || currentCh.id !== choiceData.channelId) {
+            logger.warn('[STOP] Cross-channel Option C replay rejected or missing provenance', { stored: choiceData.channelId, current: currentCh.id });
+            return;
+          }
+        }
+        if (text === 'stop_merchant') {
+          if (choiceData.merchantId) {
+            // CAS-claim first (prevents concurrent double-write), then persist
+            const claimed = await _fallbackCasClaim();
+            if (!claimed) return;
+            const persisted = await this._recordMerchantOptOut(from, choiceData.merchantId);
+            if (persisted) {
+              await _fallbackCasDeactivate(); // Session cleanup — opt-out already safe
+              const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+              if (noticeLimit.allowed) {
+                await this.sendPlatformText(from, `You have been unsubscribed from *${choiceData.merchantName || 'this business'}*. You will no longer receive their messages. Send START to resubscribe.`);
+              }
+            } else {
+              // Persistence failed — release claim so customer can retry
+                const released = await _fallbackCasReleaseClaim();
+              await this.sendPlatformText(from, released
+                ? 'Something went wrong recording your unsubscribe. Please try again.'
+                : 'Something went wrong. Please send STOP again to restart.');
+            }
+          } else if (choiceData.candidates && choiceData.candidates.length > 0) {
+            // Multi-merchant Option C → show picker (no opt-out yet, CAS first)
+            const casClaimed = await _fallbackCasDeactivate();
+            if (!casClaimed) return;
+            const cands = choiceData.candidates;
+            const sugSess = await this.createNullBizSuggestionSession(from, null, {
+              suggestions: cands,
+              _pending_stop: true,
+              _pending_stop_channel_id: choiceData.channelId,
+            });
+            if (sugSess) {
+              if (cands.length <= 3) {
+                await this.sendPlatformButtons(from, 'Which business would you like to unsubscribe from?',
+                  cands.slice(0, 3).map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+              } else {
+                const list = cands.slice(0, 10).map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+                await this.sendPlatformText(from, `Which business would you like to unsubscribe from?\n\n${list}\n\nReply with the number to select, or send *cancel* to abort.`);
+              }
+            } else {
+              await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+            }
+          }
+          return;
+        }
+        if (text === 'stop_platform') {
+          // CAS-claim first, then persist
+          const claimed = await _fallbackCasClaim();
+          if (!claimed) return;
+          const persisted = await this._recordPlatformOptOut(from);
+          if (persisted) {
+            await _fallbackCasDeactivate(); // Session cleanup — opt-out already safe
+            const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+            if (noticeLimit.allowed) {
+              await this.sendPlatformText(from, 'You have been unsubscribed from Waaiio launch updates.');
+            }
+          } else {
+            // Persistence failed — release claim so customer can retry
+                const released2 = await _fallbackCasReleaseClaim();
+            await this.sendPlatformText(from, released2
+              ? 'Something went wrong recording your unsubscribe. Please try again.'
+              : 'Something went wrong. Please send STOP again to restart.');
+          }
+          return;
+        }
+        // Unrecognized reply to Option C — reprompt
+        await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
+          { id: 'stop_merchant', title: truncTitle(choiceData.merchantName || 'Business') },
+          { id: 'stop_platform', title: 'Waaiio updates' },
+        ]);
+        return;
+      }
+
+      // ── Pending-STOP: merchant picker (user selects which merchant to stop) ──
+      // FALLBACK path — primary handling is the early dispatcher above get_bot_context.
+      // P1 Codex fix: validate inbound channel + atomic CAS claim before mutation
+      if (session.session_data._pending_stop && !session.session_data._claimed) {
+        // Channel provenance check: fail closed on lookup error
+        const storedChannelId = session.session_data._pending_stop_channel_id as string | undefined;
+        if (destinationPhone) {
+          const { data: currentCh, error: chErr } = await this.supabase
+            .from('whatsapp_channels').select('id')
+            .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+          if (chErr || !currentCh) {
+            logger.warn('[STOP] Fallback picker: channel lookup failed, rejecting', { err: chErr?.message });
+            return; // Fail closed
+          }
+          // P1 Codex fix: fail closed on missing/null channel provenance
+          if (!storedChannelId || currentCh.id !== storedChannelId) {
+            logger.warn('[STOP] Cross-channel picker replay rejected or missing provenance', { stored: storedChannelId, current: currentCh.id });
+            return;
+          }
+        }
+
+        let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
+        const btnMatch = text.match(/^biz_(\d+)$/i);
+        if (btnMatch) {
+          const idx = parseInt(btnMatch[1], 10);
+          selectedBiz = suggestions[idx] || null;
+        }
+        if (!selectedBiz) {
+          const numMatch = text.match(/^(\d+)$/);
+          if (numMatch) {
+            const idx = parseInt(numMatch[1], 10) - 1;
+            selectedBiz = suggestions[idx] || null;
+          }
+        }
+        if (selectedBiz) {
+          // Verify selected business is in the stored candidate list
+          const candidateIds = new Set(suggestions.map(s => s.id));
+          if (!candidateIds.has(selectedBiz.id)) {
+            logger.warn('[STOP] Selected business not in candidates:', selectedBiz.id);
+            return;
+          }
+
+          // CAS-claim first (prevents concurrent double-write), then persist
+          const claimed = await _fallbackCasClaim();
+          if (!claimed) return; // Concurrent reply already won
+          const persisted = await this._recordMerchantOptOut(from, selectedBiz.id);
+          if (persisted) {
+            // CAS-deactivate session after successful persistence
+            const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version ?? 0,
+              p_current_step: 'complete',
+              p_session_data: { ...session.session_data, is_active: false },
+            });
+            if (casErr || !casResult?.success) {
+              // Opt-out is recorded (safe), but session cleanup failed — log and continue
+              logger.warn('[STOP] Picker CAS cleanup failed (opt-out already recorded):', casResult?.reason || casErr?.message);
+            } else {
+              await this.deactivateSession(session.id);
+            }
+            const noticeLimit = await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+            if (noticeLimit.allowed) {
+              await this.sendPlatformText(from, `You have been unsubscribed from *${selectedBiz.name}*. You will no longer receive their messages. Send START to resubscribe.`);
+            }
+          } else {
+            // Persistence failed — release claim so customer can retry
+                const released3 = await _fallbackCasReleaseClaim();
+            await this.sendPlatformText(from, released3
+              ? 'Something went wrong recording your unsubscribe. Please try again.'
+              : 'Something went wrong. Please send STOP again to restart.');
+          }
+          return;
+        }
+        // Cancel/abort pending stop
+        if (/^(cancel|exit|nevermind|no)$/i.test(text)) {
+          await this.deactivateSession(session.id);
+          await this.sendPlatformText(from, 'No problem. You have not been unsubscribed.');
+          return;
+        }
+        // Unrecognized — reprompt
+        await this.sendPlatformText(from, 'Please select a business from the list above, or send *cancel* to abort.');
+        return;
+      }
+
       let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
 
       // Handle navigation commands at suggestion step (no business_id, so escape hatch guard skips these)
@@ -4524,5 +5007,409 @@ export class BotService {
     messageText: string,
   ): Promise<void> {
     return _forwardToBusinessOwner(this.ctx, businessId, customerPhone, customerName, messageText);
+  }
+
+  /**
+   * #721 STOP handler: resolves merchant context, records opt-out with proven persistence.
+   * Returns true if the STOP was handled (caller should return), false if not a STOP scenario.
+   */
+  private async _handleStopRequest(
+    from: string,
+    preResolvedBusinessId: string | undefined,
+    destinationPhone: string | undefined,
+  ): Promise<boolean> {
+    // P1 TENANT PROVENANCE: resolve authenticated channelId from destinationPhone
+    let resolvedChannelId: string | null = null;
+    if (destinationPhone) {
+      const { data: ch, error: chErr } = await this.supabase
+        .from('whatsapp_channels').select('id')
+        .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+      if (chErr) {
+        logger.error('[STOP] Channel lookup error — fail closed:', chErr.message);
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true; // Fail closed: DB error on channel lookup
+      }
+      resolvedChannelId = ch?.id || null;
+    }
+
+    // 1. Resolve merchant context
+    let merchantId: string | null = null;
+    let merchantName: string | null = null;
+    let candidates: Array<{ id: string; name: string; bot_code: string }> = [];
+
+    if (preResolvedBusinessId) {
+      // Dedicated channel — merchant is known
+      merchantId = preResolvedBusinessId;
+      const { data: biz, error: bizErr } = await this.supabase
+        .from('businesses').select('name').eq('id', preResolvedBusinessId).single();
+      if (bizErr) {
+        logger.error('[STOP] Business lookup failed — fail closed:', bizErr.message);
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true; // P1 DATA: fail closed on read error
+      }
+      merchantName = biz?.name || 'this business';
+    } else {
+      // Shared channel — resolve from recent sessions
+      const resolved = await this._resolveStopCandidates(from, destinationPhone);
+      if (resolved.error) {
+        // DB read error — fail closed, do not proceed with any consent mutation
+        logger.error('[STOP] Merchant resolution failed — not proceeding with consent change');
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true;
+      }
+      candidates = resolved.candidates;
+      // Only auto-select a single candidate when channel-verified (Tier 1).
+      // Tier 2 (cross-channel history) must always show picker — never auto-mutate consent.
+      if (candidates.length === 1 && resolved.channelVerified) {
+        merchantId = candidates[0].id;
+        merchantName = candidates[0].name;
+      }
+    }
+
+    // 2. Check platform (launch subscriber) context
+    const { data: launchSub, error: launchErr } = await this.supabase
+      .from('launch_subscribers').select('id')
+      .eq('wa_number', from).eq('opt_in_status', 'active').maybeSingle();
+    if (launchErr) {
+      logger.error('[STOP] Launch subscriber lookup failed — fail closed:', launchErr.message);
+      await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+      return true; // P1 DATA: fail closed on read error
+    }
+    const hasLaunchSub = !!launchSub;
+
+    // 3. Route to the correct path
+    if (merchantId && !hasLaunchSub) {
+      // Merchant only — record opt-out
+      const persisted = await this._recordMerchantOptOut(from, merchantId);
+      if (persisted) {
+        await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+        await this.sendPlatformText(from, `You have been unsubscribed from *${merchantName}*. You will no longer receive their messages. Send START to resubscribe.`);
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+      }
+      return true;
+    }
+
+    if (!merchantId && candidates.length === 0 && hasLaunchSub) {
+      // Platform only — record launch opt-out
+      const persisted = await this._recordPlatformOptOut(from);
+      if (persisted) {
+        await checkRateLimitAsync(`bot_stop_confirm:${from}`, 1, 60_000);
+        await this.sendPlatformText(from, 'You have been unsubscribed from Waaiio launch updates. Send START to resubscribe.');
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong recording your unsubscribe. Please try again.');
+      }
+      return true;
+    }
+
+    if (merchantId && hasLaunchSub) {
+      // Option C: single merchant + platform — ask which to stop
+      // P1 TENANT PROVENANCE: store resolved channelId, not raw destinationPhone
+      const sugSess = await this.createNullBizSuggestionSession(from, null, {
+        suggestions: [],
+        _pending_stop_choice: { merchantId, merchantName, channelId: resolvedChannelId },
+      });
+      if (sugSess) {
+        await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
+          { id: 'stop_merchant', title: truncTitle(merchantName || 'This business') },
+          { id: 'stop_platform', title: 'Waaiio updates' },
+        ]);
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+      }
+      return true;
+    }
+
+    // P1 OWNER OPTION C: unverified merchant(s) + platform → show Option C first, then picker
+    if (!merchantId && candidates.length >= 1 && hasLaunchSub) {
+      const sugSess = await this.createNullBizSuggestionSession(from, null, {
+        suggestions: candidates.slice(0, 10),
+        _pending_stop_choice: { candidates: candidates.slice(0, 10), channelId: resolvedChannelId },
+      });
+      if (sugSess) {
+        await this.sendPlatformButtons(from, 'Which would you like to unsubscribe from?', [
+          { id: 'stop_merchant', title: 'A business' },
+          { id: 'stop_platform', title: 'Waaiio updates' },
+        ]);
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+      }
+      return true;
+    }
+
+    if (!merchantId && candidates.length >= 1) {
+      // Unverified merchant(s) (no platform sub) — show picker for explicit confirmation
+      // P1 TENANT PROVENANCE: store resolved channelId, not raw destinationPhone
+      const sugSess = await this.createNullBizSuggestionSession(from, null, {
+        suggestions: candidates.slice(0, 10),
+        _pending_stop: true,
+        _pending_stop_channel_id: resolvedChannelId,
+      });
+      if (sugSess) {
+        if (candidates.length <= 3) {
+          await this.sendPlatformButtons(from, 'Which business would you like to unsubscribe from?',
+            candidates.slice(0, 3).map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+        } else {
+          const list = candidates.slice(0, 10).map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+          await this.sendPlatformText(from, `Which business would you like to unsubscribe from?\n\n${list}\n\nReply with the number to select, or send *cancel* to abort.`);
+        }
+      } else {
+        await this.sendPlatformText(from, 'Something went wrong. Please try sending STOP again.');
+      }
+      return true;
+    }
+
+    if (!merchantId && candidates.length === 0 && !hasLaunchSub) {
+      // No context at all — acknowledge but nothing to do
+      await this.sendPlatformText(from, 'You are not currently subscribed to any messages. No action needed.');
+      return true;
+    }
+
+    return true;
+  }
+
+  /**
+   * #721 START handler: scoped to identified merchant.
+   */
+  private async _handleStartRequest(
+    from: string,
+    preResolvedBusinessId: string | undefined,
+    _destinationPhone: string | undefined,
+  ): Promise<boolean> {
+    if (preResolvedBusinessId) {
+      // Resubscribe for this specific merchant
+      const { data: updated, error: resubErr } = await this.supabase
+        .from('messaging_opt_outs')
+        .update({ resubscribed_at: new Date().toISOString() })
+        .eq('phone', ensurePlus(from))
+        .eq('business_id', preResolvedBusinessId)
+        .eq('channel', 'whatsapp')
+        .is('resubscribed_at', null)
+        .select('id');
+
+      if (resubErr) {
+        logger.error('[BOT] START resubscribe error:', resubErr.message);
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true;
+      }
+      if (updated && updated.length > 0) {
+        await this.sendPlatformText(from, 'You have been resubscribed. You will receive messages from this business again.');
+      } else {
+        await this.sendPlatformText(from, 'You are already subscribed. No action needed.');
+      }
+      return true;
+    }
+
+    // Shared channel: resolve merchant context same as STOP, then resubscribe that merchant only.
+    // Per Owner decision: START is merchant-specific. Do NOT resubscribe all businesses or platform.
+    const resolved = await this._resolveStopCandidates(from, _destinationPhone);
+    if (resolved.error) {
+      logger.error('[START] Merchant resolution failed — not proceeding with consent change');
+      await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+      return true;
+    }
+    // Only auto-resubscribe when channel-verified (same provenance safety as STOP)
+    if (resolved.candidates.length === 1 && resolved.channelVerified) {
+      const { data: updated, error: resubErr } = await this.supabase
+        .from('messaging_opt_outs')
+        .update({ resubscribed_at: new Date().toISOString() })
+        .eq('phone', ensurePlus(from))
+        .eq('business_id', resolved.candidates[0].id)
+        .eq('channel', 'whatsapp')
+        .is('resubscribed_at', null)
+        .select('id');
+      if (resubErr) {
+        logger.error('[BOT] START resubscribe error:', resubErr.message);
+        await this.sendPlatformText(from, 'Something went wrong. Please try again.');
+        return true;
+      }
+      if (updated && updated.length > 0) {
+        await this.sendPlatformText(from, `You have been resubscribed to *${resolved.candidates[0].name}*. You will receive their messages again.`);
+      } else {
+        await this.sendPlatformText(from, 'You are already subscribed. No action needed.');
+      }
+      return true;
+    }
+    // Multiple or zero candidates — inform customer
+    await this.sendPlatformText(from, 'To resubscribe, please message the business first, then send START.');
+    return true;
+  }
+
+  /**
+   * Record merchant opt-out using INSERT + 23505 conflict detection.
+   * Returns true only when the row is provably persisted (returned row ID).
+   */
+  private async _recordMerchantOptOut(from: string, businessId: string): Promise<boolean> {
+    // Normalize phone to +E.164 for consistent storage and suppression matching.
+    // Meta inbound sends digits-only; broadcast recipients may use +E.164.
+    const normalizedPhone = ensurePlus(from);
+    const { data: inserted, error: insertErr } = await this.supabase
+      .from('messaging_opt_outs')
+      .insert({
+        phone: normalizedPhone,
+        business_id: businessId,
+        channel: 'whatsapp',
+        opt_out_type: 'all',
+        opted_out_at: new Date().toISOString(),
+      })
+      .select('id');
+
+    if (!insertErr && inserted && inserted.length > 0) {
+      logger.info('[BOT] STOP opt-out recorded:', inserted[0].id, 'for business:', businessId);
+      return true;
+    }
+
+    if (insertErr?.code === '23505') {
+      // Already opted out (unique index conflict) — verify the row exists
+      const { count } = await this.supabase
+        .from('messaging_opt_outs')
+        .select('id', { count: 'exact', head: true })
+        .eq('phone', normalizedPhone)
+        .eq('business_id', businessId)
+        .eq('channel', 'whatsapp')
+        .is('resubscribed_at', null);
+      if (count && count > 0) {
+        logger.info('[BOT] STOP opt-out already exists for business:', businessId);
+        return true;
+      }
+    }
+
+    logger.error('[BOT] STOP opt-out INSERT failed:', insertErr?.message, insertErr?.code);
+    return false;
+  }
+
+  /**
+   * Record platform (launch subscriber) opt-out.
+   * Returns true only when provably persisted.
+   */
+  private async _recordPlatformOptOut(from: string): Promise<boolean> {
+    const { data: updated, error: updateErr } = await this.supabase
+      .from('launch_subscribers')
+      .update({
+        opt_in_status: 'opted_out',
+        notification_status: 'skipped',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('wa_number', from)
+      .eq('opt_in_status', 'active')
+      .select('id');
+
+    if (!updateErr && updated && updated.length > 0) {
+      logger.info('[BOT] Platform STOP recorded for:', from);
+      return true;
+    }
+
+    if (updateErr) {
+      logger.error('[BOT] Platform STOP update failed:', updateErr.message);
+      return false;
+    }
+
+    // No rows updated — might already be opted out
+    const { data: existing } = await this.supabase
+      .from('launch_subscribers')
+      .select('opt_in_status')
+      .eq('wa_number', from)
+      .maybeSingle();
+    if (existing?.opt_in_status === 'opted_out') {
+      logger.info('[BOT] Platform STOP already opted out for:', from);
+      return true;
+    }
+
+    logger.warn('[BOT] Platform STOP: no launch_subscribers row found for:', from);
+    return false;
+  }
+
+  /**
+   * Resolve merchant candidates for STOP on shared channels.
+   * Tier 1: active sessions with matching channel. Tier 2: recent sessions for this phone.
+   */
+  /**
+   * Resolve merchant candidates for STOP on shared channels.
+   * Returns { candidates, channelVerified }.
+   * channelVerified=true: Tier 1 match (same channel). Safe to auto-select single candidate.
+   * channelVerified=false: Tier 2 history (cross-channel). Must show picker even for 1 candidate.
+   */
+  private async _resolveStopCandidates(
+    from: string,
+    destinationPhone: string | undefined,
+  ): Promise<{ candidates: Array<{ id: string; name: string; bot_code: string }>; channelVerified: boolean; error?: boolean }> {
+    // Resolve channel ID from destinationPhone
+    let channelId: string | null = null;
+    if (destinationPhone) {
+      const { data: ch, error: chErr } = await this.supabase
+        .from('whatsapp_channels')
+        .select('id')
+        .eq('phone_number_id', destinationPhone)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (chErr) {
+        logger.error('[STOP] _resolveStopCandidates: channel lookup error:', chErr.message);
+        return { candidates: [], channelVerified: false, error: true };
+      }
+      channelId = ch?.id || null;
+    }
+
+    // Tier 1: active sessions where _inbound_channel_id matches current channel
+    if (channelId) {
+      const { data: tier1, error: t1Err } = await this.supabase
+        .from('bot_sessions')
+        .select('business_id')
+        .eq('whatsapp_number', from)
+        .not('business_id', 'is', null)
+        .eq('session_data->>_inbound_channel_id', channelId)
+        .eq('is_active', true)
+        .gte('expires_at', new Date().toISOString())
+        .limit(10);
+      if (t1Err) {
+        logger.error('[STOP] _resolveStopCandidates: tier1 session query error:', t1Err.message);
+        return { candidates: [], channelVerified: false, error: true };
+      }
+      if (tier1 && tier1.length > 0) {
+        const bizIds = [...new Set(tier1.map(s => s.business_id).filter(Boolean))] as string[];
+        try {
+          return { candidates: await this._fetchBizSummaries(bizIds), channelVerified: true };
+        } catch { return { candidates: [], channelVerified: false, error: true }; }
+      }
+    }
+
+    // Tier 2: recent sessions for this phone (any status) — cross-channel history.
+    // These are CHOICES only, never auto-selected for consent mutation.
+    const { data: tier2, error: t2Err } = await this.supabase
+      .from('bot_sessions')
+      .select('business_id')
+      .eq('whatsapp_number', from)
+      .not('business_id', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(20);
+    if (t2Err) {
+      logger.error('[STOP] _resolveStopCandidates: tier2 session query error:', t2Err.message);
+      return { candidates: [], channelVerified: false, error: true };
+    }
+    if (tier2 && tier2.length > 0) {
+      const bizIds = [...new Set(tier2.map(s => s.business_id).filter(Boolean))] as string[];
+      try {
+        return { candidates: await this._fetchBizSummaries(bizIds.slice(0, 10)), channelVerified: false };
+      } catch { return { candidates: [], channelVerified: false, error: true }; }
+    }
+
+    return { candidates: [], channelVerified: false };
+  }
+
+  private async _fetchBizSummaries(
+    bizIds: string[],
+  ): Promise<Array<{ id: string; name: string; bot_code: string }>> {
+    if (bizIds.length === 0) return [];
+    const { data: businesses, error: bizErr } = await this.supabase
+      .from('businesses')
+      .select('id, name, bot_code')
+      .in('id', bizIds)
+      .eq('status', 'active');
+    if (bizErr) {
+      logger.error('[STOP] _fetchBizSummaries: business query error:', bizErr.message);
+      throw new Error('STOP_CANDIDATE_FETCH_ERROR'); // Propagate to caller for fail-closed handling
+    }
+    return (businesses || []).map(b => ({
+      id: b.id, name: b.name, bot_code: b.bot_code || '',
+    }));
   }
 }

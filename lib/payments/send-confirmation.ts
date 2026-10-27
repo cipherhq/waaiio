@@ -746,7 +746,7 @@ export async function sendProactiveConfirmation(
         if (sendAuth?.authorized) {
           sideEffectsMayHaveOccurred = true;
           try {
-            const sendResult = await resolved.sender.sendText({ to: phone, text: localizedText });
+            const sendResult = await resolved.sender.sendText({ to: phone, text: localizedText, messageCategory: 'service' });
             const wamid = sendResult?.messageId;
 
             if (wamid) {
@@ -880,7 +880,7 @@ export async function sendProactiveConfirmation(
           // Entity-correct serviceType: reservation uses booking semantics (#173)
           serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
           referenceId: payment.booking_id || payment.reservation_id || undefined,
-          sender: resolved?.sender,
+          sender: resolved?.sender, cloud: resolved?.cloud,
           amountPaid: payment.amount,
           // Skip automation for entities that don't have booking/order semantics (#173)
           skipAutomation: isOrderPayment || isCampaignPayment || isInvoicePayment,
