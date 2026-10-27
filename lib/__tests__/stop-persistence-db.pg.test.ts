@@ -2,20 +2,24 @@
  * #721 STOP Persistence DB Tests
  *
  * Hermetic real-PG tests proving opt-out persistence invariants.
- * Follows the pattern from trial-one-per-owner-db.test.ts:
+ * Follows the pattern from payout-accounts-server-only.pg.test.ts:
  * - Uses TEST_DATABASE_URL env var
  * - Uses psql + execSync for direct SQL
  * - Deterministic UUIDs
- * - Skips gracefully if TEST_DATABASE_URL not set
+ * - Fails (not skips) when REQUIRE_PG_TESTS=true but table is missing
  *
  *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test \
- *     npx vitest run lib/__tests__/stop-persistence-db.test.ts
+ *     npx vitest run lib/__tests__/stop-persistence-db.pg.test.ts
  */
 import { execSync } from 'child_process';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
+
+if (!dbUrl && process.env.REQUIRE_PG_TESTS === 'true') {
+  throw new Error('TEST_DATABASE_URL is required — cannot skip DB tests (REQUIRE_PG_TESTS=true)');
+}
 
 function psql(sql: string): string {
   return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
@@ -48,6 +52,17 @@ const describePg = canRun ? describe : describe.skip;
 
 describePg('#721: STOP opt-out persistence', () => {
   beforeAll(() => {
+    // Guard: fail (not skip) if messaging_opt_outs table doesn't exist
+    const tableExists = psqlMaybe(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'messaging_opt_outs';`
+    );
+    if (!tableExists) {
+      throw new Error(
+        'messaging_opt_outs table does not exist in test database. ' +
+        'Migrations must be applied before running this test.'
+      );
+    }
+
     // Clean test data
     psqlCleanup(`DELETE FROM messaging_opt_outs WHERE phone = '${PHONE}';`);
     psqlCleanup(`DELETE FROM bot_sessions WHERE whatsapp_number = '${PHONE}';`);

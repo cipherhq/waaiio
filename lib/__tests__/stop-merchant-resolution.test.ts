@@ -100,12 +100,12 @@ describe('#721 STOP: Early Dispatcher (CONSENT-ROUTING P1)', () => {
     expect(earlyBody).toContain('_recordPlatformOptOut');
   });
 
-  it('17. Multi-merchant + platform → Option C first, then picker', () => {
-    // _handleStopRequest: multi-merchant + hasLaunchSub → stores candidates in _pending_stop_choice
+  it('17. Unverified merchant(s) + platform → Option C first, then picker', () => {
+    // _handleStopRequest: unverified candidates + hasLaunchSub → stores candidates in _pending_stop_choice
     const stopMethodIdx = src.indexOf('private async _handleStopRequest');
     const stopMethodEnd = src.indexOf('\n  }', stopMethodIdx + 100);
     const stopBody = src.slice(stopMethodIdx, stopMethodEnd);
-    expect(stopBody).toContain('candidates.length > 1 && hasLaunchSub');
+    expect(stopBody).toContain('candidates.length >= 1 && hasLaunchSub');
     expect(stopBody).toContain('_pending_stop_choice: { candidates:');
 
     // Early dispatcher: when stop_merchant AND candidates exist → creates picker session
@@ -254,14 +254,14 @@ describe('#721 STOP: Data / Replay Safety (P1)', () => {
     expect(earlyIdx, 'Early dispatcher must exist').toBeGreaterThan(0);
   });
 
-  it('Early dispatcher only triggers for pending-STOP inputs on shared channels', () => {
+  it('Early dispatcher triggers for pending-STOP inputs on any channel type', () => {
     const earlyIdx = src.indexOf('Early pending-STOP dispatcher');
     const earlyEnd = src.indexOf('BOT-PERF: Single round-trip context bootstrap');
     const earlyBody = src.slice(earlyIdx, earlyEnd);
-    // Only for specific input patterns
-    expect(earlyBody).toContain('stop_merchant|stop_platform|biz_\\d+|[1-9]');
-    // Only for shared channels (not preResolved)
-    expect(earlyBody).toContain('!preResolvedBusinessId');
+    // Only for specific input patterns (including 10 for max-candidate picker)
+    expect(earlyBody).toContain('stop_merchant|stop_platform|biz_\\d+|[1-9]|10');
+    // Channel verification inside the handler validates the channel match (not gated by preResolved)
+    expect(earlyBody).toContain('_pendingStopInputs.test(text)');
   });
 });
 
