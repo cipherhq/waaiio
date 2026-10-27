@@ -1,3 +1,9 @@
+### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
+
+- **`docs/ops/subscription-messaging-credit-10pct-audit-2026-10-26.md`**: Surgical documentation corrections per CTO review. (1) Updated stale references: PRs #711 and #722 now noted as merged; #712 remains open draft on separate lane. (2) Moved Admin-control configurability from approved decisions to unresolved future implementation gates. (3) Explicitly distinguished four unresolved Owner decisions (discount/tax basis, annual billing, rounding rule, Admin-control design) from the already-approved 10% rate. (4) Clarified section 4 heading applies to the future implementation PR, not this documentation PR. (5) Labeled US/CA Premium 10% credit amounts as illustrative pending rounding approval. (6) Retained explicit "no merge without separate Owner authorization" in governance section.
+- **Affects**: Documentation only. No application code, migrations, database configuration, payment providers, messaging paths, or runtime behavior changed.
+- **Could break**: Nothing. No code imports or runtime dependencies on this document.
+
 ### #721 — STOP P1 corrections: consent-routing, provenance, Option C (2026-10-27)
 
 - **`lib/bot/bot.service.ts`**: Fixed 5 CTO-identified P1 findings on PR #727:
