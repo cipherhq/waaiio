@@ -74,25 +74,22 @@ REQUIRED_VERCEL_MARKERS = ("waaiiostaging", "waaiio-staging")
 # ── Safety checks ──
 
 def validate_host(host: str) -> None:
-    """Fail-closed: reject production and unknown hosts."""
+    """CTO R4: Hard block ANY non-loopback host. Remote webhook traffic is
+    not permitted until server-side Meta interception is proven."""
     from urllib.parse import urlparse
     parsed = urlparse(host)
     hostname = (parsed.hostname or "").lower()
 
-    if hostname in BLOCKED_HOSTS:
-        print(f"FAIL-CLOSED: Target '{host}' is a blocked production host.", file=sys.stderr)
-        sys.exit(1)
-
-    if hostname in ALLOWED_HOSTS:
+    # Only loopback is allowed — all remote targets are blocked
+    if hostname in ("localhost", "127.0.0.1"):
         return
 
-    if any(hostname.endswith(suffix) for suffix in ALLOWED_HOST_SUFFIXES):
-        if any(marker in hostname for marker in REQUIRED_VERCEL_MARKERS):
-            return
-        print(f"FAIL-CLOSED: Vercel preview '{host}' missing staging marker.", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"FAIL-CLOSED: Host '{hostname}' not in staging allowlist.", file=sys.stderr)
+    print(
+        f"FAIL-CLOSED: Remote host '{hostname}' blocked. "
+        f"Locust load tests only run against loopback (localhost/127.0.0.1) "
+        f"until server-side Meta interception is proven and separately authorized.",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
@@ -143,16 +140,6 @@ _start_time = None
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     """Validate host and enforce safety limits before any requests."""
-    # CTO R3: Fail-closed — remote load testing requires explicit authorization
-    if not os.environ.get("SYNTH_LOAD_TEST_AUTHORIZED"):
-        print(
-            "FAIL-CLOSED: Load testing against deployed staging is not authorized. "
-            "Set SYNTH_LOAD_TEST_AUTHORIZED=true after obtaining CTO/Owner approval "
-            "and proving server-side Meta interception.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     global _start_time
     _start_time = time.time()
 

@@ -23,15 +23,11 @@
 
 description: "Waaiio Synthetic Customer Persona Evaluations"
 
-providers:
-  - id: "webhook:waaiio-bot"
-    config:
-      url: "{{SYNTH_STAGING_URL}}/api/webhook/meta-cloud"
-      method: POST
-      headers:
-        Content-Type: "application/json"
-      # Note: Actual HMAC signing is handled by the custom provider script
-      # This config is for documentation; real execution uses the TypeScript provider
+# CTO R4: Remote webhook provider REMOVED. Direct `promptfoo eval` cannot
+# POST to deployed staging. A provider must be re-added with proven
+# server-side Meta interception and separate CTO/Owner authorization.
+#
+# providers: []  # No active provider — eval will fail without one
 
 prompts:
   - file://personas/booking-customer.yaml

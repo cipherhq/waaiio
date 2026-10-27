@@ -7,6 +7,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { CleanupTracker } from '../lib/cleanup-manifest';
+import { executeCleanup, verifyZeroSyntheticRows } from '../lib/cleanup-executor';
+import { STAGING_SUPABASE_REF } from '../lib/environment-guard';
 
 describe('CleanupTracker', () => {
   it('tracks entities for cleanup', () => {
@@ -108,5 +110,54 @@ describe('CleanupTracker', () => {
     expect(restored.getManifest().entries).toHaveLength(1);
     expect(restored.getManifest().entries[0].dependents).toHaveLength(1);
     expect(restored.getDeletionOrder()).toHaveLength(2);
+  });
+});
+
+describe('executeCleanup safety gates', () => {
+  it('dry-run succeeds without DB access', async () => {
+    const tracker = new CleanupTracker('run-dry');
+    tracker.track({ table: 'businesses', id: 'biz-1', pkColumn: 'id', meta: {} });
+
+    const result = await executeCleanup(
+      {} as any, // No DB client needed for dry-run
+      tracker,
+      { dryRun: true, supabaseRef: STAGING_SUPABASE_REF },
+    );
+
+    expect(result.mode).toBe('dry-run');
+    expect(result.planned).toBe(1);
+    expect(result.deleted).toBe(0);
+  });
+
+  it('THROWS when dryRun=false (execution unsupported)', async () => {
+    const tracker = new CleanupTracker('run-exec');
+    tracker.track({ table: 'businesses', id: 'biz-1', pkColumn: 'id', meta: {} });
+
+    await expect(executeCleanup(
+      {} as any,
+      tracker,
+      { dryRun: false, supabaseRef: STAGING_SUPABASE_REF },
+    )).rejects.toThrow('FAIL-CLOSED: executeCleanup with dryRun=false is intentionally unsupported');
+  });
+
+  it('dry-run rejects tables not in allowlist', async () => {
+    const tracker = new CleanupTracker('run-bad');
+    tracker.track({ table: 'dangerous_table', id: 'x', pkColumn: 'id', meta: {} });
+
+    const result = await executeCleanup(
+      {} as any,
+      tracker,
+      { dryRun: true, supabaseRef: STAGING_SUPABASE_REF },
+    );
+
+    expect(result.failed.length).toBe(1);
+    expect(result.failed[0].error).toContain('not in cleanup allowlist');
+  });
+});
+
+describe('verifyZeroSyntheticRows safety', () => {
+  it('rejects empty or short run IDs', async () => {
+    await expect(verifyZeroSyntheticRows({} as any, '')).rejects.toThrow('FAIL-CLOSED');
+    await expect(verifyZeroSyntheticRows({} as any, 'short')).rejects.toThrow('FAIL-CLOSED');
   });
 });

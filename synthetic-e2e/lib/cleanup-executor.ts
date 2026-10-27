@@ -58,15 +58,16 @@ const CLEANUP_ALLOWED_TABLES = new Set([
 /**
  * Execute cleanup of manifest-owned synthetic data.
  *
- * CTO R3 Fix 4: Execution and verification are intentionally unsupported
- * until staging deletion is separately authorized. This function is gated
- * with table allowlists, mandatory synthetic markers, and staging identity.
+ * CTO R4 Fix 3: When dryRun=false, this function THROWS instead of entering
+ * the delete loop. Staging deletion execution is intentionally unsupported
+ * until separately authorized. Dry-run mode is preserved for planning.
  *
- * Callers must use the CLI entry point, which exits nonzero without
- * staging credentials and authorization.
+ * When future staging deletion is authorized, the delete logic must be
+ * re-implemented with run-bound constraints, manifest PK allowlists,
+ * exact-row identity verification, and its own authorization gate.
  */
 export async function executeCleanup(
-  db: CleanupDbClient,
+  _db: CleanupDbClient,
   tracker: CleanupTracker,
   options: { dryRun: boolean; supabaseRef: string },
 ): Promise<CleanupResult> {
@@ -86,94 +87,26 @@ export async function executeCleanup(
     remainingSyntheticRows: -1,
   };
 
-  // Validate all tables are in the allowlist BEFORE any deletion
-  for (const item of deletionOrder) {
-    if (!CLEANUP_ALLOWED_TABLES.has(item.table)) {
-      result.failed.push({
-        table: item.table,
-        id: item.id,
-        error: `FAIL-CLOSED: Table "${item.table}" is not in cleanup allowlist`,
-      });
-    }
-  }
-  if (result.failed.length > 0) {
-    return result; // Abort — do not proceed with partial deletion
-  }
-
   if (options.dryRun) {
+    // Dry-run: print plan without any DB access
     for (const item of deletionOrder) {
-      console.log(`  [DRY-RUN] DELETE FROM ${item.table} WHERE ${item.pkColumn} = '${item.id}'`);
+      if (!CLEANUP_ALLOWED_TABLES.has(item.table)) {
+        result.failed.push({
+          table: item.table,
+          id: item.id,
+          error: `Table "${item.table}" is not in cleanup allowlist`,
+        });
+      }
     }
     return result;
   }
 
-  // Execute deletions in order
-  for (const item of deletionOrder) {
-    try {
-      const { data: existing, error: readError } = await db
-        .from(item.table)
-        .select('*')
-        .eq(item.pkColumn, item.id)
-        .single();
-
-      if (readError || !existing) {
-        result.failed.push({
-          table: item.table,
-          id: item.id,
-          error: `Row not found: ${readError ? JSON.stringify(readError) : 'null'}`,
-        });
-        continue;
-      }
-
-      // CTO R3 Fix 4: Ownership verification — REQUIRE at least one synthetic marker.
-      // Fail-closed: rows with NO identifiable synthetic marker are rejected.
-      const name = String(existing.name || existing.business_name || '');
-      const email = String(existing.email || '');
-      const hasSyntheticName = name && isSyntheticBusinessName(name);
-      const hasSyntheticEmail = email && isSyntheticEmail(email);
-
-      if (!hasSyntheticName && !hasSyntheticEmail) {
-        result.failed.push({
-          table: item.table,
-          id: item.id,
-          error: `FAIL-CLOSED: Row has no synthetic marker (name="${name}", email="${email}"). Refusing to delete.`,
-        });
-        continue;
-      }
-
-      const { error: deleteError, count } = await db
-        .from(item.table)
-        .delete()
-        .eq(item.pkColumn, item.id);
-
-      if (deleteError) {
-        result.failed.push({
-          table: item.table,
-          id: item.id,
-          error: `Delete failed: ${JSON.stringify(deleteError)}`,
-        });
-      } else {
-        // CTO R3: Track affected-row count for verification
-        if (count !== null && count !== 1) {
-          result.failed.push({
-            table: item.table,
-            id: item.id,
-            error: `Unexpected affected rows: expected 1, got ${count}`,
-          });
-        } else {
-          result.deleted++;
-        }
-      }
-    } catch (err) {
-      result.failed.push({
-        table: item.table,
-        id: item.id,
-        error: `Exception: ${(err as Error).message}`,
-      });
-    }
-  }
-
-  return result;
+  // CTO R4: Fail-closed — actual deletion is not supported
+  throw new Error(
+    'FAIL-CLOSED: executeCleanup with dryRun=false is intentionally unsupported. ' +
+    'Staging deletion requires separate CTO/Owner authorization and a purpose-built ' +
+    'deletion engine with run-bound constraints. Use dryRun=true for planning.'
+  );
 }
 
 /**
