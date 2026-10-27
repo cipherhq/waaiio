@@ -14,7 +14,7 @@ const MOCK_TEMPLATE_CATEGORIES: Record<string, 'utility' | 'marketing' | 'authen
   waaiio_event_invite: 'marketing',
   feedback_request: 'marketing',
 };
-const mockCategoryResolver = async (_s: SupabaseClient, _b: string, templateName: string) =>
+const mockCategoryResolver = async (_cloud: unknown, templateName: string) =>
   MOCK_TEMPLATE_CATEGORIES[templateName] || null;
 
 type Candidate = {
@@ -69,18 +69,6 @@ function raceStore() {
         const chain = {
           select: vi.fn(() => chain),
           eq: vi.fn(async () => ({ data: rows.map(row => ({ ...row })), error: null })),
-        };
-        return chain;
-      }
-      if (table === 'whatsapp_channels') {
-        // Return a mock channel with WABA credentials for template resolution
-        const chain = {
-          select: vi.fn(() => chain),
-          eq: vi.fn(() => chain),
-          maybeSingle: vi.fn(async () => ({
-            data: { waba_id: 'test-waba-123', meta_access_token: 'test-token-abc' },
-            error: null,
-          })),
         };
         return chain;
       }

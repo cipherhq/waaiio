@@ -15,7 +15,7 @@ import {
   type RuleCondition,
   type RuleContext,
 } from './rules-engine';
-import { MetaCloudService } from '@/lib/channels/meta-cloud';
+import type { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
 
 const EXTERNAL_ACTIONS = new Set(['send_message', 'send_template', 'notify_owner']);
@@ -34,45 +34,25 @@ function normalizeMetaCategory(metaCategory: string): FinancialCategory | null {
 }
 
 /**
- * Resolve a template's approved category from the business's WABA via Meta API.
- * Uses existing MetaCloudService.getTemplates() — no new infrastructure.
- * Fail closed: returns null if channel unavailable, template not found,
+ * Resolve a template's approved category from the sender's actual WABA via Meta API.
+ * Uses the already-resolved MetaCloudService from the ResolvedChannel (decrypted
+ * credentials, correct WABA). No independent channel query — the caller provides
+ * the exact cloud instance that will send the template.
+ *
+ * Fail closed: returns null if cloud unavailable, template not found on this WABA,
  * template not APPROVED, or category unrecognized.
  */
 export async function resolveTemplateCategory(
-  supabase: SupabaseClient,
-  businessId: string,
+  cloud: MetaCloudService | undefined | null,
   templateName: string,
 ): Promise<FinancialCategory | null> {
+  if (!cloud) return null;
   try {
-    // 1. Get the business's active Meta Cloud channel credentials
-    const { data: channel, error: channelErr } = await supabase
-      .from('whatsapp_channels')
-      .select('waba_id, meta_access_token')
-      .eq('business_id', businessId)
-      .eq('provider', 'meta_cloud')
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (channelErr || !channel?.waba_id || !channel?.meta_access_token) {
-      // No dedicated channel — try shared WABA from env
-      const sharedWabaId = process.env.META_CLOUD_WABA_ID;
-      const sharedToken = process.env.META_CLOUD_ACCESS_TOKEN;
-      if (!sharedWabaId || !sharedToken) return null;
-
-      const meta = new MetaCloudService({ accessToken: sharedToken, phoneNumberId: '', wabaId: sharedWabaId });
-      const { data: templates } = await meta.getTemplates({ fields: 'name,status,category' });
-      const match = templates.find(t => t.name === templateName && t.status === 'APPROVED');
-      return match ? normalizeMetaCategory(match.category) : null;
-    }
-
-    // 2. Query the business's dedicated WABA for the template
-    const meta = new MetaCloudService({ accessToken: channel.meta_access_token, phoneNumberId: '', wabaId: channel.waba_id });
-    const { data: templates } = await meta.getTemplates({ fields: 'name,status,category' });
+    const { data: templates } = await cloud.getTemplates({ fields: 'name,status,category' });
     const match = templates.find(t => t.name === templateName && t.status === 'APPROVED');
     return match ? normalizeMetaCategory(match.category) : null;
   } catch (err) {
-    logger.withContext({ op: 'sealed-rule-actions.resolve-template-category', templateName, businessId })
+    logger.withContext({ op: 'sealed-rule-actions.resolve-template-category', templateName })
       .error('[SEALED-RULES] Template category resolution failed — fail closed');
     return null;
   }
@@ -100,7 +80,8 @@ async function executeFrozenAction(
   row: FrozenRuleAction,
   context: RuleContext,
   sender?: MessageSender,
-  categoryResolver: (s: SupabaseClient, b: string, t: string) => Promise<FinancialCategory | null> = resolveTemplateCategory,
+  cloud?: MetaCloudService,
+  categoryResolver: (c: MetaCloudService | undefined | null, t: string) => Promise<FinancialCategory | null> = resolveTemplateCategory,
 ): Promise<void> {
   if (row.status === 'sending') {
     // The provider boundary was crossed by a prior worker. Reconcile to the
@@ -133,7 +114,7 @@ async function executeFrozenAction(
       // Resolve actual Meta-approved category from the business's WABA.
       // Fail closed before any provider emission or financial reservation
       // if template is not APPROVED or category is unrecognized.
-      const category = await categoryResolver(supabase, businessId, templateName);
+      const category = await categoryResolver(cloud, templateName);
       if (!category) {
         throw new Error(`sealed_template_category_unresolved:${templateName}`);
       }
@@ -183,10 +164,12 @@ export async function runSealedRuleActions(params: {
   event: string;
   context: RuleContext;
   sender?: MessageSender;
+  /** Already-resolved MetaCloudService from the sender's channel (decrypted, correct WABA). */
+  cloud?: MetaCloudService;
   /** @internal Test-only override for template category resolution. */
-  _resolveTemplateCategory?: (supabase: SupabaseClient, businessId: string, templateName: string) => Promise<FinancialCategory | null>;
+  _resolveTemplateCategory?: (cloud: MetaCloudService | undefined | null, templateName: string) => Promise<FinancialCategory | null>;
 }): Promise<{ actionCount: number; terminalCount: number }> {
-  const { supabase, paymentId, businessId, event, context, sender } = params;
+  const { supabase, paymentId, businessId, event, context, sender, cloud } = params;
   const categoryResolver = params._resolveTemplateCategory || resolveTemplateCategory;
   const existing = await readRuleActionManifest(supabase, paymentId);
   if (!existing.ok) throw new Error(`rule_manifest_lookup_failed:${existing.error}`);
@@ -227,7 +210,7 @@ export async function runSealedRuleActions(params: {
   }
 
   for (const row of frozen.rows) {
-    await executeFrozenAction(supabase, paymentId, businessId, row, context, sender, categoryResolver);
+    await executeFrozenAction(supabase, paymentId, businessId, row, context, sender, cloud, categoryResolver);
   }
 
   const finalRows = await readFrozenRuleActions(supabase, paymentId);

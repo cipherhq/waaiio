@@ -33,7 +33,7 @@ const PROACTIVE_SEND_FILES = [
   'lib/payments/recurring-offer.ts',
   // recurring-setup.ts: excluded — inbound button-tap replies, sender defaults to 'service'
   // sealed-rule-actions.ts: excluded — sendMessage is merchant-authored (no forced category),
-  //   sendTemplate resolves from TEMPLATE_CATEGORY_MAP (tested separately in sealed-rule-actions.test.ts)
+  //   sendTemplate resolves from Meta API via sender's cloud (tested separately in sealed-rule-actions.test.ts)
 ];
 
 /** Matches a line that opens a sender.send* call */
