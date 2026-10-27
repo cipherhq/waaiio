@@ -25,6 +25,56 @@ interface SeatingResource {
   deposit_amount: number;
   reservation_duration_minutes: number;
   description: string | null;
+  available_days: string[] | null;
+  available_from: string | null;
+  available_to: string | null;
+}
+
+/** Build validate() return data for a seating resource */
+function buildSelectionData(r: SeatingResource): Record<string, unknown> {
+  return {
+    seating_resource_id: r.id,
+    seating_resource_name: r.name,
+    _seating_capacity: r.capacity,
+    _seating_min_party: r.min_party_size,
+    _seating_deposit: r.deposit_amount,
+    _seating_duration: r.reservation_duration_minutes,
+    _seating_available_days: r.available_days,
+    _seating_available_from: r.available_from,
+    _seating_available_to: r.available_to,
+    _service_available_days: r.available_days,
+    _service_available_from: r.available_from,
+    _service_available_to: r.available_to,
+    service_deposit: r.deposit_amount,
+    service_duration: r.reservation_duration_minutes,
+    service_price: r.deposit_amount,
+    _service_price_is_variable: true,
+    _service_max_capacity: r.capacity,
+    _is_table_reservation: true,
+  };
+}
+
+/** Set session data for a selected seating resource — shared by skipIf */
+function setSeatingSessionData(ctx: FlowContext, r: SeatingResource) {
+  ctx.session.session_data.seating_resource_id = r.id;
+  ctx.session.session_data.seating_resource_name = r.name;
+  ctx.session.session_data._seating_capacity = r.capacity;
+  ctx.session.session_data._seating_min_party = r.min_party_size;
+  ctx.session.session_data._seating_deposit = r.deposit_amount;
+  ctx.session.session_data._seating_duration = r.reservation_duration_minutes;
+  ctx.session.session_data._seating_available_days = r.available_days;
+  ctx.session.session_data._seating_available_from = r.available_from;
+  ctx.session.session_data._seating_available_to = r.available_to;
+  // Bridge to scheduling's time-slot filter fields
+  ctx.session.session_data._service_available_days = r.available_days;
+  ctx.session.session_data._service_available_from = r.available_from;
+  ctx.session.session_data._service_available_to = r.available_to;
+  ctx.session.session_data.service_deposit = r.deposit_amount;
+  ctx.session.session_data.service_duration = r.reservation_duration_minutes;
+  ctx.session.session_data.service_price = r.deposit_amount;
+  ctx.session.session_data._service_price_is_variable = true;
+  ctx.session.session_data._service_max_capacity = r.capacity;
+  ctx.session.session_data._is_table_reservation = true;
 }
 
 const selectTableStep: FlowStepConfig = {
@@ -35,7 +85,7 @@ const selectTableStep: FlowStepConfig = {
 
     const { data: resources } = await ctx.supabase
       .from('seating_resources')
-      .select('id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description')
+      .select('id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description, available_days, available_from, available_to')
       .eq('business_id', ctx.business.id)
       .eq('is_active', true)
       .order('sort_order');
@@ -49,24 +99,6 @@ const selectTableStep: FlowStepConfig = {
           { id: 'recovery_exit', title: 'Exit' },
         ],
       }];
-    }
-
-    // Auto-select if only one resource
-    if (resources.length === 1) {
-      const r = resources[0] as SeatingResource;
-      ctx.session.session_data.seating_resource_id = r.id;
-      ctx.session.session_data.seating_resource_name = r.name;
-      ctx.session.session_data._seating_capacity = r.capacity;
-      ctx.session.session_data._seating_min_party = r.min_party_size;
-      ctx.session.session_data._seating_deposit = r.deposit_amount;
-      ctx.session.session_data._seating_duration = r.reservation_duration_minutes;
-      ctx.session.session_data.service_deposit = r.deposit_amount;
-      ctx.session.session_data.service_duration = r.reservation_duration_minutes;
-      ctx.session.session_data.service_price = 0; // Table reservations are typically free (deposit separate)
-      ctx.session.session_data._service_max_capacity = r.capacity;
-      ctx.session.session_data._is_table_reservation = true;
-      ctx.session.session_data.skip_service = true;
-      return [];
     }
 
     const cc = (ctx.business.country_code || 'NG') as CountryCode;
@@ -109,38 +141,25 @@ const selectTableStep: FlowStepConfig = {
       return { valid: true, data: { _action: 'cancel' } };
     }
 
+    const selectFields = 'id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description, available_days, available_from, available_to';
+
     // Try exact ID match first
     const { data: resource } = await ctx.supabase
       .from('seating_resources')
-      .select('id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description')
+      .select(selectFields)
       .eq('id', input)
       .eq('business_id', ctx.business!.id)
       .eq('is_active', true)
       .maybeSingle();
 
     if (resource) {
-      return {
-        valid: true,
-        data: {
-          seating_resource_id: resource.id,
-          seating_resource_name: resource.name,
-          _seating_capacity: resource.capacity,
-          _seating_min_party: resource.min_party_size,
-          _seating_deposit: resource.deposit_amount,
-          _seating_duration: resource.reservation_duration_minutes,
-          service_deposit: resource.deposit_amount,
-          service_duration: resource.reservation_duration_minutes,
-          service_price: 0,
-          _service_max_capacity: resource.capacity,
-          _is_table_reservation: true,
-        },
-      };
+      return { valid: true, data: buildSelectionData(resource as SeatingResource) };
     }
 
     // Fuzzy match by name
     const { data: all } = await ctx.supabase
       .from('seating_resources')
-      .select('id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description')
+      .select(selectFields)
       .eq('business_id', ctx.business!.id)
       .eq('is_active', true);
 
@@ -148,22 +167,7 @@ const selectTableStep: FlowStepConfig = {
       const lower = input.toLowerCase();
       const match = (all as SeatingResource[]).find(r => r.name.toLowerCase().includes(lower));
       if (match) {
-        return {
-          valid: true,
-          data: {
-            seating_resource_id: match.id,
-            seating_resource_name: match.name,
-            _seating_capacity: match.capacity,
-            _seating_min_party: match.min_party_size,
-            _seating_deposit: match.deposit_amount,
-            _seating_duration: match.reservation_duration_minutes,
-            service_deposit: match.deposit_amount,
-            service_duration: match.reservation_duration_minutes,
-            service_price: 0,
-            _service_max_capacity: match.capacity,
-            _is_table_reservation: true,
-          },
-        };
+        return { valid: true, data: buildSelectionData(match) };
       }
     }
 
@@ -183,7 +187,24 @@ const selectTableStep: FlowStepConfig = {
   },
 
   async skipIf(ctx: FlowContext) {
-    return !!ctx.session.session_data.skip_service;
+    if (ctx.session.session_data.skip_service) return true;
+    if (!ctx.business) return false;
+
+    // Auto-select if only one active resource (runs BEFORE prompt)
+    const { data: resources } = await ctx.supabase
+      .from('seating_resources')
+      .select('id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description, available_days, available_from, available_to')
+      .eq('business_id', ctx.business.id)
+      .eq('is_active', true)
+      .order('sort_order');
+
+    if (resources && resources.length === 1) {
+      const r = resources[0] as SeatingResource;
+      setSeatingSessionData(ctx, r);
+      return true;
+    }
+
+    return false;
   },
 };
 

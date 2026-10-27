@@ -65,21 +65,57 @@ CREATE POLICY seating_resources_owner_insert ON public.seating_resources FOR INS
   WITH CHECK (business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid()));
 CREATE POLICY seating_resources_owner_update ON public.seating_resources FOR UPDATE
   USING (business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid()));
-CREATE POLICY seating_resources_owner_delete ON public.seating_resources FOR DELETE
-  USING (business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid()));
+-- No DELETE policy: archive-only semantics (is_active=false).
+-- Hard deletes blocked by trigger below to preserve booking history.
 CREATE POLICY seating_resources_service_all ON public.seating_resources FOR ALL TO service_role
   USING (true) WITH CHECK (true);
+
+-- Admin read access (support, operations, admin)
+CREATE POLICY seating_resources_admin_select ON public.seating_resources FOR SELECT
+  TO authenticated
+  USING (public.has_admin_role(ARRAY['admin', 'support', 'operations']));
+
+-- Admin write access (admin only — platform-admin CRUD)
+CREATE POLICY seating_resources_admin_write ON public.seating_resources FOR ALL
+  TO authenticated
+  USING (public.has_admin_role(ARRAY['admin']))
+  WITH CHECK (public.has_admin_role(ARRAY['admin']));
+
+-- Authenticated role needs table-level grants for RLS policies to take effect
+GRANT SELECT, INSERT, UPDATE ON public.seating_resources TO authenticated;
 
 -- ═══════════════════════════════════════════════════════
 -- 1D. FK on bookings table
 -- ═══════════════════════════════════════════════════════
 ALTER TABLE public.bookings
   ADD COLUMN IF NOT EXISTS seating_resource_id UUID
-    REFERENCES public.seating_resources(id) ON DELETE SET NULL;
+    REFERENCES public.seating_resources(id) ON DELETE RESTRICT;
 
 CREATE INDEX IF NOT EXISTS idx_bookings_seating_resource
   ON public.bookings(seating_resource_id)
   WHERE seating_resource_id IS NOT NULL;
+
+-- ═══════════════════════════════════════════════════════
+-- 1D-2. Delete guard: prevent destroying referenced resources
+-- ═══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION public.guard_seating_resource_delete()
+RETURNS TRIGGER AS $$
+DECLARE v_count INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO v_count
+  FROM bookings WHERE seating_resource_id = OLD.id;
+  IF v_count > 0 THEN
+    RAISE EXCEPTION 'Cannot delete seating resource with % existing booking(s). Archive it instead (is_active=false).', v_count
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_guard_seating_resource_delete
+  BEFORE DELETE ON public.seating_resources
+  FOR EACH ROW
+  EXECUTE FUNCTION public.guard_seating_resource_delete();
 
 -- ═══════════════════════════════════════════════════════
 -- 1E. book_table_atomic RPC
@@ -122,6 +158,8 @@ DECLARE
   v_overlap_count INTEGER;
   v_req_start TIME;
   v_req_end TIME;
+  v_biz_tz TEXT;
+  v_day_name TEXT;
 BEGIN
   -- ── Bot session idempotency ──
   IF p_bot_session_id IS NOT NULL THEN
@@ -147,7 +185,8 @@ BEGIN
 
   -- ── Validate seating resource ──
   SELECT sr.id, sr.business_id, sr.capacity, sr.min_party_size,
-         sr.is_active, sr.reservation_duration_minutes
+         sr.is_active, sr.reservation_duration_minutes,
+         sr.available_days, sr.available_from, sr.available_to
   INTO v_resource
   FROM seating_resources sr
   WHERE sr.id = p_seating_resource_id
@@ -172,9 +211,33 @@ BEGIN
     RAISE EXCEPTION 'party_too_large:Maximum capacity is %', v_resource.capacity;
   END IF;
 
-  -- ── Time overlap check ──
+  -- ── Availability enforcement (day + time window) ──
+  -- Get business timezone for day-of-week
+  SELECT COALESCE(b.timezone, 'Africa/Lagos') INTO v_biz_tz
+  FROM businesses b WHERE b.id = p_business_id;
+
+  v_day_name := lower(to_char(p_date AT TIME ZONE COALESCE(v_biz_tz, 'Africa/Lagos'), 'fmday'));
+
+  -- Day-of-week check
+  IF v_resource.available_days IS NOT NULL AND array_length(v_resource.available_days, 1) > 0 THEN
+    IF NOT (v_day_name = ANY(v_resource.available_days)) THEN
+      RAISE EXCEPTION 'day_unavailable:This resource is not available on %', initcap(v_day_name);
+    END IF;
+  END IF;
+
+  -- Time window check
   v_req_start := p_time::TIME;
-  v_req_end := p_time::TIME + make_interval(mins => COALESCE(p_duration_minutes, v_resource.reservation_duration_minutes));
+  IF v_resource.available_from IS NOT NULL AND v_req_start < v_resource.available_from THEN
+    RAISE EXCEPTION 'before_opening:Earliest reservation time is %', v_resource.available_from::text;
+  END IF;
+
+  v_req_end := v_req_start + make_interval(mins => COALESCE(p_duration_minutes, v_resource.reservation_duration_minutes));
+
+  IF v_resource.available_to IS NOT NULL AND v_req_end > v_resource.available_to THEN
+    RAISE EXCEPTION 'after_closing:Reservation would extend past closing time %', v_resource.available_to::text;
+  END IF;
+
+  -- ── Time overlap check (v_req_start/v_req_end already set above) ──
 
   SELECT COUNT(*) INTO v_overlap_count
   FROM bookings b

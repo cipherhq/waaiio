@@ -170,6 +170,55 @@ describe('#730: Migration 472 SQL structure', () => {
     expect(sql).toContain('472 SELF-CHECK PASSED');
   });
 
+  it('migration enforces availability in book_table_atomic', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Day-of-week enforcement
+    expect(sql).toContain('available_days');
+    expect(sql).toContain('day_unavailable');
+
+    // Time window enforcement
+    expect(sql).toContain('available_from');
+    expect(sql).toContain('available_to');
+    expect(sql).toContain('before_opening');
+    expect(sql).toContain('after_closing');
+
+    // Business timezone lookup
+    expect(sql).toContain('v_biz_tz');
+    expect(sql).toContain('Africa/Lagos');
+  });
+
+  it('migration has delete-guard trigger for referenced resources', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    expect(sql).toContain('guard_seating_resource_delete');
+    expect(sql).toContain('trg_guard_seating_resource_delete');
+    expect(sql).toContain('Cannot delete seating resource');
+    // No DELETE RLS policy — archive only
+    expect(sql).not.toContain('seating_resources_owner_delete');
+    // FK uses RESTRICT, not SET NULL
+    expect(sql).toContain('ON DELETE RESTRICT');
+    expect(sql).not.toMatch(/seating_resource_id.*ON DELETE SET NULL/);
+  });
+
+  it('migration includes admin RLS policies', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    expect(sql).toContain('seating_resources_admin_select');
+    expect(sql).toContain('seating_resources_admin_write');
+    expect(sql).toContain('has_admin_role');
+    expect(sql).toContain('GRANT SELECT, INSERT, UPDATE ON public.seating_resources TO authenticated');
+  });
+
   it('migration does NOT modify existing tables or functions unsafely', async () => {
     const fs = await import('fs');
     const path = await import('path');
@@ -186,5 +235,150 @@ describe('#730: Migration 472 SQL structure', () => {
     expect(sql).not.toContain('ALTER TABLE public.services');
     expect(sql).not.toContain('ALTER TABLE public.appointments');
     expect(sql).not.toContain('ALTER TABLE public.reservations');
+  });
+});
+
+describe('#730: Deposit authority — table reservation financial path', () => {
+  it('resolveRuntimeDeposit preserves deposit when priceIsVariable=true', async () => {
+    const { resolveRuntimeDeposit } = await import('@/lib/payments/deposit-amount-authority');
+
+    // Simulates table reservation: deposit=5000, total=5000, variable=true
+    const result = resolveRuntimeDeposit({
+      requestedDeposit: 5000,
+      transactionTotal: 5000,
+      priceIsVariable: true,
+    });
+
+    expect(result.amount).toBe(5000);
+    expect(result.corrected).toBe(false);
+  });
+
+  it('resolveRuntimeDeposit still preserves large deposit when priceIsVariable=true and total is lower', async () => {
+    const { resolveRuntimeDeposit } = await import('@/lib/payments/deposit-amount-authority');
+
+    // variable=true: skip clamping regardless of total
+    const result = resolveRuntimeDeposit({
+      requestedDeposit: 5000,
+      transactionTotal: 0,
+      priceIsVariable: true,
+    });
+
+    expect(result.amount).toBe(5000);
+    expect(result.corrected).toBe(false);
+  });
+
+  it('resolveRuntimeDeposit clamps deposit when priceIsVariable=false (the original bug)', async () => {
+    const { resolveRuntimeDeposit } = await import('@/lib/payments/deposit-amount-authority');
+
+    const result = resolveRuntimeDeposit({
+      requestedDeposit: 5000,
+      transactionTotal: 0,
+      priceIsVariable: false,
+    });
+
+    expect(result.amount).toBe(0);
+    expect(result.corrected).toBe(true);
+    expect(result.reason).toBe('deposit_exceeds_transaction_total');
+  });
+
+  it('table-reservation flow sets _service_price_is_variable=true', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const flowPath = path.join(process.cwd(), 'lib/bot/flows/table-reservation.flow.ts');
+    const code = fs.readFileSync(flowPath, 'utf-8');
+
+    const matches = code.match(/_service_price_is_variable.*true/g) || [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('zero-deposit table reservation: no payment needed', async () => {
+    const { resolveRuntimeDeposit } = await import('@/lib/payments/deposit-amount-authority');
+
+    const result = resolveRuntimeDeposit({
+      requestedDeposit: 0,
+      transactionTotal: 0,
+      priceIsVariable: true,
+    });
+
+    expect(result.amount).toBe(0);
+    expect(result.corrected).toBe(false);
+  });
+});
+
+describe('#730: Shared flow adaptations', () => {
+  it('scheduling select_staff skips for table reservations', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const flowPath = path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts');
+    const code = fs.readFileSync(flowPath, 'utf-8');
+
+    expect(code).toContain('if (d._is_table_reservation) return true;');
+  });
+
+  it('scheduling select_time filters by seating_resource_id for table reservations', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const flowPath = path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts');
+    const code = fs.readFileSync(flowPath, 'utf-8');
+
+    expect(code).toContain("bookingsQuery = bookingsQuery.eq('seating_resource_id', seatingResourceId)");
+  });
+
+  it('scheduling select_quantity enforces seating min/max bounds', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const flowPath = path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts');
+    const code = fs.readFileSync(flowPath, 'utf-8');
+
+    expect(code).toContain('_seating_capacity');
+    expect(code).toContain('_seating_min_party');
+    expect(code).toContain('isTableReservation');
+  });
+
+  it('table-reservation flow bridges availability to scheduling fields', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const flowPath = path.join(process.cwd(), 'lib/bot/flows/table-reservation.flow.ts');
+    const code = fs.readFileSync(flowPath, 'utf-8');
+
+    expect(code).toContain('_service_available_days');
+    expect(code).toContain('_service_available_from');
+    expect(code).toContain('_service_available_to');
+  });
+
+  it('table-reservation auto-selection is in skipIf (not prompt)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const flowPath = path.join(process.cwd(), 'lib/bot/flows/table-reservation.flow.ts');
+    const code = fs.readFileSync(flowPath, 'utf-8');
+
+    expect(code).toMatch(/skipIf[\s\S]*?resources\.length === 1/);
+    const promptSection = code.slice(code.indexOf('async prompt'), code.indexOf('async validate'));
+    expect(promptSection).not.toContain('skip_service');
+  });
+});
+
+describe('#730: Admin API and security', () => {
+  it('admin seating-resources route uses requirePlatformAdmin + audit', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const routePath = path.join(process.cwd(), 'app/api/admin/seating-resources/route.ts');
+    const code = fs.readFileSync(routePath, 'utf-8');
+
+    expect(code).toContain('requirePlatformAdmin');
+    expect(code).toContain('logAdminAudit');
+    expect(code).toContain("admin.role !== 'admin'");
+    expect(code).toContain('createServiceClient');
+  });
+
+  it('merchant API uses RLS-scoped client (no service_role)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const routePath = path.join(process.cwd(), 'app/api/seating-resources/route.ts');
+    const code = fs.readFileSync(routePath, 'utf-8');
+
+    expect(code).not.toContain('createServiceClient');
+    expect(code).not.toContain('requirePlatformAdmin');
+    expect(code).toContain('@/lib/supabase/server');
   });
 });

@@ -149,8 +149,8 @@ export default function SeatingPage() {
     loadResources();
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Remove this seating resource? Existing reservations will keep their reference.')) return;
+  const handleArchive = async (id: string) => {
+    if (!confirm('Deactivate this seating area? It will be hidden from customers but existing reservations are preserved.')) return;
     const supabase = createClient();
     await supabase.from('seating_resources').update({ is_active: false }).eq('id', id);
     loadResources();
@@ -341,7 +341,7 @@ export default function SeatingPage() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                   </button>
                   {r.is_active ? (
-                    <button onClick={() => handleDelete(r.id)} className="p-1.5 text-gray-400 hover:text-red-600" title="Deactivate">
+                    <button onClick={() => handleArchive(r.id)} className="p-1.5 text-gray-400 hover:text-red-600" title="Deactivate">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
                     </button>
                   ) : (

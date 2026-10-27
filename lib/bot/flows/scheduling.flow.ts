@@ -600,6 +600,9 @@ export const schedulingFlow: FlowDefinition = {
         if (!ctx.business) return true;
         const d = ctx.session.session_data;
 
+        // Table reservations don't use staff selection
+        if (d._is_table_reservation) return true;
+
         // If service explicitly says no staff needed, skip
         if (d._service_requires_staff === false) return true;
 
@@ -1197,14 +1200,19 @@ export const schedulingFlow: FlowDefinition = {
         const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
 
         // Fetch existing bookings for this date (include duration + buffer for overlap detection)
+        const isTableRes = ctx.session.session_data._is_table_reservation === true;
+        const seatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
         let bookingsQuery = ctx.supabase
           .from('bookings')
-          .select('time, staff_id, services(duration_minutes, buffer_minutes)')
+          .select('time, staff_id, metadata, services(duration_minutes, buffer_minutes)')
           .eq('business_id', ctx.business!.id)
           .eq('date', dateStr)
           .in('status', ['confirmed', 'pending', 'in_progress']);
 
-        if (staffId) {
+        if (isTableRes && seatingResourceId) {
+          // Table reservations: filter by specific resource to show resource-level availability
+          bookingsQuery = bookingsQuery.eq('seating_resource_id', seatingResourceId);
+        } else if (staffId) {
           bookingsQuery = bookingsQuery.eq('staff_id', staffId);
         }
 
@@ -1217,8 +1225,10 @@ export const schedulingFlow: FlowDefinition = {
           if (b.time) {
             const bookingStart = timeToMinutes(b.time.slice(0, 5));
             const svc = b.services as unknown as { duration_minutes?: number; buffer_minutes?: number } | null;
+            const bMeta = b.metadata as Record<string, unknown> | null;
             const fallbackDuration = (ctx.session.session_data.service_duration as number) || 30;
-            const bookingDuration = (svc?.duration_minutes || fallbackDuration) + (svc?.buffer_minutes || 0);
+            // Table reservations store duration in metadata; services use service.duration_minutes
+            const bookingDuration = (bMeta?.duration_minutes as number) || (svc?.duration_minutes || fallbackDuration) + (svc?.buffer_minutes || 0);
 
             // Block all slots that overlap with this booking's time range (duration + buffer)
             for (const slot of allSlots) {
