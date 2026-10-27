@@ -18,9 +18,9 @@ Issue #728 Phase 3: Controlled load testing with:
 
 SAFETY: Never launch unbounded load or hit real providers.
 
-Usage (REQUIRES SEPARATE AUTHORIZATION):
+Usage (loopback only — remote hosts are rejected):
     locust -f synthetic-e2e/locust/locustfile.py \
-        --host https://staging.waaiio.com \
+        --host http://localhost:3000 \
         --users 5 --spawn-rate 1 --run-time 60s \
         --headless --csv=synthetic-e2e/reports/locust
 
@@ -257,5 +257,6 @@ class SyntheticCustomer(HttpUser):
             },
             name=f"webhook/{text[:20]}",
             timeout=60,
+            allow_redirects=False,  # CTO R5: prevent redirect to external URLs
         )
         self.message_count += 1

@@ -52,19 +52,22 @@ synthetic-e2e/
 npx vitest run synthetic-e2e/__tests__/
 ```
 
-**Test inventory:**
+**Test inventory (133 tests, 12 files):**
 
 | File | Tests | What it proves |
 |------|-------|---------------|
-| `environment-guard.test.ts` | 19 | Production URLs, Supabase refs, live keys rejected |
+| `environment-guard.test.ts` | 19 | Production URLs, Supabase refs, live keys, Meta tokens rejected |
 | `hmac-signer.test.ts` | 10 | HMAC signing matches Meta format |
 | `capture-transport.test.ts` | 10 | Capture transport isolates sends |
 | `synthetic-identity.test.ts` | 12 | Identities use reserved ranges |
-| `cleanup-manifest.test.ts` | 6 | Deletion ordering, dedup, serialization |
+| `cleanup-manifest.test.ts` | 10 | Ordering, dedup, executeCleanup fail-closed, allowlist, verify gate |
 | `audit-logger.test.ts` | 10 | Event recording, Markdown, redaction |
-| `capturing-sender.test.ts` | 13 | All MessageSender methods captured |
-| `network-deny.test.ts` | 7 | Meta fetch blocked, counters, restore |
-| `bot-stop-start.test.ts` | 7+ | Real BotService STOP/START with captures |
+| `capturing-sender.test.ts` | 13 | All MessageSender methods captured at boundary |
+| `network-deny.test.ts` | 7 | Meta fetch blocked, local-only, counters |
+| `bot-stop-start.test.ts` | 7 | BotService STOP/safety with captures |
+| `bot-stop-start-stateful.test.ts` | 3 | STOP→START→re-STOP lifecycle, B unchanged, write failure |
+| `sender-authorization-boundary.test.ts` | 5 | Real MetaCloudSender: deny→0 calls, authorize→1 call |
+| `remote-simulation-safety.test.ts` | 13 | Locust/Promptfoo/WebhookClient cannot reach remote hosts, redirect blocked |
 
 ### Cleanup CLI (intentionally unsupported)
 

@@ -85,3 +85,50 @@ describe('WebhookClient remote traffic prevention', () => {
     expect(webhookSrc).toContain("throw new Error(\n    'FAIL-CLOSED: Remote webhook delivery");
   });
 });
+
+describe('Locust redirect safety', () => {
+  const locustSrc = readFileSync(
+    resolve(__dirname, '../locust/locustfile.py'), 'utf-8',
+  );
+
+  it('HTTP POST uses allow_redirects=False to prevent redirect-based egress', () => {
+    // CTO R5: Locust client.post must not follow redirects
+    expect(locustSrc).toContain('allow_redirects=False');
+  });
+
+  it('example command uses loopback, not staging URL', () => {
+    // The usage example must reference localhost, not staging.waaiio.com
+    const usageIdx = locustSrc.indexOf('Usage');
+    const usageEnd = locustSrc.indexOf('"""', usageIdx);
+    const usageBlock = locustSrc.slice(usageIdx, usageEnd);
+    expect(usageBlock).toContain('localhost');
+    expect(usageBlock).not.toContain('staging.waaiio.com');
+  });
+});
+
+describe('WebhookClient executable fail-closed test', () => {
+  it('WebhookClient.sendText throws before any network call', async () => {
+    // Import the actual WebhookClient and verify it throws at runtime
+    const { WebhookClient } = await import('../lib/webhook-client');
+    const client = new WebhookClient({
+      baseUrl: 'http://localhost:3000',
+      metaAppSecret: 'test_secret',
+      phoneNumberId: '123',
+    });
+
+    await expect(client.sendText('15550001234', 'test'))
+      .rejects.toThrow('FAIL-CLOSED: Remote webhook delivery');
+  });
+
+  it('WebhookClient.sendButtonReply throws before any network call', async () => {
+    const { WebhookClient } = await import('../lib/webhook-client');
+    const client = new WebhookClient({
+      baseUrl: 'http://localhost:3000',
+      metaAppSecret: 'test_secret',
+      phoneNumberId: '123',
+    });
+
+    await expect(client.sendButtonReply('15550001234', 'btn', 'Button'))
+      .rejects.toThrow('FAIL-CLOSED: Remote webhook delivery');
+  });
+});
