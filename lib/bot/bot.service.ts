@@ -4872,8 +4872,11 @@ export class BotService {
       merchantName = biz?.name || 'this business';
     } else {
       // Shared channel — resolve from recent sessions
-      candidates = await this._resolveStopCandidates(from, destinationPhone);
-      if (candidates.length === 1) {
+      const resolved = await this._resolveStopCandidates(from, destinationPhone);
+      candidates = resolved.candidates;
+      // Only auto-select a single candidate when channel-verified (Tier 1).
+      // Tier 2 (cross-channel history) must always show picker — never auto-mutate consent.
+      if (candidates.length === 1 && resolved.channelVerified) {
         merchantId = candidates[0].id;
         merchantName = candidates[0].name;
       }
@@ -5015,13 +5018,14 @@ export class BotService {
 
     // Shared channel: resolve merchant context same as STOP, then resubscribe that merchant only.
     // Per Owner decision: START is merchant-specific. Do NOT resubscribe all businesses or platform.
-    const candidates = await this._resolveStopCandidates(from, _destinationPhone);
-    if (candidates.length === 1) {
+    const resolved = await this._resolveStopCandidates(from, _destinationPhone);
+    // Only auto-resubscribe when channel-verified (same provenance safety as STOP)
+    if (resolved.candidates.length === 1 && resolved.channelVerified) {
       const { data: updated, error: resubErr } = await this.supabase
         .from('messaging_opt_outs')
         .update({ resubscribed_at: new Date().toISOString() })
         .eq('phone', ensurePlus(from))
-        .eq('business_id', candidates[0].id)
+        .eq('business_id', resolved.candidates[0].id)
         .eq('channel', 'whatsapp')
         .is('resubscribed_at', null)
         .select('id');
@@ -5031,7 +5035,7 @@ export class BotService {
         return true;
       }
       if (updated && updated.length > 0) {
-        await this.sendPlatformText(from, `You have been resubscribed to *${candidates[0].name}*. You will receive their messages again.`);
+        await this.sendPlatformText(from, `You have been resubscribed to *${resolved.candidates[0].name}*. You will receive their messages again.`);
       } else {
         await this.sendPlatformText(from, 'You are already subscribed. No action needed.');
       }
@@ -5130,10 +5134,16 @@ export class BotService {
    * Resolve merchant candidates for STOP on shared channels.
    * Tier 1: active sessions with matching channel. Tier 2: recent sessions for this phone.
    */
+  /**
+   * Resolve merchant candidates for STOP on shared channels.
+   * Returns { candidates, channelVerified }.
+   * channelVerified=true: Tier 1 match (same channel). Safe to auto-select single candidate.
+   * channelVerified=false: Tier 2 history (cross-channel). Must show picker even for 1 candidate.
+   */
   private async _resolveStopCandidates(
     from: string,
     destinationPhone: string | undefined,
-  ): Promise<Array<{ id: string; name: string; bot_code: string }>> {
+  ): Promise<{ candidates: Array<{ id: string; name: string; bot_code: string }>; channelVerified: boolean }> {
     // Resolve channel ID from destinationPhone
     let channelId: string | null = null;
     if (destinationPhone) {
@@ -5146,7 +5156,7 @@ export class BotService {
       channelId = ch?.id || null;
     }
 
-    // Tier 1: active sessions where _inbound_channel_id matches
+    // Tier 1: active sessions where _inbound_channel_id matches current channel
     if (channelId) {
       const { data: tier1 } = await this.supabase
         .from('bot_sessions')
@@ -5158,11 +5168,12 @@ export class BotService {
         .limit(10);
       if (tier1 && tier1.length > 0) {
         const bizIds = [...new Set(tier1.map(s => s.business_id).filter(Boolean))] as string[];
-        return this._fetchBizSummaries(bizIds);
+        return { candidates: await this._fetchBizSummaries(bizIds), channelVerified: true };
       }
     }
 
-    // Tier 2: recent sessions for this phone (any status) with non-null business_id
+    // Tier 2: recent sessions for this phone (any status) — cross-channel history.
+    // These are CHOICES only, never auto-selected for consent mutation.
     const { data: tier2 } = await this.supabase
       .from('bot_sessions')
       .select('business_id')
@@ -5172,10 +5183,10 @@ export class BotService {
       .limit(20);
     if (tier2 && tier2.length > 0) {
       const bizIds = [...new Set(tier2.map(s => s.business_id).filter(Boolean))] as string[];
-      return this._fetchBizSummaries(bizIds.slice(0, 10));
+      return { candidates: await this._fetchBizSummaries(bizIds.slice(0, 10)), channelVerified: false };
     }
 
-    return [];
+    return { candidates: [], channelVerified: false };
   }
 
   private async _fetchBizSummaries(
