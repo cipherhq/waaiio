@@ -298,3 +298,50 @@ describe('Phone normalization (#721 Codex P1)', () => {
     expect(growthSrc).toContain('ensurePlus(phone)');
   });
 });
+
+describe('#721 STOP: Abuse timeout bypass (R10 P1)', () => {
+  it('Timeout check exempts verified pending STOP (_preResolvedPendingStop)', () => {
+    // The timeout gate must include !_preResolvedPendingStop
+    expect(src).toContain('timeoutCheck.timedOut && !_preResolvedPendingStop');
+  });
+
+  it('Pre-resolved pending STOP requires same-channel verification before bypass', () => {
+    // The _preResolvedPendingStop flag is set only after channel verification
+    const preResolveIdx = src.indexOf('_preResolvedPendingStop = prePendingSession');
+    const channelVerifyIdx = src.indexOf('preCh.id === storedChId');
+    expect(preResolveIdx).toBeGreaterThan(0);
+    expect(channelVerifyIdx).toBeGreaterThan(0);
+    // Channel verification must come BEFORE the flag is set
+    expect(channelVerifyIdx).toBeLessThan(preResolveIdx);
+  });
+
+  it('Rate limit also exempts verified pending STOP', () => {
+    expect(src).toContain('!phoneRateLimit.allowed && !_preResolvedPendingStop');
+  });
+
+  it('Maintenance also exempts verified pending STOP', () => {
+    expect(src).toContain('maintResult.data?.value === true && !_preResolvedPendingStop');
+  });
+
+  it('Wrong-channel pending session does NOT set bypass flag', () => {
+    // When channel doesn't match, _preResolvedPendingStop stays null
+    const preResolveBlock = src.slice(
+      src.indexOf('_preResolvedPendingStop: Record<string, unknown>'),
+      src.indexOf('Pre-checks: rate limit')
+    );
+    // Verify channel match is REQUIRED (not optional)
+    expect(preResolveBlock).toContain('preCh.id === storedChId');
+    // Verify missing storedChId prevents bypass
+    expect(preResolveBlock).toContain('if (storedChId && destinationPhone)');
+  });
+
+  it('Timeout gate ordering: pre-resolve → rate limit → timeout → early dispatcher', () => {
+    const preResolveIdx = src.indexOf('_preResolvedPendingStop: Record<string, unknown>');
+    const rateLimitIdx = src.indexOf('!phoneRateLimit.allowed && !_preResolvedPendingStop');
+    const timeoutIdx = src.indexOf('timeoutCheck.timedOut && !_preResolvedPendingStop');
+    const earlyDispatcherIdx = src.indexOf('Early pending-STOP dispatcher');
+    expect(preResolveIdx).toBeLessThan(rateLimitIdx);
+    expect(rateLimitIdx).toBeLessThan(timeoutIdx);
+    expect(timeoutIdx).toBeLessThan(earlyDispatcherIdx);
+  });
+});
