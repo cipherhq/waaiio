@@ -11,9 +11,15 @@
 - **`components/dashboard/Sidebar.tsx`**: Added Seating nav item gated on `table_reservation` capability.
 - **`app/dashboard/reservations/page.tsx`**: Added Table Reservations tab, `flow_type`/`seating_resource_id` to booking query and Booking interface.
 - **`app/api/seating-resources/route.ts`** (new): GET/POST/PATCH for seating resources with RLS-enforced ownership.
-- **`lib/__tests__/table-reservation-730.test.ts`** (new): 16 tests covering FlowType, routing, registry, F-1 fix, capability definitions, migration structure, and non-regression.
+- **`lib/__tests__/table-reservation-730.test.ts`** (new): 44 tests covering routing, deposit authority, availability, admin security, migration structure, and non-regression.
 - **Affects**: `table_reservation` capability routing, food/dining category defaults. Businesses without configured seating fail closed (capability hidden from WhatsApp menu).
 - **Does NOT affect**: existing `book_slot_atomic`, scheduling/appointment/stays/ordering/ticketing flows, payment pipeline, existing bookings data.
+
+### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
+
+- **`docs/ops/subscription-messaging-credit-10pct-audit-2026-10-26.md`**: Surgical documentation corrections per CTO review. (1) Updated stale references: PRs #711 and #722 now noted as merged; #712 remains open draft on separate lane. (2) Moved Admin-control configurability from approved decisions to unresolved future implementation gates. (3) Explicitly distinguished four unresolved Owner decisions (discount/tax basis, annual billing, rounding rule, Admin-control design) from the already-approved 10% rate. (4) Clarified section 4 heading applies to the future implementation PR, not this documentation PR. (5) Labeled US/CA Premium 10% credit amounts as illustrative pending rounding approval. (6) Retained explicit "no merge without separate Owner authorization" in governance section.
+- **Affects**: Documentation only. No application code, migrations, database configuration, payment providers, messaging paths, or runtime behavior changed.
+- **Could break**: Nothing. No code imports or runtime dependencies on this document.
 
 ### #721 — STOP P1 corrections: consent-routing, provenance, Option C (2026-10-27)
 
