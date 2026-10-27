@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { verifyConsent } from './consent-service';
 import { logger } from '@/lib/logger';
+import { ensurePlus } from '@/lib/utils/phone';
 
 export type EligibilityStatus =
   | 'template_eligible'  // Can send WhatsApp template
@@ -26,14 +27,26 @@ export async function getEligibility(
   email?: string,
 ): Promise<EligibilityResult> {
   try {
-    // 1. Check opt-out
-    const { data: optOut } = await supabase
+    // 1. Check opt-out (normalize phone to +E.164 — STOP records stored with ensurePlus #721)
+    const { data: optOut, error: optOutErr } = await supabase
       .from('messaging_opt_outs')
       .select('id')
-      .eq('phone', phone)
+      .eq('phone', ensurePlus(phone))
       .eq('business_id', businessId)
       .is('resubscribed_at', null)
       .maybeSingle();
+
+    if (optOutErr) {
+      logger.error('[ELIGIBILITY] Opt-out check failed — fail closed:', optOutErr.message);
+      return {
+        status: 'opted_out',
+        reason: 'Opt-out check failed — fail closed',
+        recommendedChannel: 'blocked',
+        canSendWhatsApp: false,
+        canSendSMS: false,
+        canSendEmail: false,
+      };
+    }
 
     if (optOut) {
       return {

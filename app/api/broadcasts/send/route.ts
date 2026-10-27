@@ -7,6 +7,7 @@ import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
+import { ensurePlus } from '@/lib/utils/phone';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 export const maxDuration = 60;
@@ -143,16 +144,21 @@ export async function POST(request: NextRequest) {
 
     for (const phone of phones) {
       try {
-        // Check opt-out before sending promotional message
-        const { data: optedOut } = await service
+        // Check opt-out before sending promotional message (scoped to this business)
+        // Normalize phone to +E.164 — STOP records are stored with ensurePlus (#721)
+        const { count: optOutCount, error: optOutErr } = await service
           .from('messaging_opt_outs')
-          .select('id')
-          .eq('phone', phone)
-          .is('resubscribed_at', null)
-          .maybeSingle();
-
-        if (optedOut) {
-          // Skip — customer opted out
+          .select('id', { count: 'exact', head: true })
+          .eq('phone', ensurePlus(phone))
+          .eq('business_id', business_id)
+          .eq('channel', 'whatsapp')
+          .is('resubscribed_at', null);
+        if (optOutErr || optOutCount === null) {
+          logger.error('[BROADCAST] Opt-out check failed — suppressing send:', optOutErr?.message);
+          continue;
+        }
+        if (optOutCount > 0) {
+          // Skip — customer opted out of this business
           continue;
         }
 
