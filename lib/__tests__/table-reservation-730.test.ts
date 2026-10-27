@@ -159,6 +159,13 @@ describe('#730: Migration 472 SQL structure', () => {
     expect(sql).toContain('SET search_path = public');
     expect(sql).toContain('pg_advisory_xact_lock');
 
+    // ACL: service_role granted EXECUTE
+    expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.book_table_atomic');
+    expect(sql).toContain('TO service_role');
+
+    // Advisory lock serializes on resource+date (not time) to prevent overlap race
+    expect(sql).not.toMatch(/v_lock_key.*p_time/);
+
     // Self-check
     expect(sql).toContain('472 SELF-CHECK PASSED');
   });

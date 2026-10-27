@@ -136,10 +136,12 @@ BEGIN
     END IF;
   END IF;
 
-  -- ── Advisory lock: serialize per resource+date+time ──
+  -- ── Advisory lock: serialize ALL reservations for same resource+date ──
+  -- Lock excludes time so overlapping requests with different start times
+  -- still serialize (Codex P1: concurrent overlap race)
   v_lock_key := abs(hashtext(
     p_business_id::text || '|sr|' || p_seating_resource_id::text
-    || '|' || p_date::text || '|' || p_time
+    || '|' || p_date::text
   ));
   PERFORM pg_advisory_xact_lock(v_lock_key);
 
@@ -232,6 +234,10 @@ REVOKE ALL ON FUNCTION public.book_table_atomic(
   UUID, UUID, UUID, UUID, DATE, TEXT, INTEGER, INTEGER,
   TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER
 ) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.book_table_atomic(
+  UUID, UUID, UUID, UUID, DATE, TEXT, INTEGER, INTEGER,
+  TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, INTEGER
+) TO service_role;
 
 -- ═══════════════════════════════════════════════════════
 -- 1F. Self-check
@@ -282,6 +288,15 @@ BEGIN
       AND ('search_path=public' = ANY(p.proconfig))
   ) THEN
     RAISE EXCEPTION '472 SELF-CHECK FAILED: book_table_atomic missing SECURITY DEFINER or search_path';
+  END IF;
+
+  -- Verify service_role has EXECUTE on book_table_atomic
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.role_routine_grants
+    WHERE routine_schema = 'public' AND routine_name = 'book_table_atomic'
+      AND grantee = 'service_role' AND privilege_type = 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION '472 SELF-CHECK FAILED: service_role lacks EXECUTE on book_table_atomic';
   END IF;
 
   -- Verify flow_type enum includes table_reservation
