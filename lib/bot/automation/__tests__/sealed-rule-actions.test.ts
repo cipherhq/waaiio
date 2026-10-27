@@ -299,9 +299,10 @@ describe('sealed Phase-A rule execution', () => {
       action_fingerprint: 'fp-tmpl-fail',
     }]);
     const sendTemplate = vi.fn();
-    // Resolver throws (simulating Meta API failure)
+    // Resolver throws (simulating transient Meta API failure)
     const failResolver = async () => { throw new Error('Meta API timeout'); };
-    await runSealedRuleActions({
+    // Transient failure throws — row stays pending for caller retry
+    await expect(runSealedRuleActions({
       supabase: store.supabase,
       paymentId: 'payment-tmpl-fail',
       businessId: 'business-1',
@@ -309,11 +310,11 @@ describe('sealed Phase-A rule execution', () => {
       context: { customer_phone: '+15551234567' },
       sender: { sendText: vi.fn(), sendTemplate } as never,
       _resolveTemplateCategory: failResolver as never,
-    });
-    // No provider emission on resolver failure
+    })).rejects.toThrow('sealed_template_lookup_transient');
+    // No provider emission
     expect(sendTemplate).not.toHaveBeenCalled();
-    // Action stays retryable (failed) — emission fence was never crossed
-    expect(store.getRows()[0].status).toBe('failed');
+    // Row stays pending — retryable on next invocation
+    expect(store.getRows()[0].status).toBe('pending');
   });
 
   it('fails closed when live rule discovery errors before the initial seal', async () => {

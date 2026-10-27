@@ -47,15 +47,19 @@ export async function resolveTemplateCategory(
   templateName: string,
 ): Promise<FinancialCategory | null> {
   if (!cloud) return null;
-  try {
-    const { data: templates } = await cloud.getTemplates({ fields: 'name,status,category' });
-    const match = templates.find(t => t.name === templateName && t.status === 'APPROVED');
-    return match ? normalizeMetaCategory(match.category) : null;
-  } catch (err) {
-    logger.withContext({ op: 'sealed-rule-actions.resolve-template-category', templateName })
-      .error('[SEALED-RULES] Template category resolution failed — fail closed');
-    return null;
+  // Paginate through all template pages until the target is found or exhausted.
+  // Meta API defaults to 100 per page; businesses with many templates need pagination.
+  let after: string | undefined;
+  const MAX_PAGES = 10; // Safety limit to prevent infinite pagination
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await cloud.getTemplates({ fields: 'name,status,category', after });
+    const match = result.data.find(t => t.name === templateName && t.status === 'APPROVED');
+    if (match) return normalizeMetaCategory(match.category);
+    // Check for next page
+    if (!result.paging?.next || !result.paging?.cursors?.after) break;
+    after = result.paging.cursors.after;
   }
+  return null; // Not found or not APPROVED after exhausting all pages
 }
 
 function canonicalJson(value: unknown): string {
@@ -116,18 +120,18 @@ async function executeFrozenAction(
     try {
       const resolved = await categoryResolver(cloud, payload.template_name as string);
       if (!resolved) {
-        // Template not APPROVED or category unrecognized — fail before emission fence.
-        // 'failed' is non-terminal for the caller to retry after template approval.
+        // Template not APPROVED or category unrecognized — definitive rejection.
+        // Mark as 'failed' (terminal). Template won't become approved by retrying.
         const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
         if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
         return;
       }
       preResolvedCategory = resolved;
     } catch (lookupErr) {
-      // Transient Meta API error — fail retryably, no emission fence crossed
-      const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
-      if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
-      return;
+      // Transient Meta API error — DO NOT transition. Row stays 'pending'.
+      // Throw so the caller (driveInternalEffect) retries the whole manifest,
+      // re-attempting the lookup on the next invocation.
+      throw new Error(`sealed_template_lookup_transient:${row.rule_id}:${(lookupErr as Error).message}`);
     }
   }
 
