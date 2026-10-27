@@ -175,7 +175,15 @@ DECLARE
   v_b_start_min INTEGER;
   v_b_end_min INTEGER;
 BEGIN
-  -- ── Bot session idempotency (full selection match) ──
+  -- ── Advisory lock FIRST: serialize ALL reservations for same resource+date ──
+  -- Must precede idempotency lookup so concurrent retries see each other's inserts.
+  v_lock_key := abs(hashtext(
+    p_business_id::text || '|sr|' || p_seating_resource_id::text
+    || '|' || p_date::text
+  ));
+  PERFORM pg_advisory_xact_lock(v_lock_key);
+
+  -- ── Bot session idempotency (full selection match, AFTER lock) ──
   IF p_bot_session_id IS NOT NULL THEN
     SELECT b.id, b.reference_code INTO v_booking_id, v_ref
     FROM bookings b
@@ -193,13 +201,6 @@ BEGIN
       RETURN;
     END IF;
   END IF;
-
-  -- ── Advisory lock: serialize ALL reservations for same resource+date ──
-  v_lock_key := abs(hashtext(
-    p_business_id::text || '|sr|' || p_seating_resource_id::text
-    || '|' || p_date::text
-  ));
-  PERFORM pg_advisory_xact_lock(v_lock_key);
 
   -- ── Validate seating resource ──
   SELECT sr.id, sr.business_id, sr.capacity, sr.min_party_size,

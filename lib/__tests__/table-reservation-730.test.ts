@@ -205,6 +205,20 @@ describe('#730: Migration 472 SQL structure', () => {
     expect(sql).not.toMatch(/v_req_end\s*>\s*v_resource\.available_to/);
   });
 
+  it('advisory lock precedes idempotency lookup (concurrent retry safety)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Advisory lock must appear BEFORE the idempotency lookup in the function body
+    const lockPos = sql.indexOf('pg_advisory_xact_lock(v_lock_key)');
+    const idempPos = sql.indexOf('bot_session_id = p_bot_session_id');
+    expect(lockPos).toBeGreaterThan(0);
+    expect(idempPos).toBeGreaterThan(0);
+    expect(lockPos).toBeLessThan(idempPos);
+  });
+
   it('idempotency check matches full reservation identity', async () => {
     const fs = await import('fs');
     const path = await import('path');
