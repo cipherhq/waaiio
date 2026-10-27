@@ -128,10 +128,15 @@ async function executeFrozenAction(
       }
       preResolvedCategory = resolved;
     } catch (lookupErr) {
-      // Transient Meta API error — DO NOT transition. Row stays 'pending'.
-      // Throw so the caller (driveInternalEffect) retries the whole manifest,
-      // re-attempting the lookup on the next invocation.
-      throw new Error(`sealed_template_lookup_transient:${row.rule_id}:${(lookupErr as Error).message}`);
+      // Meta API error (transient or permanent) — mark failed before emission fence.
+      // No provider emission or financial reservation occurred. 'failed' is the correct
+      // pre-emission terminal state. Throwing would permanently suppress the outer
+      // automation_rule_handoff effect via driveInternalEffect's terminal skip.
+      logger.withContext({ op: 'sealed-rule-actions.pre-fence-lookup', ruleId: row.rule_id })
+        .error('[SEALED-RULES] Template category lookup error — marking failed');
+      const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
+      if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
+      return;
     }
   }
 
