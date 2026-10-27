@@ -196,9 +196,9 @@ export class BotService {
     );
     if (launchHandled) return;
 
-    // Pre-check 1: Timeout
+    // Pre-check 1: Timeout — exempt verified same-channel pending STOP selections
     const timeoutCheck = this.intelligence.isTimedOut(from);
-    if (timeoutCheck.timedOut) {
+    if (timeoutCheck.timedOut && !_preResolvedPendingStop) {
       await this.sendPlatformText(from, `You can message again in ${timeoutCheck.remaining} minute${timeoutCheck.remaining !== 1 ? 's' : ''}. 🙏`);
       return;
     }
