@@ -3805,9 +3805,54 @@ export class BotService {
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
 
+      // Shared CAS helpers for pending-STOP handling (used by both Option C and picker blocks)
+      const _fallbackCasClaim = async (): Promise<boolean> => {
+        const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+          p_session_id: session.id,
+          p_expected_version: session.version ?? 0,
+          p_current_step: session.current_step,
+          p_session_data: { ...session.session_data, _claimed: true },
+        });
+        if (casErr || !casResult?.success) {
+          if (casResult?.reason === 'version_conflict') return false;
+          logger.warn('[STOP] Fallback CAS claim failed:', casResult?.reason || casErr?.message);
+          return false;
+        }
+        session.version = casResult.version;
+        return true;
+      };
+      const _fallbackCasReleaseClaim = async (): Promise<boolean> => {
+        const releaseData = { ...session.session_data };
+        delete (releaseData as Record<string, unknown>)._claimed;
+        try {
+          const { data } = await this.supabase.rpc('update_session_cas', {
+            p_session_id: session.id,
+            p_expected_version: session.version ?? 0,
+            p_current_step: session.current_step,
+            p_session_data: releaseData,
+          });
+          if (data?.success) { session.version = data.version; return true; }
+          return false;
+        } catch { return false; }
+      };
+      const _fallbackCasDeactivate = async () => {
+        const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
+          p_session_id: session.id,
+          p_expected_version: session.version ?? 0,
+          p_current_step: 'complete',
+          p_session_data: { ...session.session_data, is_active: false, _claimed: true },
+        });
+        if (casErr || !casResult?.success) {
+          if (casResult?.reason === 'version_conflict') return false;
+          logger.warn('[STOP] Fallback CAS deactivate failed:', casResult?.reason || casErr?.message);
+          return false;
+        }
+        await this.deactivateSession(session.id);
+        return true;
+      };
+
       // ── Pending-STOP: Option C disambiguation (stop_merchant / stop_platform) ──
       // FALLBACK path — primary handling is the early dispatcher above get_bot_context.
-      // P1 Codex fix: validate inbound channel + atomic CAS claim before mutation
       if (session.session_data._pending_stop_choice && !session.session_data._claimed) {
         const choiceData = session.session_data._pending_stop_choice as {
           merchantId?: string; merchantName?: string; channelId?: string;
@@ -3822,59 +3867,11 @@ export class BotService {
             logger.warn('[STOP] Fallback Option C: channel lookup failed, rejecting', { err: chErr?.message });
             return; // Fail closed
           }
-          // P1 Codex fix: fail closed on missing/null channel provenance
-        if (!choiceData.channelId || currentCh.id !== choiceData.channelId) {
+          if (!choiceData.channelId || currentCh.id !== choiceData.channelId) {
             logger.warn('[STOP] Cross-channel Option C replay rejected or missing provenance', { stored: choiceData.channelId, current: currentCh.id });
             return;
           }
         }
-        // Helper: CAS atomic intent claim (version bump, no deactivation)
-        const _fallbackCasClaim = async (): Promise<boolean> => {
-          const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
-            p_session_id: session.id,
-            p_expected_version: session.version ?? 0,
-            p_current_step: session.current_step,
-            p_session_data: { ...session.session_data, _claimed: true },
-          });
-          if (casErr || !casResult?.success) {
-            if (casResult?.reason === 'version_conflict') return false;
-            logger.warn('[STOP] Fallback CAS claim failed:', casResult?.reason || casErr?.message);
-            return false;
-          }
-          session.version = casResult.version;
-          return true;
-        };
-        // Helper: CAS release claim on failed persistence — allows customer retry
-        const _fallbackCasReleaseClaim = async (): Promise<boolean> => {
-          const releaseData = { ...session.session_data };
-          delete (releaseData as Record<string, unknown>)._claimed;
-          try {
-            const { data } = await this.supabase.rpc('update_session_cas', {
-              p_session_id: session.id,
-              p_expected_version: session.version ?? 0,
-              p_current_step: session.current_step,
-              p_session_data: releaseData,
-            });
-            if (data?.success) { session.version = data.version; return true; }
-            return false;
-          } catch { return false; }
-        };
-        // Helper: CAS-deactivate session after successful persistence
-        const _fallbackCasDeactivate = async () => {
-          const { data: casResult, error: casErr } = await this.supabase.rpc('update_session_cas', {
-            p_session_id: session.id,
-            p_expected_version: session.version ?? 0,
-            p_current_step: 'complete',
-            p_session_data: { ...session.session_data, is_active: false, _claimed: true },
-          });
-          if (casErr || !casResult?.success) {
-            if (casResult?.reason === 'version_conflict') return false;
-            logger.warn('[STOP] Fallback CAS deactivate failed:', casResult?.reason || casErr?.message);
-            return false;
-          }
-          await this.deactivateSession(session.id);
-          return true;
-        };
         if (text === 'stop_merchant') {
           if (choiceData.merchantId) {
             // CAS-claim first (prevents concurrent double-write), then persist
