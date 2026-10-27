@@ -316,7 +316,7 @@ describe('structural: all business-scoped recursive handleMessage calls pass _in
         const lineNum = source.substring(0, idx).split('\n').length;
         // Known exceptions: these deactivate the session first → no resumed-session
         // tracking at line 734. New-session tracking at line 2155 is also guarded.
-        const isKnownException = [573, 4023].some(l => Math.abs(lineNum - l) <= 5);
+        const isKnownException = [588, 4038].some(l => Math.abs(lineNum - l) <= 5);
         if (!isKnownException) {
           throw new Error(
             `Business-scoped handleMessage redispatch at line ~${lineNum} missing _internalProvenance. ` +

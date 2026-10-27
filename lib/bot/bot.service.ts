@@ -145,7 +145,22 @@ export class BotService {
       if (prePendingSession?.session_data &&
           (prePendingSession.session_data._pending_stop || prePendingSession.session_data._pending_stop_choice) &&
           !prePendingSession.session_data._claimed) {
-        _preResolvedPendingStop = prePendingSession as Record<string, unknown>;
+        // R7 fix: verify channel provenance BEFORE granting rate-limit/maintenance bypass.
+        // Only bypass gates when the pending session belongs to the SAME inbound channel.
+        const storedChId = (prePendingSession.session_data._pending_stop_channel_id as string | undefined)
+          || (prePendingSession.session_data._pending_stop_choice as { channelId?: string } | undefined)?.channelId;
+        if (storedChId && destinationPhone) {
+          const { data: preCh } = await this.supabase
+            .from('whatsapp_channels').select('id')
+            .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+          if (preCh && preCh.id === storedChId) {
+            _preResolvedPendingStop = prePendingSession as Record<string, unknown>;
+          }
+          // Channel mismatch or lookup failure: _preResolvedPendingStop stays null →
+          // normal rate-limit/maintenance gates apply. The later early dispatcher
+          // will also fall through on mismatch, routing to normal flow.
+        }
+        // Missing stored channelId or destinationPhone: don't bypass gates.
       }
     }
 
