@@ -82,14 +82,29 @@ export async function PATCH(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { id, ...updates } = body;
+    const { id } = body;
 
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
+
+    // Allowlisted mutable fields — business_id, id, created_at are immutable
+    const ALLOWED_FIELDS = new Set([
+      'name', 'resource_type', 'capacity', 'min_party_size', 'section',
+      'reservation_duration_minutes', 'deposit_amount', 'description',
+      'available_days', 'available_from', 'available_to', 'is_active',
+      'sort_order', 'metadata',
+    ]);
+    const filtered: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) {
+      if (ALLOWED_FIELDS.has(k)) filtered[k] = v;
+    }
+    if (Object.keys(filtered).length === 0) {
+      return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
+    }
 
     // RLS enforces ownership
     const { data, error } = await supabase
       .from('seating_resources')
-      .update(updates)
+      .update(filtered)
       .eq('id', id)
       .select()
       .single();

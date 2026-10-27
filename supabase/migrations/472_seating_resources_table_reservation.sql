@@ -158,19 +158,24 @@ DECLARE
   v_lock_key BIGINT;
   v_resource RECORD;
   v_overlap_count INTEGER;
-  v_req_start TIME;
-  v_req_end TIME;
-  v_biz_tz TEXT;
+  v_req_start_min INTEGER;  -- minutes since midnight (avoids TIME wrap)
+  v_req_end_min INTEGER;
   v_day_name TEXT;
   v_committed_deposit INTEGER;
   v_committed_duration INTEGER;
   v_committed_total INTEGER;
+  v_from_min INTEGER;
+  v_to_min INTEGER;
+  v_b_start_min INTEGER;
+  v_b_end_min INTEGER;
 BEGIN
-  -- ── Bot session idempotency ──
+  -- ── Bot session idempotency (with matching guard) ──
   IF p_bot_session_id IS NOT NULL THEN
     SELECT b.id, b.reference_code INTO v_booking_id, v_ref
     FROM bookings b
     WHERE b.bot_session_id = p_bot_session_id
+      AND b.business_id = p_business_id
+      AND b.user_id = p_user_id
       AND b.status IN ('pending', 'confirmed')
     LIMIT 1;
     IF FOUND THEN
@@ -180,8 +185,6 @@ BEGIN
   END IF;
 
   -- ── Advisory lock: serialize ALL reservations for same resource+date ──
-  -- Lock excludes time so overlapping requests with different start times
-  -- still serialize (Codex P1: concurrent overlap race)
   v_lock_key := abs(hashtext(
     p_business_id::text || '|sr|' || p_seating_resource_id::text
     || '|' || p_date::text
@@ -218,13 +221,13 @@ BEGIN
       p_expected_duration, v_resource.reservation_duration_minutes;
   END IF;
 
-  -- Use DB-authoritative values when revalidation is active
+  -- DB-authoritative values: flat deposit per reservation (Owner decision 2026-10-27)
   v_committed_deposit := CASE WHEN p_expected_deposit IS NOT NULL
     THEN v_resource.deposit_amount ELSE p_deposit_amount END;
   v_committed_duration := CASE WHEN p_expected_duration IS NOT NULL
     THEN v_resource.reservation_duration_minutes ELSE COALESCE(p_duration_minutes, v_resource.reservation_duration_minutes) END;
-  v_committed_total := CASE WHEN p_expected_deposit IS NOT NULL
-    THEN v_resource.deposit_amount ELSE p_total_amount END;
+  -- Total = flat deposit (not multiplied by party_size)
+  v_committed_total := v_committed_deposit;
 
   -- ── Party size validation ──
   IF p_party_size < v_resource.min_party_size THEN
@@ -235,45 +238,52 @@ BEGIN
   END IF;
 
   -- ── Availability enforcement (day + time window) ──
-  -- Get business timezone for day-of-week
-  SELECT COALESCE(b.timezone, 'Africa/Lagos') INTO v_biz_tz
-  FROM businesses b WHERE b.id = p_business_id;
+  -- Weekday: use p_date directly — the date represents the local calendar day
+  -- the customer selected. AT TIME ZONE on DATE shifts midnight to a different
+  -- day for non-UTC timezones (confirmed PG 16.13 bug reproduction).
+  v_day_name := lower(to_char(p_date, 'fmday'));
 
-  v_day_name := lower(to_char(p_date AT TIME ZONE COALESCE(v_biz_tz, 'Africa/Lagos'), 'fmday'));
-
-  -- Day-of-week check
   IF v_resource.available_days IS NOT NULL AND array_length(v_resource.available_days, 1) > 0 THEN
     IF NOT (v_day_name = ANY(v_resource.available_days)) THEN
       RAISE EXCEPTION 'day_unavailable:This resource is not available on %', initcap(v_day_name);
     END IF;
   END IF;
 
-  -- Time window check
-  v_req_start := p_time::TIME;
-  IF v_resource.available_from IS NOT NULL AND v_req_start < v_resource.available_from THEN
-    RAISE EXCEPTION 'before_opening:Earliest reservation time is %', v_resource.available_from::text;
+  -- All time comparisons use minutes-since-midnight to avoid TIME wrap at 24:00.
+  -- TIME '23:30' + 90min = '01:00' in PG, but 23*60+30+90 = 1470 > 22*60 = 1320.
+  v_req_start_min := EXTRACT(HOUR FROM p_time::TIME)::int * 60
+                   + EXTRACT(MINUTE FROM p_time::TIME)::int;
+  v_req_end_min := v_req_start_min + v_committed_duration;
+
+  IF v_resource.available_from IS NOT NULL THEN
+    v_from_min := EXTRACT(HOUR FROM v_resource.available_from)::int * 60
+                + EXTRACT(MINUTE FROM v_resource.available_from)::int;
+    IF v_req_start_min < v_from_min THEN
+      RAISE EXCEPTION 'before_opening:Earliest reservation time is %', v_resource.available_from::text;
+    END IF;
   END IF;
 
-  v_req_end := v_req_start + make_interval(mins => v_committed_duration);
-
-  IF v_resource.available_to IS NOT NULL AND v_req_end > v_resource.available_to THEN
-    RAISE EXCEPTION 'after_closing:Reservation would extend past closing time %', v_resource.available_to::text;
+  IF v_resource.available_to IS NOT NULL THEN
+    v_to_min := EXTRACT(HOUR FROM v_resource.available_to)::int * 60
+              + EXTRACT(MINUTE FROM v_resource.available_to)::int;
+    IF v_req_end_min > v_to_min THEN
+      RAISE EXCEPTION 'after_closing:Reservation would extend past closing time %', v_resource.available_to::text;
+    END IF;
   END IF;
 
-  -- ── Time overlap check (v_req_start/v_req_end already set above) ──
-
+  -- ── Time overlap check (using minutes to avoid midnight wrap) ──
   SELECT COUNT(*) INTO v_overlap_count
   FROM bookings b
   WHERE b.seating_resource_id = p_seating_resource_id
     AND b.date = p_date
     AND b.status IN ('pending', 'confirmed', 'in_progress')
-    AND b.time < v_req_end
-    AND (b.time + make_interval(
-           mins => COALESCE(
-             (b.metadata->>'duration_minutes')::int,
-             v_resource.reservation_duration_minutes
-           )
-         )) > v_req_start;
+    AND v_req_start_min < (
+          EXTRACT(HOUR FROM b.time)::int * 60 + EXTRACT(MINUTE FROM b.time)::int
+          + COALESCE((b.metadata->>'duration_minutes')::int, v_resource.reservation_duration_minutes)
+        )
+    AND v_req_end_min > (
+          EXTRACT(HOUR FROM b.time)::int * 60 + EXTRACT(MINUTE FROM b.time)::int
+        );
 
   IF v_overlap_count > 0 THEN
     RETURN QUERY SELECT NULL::UUID, NULL::TEXT, false;
@@ -293,8 +303,9 @@ BEGIN
     p_business_id, p_user_id, p_seating_resource_id,
     p_date, p_time::TIME, p_party_size,
     'table_reservation'::flow_type, 'whatsapp'::booking_channel,
-    v_committed_deposit, p_deposit_status::deposit_status,
-    CASE WHEN v_committed_deposit > 0 THEN 'pending'::reservation_status ELSE p_status::reservation_status END,
+    v_committed_deposit,
+    CASE WHEN v_committed_deposit > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
+    CASE WHEN v_committed_deposit > 0 THEN 'pending'::reservation_status ELSE 'confirmed'::reservation_status END,
     p_guest_name, p_guest_phone, p_guest_email,
     p_special_requests, v_committed_total, p_party_size,
     p_bot_session_id,

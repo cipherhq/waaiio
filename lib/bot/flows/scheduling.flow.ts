@@ -2536,11 +2536,28 @@ export const schedulingFlow: FlowDefinition = {
         const isPrepay = prepayMode === 'full' || (prepayMode === 'auto' && prepayCategories.has(ctx.business?.category || ''));
 
         let totalDeposit: number;
-        if (packageEnrollmentId) {
+        let bookingTotalAmount: number;
+
+        if (d._is_table_reservation) {
+          // ── Table reservation: FLAT deposit per reservation (Owner decision 2026-10-27) ──
+          // Not multiplied by party_size. The resource deposit IS the total payable.
+          const flatDeposit = (d._seating_deposit as number) || serviceDeposit || 0;
+          if (prepayMode === 'free') {
+            // Business explicitly set free prepay — honor it, zero deposit
+            totalDeposit = 0;
+          } else {
+            totalDeposit = flatDeposit;
+          }
+          // Total = flat deposit regardless of party size
+          bookingTotalAmount = totalDeposit;
+        } else if (packageEnrollmentId) {
           // Package covers this booking — no upfront charge (matches canonical non-package free behavior)
           totalDeposit = 0;
+          bookingTotalAmount = 0;
         } else if (prepayMode === 'free') {
           totalDeposit = 0;
+          const baseTransactionTotal = finalServicePrice * partySize;
+          bookingTotalAmount = servicePrice > 0 || serviceDeposit > 0 ? baseTransactionTotal : 0;
         } else if (serviceDeposit > 0) {
           // Explicit deposit set on the service. #376: stale fixed-price
           // configuration must never initialize a payment above transaction total.
@@ -2560,23 +2577,25 @@ export const schedulingFlow: FlowDefinition = {
               reason: depositAuthority.reason,
             });
           }
+          const baseTransactionTotal = finalServicePrice * partySize;
+          bookingTotalAmount = servicePriceIsVariable
+            ? Math.max(baseTransactionTotal, totalDeposit)
+            : (servicePrice > 0 || serviceDeposit > 0 ? baseTransactionTotal : totalDeposit);
         } else if (depositPerGuest > 0) {
           // Per-guest deposit (restaurants) is a separate business-level authority.
           totalDeposit = depositPerGuest * partySize;
+          bookingTotalAmount = finalServicePrice * partySize || totalDeposit;
         } else if (isPrepay && finalServicePrice > 0) {
           // Service-based businesses: charge full service price (after promo discount)
           totalDeposit = finalServicePrice * partySize;
+          bookingTotalAmount = totalDeposit;
         } else {
           totalDeposit = 0;
+          const baseTransactionTotal = finalServicePrice * partySize;
+          bookingTotalAmount = servicePriceIsVariable
+            ? Math.max(baseTransactionTotal, 0)
+            : baseTransactionTotal;
         }
-
-        // Booking total is transaction authority, not merely the upfront deposit.
-        // For variable-price offerings the configured price is only a starting
-        // price, so total must be at least the known upfront amount.
-        const baseTransactionTotal = finalServicePrice * partySize;
-        const bookingTotalAmount = servicePriceIsVariable
-          ? Math.max(baseTransactionTotal, totalDeposit)
-          : (servicePrice > 0 || serviceDeposit > 0 ? baseTransactionTotal : totalDeposit);
 
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {

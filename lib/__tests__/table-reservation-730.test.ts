@@ -179,6 +179,55 @@ describe('#730: Migration 472 SQL structure', () => {
     expect(sql).toContain('472 SELF-CHECK PASSED');
   });
 
+  it('weekday uses to_char(p_date) directly — no AT TIME ZONE', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Must use to_char(p_date, 'fmday') — NOT p_date AT TIME ZONE
+    expect(sql).toContain("lower(to_char(p_date, 'fmday'))");
+    expect(sql).not.toMatch(/to_char\(p_date AT TIME ZONE/);
+  });
+
+  it('time comparisons use integer minutes (no TIME wrap)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Must use EXTRACT(HOUR/MINUTE) for minutes-since-midnight
+    expect(sql).toContain('v_req_start_min');
+    expect(sql).toContain('v_req_end_min');
+    expect(sql).toContain('EXTRACT(HOUR FROM');
+    expect(sql).toContain('EXTRACT(MINUTE FROM');
+    // Must NOT use TIME comparison for closing/overlap checks
+    expect(sql).not.toMatch(/v_req_end\s*>\s*v_resource\.available_to/);
+  });
+
+  it('idempotency check includes business_id and user_id match', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Idempotency must match business and user, not just bot_session_id
+    expect(sql).toMatch(/bot_session_id = p_bot_session_id[\s\S]*?business_id = p_business_id/);
+    expect(sql).toMatch(/bot_session_id = p_bot_session_id[\s\S]*?user_id = p_user_id/);
+  });
+
+  it('flat deposit: v_committed_total = v_committed_deposit (not multiplied)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Total must equal flat deposit, not multiplied by party_size
+    expect(sql).toContain('v_committed_total := v_committed_deposit');
+    // Comment should reference Owner decision
+    expect(sql).toContain('flat deposit per reservation');
+  });
+
   it('migration enforces availability in book_table_atomic', async () => {
     const fs = await import('fs');
     const path = await import('path');
@@ -195,9 +244,9 @@ describe('#730: Migration 472 SQL structure', () => {
     expect(sql).toContain('before_opening');
     expect(sql).toContain('after_closing');
 
-    // Business timezone lookup
-    expect(sql).toContain('v_biz_tz');
-    expect(sql).toContain('Africa/Lagos');
+    // Uses minutes-since-midnight (not TIME type)
+    expect(sql).toContain('v_from_min');
+    expect(sql).toContain('v_to_min');
   });
 
   it('migration has delete-guard trigger for referenced resources', async () => {
@@ -300,6 +349,19 @@ describe('#730: Deposit authority — table reservation financial path', () => {
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('scheduling.flow.ts has flat deposit branch for table reservations', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts'), 'utf-8');
+
+    // Must have dedicated table_reservation deposit logic
+    expect(code).toContain('_is_table_reservation');
+    expect(code).toContain('FLAT deposit per reservation');
+    expect(code).toContain('_seating_deposit');
+    // Total must equal flat deposit (not multiplied)
+    expect(code).toMatch(/bookingTotalAmount\s*=\s*totalDeposit/);
+  });
+
   it('zero-deposit table reservation: no payment needed', async () => {
     const { resolveRuntimeDeposit } = await import('@/lib/payments/deposit-amount-authority');
 
@@ -400,6 +462,36 @@ describe('#730: Admin API and security', () => {
     expect(code).toContain('logAdminAudit');
     expect(code).toContain("admin.role !== 'admin'");
     expect(code).toContain('createServiceClient');
+  });
+
+  it('merchant PATCH uses field allowlist (rejects business_id mutation)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/api/seating-resources/route.ts'), 'utf-8');
+
+    expect(code).toContain('ALLOWED_FIELDS');
+    expect(code).not.toMatch(/\.update\(updates\)/); // Must not pass raw updates
+    expect(code).toContain('.update(filtered)');
+  });
+
+  it('admin PATCH uses field allowlist (rejects business_id mutation)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/api/admin/seating-resources/route.ts'), 'utf-8');
+
+    expect(code).toContain('ALLOWED_FIELDS');
+    expect(code).not.toMatch(/\.update\(updates\)/);
+    expect(code).toContain('.update(filtered)');
+  });
+
+  it('reschedule route blocks table_reservation bookings', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/api/bookings/[id]/reschedule/route.ts'), 'utf-8');
+
+    expect(code).toContain("flow_type === 'table_reservation'");
+    expect(code).toContain('Table reservations cannot be rescheduled yet');
+    expect(code).toContain('422');
   });
 
   it('merchant API uses RLS-scoped client (no service_role)', async () => {

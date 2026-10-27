@@ -87,16 +87,31 @@ export async function PATCH(request: NextRequest) {
   if (admin.role !== 'admin') return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
 
   const body = await request.json();
-  const { id, ...updates } = body;
+  const { id } = body;
 
   if (!id || !UUID_RE.test(id)) {
     return NextResponse.json({ error: 'Valid id required' }, { status: 400 });
   }
 
+  // Allowlisted mutable fields — business_id, id, created_at are immutable
+  const ALLOWED_FIELDS = new Set([
+    'name', 'resource_type', 'capacity', 'min_party_size', 'section',
+    'reservation_duration_minutes', 'deposit_amount', 'description',
+    'available_days', 'available_from', 'available_to', 'is_active',
+    'sort_order', 'metadata',
+  ]);
+  const filtered: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (ALLOWED_FIELDS.has(k)) filtered[k] = v;
+  }
+  if (Object.keys(filtered).length === 0) {
+    return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
+  }
+
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from('seating_resources')
-    .update(updates)
+    .update(filtered)
     .eq('id', id)
     .select()
     .single();
@@ -108,7 +123,7 @@ export async function PATCH(request: NextRequest) {
     action: 'update_seating_resource',
     entityType: 'seating_resource',
     entityId: id,
-    details: { updates: Object.keys(updates) },
+    details: { updates: Object.keys(filtered) },
   });
 
   return NextResponse.json({ data });
