@@ -1,15 +1,19 @@
 /**
- * M470/M471 Migration Readiness Tests — Issue #507
+ * M470/M471 Caller Behavior & SQL Source Lint — Issue #507
  *
- * Validates that the application-layer callers of M470 and M471 RPCs
- * handle all RPC response shapes correctly, including:
- * - Success paths (booking created, cancellation completed)
- * - ACL enforcement (service_role only)
- * - Error paths (tier_paused, price_changed, all_tiers_paused)
- * - Concurrency paths (idempotent re-entry, payment fence)
- * - Missing RPC (the current staging state)
+ * §1–§4: Mock-Supabase caller tests — verify the application-layer code
+ * that calls M470/M471 RPCs handles every response shape correctly.
+ * Evidence type: MOCK CALLER BEHAVIOR (not disposable-PG execution).
  *
- * Evidence type: UNIT-INTEGRATION EXECUTED (mock Supabase)
+ * §5: SQL source lint — reads migration files as text and checks structural
+ * contracts (SECURITY DEFINER, ACL blocks, execution order, self-verification).
+ * Evidence type: SQL SOURCE LINT (not executed migration state).
+ *
+ * Disposable-PG evidence (real migration apply, RPC execution, ACL enforcement,
+ * payment-fence concurrency) was executed separately and recorded in the
+ * GitHub #507 addendum. CI does not have a local PG instance, so those tests
+ * are not part of this Vitest file.
+ *
  * SHA: a27650c78200e74e1770d5d9e571117529fab066
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -19,8 +23,8 @@ import { safeFlowCleanup } from '@/lib/bot/handlers/escape-hatches';
 // §1 — M470: create_ticket_booking_checked RPC caller behavior
 // ══════════════════════════════════════════════
 
-describe('§1 M470: create_ticket_booking_checked caller behavior', () => {
-  describe('ticketing.flow.ts process_tickets step', () => {
+describe('§1 M470: create_ticket_booking_checked — mock caller response handling', () => {
+  describe('ticketing.flow.ts process_tickets step (response shape coverage)', () => {
     it('handles successful RPC response (new booking)', async () => {
       // The RPC returns { success: true, booking_id: '...', reference_code: '...' }
       // ticketing.flow.ts:626-632 expects row.success === true
@@ -108,8 +112,8 @@ describe('§1 M470: create_ticket_booking_checked caller behavior', () => {
 // §2 — M471: cancel_pending_booking_for_navigation RPC caller behavior
 // ══════════════════════════════════════════════
 
-describe('§2 M471: cancel_pending_booking_for_navigation caller behavior', () => {
-  describe('escape-hatches.ts safeFlowCleanup', () => {
+describe('§2 M471: cancel_pending_booking_for_navigation — mock caller response handling', () => {
+  describe('escape-hatches.ts safeFlowCleanup (executed with mock Supabase)', () => {
     it('handles successful cancellation', async () => {
       const mockSupabase = {
         rpc: vi.fn().mockResolvedValue({ data: { cancelled: true }, error: null }),
@@ -242,7 +246,7 @@ describe('§2 M471: cancel_pending_booking_for_navigation caller behavior', () =
 // §3 — M471: cancel_pending_reservation_for_navigation RPC caller behavior
 // ══════════════════════════════════════════════
 
-describe('§3 M471: cancel_pending_reservation_for_navigation caller behavior', () => {
+describe('§3 M471: cancel_pending_reservation_for_navigation — mock caller response handling', () => {
   it('handles successful reservation cancellation', async () => {
     const mockSupabase = {
       rpc: vi.fn().mockResolvedValue({ data: { cancelled: true }, error: null }),
@@ -390,7 +394,7 @@ describe('§4 Concurrent cleanup scenarios', () => {
 // §5 — M470/M471 SQL contract verification
 // ══════════════════════════════════════════════
 
-describe('§5 SQL contract verification', () => {
+describe('§5 SQL source lint (reads migration files as text, not executed PG state)', () => {
   it('M470 defines create_ticket_booking_checked with correct signature', async () => {
     const { readFile } = await import('fs/promises');
     const sql = await readFile(
