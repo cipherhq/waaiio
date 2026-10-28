@@ -333,6 +333,19 @@ BEGIN
 END;
 $$;
 
+-- ═══════════════════════════════════════════════════════
+-- 1F. Minimum service_role grants for SECURITY INVOKER RPC
+-- book_table_atomic needs: SELECT seating_resources (FOR UPDATE),
+-- SELECT/INSERT bookings, SELECT businesses (timezone).
+-- Earlier migrations grant SELECT+UPDATE on bookings (M415) and
+-- ALL on businesses (M293), but INSERT on bookings and SELECT on
+-- seating_resources are missing for service_role.
+-- ═══════════════════════════════════════════════════════
+GRANT INSERT ON public.bookings TO service_role;
+GRANT SELECT ON public.seating_resources TO service_role;
+-- Sequences needed for gen_random_uuid() / reference_code on INSERT
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO service_role;
+
 -- ACL: service_role only (matches book_slot_atomic pattern)
 REVOKE ALL ON FUNCTION public.book_table_atomic(
   UUID, UUID, UUID, UUID, DATE, TEXT, INTEGER, INTEGER,

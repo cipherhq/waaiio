@@ -4281,8 +4281,8 @@ jobs:
 
           # Verify minimum expected test count
           PASS_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) passed' | head -1 | grep -oP '\d+')
-          if [ -z "$PASS_COUNT" ] || [ "$PASS_COUNT" -lt 17 ]; then
-            echo "❌ Expected at least 17 M472 DB tests, got ${PASS_COUNT:-0}."
+          if [ -z "$PASS_COUNT" ] || [ "$PASS_COUNT" -lt 23 ]; then
+            echo "❌ Expected at least 23 M472 DB tests, got ${PASS_COUNT:-0}."
             exit 1
           fi
 

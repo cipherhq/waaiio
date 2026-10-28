@@ -309,42 +309,66 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
     expect(rows[0].sat).toBe('saturday');
   });
 
-  // ── Security regression tests ──
+  // ── Security regression tests (actual role execution, not catalog-only) ──
 
-  it('book_table_atomic is SECURITY INVOKER (not DEFINER)', async () => {
+  it('book_table_atomic is SECURITY INVOKER (catalog)', async () => {
     const { rows } = await sql(client, `
       SELECT p.prosecdef FROM pg_proc p
       JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public' AND p.proname = 'book_table_atomic'
     `);
     expect(rows.length).toBe(1);
-    expect(rows[0].prosecdef).toBe(false); // false = INVOKER
+    expect(rows[0].prosecdef).toBe(false);
   });
 
-  it('service_role has EXECUTE on book_table_atomic', async () => {
-    const { rows } = await sql(client, `
-      SELECT 1 FROM information_schema.role_routine_grants
-      WHERE routine_schema = 'public' AND routine_name = 'book_table_atomic'
-        AND grantee = 'service_role' AND privilege_type = 'EXECUTE'
-    `);
-    expect(rows.length).toBeGreaterThanOrEqual(1);
+  it('service_role can execute book_table_atomic and create a booking', async () => {
+    const { bizId, userId, resourceId } = await setupTestData();
+
+    // Switch to service_role, then execute RPC
+    await sql(client, `SET LOCAL ROLE service_role`);
+    const { rows } = await sql(client,
+      `SELECT * FROM book_table_atomic(NULL, $1, $2, $3, '2026-10-30'::date, '20:00', 2, 90, 'RoleTest', '+999', NULL, NULL, 5000, 'pending', 'pending', 5000, 5000, 90)`,
+      [bizId, userId, resourceId],
+    );
+    await sql(client, `RESET ROLE`);
+
+    expect(rows[0].slot_available).toBe(true);
+    expect(rows[0].booking_id).toBeDefined();
+
+    // Verify the booking was actually written
+    const { rows: [booking] } = await sql(client, `SELECT * FROM bookings WHERE id = $1`, [rows[0].booking_id]);
+    expect(booking.flow_type).toBe('table_reservation');
+    expect(booking.guest_name).toBe('RoleTest');
   });
 
-  it('anon role cannot execute book_table_atomic', async () => {
-    // Create anon role if not exists, try to execute
+  it('anon role lacks EXECUTE privilege on book_table_atomic', async () => {
     await sql(client, `DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+    // Check actual privilege — has_function_privilege is authoritative
     const { rows } = await sql(client, `
-      SELECT has_function_privilege('anon', 'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)', 'EXECUTE') AS can_exec
+      SELECT has_function_privilege('anon',
+        'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)',
+        'EXECUTE') AS can_exec
     `);
     expect(rows[0].can_exec).toBe(false);
   });
 
-  it('authenticated role cannot execute book_table_atomic', async () => {
+  it('authenticated role lacks EXECUTE privilege on book_table_atomic', async () => {
     await sql(client, `DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     const { rows } = await sql(client, `
-      SELECT has_function_privilege('authenticated', 'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)', 'EXECUTE') AS can_exec
+      SELECT has_function_privilege('authenticated',
+        'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)',
+        'EXECUTE') AS can_exec
     `);
     expect(rows[0].can_exec).toBe(false);
+  });
+
+  it('service_role EXECUTE privilege is confirmed', async () => {
+    const { rows } = await sql(client, `
+      SELECT has_function_privilege('service_role',
+        'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)',
+        'EXECUTE') AS can_exec
+    `);
+    expect(rows[0].can_exec).toBe(true);
   });
 
   it('seating_resources has RLS enabled', async () => {
