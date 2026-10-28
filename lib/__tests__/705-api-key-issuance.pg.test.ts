@@ -20,7 +20,8 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 
 const M474_PATH = path.resolve('supabase/migrations/474_api_key_atomic_issuance.sql');
-const M480_PATH = path.resolve('supabase/migrations/480_api_key_close_direct_writes.sql');
+// M480 (DML lockdown) ships in a follow-up PR. The equivalent grants/revokes
+// are applied inline in beforeAll to prove the lockdown behavior works.
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 // ── Disposable database safety guard ────────────────────────────
@@ -333,9 +334,14 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
     execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M474_PATH}"`, {
       encoding: 'utf-8', timeout: 30000,
     });
-    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M480_PATH}"`, {
-      encoding: 'utf-8', timeout: 30000,
-    });
+    // Apply M480-equivalent DML lockdown inline (M480 ships in follow-up PR)
+    psql(`
+      REVOKE INSERT, UPDATE, DELETE ON TABLE public.api_keys FROM PUBLIC;
+      REVOKE INSERT, UPDATE, DELETE ON TABLE public.api_keys FROM anon;
+      REVOKE INSERT, UPDATE, DELETE ON TABLE public.api_keys FROM authenticated;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.api_keys TO service_role;
+      GRANT SELECT ON TABLE public.api_keys TO authenticated;
+    `);
 
     // Mark setup as fully completed — only now is cleanup safe
     setupCompleted = true;

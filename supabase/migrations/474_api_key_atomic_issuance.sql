@@ -6,8 +6,8 @@
 --   issue_api_key()   — atomic ownership + paid-tier + limit + insert
 --   revoke_api_key()  — atomic ownership + revocation
 --
--- Does NOT revoke authenticated DML on api_keys (that is M480, applied
--- only after all app instances use service-client RPCs).
+-- Does NOT revoke authenticated DML on api_keys. A separate follow-up
+-- migration will lock down direct writes after app deployment is verified.
 
 -- ============================================================
 -- 1. issue_api_key() — atomic key issuance with business-row lock
