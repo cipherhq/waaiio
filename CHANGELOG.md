@@ -1,3 +1,9 @@
+### #736 — Phase A R4: severity reclassification per Codex P1 and CTO R3 (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: Reclassified gap inventory per Evidence Verification Agent severity gate (AGENTS.md §Evidence Verification Agent). (1) GAP-005 (no staging E2E) moved from P0 to UNVERIFIED / EVIDENCE GAP — missing authorization is not a runtime defect. (2) GAP-001, GAP-002, GAP-004 reclassified from generic "P0" to CONFIRMED CODE DEFECT — DEPLOYMENT UNVERIFIED with explicit scope note that all are offline-only, online unaffected. (3) GAP-003 reclassified to OWNER TARGET CONTRACT — implementation gap vs approved target, not a runtime defect. (4) Section 7 restructured into five subsections by finding status (confirmed code defect, owner target, evidence gap, P1, P2). (5) PR #741 and #745 SHA references verified current.
+- **Affects**: Documentation only. No code, migrations, or runtime changes.
+- **Could break**: Nothing.
+
 ### #736 — Phase A R3: migration reconciliation after PR #740 merge (2026-10-29)
 
 - **`docs/contracts/736-capability-e2e-contract.md`**: Reconciled cross-lane dependency map against current GitHub state after PR #740 merged to main as `c3b33307`. (1) PR #740 moved from "active unmerged" to "merged" section — M474 applied to staging. (2) Added PR #745 (M480, DML lockdown follow-up). (3) Removed obsolete M479 collision claim — resolved by PR #740 renumbering before merge. (4) Updated all PR HEAD SHAs to current GitHub values. (5) Removed GAP-007 (collision) and GAP-013 (PR #740 DB test skip — PR merged with CI green). (6) Updated evidence summary with merge SHA and R3 verification dates.

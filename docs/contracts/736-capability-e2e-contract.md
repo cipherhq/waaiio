@@ -373,17 +373,33 @@ The prior M479 collision (reported in R2) is **resolved** — PR #740 was renumb
 
 ## 7. Implementation Gap Inventory
 
-### 7.1 P0 Gaps (Source-Verified)
+### 7.1 Confirmed Code Defects — Deployment Unverified
 
-| ID | Gap | Evidence | Affected Capabilities | Dependency |
-|----|-----|---------|----------------------|------------|
-| GAP-001 | Offline bank transfer defaults ON when `payment_channels` metadata absent | `PaymentsTab.tsx` defaults to true when metadata absent; bot helper checks `!== false` | All offline-eligible | PR #741 (Owner Option B strict OFF already approved) |
-| GAP-002 | Non-order offline confirm auto-approves booking regardless of merchant manual-approval setting | `pending-transfers/[id]/route.ts` confirm path sets `bookings.status='confirmed'` | scheduling, appointment, reservation (offline) | PR #741 |
-| GAP-003 | No separate "Confirm Payment Only" vs "Confirm Payment & Approve" merchant actions | Absent from current `pending-transfers/[id]/route.ts` | Manual-approval merchants using offline | PR #741 |
-| GAP-004 | `confirm_order_transfer_atomic` RPC sets `orders.status='confirmed'` inside SQL — cannot defer fulfillment approval | M394 RPC SQL | ordering (offline) | PR #741 CTO blockers |
-| GAP-005 | No staging E2E verification of any capability | Phase D not authorized | All | Separate authorization needed |
+These are confirmed source-code defects traced at SHA `1c6ed975` / `c3b33307`. Their impact on deployed staging/production behavior is unverified — the actual metadata state of existing merchants and the runtime reachability of each path have not been tested against a live environment. All are scoped to **offline bank transfer paths only**; online payment flows are unaffected.
 
-### 7.2 P1 Gaps
+| ID | Gap | Severity | Evidence | Affected Capabilities | Dependency |
+|----|-----|----------|---------|----------------------|------------|
+| GAP-001 | Offline bank transfer defaults ON when `payment_channels` metadata absent | CONFIRMED CODE DEFECT | `PaymentsTab.tsx` defaults to true when metadata absent; bot helper checks `!== false` | All offline-eligible | PR #741 (Owner Option B strict OFF already approved) |
+| GAP-002 | Non-order offline confirm auto-approves booking regardless of merchant manual-approval setting | CONFIRMED CODE DEFECT | `pending-transfers/[id]/route.ts` confirm path sets `bookings.status='confirmed'` | scheduling, appointment, reservation (offline) | PR #741 |
+| GAP-004 | `confirm_order_transfer_atomic` RPC sets `orders.status='confirmed'` inside SQL — cannot defer fulfillment approval | CONFIRMED CODE DEFECT | M394 RPC SQL | ordering (offline) | PR #741 CTO blockers |
+
+### 7.2 Owner Target Contract Gaps
+
+Implementation gaps between current code and Owner-approved target behavior. Not runtime defects — the current system works as originally built; the Owner has approved a different behavior that is not yet implemented.
+
+| ID | Gap | Status | Evidence | Affected Capabilities | Dependency |
+|----|-----|--------|---------|----------------------|------------|
+| GAP-003 | No separate "Confirm Payment Only" vs "Confirm Payment & Approve" merchant actions | OWNER TARGET CONTRACT | Absent from current `pending-transfers/[id]/route.ts`; Owner approved in #721 | Manual-approval merchants using offline | PR #741 |
+
+### 7.3 Unverified / Evidence Gaps
+
+Missing verification evidence. Not confirmed defects — these represent certification requirements that have not yet been satisfied due to authorization or infrastructure prerequisites.
+
+| ID | Gap | Status | Evidence | Affected | Prerequisite |
+|----|-----|--------|---------|----------|-------------|
+| GAP-005 | No staging E2E verification of any capability | UNVERIFIED / EVIDENCE GAP | Phase D staging execution not yet authorized | All | Separate staging execution authorization; does not indicate a runtime defect |
+
+### 7.4 P1 Gaps — Implementation Required
 
 | ID | Gap | Evidence | Affected | Dependency |
 |----|-----|---------|----------|------------|
@@ -392,7 +408,7 @@ The prior M479 collision (reported in R2) is **resolved** — PR #740 was renumb
 | GAP-008 | `table_reservation` backing check uses same query as `scheduling` | `capability-selection.flow.ts` line 84-88 | table_reservation | PR #731 should add specific seating check |
 | GAP-009 | `membership`, `referral`, `reminders`, `staff`, `whatsapp_sign`, `reports`, `waiver` lack dedicated executable tests for their specific code paths | Test file search found no dedicated test files | 7 capabilities | Phase C test development |
 
-### 7.3 P2 Gaps
+### 7.5 P2 Gaps
 
 | ID | Gap | Evidence |
 |----|-----|---------|
