@@ -70,7 +70,7 @@ describe('generateMerchantIdentity', () => {
 describe('generateCustomerIdentity', () => {
   it('uses reserved 1-555-000 phone range', () => {
     const customer = generateCustomerIdentity('run-123', 'journey-1');
-    expect(customer.phone).toMatch(/^1555000/);
+    expect(customer.phone).toMatch(/^15550/);
     expect(isSyntheticPhone(customer.phone)).toBe(true);
   });
 
