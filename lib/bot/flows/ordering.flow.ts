@@ -3458,7 +3458,7 @@ export const orderingFlow: FlowDefinition = {
               proof_type: 'screenshot',
               proof_image_url: ctx.mediaUrl,
               verified_by_ocr: ocrMatches,
-              ocr_result: ocrMatches ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, confidence: ocr.confidence } : null,
+              ocr_result: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date, confidence: ocr.confidence, fields_match: ocrMatches } : null,
             })
             .eq('reference_code', transferRef)
             .eq('status', 'pending');
@@ -3487,7 +3487,7 @@ export const orderingFlow: FlowDefinition = {
             }).catch(err => logger.error('[ORDERING] Transfer notification error:', err));
           }
 
-          const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
+          const ocrHint = ocrMatches ? `\n\n🤖 _Receipt details match your payment reference._` : '';
           await ctx.sender.sendText({
             to: ctx.from,
             text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm your order shortly.\n\nRef: *${transferRef}*${ocrHint}\n\nSend *Hi* to continue.`),

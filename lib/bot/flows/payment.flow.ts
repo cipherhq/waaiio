@@ -816,12 +816,14 @@ export const paymentFlow: FlowDefinition = {
               proof_type: 'screenshot',
               proof_image_url: ctx.mediaUrl,
               verified_by_ocr: ocrMatches,
-              ocr_result: ocrMatches ? {
+              ocr_result: ocr.confidence > 0 ? {
                 amount: ocr.amount,
                 reference: ocr.reference,
                 sender_name: ocr.senderName,
                 bank_name: ocr.bankName,
+                date: ocr.date,
                 confidence: ocr.confidence,
+                fields_match: ocrMatches,
               } : null,
             })
             .eq('reference_code', transferRef)
@@ -831,8 +833,8 @@ export const paymentFlow: FlowDefinition = {
           if (ctx.business) {
             const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
             const ocrStatus = ocrMatches
-              ? `✅ AI verified: amount ${formatCurrency(expectedAmount, cc)} and ref *${transferRef}* match the receipt.`
-              : `⚠️ AI could not verify — please check the receipt manually.`;
+              ? `✅ Receipt fields match: amount ${formatCurrency(expectedAmount, cc)} and ref *${transferRef}* match the receipt.`
+              : `⚠️ Receipt fields do not match — please check the receipt manually.`;
 
             notifyOwnerNewPayment({
               supabase: ctx.supabase,
@@ -856,7 +858,7 @@ export const paymentFlow: FlowDefinition = {
           }
 
           const ocrHint = ocrMatches
-            ? `\n\n🤖 _Our AI verified your receipt — amount and reference match. The business will confirm shortly._`
+            ? `\n\n🤖 _Receipt details match your payment reference. The business will confirm shortly._`
             : '';
 
           await ctx.sender.sendText({
