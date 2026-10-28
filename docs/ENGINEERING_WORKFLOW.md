@@ -166,6 +166,14 @@ For high-risk changes (payment, capability, session state, shared helpers, cross
     - Local test evidence
     - Exact-head CI run/jobs
 
+### Phase B self-verification and escalation before handoff
+
+Claude should continue an already-authorized implementation without asking the Owner to reapprove the work's size or its unfinished parts. Track each agreed acceptance ID in the existing Issue/PR through implementation and actual executable proof; preserve earlier cleared items unless a dependency or evidence changes.
+
+Before returning as `READY FOR CTO REVIEW`, Claude must inspect the full changed lifecycle (Graphify plus TS-to-SQL/final-state database authority where relevant), exercise real handlers/rendered UI/disposable PostgreSQL, affected negative/concurrency and neighboring regressions, verify targeted files have **zero skips**, and inspect exact-head protected CI runs/job logs and independent review findings. Clearly distinguish mocks/source checks/build success from runtime coverage; mark missing evidence or pending CI honestly.
+
+Claude can investigate and resolve deterministic failures **within an already authorized scope**, documenting the root cause and bounded corrections. Escalate after two unsuccessful substantive attempts at the same failure, or immediately for product ambiguity, architecture/security/payment changes, migration conflict, permission failure or unapproved external operation. Ask one concrete question supported by evidence; do not silently alter testing expectations or open a new lane. Return for CTO review when evidence is complete, or for a true blocker/required Owner approval. All existing architecture, review, merge, migration and deployment gates remain mandatory.
+
 ### Exact-Head Review
 
 12. ChatGPT performs independent exact-head PR review against the agreed architecture, prior invariants, regression contracts, and CI evidence.
