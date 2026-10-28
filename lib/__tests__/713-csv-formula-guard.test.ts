@@ -228,55 +228,30 @@ describe('#713 Path 2: buildAdminCsvString', () => {
   });
 });
 
-// ─── 5. Paths 3-5: API route helpers (structural equivalence) ────
+// ─── 5. Paths 3-5: API route serializers (extracted to csv-serializer.ts) ──
 //
-// Next.js Route Modules cannot export non-route functions. The API
-// route serializers (csvEscape, csvEscapeField, escapeCsvField) are
-// structurally verified to be equivalent to the tested escapeCell.
+// Serializer logic extracted into importable helpers next to each route.
+// Routes import from csv-serializer.ts; tests import from the same file
+// (see 713-csv-api-routes.test.ts for full behavioral tests).
+// Here we verify the route→serializer wiring and serializer guard logic.
 
-describe('#713 Paths 3-5: API route serializer equivalence', () => {
-  /**
-   * Extract the escape function body from a route source file.
-   * Returns the core logic (the if/return block) for comparison.
-   */
-  function extractEscapeLogic(src: string, fnName: string): string {
-    const fnStart = src.indexOf(`function ${fnName}`);
-    if (fnStart === -1) return '';
-    const bodyStart = src.indexOf('{', fnStart);
-    let depth = 0;
-    let end = bodyStart;
-    for (let i = bodyStart; i < src.length; i++) {
-      if (src[i] === '{') depth++;
-      if (src[i] === '}') depth--;
-      if (depth === 0) { end = i + 1; break; }
-    }
-    return src.slice(bodyStart, end);
-  }
-
-  const sharedSrc = fs.readFileSync('lib/utils/csv-export.ts', 'utf-8');
-  const sharedNeutralize = extractEscapeLogic(sharedSrc, 'neutralizeFormulaPrefix');
-
-  const routes = [
-    { path: 'app/api/account/export/route.ts', escapeFn: 'csvEscape', neutralizeFn: 'neutralizeFormulaPrefix' },
-    { path: 'app/api/keyword-campaigns/[id]/responses/route.ts', escapeFn: 'csvEscapeField', neutralizeFn: null },
-    { path: 'app/api/promotions/export-codes/route.ts', escapeFn: 'escapeCsvField', neutralizeFn: 'neutralizeFormulaPrefix' },
+describe('#713 Paths 3-5: API route serializer wiring', () => {
+  const serializers = [
+    { serializerPath: 'app/api/account/export/csv-serializer.ts', routePath: 'app/api/account/export/route.ts', importPattern: './csv-serializer' },
+    { serializerPath: 'app/api/keyword-campaigns/csv-serializer.ts', routePath: 'app/api/keyword-campaigns/[id]/responses/route.ts', importPattern: '@/app/api/keyword-campaigns/csv-serializer' },
+    { serializerPath: 'app/api/promotions/export-codes/csv-serializer.ts', routePath: 'app/api/promotions/export-codes/route.ts', importPattern: './csv-serializer' },
   ];
 
-  for (const { path, escapeFn, neutralizeFn } of routes) {
-    describe(path, () => {
-      const src = fs.readFileSync(path, 'utf-8');
+  for (const { serializerPath, routePath, importPattern } of serializers) {
+    describe(serializerPath, () => {
+      const src = fs.readFileSync(serializerPath, 'utf-8');
 
-      it('contains formula guard with same whitespace stripping', () => {
+      it('contains formula guard with whitespace stripping', () => {
         expect(src).toContain("replace(/^[\\s\\x00]+/, '')");
       });
 
-      it('contains same formula trigger regex', () => {
+      it('contains formula trigger regex', () => {
         expect(src).toContain('/^[=+\\-@|]/');
-      });
-
-      it('contains numeric preservation regex', () => {
-        // The route must contain the numeric check to preserve values like -50, +3.14
-        expect(src).toContain('\\d+\\.?\\d*');
       });
 
       it('quoting handles comma, double-quote, LF and CR', () => {
@@ -285,31 +260,17 @@ describe('#713 Paths 3-5: API route serializer equivalence', () => {
         expect(src).toContain("includes('\\n')");
         expect(src).toContain("includes('\\r')");
       });
+    });
 
-      it(`${escapeFn} applies neutralization before quoting`, () => {
-        const escBody = extractEscapeLogic(src, escapeFn);
-        const neutralizePos = escBody.indexOf('neutralizeFormulaPrefix') !== -1
-          ? escBody.indexOf('neutralizeFormulaPrefix')
-          : escBody.indexOf("replace(/^[\\s\\x00]+/, '')");
-        const quotePos = escBody.indexOf("includes(',')");
-        expect(neutralizePos).toBeGreaterThanOrEqual(0);
-        expect(quotePos).toBeGreaterThan(neutralizePos);
-      });
-
-      if (neutralizeFn) {
-        it('neutralizeFormulaPrefix body matches shared implementation', () => {
-          const routeNeutralize = extractEscapeLogic(src, neutralizeFn);
-          expect(routeNeutralize).toBe(sharedNeutralize);
-        });
-      }
+    it(`${routePath} imports from serializer`, () => {
+      const routeSrc = fs.readFileSync(routePath, 'utf-8');
+      expect(routeSrc).toContain(importPattern);
     });
   }
 
-  it('keyword-campaigns uses csvEscapeField for all columns', () => {
+  it('keyword-campaigns route uses buildKeywordResponsesCsv', () => {
     const src = fs.readFileSync('app/api/keyword-campaigns/[id]/responses/route.ts', 'utf-8');
+    expect(src).toContain('buildKeywordResponsesCsv');
     expect(src).not.toContain('${r.phone},"${name}"');
-    expect(src).toContain('csvEscapeField(r.phone');
-    expect(src).toContain('csvEscapeField(r.customer_name');
-    expect(src).toContain('csvEscapeField(r.responded_at');
   });
 });

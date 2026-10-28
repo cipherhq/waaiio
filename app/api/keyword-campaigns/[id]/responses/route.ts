@@ -1,20 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { csvEscapeField, buildKeywordResponsesCsv } from '@/app/api/keyword-campaigns/csv-serializer';
 
 type Params = { params: Promise<{ id: string }> };
-
-function csvEscapeField(value: string): string {
-  const trimmed = value.replace(/^[\s\x00]+/, '');
-  let safe = value;
-  if (trimmed && /^[=+\-@|]/.test(trimmed) && !/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) {
-    safe = "'" + value;
-  }
-  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
-    return `"${safe.replace(/"/g, '""')}"`;
-  }
-  return safe;
-}
 
 export async function GET(request: NextRequest, { params }: Params) {
   const { id } = await params;
@@ -64,16 +53,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Export failed' }, { status: 500 });
     }
 
-    const rows = allResponses || [];
-    const csvHeader = 'phone,customer_name,responded_at';
-    const csvRows = rows.map((r) => {
-      return [
-        csvEscapeField(r.phone || ''),
-        csvEscapeField(r.customer_name || ''),
-        csvEscapeField(r.responded_at || ''),
-      ].join(',');
-    });
-    const csv = [csvHeader, ...csvRows].join('\n');
+    const csv = buildKeywordResponsesCsv(allResponses || []);
 
     const filename = `${campaign.name.replace(/[^a-zA-Z0-9]/g, '_')}_responses.csv`;
     return new NextResponse(csv, {

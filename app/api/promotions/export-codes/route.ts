@@ -13,23 +13,7 @@ const CSV_HEADER = 'display_suffix,outcome,status,claimed_at,claimed_by_phone\n'
 // (businesses need plaintext codes for printing, not winner allocation)
 const CSV_HEADER_FULL = 'code,display_suffix,status\n';
 
-function neutralizeFormulaPrefix(value: string): string {
-  const trimmed = value.replace(/^[\s\x00]+/, '');
-  if (!trimmed) return value;
-  if (!/^[=+\-@|]/.test(trimmed)) return value;
-  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) return value;
-  return "'" + value;
-}
-
-function escapeCsvField(value: string | null | undefined): string {
-  if (value === null || value === undefined) return '';
-  const str = String(value);
-  const safe = neutralizeFormulaPrefix(str);
-  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
-    return `"${safe.replace(/"/g, '""')}"`;
-  }
-  return safe;
-}
+import { escapeCsvField } from './csv-serializer';
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
