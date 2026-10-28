@@ -69,9 +69,9 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
       DELETE FROM public.refunds WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.platform_fees WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.pending_transfers WHERE business_id IN ('${BIZ}', '${BIZ_B}');
+      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.bookings WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.invoices WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.services WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.businesses WHERE id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.profiles WHERE id IN ('${OWNER}', '${OWNER_B}');
@@ -127,9 +127,9 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
       DELETE FROM public.refunds WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.platform_fees WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.pending_transfers WHERE business_id IN ('${BIZ}', '${BIZ_B}');
+      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.bookings WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.invoices WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.services WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.businesses WHERE id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.profiles WHERE id IN ('${OWNER}', '${OWNER_B}');
