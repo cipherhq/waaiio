@@ -24,7 +24,7 @@ export async function PATCH(
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { action, reason, business_id } = body;
+    const { action, reason, business_id, approve_fulfillment } = body;
 
     if (!action || !['confirm', 'reject'].includes(action)) {
       return NextResponse.json({ error: 'action must be "confirm" or "reject"' }, { status: 400 });
@@ -260,11 +260,16 @@ export async function PATCH(
 
     // M393: Order-linked confirmation uses atomic RPC
     if (transfer.order_id) {
+      // M475: 5-arg with explicit approval control. approve_fulfillment must be explicitly provided.
+      if (typeof approve_fulfillment !== 'boolean') {
+        return NextResponse.json({ error: 'approve_fulfillment (boolean) is required for order transfers' }, { status: 400 });
+      }
       const { data: confirmResult, error: confirmErr } = await service.rpc('confirm_order_transfer_atomic', {
         p_transfer_id: transferId,
         p_order_id: transfer.order_id,
         p_business_id: business_id,
         p_confirmed_by: user.id,
+        p_approve_fulfillment: approve_fulfillment,
       });
 
       if (confirmErr) {
@@ -303,94 +308,33 @@ export async function PATCH(
       return NextResponse.json({ success: true, status: 'confirmed', finalization_status: finalizationStatus });
     }
 
-    // ── Non-order confirmation: preserve existing behavior ──
-    const now = new Date().toISOString();
+    // ── M475: Non-order confirmation via atomic RPC ──
+    // Replaces inline logic with confirm_nonorder_transfer_atomic which handles:
+    // transfer+payment+fee+entity in one PostgreSQL transaction.
+    if (typeof approve_fulfillment !== 'boolean') {
+      return NextResponse.json({ error: 'approve_fulfillment (boolean) is required' }, { status: 400 });
+    }
 
-    // 1. Update pending_transfer status (guard with status='pending' to prevent double-confirm)
-    const { data: confirmedRows, error: confirmErr } = await service
-      .from('pending_transfers')
-      .update({
-        status: 'confirmed',
-        confirmed_by: user.id,
-        confirmed_at: now,
-      })
-      .eq('id', transferId)
-      .eq('status', 'pending')
-      .select('id');
+    const { data: nonOrderResult, error: nonOrderErr } = await service.rpc('confirm_nonorder_transfer_atomic', {
+      p_transfer_id: transferId,
+      p_business_id: business_id,
+      p_confirmed_by: user.id,
+      p_approve_fulfillment: approve_fulfillment,
+    });
 
-    if (confirmErr) {
-      logger.error('[PENDING_TRANSFERS] Confirm update error:', confirmErr.message);
+    if (nonOrderErr) {
+      logger.error('[PENDING_TRANSFERS] confirm_nonorder_transfer_atomic error:', nonOrderErr.message);
       return NextResponse.json({ error: 'Failed to confirm transfer' }, { status: 500 });
     }
 
-    if (!confirmedRows || confirmedRows.length === 0) {
-      return NextResponse.json({ error: 'Transfer already confirmed or no longer pending' }, { status: 409 });
+    if (!nonOrderResult?.confirmed) {
+      return NextResponse.json(
+        { error: `Cannot confirm: ${nonOrderResult?.reason || 'unknown'}` },
+        { status: 409 },
+      );
     }
 
-    // 2. Update related entity
-    if (transfer.booking_id) {
-      await service
-        .from('bookings')
-        .update({
-          deposit_status: 'paid',
-          status: 'confirmed',
-          confirmed_at: now,
-        })
-        .eq('id', transfer.booking_id);
-    }
-
-    if (transfer.invoice_id) {
-      await service
-        .from('invoices')
-        .update({
-          status: 'paid',
-          paid_at: now,
-        })
-        .eq('id', transfer.invoice_id);
-    }
-
-    // 3. Record platform fee for analytics (zero fee — direct transfers included in subscription)
-    await service.from('platform_fees').insert({
-      business_id: business_id,
-      booking_id: transfer.booking_id || null,
-      invoice_id: transfer.invoice_id || null,
-      order_id: null,
-      transaction_amount: transfer.expected_amount,
-      fee_percentage: 0,
-      fee_flat: 0,
-      fee_total: 0,
-      gateway_fee: 0,
-      tier: (business.subscription_tier || 'free') as string,
-      is_direct_transfer: true,
-    }).then(({ error }) => {
-      if (error) logger.error('[PENDING_TRANSFERS] Analytics fee record error:', error.message);
-    });
-
-    // 4. Create payment record
-    const { error: paymentErr } = await service.from('payments').insert({
-      business_id: business_id,
-      amount: transfer.expected_amount,
-      currency: transfer.currency || 'NGN',
-      status: 'success',
-      payment_method: 'bank_transfer',
-      gateway: 'direct',
-      booking_id: transfer.booking_id || null,
-      invoice_id: transfer.invoice_id || null,
-      customer_phone: transfer.customer_phone || null,
-      customer_name: transfer.customer_name || null,
-      reference: transfer.reference_code || null,
-      metadata: {
-        pending_transfer_id: transferId,
-        confirmed_by: user.id,
-        proof_type: transfer.proof_type,
-      },
-    });
-
-    if (paymentErr) {
-      logger.error('[PENDING_TRANSFERS] Payment record error:', paymentErr.message);
-    }
-
-    // 5. Notify customer via WhatsApp (with email fallback) that transfer was confirmed
+    // Notify customer via WhatsApp (with email fallback)
     if (transfer.customer_phone) {
       try {
         const resolver = new ChannelResolver(service);
@@ -404,7 +348,14 @@ export async function PATCH(
           const cc = (biz?.country_code || 'NG') as CountryCode;
           const bizName = biz?.name || 'Business';
           const amountFormatted = formatCurrency(transfer.expected_amount / 100, cc);
-          const messageText = `✅ *Payment Confirmed!*\n\n💰 ${amountFormatted}\n🔑 Ref: *${transfer.reference_code}*\n🏢 ${bizName}\n\nYour booking is confirmed. Thank you!`;
+
+          // #736: Accurate notification based on approval status
+          const approved = nonOrderResult.approved;
+          const statusText = approved
+            ? 'Your booking is confirmed. Thank you!'
+            : 'Your payment has been received. The merchant will review and confirm your booking shortly.';
+          const titleText = approved ? 'Booking Confirmed' : 'Payment Received';
+          const messageText = `✅ *${titleText}!*\n\n💰 ${amountFormatted}\n🔑 Ref: *${transfer.reference_code}*\n🏢 ${bizName}\n\n${statusText}`;
 
           const customerEmail = await findCustomerEmail(service, transfer.customer_phone, business_id);
           await sendOrEmail({
@@ -416,11 +367,11 @@ export async function PATCH(
             alwaysEmail: true,
             email: customerEmail ? {
               address: customerEmail,
-              subject: `Payment Confirmed - ${bizName}`,
+              subject: `${titleText} - ${bizName}`,
               html: businessNotificationEmail({
                 businessName: bizName,
-                title: 'Payment Confirmed',
-                message: 'Your bank transfer has been verified and your booking is confirmed. Thank you!',
+                title: titleText,
+                message: statusText,
                 details: {
                   'Amount': amountFormatted,
                   'Reference': transfer.reference_code,
@@ -434,16 +385,24 @@ export async function PATCH(
       }
     }
 
-    // 6. In-app notification
+    // In-app notification
+    const notifBody = approve_fulfillment
+      ? `Bank transfer of ${formatCurrency(transfer.expected_amount / 100, 'NG')} confirmed and approved. Ref: ${transfer.reference_code}`
+      : `Bank transfer of ${formatCurrency(transfer.expected_amount / 100, 'NG')} payment verified (awaiting approval). Ref: ${transfer.reference_code}`;
     createNotification(service, {
       businessId: business_id,
       bookingId: transfer.booking_id || undefined,
       type: 'transfer_confirmed',
       channel: 'dashboard',
-      body: `Bank transfer of ${formatCurrency(transfer.expected_amount / 100, 'NG')} confirmed. Ref: ${transfer.reference_code}`,
+      body: notifBody,
     }).catch(err => logger.error('[PENDING_TRANSFERS] Notification error:', err));
 
-    return NextResponse.json({ success: true, status: 'confirmed' });
+    return NextResponse.json({
+      success: true,
+      status: 'confirmed',
+      approved: approve_fulfillment,
+      payment_id: nonOrderResult.payment_id,
+    });
   } catch (err) {
     logger.error('[PENDING_TRANSFERS] PATCH error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
