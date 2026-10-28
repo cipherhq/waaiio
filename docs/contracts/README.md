@@ -12,6 +12,10 @@ Machine-readable contracts for Waaiio's high-risk capability domains. Each contr
 
 - `capability-index.json` — All 32 capabilities with risk tier and contract status
 - `{capability}.contract.json` — Detailed Tier-1 contracts
+- `shared-payment-lifecycle.md` — Universal payment-to-fulfillment lifecycle standard (#721)
+- `whatsapp-experience-contract.md` — Shared WhatsApp customer experience standards (#721)
+- `721-capability-journey-matrix.md` — Complete 32-capability × WhatsApp journey matrix (#721)
+- `721-behavior-vs-contract-report.md` — Current behavior vs contract audit report (#721)
 
 ## Schema
 

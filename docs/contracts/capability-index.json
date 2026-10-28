@@ -1,7 +1,7 @@
 {
   "_schema": "waaiio-capability-index-v1",
   "_source": "shared/capabilities.ts",
-  "_generated_from_main": "a88b2b6c0df3149e81509e62a7f167264e31d100",
+  "_generated_from_main": "164b31b87fc8013dec65a55201ecaee30859a1b8",
   "total": 32,
   "capabilities": [
     {
@@ -43,8 +43,9 @@
     {
       "id": "table_reservation",
       "subscriptionTier": "free",
-      "riskTier": "tier-3",
-      "contractStatus": "index-only"
+      "riskTier": "tier-2",
+      "contractStatus": "index-only",
+      "notes": "Currently duplicates scheduling flow. Dedicated architecture in PR #731."
     },
     {
       "id": "whatsapp_sign",
