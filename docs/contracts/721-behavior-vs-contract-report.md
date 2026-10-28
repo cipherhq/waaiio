@@ -63,7 +63,7 @@ Each finding is classified using the Operating Order's mandatory finding states:
 | Giving loyalty exclusion | `giving.contract.json` knownDebt #167 claims loyalty not excluded | FIXED — `skipLoyalty` implemented in `send-confirmation.ts`. Contract JSON text is stale. | Update `giving.contract.json` knownDebt section (separate PR) |
 | Payment provider count | Earlier audit listed 4 providers | PayPal is a 5th supported gateway (`lib/payments/paypal.ts`) | Updated in `shared-payment-lifecycle.md` (this PR) |
 | CI job count | Earlier references said "7 jobs" | CI has 11 jobs | Noted in this PR's audit documents |
-| `table_reservation` tier | `capability-index.json` showed `tier-3` | Changed to `tier-2` — involves bookings/payments, pending dedicated architecture (PR #731) | Updated in `capability-index.json` (this PR) |
+| `table_reservation` tier | `capability-index.json` showed `tier-3` | Changed to `tier-1` — bookings, deposits, and state-machine behavior meet Tier-1 criteria. RISK GAP: detailed contract required before PR #731 merge. | Updated in `capability-index.json` (this PR) |
 
 ---
 
@@ -97,19 +97,19 @@ Each finding is classified using the Operating Order's mandatory finding states:
 
 ## Graphify Evidence
 
-**Full-repo Graphify was performed in earlier #721 audit sessions** (reported in issue comment #6435390135):
-- 11,851 nodes, 25,839 edges, 1,232 communities
-- `messaging_opt_outs` consumer map: 7 files confirmed, zero in `admin/`
-- Only migration: `237_opt_out_suppression.sql`
+**Fresh AST-only Graphify extraction performed at exact head SHA `7642f88d`** (branch `docs/721-whatsapp-lifecycle-contract`, based on main `164b31b8`):
+- **16,293 nodes, 34,360 edges** (AST extraction, no clustering/LLM)
+- 2,705 source files processed, 75 empty-node files (JSON configs, not code)
+- `graphify update . --no-cluster` — code-only, no semantic LLM extraction
 
-**Graphify NOT re-run in this session.** The earlier full-repo graph covered the same main SHA lineage. The current audit relied on:
-- Direct source grep across all directories for dependency verification
-- `shared/capabilities.ts` as canonical capability source (32 capabilities verified)
-- `lib/bot/flows/registry.ts` flow registration (17 flows verified)
-- `lib/payments/` architecture trace (5 providers + offline verified)
-- Issue/PR status via `gh` CLI
+**Prior full-repo graph** (issue comment #6435390135): 11,851 nodes, 25,839 edges, 1,232 communities (included LLM-based semantic extraction and clustering). The current AST-only extraction has higher node/edge count due to exhaustive AST parsing without deduplication that clustering provides.
 
-**Limitation:** A fresh Graphify run against exact SHA `164b31b8` was not performed. The earlier graph was built against a prior SHA on the same branch lineage. Dependency paths may have changed with merged PRs #722, #727, #729, #733.
+**Dependency verification performed:**
+- `messaging_opt_outs` reverse-dependency query: consumer map consistent with prior audit (7 files in `lib/`, `app/api/`)
+- `shared/capabilities.ts` → `bot.service.ts` path verified (4 hops via type system)
+- `graphify-out/` is gitignored; graph output NOT committed to the PR
+
+**Limitation:** AST-only extraction captures structural imports/exports but not semantic call relationships. Full semantic extraction requires an LLM API key (Gemini/OpenAI/Claude). The AST graph does not replace staging E2E verification for runtime behavior.
 
 ---
 
@@ -132,7 +132,7 @@ Each finding is classified using the Operating Order's mandatory finding states:
 | #721 | This issue | Cross-capability payment contract | OPEN |
 | #728 | Launch QA: staging E2E harness | E2E test infrastructure | OPEN (PR #729, #733 MERGED) |
 | #730 | Booking UX parity | Table reservation dedicated architecture | OPEN (PR #731 DRAFT) |
-| #735 | T19b: provider-paid after cancellation | P0-2 in this report | OPEN |
+| #735 | T19b: provider-paid after cancellation | P1 investigation in this report (no provider incident established) | OPEN |
 | PR #732 | #507 lifecycle certification tests | 126 tests, blocked on staging E2E | OPEN |
 | PR #712 | Currency-safe payouts | Separate lane | DRAFT |
 | PR #604 | Scheduling price authority | Separate lane | DRAFT |

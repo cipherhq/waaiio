@@ -110,20 +110,38 @@ This standard does NOT replace capability-specific contracts. It defines the sha
 
 ## 4. Offline Bank Transfer Path
 
+**Payment verification and booking/reservation acceptance are separate decisions** (Owner-approved A7, Issue #721 body §8).
+
 ```
 Customer selects bank transfer
   → bank-transfer.ts shows merchant bank details
   → Customer sends proof/reference
   → pending_transfers row created (status: pending)
-  → Merchant verifies in dashboard (pending-transfers/[id]/route.ts)
-  → On merchant verification: payment marked verified
-  → Stage 2 + Stage 3 execute
+  → Merchant reviews in dashboard (pending-transfers/[id]/route.ts)
+
+  Payment verification (Step 1):
+  → Merchant confirms funds received → payment marked verified
+
+  Booking/reservation acceptance (Step 2 — separate decision):
+  → If merchant has manual approval configured:
+      Merchant sees "Confirm Payment & Approve Booking" vs "Confirm Payment Only"
+      Payment verification alone does NOT auto-confirm the booking
+      Customer notified of payment receipt; booking status remains pending approval
+  → If merchant does NOT have manual approval:
+      Payment verification triggers Stage 2 fulfillment + Stage 3 notifications
+
+  → Stage 2 + Stage 3 execute only after BOTH payment verification AND
+    applicable booking acceptance are complete
 ```
 
 **Rules:**
 - Proof of bank transfer is NOT confirmation that funds arrived
-- Merchant must manually verify and approve
+- Merchant must manually verify payment receipt
+- Payment verification and booking acceptance are independently controllable
 - "I've Paid" for offline triggers merchant notification, not auto-confirmation
+- Customer receives accurate status: "payment received, pending approval" vs "booking confirmed"
+
+**Implementation gap (A7):** Current `pending-transfers/[id]/route.ts` marks `status='confirmed'` directly on payment verification, bypassing the manual approval setting. This is a known gap against the approved target behavior; fix tracked under #721.
 
 ---
 
