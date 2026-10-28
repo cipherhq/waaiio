@@ -1,20 +1,30 @@
 /**
  * M470/M471 Caller Behavior & SQL Source Lint — Issue #507
  *
- * §1–§4: Mock-Supabase caller tests — verify the application-layer code
- * that calls M470/M471 RPCs handles every response shape correctly.
- * Evidence type: MOCK CALLER BEHAVIOR (not disposable-PG execution).
+ * §1: Mock RPC response shapes — asserts locally constructed objects matching
+ *     M470 RPC response/error patterns. Does NOT invoke real process_tickets.
+ *     Evidence type: MOCK RESPONSE SHAPES (not caller certification).
+ *
+ * §2–§4: Mock-Supabase safeFlowCleanup caller tests — invokes real
+ *     safeFlowCleanup code with mocked Supabase, verifying the actual
+ *     escape-hatches.ts caller handles M471 RPC responses correctly.
+ *     Evidence type: UNIT-INTEGRATION EXECUTED (real caller, mock DB).
  *
  * §5: SQL source lint — reads migration files as text and checks structural
- * contracts (SECURITY DEFINER, ACL blocks, execution order, self-verification).
- * Evidence type: SQL SOURCE LINT (not executed migration state).
+ *     contracts (SECURITY DEFINER, ACL blocks, execution order).
+ *     Evidence type: SQL SOURCE LINT (not executed migration state).
  *
- * Disposable-PG evidence (real migration apply, RPC execution, ACL enforcement,
- * payment-fence concurrency) was executed separately and recorded in the
- * GitHub #507 addendum. CI does not have a local PG instance, so those tests
- * are not part of this Vitest file.
+ * §6: Real process_tickets step invocation — imports and calls the actual
+ *     ticketing.flow.ts process_tickets step with mocked Supabase RPC
+ *     responses for success/sold-out/tier_paused/price_changed/RPC-not-found.
+ *     Evidence type: UNIT-INTEGRATION EXECUTED (real caller, mock DB).
  *
- * SHA: a27650c78200e74e1770d5d9e571117529fab066
+ * Outstanding limitation: §1 mock response shapes do not exercise the
+ * caller path. §6 provides real caller coverage for process_tickets.
+ * Full deployed-app caller certification requires staging E2E (BLOCKED).
+ *
+ * Disposable-PG evidence (28 tests, local-only) is in
+ * scripts/disposable-pg-m470-m471-test.sh, not executed by CI.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { safeFlowCleanup } from '@/lib/bot/handlers/escape-hatches';

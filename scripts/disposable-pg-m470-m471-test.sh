@@ -42,30 +42,51 @@ if [[ "$PG_HOST_ACTUAL" != "socket" ]] && [[ "$PG_HOST_ACTUAL" != "" ]] && [[ "$
 fi
 
 # ── CLEANUP WITH SIGNAL HANDLING ──
+# _FINAL_EXIT is set by the EXIT trap to the desired process exit code.
+# The trap disables itself before calling exit to prevent recursion.
+_FINAL_EXIT=0
 cleanup() {
-  local exit_code=${1:-$?}
+  local prior_code=${1:-0}
+  local cleanup_failed=0
   # Kill any background children
   for pid in "${CHILD_PIDS[@]}"; do
     kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null || true
   done
   # Drop the test database
-  if psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME';" 2>/dev/null | grep -q 1; then
-    # Terminate any remaining connections
+  local db_exists
+  db_exists=$(psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME';" 2>/dev/null || echo "query_failed")
+  if echo "$db_exists" | grep -q "query_failed"; then
+    echo "ERROR: Cannot verify database state — treating as cleanup failure"
+    cleanup_failed=1
+  elif echo "$db_exists" | grep -q 1; then
     psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$DB_NAME' AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
     psql -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME;" >/dev/null 2>&1
-    # Verify cleanup
-    if psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME';" 2>/dev/null | grep -q 1; then
-      echo "ERROR: Failed to drop test database $DB_NAME — exiting nonzero"
-      # Preserve a prior nonzero exit code; otherwise report cleanup failure
-      if [[ "$exit_code" -eq 0 ]]; then exit_code=2; fi
+    # Verify
+    local still_exists
+    still_exists=$(psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME';" 2>/dev/null || echo "query_failed")
+    if echo "$still_exists" | grep -q 1 || echo "$still_exists" | grep -q "query_failed"; then
+      echo "ERROR: Failed to drop test database $DB_NAME"
+      cleanup_failed=1
     else
       echo "Cleanup verified: database $DB_NAME dropped."
     fi
+  else
+    echo "Cleanup: database $DB_NAME already absent."
   fi
-  return "$exit_code"
+  # Determine final exit code: prior test failure takes precedence, then cleanup failure
+  if [[ "$prior_code" -ne 0 ]]; then
+    _FINAL_EXIT=$prior_code
+  elif [[ "$cleanup_failed" -ne 0 ]]; then
+    _FINAL_EXIT=2
+  else
+    _FINAL_EXIT=0
+  fi
 }
-trap 'cleanup $?' EXIT
-trap 'echo ""; echo "INTERRUPTED — cleaning up..."; cleanup 130; exit 130' INT TERM
+# EXIT trap: capture current exit code, run cleanup, then exit with the adjusted code.
+# Trap is disabled before exit to prevent recursion.
+# Capture $? BEFORE trap - EXIT (which resets $? to 0)
+trap '_TRAP_CODE=$?; trap - EXIT; cleanup $_TRAP_CODE; exit $_FINAL_EXIT' EXIT
+trap '_TRAP_CODE=130; echo ""; echo "INTERRUPTED"; trap - EXIT; cleanup $_TRAP_CODE; exit $_FINAL_EXIT' INT TERM
 
 echo "=== Disposable-PG M470/M471 Test Suite ==="
 echo "Database: $DB_NAME"
@@ -301,54 +322,90 @@ psql -d "$DB_NAME" -q -c "UPDATE event_ticket_types SET tickets_sold=47 WHERE id
 BK1_ID=$(psql -d "$DB_NAME" -tAc "SELECT booking_id FROM create_ticket_booking_checked('bbbbbbb0-0001-0001-0001-000000000001','aaaaaaaa-0001-0001-0001-000000000001','cccccccc-0001-0001-0001-000000000001',2,'dddddddd-0001-0001-0001-000000000001',10000,'Buyer1','+2348011111111','aaaaaaaa-1111-2222-3333-444444444441',5000);" | tr -d ' ')
 BK2_ID=$(psql -d "$DB_NAME" -tAc "SELECT booking_id FROM create_ticket_booking_checked('bbbbbbb0-0001-0001-0001-000000000001','aaaaaaaa-0001-0001-0001-000000000001','cccccccc-0001-0001-0001-000000000001',2,'dddddddd-0002-0001-0001-000000000001',10000,'Buyer2','+2348022222222','aaaaaaaa-1111-2222-3333-444444444442',5000);" | tr -d ' ')
 
-# Verify: both bookings created, tickets_sold still 47 (no increment yet)
-SOLD_BEFORE=$(psql -d "$DB_NAME" -tAc "SELECT tickets_sold FROM event_ticket_types WHERE id='cccccccc-0001-0001-0001-000000000001';" | tr -d ' ')
-if [[ "$SOLD_BEFORE" != "47" ]]; then
-  log_fail "T18a: tickets_sold should be 47 before finalization, got $SOLD_BEFORE"
+# Verify: both pending bookings exist
+BK_COUNT=$(psql -d "$DB_NAME" -tAc "SELECT count(*) FROM bookings WHERE id IN ('$BK1_ID','$BK2_ID') AND status='pending';" | tr -d ' ')
+if [[ "$BK_COUNT" != "2" ]]; then
+  log_fail "T18a: Expected 2 pending bookings, got $BK_COUNT"
 else
-  log_pass "T18a: Both pending bookings created, tickets_sold=47 (no premature increment)"
+  SOLD_BEFORE=$(psql -d "$DB_NAME" -tAc "SELECT tickets_sold FROM event_ticket_types WHERE id='cccccccc-0001-0001-0001-000000000001';" | tr -d ' ')
+  if [[ "$SOLD_BEFORE" != "47" ]]; then
+    log_fail "T18a: tickets_sold should be 47 before finalization, got $SOLD_BEFORE"
+  else
+    log_pass "T18a: 2 pending bookings confirmed, tickets_sold=47 (no premature increment)"
+  fi
 fi
 
 # Step 2: Both finalize concurrently (the authoritative inventory commit)
+# Capture FULL output (stdout+stderr) to verify CHECK constraint error
 F1_OUT=$(mktemp)
 F2_OUT=$(mktemp)
-psql -d "$DB_NAME" -tAc "SELECT (finalize_free_ticket_booking('$BK1_ID'::uuid,'aaaaaaaa-0001-0001-0001-000000000001'::uuid,'cccccccc-0001-0001-0001-000000000001'::uuid,2))->>'success';" > "$F1_OUT" 2>&1 &
+psql -d "$DB_NAME" -tA -c "SELECT (finalize_free_ticket_booking('$BK1_ID'::uuid,'aaaaaaaa-0001-0001-0001-000000000001'::uuid,'cccccccc-0001-0001-0001-000000000001'::uuid,2))->>'success';" > "$F1_OUT" 2>&1 &
 CHILD_PIDS+=($!)
-psql -d "$DB_NAME" -tAc "SELECT (finalize_free_ticket_booking('$BK2_ID'::uuid,'aaaaaaaa-0001-0001-0001-000000000001'::uuid,'cccccccc-0001-0001-0001-000000000001'::uuid,2))->>'success';" > "$F2_OUT" 2>&1 &
+psql -d "$DB_NAME" -tA -c "SELECT (finalize_free_ticket_booking('$BK2_ID'::uuid,'aaaaaaaa-0001-0001-0001-000000000001'::uuid,'cccccccc-0001-0001-0001-000000000001'::uuid,2))->>'success';" > "$F2_OUT" 2>&1 &
 CHILD_PIDS+=($!)
 wait "${CHILD_PIDS[@]}" 2>/dev/null || true
 CHILD_PIDS=()
 
-F1_R=$(cat "$F1_OUT" 2>/dev/null | tr -d ' \n')
-F2_R=$(cat "$F2_OUT" 2>/dev/null | tr -d ' \n')
+F1_FULL=$(cat "$F1_OUT" 2>/dev/null || echo "read_error")
+F2_FULL=$(cat "$F2_OUT" 2>/dev/null || echo "read_error")
 rm -f "$F1_OUT" "$F2_OUT"
 
+# Parse results: extract success value and check for CHECK constraint error
+F1_SUCCESS=""
+F2_SUCCESS=""
+F1_CHECK_ERR=0
+F2_CHECK_ERR=0
+echo "$F1_FULL" | grep -q "^true$" && F1_SUCCESS="true"
+echo "$F2_FULL" | grep -q "^true$" && F2_SUCCESS="true"
+echo "$F1_FULL" | grep -q "chk_capacity_gte_sold" && F1_CHECK_ERR=1
+echo "$F2_FULL" | grep -q "chk_capacity_gte_sold" && F2_CHECK_ERR=1
+
 SOLD_AFTER=$(psql -d "$DB_NAME" -tAc "SELECT tickets_sold FROM event_ticket_types WHERE id='cccccccc-0001-0001-0001-000000000001';" | tr -d ' ')
-BOOKINGS_COUNT=$(psql -d "$DB_NAME" -tAc "SELECT count(*) FROM bookings WHERE id IN ('$BK1_ID','$BK2_ID') AND status='confirmed';" | tr -d ' ')
 
-# Expected: 47+2=49 (first finalize succeeds), 49+2=51 > 50 capacity
-# The CHECK constraint chk_capacity_gte_sold blocks tickets_sold > total_tickets.
-# Second finalize's transaction aborts on constraint violation.
-# Net: exactly 1 success, exactly 1 rejection, tickets_sold=49.
-echo "  Final tickets_sold=$SOLD_AFTER, F1=$F1_R, F2=$F2_R"
+echo "  Final tickets_sold=$SOLD_AFTER"
+echo "  F1: success=$F1_SUCCESS check_err=$F1_CHECK_ERR"
+echo "  F2: success=$F2_SUCCESS check_err=$F2_CHECK_ERR"
 
-SUCCESS_COUNT=0
-FAILURE_COUNT=0
-[[ "$F1_R" == "true" ]] && SUCCESS_COUNT=$((SUCCESS_COUNT+1)) || FAILURE_COUNT=$((FAILURE_COUNT+1))
-[[ "$F2_R" == "true" ]] && SUCCESS_COUNT=$((SUCCESS_COUNT+1)) || FAILURE_COUNT=$((FAILURE_COUNT+1))
+# Determine winner and loser
+WINNER_ID="" LOSER_ID=""
+if [[ "$F1_SUCCESS" == "true" ]] && [[ "$F2_CHECK_ERR" -eq 1 ]]; then
+  WINNER_ID="$BK1_ID"; LOSER_ID="$BK2_ID"
+elif [[ "$F2_SUCCESS" == "true" ]] && [[ "$F1_CHECK_ERR" -eq 1 ]]; then
+  WINNER_ID="$BK2_ID"; LOSER_ID="$BK1_ID"
+fi
 
 # Check committed booking states
 BK1_FIN=$(psql -d "$DB_NAME" -tAc "SELECT tickets_finalized FROM bookings WHERE id='$BK1_ID';" | tr -d ' ')
 BK2_FIN=$(psql -d "$DB_NAME" -tAc "SELECT tickets_finalized FROM bookings WHERE id='$BK2_ID';" | tr -d ' ')
-FINALIZED_COUNT=0
-[[ "$BK1_FIN" == "t" ]] && FINALIZED_COUNT=$((FINALIZED_COUNT+1))
-[[ "$BK2_FIN" == "t" ]] && FINALIZED_COUNT=$((FINALIZED_COUNT+1))
 
-# STRICT: require exactly 1 success, 1 failure, final=49, 1 finalized booking
-if [[ "$SUCCESS_COUNT" -eq 1 ]] && [[ "$FAILURE_COUNT" -eq 1 ]] && [[ "$SOLD_AFTER" -eq 49 ]] && [[ "$FINALIZED_COUNT" -eq 1 ]]; then
-  log_pass "T18b: Exactly 1 finalization committed (tickets_sold=49/50), 1 rejected, 1 booking finalized"
-else
-  log_fail "T18b: Expected 1 success + 1 failure + sold=49 + 1 finalized. Got: successes=$SUCCESS_COUNT failures=$FAILURE_COUNT sold=$SOLD_AFTER finalized=$FINALIZED_COUNT (F1=$F1_R F2=$F2_R bk1_fin=$BK1_FIN bk2_fin=$BK2_FIN)"
+# STRICT: require all of:
+# 1. Exactly one true success + one CHECK constraint rejection (not just any error)
+# 2. Final tickets_sold = 49
+# 3. Winner booking is finalized, loser is NOT finalized
+# 4. Winner and loser are identified
+T18_OK=1
+if [[ -z "$WINNER_ID" ]]; then
+  log_fail "T18b: Cannot identify winner/loser. Need exactly 1 success + 1 chk_capacity_gte_sold error"
+  T18_OK=0
+fi
+if [[ "$T18_OK" -eq 1 ]] && [[ "$SOLD_AFTER" -ne 49 ]]; then
+  log_fail "T18b: Expected tickets_sold=49, got $SOLD_AFTER"
+  T18_OK=0
+fi
+if [[ "$T18_OK" -eq 1 ]]; then
+  WINNER_FIN=$(psql -d "$DB_NAME" -tAc "SELECT tickets_finalized FROM bookings WHERE id='$WINNER_ID';" | tr -d ' ')
+  LOSER_FIN=$(psql -d "$DB_NAME" -tAc "SELECT tickets_finalized FROM bookings WHERE id='$LOSER_ID';" | tr -d ' ')
+  if [[ "$WINNER_FIN" != "t" ]]; then
+    log_fail "T18b: Winner booking $WINNER_ID should be finalized, got $WINNER_FIN"
+    T18_OK=0
+  fi
+  if [[ "$LOSER_FIN" != "f" ]]; then
+    log_fail "T18b: Loser booking $LOSER_ID should NOT be finalized, got $LOSER_FIN"
+    T18_OK=0
+  fi
+fi
+if [[ "$T18_OK" -eq 1 ]]; then
+  log_pass "T18b: 1 finalization committed (winner=$WINNER_ID finalized=true), 1 rejected by chk_capacity_gte_sold (loser=$LOSER_ID finalized=false), tickets_sold=49/50"
 fi
 
 # ═══════ T19: PAYMENT-VS-CANCEL WITH STATE ASSERTIONS ═══════
