@@ -156,7 +156,7 @@ describe('Phase 2D dashboard-confirm vs recovery-cron contention', () => {
     const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
     const dashboardReq = new Request('http://x/api/dashboard/pending-transfers/xf-race', {
       method: 'PATCH',
-      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1' }),
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
       headers: { 'Content-Type': 'application/json' },
     });
 

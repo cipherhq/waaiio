@@ -192,7 +192,7 @@ describe('R33-2: pending-transfers PATCH — exact channel A', () => {
     const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
     const req = new Request('http://x', {
       method: 'PATCH',
-      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1' }),
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
       headers: { 'Content-Type': 'application/json' },
     });
     const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-c1' }) });
@@ -238,7 +238,7 @@ describe('R33-2: pending-transfers PATCH — exact channel A', () => {
     expect(mockResolveByBusinessId).not.toHaveBeenCalled();
   });
 
-  it('non-order confirm: uses resolveByBusinessId (control)', async () => {
+  it('non-order confirm: uses atomic RPC and resolveByBusinessId for notification', async () => {
     vi.resetModules();
     const transfer = {
       id: 'xf-no', order_id: null, booking_id: 'book-1', invoice_id: null,
@@ -248,35 +248,32 @@ describe('R33-2: pending-transfers PATCH — exact channel A', () => {
     };
 
     mockFromHandler = (table: string) => {
-      if (table === 'pending_transfers') {
-        const c = chain(transfer);
-        c.update = vi.fn(() => ({
-          eq: vi.fn(() => ({ eq: vi.fn(() => ({ select: vi.fn().mockResolvedValue({ data: [{ id: 'xf-no' }], error: null }) })) })),
-        }));
-        return c;
-      }
+      if (table === 'pending_transfers') return chain(transfer);
       if (table === 'businesses') {
         const c = chain({ name: 'Biz', country_code: 'NG' });
         c.single = vi.fn().mockResolvedValue({ data: { name: 'Biz', country_code: 'NG' }, error: null });
         return c;
       }
-      if (table === 'bookings') return { update: vi.fn(() => ({ eq: vi.fn().mockResolvedValue({ error: null }) })) };
-      if (table === 'platform_fees') return { insert: vi.fn(() => ({ then: (r: any) => r({ error: null }) })) };
-      if (table === 'payments') return { insert: vi.fn().mockResolvedValue({ error: null }) };
       return chain();
     };
+    // M475: non-order confirm now uses confirm_nonorder_transfer_atomic RPC
+    mockRpc.mockResolvedValue({
+      data: { confirmed: true, payment_id: 'pay-no1', entity_type: 'booking', approved: true, amount_major: 1000 },
+      error: null,
+    });
     mockResolveByBusinessId.mockResolvedValue({ sender: { sendText: mockSendText } });
 
     const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
     const req = new Request('http://x', {
       method: 'PATCH',
-      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1' }),
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
       headers: { 'Content-Type': 'application/json' },
     });
     const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-no' }) });
     const body = await res.json();
 
     expect(body.status).toBe('confirmed');
+    expect(body.approved).toBe(true);
     expect(mockResolveByBusinessId).toHaveBeenCalled();
     expect(mockResolveByChannelIdForBusiness).not.toHaveBeenCalled();
   });
