@@ -872,6 +872,8 @@ export const schedulingFlow: FlowDefinition = {
         futureDate.setDate(futureDate.getDate() + maxAdvanceDays);
         const futureDateStr = futureDate.toISOString().split('T')[0];
 
+        const isTableRes = ctx.session.session_data._is_table_reservation === true;
+        const dateSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
         let bookingsQuery = ctx.supabase
           .from('bookings')
           .select('date, time')
@@ -880,7 +882,12 @@ export const schedulingFlow: FlowDefinition = {
           .gte('date', todayStr)
           .lte('date', futureDateStr);
 
-        if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+        // Table reservations: scope to selected resource so other tables don't block dates
+        if (isTableRes && dateSeatingResourceId) {
+          bookingsQuery = bookingsQuery.eq('seating_resource_id', dateSeatingResourceId);
+        } else if (staffId) {
+          bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+        }
         const { data: allBookings } = await bookingsQuery.limit(2000);
 
         // Count bookings per date+time

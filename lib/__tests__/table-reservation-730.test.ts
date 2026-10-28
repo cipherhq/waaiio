@@ -930,6 +930,49 @@ describe('#730: Admin API and security', () => {
     expect(code).toContain("r.flow_type === 'table_reservation' ? (r.seating_resource_name");
   });
 
+  it('select_date.prompt scopes availability to seating_resource_id', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts'), 'utf-8');
+
+    // Must scope date availability to resource for table reservations
+    expect(code).toContain("eq('seating_resource_id', dateSeatingResourceId)");
+    // Must check _is_table_reservation before applying staff filter
+    expect(code).toMatch(/isTableRes && dateSeatingResourceId[\s\S]*?eq\('seating_resource_id'/);
+  });
+
+  it('select_date.prompt: actual handler scopes table dates by resource', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_date');
+    expect(step).toBeDefined();
+
+    // Mock supabase that returns different bookings per resource filter
+    const mockSelect = { eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), gte: vi.fn().mockReturnThis(), lte: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue({ data: [] }) };
+    const mockSupabase = { from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(mockSelect) }) } as any;
+
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_date', version: 1,
+        session_data: {
+          _is_table_reservation: true,
+          seating_resource_id: 'res-A',
+          _seating_capacity: 4,
+          _service_max_capacity: 4,
+          service_duration: 90,
+          _service_available_days: [],
+        },
+      },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', operating_hours: {}, metadata: {} },
+      supabase: mockSupabase, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1',
+      copyLang: 'en', t: (s: string) => Promise.resolve(s),
+    } as any;
+
+    await step!.prompt(ctx);
+
+    // Verify the query was scoped to seating_resource_id
+    const eqCalls = mockSelect.eq.mock.calls.map((c: any[]) => c[0]);
+    expect(eqCalls).toContain('seating_resource_id');
+  });
+
   it('dashboard column header shows "Table / Seating" for table_reservations tab', async () => {
     const fs = await import('fs');
     const path = await import('path');
