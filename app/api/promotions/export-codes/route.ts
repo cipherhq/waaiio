@@ -25,7 +25,7 @@ function escapeCsvField(value: string | null | undefined): string {
   if (value === null || value === undefined) return '';
   const str = String(value);
   const safe = neutralizeFormulaPrefix(str);
-  if (safe.includes(',') || safe.includes('"') || safe.includes('\n')) {
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
     return `"${safe.replace(/"/g, '""')}"`;
   }
   return safe;

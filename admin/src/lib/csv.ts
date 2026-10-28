@@ -23,7 +23,7 @@ export function downloadCSV(
   const escape = (val: unknown): string => {
     const str = val == null ? '' : String(val);
     const safe = neutralizeFormulaPrefix(str);
-    if (safe.includes(',') || safe.includes('"') || safe.includes('\n')) {
+    if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
       return `"${safe.replace(/"/g, '""')}"`;
     }
     return safe;

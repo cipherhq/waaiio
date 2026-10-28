@@ -48,9 +48,9 @@ export function exportToCsv(
   URL.revokeObjectURL(url);
 }
 
-function escapeCell(value: string): string {
+export function escapeCell(value: string): string {
   const safe = neutralizeFormulaPrefix(value);
-  if (safe.includes(',') || safe.includes('"') || safe.includes('\n')) {
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
     return `"${safe.replace(/"/g, '""')}"`;
   }
   return safe;
