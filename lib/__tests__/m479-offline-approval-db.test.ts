@@ -64,15 +64,17 @@ const SERVICE = 'c4790000-0000-0000-0000-000000000020';
 describe('M479 Offline merchant approval PostgreSQL', () => {
   beforeAll(() => {
     // Clean up test data (deterministic UUIDs ensure isolation)
-    // Order: children before parents — bookings ON DELETE RESTRICT payments (M183 FK)
-    // DO NOT reorder: bookings must be deleted before payments due to FK constraint
+    // Circular FK: bookings.payment_id → payments AND payments.reservation_id → bookings
+    // Break the cycle by nullifying cross-references before deleting
     runSQL(`
+      UPDATE public.payments SET reservation_id = NULL WHERE business_id IN ('${BIZ}', '${BIZ_B}');
+      UPDATE public.bookings SET payment_id = NULL WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.refunds WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.platform_fees WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.pending_transfers WHERE business_id IN ('${BIZ}', '${BIZ_B}');
+      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.bookings WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.invoices WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.services WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.businesses WHERE id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.profiles WHERE id IN ('${OWNER}', '${OWNER_B}');
@@ -123,15 +125,17 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
   });
 
   afterAll(() => {
-    // Order: children before parents — bookings ON DELETE RESTRICT payments (M183 FK)
-    // DO NOT reorder: bookings must be deleted before payments due to FK constraint
+    // Circular FK: bookings.payment_id → payments AND payments.reservation_id → bookings
+    // Break the cycle by nullifying cross-references before deleting
     runSQL(`
+      UPDATE public.payments SET reservation_id = NULL WHERE business_id IN ('${BIZ}', '${BIZ_B}');
+      UPDATE public.bookings SET payment_id = NULL WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.refunds WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.platform_fees WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.pending_transfers WHERE business_id IN ('${BIZ}', '${BIZ_B}');
+      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.bookings WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.invoices WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.services WHERE business_id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.businesses WHERE id IN ('${BIZ}', '${BIZ_B}');
       DELETE FROM public.profiles WHERE id IN ('${OWNER}', '${OWNER_B}');
