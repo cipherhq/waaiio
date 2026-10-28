@@ -850,7 +850,7 @@ export default function BookingsPage() {
               <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300 dark:border-gray-600" /></th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guest</th>
-                {bookingType === 'reservations' || (!hasBothTypes && showReservations) ? (
+                {bookingType === 'reservations' || (!hasMultipleTypes && showReservations && bookingType !== 'table_reservations') ? (
                   <>
                     <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.propertyName || 'Property'}</th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-in</th>
@@ -861,7 +861,9 @@ export default function BookingsPage() {
                   </>
                 ) : (
                   <>
-                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Staff</th>
+                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
+                      {bookingType === 'table_reservations' ? 'Table / Seating' : 'Staff'}
+                    </th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date & Time</th>
                     <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
                     <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>

@@ -930,6 +930,17 @@ describe('#730: Admin API and security', () => {
     expect(code).toContain("r.flow_type === 'table_reservation' ? (r.seating_resource_name");
   });
 
+  it('dashboard column header shows "Table / Seating" for table_reservations tab', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
+
+    // Table Reservations tab must show "Table / Seating" header, not "Staff" or "Property"
+    expect(code).toContain("bookingType === 'table_reservations' ? 'Table / Seating' : 'Staff'");
+    // Lodging condition must not activate when bookingType is table_reservations
+    expect(code).toContain("bookingType !== 'table_reservations'");
+  });
+
   it('dashboard status label uses row-specific labels (not global reservation labels)', async () => {
     const fs = await import('fs');
     const path = await import('path');
