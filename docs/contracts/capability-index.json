@@ -2,6 +2,8 @@
   "_schema": "waaiio-capability-index-v1",
   "_source": "shared/capabilities.ts",
   "_generated_from_main": "a88b2b6c0df3149e81509e62a7f167264e31d100",
+  "_lifecycle_audit": "1c6ed9757d26ee849b9293c6c8ada67684e81ef3",
+  "_lifecycle_ref": "docs/contracts/736-capability-e2e-contract.md",
   "total": 32,
   "capabilities": [
     {
