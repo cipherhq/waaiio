@@ -342,8 +342,9 @@ $$;
 -- seating_resources are missing for service_role.
 -- ═══════════════════════════════════════════════════════
 GRANT INSERT ON public.bookings TO service_role;
--- SELECT + UPDATE needed: SELECT for reading resource data, UPDATE for FOR UPDATE row lock
-GRANT SELECT, UPDATE ON public.seating_resources TO service_role;
+-- SELECT + UPDATE: reading resource data + FOR UPDATE row lock in book_table_atomic
+-- INSERT: admin seating-resource creation via service_role (app/api/admin/seating-resources)
+GRANT SELECT, INSERT, UPDATE ON public.seating_resources TO service_role;
 
 -- ACL: service_role only (matches book_slot_atomic pattern)
 REVOKE ALL ON FUNCTION public.book_table_atomic(

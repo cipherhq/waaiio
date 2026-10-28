@@ -907,6 +907,29 @@ describe('#730: Admin API and security', () => {
     expect(code).not.toContain('nextActions');
   });
 
+  it('lodging+table business does not early-return before loading table bookings', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
+
+    // Early return must check for table_reservation capability, not just isReservationType
+    expect(code).toContain('!hasTableReservationCap && !hasSchedulingCapability');
+    // Must NOT early-return based solely on isReservationType
+    expect(code).not.toMatch(/if \(isReservationType\) \{\s*setBookings/);
+  });
+
+  it('dashboard joins seating_resources name for table bookings', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
+
+    // Must join seating_resources for name
+    expect(code).toContain('seating_resources(name)');
+    expect(code).toContain('seating_resource_name');
+    // Table bookings show resource name instead of staff_name
+    expect(code).toContain("r.flow_type === 'table_reservation' ? (r.seating_resource_name");
+  });
+
   it('dashboard status label uses row-specific labels (not global reservation labels)', async () => {
     const fs = await import('fs');
     const path = await import('path');

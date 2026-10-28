@@ -59,6 +59,7 @@ interface Booking {
   guest_list: Array<{ name: string }> | null;
   flow_type: string | null;
   seating_resource_id: string | null;
+  seating_resource_name: string | null;
   _isReservation?: boolean;
 }
 
@@ -474,13 +475,14 @@ export default function BookingsPage() {
             completed_at: r.checked_out_at,
             flow_type: 'reservation',
             seating_resource_id: null,
+            seating_resource_name: null,
             _isReservation: true,
           };
         }) as Booking[];
         allBookings.push(...mapped);
 
-        // If ONLY reservation type (no scheduling), skip bookings query
-        if (isReservationType) {
+        // If ONLY reservation type with no table or scheduling capability, skip bookings query
+        if (isReservationType && !hasTableReservationCap && !hasSchedulingCapability) {
           setBookings(allBookings);
           setLoading(false);
           return;
@@ -490,7 +492,7 @@ export default function BookingsPage() {
       // Query bookings table (appointments + on-demand services)
       let query = supabase
         .from('bookings')
-        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list, flow_type, seating_resource_id')
+        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list, flow_type, seating_resource_id, seating_resources(name)')
         .eq('business_id', business.id)
         .neq('flow_type', 'payment')
         .order('date', { ascending: false })
@@ -517,8 +519,14 @@ export default function BookingsPage() {
         );
       }
 
-      // Merge with reservations (if any) and sort by date descending
-      allBookings.push(...(results as Booking[]));
+      // Map seating resource name from join and merge
+      const mapped = results.map(r => {
+        const raw = r as Record<string, unknown>;
+        const sr = raw.seating_resources as { name: string } | { name: string }[] | null;
+        const srName = Array.isArray(sr) ? sr[0]?.name : sr?.name;
+        return { ...r, seating_resource_name: srName || null } as unknown as Booking;
+      });
+      allBookings.push(...mapped);
       allBookings.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setBookings(allBookings);
     } catch {
@@ -894,7 +902,9 @@ export default function BookingsPage() {
                     </>
                   ) : (
                     <>
-                      <td className="hidden sm:table-cell px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.staff_name || '—'}</td>
+                      <td className="hidden sm:table-cell px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                        {r.flow_type === 'table_reservation' ? (r.seating_resource_name || '—') : (r.staff_name || '—')}
+                      </td>
                       <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
                         {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}
                         {r.time && !r.time.includes('night') && ` at ${r.time.slice(0, 5)}`}
@@ -1325,6 +1335,14 @@ export default function BookingsPage() {
                 <div className="rounded-lg bg-brand-50 p-4">
                   <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">{labels.propertyName || 'Property'}</h3>
                   <p className="text-sm font-semibold text-gray-900">{selected.staff_name}</p>
+                </div>
+              )}
+
+              {/* Seating resource (table reservations) */}
+              {selected.flow_type === 'table_reservation' && selected.seating_resource_name && (
+                <div className="rounded-lg bg-purple-50 dark:bg-purple-900/20 p-4">
+                  <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Table / Seating</h3>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{selected.seating_resource_name}</p>
                 </div>
               )}
 

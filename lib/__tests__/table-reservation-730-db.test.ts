@@ -433,12 +433,13 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
   });
 
   it('service_role has required table/schema/function permissions', async () => {
-    // Verify the composed grant state for service_role
     const checks = await sql(client, `
       SELECT
         has_table_privilege('service_role', 'public.bookings', 'INSERT') AS bookings_insert,
         has_table_privilege('service_role', 'public.bookings', 'SELECT') AS bookings_select,
         has_table_privilege('service_role', 'public.seating_resources', 'SELECT') AS sr_select,
+        has_table_privilege('service_role', 'public.seating_resources', 'INSERT') AS sr_insert,
+        has_table_privilege('service_role', 'public.seating_resources', 'UPDATE') AS sr_update,
         has_table_privilege('service_role', 'public.businesses', 'SELECT') AS biz_select,
         has_schema_privilege('service_role', 'public', 'USAGE') AS schema_usage,
         has_function_privilege('service_role',
@@ -449,9 +450,32 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
     expect(r.bookings_insert).toBe(true);
     expect(r.bookings_select).toBe(true);
     expect(r.sr_select).toBe(true);
+    expect(r.sr_insert).toBe(true); // admin POST creates resources
+    expect(r.sr_update).toBe(true); // FOR UPDATE lock + admin PATCH
     expect(r.biz_select).toBe(true);
     expect(r.schema_usage).toBe(true);
     expect(r.rpc_execute).toBe(true);
+  });
+
+  it('service_role can INSERT into seating_resources (admin creation)', async () => {
+    const { bizId } = await setupTestData();
+
+    await sql(client, `BEGIN`);
+    try {
+      await sql(client, `SET LOCAL ROLE service_role`);
+      const { rows: [roleCheck] } = await sql(client, `SELECT current_user`);
+      expect(roleCheck.current_user).toBe('service_role');
+
+      const { rows } = await sql(client,
+        `INSERT INTO seating_resources (business_id, name, capacity) VALUES ($1, 'Admin Table', 6) RETURNING id, name`,
+        [bizId],
+      );
+      expect(rows[0].name).toBe('Admin Table');
+      await sql(client, `COMMIT`);
+    } catch {
+      await sql(client, `ROLLBACK`);
+      throw new Error('service_role INSERT into seating_resources failed');
+    }
   });
 
   it('seating_resources has RLS enabled', async () => {
