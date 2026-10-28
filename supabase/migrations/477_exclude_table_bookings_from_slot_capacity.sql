@@ -181,13 +181,18 @@ BEGIN
 END;
 $$;
 
--- Self-check: verify the replacement includes table isolation
+-- Self-check: verify the 30-arg replacement includes table isolation
 DO $$
 DECLARE v_src text;
 BEGIN
+  -- Match the specific 30-arg overload (p_expected_deposit is the last param)
   SELECT prosrc INTO v_src FROM pg_proc
   WHERE proname = 'book_slot_atomic'
-    AND pronamespace = 'public'::regnamespace;
+    AND pronamespace = 'public'::regnamespace
+    AND pronargs = 30;
+  IF v_src IS NULL THEN
+    RAISE EXCEPTION '477 SELF-CHECK FAILED: 30-arg book_slot_atomic not found';
+  END IF;
   IF v_src NOT ILIKE '%seating_resource_id IS NULL%' THEN
     RAISE EXCEPTION '477 SELF-CHECK FAILED: book_slot_atomic missing table-reservation exclusion';
   END IF;

@@ -90,6 +90,9 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
         promo_code_id UUID,
         location_id UUID,
         class_session_id UUID,
+        original_date DATE,
+        original_time TEXT,
+        rescheduled_at TIMESTAMPTZ,
         metadata JSONB DEFAULT '{}'::jsonb,
         bot_session_id UUID,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -150,8 +153,10 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
     const path = await import('path');
     const m474Path = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     await sql(client, fs.readFileSync(m474Path, 'utf-8'));
-    const m475Path = path.join(process.cwd(), 'supabase/migrations/477_exclude_table_bookings_from_slot_capacity.sql');
-    await sql(client, fs.readFileSync(m475Path, 'utf-8'));
+    const m477Path = path.join(process.cwd(), 'supabase/migrations/477_exclude_table_bookings_from_slot_capacity.sql');
+    await sql(client, fs.readFileSync(m477Path, 'utf-8'));
+    const m478Path = path.join(process.cwd(), 'supabase/migrations/478_reschedule_table_isolation.sql');
+    await sql(client, fs.readFileSync(m478Path, 'utf-8'));
 
     // Grants from earlier migrations that M474 depends on for SECURITY INVOKER:
     // M293: GRANT ALL ON businesses TO service_role
@@ -556,6 +561,36 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
     // Second at same time — should fail (capacity 1)
     const { rows: [second] } = await sql(client, `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, '2026-10-30'::date, '19:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'Guest2', '+2', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`, [bizId, userId]);
     expect(second.slot_available).toBe(false);
+  });
+
+  it('M478: table booking does not block service reschedule', async () => {
+    const { bizId, userId, resourceId } = await setupTestData();
+
+    // Create a service booking at 18:00
+    const { rows: [svcBooking] } = await sql(client, `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, '2026-10-30'::date, '18:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'SvcGuest', '+1', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`, [bizId, userId]);
+    expect(svcBooking.slot_available).toBe(true);
+
+    // Create a table reservation at 19:00
+    await sql(client, `SELECT * FROM book_table_atomic(NULL, $1, $2, $3, '2026-10-30'::date, '19:00', 2, 90, 'TableGuest', '+2', NULL, NULL, 5000, 'pending', 'pending', 5000, 5000, 90)`, [bizId, userId, resourceId]);
+
+    // Reschedule the service booking to 19:00 (same time as table) — should SUCCEED
+    const { rows: [row] } = await sql(client, `SELECT reschedule_booking_atomic($1, $2, '2026-10-30'::date, '19:00') AS result`, [svcBooking.booking_id, bizId]);
+    const result = row.result;
+    expect(result.rescheduled).toBe(true);
+  });
+
+  it('M478: real service conflict still blocks reschedule', async () => {
+    const { bizId, userId } = await setupTestData();
+
+    // Two service bookings: one at 18:00, another at 19:00 (both cap=1)
+    const { rows: [svc1] } = await sql(client, `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, '2026-10-30'::date, '18:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'G1', '+1', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`, [bizId, userId]);
+    await sql(client, `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, '2026-10-30'::date, '19:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'G2', '+2', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`, [bizId, userId]);
+
+    // Reschedule first to 19:00 — should FAIL (real service conflict)
+    const { rows: [row] } = await sql(client, `SELECT reschedule_booking_atomic($1, $2, '2026-10-30'::date, '19:00') AS result`, [svc1.booking_id, bizId]);
+    const result = row.result;
+    expect(result.rescheduled).toBe(false);
+    expect(result.reason).toBe('slot_full');
   });
 
   it('seating_resources has RLS enabled', async () => {

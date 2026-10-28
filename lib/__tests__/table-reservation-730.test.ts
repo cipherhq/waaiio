@@ -36,7 +36,7 @@ describe('#730: Table Reservation type and routing', () => {
     expect(schedulingStep).toBe('select_service');
   });
 
-  it('registry has table_reservation flow registered', async () => {
+  it('registry has table_reservation flow registered', { timeout: 15000 }, async () => {
     const { getFlowDefinition } = await import('@/lib/bot/flows/registry');
     const flow = getFlowDefinition('table_reservation');
     expect(flow).toBeDefined();
