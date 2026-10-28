@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { safeFlowCleanup } from '@/lib/bot/handlers/escape-hatches';
+import { ticketingFlow } from '@/lib/bot/flows/ticketing.flow';
 
 // ══════════════════════════════════════════════
 // §1 — M470: create_ticket_booking_checked RPC caller behavior
@@ -475,5 +476,226 @@ describe('§5 SQL source lint (reads migration files as text, not executed PG st
     expect(constraintPos).toBeLessThan(triggerPos);
     expect(triggerPos).toBeLessThan(rpcPos);
     expect(rpcPos).toBeLessThan(aclPos);
+  });
+});
+
+// ══════════════════════════════════════════════
+// §6 — REAL process_tickets step execution with mocked M470 RPC responses
+// Evidence type: UNIT-INTEGRATION EXECUTED (real step code, mock Supabase)
+// ══════════════════════════════════════════════
+
+describe('§6 Real process_tickets step caller tests (ticketing.flow.ts)', () => {
+  const processTicketsStep = ticketingFlow.steps.find(s => s.id === 'process_tickets')!;
+
+  function buildTicketCtx(rpcBehavior: {
+    rpcResult?: unknown;
+    rpcError?: { message: string } | null;
+  }) {
+    const BIZ_ID = 'test-biz-id';
+
+    const supabase = {
+      from: vi.fn((table: string) => {
+        const chain: Record<string, any> = {};
+        chain.select = vi.fn().mockReturnValue(chain);
+        chain.insert = vi.fn().mockReturnValue(chain);
+        chain.update = vi.fn().mockReturnValue(chain);
+        chain.eq = vi.fn().mockReturnValue(chain);
+        chain.neq = vi.fn().mockReturnValue(chain);
+        chain.or = vi.fn().mockReturnValue(chain);
+        chain.is = vi.fn().mockReturnValue(chain);
+        chain.not = vi.fn().mockReturnValue(chain);
+        chain.in = vi.fn().mockReturnValue(chain);
+        chain.order = vi.fn().mockReturnValue(chain);
+        chain.limit = vi.fn().mockReturnValue(chain);
+        chain.then = (fn: any) => fn({ data: [], error: null });
+
+        // CAP-001 guard queries businesses fresh — return a valid business
+        if (table === 'businesses') {
+          chain.single = vi.fn().mockResolvedValue({
+            data: { id: BIZ_ID, status: 'active', subscription_tier: 'business', trial_ends_at: null, category: 'events' },
+            error: null,
+          });
+        }
+        // CAP-001 guard queries business_capabilities
+        else if (table === 'business_capabilities') {
+          chain.then = (fn: any) => fn({
+            data: [{ capability: 'ticketing', is_enabled: true, sort_order: 0 }],
+            error: null,
+          });
+          chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+        }
+        // CAP-001 guard queries capability_overrides
+        else if (table === 'capability_overrides') {
+          chain.then = (fn: any) => fn({ data: [], error: null });
+          chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+        }
+        // Tier limits query
+        else if (table === 'event_tickets') {
+          chain.then = (fn: any) => fn({ data: [], count: 0, error: null });
+          chain.select = vi.fn((...args: any[]) => {
+            if (args[1]?.count === 'exact') {
+              const cc: Record<string, any> = {};
+              cc.eq = vi.fn().mockReturnValue(cc);
+              cc.then = (fn2: any) => fn2({ count: 0, error: null });
+              Object.defineProperty(cc, Symbol.toStringTag, { value: 'Promise' });
+              return cc;
+            }
+            return chain;
+          });
+          chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+        }
+        else {
+          chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        }
+
+        return chain;
+      }),
+      rpc: vi.fn((name: string) => {
+        if (name === 'create_ticket_booking_checked') {
+          return Promise.resolve({
+            data: rpcBehavior.rpcResult ?? null,
+            error: rpcBehavior.rpcError ?? null,
+          });
+        }
+        if (name === 'finalize_free_ticket_booking') {
+          return Promise.resolve({ data: { success: true }, error: null });
+        }
+        // update_session_cas for CAP-001 recovery
+        if (name === 'update_session_cas') {
+          return Promise.resolve({ data: { success: true, version: 2 }, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      }),
+    };
+
+    const ctx = {
+      supabase: supabase as any,
+      sender: {
+        sendText: vi.fn().mockResolvedValue({}),
+        sendButtons: vi.fn().mockResolvedValue({}),
+        sendList: vi.fn().mockResolvedValue({}),
+        sendDocument: vi.fn().mockResolvedValue({}),
+        sendImage: vi.fn().mockResolvedValue({}),
+      } as any,
+      standalone: {} as any,
+      intelligence: {} as any,
+      t: vi.fn(async (text: string) => text),
+      from: '+2348012345678',
+      copyLang: 'en',
+      session: {
+        id: 'ticket-test-session',
+        user_id: 'test-user-id',
+        business_id: BIZ_ID,
+        current_step: 'process_tickets',
+        session_data: {
+          capabilities: ['ticketing'] as string[],
+          ticket_quantity: 2,
+          total_amount: 0,
+          event_id: 'evt-001',
+          event_name: 'Test Event',
+          event_date: '2027-06-01',
+          event_time: '18:00',
+          event_venue: 'Test Venue',
+          event_price: 0,
+          first_name: 'John',
+          last_name: 'Doe',
+          _terms_accepted: true,
+        },
+        version: 1,
+      },
+      business: {
+        id: BIZ_ID,
+        name: 'TestBiz',
+        slug: 'testbiz',
+        category: 'events' as any,
+        flow_type: 'ticketing' as any,
+        subscription_tier: 'business',
+        trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
+        metadata: { require_terms_before_payment: false },
+        country_code: 'NG' as any,
+      },
+    };
+    return { ctx, supabase };
+  }
+
+  it('success path: free event creates booking via RPC and returns confirmation', async () => {
+    const { ctx, supabase } = buildTicketCtx({
+      rpcResult: { success: true, booking_id: 'bk-free-001', reference_code: 'REF-FREE' },
+    });
+
+    const messages = await processTicketsStep.prompt(ctx as any);
+
+    // RPC was called with correct params
+    expect(supabase.rpc).toHaveBeenCalledWith('create_ticket_booking_checked', expect.objectContaining({
+      p_business_id: 'test-biz-id',
+      p_event_id: 'evt-001',
+      p_quantity: 2,
+      p_total_amount: 0,
+    }));
+
+    // Session state updated with booking reference
+    expect(ctx.session.session_data.booking_id).toBe('bk-free-001');
+    expect(ctx.session.session_data.reference_code).toBe('REF-FREE');
+
+    // Free event finalization RPC called
+    expect(supabase.rpc).toHaveBeenCalledWith('finalize_free_ticket_booking', expect.objectContaining({
+      p_booking_id: 'bk-free-001',
+      p_event_id: 'evt-001',
+      p_quantity: 2,
+    }));
+  });
+
+  it('sold-out: RPC returns success=false → sold-out message to customer', async () => {
+    const { ctx } = buildTicketCtx({
+      rpcResult: { success: false, booking_id: null, reference_code: null },
+    });
+
+    const messages = await processTicketsStep.prompt(ctx as any);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe('text');
+    const text = (messages[0] as any).text?.toLowerCase() || '';
+    expect(text).toMatch(/sold.?out|sorry/i);
+  });
+
+  it('tier_paused: RPC raises exception → unavailable message', async () => {
+    const { ctx } = buildTicketCtx({
+      rpcError: { message: 'tier_paused:Ticket type is not currently available for sale' },
+    });
+
+    const messages = await processTicketsStep.prompt(ctx as any);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe('text');
+    const text = (messages[0] as any).text?.toLowerCase() || '';
+    expect(text).toMatch(/no longer available|not currently available|start over/i);
+  });
+
+  it('price_changed: RPC raises exception → price-change message', async () => {
+    const { ctx } = buildTicketCtx({
+      rpcError: { message: 'price_changed:Ticket price changed from 5000 to 7500' },
+    });
+
+    const messages = await processTicketsStep.prompt(ctx as any);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe('text');
+    const text = (messages[0] as any).text?.toLowerCase() || '';
+    expect(text).toMatch(/price.*changed|updated price|start over/i);
+  });
+
+  it('RPC-not-found (staging state): generic error returned, no payment issued', async () => {
+    const { ctx } = buildTicketCtx({
+      rpcError: { message: 'Could not find the function public.create_ticket_booking_checked' },
+    });
+
+    const messages = await processTicketsStep.prompt(ctx as any);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe('text');
+    // Generic error — no payment link should have been generated
+    expect(ctx.session.session_data.payment_reference).toBeUndefined();
+    expect(ctx.session.session_data.booking_id).toBeUndefined();
   });
 });

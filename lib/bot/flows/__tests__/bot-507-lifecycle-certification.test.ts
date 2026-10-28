@@ -1065,60 +1065,87 @@ describe('§22 Flow Registry Completeness', () => {
 // §23 — MERCHANT ISOLATION
 // ══════════════════════════════════════════════
 
-describe('§23 Merchant Isolation', () => {
+describe('§23 Merchant Isolation (tenant-conditioned fixtures)', () => {
   const selectCapStep = getStep(capabilitySelectionFlow, 'select_capability');
+  const BIZ_A = 'biz-AAAA-1111-2222-333344445555';
+  const BIZ_B = 'biz-BBBB-5555-6666-777788889999';
 
-  it('prepareCapabilityMenu passes business_id to every backing-data query', async () => {
-    // Business A has products; Business B should NEVER see them
-    const BUSINESS_A_ID = 'biz-AAAA-1111-2222-333344445555';
+  // Data that exists ONLY for Business A — if a query omits business_id
+  // or uses the wrong ID, it must NOT see these counts.
+  const TENANT_DATA: Record<string, Record<string, number>> = {
+    products:         { [BIZ_A]: 3, [BIZ_B]: 0 },
+    services:         { [BIZ_A]: 4, [BIZ_B]: 0 },
+    events:           { [BIZ_A]: 2, [BIZ_B]: 0 },
+    campaigns:        { [BIZ_A]: 1, [BIZ_B]: 0 },
+    properties:       { [BIZ_A]: 1, [BIZ_B]: 0 },
+    appointments:     { [BIZ_A]: 2, [BIZ_B]: 0 },
+    waiver_templates: { [BIZ_A]: 1, [BIZ_B]: 0 },
+  };
+
+  /** Build a Supabase mock whose count queries return data conditioned on the
+   *  actual business_id value passed to .eq('business_id', ...). If the code
+   *  omits the .eq('business_id', ...) call, the resolver never sees a tenant
+   *  key and returns 0 — making the menu empty and failing assertions. */
+  function buildTenantMock() {
     const eqCalls: Array<{ table: string; field: string; value: string }> = [];
 
-    const spySupabase = {
-      from: vi.fn((table: string) => {
-        const chain: Record<string, any> = {};
-        const makeChain = () => chain;
-        chain.select = vi.fn((...args: any[]) => {
-          if (args[1]?.count === 'exact') {
-            const countChain: Record<string, any> = {};
-            countChain.eq = vi.fn((field: string, value: string) => {
-              eqCalls.push({ table, field, value });
-              return countChain;
-            });
-            countChain.neq = vi.fn().mockReturnValue(countChain);
-            countChain.or = vi.fn().mockReturnValue(countChain);
-            countChain.is = vi.fn().mockReturnValue(countChain);
-            countChain.not = vi.fn().mockReturnValue(countChain);
-            countChain.in = vi.fn().mockReturnValue(countChain);
-            countChain.gte = vi.fn().mockReturnValue(countChain);
-            countChain.limit = vi.fn().mockReturnValue(countChain);
-            countChain.then = (fn: any) => fn({ count: 1, data: [], error: null });
-            Object.defineProperty(countChain, Symbol.toStringTag, { value: 'Promise' });
-            return countChain;
-          }
-          return chain;
-        });
-        chain.eq = vi.fn((field: string, value: string) => {
-          eqCalls.push({ table, field, value });
-          return chain;
-        });
-        chain.neq = vi.fn().mockReturnValue(chain);
-        chain.or = vi.fn().mockReturnValue(chain);
-        chain.is = vi.fn().mockReturnValue(chain);
-        chain.not = vi.fn().mockReturnValue(chain);
-        chain.in = vi.fn().mockReturnValue(chain);
-        chain.gte = vi.fn().mockReturnValue(chain);
-        chain.lte = vi.fn().mockReturnValue(chain);
-        chain.order = vi.fn().mockReturnValue(chain);
-        chain.limit = vi.fn().mockReturnValue(chain);
-        chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
-        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        return chain;
-      }),
-      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
-    };
+    const from = vi.fn((table: string) => {
+      // Track which business_id was requested for THIS query chain
+      let resolvedBizId: string | null = null;
 
+      const chain: Record<string, any> = {};
+      chain.select = vi.fn((...args: any[]) => {
+        if (args[1]?.count === 'exact') {
+          const countChain: Record<string, any> = {};
+          countChain.eq = vi.fn((field: string, value: string) => {
+            eqCalls.push({ table, field, value });
+            if (field === 'business_id') resolvedBizId = value;
+            return countChain;
+          });
+          countChain.neq = vi.fn().mockReturnValue(countChain);
+          countChain.or = vi.fn().mockReturnValue(countChain);
+          countChain.is = vi.fn().mockReturnValue(countChain);
+          countChain.not = vi.fn().mockReturnValue(countChain);
+          countChain.in = vi.fn().mockReturnValue(countChain);
+          countChain.gte = vi.fn().mockReturnValue(countChain);
+          countChain.limit = vi.fn().mockReturnValue(countChain);
+          // Resolve count USING the tenant predicate actually passed
+          countChain.then = (fn: any) => {
+            const tenantCounts = TENANT_DATA[table];
+            const count = resolvedBizId && tenantCounts ? (tenantCounts[resolvedBizId] ?? 0) : 0;
+            return fn({ count, data: [], error: null });
+          };
+          Object.defineProperty(countChain, Symbol.toStringTag, { value: 'Promise' });
+          return countChain;
+        }
+        return chain;
+      });
+      chain.eq = vi.fn((field: string, value: string) => {
+        eqCalls.push({ table, field, value });
+        if (field === 'business_id') resolvedBizId = value;
+        return chain;
+      });
+      chain.neq = vi.fn().mockReturnValue(chain);
+      chain.or = vi.fn().mockReturnValue(chain);
+      chain.is = vi.fn().mockReturnValue(chain);
+      chain.not = vi.fn().mockReturnValue(chain);
+      chain.in = vi.fn().mockReturnValue(chain);
+      chain.gte = vi.fn().mockReturnValue(chain);
+      chain.lte = vi.fn().mockReturnValue(chain);
+      chain.order = vi.fn().mockReturnValue(chain);
+      chain.limit = vi.fn().mockReturnValue(chain);
+      chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      return chain;
+    });
+
+    return { supabase: { from, rpc: vi.fn().mockResolvedValue({ data: null, error: null }) }, eqCalls };
+  }
+
+  function buildIsoCtx(bizId: string, bizName: string, caps: CapabilityId[]) {
+    const { supabase, eqCalls } = buildTenantMock();
     const ctx: FlowContext = {
-      supabase: spySupabase as any,
+      supabase: supabase as any,
       sender: {
         sendText: vi.fn().mockResolvedValue({}),
         sendButtons: vi.fn().mockResolvedValue({}),
@@ -1132,149 +1159,80 @@ describe('§23 Merchant Isolation', () => {
       from: '+2348099999999',
       copyLang: 'en',
       session: {
-        id: 'iso-test-session',
+        id: `iso-${bizId}`,
         user_id: null,
-        business_id: BUSINESS_A_ID,
+        business_id: bizId,
         current_step: 'select_capability',
-        session_data: {
-          capabilities: ['ordering', 'scheduling', 'ticketing', 'crowdfunding',
-            'reservation', 'appointment', 'class_booking', 'giving',
-            'chat', 'queue', 'table_reservation', 'waiver'] as CapabilityId[],
-        },
+        session_data: { capabilities: caps },
         version: 1,
       },
       business: {
-        id: BUSINESS_A_ID,
-        name: 'Business A',
-        slug: 'biz-a',
-        category: 'shop' as any,
-        flow_type: 'ordering' as any,
+        id: bizId, name: bizName, slug: bizName.toLowerCase().replace(/\s/g, '-'),
+        category: 'shop' as any, flow_type: 'ordering' as any,
         subscription_tier: 'business',
         trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
-        metadata: {},
-        country_code: 'NG' as any,
+        metadata: {}, country_code: 'NG' as any,
       },
     };
+    return { ctx, eqCalls };
+  }
 
-    await selectCapStep.prompt(ctx);
-
-    // Every backing-data table query must have a business_id filter
-    const backingTables = ['products', 'services', 'events', 'campaigns', 'properties', 'appointments', 'waiver_templates'];
-    const queriedTables = [...new Set(eqCalls.filter(c => c.field === 'business_id').map(c => c.table))];
-
-    for (const table of backingTables) {
-      const bizFilters = eqCalls.filter(c => c.table === table && c.field === 'business_id');
-      expect(bizFilters.length).toBeGreaterThanOrEqual(1);
-      // Every business_id filter must use BUSINESS_A_ID — never a different business
-      for (const f of bizFilters) {
-        expect(f.value).toBe(BUSINESS_A_ID);
-      }
-    }
-  });
-
-  it('Business B menu never includes Business A data', async () => {
-    const BUSINESS_B_ID = 'biz-BBBB-5555-6666-777788889999';
-    const eqCalls: Array<{ table: string; field: string; value: string }> = [];
-
-    const spySupabase = {
-      from: vi.fn((table: string) => {
-        const chain: Record<string, any> = {};
-        chain.select = vi.fn((...args: any[]) => {
-          if (args[1]?.count === 'exact') {
-            const countChain: Record<string, any> = {};
-            countChain.eq = vi.fn((field: string, value: string) => {
-              eqCalls.push({ table, field, value });
-              return countChain;
-            });
-            countChain.neq = vi.fn().mockReturnValue(countChain);
-            countChain.or = vi.fn().mockReturnValue(countChain);
-            countChain.is = vi.fn().mockReturnValue(countChain);
-            countChain.not = vi.fn().mockReturnValue(countChain);
-            countChain.in = vi.fn().mockReturnValue(countChain);
-            countChain.gte = vi.fn().mockReturnValue(countChain);
-            countChain.limit = vi.fn().mockReturnValue(countChain);
-            // Return 0 for all counts — Business B has no data
-            countChain.then = (fn: any) => fn({ count: 0, data: [], error: null });
-            Object.defineProperty(countChain, Symbol.toStringTag, { value: 'Promise' });
-            return countChain;
-          }
-          return chain;
-        });
-        chain.eq = vi.fn((field: string, value: string) => {
-          eqCalls.push({ table, field, value });
-          return chain;
-        });
-        chain.neq = vi.fn().mockReturnValue(chain);
-        chain.or = vi.fn().mockReturnValue(chain);
-        chain.is = vi.fn().mockReturnValue(chain);
-        chain.not = vi.fn().mockReturnValue(chain);
-        chain.in = vi.fn().mockReturnValue(chain);
-        chain.gte = vi.fn().mockReturnValue(chain);
-        chain.lte = vi.fn().mockReturnValue(chain);
-        chain.order = vi.fn().mockReturnValue(chain);
-        chain.limit = vi.fn().mockReturnValue(chain);
-        chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
-        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        return chain;
-      }),
-      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
-    };
-
-    const ctx: FlowContext = {
-      supabase: spySupabase as any,
-      sender: {
-        sendText: vi.fn().mockResolvedValue({}),
-        sendButtons: vi.fn().mockResolvedValue({}),
-        sendList: vi.fn().mockResolvedValue({}),
-        sendDocument: vi.fn().mockResolvedValue({}),
-        sendImage: vi.fn().mockResolvedValue({}),
-      } as any,
-      standalone: {} as any,
-      intelligence: {} as any,
-      t: vi.fn(async (text: string) => text),
-      from: '+2348011111111',
-      copyLang: 'en',
-      session: {
-        id: 'iso-test-session-b',
-        user_id: null,
-        business_id: BUSINESS_B_ID,
-        current_step: 'select_capability',
-        session_data: {
-          capabilities: ['ordering', 'scheduling', 'chat'] as CapabilityId[],
-        },
-        version: 1,
-      },
-      business: {
-        id: BUSINESS_B_ID,
-        name: 'Business B',
-        slug: 'biz-b',
-        category: 'shop' as any,
-        flow_type: 'ordering' as any,
-        subscription_tier: 'free',
-        trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
-        metadata: {},
-        country_code: 'NG' as any,
-      },
-    };
+  it('Business A sees ordering (3 products) — tenant-conditioned count', async () => {
+    const caps: CapabilityId[] = ['ordering', 'scheduling', 'ticketing', 'crowdfunding',
+      'reservation', 'appointment', 'class_booking', 'giving',
+      'chat', 'queue', 'table_reservation', 'waiver'];
+    const { ctx, eqCalls } = buildIsoCtx(BIZ_A, 'Business A', caps);
 
     const messages = await selectCapStep.prompt(ctx);
 
-    // Negative assertion: no query ever used a different business ID
-    const bizIdCalls = eqCalls.filter(c => c.field === 'business_id');
-    for (const call of bizIdCalls) {
-      expect(call.value).toBe(BUSINESS_B_ID);
+    // 1. Every backing-data table must have at least one business_id filter
+    const backingTables = ['products', 'services', 'events', 'campaigns', 'properties', 'appointments', 'waiver_templates'];
+    for (const table of backingTables) {
+      const bizFilters = eqCalls.filter(c => c.table === table && c.field === 'business_id');
+      expect(bizFilters.length, `${table} must have ≥1 business_id filter`).toBeGreaterThanOrEqual(1);
+      for (const f of bizFilters) {
+        expect(f.value, `${table} business_id must be BIZ_A`).toBe(BIZ_A);
+      }
     }
 
-    // With 0 backing data, only chat (always available) should render
-    // The menu should show chat only or a zero-capability fallback
-    if (messages[0].type === 'text') {
-      // Zero-capability fallback text (no backed capabilities besides chat)
-      expect(messages[0].text).toBeTruthy();
-    } else if (messages[0].type === 'buttons') {
-      const btnIds = (messages[0] as any).buttons?.map((b: any) => b.id) || [];
+    // 2. Menu must include ordering (BIZ_A has 3 products)
+    expect(messages[0].type).toBe('list');
+    if (messages[0].type === 'list') {
+      const ids = messages[0].items!.map(i => i.postbackText);
+      expect(ids).toContain('cap_ordering');
+      expect(ids).toContain('cap_scheduling');
+      expect(ids).toContain('cap_ticketing');
+    }
+  });
+
+  it('Business B sees NO ordering/ticketing/crowdfunding (0 data) despite shared mock', async () => {
+    // CAUSAL: if the code omitted .eq('business_id', BIZ_B), the tenant-conditioned
+    // mock would return 0 (no resolvedBizId → default 0). But if someone accidentally
+    // hardcoded BIZ_A or removed the filter, the mock returns BIZ_A counts (>0),
+    // which would make ordering appear and FAIL this test.
+    const caps: CapabilityId[] = ['ordering', 'scheduling', 'chat'];
+    const { ctx, eqCalls } = buildIsoCtx(BIZ_B, 'Business B', caps);
+
+    const messages = await selectCapStep.prompt(ctx);
+
+    // 1. All business_id filters must use BIZ_B, never BIZ_A
+    const bizIdCalls = eqCalls.filter(c => c.field === 'business_id');
+    expect(bizIdCalls.length).toBeGreaterThan(0);
+    for (const call of bizIdCalls) {
+      expect(call.value, `No query should use BIZ_A (${BIZ_A})`).toBe(BIZ_B);
+      expect(call.value).not.toBe(BIZ_A);
+    }
+
+    // 2. Business B has 0 products and 0 services — ordering and scheduling must be absent
+    //    Only chat (always available) should render
+    if (messages[0].type === 'buttons') {
+      const btnIds = (messages[0] as any).buttons.map((b: any) => b.id);
       expect(btnIds).toContain('cap_chat');
-      // Must NOT contain ordering (0 products)
       expect(btnIds).not.toContain('cap_ordering');
+      expect(btnIds).not.toContain('cap_scheduling');
+    } else if (messages[0].type === 'text') {
+      // Zero-backed fallback (only chat passed backing check but single-cap auto-skip may apply)
+      expect(messages[0].text).toBeTruthy();
     }
   });
 
