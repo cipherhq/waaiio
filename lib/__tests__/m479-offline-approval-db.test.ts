@@ -90,9 +90,9 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
       INSERT INTO public.services (id, business_id, name, service_type, billing_type, recurring_interval, is_active, price, duration_minutes, deposit_amount)
       VALUES ('${SERVICE}', '${BIZ}', 'M479 Svc', 'booking', 'one_time', NULL, true, 5000, 60, 0);
 
-      -- Booking: pending, deposit_status none (user_id, date are NOT NULL)
-      INSERT INTO public.bookings (id, business_id, user_id, guest_phone, service_id, status, deposit_status, total_amount, reference_code, flow_type, date)
-      VALUES ('${BOOKING}', '${BIZ}', '${OWNER}', '+2341234567', '${SERVICE}', 'pending', 'none', 5000, 'BK-M479', 'scheduling', CURRENT_DATE);
+      -- Booking: pending (all NOT NULL without defaults: user_id, date, time, party_size, reference_code, business_id)
+      INSERT INTO public.bookings (id, business_id, user_id, guest_phone, service_id, status, deposit_status, total_amount, reference_code, flow_type, date, time, party_size)
+      VALUES ('${BOOKING}', '${BIZ}', '${OWNER}', '+2341234567', '${SERVICE}', 'pending', 'none', 5000, 'BK-M479', 'scheduling', CURRENT_DATE, '10:00', 1);
 
       -- Invoice: sent (customer_name, subtotal, tax_rate, tax_amount, discount_value, discount_amount, amount_paid, currency, issue_date are NOT NULL)
       INSERT INTO public.invoices (id, business_id, customer_name, status, subtotal, tax_rate, tax_amount, discount_value, discount_amount, total_amount, amount_paid, currency, issue_date, due_date)
