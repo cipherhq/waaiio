@@ -909,7 +909,7 @@ export default function BookingsPage() {
                   )}
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
-                      {(showReservations && reservationStatusLabels[r.status]) || r.status.replace('_', ' ')}
+                      {(r._isReservation && reservationStatusLabels[r.status]) || r.status.replace('_', ' ')}
                     </span>
                     {r.rescheduled_at && (
                       <span className="ml-1 inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">

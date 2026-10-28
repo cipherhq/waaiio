@@ -1630,6 +1630,23 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'select_quantity',
       async skipIf(ctx: FlowContext) {
+        // ── Table reservations: enforce resource min/max BEFORE generic skips ──
+        // Service/business skip_quantity and class state must not bypass table party-size selection.
+        if (ctx.session.session_data._is_table_reservation) {
+          const tableMin = (ctx.session.session_data._seating_min_party as number) || 1;
+          const tableMax = (ctx.session.session_data._seating_capacity as number) || 10;
+          const existingSize = ctx.session.session_data.party_size as number | undefined;
+          // Only skip if valid party_size already set AND within table bounds
+          if (existingSize && existingSize >= tableMin && existingSize <= tableMax) return true;
+          // For min=max (fixed-size table), auto-set
+          if (tableMin === tableMax) {
+            ctx.session.session_data.party_size = tableMin;
+            return true;
+          }
+          // Must prompt — do not allow generic skips to force party_size=1
+          return false;
+        }
+
         // Skip if smart intent already extracted quantity
         if (ctx.session.session_data.party_size) return true;
 

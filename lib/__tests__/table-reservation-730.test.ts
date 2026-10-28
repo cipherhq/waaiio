@@ -700,6 +700,103 @@ describe('#730: Admin API and security', () => {
     }
   });
 
+  it('select_quantity.skipIf: table reservation is NOT skipped by business skip_quantity', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+    expect(step).toBeDefined();
+
+    // Simulate: business has skip_quantity=true, but table reservation min=2
+    const ctx = {
+      session: {
+        id: 'test', user_id: 'u1', business_id: 'b1', current_step: 'select_quantity', version: 1,
+        session_data: {
+          _is_table_reservation: true,
+          _seating_min_party: 2,
+          _seating_capacity: 4,
+          _service_max_capacity: 4,
+          _service_metadata: { skip_quantity: true }, // stale from prior service
+        },
+      },
+      business: { id: 'b1', name: 'Test', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', metadata: { skip_quantity: true } },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1234',
+    } as any;
+
+    const shouldSkip = await step!.skipIf!(ctx);
+    expect(shouldSkip).toBe(false); // Must NOT skip — needs party size selection
+  });
+
+  it('select_quantity.skipIf: table reservation with min=max auto-sets party_size', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+
+    const ctx = {
+      session: {
+        id: 'test', user_id: 'u1', business_id: 'b1', current_step: 'select_quantity', version: 1,
+        session_data: {
+          _is_table_reservation: true,
+          _seating_min_party: 4,
+          _seating_capacity: 4,
+          _service_max_capacity: 4,
+        },
+      },
+      business: { id: 'b1', name: 'Test', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1234',
+    } as any;
+
+    const shouldSkip = await step!.skipIf!(ctx);
+    expect(shouldSkip).toBe(true);
+    expect(ctx.session.session_data.party_size).toBe(4);
+  });
+
+  it('select_quantity.skipIf: table reservation with stale class state does NOT enter class branch', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+
+    // After switching from class_booking to table_reservation,
+    // _service_is_class should have been cleared by capability-transition.
+    // Even if somehow still present, table check comes first.
+    const ctx = {
+      session: {
+        id: 'test', user_id: 'u1', business_id: 'b1', current_step: 'select_quantity', version: 1,
+        session_data: {
+          _is_table_reservation: true,
+          _seating_min_party: 1,
+          _seating_capacity: 6,
+          _service_max_capacity: 6,
+          _service_is_class: true, // stale — should not matter
+        },
+      },
+      business: { id: 'b1', name: 'Test', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1234',
+    } as any;
+
+    const shouldSkip = await step!.skipIf!(ctx);
+    expect(shouldSkip).toBe(false); // Must prompt for guests, not enter class branch
+  });
+
+  it('clearStaleCapabilityState removes class/metadata state on transition', async () => {
+    const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
+
+    const sessionData: Record<string, unknown> = {
+      active_capability: 'class_booking',
+      _service_is_class: true,
+      _class_session_id: 'cs-123',
+      _class_remaining_spots: 5,
+      _service_metadata: { is_class: true, skip_quantity: false },
+      service_id: 'svc-class',
+      first_name: 'Alice',
+    };
+
+    clearStaleCapabilityState(sessionData, 'class_booking', 'table_reservation');
+
+    expect(sessionData._service_is_class).toBeUndefined();
+    expect(sessionData._class_session_id).toBeUndefined();
+    expect(sessionData._class_remaining_spots).toBeUndefined();
+    expect(sessionData._service_metadata).toBeUndefined();
+    expect(sessionData.service_id).toBeUndefined();
+    expect(sessionData.first_name).toBe('Alice'); // preserved
+  });
+
   it('table quantity buttons are unique for capacity=4 (P1-QTY fix)', () => {
     // Simulate the button generation logic for a 4-seat table (min=1, max=4)
     const minCap = 1, maxCap = 4;
@@ -766,6 +863,17 @@ describe('#730: Admin API and security', () => {
     expect(code).toContain("flow_type === 'table_reservation'");
     // Must NOT use global nextActions
     expect(code).not.toContain('nextActions');
+  });
+
+  it('dashboard status label uses row-specific labels (not global reservation labels)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
+
+    // Must scope reservation labels to _isReservation rows, not all rows
+    expect(code).toContain('r._isReservation && reservationStatusLabels');
+    // Must NOT use showReservations global for status labels
+    expect(code).not.toContain('showReservations && reservationStatusLabels[r.status]');
   });
 
   it('M472 overlap query includes in_progress (seated tables block overlap)', async () => {
