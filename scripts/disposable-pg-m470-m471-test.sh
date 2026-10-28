@@ -55,7 +55,9 @@ cleanup() {
     psql -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME;" >/dev/null 2>&1
     # Verify cleanup
     if psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME';" 2>/dev/null | grep -q 1; then
-      echo "WARNING: Failed to drop test database $DB_NAME"
+      echo "ERROR: Failed to drop test database $DB_NAME — exiting nonzero"
+      # Preserve a prior nonzero exit code; otherwise report cleanup failure
+      if [[ "$exit_code" -eq 0 ]]; then exit_code=2; fi
     else
       echo "Cleanup verified: database $DB_NAME dropped."
     fi
@@ -127,26 +129,7 @@ BEGIN
   UPDATE bookings SET status='cancelled', cancelled_at=NOW(), cancelled_by=p_cancelled_by::cancelled_by WHERE id=p_booking_id AND status='pending';
   RETURN jsonb_build_object('cancelled', true);
 END; $fn$;
--- M304 prerequisite: finalize_free_ticket_booking (authoritative inventory commit)
-CREATE OR REPLACE FUNCTION public.finalize_free_ticket_booking(
-  p_booking_id uuid, p_event_id uuid, p_ticket_type_id uuid DEFAULT NULL, p_quantity int DEFAULT 1
-) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
-DECLARE v_already boolean; v_event_rows int; v_tt_rows int;
-BEGIN
-  SELECT tickets_finalized INTO v_already FROM bookings WHERE id = p_booking_id FOR UPDATE;
-  IF NOT FOUND THEN RETURN jsonb_build_object('success', false, 'reason', 'booking_not_found'); END IF;
-  IF v_already THEN RETURN jsonb_build_object('success', true, 'already_finalized', true); END IF;
-  UPDATE events SET tickets_sold = tickets_sold + p_quantity WHERE id = p_event_id;
-  GET DIAGNOSTICS v_event_rows = ROW_COUNT;
-  IF v_event_rows = 0 THEN RETURN jsonb_build_object('success', false, 'reason', 'event_not_found'); END IF;
-  IF p_ticket_type_id IS NOT NULL THEN
-    UPDATE event_ticket_types SET tickets_sold = COALESCE(tickets_sold, 0) + p_quantity WHERE id = p_ticket_type_id;
-    GET DIAGNOSTICS v_tt_rows = ROW_COUNT;
-    IF v_tt_rows = 0 THEN RAISE EXCEPTION 'ticket_type_not_found: %', p_ticket_type_id; END IF;
-  END IF;
-  UPDATE bookings SET tickets_finalized = true WHERE id = p_booking_id;
-  RETURN jsonb_build_object('success', true, 'already_finalized', false);
-END; $fn$;
+-- M304 prerequisite: finalize_free_ticket_booking loaded below from canonical migration
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
@@ -156,6 +139,29 @@ GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO service_role;
 SCHEMA
 echo "--- Schema setup complete ---"
+
+# ── LOAD CANONICAL M304 finalize_free_ticket_booking FROM ACTUAL MIGRATION ──
+# Extract the function body from the canonical migration file (lines 361–423).
+# This ensures exact source parity — any drift in M304 will change the loaded function.
+M304_FILE="supabase/migrations/304_session_resilience.sql"
+if [[ ! -f "$M304_FILE" ]]; then
+  echo "ABORT: Canonical migration $M304_FILE not found"
+  exit 1
+fi
+# Extract from 'CREATE OR REPLACE FUNCTION public.finalize_free_ticket_booking' through the closing '$$;'
+M304_FN=$(sed -n '/^CREATE OR REPLACE FUNCTION public\.finalize_free_ticket_booking/,/^\$\$;/p' "$M304_FILE")
+if [[ -z "$M304_FN" ]]; then
+  echo "ABORT: Could not extract finalize_free_ticket_booking from $M304_FILE"
+  exit 1
+fi
+echo "$M304_FN" | psql -v ON_ERROR_STOP=1 -d "$DB_NAME" -q || { echo "ABORT: Failed to load canonical finalize_free_ticket_booking"; exit 1; }
+# Verify loaded
+LOADED=$(psql -d "$DB_NAME" -tAc "SELECT count(*) FROM pg_proc WHERE proname='finalize_free_ticket_booking';")
+if [[ "$LOADED" != "1" ]]; then
+  echo "ABORT: finalize_free_ticket_booking not found in pg_proc after loading"
+  exit 1
+fi
+echo "--- Loaded canonical finalize_free_ticket_booking from $M304_FILE ---"
 
 # ── APPLY MIGRATIONS WITH ON_ERROR_STOP ──
 echo "--- Applying M470 ---"
@@ -322,22 +328,27 @@ BOOKINGS_COUNT=$(psql -d "$DB_NAME" -tAc "SELECT count(*) FROM bookings WHERE id
 
 # Expected: 47+2=49 (first finalize succeeds), 49+2=51 > 50 capacity
 # The CHECK constraint chk_capacity_gte_sold blocks tickets_sold > total_tickets.
-# So second finalize should fail (constraint violation aborts its transaction).
-# Net result: tickets_sold=49 (only first finalize committed).
+# Second finalize's transaction aborts on constraint violation.
+# Net: exactly 1 success, exactly 1 rejection, tickets_sold=49.
 echo "  Final tickets_sold=$SOLD_AFTER, F1=$F1_R, F2=$F2_R"
 
 SUCCESS_COUNT=0
-[[ "$F1_R" == "true" ]] && SUCCESS_COUNT=$((SUCCESS_COUNT+1))
-[[ "$F2_R" == "true" ]] && SUCCESS_COUNT=$((SUCCESS_COUNT+1))
+FAILURE_COUNT=0
+[[ "$F1_R" == "true" ]] && SUCCESS_COUNT=$((SUCCESS_COUNT+1)) || FAILURE_COUNT=$((FAILURE_COUNT+1))
+[[ "$F2_R" == "true" ]] && SUCCESS_COUNT=$((SUCCESS_COUNT+1)) || FAILURE_COUNT=$((FAILURE_COUNT+1))
 
-if [[ "$SOLD_AFTER" -le "50" ]]; then
-  if [[ "$SUCCESS_COUNT" -eq 1 ]] && [[ "$SOLD_AFTER" -eq 49 ]]; then
-    log_pass "T18b: Exactly 1 finalization committed (tickets_sold=49/50), 1 rejected by capacity constraint"
-  elif [[ "$SOLD_AFTER" -le "50" ]]; then
-    log_pass "T18b: No oversell. tickets_sold=$SOLD_AFTER/50, successes=$SUCCESS_COUNT (F1=$F1_R F2=$F2_R)"
-  fi
+# Check committed booking states
+BK1_FIN=$(psql -d "$DB_NAME" -tAc "SELECT tickets_finalized FROM bookings WHERE id='$BK1_ID';" | tr -d ' ')
+BK2_FIN=$(psql -d "$DB_NAME" -tAc "SELECT tickets_finalized FROM bookings WHERE id='$BK2_ID';" | tr -d ' ')
+FINALIZED_COUNT=0
+[[ "$BK1_FIN" == "t" ]] && FINALIZED_COUNT=$((FINALIZED_COUNT+1))
+[[ "$BK2_FIN" == "t" ]] && FINALIZED_COUNT=$((FINALIZED_COUNT+1))
+
+# STRICT: require exactly 1 success, 1 failure, final=49, 1 finalized booking
+if [[ "$SUCCESS_COUNT" -eq 1 ]] && [[ "$FAILURE_COUNT" -eq 1 ]] && [[ "$SOLD_AFTER" -eq 49 ]] && [[ "$FINALIZED_COUNT" -eq 1 ]]; then
+  log_pass "T18b: Exactly 1 finalization committed (tickets_sold=49/50), 1 rejected, 1 booking finalized"
 else
-  log_fail "T18b: OVERSELL! tickets_sold=$SOLD_AFTER > 50 (F1=$F1_R F2=$F2_R)"
+  log_fail "T18b: Expected 1 success + 1 failure + sold=49 + 1 finalized. Got: successes=$SUCCESS_COUNT failures=$FAILURE_COUNT sold=$SOLD_AFTER finalized=$FINALIZED_COUNT (F1=$F1_R F2=$F2_R bk1_fin=$BK1_FIN bk2_fin=$BK2_FIN)"
 fi
 
 # ═══════ T19: PAYMENT-VS-CANCEL WITH STATE ASSERTIONS ═══════
