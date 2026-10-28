@@ -1,4 +1,4 @@
--- 472_api_key_atomic_issuance.sql
+-- 474_api_key_atomic_issuance.sql
 -- Issue #705: Atomic API-key issuance and revocation RPCs.
 --
 -- ADDITIVE ONLY — safe to apply before or after app deployment.
@@ -6,7 +6,7 @@
 --   issue_api_key()   — atomic ownership + paid-tier + limit + insert
 --   revoke_api_key()  — atomic ownership + revocation
 --
--- Does NOT revoke authenticated DML on api_keys (that is M473, applied
+-- Does NOT revoke authenticated DML on api_keys (that is M475, applied
 -- only after all app instances use service-client RPCs).
 
 -- ============================================================
@@ -148,23 +148,23 @@ DO $$
 BEGIN
   -- Verify RPC EXECUTE grants
   IF NOT has_function_privilege('service_role', 'public.issue_api_key(UUID, TEXT, TEXT, TEXT, UUID)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'M472 verification FAILED: service_role missing EXECUTE on issue_api_key';
+    RAISE EXCEPTION 'M474 verification FAILED: service_role missing EXECUTE on issue_api_key';
   END IF;
   IF NOT has_function_privilege('service_role', 'public.revoke_api_key(UUID, UUID)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'M472 verification FAILED: service_role missing EXECUTE on revoke_api_key';
+    RAISE EXCEPTION 'M474 verification FAILED: service_role missing EXECUTE on revoke_api_key';
   END IF;
 
   -- Verify authenticated/anon CANNOT execute RPCs
   IF has_function_privilege('authenticated', 'public.issue_api_key(UUID, TEXT, TEXT, TEXT, UUID)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'M472 verification FAILED: authenticated can EXECUTE issue_api_key';
+    RAISE EXCEPTION 'M474 verification FAILED: authenticated can EXECUTE issue_api_key';
   END IF;
   IF has_function_privilege('authenticated', 'public.revoke_api_key(UUID, UUID)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'M472 verification FAILED: authenticated can EXECUTE revoke_api_key';
+    RAISE EXCEPTION 'M474 verification FAILED: authenticated can EXECUTE revoke_api_key';
   END IF;
   IF has_function_privilege('anon', 'public.issue_api_key(UUID, TEXT, TEXT, TEXT, UUID)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'M472 verification FAILED: anon can EXECUTE issue_api_key';
+    RAISE EXCEPTION 'M474 verification FAILED: anon can EXECUTE issue_api_key';
   END IF;
 
-  RAISE NOTICE 'M472 self-verification PASSED: RPCs created with service_role-only EXECUTE';
+  RAISE NOTICE 'M474 self-verification PASSED: RPCs created with service_role-only EXECUTE';
 END;
 $$;

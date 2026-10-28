@@ -34,7 +34,8 @@ export async function DELETE(
       return NextResponse.json({ error: 'Failed to revoke API key' }, { status: 500 });
     }
 
-    if (success === null || success === undefined) {
+    // Require explicit boolean true — reject false, null, undefined
+    if (success !== true) {
       return NextResponse.json({ error: 'Failed to revoke API key' }, { status: 500 });
     }
 

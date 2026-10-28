@@ -4,22 +4,59 @@
  * Tests concurrency, ACL, ownership, paid-tier enforcement, revocation,
  * and direct DML bypass denial against a disposable PostgreSQL instance.
  *
- * Requires TEST_DATABASE_URL (skips without it):
- *   docker run --rm -d --name m472-test -p 54329:5432 -e POSTGRES_PASSWORD=test postgres:16
+ * Auto-discovered by CI "P0 security ACL tests" job (*.pg.test.ts glob).
+ * Each file gets its own pg_test_N database clone with zero-skip enforcement.
+ *
+ * Local usage:
+ *   docker run --rm -d --name m474-test -p 54329:5432 -e POSTGRES_PASSWORD=test postgres:16
  *   sleep 2
  *   TEST_DATABASE_URL=postgresql://postgres:test@localhost:54329/postgres \
- *     npx vitest run lib/__tests__/705-api-key-issuance-db.test.ts
- *
- * CI: add a dedicated step with TEST_DATABASE_URL in ci.yml to run this test.
+ *     npx vitest run lib/__tests__/705-api-key-issuance.pg.test.ts
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync, exec } from 'child_process';
 import * as path from 'path';
 import * as crypto from 'crypto';
 
-const M472_PATH = path.resolve('supabase/migrations/472_api_key_atomic_issuance.sql');
-const M473_PATH = path.resolve('supabase/migrations/473_api_key_close_direct_writes.sql');
+const M474_PATH = path.resolve('supabase/migrations/474_api_key_atomic_issuance.sql');
+const M475_PATH = path.resolve('supabase/migrations/475_api_key_close_direct_writes.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
+
+// ── Disposable database safety guard ────────────────────────────
+// Prevents accidental execution against production, staging or shared databases.
+
+/** Known Supabase project refs that must never be targeted by tests. */
+const FORBIDDEN_PROJECT_REFS = ['cxcmiqotkowhxinjbytg'];
+
+function assertDisposableDatabase(url: string): void {
+  const lower = url.toLowerCase();
+
+  // Reject Supabase pooler/direct connections
+  if (lower.includes('.supabase.co') || lower.includes('.supabase.com')) {
+    throw new Error(
+      `SAFETY GUARD: TEST_DATABASE_URL points to a Supabase hosted database. ` +
+      `Tests must only run against a local disposable PostgreSQL instance.`
+    );
+  }
+
+  // Reject known project refs
+  for (const ref of FORBIDDEN_PROJECT_REFS) {
+    if (lower.includes(ref)) {
+      throw new Error(
+        `SAFETY GUARD: TEST_DATABASE_URL contains known project ref '${ref}'. ` +
+        `Tests must only run against a local disposable PostgreSQL instance.`
+      );
+    }
+  }
+
+  // Reject Supabase pooler port
+  if (lower.includes(':6543')) {
+    throw new Error(
+      `SAFETY GUARD: TEST_DATABASE_URL uses port 6543 (Supabase pooler). ` +
+      `Tests must only run against a local disposable PostgreSQL instance.`
+    );
+  }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -41,12 +78,12 @@ function psqlAsync(sql: string): Promise<string> {
   return new Promise((resolve) => {
     exec(`psql "${dbUrl}" ${PSQL_FLAGS}`, {
       encoding: 'utf-8', timeout: 30000,
-    }, (err, stdout, stderr) => {
+    }, (err, _stdout, stderr) => {
       if (err) {
         // Verbose psql includes SQLSTATE in stderr: "ERROR:  WA001: ..."
         resolve(`ERROR:${stderr}`);
       } else {
-        resolve(stdout.split('\n').filter(l => {
+        resolve(_stdout.split('\n').filter(l => {
           const t = l.trim();
           return t !== '' && !/^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|DO|SET|COMMENT|NOTICE)\b/.test(t);
         }).join('\n').trim());
@@ -55,32 +92,89 @@ function psqlAsync(sql: string): Promise<string> {
   });
 }
 
-/** Generate a unique key hash for testing (not real keys, just unique hashes) */
+/** Generate a unique key hash for testing */
 function testHash(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
-// Test UUIDs
+// Test UUIDs — namespaced to avoid collisions with other test suites
 const OWNER_A = '00000000-0000-4705-a001-000000000001';
 const OWNER_B = '00000000-0000-4705-a001-000000000002';
 const BIZ_A   = '00000000-0000-4705-b001-000000000001';
 const BIZ_B   = '00000000-0000-4705-b001-000000000002';
 const BIZ_FREE = '00000000-0000-4705-b001-000000000003';
 
-describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => {
+// ── Safety guard unit tests (run regardless of TEST_DATABASE_URL) ──
+
+describe('disposable database safety guard', () => {
+  it('rejects Supabase hosted URLs', () => {
+    expect(() => assertDisposableDatabase(
+      'postgresql://user:pass@db.cxcmiqotkowhxinjbytg.supabase.co:5432/postgres'
+    )).toThrow('SAFETY GUARD');
+  });
+
+  it('rejects known project refs', () => {
+    expect(() => assertDisposableDatabase(
+      'postgresql://user:pass@localhost:5432/cxcmiqotkowhxinjbytg'
+    )).toThrow('SAFETY GUARD');
+  });
+
+  it('rejects Supabase pooler port', () => {
+    expect(() => assertDisposableDatabase(
+      'postgresql://user:pass@localhost:6543/postgres'
+    )).toThrow('SAFETY GUARD');
+  });
+
+  it('accepts local disposable URL', () => {
+    expect(() => assertDisposableDatabase(
+      'postgresql://test_runner:test_only_ephemeral@localhost:5432/pg_test_0'
+    )).not.toThrow();
+  });
+
+  it('accepts Docker-based URL', () => {
+    expect(() => assertDisposableDatabase(
+      'postgresql://postgres:test@localhost:54329/postgres'
+    )).not.toThrow();
+  });
+});
+
+// ── Main test suite (requires real PostgreSQL) ──────────────────
+
+describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => {
   beforeAll(() => {
     if (!dbUrl) return;
 
+    // Fail-closed safety check before any mutations
+    assertDisposableDatabase(dbUrl);
+
+    // Verify the database is not pre-populated (additional safety layer).
+    // In CI, pg_test_N clones have only roles + auth schema from the template.
+    // A database with existing businesses/api_keys rows is NOT disposable.
+    try {
+      const existingRows = execSync(`psql "${dbUrl}" -tAXq -c "SELECT count(*) FROM businesses" 2>/dev/null`, {
+        encoding: 'utf-8', timeout: 5000,
+      }).trim();
+      if (existingRows && parseInt(existingRows, 10) > 0) {
+        throw new Error(
+          `SAFETY GUARD: Target database has ${existingRows} existing business rows. ` +
+          `Refusing to run destructive tests against a non-empty database.`
+        );
+      }
+    } catch (e) {
+      // Table doesn't exist — that's fine, we'll create it
+      if (e instanceof Error && e.message.includes('SAFETY GUARD')) throw e;
+    }
+
     // Create prerequisite schema (minimal subset needed for api_keys)
     psql(`
-      -- Supabase roles
+      -- Supabase roles (idempotent — CI template may already have them)
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       ALTER ROLE service_role BYPASSRLS;
       GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
-      -- auth.uid() stub
+      -- auth.uid() stub (idempotent)
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT COALESCE(
@@ -91,7 +185,7 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
       GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
       GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon, authenticated, service_role;
 
-      -- businesses table (minimal)
+      -- businesses table (minimal, created by this test)
       CREATE TABLE IF NOT EXISTS public.businesses (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         owner_id UUID NOT NULL,
@@ -107,7 +201,7 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
       GRANT ALL ON TABLE public.businesses TO service_role;
       GRANT SELECT, UPDATE ON TABLE public.businesses TO authenticated;
 
-      -- api_keys table (matches M180)
+      -- api_keys table (matches M180, created by this test)
       CREATE TABLE IF NOT EXISTS public.api_keys (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
@@ -122,7 +216,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
       CREATE INDEX IF NOT EXISTS idx_api_keys_business ON public.api_keys(business_id);
       ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
 
-      -- Original M180 RLS policy (wrap in exception handler for idempotency)
       DO $$ BEGIN
         CREATE POLICY "owners_manage_api_keys" ON public.api_keys
           FOR ALL USING (
@@ -130,7 +223,7 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
           );
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-      -- Default table grants (before M472 lockdown)
+      -- Pre-lockdown grants (M475 will restrict these)
       GRANT ALL ON TABLE public.api_keys TO service_role;
       GRANT ALL ON TABLE public.api_keys TO authenticated;
 
@@ -144,23 +237,31 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         subscription_tier = EXCLUDED.subscription_tier;
     `);
 
-    // Apply M472 (additive RPCs) then M473 (DML lockdown)
-    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M472_PATH}"`, {
+    // Apply M474 (additive RPCs) then M475 (DML lockdown)
+    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M474_PATH}"`, {
       encoding: 'utf-8', timeout: 30000,
     });
-    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M473_PATH}"`, {
+    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M475_PATH}"`, {
       encoding: 'utf-8', timeout: 30000,
     });
   });
 
   afterAll(() => {
     if (!dbUrl) return;
-    psql(`
-      DROP FUNCTION IF EXISTS public.issue_api_key(UUID, TEXT, TEXT, TEXT, UUID) CASCADE;
-      DROP FUNCTION IF EXISTS public.revoke_api_key(UUID, UUID) CASCADE;
-      DROP TABLE IF EXISTS public.api_keys CASCADE;
-      DROP TABLE IF EXISTS public.businesses CASCADE;
-    `);
+    // Clean up only resources created by this test run.
+    // In CI, the entire pg_test_N database is destroyed after the run.
+    // Locally, this prevents stale state from affecting subsequent runs.
+    try {
+      psql(`
+        DROP FUNCTION IF EXISTS public.issue_api_key(UUID, TEXT, TEXT, TEXT, UUID) CASCADE;
+        DROP FUNCTION IF EXISTS public.revoke_api_key(UUID, UUID) CASCADE;
+        DROP TABLE IF EXISTS public.api_keys CASCADE;
+        DROP TABLE IF EXISTS public.businesses CASCADE;
+      `);
+    } catch {
+      // Best-effort cleanup — CI destroys the database anyway
+      console.error('Warning: afterAll cleanup failed (non-fatal in CI)');
+    }
   });
 
   // ────────────────────────────────────────────────────────────────
@@ -243,20 +344,18 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
 
   describe('direct DML bypass denied', () => {
     it('authenticated role cannot INSERT directly into api_keys', () => {
-      const result = psqlAsync(`
+      return psqlAsync(`
         SET ROLE authenticated;
         SET request.jwt.claim.sub = '${OWNER_A}';
         INSERT INTO api_keys (business_id, key_hash, key_prefix, name)
         VALUES ('${BIZ_A}', '${testHash()}', 'wai_direct1', 'Direct bypass');
         RESET ROLE;
-      `);
-      return result.then(r => {
+      `).then(r => {
         expect(r).toContain('ERROR');
       });
     });
 
     it('authenticated role cannot UPDATE key_hash directly', () => {
-      // First insert a key via service_role
       const hash = testHash();
       psql(`
         SET ROLE service_role;
@@ -309,40 +408,36 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         SELECT issue_api_key('${BIZ_A}', '${hash}', 'wai_own01', 'Owner test', '${OWNER_A}');
         RESET ROLE;
       `);
-      // Should return a UUID
       expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     });
 
     it('owner B CANNOT issue key for owner A business (WA001)', () => {
-      const result = psqlAsync(`
+      return psqlAsync(`
         SET ROLE service_role;
         SELECT issue_api_key('${BIZ_A}', '${testHash()}', 'wai_cross', 'Cross-tenant', '${OWNER_B}');
         RESET ROLE;
-      `);
-      return result.then(r => {
+      `).then(r => {
         expect(r).toContain('WA001');
       });
     });
 
     it('owner A CANNOT issue key for free-tier business (WA001)', () => {
-      const result = psqlAsync(`
+      return psqlAsync(`
         SET ROLE service_role;
         SELECT issue_api_key('${BIZ_FREE}', '${testHash()}', 'wai_free1', 'Free tier', '${OWNER_A}');
         RESET ROLE;
-      `);
-      return result.then(r => {
+      `).then(r => {
         expect(r).toContain('WA001');
       });
     });
 
     it('nonexistent business raises WA001', () => {
       const fakeBiz = '00000000-0000-4705-b001-999999999999';
-      const result = psqlAsync(`
+      return psqlAsync(`
         SET ROLE service_role;
         SELECT issue_api_key('${fakeBiz}', '${testHash()}', 'wai_fake1', 'Ghost', '${OWNER_A}');
         RESET ROLE;
-      `);
-      return result.then(r => {
+      `).then(r => {
         expect(r).toContain('WA001');
       });
     });
@@ -361,8 +456,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         INSERT INTO businesses (id, owner_id, subscription_tier)
         VALUES ('${limitBiz}', '${limitOwner}', 'growth')
         ON CONFLICT (id) DO UPDATE SET subscription_tier = 'growth';
-
-        -- Clean slate
         DELETE FROM api_keys WHERE business_id = '${limitBiz}';
       `);
     });
@@ -376,7 +469,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         `);
         expect(result).toMatch(/^[0-9a-f]{8}-/);
       }
-      // Verify count
       const count = psql(`SELECT count(*) FROM api_keys WHERE business_id = '${limitBiz}' AND revoked_at IS NULL`);
       expect(count).toBe('5');
     });
@@ -392,7 +484,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
     });
 
     it('revoking a key allows creating a new one', () => {
-      // Revoke one key
       psql(`
         SET ROLE service_role;
         SELECT revoke_api_key(
@@ -402,7 +493,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         RESET ROLE;
       `);
 
-      // Now should succeed
       const result = psql(`
         SET ROLE service_role;
         SELECT issue_api_key('${limitBiz}', '${testHash()}', 'wai_lim6', 'Replacement', '${limitOwner}');
@@ -410,7 +500,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
       `);
       expect(result).toMatch(/^[0-9a-f]{8}-/);
 
-      // Still exactly 5 active
       const count = psql(`SELECT count(*) FROM api_keys WHERE business_id = '${limitBiz}' AND revoked_at IS NULL`);
       expect(count).toBe('5');
     });
@@ -450,7 +539,7 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
       expect(successes.length).toBe(5);
       expect(failures.length).toBe(1);
 
-      // Verify exactly 5 in database
+      // Verify exactly 5 persisted in database
       const count = psql(`SELECT count(*) FROM api_keys WHERE business_id = '${concBiz}' AND revoked_at IS NULL`);
       expect(count).toBe('5');
     });
@@ -472,7 +561,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         DELETE FROM api_keys WHERE business_id = '${conc2Biz}';
       `);
 
-      // Pre-create 4 keys
       for (let i = 0; i < 4; i++) {
         psql(`
           SET ROLE service_role;
@@ -481,7 +569,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         `);
       }
 
-      // Verify 4 exist
       const pre = psql(`SELECT count(*) FROM api_keys WHERE business_id = '${conc2Biz}' AND revoked_at IS NULL`);
       if (pre !== '4') throw new Error(`Expected 4 pre-existing keys, got ${pre}`);
     });
@@ -503,7 +590,7 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
       expect(successes.length).toBe(1);
       expect(failures.length).toBe(2);
 
-      // Verify exactly 5 in database
+      // Verify exactly 5 persisted in database
       const count = psql(`SELECT count(*) FROM api_keys WHERE business_id = '${conc2Biz}' AND revoked_at IS NULL`);
       expect(count).toBe('5');
     });
@@ -541,6 +628,7 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
       `);
       expect(result).toBe('t');
 
+      // Verify persisted state
       const revokedAt = psql(`SELECT revoked_at IS NOT NULL FROM api_keys WHERE id = '${revKeyId}'`);
       expect(revokedAt).toBe('t');
     });
@@ -555,7 +643,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
     });
 
     it('wrong owner cannot revoke (WA001)', () => {
-      // Create another key for this test
       const keyId = psql(`
         SET ROLE service_role;
         SELECT issue_api_key('${revBiz}', '${testHash()}', 'wai_rev2', 'Protected', '${revOwner}');
@@ -605,7 +692,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         RESET ROLE;
       `);
 
-      // Simulate validateApiKey's last_used_at update
       psql(`
         SET ROLE service_role;
         UPDATE api_keys SET last_used_at = now() WHERE id = '${keyId}';
@@ -638,7 +724,6 @@ describe.skipIf(!dbUrl)('M472 API Key Atomic Issuance (real PostgreSQL)', () => 
         DELETE FROM api_keys WHERE business_id IN ('${isoBizA}', '${isoBizB}');
       `);
 
-      // Create keys for each business via service_role
       psql(`
         SET ROLE service_role;
         SELECT issue_api_key('${isoBizA}', '${testHash()}', 'wai_isoA', 'A key', '${isoOwnerA}');
