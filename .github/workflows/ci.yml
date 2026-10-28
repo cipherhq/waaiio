@@ -4237,7 +4237,7 @@ jobs:
       # ── M472: Table reservation book_table_atomic (#730) ──
       # Disposable PG: migration apply, RPC behavior, concurrency, deposits,
       # availability, security mode, role ACL, capacity, idempotency
-      - name: M472 table reservation behavioral + security DB tests
+      - name: M474 table reservation behavioral + security DB tests
         env:
           PGHOST: localhost
           PGUSER: postgres
@@ -4245,13 +4245,13 @@ jobs:
           PGDATABASE: waaiio_test
         run: |
           set -e
-          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m472_test
-          createdb --maintenance-db=waaiio_test waaiio_m472_test
-          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m472_test; }
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m474_test
+          createdb --maintenance-db=waaiio_test waaiio_m474_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m474_test; }
           trap cleanup EXIT
-          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m472_test
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m474_test
 
-          echo "Running M472 table reservation behavioral + security DB tests..."
+          echo "Running M474 table reservation behavioral + security DB tests..."
           set +e
           OUTPUT=$(npx vitest run lib/__tests__/table-reservation-730-db.test.ts --reporter=verbose 2>&1)
           TEST_EXIT=$?
@@ -4260,7 +4260,7 @@ jobs:
 
           # Fail on test runner error
           if [ "$TEST_EXIT" -ne 0 ]; then
-            echo "❌ M472 table reservation DB tests exited with code $TEST_EXIT."
+            echo "❌ M474 table reservation DB tests exited with code $TEST_EXIT."
             exit "$TEST_EXIT"
           fi
 
@@ -4275,7 +4275,7 @@ jobs:
 
           # Fail if no tests passed
           if ! echo "$OUTPUT" | grep -q "passed"; then
-            echo "❌ No M472 table reservation DB tests passed. Something is wrong."
+            echo "❌ No M474 table reservation DB tests passed. Something is wrong."
             exit 1
           fi
 
@@ -4288,7 +4288,7 @@ jobs:
             exit 1
           fi
 
-          echo "✅ M472 table reservation DB tests complete — $PASS_COUNT passed, zero skips, zero failures."
+          echo "✅ M474 table reservation DB tests complete — $PASS_COUNT passed, zero skips, zero failures."
 
   migrations:
     name: Migration validation

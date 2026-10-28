@@ -891,8 +891,10 @@ export const schedulingFlow: FlowDefinition = {
         // Table reservations: scope to selected resource so other tables don't block dates
         if (isTableRes && dateSeatingResourceId) {
           bookingsQuery = bookingsQuery.eq('seating_resource_id', dateSeatingResourceId);
-        } else if (staffId) {
-          bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+        } else {
+          // Non-table bookings: exclude table reservations from capacity count
+          bookingsQuery = bookingsQuery.is('seating_resource_id', null);
+          if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
         }
         const { data: allBookings } = await bookingsQuery.limit(2000);
 
@@ -1225,8 +1227,10 @@ export const schedulingFlow: FlowDefinition = {
         if (isTableRes && seatingResourceId) {
           // Table reservations: filter by specific resource to show resource-level availability
           bookingsQuery = bookingsQuery.eq('seating_resource_id', seatingResourceId);
-        } else if (staffId) {
-          bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+        } else {
+          // Non-table bookings: exclude table reservations from capacity count
+          bookingsQuery = bookingsQuery.is('seating_resource_id', null);
+          if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
         }
 
         const { data: existingBookings } = await bookingsQuery;
@@ -1379,7 +1383,7 @@ export const schedulingFlow: FlowDefinition = {
             return { valid: false, errorMessage: 'That time is already reserved for this table. Try a different time.' };
           }
         } else {
-          // Standard service/appointment: business-wide slot count
+          // Standard service/appointment: exclude table reservations from capacity count
           const staffId = ctx.session.session_data.staff_id as string | null;
           const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
 
@@ -1389,7 +1393,8 @@ export const schedulingFlow: FlowDefinition = {
             .eq('business_id', ctx.business!.id)
             .eq('date', dateStr)
             .eq('time', input)
-            .in('status', ['confirmed', 'pending', 'in_progress']);
+            .in('status', ['confirmed', 'pending', 'in_progress'])
+            .is('seating_resource_id', null); // Exclude table reservations
 
           if (staffId) checkQuery = checkQuery.eq('staff_id', staffId);
 

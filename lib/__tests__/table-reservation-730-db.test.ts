@@ -86,6 +86,10 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
         special_requests TEXT,
         venue_address TEXT,
         end_date DATE,
+        addons_snapshot JSONB,
+        promo_code_id UUID,
+        location_id UUID,
+        class_session_id UUID,
         metadata JSONB DEFAULT '{}'::jsonb,
         bot_session_id UUID,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -97,6 +101,40 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
       CREATE TRIGGER set_reference_code BEFORE INSERT ON bookings FOR EACH ROW
         WHEN (NEW.reference_code IS NULL) EXECUTE FUNCTION generate_reference_code();
 
+      -- Tables needed by M475 book_slot_atomic replacement
+      CREATE TABLE IF NOT EXISTS services (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id),
+        name TEXT, price INTEGER DEFAULT 0, deposit_amount INTEGER DEFAULT 0,
+        is_active BOOLEAN DEFAULT true, max_capacity INTEGER DEFAULT 1,
+        duration_minutes INTEGER DEFAULT 30, is_class BOOLEAN DEFAULT false,
+        requires_staff BOOLEAN DEFAULT false, staff_ids TEXT[],
+        metadata JSONB DEFAULT '{}', class_schedule JSONB, auto_approve BOOLEAN DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS appointments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id),
+        name TEXT, requires_staff BOOLEAN DEFAULT false,
+        available_days TEXT[], available_from TIME, available_to TIME
+      );
+      CREATE TABLE IF NOT EXISTS business_staff (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id),
+        name TEXT, is_active BOOLEAN DEFAULT true, schedule JSONB DEFAULT '{}'
+      );
+      CREATE TABLE IF NOT EXISTS class_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id),
+        service_id UUID REFERENCES services(id),
+        date DATE, start_time TIME, capacity INTEGER DEFAULT 10,
+        status TEXT DEFAULT 'scheduled', staff_id UUID, location_id UUID
+      );
+      -- Stub helper functions for M475
+      CREATE OR REPLACE FUNCTION check_staff_availability(p_staff_id UUID, p_biz UUID, p_date DATE, p_time TEXT, p_dur INTEGER DEFAULT 30)
+        RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ BEGIN RETURN QUERY SELECT true, 'ok'; END $$ LANGUAGE plpgsql;
+      CREATE OR REPLACE FUNCTION check_appointment_schedule(p_appt UUID, p_biz UUID, p_date DATE, p_time TEXT)
+        RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ BEGIN RETURN QUERY SELECT true, 'ok'; END $$ LANGUAGE plpgsql;
+
       -- Stub has_admin_role for RLS policies
       CREATE OR REPLACE FUNCTION public.has_admin_role(roles TEXT[]) RETURNS BOOLEAN AS $$
       BEGIN RETURN false; END $$ LANGUAGE plpgsql;
@@ -107,14 +145,15 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
       CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ BEGIN RETURN 'service_role'; END $$ LANGUAGE plpgsql;
     `);
 
-    // Apply M472
+    // Apply M474 + M475
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql');
-    const migrationSql = fs.readFileSync(migrationPath, 'utf-8');
-    await sql(client, migrationSql);
+    const m474Path = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    await sql(client, fs.readFileSync(m474Path, 'utf-8'));
+    const m475Path = path.join(process.cwd(), 'supabase/migrations/475_exclude_table_bookings_from_slot_capacity.sql');
+    await sql(client, fs.readFileSync(m475Path, 'utf-8'));
 
-    // Grants from earlier migrations that M472 depends on for SECURITY INVOKER:
+    // Grants from earlier migrations that M474 depends on for SECURITY INVOKER:
     // M293: GRANT ALL ON businesses TO service_role
     // M415: GRANT SELECT, UPDATE ON bookings TO service_role
     // These are present in the full CI bootstrap but not this minimal fixture.
@@ -476,6 +515,47 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
       await sql(client, `ROLLBACK`);
       throw new Error('service_role INSERT into seating_resources failed');
     }
+  });
+
+  it('M475: table booking does not block service slot (cross-capability isolation)', async () => {
+    const { bizId, userId, resourceId } = await setupTestData();
+
+    // Create a table reservation at 19:00
+    await sql(client, `SELECT * FROM book_table_atomic(NULL, $1, $2, $3, '2026-10-30'::date, '19:00', 2, 90, 'TableGuest', '+1', NULL, NULL, 5000, 'pending', 'pending', 5000, 5000, 90)`, [bizId, userId, resourceId]);
+
+    // Verify the table booking exists
+    const { rows: tableBookings } = await sql(client, `SELECT id, seating_resource_id FROM bookings WHERE business_id = $1 AND date = '2026-10-30' AND time = '19:00'`, [bizId]);
+    expect(tableBookings.length).toBe(1);
+    expect(tableBookings[0].seating_resource_id).toBe(resourceId);
+
+    // Now book a SERVICE at the same time — capacity 1 — should succeed
+    // because book_slot_atomic excludes table reservations (seating_resource_id IS NULL)
+    const { rows: [svcBooking] } = await sql(client, `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, '2026-10-30'::date, '19:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'SvcGuest', '+2', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`, [bizId, userId]);
+    expect(svcBooking.slot_available).toBe(true);
+    expect(svcBooking.booking_id).toBeDefined();
+  });
+
+  it('M475: service booking does not block table reservation', async () => {
+    const { bizId, userId, resourceId } = await setupTestData();
+
+    // Create a service booking at 19:00
+    await sql(client, `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, '2026-10-30'::date, '19:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'SvcGuest', '+1', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`, [bizId, userId]);
+
+    // Table reservation at same time should still succeed
+    const { rows: [tableResult] } = await sql(client, `SELECT * FROM book_table_atomic(NULL, $1, $2, $3, '2026-10-30'::date, '19:00', 2, 90, 'TableGuest', '+2', NULL, NULL, 5000, 'pending', 'pending', 5000, 5000, 90)`, [bizId, userId, resourceId]);
+    expect(tableResult.slot_available).toBe(true);
+  });
+
+  it('M475: two service bookings at same time still respect capacity', async () => {
+    const { bizId, userId } = await setupTestData();
+
+    // First service booking — capacity 1
+    const { rows: [first] } = await sql(client, `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, '2026-10-30'::date, '19:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'Guest1', '+1', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`, [bizId, userId]);
+    expect(first.slot_available).toBe(true);
+
+    // Second at same time — should fail (capacity 1)
+    const { rows: [second] } = await sql(client, `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, '2026-10-30'::date, '19:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'Guest2', '+2', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`, [bizId, userId]);
+    expect(second.slot_available).toBe(false);
   });
 
   it('seating_resources has RLS enabled', async () => {
