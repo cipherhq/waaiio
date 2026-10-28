@@ -13,7 +13,7 @@ const CSV_HEADER = 'display_suffix,outcome,status,claimed_at,claimed_by_phone\n'
 // (businesses need plaintext codes for printing, not winner allocation)
 const CSV_HEADER_FULL = 'code,display_suffix,status\n';
 
-import { escapeCsvField } from './csv-serializer';
+import { escapeCsvField, buildPromoMaskedCsvRow, buildPromoFullCsvRow } from './csv-serializer';
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -179,23 +179,12 @@ export async function GET(request: NextRequest) {
           ? formatPromoCode(decryptPromoCode(code.encrypted_code))
           : '';
         csvChunks.push(
-          [
-            escapeCsvField(decrypted),
-            escapeCsvField(code.display_suffix),
-            escapeCsvField(code.status),
-          ].join(',') + '\n',
+          buildPromoFullCsvRow({ decryptedCode: decrypted, display_suffix: code.display_suffix, status: code.status }) + '\n',
         );
       } else {
         // Masked export: redact outcome for unused codes (winner confidentiality)
-        const isClaimed = code.status === 'claimed';
         csvChunks.push(
-          [
-            escapeCsvField(code.display_suffix),
-            escapeCsvField(isClaimed ? (code.outcome ?? '') : ''),
-            escapeCsvField(code.status),
-            escapeCsvField(code.claimed_at),
-            escapeCsvField(code.claimed_by_phone),
-          ].join(',') + '\n',
+          buildPromoMaskedCsvRow(code) + '\n',
         );
       }
     }
