@@ -333,37 +333,49 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
 
   it('service_role executes book_table_atomic within a role-scoped transaction', async () => {
     const { bizId, userId, resourceId } = await setupTestData();
+    let bookingId: string | undefined;
 
-    // Explicit transaction with role switch — asserts effective identity during RPC
     await sql(client, `BEGIN`);
-    await sql(client, `SET LOCAL ROLE service_role`);
+    try {
+      await sql(client, `SET LOCAL ROLE service_role`);
+      const { rows: [roleCheck] } = await sql(client, `SELECT current_user`);
+      expect(roleCheck.current_user).toBe('service_role');
 
-    // Assert the effective role IS service_role
-    const { rows: [roleCheck] } = await sql(client, `SELECT current_user, session_user`);
-    expect(roleCheck.current_user).toBe('service_role');
+      const { rows } = await sql(client,
+        `SELECT * FROM book_table_atomic(NULL, $1, $2, $3, '2026-10-30'::date, '20:00', 2, 90, 'RoleTest', '+999', NULL, NULL, 5000, 'pending', 'pending', 5000, 5000, 90)`,
+        [bizId, userId, resourceId],
+      );
+      expect(rows[0].slot_available).toBe(true);
+      bookingId = rows[0].booking_id;
+      expect(bookingId).toBeDefined();
+      await sql(client, `COMMIT`);
+    } catch {
+      await sql(client, `ROLLBACK`);
+      throw new Error('service_role booking failed unexpectedly');
+    }
 
-    // Execute actual booking RPC under service_role
-    const { rows } = await sql(client,
-      `SELECT * FROM book_table_atomic(NULL, $1, $2, $3, '2026-10-30'::date, '20:00', 2, 90, 'RoleTest', '+999', NULL, NULL, 5000, 'pending', 'pending', 5000, 5000, 90)`,
-      [bizId, userId, resourceId],
-    );
-    expect(rows[0].slot_available).toBe(true);
-    expect(rows[0].booking_id).toBeDefined();
-
-    await sql(client, `COMMIT`);
-
-    // Verify the booking was actually written (back as superuser)
-    const { rows: [booking] } = await sql(client, `SELECT * FROM bookings WHERE id = $1`, [rows[0].booking_id]);
+    // Verify durable write (back as superuser)
+    const { rows: [booking] } = await sql(client, `SELECT * FROM bookings WHERE id = $1`, [bookingId]);
     expect(booking.flow_type).toBe('table_reservation');
     expect(booking.guest_name).toBe('RoleTest');
   });
 
-  it('anon role is denied actual RPC execution', async () => {
+  it('anon role is denied EXECUTE on book_table_atomic (SQLSTATE 42501)', async () => {
     const { bizId, userId, resourceId } = await setupTestData();
     await sql(client, `DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     await sql(client, `GRANT USAGE ON SCHEMA public TO anon`);
 
-    let gotPermissionDenied = false;
+    // Catalog check: EXECUTE privilege must be false
+    const { rows: [privCheck] } = await sql(client, `
+      SELECT has_function_privilege('anon',
+        'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)',
+        'EXECUTE') AS can_exec
+    `);
+    expect(privCheck.can_exec).toBe(false);
+
+    // Actual execution attempt under anon role
+    let caughtCode: string | undefined;
+    let caughtMessage = '';
     await sql(client, `BEGIN`);
     try {
       await sql(client, `SET LOCAL ROLE anon`);
@@ -375,19 +387,31 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
         [bizId, userId, resourceId],
       );
     } catch (err: any) {
-      if (/permission denied/i.test(err.message)) gotPermissionDenied = true;
+      caughtCode = err.code;
+      caughtMessage = err.message || '';
     } finally {
       await sql(client, `ROLLBACK`);
     }
-    expect(gotPermissionDenied).toBe(true);
+    expect(caughtCode).toBe('42501'); // insufficient_privilege
+    expect(caughtMessage).toMatch(/permission denied for function book_table_atomic/i);
   });
 
-  it('authenticated role is denied actual RPC execution', async () => {
+  it('authenticated role is denied EXECUTE on book_table_atomic (SQLSTATE 42501)', async () => {
     const { bizId, userId, resourceId } = await setupTestData();
     await sql(client, `DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     await sql(client, `GRANT USAGE ON SCHEMA public TO authenticated`);
 
-    let gotPermissionDenied = false;
+    // Catalog check
+    const { rows: [privCheck] } = await sql(client, `
+      SELECT has_function_privilege('authenticated',
+        'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)',
+        'EXECUTE') AS can_exec
+    `);
+    expect(privCheck.can_exec).toBe(false);
+
+    // Actual execution attempt
+    let caughtCode: string | undefined;
+    let caughtMessage = '';
     await sql(client, `BEGIN`);
     try {
       await sql(client, `SET LOCAL ROLE authenticated`);
@@ -399,11 +423,13 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
         [bizId, userId, resourceId],
       );
     } catch (err: any) {
-      if (/permission denied/i.test(err.message)) gotPermissionDenied = true;
+      caughtCode = err.code;
+      caughtMessage = err.message || '';
     } finally {
       await sql(client, `ROLLBACK`);
     }
-    expect(gotPermissionDenied).toBe(true);
+    expect(caughtCode).toBe('42501');
+    expect(caughtMessage).toMatch(/permission denied for function book_table_atomic/i);
   });
 
   it('service_role has required table/schema/function permissions', async () => {
