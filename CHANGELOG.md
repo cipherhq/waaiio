@@ -1,3 +1,9 @@
+### #736 — Phase A R5: Codex P1 findings, Stripe PIN correction, gap reclassification (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: (1) **Stripe saved-card PIN corrected**: Stripe saved cards use the same Waaiio 4-digit PIN lifecycle as Paystack — `checkStripeConsentAndOffer` → `establish_saved_card_session(save_card_pin)` → `requiresPin` → `verifyPin`. Traced via Graphify and source read of `saved-card-offer.ts:603-782` and `saved-card-flow.ts:128-178`. Table expanded with PIN Activation and PIN Reuse columns. (2) **GAP-007 reclassified** from P1 to PRODUCT DECISION NEEDED — Owner scope decision, not a confirmed defect; `getUserFacingCapabilities()` already excludes these capabilities from the WhatsApp menu. (3) **GAP-009 reclassified** from P1 to UNVERIFIED / EVIDENCE GAP — missing test coverage for 7 contextual/dashboard-only capabilities is a verification gap, not a confirmed runtime defect. (4) PR #741 HEAD SHA updated to `dba4e7b7`. Section 7 restructured into six subsections.
+- **Affects**: Documentation only.
+- **Could break**: Nothing.
+
 ### #736 — Phase A R4: severity reclassification per Codex P1 and CTO R3 (2026-10-29)
 
 - **`docs/contracts/736-capability-e2e-contract.md`**: Reclassified gap inventory per Evidence Verification Agent severity gate (AGENTS.md §Evidence Verification Agent). (1) GAP-005 (no staging E2E) moved from P0 to UNVERIFIED / EVIDENCE GAP — missing authorization is not a runtime defect. (2) GAP-001, GAP-002, GAP-004 reclassified from generic "P0" to CONFIRMED CODE DEFECT — DEPLOYMENT UNVERIFIED with explicit scope note that all are offline-only, online unaffected. (3) GAP-003 reclassified to OWNER TARGET CONTRACT — implementation gap vs approved target, not a runtime defect. (4) Section 7 restructured into five subsections by finding status (confirmed code defect, owner target, evidence gap, P1, P2). (5) PR #741 and #745 SHA references verified current.

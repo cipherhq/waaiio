@@ -310,12 +310,14 @@ Source: `lib/bot/flows/shared/bank-transfer.ts`, `app/api/dashboard/pending-tran
 
 ### 5.5 Saved Card Support
 
-| Provider | Save Card | Skip | PIN Reuse | Test Evidence |
-|----------|-----------|------|-----------|--------------|
-| Paystack | Post-payment offer | Decline option | 4-digit PIN (bcrypt) | `lib/payments/__tests__/paystack-card-authorization.test.ts`, `lib/payments/__tests__/saved-card-phase1-integration.test.ts` |
-| Stripe | Checkout `saved_payment_method_options` | Yes | No PIN (provider handles) | `lib/payments/__tests__/stripe-saved-card.test.ts`, `lib/payments/__tests__/stripe-saved-card-checkout.test.ts` |
-| Flutterwave | Not supported | N/A | N/A | N/A |
-| Square | Not supported | N/A | N/A | N/A |
+| Provider | Save Card | Skip | PIN Activation | PIN Reuse | Test Evidence |
+|----------|-----------|------|---------------|-----------|--------------|
+| Paystack | Post-payment offer via `checkAndOfferSavedCard` | Decline option | 4-digit Waaiio PIN (bcrypt) set in `save_card_pin` step | Required on every saved-card charge via `requiresPin` → `verifyPin` | `lib/payments/__tests__/paystack-card-authorization.test.ts`, `lib/payments/__tests__/saved-card-phase1-integration.test.ts` |
+| Stripe | Consent via Checkout `saved_payment_method_options`; activation via `checkStripeConsentAndOffer` | Yes (customer does not check save box) | 4-digit Waaiio PIN (bcrypt) — same lifecycle as Paystack. `saved-card-offer.ts:726-782` creates `save_card_pin` session | Required on every saved-card charge via `saved-card-flow.ts:128-178` `requiresPin` → `verifyPin` | `lib/payments/__tests__/stripe-saved-card.test.ts`, `lib/payments/__tests__/stripe-saved-card-checkout.test.ts` |
+| Flutterwave | Not supported | N/A | N/A | N/A | N/A |
+| Square | Not supported | N/A | N/A | N/A | N/A |
+
+**Graphify evidence** (`checkStripeConsentAndOffer` call chain): `send-confirmation.ts:1575-1576` → `saved-card-offer.ts:603` → `canonicalSavedCardPhone`, `isCompatibleForSavedCard`, `extractStripeSavedCardEvidence`, `establish_saved_card_session(p_current_step='save_card_pin')`. Reuse path: `saved-card-flow.ts:128` `requiresPin` → `verifyPin` (line 158) — identical for both Paystack and Stripe gateways.
 
 ### 5.6 Idempotency and Race Protection
 
@@ -345,7 +347,7 @@ Source: `lib/bot/flows/shared/bank-transfer.ts`, `app/api/dashboard/pending-tran
 |----|--------|----------|--------|-----------------|-------------------|
 | **#745** | `security/705-api-key-dml-lockdown` | `0efd6503` | DRAFT | M474 (dup of merged) + **M480** | No capability impact. DML lockdown follow-up to merged #740. |
 | **#731** | `feat/730-booking-reservation-ux` | `b1c6da9c` | DRAFT | **M476**, **M477**, **M478** | Blocks `table_reservation` — adds `seating_resources`, `book_table_atomic` RPC |
-| **#741** | `fix/736-offline-merchant-approval` | `88c22d71` | DRAFT | **M479** | Blocks offline bank transfer certification — payment vs fulfillment separation |
+| **#741** | `fix/736-offline-merchant-approval` | `dba4e7b7` | DRAFT | **M479** | Blocks offline bank transfer certification — payment vs fulfillment separation |
 
 ### 6.3 Migration Namespace Map (no collisions)
 
@@ -398,17 +400,24 @@ Missing verification evidence. Not confirmed defects — these represent certifi
 | ID | Gap | Status | Evidence | Affected | Prerequisite |
 |----|-----|--------|---------|----------|-------------|
 | GAP-005 | No staging E2E verification of any capability | UNVERIFIED / EVIDENCE GAP | Phase D staging execution not yet authorized | All | Separate staging execution authorization; does not indicate a runtime defect |
+| GAP-009 | `membership`, `referral`, `reminders`, `staff`, `whatsapp_sign`, `reports`, `waiver` lack dedicated executable tests for their specific code paths | UNVERIFIED / EVIDENCE GAP | Test file search found no dedicated test files for these 7 capabilities | 7 capabilities | Phase C test development; does not indicate a runtime defect — these capabilities function as dashboard-only or contextual triggers |
 
-### 7.4 P1 Gaps — Implementation Required
+### 7.4 Product Decisions Needed
+
+Gaps that depend on Owner product decisions, not confirmed defects. Included here to track scope; do not treat as implementation mandates until Owner decides.
+
+| ID | Gap | Status | Evidence | Affected |
+|----|-----|--------|---------|----------|
+| GAP-007 | `estimates`, `packages`, `multi_location` have no bot flow — customer interaction undefined | PRODUCT DECISION NEEDED | `getUserFacingCapabilities()` already excludes them from WhatsApp menu; no customer-facing gap on current main | estimates, packages, multi_location |
+
+### 7.5 P1 Gaps — Implementation Required
 
 | ID | Gap | Evidence | Affected | Dependency |
 |----|-----|---------|----------|------------|
 | GAP-006 | `table_reservation` requires unmerged PR #731 | PR #731 DRAFT with M476-M478 | table_reservation | PR #731 merge + migration |
-| GAP-007 | `estimates`, `packages`, `multi_location` have no bot flow — customer interaction undefined | `flow-routing.ts` falls through to `select_service` | estimates, packages, multi_location | Owner decision on launch classification |
 | GAP-008 | `table_reservation` backing check uses same query as `scheduling` | `capability-selection.flow.ts` line 84-88 | table_reservation | PR #731 should add specific seating check |
-| GAP-009 | `membership`, `referral`, `reminders`, `staff`, `whatsapp_sign`, `reports`, `waiver` lack dedicated executable tests for their specific code paths | Test file search found no dedicated test files | 7 capabilities | Phase C test development |
 
-### 7.5 P2 Gaps
+### 7.6 P2 Gaps
 
 | ID | Gap | Evidence |
 |----|-----|---------|
@@ -540,5 +549,5 @@ These are presented as **recommendations requiring Owner decision**, not asserti
 | PR #740 (merged) | GitHub MCP, `git log origin/main` | Merge SHA `c3b33307` on main |
 | PR #745 files | GitHub API `pulls/745/files` | `0efd6503` |
 | PR #731 files | GitHub API `pulls/731/files` | `b1c6da9c` |
-| PR #741 files | GitHub API `pulls/741/files` | `88c22d71` |
+| PR #741 files | GitHub API `pulls/741/files` | `dba4e7b7` |
 | CI run (R2) | `gh pr checks 744` | Run 40746741556 — 12/12 green on `4563ae56` |
