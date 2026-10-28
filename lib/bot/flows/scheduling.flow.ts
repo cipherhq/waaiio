@@ -1708,6 +1708,30 @@ export const schedulingFlow: FlowDefinition = {
         return false;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        // Table reservation FIRST — takes priority over stale class state
+        const isTableReservation = ctx.session.session_data._is_table_reservation === true;
+        if (isTableReservation) {
+          const maxCap = (ctx.session.session_data._seating_capacity as number) || 10;
+          const minCap = (ctx.session.session_data._seating_min_party as number) || 1;
+          const candidates = new Set<number>();
+          candidates.add(minCap);
+          if (maxCap !== minCap) candidates.add(maxCap);
+          const mid = Math.round((minCap + maxCap) / 2);
+          if (mid > minCap && mid < maxCap) candidates.add(mid);
+          if (candidates.size < 3 && minCap + 1 < maxCap) candidates.add(minCap + 1);
+          const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
+          const buttons = sorted.map(n => ({
+            id: String(n),
+            title: `${n} guest${n > 1 ? 's' : ''}`,
+          }));
+          const rangeLabel = minCap === maxCap ? `${minCap}` : `${minCap}-${maxCap}`;
+          return [{
+            type: 'buttons',
+            body: `How many guests will be dining?\n\nType a number (${rangeLabel}).`,
+            buttons,
+          }];
+        }
+
         const isClass = ctx.session.session_data._service_is_class;
 
         // Class booking: use "spots" terminology and respect remaining capacity
@@ -1727,32 +1751,6 @@ export const schedulingFlow: FlowDefinition = {
           return [{
             type: 'buttons',
             body: `How many spots would you like to book?\n\n${remaining} spot${remaining === 1 ? '' : 's'} available. Type a number (1-${maxSpots}).`,
-            buttons,
-          }];
-        }
-
-        // Table reservation: generate unique buttons within [minCap, maxCap]
-        const isTableReservation = ctx.session.session_data._is_table_reservation === true;
-        if (isTableReservation) {
-          const maxCap = (ctx.session.session_data._seating_capacity as number) || 10;
-          const minCap = (ctx.session.session_data._seating_min_party as number) || 1;
-          // Generate up to 3 unique values within [minCap, maxCap]
-          const candidates = new Set<number>();
-          candidates.add(minCap);
-          if (maxCap !== minCap) candidates.add(maxCap);
-          const mid = Math.round((minCap + maxCap) / 2);
-          if (mid > minCap && mid < maxCap) candidates.add(mid);
-          // If still < 3 options and range allows, add another
-          if (candidates.size < 3 && minCap + 1 < maxCap) candidates.add(minCap + 1);
-          const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
-          const buttons = sorted.map(n => ({
-            id: String(n),
-            title: `${n} guest${n > 1 ? 's' : ''}`,
-          }));
-          const rangeLabel = minCap === maxCap ? `${minCap}` : `${minCap}-${maxCap}`;
-          return [{
-            type: 'buttons',
-            body: `How many guests will be dining?\n\nType a number (${rangeLabel}).`,
             buttons,
           }];
         }
@@ -1805,7 +1803,7 @@ export const schedulingFlow: FlowDefinition = {
           if (entities.quantity) size = entities.quantity;
         }
         if (isNaN(size) || size < minQty || size > maxQty) {
-          const unit = isClass ? 'spots' : 'guests';
+          const unit = isTableReservation ? 'guests' : (isClass ? 'spots' : 'guests');
           return { valid: false, errorMessage: `Please enter a number between ${minQty} and ${maxQty} ${unit}.` };
         }
         ctx.intelligence.resetAbuse(ctx.from);

@@ -797,56 +797,98 @@ describe('#730: Admin API and security', () => {
     expect(sessionData.first_name).toBe('Alice'); // preserved
   });
 
-  it('table quantity buttons are unique for capacity=4 (P1-QTY fix)', () => {
-    // Simulate the button generation logic for a 4-seat table (min=1, max=4)
-    const minCap = 1, maxCap = 4;
-    const candidates = new Set<number>();
-    candidates.add(minCap);
-    if (maxCap !== minCap) candidates.add(maxCap);
-    const mid = Math.round((minCap + maxCap) / 2);
-    if (mid > minCap && mid < maxCap) candidates.add(mid);
-    if (candidates.size < 3 && minCap + 1 < maxCap) candidates.add(minCap + 1);
-    const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
-    const buttons = sorted.map(n => ({ id: String(n), title: `${n} guest${n > 1 ? 's' : ''}` }));
+  // ── Real handler invocations for select_quantity ──
 
-    // Must have unique IDs
+  it('select_quantity.prompt: table reservation produces unique buttons for capacity=4', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_quantity', version: 1,
+        session_data: { _is_table_reservation: true, _seating_capacity: 4, _seating_min_party: 1, _service_max_capacity: 4 } },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1',
+    } as any;
+    const msgs = await step!.prompt(ctx);
+    expect(msgs.length).toBe(1);
+    const buttons = (msgs[0] as any).buttons as Array<{id: string; title: string}>;
     const ids = buttons.map(b => b.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    // Must be within range
-    for (const b of buttons) {
-      const n = parseInt(b.id);
-      expect(n).toBeGreaterThanOrEqual(minCap);
-      expect(n).toBeLessThanOrEqual(maxCap);
-    }
-    // Specifically: no duplicate '4' button
-    expect(ids.filter(id => id === '4').length).toBeLessThanOrEqual(1);
+    expect(new Set(ids).size).toBe(ids.length); // unique
+    for (const b of buttons) { const n = parseInt(b.id); expect(n).toBeGreaterThanOrEqual(1); expect(n).toBeLessThanOrEqual(4); }
+    expect(ids.filter(id => id === '4').length).toBeLessThanOrEqual(1); // no duplicate '4'
+    expect((msgs[0] as any).body).toContain('guests'); // table terminology
   });
 
-  it('table quantity buttons are unique for capacity=2 min=2 (single value)', () => {
-    const minCap = 2, maxCap = 2;
-    const candidates = new Set<number>();
-    candidates.add(minCap);
-    if (maxCap !== minCap) candidates.add(maxCap);
-    const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
-    const buttons = sorted.map(n => ({ id: String(n), title: `${n} guests` }));
-    expect(buttons.length).toBe(1);
-    expect(buttons[0].id).toBe('2');
+  it('select_quantity.prompt: table takes priority over stale _service_is_class', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_quantity', version: 1,
+        session_data: { _is_table_reservation: true, _seating_capacity: 6, _seating_min_party: 2, _service_max_capacity: 6, _service_is_class: true } },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1',
+    } as any;
+    const msgs = await step!.prompt(ctx);
+    expect((msgs[0] as any).body).toContain('guests'); // NOT "spots"
+    expect((msgs[0] as any).body).not.toContain('spot');
   });
 
-  it('table quantity buttons are unique for capacity=6 min=2', () => {
-    const minCap = 2, maxCap = 6;
-    const candidates = new Set<number>();
-    candidates.add(minCap);
-    if (maxCap !== minCap) candidates.add(maxCap);
-    const mid = Math.round((minCap + maxCap) / 2);
-    if (mid > minCap && mid < maxCap) candidates.add(mid);
-    if (candidates.size < 3 && minCap + 1 < maxCap) candidates.add(minCap + 1);
-    const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
+  it('select_quantity.prompt: min=max table shows single button', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_quantity', version: 1,
+        session_data: { _is_table_reservation: true, _seating_capacity: 2, _seating_min_party: 2, _service_max_capacity: 2 } },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1',
+    } as any;
+    // skipIf should auto-set for min=max
+    const skipped = await step!.skipIf!(ctx);
+    expect(skipped).toBe(true);
+    expect(ctx.session.session_data.party_size).toBe(2);
+  });
 
-    const ids = sorted.map(String);
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(sorted.every(n => n >= minCap && n <= maxCap)).toBe(true);
-    expect(sorted.length).toBeLessThanOrEqual(3);
+  it('select_quantity.validate: table uses "guests" terminology even with stale class state', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_quantity', version: 1,
+        session_data: { _is_table_reservation: true, _seating_capacity: 4, _seating_min_party: 2, _service_max_capacity: 4, _service_is_class: true } },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: { resetAbuse: () => {} } as any, from: '+1',
+    } as any;
+    // Invalid input below min
+    const result = await step!.validate!('1', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toContain('guests'); // NOT "spots"
+    expect(result.errorMessage).toContain('2'); // min
+    expect(result.errorMessage).toContain('4'); // max
+  });
+
+  it('select_quantity.validate: accepts valid table party size', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_quantity', version: 1,
+        session_data: { _is_table_reservation: true, _seating_capacity: 4, _seating_min_party: 2, _service_max_capacity: 4 } },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: { resetAbuse: () => {} } as any, from: '+1',
+    } as any;
+    const result = await step!.validate!('3', ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?.party_size).toBe(3);
+  });
+
+  it('select_quantity.validate: rejects party size above table max', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_quantity');
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_quantity', version: 1,
+        session_data: { _is_table_reservation: true, _seating_capacity: 4, _seating_min_party: 1, _service_max_capacity: 4 } },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: { resetAbuse: () => {} } as any, from: '+1',
+    } as any;
+    const result = await step!.validate!('5', ctx);
+    expect(result.valid).toBe(false);
   });
 
   it('dashboard uses table-specific status actions (not lodging checked_in)', async () => {
