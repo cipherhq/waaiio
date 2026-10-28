@@ -525,6 +525,7 @@ const donationPaymentStep: FlowStepConfig = {
           countryCode: country,
           transferExpiryHours: ps.transfer_expiry_hours,
         });
+        if (!transferRef) return [{ type: 'text' as const, text: await ctx.t('Unable to create bank transfer. Please try again or use the online payment link.') }];
         sd.bank_transfer_reference = transferRef;
         sd.bank_transfer_offered = true;
         sd.bank_transfer_amount = amount;
@@ -573,6 +574,7 @@ const donationPaymentStep: FlowStepConfig = {
         countryCode: country,
         transferExpiryHours: ps.transfer_expiry_hours,
       });
+      if (!transferRef) return [{ type: 'text' as const, text: await ctx.t('Unable to create bank transfer. Please try again or use the online payment link.') }];
       sd.bank_transfer_reference = transferRef;
       sd.bank_transfer_offered = true;
       sd.bank_transfer_amount = amount;

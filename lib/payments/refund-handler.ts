@@ -280,7 +280,7 @@ async function dispatchAndFinalize(
   // merchant_obligation refunds should never reach dispatch, but guard here as defense-in-depth.
   if (payment.gateway === 'direct') {
     logger.error('[REFUND] Blocked provider dispatch for direct/bank-transfer payment:', refundId);
-    return { success: false, refundId, errorMessage: 'Direct transfers cannot be provider-refunded' };
+    return { success: false, refundId, errorMessage: 'Direct transfers cannot be provider-refunded', state: 'failed' as RefundState };
   }
 
   // Atomic dispatch claim (token-bound if recovering)

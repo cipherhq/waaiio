@@ -963,6 +963,7 @@ export const reservationFlow: FlowDefinition = {
                 countryCode: cc,
                 transferExpiryHours: ps.transfer_expiry_hours,
               });
+              if (!transferRef) return [{ type: 'text' as const, text: await ctx.t('Unable to create bank transfer. Please try again or use the online payment link.') }];
               d.bank_transfer_reference = transferRef;
               d.bank_transfer_offered = true;
               d.bank_transfer_amount = payableAmount;
@@ -1061,6 +1062,7 @@ export const reservationFlow: FlowDefinition = {
               countryCode: cc,
               transferExpiryHours: ps.transfer_expiry_hours,
             });
+            if (!transferRef) return [{ type: 'text' as const, text: await ctx.t('Unable to create bank transfer. Please try again or use the online payment link.') }];
             d.bank_transfer_reference = transferRef;
             d.bank_transfer_offered = true;
             d.bank_transfer_amount = payableAmount;
