@@ -90,13 +90,13 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
       INSERT INTO public.services (id, business_id, name, service_type, billing_type, recurring_interval, is_active, price, duration_minutes, deposit_amount)
       VALUES ('${SERVICE}', '${BIZ}', 'M479 Svc', 'booking', 'one_time', NULL, true, 5000, 60, 0);
 
-      -- Booking: pending, deposit_status none
-      INSERT INTO public.bookings (id, business_id, guest_phone, service_id, status, deposit_status, total_amount, reference_code, flow_type)
-      VALUES ('${BOOKING}', '${BIZ}', '+2341234567', '${SERVICE}', 'pending', 'none', 5000, 'BK-M479', 'scheduling');
+      -- Booking: pending, deposit_status none (user_id is NOT NULL)
+      INSERT INTO public.bookings (id, business_id, user_id, guest_phone, service_id, status, deposit_status, total_amount, reference_code, flow_type)
+      VALUES ('${BOOKING}', '${BIZ}', '${OWNER}', '+2341234567', '${SERVICE}', 'pending', 'none', 5000, 'BK-M479', 'scheduling');
 
-      -- Invoice: sent
-      INSERT INTO public.invoices (id, business_id, status, total_amount, due_date)
-      VALUES ('${INVOICE}', '${BIZ}', 'sent', 5000, NOW() + INTERVAL '30 days');
+      -- Invoice: sent (customer_name, subtotal, tax_rate, tax_amount, discount_value, discount_amount, amount_paid, currency, issue_date are NOT NULL)
+      INSERT INTO public.invoices (id, business_id, customer_name, status, subtotal, tax_rate, tax_amount, discount_value, discount_amount, total_amount, amount_paid, currency, issue_date, due_date)
+      VALUES ('${INVOICE}', '${BIZ}', 'Test Customer', 'sent', 5000, 0, 0, 0, 0, 5000, 0, 'NGN', NOW(), NOW() + INTERVAL '30 days');
 
       -- Transfer: non-expired (24h from now), linked to booking
       INSERT INTO public.pending_transfers (id, business_id, booking_id, customer_phone, customer_name, expected_amount, currency, reference_code, status, expires_at)
@@ -311,8 +311,8 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
     const orderId = 'c4790000-0000-0000-0000-000000000060';
     const promoId = 'c4790000-0000-0000-0000-000000000070';
     runSQL(`
-      INSERT INTO public.orders (id, business_id, status, total_amount, channel)
-      VALUES ('${orderId}', '${BIZ}', 'paid_pending_approval', 500000, 'whatsapp')
+      INSERT INTO public.orders (id, business_id, user_id, reference_code, status, total_amount, channel)
+      VALUES ('${orderId}', '${BIZ}', '${OWNER}', 'ORD-M479T16', 'paid_pending_approval', 500000, 'whatsapp')
       ON CONFLICT (id) DO UPDATE SET status = 'paid_pending_approval';
 
       INSERT INTO public.promo_codes (id, business_id, code, discount_type, discount_value, max_uses, current_uses, is_active)
@@ -339,8 +339,8 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
   it('T17: finalize_promo_reservation rejects pending (unpaid) orders', () => {
     const orderId = 'c4790000-0000-0000-0000-000000000061';
     runSQL(`
-      INSERT INTO public.orders (id, business_id, status, total_amount, channel)
-      VALUES ('${orderId}', '${BIZ}', 'pending', 500000, 'whatsapp')
+      INSERT INTO public.orders (id, business_id, user_id, reference_code, status, total_amount, channel)
+      VALUES ('${orderId}', '${BIZ}', '${OWNER}', 'ORD-M479T17', 'pending', 500000, 'whatsapp')
       ON CONFLICT (id) DO UPDATE SET status = 'pending';
     `);
     const result = JSON.parse(runSQL(`SELECT finalize_promo_reservation('${orderId}')`));
@@ -353,8 +353,8 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
     const orderId = 'c4790000-0000-0000-0000-000000000062';
     const promoId = 'c4790000-0000-0000-0000-000000000072';
     runSQL(`
-      INSERT INTO public.orders (id, business_id, status, total_amount, channel)
-      VALUES ('${orderId}', '${BIZ}', 'confirmed', 500000, 'whatsapp')
+      INSERT INTO public.orders (id, business_id, user_id, reference_code, status, total_amount, channel)
+      VALUES ('${orderId}', '${BIZ}', '${OWNER}', 'ORD-M479T18', 'confirmed', 500000, 'whatsapp')
       ON CONFLICT (id) DO UPDATE SET status = 'confirmed';
       INSERT INTO public.promo_codes (id, business_id, code, discount_type, discount_value, max_uses, current_uses, is_active)
       VALUES ('${promoId}', '${BIZ}', 'M479FIN', 'percentage', 10, 100, 5, true)
