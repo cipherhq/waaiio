@@ -645,6 +645,28 @@ describe('#730: Admin API and security', () => {
     expect(sessionData.first_name).toBe('Bob');
   });
 
+  it('clearStaleCapabilityState is no-op for fresh session (undefined fromCap)', async () => {
+    const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
+
+    // Simulates first capability selection with smart-prefilled data
+    const sessionData: Record<string, unknown> = {
+      service_id: 'svc-prefilled',
+      service_name: 'Prefilled Service',
+      date: '2026-10-30',
+      time: '14:00',
+      party_size: 2,
+      first_name: 'Alice',
+    };
+
+    clearStaleCapabilityState(sessionData, undefined, 'scheduling');
+
+    // Prefilled data must be preserved (fresh session, no stale state)
+    expect(sessionData.service_id).toBe('svc-prefilled');
+    expect(sessionData.date).toBe('2026-10-30');
+    expect(sessionData.time).toBe('14:00');
+    expect(sessionData.party_size).toBe(2);
+  });
+
   it('clearStaleCapabilityState is no-op for same capability', async () => {
     const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
 

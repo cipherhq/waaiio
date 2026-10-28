@@ -67,8 +67,8 @@ export function clearStaleCapabilityState(
   fromCapability: string | undefined,
   toCapability: string,
 ): void {
-  // Same capability → no cleanup needed
-  if (fromCapability === toCapability) return;
+  // No prior capability (fresh session) or same capability → no cleanup needed
+  if (!fromCapability || fromCapability === toCapability) return;
 
   // Clear table-reservation-specific keys when leaving table_reservation
   if (fromCapability === 'table_reservation') {

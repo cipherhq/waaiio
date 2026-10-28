@@ -3241,11 +3241,7 @@ export class BotService {
         return;
       }
 
-      const rebookServiceId = session.session_data._quick_rebook_service_id as string;
-      session.session_data.service_id = rebookServiceId;
-      session.session_data.service_name = session.session_data._quick_rebook_service_name;
-      session.session_data.skip_service = true;
-      // Clear stale transactional state before switching (shared cleanup)
+      // Clear stale transactional state BEFORE setting new service (shared cleanup)
       const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
       clearStaleCapabilityState(
         session.session_data,
@@ -3253,6 +3249,12 @@ export class BotService {
         rebookCap,
       );
       session.session_data.active_capability = rebookCap;
+
+      // Now set the rebook service (AFTER cleanup so it's not erased)
+      const rebookServiceId = session.session_data._quick_rebook_service_id as string;
+      session.session_data.service_id = rebookServiceId;
+      session.session_data.service_name = session.session_data._quick_rebook_service_name;
+      session.session_data.skip_service = true;
 
       // Fetch service details to pre-fill duration, price, etc.
       const { data: svc } = await this.supabase
