@@ -298,7 +298,6 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
   });
 
   it('weekday is correct for various timezones (no AT TIME ZONE bug)', async () => {
-    // Verify to_char(DATE, 'fmday') returns correct day regardless of session timezone
     const { rows } = await sql(client, `
       SELECT
         lower(to_char('2026-10-27'::date, 'fmday')) AS tue,
@@ -308,5 +307,51 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
     expect(rows[0].tue).toBe('tuesday');
     expect(rows[0].fri).toBe('friday');
     expect(rows[0].sat).toBe('saturday');
+  });
+
+  // ── Security regression tests ──
+
+  it('book_table_atomic is SECURITY INVOKER (not DEFINER)', async () => {
+    const { rows } = await sql(client, `
+      SELECT p.prosecdef FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'book_table_atomic'
+    `);
+    expect(rows.length).toBe(1);
+    expect(rows[0].prosecdef).toBe(false); // false = INVOKER
+  });
+
+  it('service_role has EXECUTE on book_table_atomic', async () => {
+    const { rows } = await sql(client, `
+      SELECT 1 FROM information_schema.role_routine_grants
+      WHERE routine_schema = 'public' AND routine_name = 'book_table_atomic'
+        AND grantee = 'service_role' AND privilege_type = 'EXECUTE'
+    `);
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('anon role cannot execute book_table_atomic', async () => {
+    // Create anon role if not exists, try to execute
+    await sql(client, `DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+    const { rows } = await sql(client, `
+      SELECT has_function_privilege('anon', 'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)', 'EXECUTE') AS can_exec
+    `);
+    expect(rows[0].can_exec).toBe(false);
+  });
+
+  it('authenticated role cannot execute book_table_atomic', async () => {
+    await sql(client, `DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+    const { rows } = await sql(client, `
+      SELECT has_function_privilege('authenticated', 'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)', 'EXECUTE') AS can_exec
+    `);
+    expect(rows[0].can_exec).toBe(false);
+  });
+
+  it('seating_resources has RLS enabled', async () => {
+    const { rows } = await sql(client, `
+      SELECT relrowsecurity FROM pg_class
+      WHERE relname = 'seating_resources' AND relnamespace = 'public'::regnamespace
+    `);
+    expect(rows[0].relrowsecurity).toBe(true);
   });
 });

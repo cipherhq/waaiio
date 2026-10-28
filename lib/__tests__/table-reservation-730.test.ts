@@ -155,8 +155,8 @@ describe('#730: Migration 472 SQL structure', () => {
 
     // RPC
     expect(sql).toContain('CREATE OR REPLACE FUNCTION public.book_table_atomic');
-    expect(sql).toContain('SECURITY DEFINER');
-    expect(sql).toContain('SET search_path = public');
+    expect(sql).toContain('SECURITY INVOKER');
+    expect(sql).not.toContain('SECURITY DEFINER');
     expect(sql).toContain('pg_advisory_xact_lock');
 
     // ACL: service_role granted EXECUTE

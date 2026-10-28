@@ -155,8 +155,7 @@ CREATE OR REPLACE FUNCTION public.book_table_atomic(
 )
 RETURNS TABLE(booking_id UUID, reference_code TEXT, slot_available BOOLEAN)
 LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
+SECURITY INVOKER
 AS $$
 DECLARE
   v_booking_id UUID;
@@ -396,15 +395,14 @@ BEGIN
     RAISE EXCEPTION '472 SELF-CHECK FAILED: book_table_atomic function not found';
   END IF;
 
-  -- Verify book_table_atomic is SECURITY DEFINER with search_path
-  IF NOT EXISTS (
+  -- Verify book_table_atomic is SECURITY INVOKER (not DEFINER)
+  IF EXISTS (
     SELECT 1 FROM pg_proc p
     JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public' AND p.proname = 'book_table_atomic'
       AND p.prosecdef = true
-      AND ('search_path=public' = ANY(p.proconfig))
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: book_table_atomic missing SECURITY DEFINER or search_path';
+    RAISE EXCEPTION '472 SELF-CHECK FAILED: book_table_atomic must be SECURITY INVOKER, not DEFINER';
   END IF;
 
   -- Verify service_role has EXECUTE on book_table_atomic
