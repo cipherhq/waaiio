@@ -156,14 +156,14 @@ export default function PendingTransfersPage() {
   }, []);
 
   // ------ Actions ------
-  async function handleConfirm() {
+  async function handleConfirm(approveFulfillment: boolean) {
     if (!confirmTarget) return;
     setActionLoading(true);
     try {
       const res = await fetch(`/api/dashboard/pending-transfers/${confirmTarget.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'confirm', business_id: business.id }),
+        body: JSON.stringify({ action: 'confirm', business_id: business.id, approve_fulfillment: approveFulfillment }),
       });
       if (res.ok) {
         setConfirmTarget(null);
@@ -487,7 +487,6 @@ export default function PendingTransfersPage() {
               <span className="font-semibold text-gray-900 dark:text-gray-100">
                 {confirmTarget.customer_name || maskPhone(confirmTarget.customer_phone)}
               </span>
-              ? This will confirm their booking.
             </p>
             <div className="mt-2 rounded-lg bg-gray-50 dark:bg-gray-700/50 px-3 py-2">
               <p className="text-xs text-gray-500 dark:text-gray-400">Reference</p>
@@ -495,21 +494,64 @@ export default function PendingTransfersPage() {
                 {confirmTarget.reference_code}
               </code>
             </div>
-            <div className="mt-5 flex gap-3 justify-end">
-              <button
-                onClick={() => setConfirmTarget(null)}
-                disabled={actionLoading}
-                className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirm}
-                disabled={actionLoading}
-                className="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
-              >
-                {actionLoading ? 'Confirming...' : 'Yes, Confirm Payment'}
-              </button>
+            {/* #736: OCR receipt details when available */}
+            {(confirmTarget as any).ocr_result && (
+              <div className="mt-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 px-3 py-2">
+                <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1">
+                  {(confirmTarget as any).ocr_result.fields_match
+                    ? 'Receipt fields match expected payment'
+                    : 'Receipt fields need manual review'}
+                </p>
+                <div className="grid grid-cols-2 gap-1 text-xs text-blue-600 dark:text-blue-400">
+                  {(confirmTarget as any).ocr_result.amount != null && (
+                    <div>Amount: {(confirmTarget as any).ocr_result.amount}</div>
+                  )}
+                  {(confirmTarget as any).ocr_result.reference && (
+                    <div>Ref: {(confirmTarget as any).ocr_result.reference}</div>
+                  )}
+                  {(confirmTarget as any).ocr_result.sender_name && (
+                    <div>Sender: {(confirmTarget as any).ocr_result.sender_name}</div>
+                  )}
+                  {(confirmTarget as any).ocr_result.bank_name && (
+                    <div>Bank: {(confirmTarget as any).ocr_result.bank_name}</div>
+                  )}
+                  {(confirmTarget as any).ocr_result.date && (
+                    <div>Date: {(confirmTarget as any).ocr_result.date}</div>
+                  )}
+                </div>
+                <p className="mt-1 text-[10px] text-blue-400 dark:text-blue-500 italic">
+                  Receipt data is for reference only. It does not confirm that funds were received.
+                </p>
+              </div>
+            )}
+            {/* #736: Split confirm buttons — payment only vs payment + approve */}
+            <div className="mt-5 flex flex-col gap-2">
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setConfirmTarget(null)}
+                  disabled={actionLoading}
+                  className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleConfirm(false)}
+                  disabled={actionLoading}
+                  className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {actionLoading ? 'Processing...' : 'Confirm Payment Only'}
+                </button>
+                <button
+                  onClick={() => handleConfirm(true)}
+                  disabled={actionLoading}
+                  className="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                >
+                  {actionLoading ? 'Processing...' : 'Confirm & Approve'}
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-400 dark:text-gray-500 text-right">
+                &ldquo;Confirm Payment Only&rdquo; verifies funds received. &ldquo;Confirm &amp; Approve&rdquo; also approves the booking.
+              </p>
             </div>
           </div>
         </div>
