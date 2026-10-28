@@ -6,7 +6,7 @@
 --   issue_api_key()   — atomic ownership + paid-tier + limit + insert
 --   revoke_api_key()  — atomic ownership + revocation
 --
--- Does NOT revoke authenticated DML on api_keys (that is M475, applied
+-- Does NOT revoke authenticated DML on api_keys (that is M479, applied
 -- only after all app instances use service-client RPCs).
 
 -- ============================================================
