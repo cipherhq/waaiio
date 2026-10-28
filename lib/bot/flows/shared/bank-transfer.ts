@@ -21,7 +21,11 @@ interface BankTransferCheckResult {
 
 /**
  * Check if a business qualifies for direct bank transfer and return bank account details.
- * Qualification: NG/GH country + growth/business tier + amount >= minimum.
+ * Qualification: explicit opt-in + NG/GH country + growth/business tier + amount >= minimum
+ * + whole major-unit amount (no fractional cents).
+ *
+ * Owner Option B (#721): bank transfer OFF by default. Requires explicit
+ * businesses.metadata.bank_transfer_enabled === true.
  */
 export async function checkBankTransferEligibility(
   supabase: SupabaseClient,
@@ -49,6 +53,28 @@ export async function checkBankTransferEligibility(
     amount >= minBankTransfer;
 
   if (!qualifies) {
+    return { qualifies: false, bankAccount: null, platformSettings: ps };
+  }
+
+  // #736 Owner Option B: explicit merchant opt-in required (OFF by default).
+  // Only metadata.bank_transfer_enabled === true enables bank transfer.
+  const { data: bizData } = await supabase
+    .from('businesses')
+    .select('metadata')
+    .eq('id', params.businessId)
+    .single();
+  const meta = (bizData?.metadata || {}) as Record<string, unknown>;
+  if (meta.bank_transfer_enabled !== true) {
+    return { qualifies: false, bankAccount: null, platformSettings: ps };
+  }
+
+  // #736: Fail-closed on fractional amounts — reject before showing bank details.
+  // Bank transfer amounts are stored as Math.round(amount * 100) in minor units.
+  // Payment records use major units (integer). If amount has sub-unit fractions,
+  // the minor→major conversion is lossy. Reject these before the customer pays.
+  const minorUnits = Math.round(amount * 100);
+  if (minorUnits % 100 !== 0) {
+    logger.warn('[BANK-TRANSFER] Fractional amount rejected before instructions:', { amount, minorUnits, businessId: params.businessId });
     return { qualifies: false, bankAccount: null, platformSettings: ps };
   }
 
@@ -83,7 +109,7 @@ export async function createPendingTransfer(
     countryCode: CountryCode;
     transferExpiryHours: number;
   },
-): Promise<string> {
+): Promise<string | null> {
   const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
 
   const { error } = await supabase.from('pending_transfers').insert({
@@ -100,6 +126,7 @@ export async function createPendingTransfer(
 
   if (error) {
     logger.error('[BANK-TRANSFER] Failed to insert pending_transfer:', error.message);
+    return null; // #736: fail closed — caller must check and show fallback
   }
 
   return transferRef;

@@ -76,7 +76,8 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
   const [accountNumber, setAccountNumber] = useState('');
   const [accountName, setAccountName] = useState('');
   const businessMeta = (business.metadata || {}) as Record<string, unknown>;
-  const [bankEnabled, setBankEnabled] = useState<boolean>(businessMeta.bank_transfer_enabled !== false);
+  // #736 Owner Option B: bank transfer OFF by default. Only explicit true enables it.
+  const [bankEnabled, setBankEnabled] = useState<boolean>(businessMeta.bank_transfer_enabled === true);
 
   // Validation
   const [errors, setErrors] = useState<{ bank?: string; number?: string; name?: string }>({});
