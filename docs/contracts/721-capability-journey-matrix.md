@@ -345,11 +345,16 @@
 | A4 | Dual-context STOP (merchant + platform): Option C disambiguation | APPROVED | Issue #721 comment #6436042909 |
 | A5 | Throttle notice wording: "You're sending messages too quickly..." | APPROVED | Issue #721 comment #6435005793 |
 | A6 | Payment-page card disclosure: Option B (clear and reassuring) | APPROVED | Issue #721 comment #6435005793 |
+| A7 | Offline transfer: payment verification and booking acceptance are separate decisions. When manual acceptance is configured, merchant sees "Confirm Payment & Approve" vs "Confirm Payment Only" | APPROVED target behavior (implementation gap) | Issue #721 body §8 |
+| A8 | Cross-country: same shared WhatsApp conversation for international merchant switches when technically supported by Meta's number architecture | APPROVED | Program §5 rules |
+| A9 | Cross-country: separate checkout, payment, receipt, and settlement per merchant — never combined multi-merchant checkouts | APPROVED | Program §5 rules |
+| A10 | Cross-country: preserve merchant-isolated unfinished carts; revalidate price and availability before checkout | APPROVED | Program §5 rules |
+| A11 | Cross-country: display merchant's transaction currency; do not auto-substitute customer's local currency | APPROVED | Program §5 rules |
+| A12 | Cross-country: fulfillment must respect merchant configuration and supported delivery/service areas | APPROVED | Program §5 rules |
 
 ### Genuinely Unresolved (require Owner decision before implementation)
 
 | # | Question | Context |
 |---|---|---|
-| U1 | Should dedicated merchants appear in the shared business directory with a link to their dedicated conversation? | Current behavior: dedicated merchants are not in shared directory. Program §4.B flags this as an open question. |
-| U2 | Offline transfer auto-confirms bookings — should it respect the merchant's manual booking approval setting? | `pending-transfers/[id]/route.ts` marks `status='confirmed'` directly, bypassing approval when enabled. |
-| U3 | Profanity filter contains "were" (common English past tense) — should it be removed? | `PROFANITY_SET` in `bot-intelligence.ts`. Separate from P1 work; CTO flagged as potential false positive. |
+| U1 | Should dedicated merchants appear in the shared business directory with a link to their dedicated conversation? | Current behavior: dedicated merchants are not in shared directory. Dedicated-number exclusivity is approved; directory inclusion is not. |
+| U2 | Profanity filter contains "were" (common English past tense) — should it be removed? | `PROFANITY_SET` in `bot-intelligence.ts`. Separate from P1 work; CTO flagged as potential false positive. |

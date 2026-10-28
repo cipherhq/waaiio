@@ -43,9 +43,9 @@
     {
       "id": "table_reservation",
       "subscriptionTier": "free",
-      "riskTier": "tier-2",
+      "riskTier": "tier-1",
       "contractStatus": "index-only",
-      "notes": "Currently duplicates scheduling flow. Dedicated architecture in PR #731."
+      "notes": "RISK GAP: Tier-1 (bookings, deposits, state-machine) but lacks required detailed contract. Currently duplicates scheduling flow. Dedicated seating/deposit/booking architecture in PR #731 (DRAFT). Detailed contract required before #731 merge."
     },
     {
       "id": "whatsapp_sign",

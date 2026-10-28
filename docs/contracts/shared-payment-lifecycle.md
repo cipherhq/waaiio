@@ -84,18 +84,27 @@ This standard does NOT replace capability-specific contracts. It defines the sha
 
 ## 3. Payment Providers
 
+### Launch-Enabled (active routing for new merchants)
+
 | Provider | Countries | Webhooks | Saved Cards | Recurring | Offline |
 |---|---|---|---|---|---|
 | Paystack | NG, GH | `charge.success` | Yes (PIN-protected) | Yes (auto-charge) | N/A |
 | Stripe | US, UK, CA | `checkout.session.completed`, `invoice.paid` | Yes (Stripe Customer) | Yes (Subscriptions) | N/A |
-| Flutterwave | NG, GH, others | `charge.completed` | Yes (token) | Yes (token charge) | N/A |
-| Square | US | Square-specific | Limited | No | N/A |
-| PayPal | US, international | PayPal API verification | Limited | No | N/A |
 | Direct/Offline | All | N/A (merchant verification) | N/A | N/A | Yes (bank transfer) |
+
+### Code Exists, Not Automatically Launch-Enabled
+
+| Provider | Countries | Status | Notes |
+|---|---|---|---|
+| Flutterwave | NG, GH, others | Code and webhook handler exist | Not automatically routed for new merchants; requires merchant BYO keys or explicit configuration |
+| Square | US | Code exists | Zero test files; limited integration |
+| PayPal | US, international | Webhook handler exists | Limited integration; not standard routing |
 
 **Routing:** Provider eligibility determined by merchant country + configured credentials. Factory pattern in `lib/payments/`.
 
 **BYO webhooks:** `app/api/payments/byo-webhook/[businessId]/route.ts` for businesses using their own Paystack/Flutterwave keys.
+
+**Evidence note:** Provider routing logic verified via code trace. Actual launch-enabled configuration NOT verified via Stripe/Paystack MCP in this session. Existing provider sandbox/test-mode behavior NOT E2E tested.
 
 ---
 
@@ -155,7 +164,7 @@ pending → provider_pending | provider_ambiguous → provider_success_unfinaliz
 
 | ID | Description | Evidence | Status |
 |---|---|---|---|
-| #735 | T19b: Provider-paid after booking cancellation — no automatic reconciliation | `process-success.ts` returns `criticalSuccess:false` | CONFIRMED CODE DEFECT — DEPLOYMENT UNVERIFIED |
+| #735 | T19b: Constructed-interleaving code gap — booking cancellation then provider payment success leaves booking `cancelled` | `process-success.ts` returns `criticalSuccess:false`; no provider incident established; staging query 0 affected rows | P1 INVESTIGATION — no automatic refund/reinstatement policy approved |
 | — | Ordering "I've Paid" uses `reconcilePayment` directly instead of `verifyAndReconcilePayment` adapter | Inconsistent verification path | KNOWN DEBT |
 | — | Square has zero test files | No test coverage for a supported provider | GAP |
 | — | No E2E payment journey test exists (create-link → webhook → confirmation) | All payment tests are unit/DB level | GAP |

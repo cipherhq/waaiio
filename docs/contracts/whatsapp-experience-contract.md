@@ -36,10 +36,11 @@ Shared numbers serve multiple merchants on one WhatsApp conversation.
 4. Bot continues directly into the merchant's capabilities
 
 **Merchant switching (shared number):**
-- Customers may interact with multiple merchants in the same conversation
+- Customers may interact with multiple merchants in the same WhatsApp conversation **on the same shared number**
 - Each merchant maintains separate session, cart, and transaction state
 - Switching merchants does not contaminate the previous merchant's data
 - Completed payment facts are preserved regardless of switching
+- Same-conversation continuity applies only within a single WhatsApp phone number; two distinct Meta phone numbers are two distinct conversations regardless of Waaiio's application layer
 
 ### B. Dedicated Merchant Numbers
 
@@ -74,13 +75,15 @@ Waaiio remembers useful customer context securely:
 **Certified languages:** English (`en`), Nigerian Pidgin English (`pcm`)
 **Other catalogued languages:** Not certified; do not activate without Owner approval.
 
-**Behavior:**
+**Target behavior (code paths exist; not all E2E verified):**
 - Language choice offered on first visit
 - Returning customers are not unnecessarily re-asked
 - Mid-conversation language switch preserves session progress
 - Payment status and transaction details remain unchanged on switch
 - Names, prices, currencies, payment references, and links are protected from translation
 - Unsupported languages fall back to English safely
+
+**Evidence status:** Language infrastructure verified via code trace (`lib/bot/` translation modules). Mid-session language switch preservation and translation protection NOT verified end-to-end.
 
 ---
 
@@ -228,7 +231,9 @@ Waaiio supports international customer access. A customer in Nigeria may purchas
 - Fulfillment must respect merchant configuration and supported delivery/service areas
 - Cross-country purchasing does not mean every merchant can serve everywhere
 
-**Evidence status:** UNVERIFIED — no E2E evidence of cross-country merchant discovery or purchasing. Requires staging test.
+**Owner-approved rules (A8-A12):** Same shared conversation when technically supported; separate checkout/payment/receipt per merchant; preserve merchant-isolated carts with revalidation; display merchant's currency; respect merchant fulfillment configuration.
+
+**Evidence status:** UNVERIFIED — no E2E evidence of cross-country merchant discovery or purchasing. Code architecture supports it via country-agnostic business directory; actual behavior requires staging test.
 
 ---
 
@@ -250,7 +255,7 @@ Waaiio supports international customer access. A customer in Nigeria may purchas
 - No shared-directory switching exposed
 - No cross-merchant data leakage
 
-### Implementation
+### Implementation (architecture verified via code trace; not E2E tested)
 
 - `business_id` is the partition key across all tables
 - RLS enforces tenant isolation at the database level
@@ -258,26 +263,30 @@ Waaiio supports international customer access. A customer in Nigeria may purchas
 - Payment records tied to specific `business_id`
 - Session data isolated by business context
 
+**Evidence status:** Architectural isolation verified via RLS policies, session schema, and payment table structure. Cart preservation during merchant switching, price revalidation on checkout, and cross-merchant data isolation NOT verified end-to-end. Staging E2E required.
+
 ---
 
 ## 14. Receipts and Confirmations
 
-**For every successful payment:**
+**Target behavior for every successful payment (code path exists; not E2E verified):**
 - Customer receives WhatsApp confirmation (post-PR #722: with `messageCategory: 'utility'`)
 - Merchant receives email notification (via `send-confirmation.ts`)
 - Receipt generated (PDF where applicable, text fallback)
 
-**Capability-specific confirmations:**
+**Capability-specific confirmations (implementation exists; staging E2E not performed):**
 - Ticketing: QR code ticket delivery via `sendTicketsAfterPurchase` (with dedup)
 - Booking: Confirmation with reference code and details
 - Ordering: Order confirmation with item summary
 - Giving: Donation acknowledgment
 - Invoice: Payment receipt with invoice reference
 
-**Failure handling:**
+**Failure handling (design contract — not incident-tested):**
 - Stage 3 notification failure does NOT undo Stage 1 payment or Stage 2 fulfillment
 - Failed notification triggers auditable recovery path
 - Never pretend payment failed or charge again automatically
+
+**Evidence status:** Code paths verified via source trace. Actual WhatsApp delivery, merchant email receipt, and receipt PDF generation NOT verified end-to-end. Staging E2E required for certification.
 
 ---
 

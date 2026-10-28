@@ -49,9 +49,9 @@ Each finding is classified using the Operating Order's mandatory finding states:
 
 | ID | Severity | Description | Evidence | Existing Issue |
 |---|---|---|---|---|
-| T19B | P0 | Provider-paid payment after booking cancellation — booking stays `cancelled` while payment becomes `success` | `process-success.ts` returns `criticalSuccess:false`; no automatic reconciliation | #735 (OPEN) |
+| T19B | P1 | Provider-paid payment after booking cancellation — constructed-interleaving code gap where booking stays `cancelled` while payment becomes `success` | `process-success.ts` returns `criticalSuccess:false`; no provider incident established; staging query returned 0 affected rows. Issue #735 classifies as P1 investigation. | #735 (OPEN) |
 | TABLE-DUP | P1 | `table_reservation` duplicates scheduling — same backing data, same flow, no dedicated entity | `capability-selection.flow.ts:84-88` identical to scheduling | #507, #730 (OPEN), PR #731 (DRAFT) |
-| OFFLINE-APPROVE | P1 | Offline transfer auto-confirms bookings — bypasses manual booking approval when enabled | `pending-transfers/[id]/route.ts` marks `status='confirmed'` directly | #721 (OPEN) |
+| OFFLINE-APPROVE | P1 | Offline transfer auto-confirms bookings — bypasses manual booking approval when merchant has approval configured | `pending-transfers/[id]/route.ts` marks `status='confirmed'` directly. Owner-approved target: separate payment verification and booking acceptance (#721 body §8). | #721 (OPEN) — approved target behavior, implementation gap |
 | ORDER-ADAPTER | P2 | Ordering "I've Paid" uses `reconcilePayment` directly instead of `verifyAndReconcilePayment` | Inconsistent verification path | — |
 
 ---
