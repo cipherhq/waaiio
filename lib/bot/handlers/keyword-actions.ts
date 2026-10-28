@@ -279,6 +279,13 @@ export async function executeKeywordAction(
             await sendText(from, msg);
             return true;
           }
+          // Clear stale transactional state before switching (shared cleanup)
+          const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
+          clearStaleCapabilityState(
+            session.session_data,
+            session.session_data.active_capability as string | undefined,
+            capability,
+          );
           session.session_data.active_capability = capability;
           const capFirstStep = capabilityToFirstStep(capability as CapabilityId);
           // Use CAS to prevent stale worker from overwriting a concurrent transition

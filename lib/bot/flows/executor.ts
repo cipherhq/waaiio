@@ -691,6 +691,13 @@ export class FlowExecutor {
           // Recompute firstStep from server-side authority (never from stored state)
           const { capabilityToFirstStep } = await import('@/lib/bot/handlers/flow-routing');
           const targetStep = capabilityToFirstStep(targetCap);
+          // Clear stale transactional state before switching (shared cleanup)
+          const { clearStaleCapabilityState } = await import('./shared/capability-transition');
+          clearStaleCapabilityState(
+            session.session_data,
+            session.session_data.active_capability as string | undefined,
+            targetCap,
+          );
           session.session_data.active_capability = targetCap;
           await this.advanceToStep(session, targetStep, from, ctx, translationCtx, scopedSender);
           return;

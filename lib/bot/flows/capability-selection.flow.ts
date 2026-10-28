@@ -571,46 +571,18 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
     }
 
-    // Clear stale table-reservation transactional state when switching capabilities.
+    // Clear stale transactional state from previous capability (shared function).
     // Prevents cross-capability deposit/resource contamination (P1-F6).
-    const staleTableCleanup: Record<string, unknown> = {};
-    if (capId !== 'table_reservation' && ctx.session.session_data._is_table_reservation) {
-      staleTableCleanup._is_table_reservation = undefined;
-      staleTableCleanup.seating_resource_id = undefined;
-      staleTableCleanup.seating_resource_name = undefined;
-      staleTableCleanup._seating_capacity = undefined;
-      staleTableCleanup._seating_min_party = undefined;
-      staleTableCleanup._seating_deposit = undefined;
-      staleTableCleanup._seating_duration = undefined;
-      staleTableCleanup._seating_available_days = undefined;
-      staleTableCleanup._seating_available_from = undefined;
-      staleTableCleanup._seating_available_to = undefined;
-      staleTableCleanup._service_available_days = undefined;
-      staleTableCleanup._service_available_from = undefined;
-      staleTableCleanup._service_available_to = undefined;
-      // Reset shared financial fields that table-reservation set
-      staleTableCleanup.service_price = undefined;
-      staleTableCleanup.service_deposit = undefined;
-      staleTableCleanup._service_price_is_variable = undefined;
-      staleTableCleanup._service_max_capacity = undefined;
-      staleTableCleanup.service_duration = undefined;
-      staleTableCleanup.skip_service = undefined;
-    }
-    // Also clear stale service/appointment state when switching TO table_reservation
-    if (capId === 'table_reservation' && !ctx.session.session_data._is_table_reservation) {
-      staleTableCleanup.service_id = undefined;
-      staleTableCleanup.service_name = undefined;
-      staleTableCleanup._is_appointment = undefined;
-      staleTableCleanup._service_requires_staff = undefined;
-      staleTableCleanup._service_staff_ids = undefined;
-      staleTableCleanup.staff_id = undefined;
-      staleTableCleanup.staff_name = undefined;
-      staleTableCleanup.skip_service = undefined;
-    }
+    const { clearStaleCapabilityState } = await import('./shared/capability-transition');
+    clearStaleCapabilityState(
+      ctx.session.session_data,
+      ctx.session.session_data.active_capability as string | undefined,
+      capId,
+    );
 
     return {
       valid: true,
-      data: { active_capability: capId, ...staleTableCleanup },
+      data: { active_capability: capId },
     };
   },
 

@@ -576,19 +576,106 @@ describe('#730: Admin API and security', () => {
     expect(code).toContain('reqStartMin < bEndMin && reqEndMin > bStartMin');
   });
 
-  it('capability switch clears stale table-reservation state', async () => {
+  it('clearStaleCapabilityState removes table state when switching away', async () => {
+    const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
+
+    const sessionData: Record<string, unknown> = {
+      active_capability: 'table_reservation',
+      _is_table_reservation: true,
+      seating_resource_id: 'res-123',
+      seating_resource_name: 'Table 1',
+      _seating_capacity: 4,
+      _seating_min_party: 1,
+      _seating_deposit: 5000,
+      _seating_duration: 90,
+      service_price: 5000,
+      service_deposit: 5000,
+      _service_price_is_variable: true,
+      _service_max_capacity: 4,
+      skip_service: true,
+      // Identity fields that must be preserved
+      first_name: 'Alice',
+      email: 'alice@test.com',
+      capabilities: ['table_reservation', 'scheduling'],
+    };
+
+    clearStaleCapabilityState(sessionData, 'table_reservation', 'scheduling');
+
+    // Table-specific keys cleared
+    expect(sessionData._is_table_reservation).toBeUndefined();
+    expect(sessionData.seating_resource_id).toBeUndefined();
+    expect(sessionData._seating_deposit).toBeUndefined();
+    // Shared selection keys cleared
+    expect(sessionData.service_price).toBeUndefined();
+    expect(sessionData.service_deposit).toBeUndefined();
+    expect(sessionData.skip_service).toBeUndefined();
+    // Identity preserved
+    expect(sessionData.first_name).toBe('Alice');
+    expect(sessionData.email).toBe('alice@test.com');
+    expect(sessionData.capabilities).toBeDefined();
+  });
+
+  it('clearStaleCapabilityState clears service state when switching TO table_reservation', async () => {
+    const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
+
+    const sessionData: Record<string, unknown> = {
+      active_capability: 'scheduling',
+      service_id: 'svc-456',
+      service_name: 'Haircut',
+      service_price: 3000,
+      _is_appointment: true,
+      staff_id: 'staff-789',
+      staff_name: 'John',
+      date: '2026-10-30',
+      time: '14:00',
+      party_size: 1,
+      first_name: 'Bob',
+    };
+
+    clearStaleCapabilityState(sessionData, 'scheduling', 'table_reservation');
+
+    // Service-specific keys cleared
+    expect(sessionData.service_id).toBeUndefined();
+    expect(sessionData.service_name).toBeUndefined();
+    expect(sessionData._is_appointment).toBeUndefined();
+    expect(sessionData.staff_id).toBeUndefined();
+    expect(sessionData.date).toBeUndefined();
+    expect(sessionData.time).toBeUndefined();
+    // Identity preserved
+    expect(sessionData.first_name).toBe('Bob');
+  });
+
+  it('clearStaleCapabilityState is no-op for same capability', async () => {
+    const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
+
+    const sessionData: Record<string, unknown> = {
+      active_capability: 'scheduling',
+      service_id: 'svc-456',
+      service_price: 3000,
+    };
+
+    clearStaleCapabilityState(sessionData, 'scheduling', 'scheduling');
+
+    // Nothing should be cleared
+    expect(sessionData.service_id).toBe('svc-456');
+    expect(sessionData.service_price).toBe(3000);
+  });
+
+  it('all capability-transition callers use shared clearStaleCapabilityState', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/capability-selection.flow.ts'), 'utf-8');
 
-    // Must clear table state when switching away from table_reservation
-    expect(code).toContain("capId !== 'table_reservation'");
-    expect(code).toContain('_is_table_reservation');
-    expect(code).toContain('seating_resource_id');
-    expect(code).toContain('_seating_deposit');
-    expect(code).toContain('staleTableCleanup');
-    // Must also clear service state when switching TO table_reservation
-    expect(code).toContain("capId === 'table_reservation' && !ctx.session.session_data._is_table_reservation");
+    const callers = [
+      'lib/bot/flows/capability-selection.flow.ts',
+      'lib/bot/flows/executor.ts',
+      'lib/bot/handlers/keyword-actions.ts',
+      'lib/bot/bot.service.ts',
+    ];
+
+    for (const file of callers) {
+      const code = fs.readFileSync(path.join(process.cwd(), file), 'utf-8');
+      expect(code).toContain('clearStaleCapabilityState');
+    }
   });
 
   it('WhatsApp hides reschedule button for table reservations', async () => {
