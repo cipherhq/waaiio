@@ -1,9 +1,21 @@
-# Phase 2 Staging Execution — Threat Model & Fail-Closed Architecture
+# Phase 2 Staging Preparation — Threat Model & Fail-Closed Architecture
+
+> **Status: STATIC PREPARATION.** This document describes safety architecture
+> for proposed staging execution. Actual staging traffic, data creation, and
+> provider calls require **separate CTO safety review + Owner execution authorization**.
 
 ## Scope
 
-5 test businesses × 100 synthetic customers = 500 persisted staging journeys.
+5 test businesses × 100 synthetic customers = 500 proposed staging journeys.
 No production mutations, live provider traffic, real recipients, or untagged data.
+
+## Three-Phase Authorization Model
+
+| Phase | Description | Authorizes |
+|-------|-------------|-----------|
+| **Static preparation** | This PR — threat model, preflight gates, identity allocation, test matrix | Code review and merge only |
+| **Environment verification** | MCP-verified deployment, provider sandbox proof, outbound capture proof | CTO safety clearance for pilot |
+| **Staging execution** | Actual data creation, webhook traffic, payment sandbox calls | Owner authorization per wave |
 
 ## Threat Surface
 
@@ -22,7 +34,7 @@ No production mutations, live provider traffic, real recipients, or untagged dat
 **Risk:** Staging may have live Stripe/Paystack keys instead of test-mode keys.
 
 **Mitigation:**
-1. **Pre-execution preflight:** Verify Stripe key starts with `sk_test_` and Paystack with `sk_test_` by checking variable name patterns in Vercel config (no secrets decrypted)
+1. **Pre-execution preflight:** Verify Stripe and Paystack keys are test-mode (not live) by provider-authoritative sandbox verification (no secrets decrypted in preflight)
 2. **Sandbox-only transactions:** All payment flows use test card numbers (Stripe `4242424242424242`, Paystack test cards)
 3. **Provider-authoritative verification:** Retrieve transaction from sandbox API to confirm test-mode before recording as "paid"
 4. **Abort:** If any live-mode key prefix is detected, fail closed
@@ -72,7 +84,7 @@ No production mutations, live provider traffic, real recipients, or untagged dat
 ```
 G1: Staging URL + Supabase ref verified ──────────────────┐
 G2: Deployment SHA matches expected ──────────────────────┤
-G3: Payment keys are test-mode (no sk_live_/pk_live_) ────┤
+G3: Payment keys are test-mode (provider-authoritative) ──┤
 G4: Meta outbound capture proven OR webhooks disabled ────┤
 G5: Synthetic identities validated (digits only, unique) ──┤
 G6: No real email/phone in identity set ──────────────────┤

@@ -169,12 +169,15 @@ export function extractRunIdFromEmail(email: string): string | null {
 }
 
 /**
- * Generate bulk customer identities with guaranteed uniqueness.
- * Fails if any phone collision is detected within the batch.
+ * Generate bulk customer identities with deterministic collision-free allocation.
+ *
+ * Uses sequential offset per business to guarantee zero within-run collisions.
+ * Cross-run uniqueness is NOT guaranteed — callers must check against persisted
+ * records before staging writes.
  *
  * @param runId - Run identity for scoping
- * @param count - Number of customers to generate
- * @param businessIndex - Business index (0-4) for journey ID prefixing
+ * @param count - Number of customers to generate (max 1000 per business)
+ * @param businessIndex - Business index (0-4) for deterministic offset
  * @returns Array of unique customer identities
  */
 export function generateBulkCustomers(
@@ -182,21 +185,40 @@ export function generateBulkCustomers(
   count: number,
   businessIndex = 0,
 ): CustomerIdentity[] {
+  if (count > 1000) {
+    throw new Error(`FAIL-CLOSED: Max 1000 customers per business (requested ${count})`);
+  }
+
   const customers: CustomerIdentity[] = [];
   const phones = new Set<string>();
 
-  for (let i = 0; i < count; i++) {
-    const journeyId = `biz${businessIndex}-cust${i}`;
-    const customer = generateCustomerIdentity(runId, journeyId, i);
+  // Use run-seeded offset to distribute across the 000000-999999 space
+  const runSeed = createHash('sha256').update(runId).digest().readUInt32BE(0);
+  const bizOffset = businessIndex * 1000; // Each business gets a 1000-number band
+  const runOffset = (runSeed % 100) * 5000; // Run-level offset within the space
 
-    if (phones.has(customer.phone)) {
+  for (let i = 0; i < count; i++) {
+    const phoneNum = (runOffset + bizOffset + i) % 1000000;
+    const phoneDigits = String(phoneNum).padStart(6, '0');
+    const phone = `${SYNTHETIC_PHONE_PREFIX}${phoneDigits}`;
+    const journeyId = `biz${businessIndex}-cust${i}`;
+    const displayName = `SynthCustomer ${phoneDigits}`;
+
+    if (phones.has(phone)) {
       throw new Error(
-        `COLLISION: Phone ${customer.phone} already assigned at index ${i} ` +
-        `(journeyId=${journeyId}, runId=${runId}). Increase phone space or fix hash.`
+        `COLLISION: Phone ${phone} at biz${businessIndex}-cust${i}. ` +
+        `This should not happen with sequential allocation.`
       );
     }
-    phones.add(customer.phone);
-    customers.push(customer);
+    phones.add(phone);
+
+    customers.push({
+      runId,
+      journeyId,
+      phone,
+      displayName,
+      sanitized: { phone: `${SYNTHETIC_PHONE_PREFIX}******`, displayName },
+    });
   }
 
   return customers;
