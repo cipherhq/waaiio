@@ -56,6 +56,17 @@ function assertDisposableDatabase(url: string): void {
       `Tests must only run against a local disposable PostgreSQL instance.`
     );
   }
+
+  // Reject default/shared database names (protect developer databases)
+  const parsed = new URL(url.replace(/^postgresql:/, 'http:'));
+  const dbName = parsed.pathname.replace(/^\//, '');
+  const sharedNames = ['postgres', 'waaiio', 'waaiio_staging', 'template0', 'template1'];
+  if (sharedNames.includes(dbName.toLowerCase())) {
+    throw new Error(
+      `SAFETY GUARD: TEST_DATABASE_URL targets shared database '${dbName}'. ` +
+      `Use a dedicated disposable database (e.g., pg_test_0, waaiio_m474_test).`
+    );
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -97,6 +108,11 @@ function testHash(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+/** Ensure auth.users row exists (CI template has businesses.owner_id FK → auth.users) */
+function ensureUser(userId: string): void {
+  psql(`INSERT INTO auth.users (id, email) VALUES ('${userId}', '${userId}@test.local') ON CONFLICT (id) DO NOTHING`);
+}
+
 // Test UUIDs — namespaced to avoid collisions with other test suites
 const OWNER_A = '00000000-0000-4705-a001-000000000001';
 const OWNER_B = '00000000-0000-4705-a001-000000000002';
@@ -131,9 +147,21 @@ describe('disposable database safety guard', () => {
     )).not.toThrow();
   });
 
-  it('accepts Docker-based URL', () => {
+  it('rejects default postgres database', () => {
     expect(() => assertDisposableDatabase(
-      'postgresql://postgres:test@localhost:54329/postgres'
+      'postgresql://postgres:test@localhost:5432/postgres'
+    )).toThrow('SAFETY GUARD');
+  });
+
+  it('rejects shared waaiio database', () => {
+    expect(() => assertDisposableDatabase(
+      'postgresql://postgres:test@localhost:5432/waaiio'
+    )).toThrow('SAFETY GUARD');
+  });
+
+  it('accepts Docker-based disposable URL', () => {
+    expect(() => assertDisposableDatabase(
+      'postgresql://postgres:test@localhost:54329/waaiio_m474_test'
     )).not.toThrow();
   });
 });
@@ -185,14 +213,17 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
       GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
       GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon, authenticated, service_role;
 
-      -- businesses table (minimal, created by this test)
+      -- businesses table (minimal; CI template may pre-create with fewer columns)
       CREATE TABLE IF NOT EXISTS public.businesses (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        owner_id UUID NOT NULL,
-        subscription_tier TEXT DEFAULT 'free',
-        status TEXT DEFAULT 'active',
+        owner_id UUID,
         name TEXT DEFAULT 'Test Business'
       );
+      -- Add columns the CI template may be missing (idempotent)
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS owner_id UUID;
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS subscription_tier TEXT DEFAULT 'free';
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
+      ALTER TABLE public.businesses ADD COLUMN IF NOT EXISTS name TEXT DEFAULT 'Test Business';
       ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
       DO $$ BEGIN
         CREATE POLICY "owner_all" ON public.businesses
@@ -227,11 +258,21 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
       GRANT ALL ON TABLE public.api_keys TO service_role;
       GRANT ALL ON TABLE public.api_keys TO authenticated;
 
-      -- Seed test data
-      INSERT INTO public.businesses (id, owner_id, subscription_tier) VALUES
-        ('${BIZ_A}', '${OWNER_A}', 'growth'),
-        ('${BIZ_B}', '${OWNER_B}', 'business'),
-        ('${BIZ_FREE}', '${OWNER_A}', 'free')
+      -- Seed stub auth.users (CI template has businesses.owner_id FK → auth.users)
+      CREATE TABLE IF NOT EXISTS auth.users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email TEXT, created_at TIMESTAMPTZ DEFAULT now()
+      );
+      INSERT INTO auth.users (id, email) VALUES
+        ('${OWNER_A}', 'owner-a@test.local'),
+        ('${OWNER_B}', 'owner-b@test.local')
+      ON CONFLICT (id) DO NOTHING;
+
+      -- Seed test data (include name — CI template has name TEXT NOT NULL)
+      INSERT INTO public.businesses (id, owner_id, subscription_tier, name) VALUES
+        ('${BIZ_A}', '${OWNER_A}', 'growth', 'Test Biz A'),
+        ('${BIZ_B}', '${OWNER_B}', 'business', 'Test Biz B'),
+        ('${BIZ_FREE}', '${OWNER_A}', 'free', 'Test Free Biz')
       ON CONFLICT (id) DO UPDATE SET
         owner_id = EXCLUDED.owner_id,
         subscription_tier = EXCLUDED.subscription_tier;
@@ -452,9 +493,10 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
     const limitOwner = '00000000-0000-4705-a005-000000000001';
 
     beforeAll(() => {
+      ensureUser(limitOwner);
       psql(`
-        INSERT INTO businesses (id, owner_id, subscription_tier)
-        VALUES ('${limitBiz}', '${limitOwner}', 'growth')
+        INSERT INTO businesses (id, owner_id, subscription_tier, name)
+        VALUES ('${limitBiz}', '${limitOwner}', 'growth', 'Limit Biz')
         ON CONFLICT (id) DO UPDATE SET subscription_tier = 'growth';
         DELETE FROM api_keys WHERE business_id = '${limitBiz}';
       `);
@@ -514,9 +556,10 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
     const concOwner = '00000000-0000-4705-a006-000000000001';
 
     beforeAll(() => {
+      ensureUser(concOwner);
       psql(`
-        INSERT INTO businesses (id, owner_id, subscription_tier)
-        VALUES ('${concBiz}', '${concOwner}', 'growth')
+        INSERT INTO businesses (id, owner_id, subscription_tier, name)
+        VALUES ('${concBiz}', '${concOwner}', 'growth', 'Conc Biz')
         ON CONFLICT (id) DO UPDATE SET subscription_tier = 'growth';
         DELETE FROM api_keys WHERE business_id = '${concBiz}';
       `);
@@ -554,9 +597,10 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
     const conc2Owner = '00000000-0000-4705-a007-000000000001';
 
     beforeAll(() => {
+      ensureUser(conc2Owner);
       psql(`
-        INSERT INTO businesses (id, owner_id, subscription_tier)
-        VALUES ('${conc2Biz}', '${conc2Owner}', 'business')
+        INSERT INTO businesses (id, owner_id, subscription_tier, name)
+        VALUES ('${conc2Biz}', '${conc2Owner}', 'business', 'Conc2 Biz')
         ON CONFLICT (id) DO UPDATE SET subscription_tier = 'business';
         DELETE FROM api_keys WHERE business_id = '${conc2Biz}';
       `);
@@ -606,9 +650,10 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
     let revKeyId: string;
 
     beforeAll(() => {
+      ensureUser(revOwner);
       psql(`
-        INSERT INTO businesses (id, owner_id, subscription_tier)
-        VALUES ('${revBiz}', '${revOwner}', 'growth')
+        INSERT INTO businesses (id, owner_id, subscription_tier, name)
+        VALUES ('${revBiz}', '${revOwner}', 'growth', 'Rev Biz')
         ON CONFLICT (id) DO UPDATE SET subscription_tier = 'growth';
         DELETE FROM api_keys WHERE business_id = '${revBiz}';
       `);
@@ -679,9 +724,10 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
       const valBiz = '00000000-0000-4705-b009-000000000001';
       const valOwner = '00000000-0000-4705-a009-000000000001';
 
+      ensureUser(valOwner);
       psql(`
-        INSERT INTO businesses (id, owner_id, subscription_tier)
-        VALUES ('${valBiz}', '${valOwner}', 'growth')
+        INSERT INTO businesses (id, owner_id, subscription_tier, name)
+        VALUES ('${valBiz}', '${valOwner}', 'growth', 'Val Biz')
         ON CONFLICT (id) DO UPDATE SET subscription_tier = 'growth';
         DELETE FROM api_keys WHERE business_id = '${valBiz}';
       `);
@@ -714,10 +760,12 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
     const isoBizB = '00000000-0000-4705-b010-000000000002';
 
     beforeAll(() => {
+      ensureUser(isoOwnerA);
+      ensureUser(isoOwnerB);
       psql(`
-        INSERT INTO businesses (id, owner_id, subscription_tier) VALUES
-          ('${isoBizA}', '${isoOwnerA}', 'growth'),
-          ('${isoBizB}', '${isoOwnerB}', 'business')
+        INSERT INTO businesses (id, owner_id, subscription_tier, name) VALUES
+          ('${isoBizA}', '${isoOwnerA}', 'growth', 'Iso A'),
+          ('${isoBizB}', '${isoOwnerB}', 'business', 'Iso B')
         ON CONFLICT (id) DO UPDATE SET
           owner_id = EXCLUDED.owner_id,
           subscription_tier = EXCLUDED.subscription_tier;
