@@ -1,9 +1,12 @@
-### #736 — Full 32-capability WhatsApp E2E certification contract — Phase A (2026-10-28)
+### #736 — Full 32-capability WhatsApp E2E certification contract — Phase A R2 (2026-10-28)
 
-- **`docs/contracts/736-capability-e2e-contract.md`** (new): Complete Phase A contract and traceability matrix for all 32 canonical Waaiio capabilities. Documents: (1) Full lifecycle matrix with entry type, flow file, payment eligibility, backing data checks, and classification status for each capability. (2) Dedicated vs shared WhatsApp channel architecture audit with cross-merchant isolation vectors. (3) First-time/returning customer flows, multilingual support (2 certified: en, pcm), navigation commands. (4) Messaging cost optimization audit with protected messages list. (5) Payment-to-fulfillment contract: Stage 1/2/3 pipeline, provider routing (Paystack NG/GH, Stripe US/UK/CA), saved cards, offline bank transfer. (6) Cross-lane dependency map (PRs #731, #740, #741). (7) Implementation gap inventory (5 P0, 5 P1, 4 P2). (8) Phase B–E test and certification plan. (9) Launch-readiness exception list and Owner product decisions needed.
-- **`docs/contracts/capability-index.json`**: Added `_lifecycle_audit` SHA and `_lifecycle_ref` pointer to the new contract.
-- **`docs/contracts/README.md`**: Added cross-capability lifecycle contract section with references to Issues #721 and #507.
-- **Affects**: Documentation and contract registry only. No application code, migrations, database changes, payment flows, bot logic, or runtime behavior changed.
+- **`docs/contracts/736-capability-e2e-contract.md`**: R2 correction per CTO review. (1) Normalized 32-capability matrix with five orthogonal dimensions (entry type, bot implementation, test coverage, certification level, dependency status) — exactly 32 rows, no double-counting. (2) Corrected migration numbers: PR #740 uses M474+M479, PR #741 uses M479. Documented M479 namespace collision between #740 and #741. (3) Removed unauthorized launch conclusions — all launch timing decisions presented as Owner recommendations, not assertions. (4) Corrected offline payment vs booking approval language: auto-accept merchants keep auto-accept behavior after fund verification; manual-approval merchants get split Confirm Payment / Confirm & Approve actions. (5) Added Section 9 (Verification Transparency) documenting exactly what was independently verified vs unverified, including acknowledgment that 3 delegated agents failed due to context limits. (6) All claims now cite actual test file names and verification method.
+- **`docs/contracts/capability-index.json`**: Added `_lifecycle_audit` SHA and `_lifecycle_ref` pointer.
+- **`docs/contracts/README.md`**: Added cross-capability lifecycle contract section.
+- **`CLAUDE.md`**: Added read-first reference to `736-capability-e2e-contract.md` for capability flows, payment-to-fulfillment chains, or WhatsApp bot changes.
+- **`AGENTS.md`**: Added read-first reference to `736-capability-e2e-contract.md`.
+- **`RELEASE_GATE_V2.md`**: Added cross-capability lifecycle contract reference in §3 (Golden Journeys).
+- **Affects**: Documentation and governance references only. No application code, migrations, database changes, payment flows, bot logic, or runtime behavior changed.
 - **Could break**: Nothing. No code imports or runtime dependencies.
 
 ### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)

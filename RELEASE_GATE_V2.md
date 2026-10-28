@@ -136,6 +136,8 @@ A CI step must scan every migration file for `CREATE OR REPLACE FUNCTION` bodies
 
 ## 3. Golden Journeys
 
+> **Cross-capability lifecycle contract:** [`docs/contracts/736-capability-e2e-contract.md`](./docs/contracts/736-capability-e2e-contract.md) documents the full 32-capability matrix, entry types, payment-to-fulfillment authorities, and certification status (Issue #736). Check the contract's gap inventory and dependency map before certifying a golden journey as production-ready.
+
 Golden journeys are the end-to-end user paths that must work on every production release. Each journey spans multiple subsystems and exercises the full stack.
 
 ### 3.1 Appointment Payment (Stripe)

@@ -10,6 +10,8 @@ Read and follow both documents before any substantive work. The Operating Order 
 
 **For migrations, payments, authorization, provider integrations, or cross-cutting changes:** read Release Gate V2 §1 (invariant registry) and §2 (migration checks) before writing code. Verify your change does not violate a registered invariant. If it touches a `SECURITY DEFINER` function, check DB-001/DB-002/DB-006.
 
+**For capability flows, payment-to-fulfillment chains, or WhatsApp bot changes:** read [`docs/contracts/736-capability-e2e-contract.md`](./docs/contracts/736-capability-e2e-contract.md) for the cross-capability lifecycle matrix (Issue #736). Check the capability's entry type, payment eligibility, post-payment fulfillment authority, and dependency status before modifying shared bot routing, payment authority, or channel handling. Binding Owner product contracts: Issues #721 (shared payment parity) and #507 (all-capabilities bot menu).
+
 ### Startup-Critical Non-Negotiables (compact summary — Operating Order is authoritative)
 
 1. **Evidence hierarchy.** Repository/database/runtime/executable-test evidence beats handoff claims, assumptions, PR descriptions, documentation alone, source-string tests, and green CI alone.

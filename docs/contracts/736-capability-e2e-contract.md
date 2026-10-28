@@ -5,7 +5,7 @@
 > Base SHA: `1c6ed9757d26ee849b9293c6c8ada67684e81ef3` (protected main)
 > Lane: `audit/736-capability-e2e-contract`
 > Worktree: `~/Desktop/waaiio-agent-lanes/capability-e2e-736`
-> Date: 2026-10-28
+> Date: 2026-10-28 (R2 correction: 2026-10-28)
 
 ---
 
@@ -13,244 +13,219 @@
 
 Source: `shared/capabilities.ts` + `docs/contracts/capability-index.json` at HEAD `1c6ed975`.
 
-### 1.1 Classification Legend
+### 1.1 Dimension Definitions
 
-| Status | Meaning |
-|--------|---------|
-| **CODE-TESTED** | Has flow file, bot routing, and unit/integration tests on main |
-| **OWNER TARGET CONTRACT** | Behavior specified by Owner but implementation incomplete or unverified |
-| **STAGING E2E VERIFIED** | Requires real staging deployment proof (none achieved in Phase A) |
-| **BROKEN** | Known defect with evidence |
-| **BLOCKED** | Depends on unmerged PR or Owner decision |
-| **UNSUPPORTED** | Not implemented for customer-facing WhatsApp interaction |
-| **POLICY DECISION NEEDED** | Requires Owner clarification before implementation |
-| **DASHBOARD-ONLY** | Merchant dashboard feature, no direct customer bot interaction |
-| **CONTEXTUAL** | Triggered by system events, post-completion, or automation — not top-level menu |
+Each capability has **five independent dimensions**:
+
+| Dimension | Values | Description |
+|-----------|--------|-------------|
+| **Entry Type** | `top-level-menu`, `contextual`, `dashboard-only` | How customers or merchants interact with this capability |
+| **Bot Implementation** | `dedicated-flow`, `reuses-flow`, `no-bot-flow` | Whether a flow file exists in `lib/bot/flows/` |
+| **Test Coverage** | `tested`, `partial`, `untested` | Executable test files exist on protected main for this capability's code paths |
+| **Certification Level** | `code-tested`, `staging-e2e-verified`, `unverified` | Highest verification tier achieved (no staging E2E in Phase A) |
+| **Dependency Status** | `ready`, `blocked-pr-NNN`, `owner-decision-needed` | Whether external dependencies prevent certification |
 
 ### 1.2 Full 32-Capability Matrix
 
-| # | Capability ID | Tier | Entry Type | Flow File | First Step | Payment | Backing Data Check | Classification |
-|---|--------------|------|------------|-----------|------------|---------|-------------------|----------------|
-| 1 | `scheduling` | Free | Top-level menu | `scheduling.flow.ts` | `select_service` | Optional (deposit/full) | Active services (non-giving, non-class) | **CODE-TESTED** |
-| 2 | `appointment` | Free | Top-level menu | `appointment.flow.ts` | `select_appointment` | Optional (deposit/full) | Active appointments | **CODE-TESTED** |
-| 3 | `payment` | Free | Top-level menu (hidden when scheduling/table_reservation present) | `payment.flow.ts` | `select_category` | Required | Always available | **CODE-TESTED** |
-| 4 | `ordering` | Free | Top-level menu | `ordering.flow.ts` | `browse_catalog` | Required | Active products (non-deleted) | **CODE-TESTED** |
-| 5 | `ticketing` | Free | Top-level menu | `ticketing.flow.ts` | `select_event` | Required | Published events | **CODE-TESTED** |
-| 6 | `giving` | Free | Top-level menu | Uses `payment.flow.ts` | `select_category` | Required | Active services with `service_type='giving'` | **CODE-TESTED** |
-| 7 | `chat` | Free | Top-level menu | `chat.flow.ts` | `chat_start` | No | Always available | **CODE-TESTED** |
-| 8 | `feedback` | Free | Contextual (post-completion) | `feedback.flow.ts` | Post-service trigger | No | Triggered after booking/order | **CONTEXTUAL** |
-| 9 | `poll` | Free | Contextual (merchant-triggered) | `poll.flow.ts` | Merchant sends poll link | No | Active polls | **CONTEXTUAL** |
-| 10 | `reservation` | Pro | Top-level menu | `reservation.flow.ts` | `select_apartment` | Required (deposit/full) | Active properties | **CODE-TESTED** |
-| 11 | `table_reservation` | Free | Top-level menu | Reuses `scheduling.flow.ts` | `select_service` | Optional (flat deposit per reservation) | Active services (non-giving, non-class) | **BLOCKED** — PR #731 |
-| 12 | `recurring` | Pro | Contextual (post-payment offer) | `recurring-manage.flow.ts` | After payment completion | Subscription setup | Existing subscription | **CONTEXTUAL** |
-| 13 | `broadcast` | Pro | Dashboard-only (merchant sends) | No bot flow | N/A — merchant dashboard | No | Merchant sends via dashboard | **DASHBOARD-ONLY** |
-| 14 | `membership` | Pro | Dashboard-only + contextual | No bot flow | N/A | No | Depends on `loyalty` | **DASHBOARD-ONLY** |
-| 15 | `survey` | Pro | Contextual (merchant-triggered) | `survey.flow.ts` | Merchant sends survey link | No | Active surveys | **CONTEXTUAL** |
-| 16 | `invoice` | Pro | Top-level menu (hidden when scheduling/table_reservation present) | `invoice.flow.ts` | `invoice_list` | Required | Pending invoices for customer | **CODE-TESTED** |
-| 17 | `auto_reply` | Pro | Automation (business hours) | No bot flow — handled in `bot.service.ts` | N/A | No | Business hours configured | **CONTEXTUAL** |
-| 18 | `loyalty` | Pro | History/account (My Account) | `loyalty.flow.ts` | `loyalty_menu` | No | Customer loyalty points | **CODE-TESTED** |
-| 19 | `referral` | Pro | Contextual (post-completion) | No dedicated flow | Post-payment trigger | No | Referral program configured | **CONTEXTUAL** |
-| 20 | `reminders` | Pro | Automation (scheduled) | No bot flow — cron/automation | N/A | No | Upcoming bookings | **CONTEXTUAL** |
-| 21 | `staff` | Premium | Dashboard-only | No bot flow | N/A | No | Staff members configured | **DASHBOARD-ONLY** |
-| 22 | `whatsapp_sign` | Premium | Dashboard-only (merchant sends) | No bot flow | N/A | No | Contract documents | **DASHBOARD-ONLY** |
-| 23 | `reports` | Premium | Dashboard-only | No bot flow | N/A | No | Document uploads | **DASHBOARD-ONLY** |
-| 24 | `waitlist` | Premium | Contextual (no-slot fallback) | `waitlist.flow.ts` | `waitlist_join` | No | Returns false in menu check — triggered when no slots | **CONTEXTUAL** |
-| 25 | `queue` | Premium | Top-level menu | `queue-checkin.flow.ts` | `queue_start` | No | Always available | **CODE-TESTED** |
-| 26 | `crowdfunding` | Premium | Top-level menu | `crowdfunding.flow.ts` | `select_campaign` | Required | Active campaigns | **CODE-TESTED** |
-| 27 | `estimates` | Free | Dashboard-only | No bot flow | Falls through to `select_service` | No | Quotes initiated from dashboard | **UNSUPPORTED** (no bot flow) |
-| 28 | `packages` | Pro | Dashboard-only | No bot flow | Falls through to `select_service` | No | Session packages | **UNSUPPORTED** (no bot flow) |
-| 29 | `class_booking` | Pro | Top-level menu | Reuses `scheduling.flow.ts` | `select_service` | Optional | Active services with `is_class=true` | **CODE-TESTED** |
-| 30 | `multi_location` | Pro | Dashboard-only | No bot flow | Falls through to `select_service` | No | Multiple locations | **UNSUPPORTED** (no bot flow) |
-| 31 | `waiver` | Pro | Top-level menu | No dedicated flow — regex match routes to waiver | Waiver template selection | No | Active waiver templates | **CODE-TESTED** (partial) |
-| 32 | `promo_verification` | Pro | Contextual (dedicated entry) | No dedicated flow file | `promo_entry` | No | Active promo campaigns | **CODE-TESTED** |
+**Invariant: exactly 32 rows, matching `shared/capabilities.ts` CapabilityId union and `capability-index.json` array length.**
 
-### 1.3 Entry Type Summary
+| # | ID | Tier | Entry Type | Bot Implementation | First Step | Payment | Backing Data Predicate | Test Coverage | Certification | Dependency |
+|---|-----|------|------------|-------------------|------------|---------|----------------------|---------------|---------------|------------|
+| 1 | `scheduling` | free | top-level-menu | dedicated-flow (`scheduling.flow.ts`) | `select_service` | Optional (deposit/full) | `services` active, non-giving, non-class | tested | code-tested | ready |
+| 2 | `appointment` | free | top-level-menu | dedicated-flow (`appointment.flow.ts`) | `select_appointment` | Optional | `appointments` active | tested | code-tested | ready |
+| 3 | `payment` | free | top-level-menu (conditionally hidden) | dedicated-flow (`payment.flow.ts`) | `select_category` | Required | Always available | tested | code-tested | ready |
+| 4 | `ordering` | free | top-level-menu | dedicated-flow (`ordering.flow.ts`) | `browse_catalog` | Required | `products` active, non-deleted | tested | code-tested | ready |
+| 5 | `ticketing` | free | top-level-menu | dedicated-flow (`ticketing.flow.ts`) | `select_event` | Required | `events` status=published | tested | code-tested | ready |
+| 6 | `giving` | free | top-level-menu | reuses-flow (`payment.flow.ts`) | `select_category` | Required | `services` active, service_type=giving | tested | code-tested | ready |
+| 7 | `chat` | free | top-level-menu | dedicated-flow (`chat.flow.ts`) | `chat_start` | No | Always available | tested | code-tested | ready |
+| 8 | `feedback` | free | contextual | dedicated-flow (`feedback.flow.ts`) | Post-service trigger | No | Triggered after booking/order completion | partial | code-tested | ready |
+| 9 | `poll` | free | contextual | dedicated-flow (`poll.flow.ts`) | Merchant sends poll link | No | Active polls | partial | code-tested | ready |
+| 10 | `reservation` | growth | top-level-menu | dedicated-flow (`reservation.flow.ts`) | `select_apartment` | Required (deposit/full) | `properties` active | tested | code-tested | ready |
+| 11 | `table_reservation` | free | top-level-menu | reuses-flow (`scheduling.flow.ts`) | `select_service` | Optional (flat deposit per reservation) | `services` active, non-giving, non-class (same as scheduling — see GAP-010) | untested | unverified | blocked-pr-731 |
+| 12 | `recurring` | growth | contextual | dedicated-flow (`recurring-manage.flow.ts`) | After payment completion | Subscription setup | Existing subscription | tested | code-tested | ready |
+| 13 | `broadcast` | growth | dashboard-only | no-bot-flow | N/A | No | Merchant sends via dashboard | partial | code-tested | ready |
+| 14 | `membership` | growth | dashboard-only | no-bot-flow | N/A | No | Depends on `loyalty` capability | untested | unverified | ready |
+| 15 | `survey` | growth | contextual | dedicated-flow (`survey.flow.ts`) | Merchant sends survey link | No | Active surveys | partial | code-tested | ready |
+| 16 | `invoice` | growth | top-level-menu (conditionally hidden) | dedicated-flow (`invoice.flow.ts`) | `invoice_list` | Required | Pending invoices for customer | tested | code-tested | ready |
+| 17 | `auto_reply` | growth | contextual | no-bot-flow (handled in `bot.service.ts`) | N/A | No | Business hours configured | partial | code-tested | ready |
+| 18 | `loyalty` | growth | top-level-menu (via My Account) | dedicated-flow (`loyalty.flow.ts`) | `loyalty_menu` | No | Customer loyalty points | tested | code-tested | ready |
+| 19 | `referral` | growth | contextual | no-bot-flow | Post-payment trigger | No | Referral program configured | partial | unverified | ready |
+| 20 | `reminders` | growth | contextual | no-bot-flow (cron/automation) | N/A | No | Upcoming bookings | partial | unverified | ready |
+| 21 | `staff` | business | dashboard-only | no-bot-flow | N/A | No | Staff members configured | untested | unverified | ready |
+| 22 | `whatsapp_sign` | business | dashboard-only | no-bot-flow | N/A | No | Contract documents | untested | unverified | ready |
+| 23 | `reports` | business | dashboard-only | no-bot-flow | N/A | No | Document uploads | untested | unverified | ready |
+| 24 | `waitlist` | business | contextual | dedicated-flow (`waitlist.flow.ts`) | `waitlist_join` | No | Returns false in menu — triggered when no slots available | partial | code-tested | ready |
+| 25 | `queue` | business | top-level-menu | dedicated-flow (`queue-checkin.flow.ts`) | `queue_start` | No | Always available | tested | code-tested | ready |
+| 26 | `crowdfunding` | business | top-level-menu | dedicated-flow (`crowdfunding.flow.ts`) | `select_campaign` | Required | `campaigns` status=active | tested | code-tested | ready |
+| 27 | `estimates` | free | dashboard-only | no-bot-flow | N/A | No | Dashboard-originated quotes | untested | unverified | owner-decision-needed |
+| 28 | `packages` | growth | dashboard-only | no-bot-flow | N/A | No | Session packages | untested | unverified | owner-decision-needed |
+| 29 | `class_booking` | growth | top-level-menu | reuses-flow (`scheduling.flow.ts`) | `select_service` | Optional | `services` active, is_class=true | tested | code-tested | ready |
+| 30 | `multi_location` | growth | dashboard-only | no-bot-flow | N/A | No | Multiple locations | untested | unverified | owner-decision-needed |
+| 31 | `waiver` | growth | top-level-menu | no-bot-flow (regex match in `capability-selection.flow.ts`) | Waiver template selection | No | `waiver_templates` active | partial | unverified | ready |
+| 32 | `promo_verification` | growth | contextual | no-bot-flow (dedicated entry step `promo_entry`) | `promo_entry` | No | Active promo campaigns | tested | code-tested | ready |
 
-| Entry Type | Count | Capabilities |
-|-----------|-------|--------------|
-| **Top-level menu** | 13 | scheduling, appointment, payment, ordering, ticketing, giving, chat, reservation, table_reservation, invoice, queue, class_booking, waiver |
-| **Contextual** | 9 | feedback, poll, recurring, survey, auto_reply, referral, reminders, waitlist, promo_verification |
-| **Dashboard-only** | 7 | broadcast, membership, staff, whatsapp_sign, reports, estimates, packages, multi_location |
-| **Unsupported (no bot)** | 3 | estimates, packages, multi_location |
+### 1.3 Count Validation
 
-### 1.4 User-Facing Menu Filter
+| Dimension | Value | Count | IDs |
+|-----------|-------|-------|-----|
+| **Entry: top-level-menu** | Shown in WhatsApp capability list | 15 | scheduling, appointment, payment, ordering, ticketing, giving, chat, reservation, table_reservation, invoice, queue, crowdfunding, class_booking, waiver, loyalty (via My Account) |
+| **Entry: contextual** | Triggered by events, post-completion, automation, merchant action | 10 | feedback, poll, recurring, survey, auto_reply, referral, reminders, waitlist, promo_verification, table_reservation is contextual only until #731 merges — **CORRECTION: table_reservation has menu entry but blocked** |
+| **Entry: dashboard-only** | No customer-facing WhatsApp interaction | 8 | broadcast, membership, staff, whatsapp_sign, reports, estimates, packages, multi_location |
+| **Total** | | **32** | *Validated: 15 + 9 contextual + 8 dashboard = 32 (table_reservation counted once as top-level-menu)* |
 
-Source: `lib/bot/handlers/flow-routing.ts:getUserFacingCapabilities()`
+**`getUserFacingCapabilities()` logic** (source: `lib/bot/handlers/flow-routing.ts:36-42`):
+- **Always excluded from menu** (17 IDs in `nonUserFacing` set): reminders, feedback, loyalty, referral, reports, staff, whatsapp_sign, survey, poll, broadcast, recurring, auto_reply, membership, estimates, packages, multi_location, promo_verification
+- **Conditionally excluded** (+2 when `scheduling` or `table_reservation` present): payment, invoice
+- **Maximum user-facing menu items**: 15 (all 32 minus 17 always-excluded)
+- **Minimum user-facing menu items**: 13 (when scheduling/table_reservation adds payment+invoice to exclusion)
+- Note: `waitlist` passes the filter but `prepareCapabilityMenu()` returns false for its backing check — it never appears in the menu, only triggered contextually when no slots available
 
-The following 17 capabilities are excluded from the top-level WhatsApp menu:
-`reminders`, `feedback`, `loyalty`, `referral`, `reports`, `staff`, `whatsapp_sign`, `survey`, `poll`, `broadcast`, `recurring`, `auto_reply`, `membership`, `estimates`, `packages`, `multi_location`, `promo_verification`
+### 1.4 Certification Summary
 
-Additionally, `payment` and `invoice` are hidden when `scheduling` or `table_reservation` is present (payment is embedded in those flows).
+| Certification Level | Count | IDs |
+|--------------------|-------|-----|
+| **code-tested** | 21 | scheduling, appointment, payment, ordering, ticketing, giving, chat, feedback, poll, reservation, recurring, broadcast, survey, invoice, auto_reply, loyalty, waitlist, queue, crowdfunding, class_booking, promo_verification |
+| **unverified** | 11 | table_reservation, membership, referral, reminders, staff, whatsapp_sign, reports, estimates, packages, multi_location, waiver |
+| **staging-e2e-verified** | 0 | None (Phase D not yet authorized) |
 
 ---
 
 ## 2. Dedicated and Shared WhatsApp Channel Architecture
 
-Source: `lib/channels/channel-resolver.ts`
+Source: `lib/channels/channel-resolver.ts` at SHA `1c6ed975`
 
 ### 2.1 Channel Resolution Priority
 
-1. `assigned_channel_id` (admin-assigned) → highest priority
-2. `whatsapp_channel_id` (business self-configured)
-3. Dedicated channel (`channel_type='dedicated'`, `business_id` match)
-4. Country shared channel (`channel_type='shared'`, matching `country_code`)
+Source: `resolveByBusinessId()` lines 212-278
+
+1. `assigned_channel_id` from `businesses` table (admin-assigned) — highest priority
+2. `whatsapp_channel_id` from `businesses` table (business self-configured)
+3. Dedicated channel query: `whatsapp_channels` where `business_id` match, `channel_type='dedicated'`, `is_active=true`
+4. Country shared channel: `channel_type='shared'`, matching `country_code` from business
 5. Any shared channel (fallback)
 
-### 2.2 Dedicated Number Architecture
+### 2.2 Tenant Isolation Mechanism
 
-- Direct business association via `businesses.assigned_channel_id` or `whatsapp_channels.business_id`
-- Customer messages route directly to the associated business
-- Meta credentials (WABA ID, phone number ID, access token) stored per channel
-- Token expiry monitoring with warn/error logging
-- Business data, payment links, session continuity all scoped to the single business
+Source: `stripSharedChannelBusinessAuthority()` lines 38-44
 
-### 2.3 Shared Number Architecture
+Shared channels have their `business_id` nullified before caching or use. This prevents stale shared-channel rows from carrying tenant authority. The function is called in `cacheSet()`, `buildResolved()`, and the direct returned value path.
 
-- `channel_type='shared'`, `country_code` scoped
-- **Critical isolation**: `stripSharedChannelBusinessAuthority()` nullifies any stale `business_id` on shared channels — shared channels are transport infrastructure, not tenant authority
-- Business selection via bot code entry or returning-customer session lookup
-- Business switching available via "Switch Business" option in navigation
-- Session scoped to `(whatsapp_number, business_id)` — prevents cross-tenant data leakage
+**Existing test evidence:**
+- `lib/channels/__tests__/issue-522-shared-channel-business-authority.test.ts` — tests `stripSharedChannelBusinessAuthority()` behavior
+- `lib/channels/__tests__/channel-authority.test.ts` — channel resolution authority tests
 
-### 2.4 Cross-Merchant Isolation Audit
+**Verified claims:**
+- Session keyed by `(whatsapp_number, business_id)` — verified from `bot_sessions` table usage in `bot.service.ts`
+- `stampBusinessId()` propagates requested businessId on outbound — verified at line 287-292
 
-| Vector | Protection | Evidence |
-|--------|-----------|----------|
-| Customer identity | Session keyed by `(phone, business_id)` | `bot_sessions` table schema |
-| Business catalogs | All queries filter by `business_id` | Every flow file |
-| Saved cards | Ownership by canonical `+E.164` phone, provider-stored | PAY-003, PAY-004 invariants |
-| Payment references | Tenant-scoped booking/order IDs | Payment authority |
-| Financial records | RLS on all tables, `business_id` partition | DB-003 invariant |
-| Messaging | Channel resolver stamps correct business | `stampBusinessId()` in resolver |
+**Unverified in Phase A** (requires staging E2E):
+- Actual Meta webhook routing to correct business on shared numbers under concurrent sessions
+- Real-world token refresh behavior for dedicated channels with `meta_token_expires_at`
+- End-to-end cross-merchant payment link isolation (tested at unit level, not deployed)
 
-### 2.5 Test Plan
+### 2.3 Cross-Merchant Isolation Vectors
 
-| Scenario | Type | Priority |
-|----------|------|----------|
-| Dedicated number: customer → single business routing | Unit + Staging E2E | P0 |
-| Shared number: bot code → correct business | Unit + Staging E2E | P0 |
-| Shared number: business switch mid-session | Unit + Staging E2E | P0 |
-| Cross-merchant: customer A's orders invisible to business B | Disposable PG | P0 |
-| Cross-merchant: saved card isolation | Unit | P0 |
-| Token expiry: dedicated channel with expired Meta token | Unit | P1 |
+| Vector | Protection Mechanism | Test Evidence |
+|--------|---------------------|---------------|
+| Customer identity | Session keyed by `(phone, business_id)` | `bot.service.ts` session lookup logic |
+| Business catalogs | All queries filter by `business_id` | Every flow file (verified by read) |
+| Saved cards | Provider-stored, ownership by canonical `+E.164` phone | `lib/payments/__tests__/saved-card-phase1-integration.test.ts` |
+| Payment references | Tenant-scoped booking/order IDs | `lib/payments/__tests__/authority.test.ts` |
+| Financial records | RLS on all tables, `business_id` partition | DB-003 invariant, `lib/__tests__/p0-table-exposure-db.test.ts` |
+| Messaging | `stripSharedChannelBusinessAuthority()` + `stampBusinessId()` | `lib/channels/__tests__/issue-522-shared-channel-business-authority.test.ts` |
 
 ---
 
-## 3. First-Time Customer, Multilingual, and Navigation Matrix
+## 3. First-Time Customer, Multilingual, and Navigation
 
 ### 3.1 First-Time vs Returning Customer
 
-Source: `capability-selection.flow.ts:prompt()` lines 196–241
+Source: `capability-selection.flow.ts:prompt()` lines 196-241
 
-- **Returning customer detection**: Checks `profiles` table for matching phone, then queries `bookings`, `orders`, `payments`, `invoices`, `campaign_donations` for any history
-- **My Account**: Shown only for returning customers with history — provides access to loyalty, recurring management, order/booking history
-- **First-time customer**: Sees only the capability menu (no "My Account" option)
-- **Promo history**: Independently checked even without a `profiles` row
+**Mechanism**: Queries `profiles` table for matching phone, then parallel checks across `bookings`, `orders`, `payments`, `invoices`, `campaign_donations` for any history. Also checks `promo_redemptions` independently.
+
+**"My Account" option**: Shown only when `hasHistory` is true. Provides access to loyalty, recurring management, order/booking history.
+
+**Test evidence**: `lib/bot/__tests__/cas-004-round6b-matrix.test.ts` covers capability menu behavior including My Account routing.
 
 ### 3.2 Supported Languages
 
-Source: `lib/bot/languages.ts`
+Source: `lib/bot/languages.ts` at SHA `1c6ed975`
 
-| Language | Code | Certified | Runtime Active |
-|----------|------|-----------|---------------|
-| English | `en` | ✅ Yes | ✅ Yes |
-| Nigerian Pidgin | `pcm` | ✅ Yes | ✅ Yes |
-| Yoruba | `yo` | ❌ No | ❌ Fallback to English |
-| Igbo | `ig` | ❌ No | ❌ Fallback to English |
-| Hausa | `ha` | ❌ No | ❌ Fallback to English |
-| Twi | `tw` | ❌ No | ❌ Fallback to English |
-| French | `fr` | ❌ No | ❌ Fallback to English |
-| Spanish | `es` | ❌ No | ❌ Fallback to English |
+| Language | Code | Certified | Status at Runtime |
+|----------|------|-----------|-------------------|
+| English | `en` | Yes | Active — full static copy in `flow-localization.ts` |
+| Nigerian Pidgin | `pcm` | Yes | Active — full static copy in `flow-localization.ts` |
+| Yoruba | `yo` | No | Copy populated, falls back to English at runtime |
+| Igbo | `ig` | No | Copy populated, falls back to English at runtime |
+| Hausa | `ha` | No | Copy populated, falls back to English at runtime |
+| Twi | `tw` | No | Copy populated, falls back to English at runtime |
+| French | `fr` | No | Copy populated, falls back to English at runtime |
+| Spanish | `es` | No | Copy populated, falls back to English at runtime |
 
-Only **certified** languages resolve to their locale copy. Uncertified languages have copy populated but fall back to English at runtime.
+**Verification**: `getFlowCopy()` in `flow-localization.ts` only resolves certified+entitled languages to their locale copy. The `CERTIFIED_LANGUAGES` array is derived from `LANGUAGE_CATALOG.filter(l => l.certified)` — currently `['en', 'pcm']`.
 
-### 3.3 Language Detection and Switching
+**Owner decision required**: Whether to certify additional languages before launch (see Section 10).
 
-- Language stored in `bot_sessions.session_data` and business language preference
-- `copyLang` propagated through `FlowContext` to all flow steps
-- `getFlowCopy(lang, key)` resolves deterministic static copy
-- Dynamic content uses LLM translation path (separate from static copy)
-- Bot commands (`Hi`, `cancel`, `menu`, `back`, `exit`, `skip`) preserved as English in all locales
+### 3.3 Navigation Commands
 
-### 3.4 Navigation Commands
+Source: `flow-localization.ts`, `bot.service.ts`, `executor.ts` at SHA `1c6ed975`
 
-Source: `flow-localization.ts`, `bot.service.ts`, `executor.ts`
-
-| Command | Action | Where Handled |
-|---------|--------|--------------|
+| Command | Action | Source |
+|---------|--------|--------|
 | `Hi` / `Hello` / `Start` | Restart session | `bot.service.ts` greeting handler |
 | `cancel` | Cancel current flow/booking | `executor.ts` escape hatch |
 | `exit` / `quit` | Leave business entirely | `executor.ts` escape hatch |
 | `back` | Go to previous step | `executor.ts` step navigation |
 | `menu` / `restart` / `start over` | Return to main menu | `executor.ts` escape hatch |
-| `STOP` / `UNSUBSCRIBE` | Notification consent withdrawal (NOT navigation) | `bot.service.ts` consent handler (#721/#727) |
+| `STOP` / `UNSUBSCRIBE` | Notification consent withdrawal (**not navigation**) | `bot.service.ts` consent handler (PR #727, merged as `a27650c7`) |
 | `START` | Re-subscribe to notifications | `bot.service.ts` consent handler |
 | Numeric (`1`, `2`, `3`) | Select numbered option | `capability-selection.flow.ts:validate()` |
 
-### 3.5 Recovery Paths
+**Test evidence**:
+- STOP/START: `lib/__tests__/stop-persistence-db.test.ts` (9 PG tests), `lib/__tests__/stop-merchant-resolution.test.ts` (21 behavioral tests)
+- Navigation: `lib/bot/__tests__/navigation-cancellation-db.test.ts`
+- Capability selection: `lib/bot/__tests__/cas-004-round6b-matrix.test.ts`, `lib/bot/__tests__/cas-004-semantic-routing.test.ts`
 
-| Scenario | Recovery | Evidence |
-|----------|----------|---------|
-| Invalid menu selection | Shows valid alternatives with `buildRecoveryMessage()` | `capability-recovery.ts` |
-| Zero renderable capabilities | "Still setting up" message | `capability-selection.flow.ts:prompt()` line 278 |
-| Session timeout/expiry | "Send Hi to start over" | Standard expired-session handler |
-| Payment interruption | "I've Paid" button + `verifyAndReconcilePayment` | Payment flow `await_payment` step |
-| Interrupted checkout | Retry payment via `retry_payment` with `_payment_retry_blocked` guard | Payment authority |
-| Business unavailable | "This business is currently unavailable" | `error.business_unavailable` copy |
+### 3.4 Recovery Paths
 
-### 3.6 STOP/START vs Navigation Distinction
+| Scenario | Recovery Mechanism | Verification Status |
+|----------|-------------------|-------------------|
+| Invalid menu selection | `buildRecoveryMessage()` shows valid alternatives | Tested: `lib/bot/__tests__/cas-004-round6b-matrix.test.ts` |
+| Zero renderable capabilities | "Still setting up" message | Verified by code read: `capability-selection.flow.ts:prompt()` line 278 |
+| Session timeout/expiry | "Send Hi to start over" | Verified by code read: `flow-localization.ts` error copy |
+| Payment interruption | "I've Paid" button + `verifyAndReconcilePayment` | Tested: `lib/payments/__tests__/reconcile.test.ts` |
+| Interrupted checkout retry | `retry_payment` with `_payment_retry_blocked` guard | Tested: `lib/payments/__tests__/provider-verification-safety.test.ts` |
+| Business unavailable | Error message | Verified by code read: `flow-localization.ts` `error.business_unavailable` |
 
-Source: PR #721/#727 (merged as `a27650c7`)
-
-- **STOP/UNSUBSCRIBE**: Persisted as merchant-scoped consent withdrawal. Customer stops receiving marketing/broadcast messages from that specific business.
-- **Navigation cancel/exit**: Ends the current flow/session. Does NOT affect notification consent.
-- These are handled in separate code paths — STOP goes to the consent handler in `bot.service.ts`, navigation commands go to the executor escape hatches.
+**Unverified in Phase A**: Actual WhatsApp delivery of recovery messages; multi-turn recovery sequences across session boundaries; recovery after Meta service-window expiry.
 
 ---
 
 ## 4. Messaging Cost Optimization Audit
 
-### 4.1 Current Message Patterns
+### 4.1 Existing Efficiency: Smart Entity Extraction
 
-| Pattern | Messages | Optimization Opportunity |
-|---------|----------|------------------------|
-| Greeting + capability menu | 1-2 | Greeting can be combined into menu body ✅ (already done) |
-| Service selection → date → time → confirm | 4+ steps | Consolidate where possible with entity extraction |
-| Payment link + "I've Paid" prompt | 2 | Required — cannot reduce |
-| Post-payment confirmation | 1-3 | Consolidate receipt + next-steps into single message |
-| Saved card offer (post-payment) | 1 | Required opt-in prompt |
-| Error + retry guidance | 2 | Can consolidate into single message |
+Source: `capability-selection.flow.ts` lines 412-459, `lib/bot/smart-intent.ts`
 
-### 4.2 Smart Entity Extraction (Already Implemented)
+Natural language input (e.g., "Book a massage for tomorrow at 2pm") extracts service keywords, date, time, and quantity — skipping multiple selection steps. This is already implemented and reduces 3-4 messages to 1-2 for matching input.
 
-Source: `capability-selection.flow.ts` lines 412-459, `smart-intent.ts`
+**Verification status**: Code path verified by read. Tested in `lib/bot/__tests__/cas-004-semantic-routing.test.ts`. Actual message-count reduction not measured in staging.
 
-When a customer sends "Book a massage for tomorrow at 2pm", the system extracts:
-- Service keywords → auto-selects matching service (skips service picker)
-- Date → pre-fills date step
-- Time → pre-fills time step
-- Quantity → pre-fills party size
+### 4.2 Proposed Optimizations (Phase B, requires approval)
 
-This already reduces 3-4 messages to 1-2 for natural language input.
+| Optimization | Potential Saving | Mandatory Messages Preserved |
+|-------------|-----------------|------------------------------|
+| Skip confirmation step when entity extraction resolves all fields | 1 msg/journey | Payment confirmations, OTPs, consent notices |
+| Consolidate post-payment receipt + loyalty offer into single message | 1-2 msg/journey | Payment receipt, refund notices |
+| Reduce duplicate "Send Hi to start over" in sequential error paths | 0.5 msg/error flow | At least one recovery instruction |
+| Reuse known customer data (name, preferences) for returning customers | 1-2 msg/returning | Payment verification prompts |
 
-### 4.3 Proposed Optimizations (Phase B Implementation)
+### 4.3 Protected Messages (Must Not Reduce)
 
-| Optimization | Estimated Savings | Mandatory Messages Preserved |
-|-------------|-------------------|------------------------------|
-| Combine greeting + menu into single WhatsApp message | Already done | N/A |
-| Skip confirmation step when entity extraction provides all data | 1 msg/journey | Payment confirmation required |
-| Consolidate post-payment receipt + loyalty + next-step offer | 1-2 msg/journey | Payment receipt, OTP, consent notices |
-| Reduce duplicate "Send Hi to start over" in error paths | 0.5 msg/error | At least one recovery instruction |
-| Reuse known customer data (name, preferences) | 1-2 msg/returning | Verification prompts for payments |
+Payment confirmations and receipts, OTPs and verification codes, STOP/START consent management, refund and cancellation notices, security-critical communications (PIN prompts, card save consent), merchant notifications (email + WhatsApp).
 
-### 4.4 Protected Messages (Must Not Reduce)
-
-- Payment confirmations and receipts
-- OTPs and verification codes
-- STOP/START consent management
-- Refund and cancellation notices
-- Security-critical communications (PIN prompts, card save consent)
-- Merchant notifications (email + WhatsApp)
+**Verification status**: List derived from code read of `flow-localization.ts`, `send-confirmation.ts`, and `post-completion.ts`. Not independently verified against actual message counts from staging logs.
 
 ---
 
@@ -258,290 +233,281 @@ This already reduces 3-4 messages to 1-2 for natural language input.
 
 ### 5.1 Provider Routing
 
-Source: `lib/payments/gateway-resolver.ts`
+Source: `lib/payments/gateway-resolver.ts` at SHA `1c6ed975`
 
-| Country | Provider | Currency | Status |
+| Country | Provider | Currency | Source |
 |---------|----------|----------|--------|
-| NG | Paystack | NGN | Active |
-| GH | Paystack | GHS | Active |
-| US | Stripe | USD | Active |
-| UK | Stripe | GBP | Active |
-| CA | Stripe | CAD | Active |
-| Any (Flutterwave) | Flutterwave | Various | Deferred post-launch (existing merchants only) |
-| Any (Square) | Square | Various | Available but not primary |
+| NG | Paystack | NGN | `countries.payment_gateway` (sole authority) |
+| GH | Paystack | GHS | `countries.payment_gateway` |
+| US | Stripe | USD | `countries.payment_gateway` |
+| UK | Stripe | GBP | `countries.payment_gateway` |
+| CA | Stripe | CAD | `countries.payment_gateway` |
 
-Setup-available gateways: `paystack`, `stripe` only (Flutterwave deferred per Owner 2026-10-24).
+Setup-available gateways: `paystack`, `stripe` only (`SETUP_AVAILABLE_GATEWAYS` at line 45). Flutterwave deferred for new merchant setup per Owner decision 2026-10-24; existing Flutterwave merchants and processing unaffected.
+
+**Test evidence**: `lib/payments/__tests__/provider-preflight.test.ts`, `lib/payments/__tests__/provider-adapters.test.ts`
 
 ### 5.2 Payment Lifecycle (Canonical Authority)
 
-Source: `lib/payments/process-success.ts`, `lib/payments/authority.ts`, existing contracts
+Source: `lib/payments/process-success.ts`, `lib/payments/authority.ts`, existing `docs/contracts/payment.contract.json`
 
 ```
-Stage 1: CLAIM
-  └─ Idempotent claim on payment record
-  └─ Prevent duplicate processing
-
-Stage 2: FINALIZE
-  └─ Booking/order status transition (pending → confirmed)
-  └─ apply_order_stock_once / book_slot_atomic (FOR UPDATE serialized)
-  └─ deposit_status update
-  └─ Platform fee recording (recordPlatformFee — tier resolved from DB)
-  └─ Customer spend tracking (apply_payment_spend_once)
-  └─ Promo reservation finalization (finalize_promo_reservation)
-  └─ Referral conversion
-
-Stage 3: MANIFEST + EFFECTS
-  └─ Initialize terminal effects manifest (semantic hash)
-  └─ Execute effects: WhatsApp confirmation, email, loyalty, automation rules
-  └─ Finalize confirmation claim
-  └─ Post-completion: saved-card offer (if consented), recurring offer
+Stage 1: CLAIM — Idempotent claim on payment record (prevent duplicate processing)
+Stage 2: FINALIZE — Booking/order status transition, stock/slot application, fee recording, spend tracking
+Stage 3: MANIFEST + EFFECTS — Terminal effects (WhatsApp confirmation, email, loyalty, automation)
 ```
 
-### 5.3 Capability × Payment × Fulfillment Matrix
+**Test evidence**:
+- `lib/payments/__tests__/process-success.test.ts` — Stage 2 finalization
+- `lib/payments/__tests__/process-success-finalization.test.ts` — Stage 2/3 ordering
+- `lib/payments/__tests__/authority.test.ts` — Payment authority
+- `lib/payments/__tests__/payment-idempotency.test.ts` — Idempotency
+- `lib/payments/__tests__/webhook-idempotency.test.ts` — Webhook dedup
+- `lib/__tests__/p0-post-payment-lifecycle.test.ts` — Full lifecycle
 
-| Capability | Payment Required | Amount Source | Post-Payment Fulfillment | Merchant Approval |
-|-----------|-----------------|-------------|-------------------------|-------------------|
-| **scheduling** | Optional (free or paid) | Service price + deposit config | `bookings.status` → confirmed, slot held | Auto (default) or manual |
-| **appointment** | Optional | Appointment service price | `bookings.status` → confirmed | Auto or manual |
-| **payment** | Required | Customer-entered amount | `bookings.status` (flow_type='payment') → confirmed | N/A (direct payment) |
-| **ordering** | Required | Cart total (products × qty + variants) | `orders.status` → confirmed via `apply_order_stock_once`, stock decremented | Auto |
-| **ticketing** | Required | Ticket type price × qty | Ticket issuance with QR/PDF after payment | Auto |
-| **giving** | Required | Customer-entered or fixed amount | Donation recorded, receipt sent | N/A |
-| **reservation** | Required (deposit/full) | Property rate × nights | `bookings.status` → confirmed, dates held | Auto or manual |
-| **table_reservation** | Optional (flat deposit) | Flat deposit amount per reservation (#730) | **BLOCKED** — PR #731 | Auto or manual |
-| **crowdfunding** | Required | Customer-entered donation amount | Campaign contribution recorded, goal progress updated | N/A |
+### 5.3 Capability x Payment x Fulfillment Matrix
+
+| Capability | Payment Required | Amount Source | Post-Payment Authority | Merchant Booking Approval |
+|-----------|-----------------|-------------|----------------------|--------------------------|
+| **scheduling** | Optional | Service price + deposit config | `processSuccessfulPayment` → `bookings.status` pending→confirmed | Auto-accept (default) OR manual per merchant config |
+| **appointment** | Optional | Appointment service price | Same as scheduling | Auto-accept (default) OR manual per merchant config |
+| **payment** | Required | Customer-entered amount | `processSuccessfulPayment` → `bookings.status` (flow_type='payment') | N/A (direct payment, no booking approval) |
+| **ordering** | Required | Cart total | `apply_order_stock_once` RPC → `orders.status` pending→confirmed, stock decremented | Auto (stock is authority) |
+| **ticketing** | Required | Ticket type price x qty | Payment → ticket issuance with QR/PDF | Auto (capacity is authority) |
+| **giving** | Required | Customer-entered or fixed | Donation recorded, receipt sent | N/A (no approval concept) |
+| **reservation** | Required | Property rate x nights | `processSuccessfulPayment` → `bookings.status` | Auto-accept (default) OR manual per merchant config |
+| **table_reservation** | Optional | Flat deposit (#730) | **BLOCKED** — PR #731 required | Per merchant config |
+| **crowdfunding** | Required | Customer-entered | Campaign contribution recorded | N/A |
 | **invoice** | Required | Invoice line items total | Invoice status → paid | N/A |
-| **recurring** | Subscription setup | Original service/product price | Subscription created, next charge scheduled | N/A |
+| **recurring** | Subscription | Original price | Subscription created, next charge scheduled | N/A |
 
 ### 5.4 Offline Bank Transfer Contract
 
 Source: `lib/bot/flows/shared/bank-transfer.ts`, `app/api/dashboard/pending-transfers/`
 
 **Current main behavior (`1c6ed975`):**
-1. Merchant enables bank transfer (currently default ON — **Owner decision: change to strict OFF, Option B**)
+1. Merchant bank transfer eligibility determined by `bank_transfer_enabled` in `payment_channels` metadata
 2. Customer selects bank transfer → sees merchant bank details
 3. Customer sends typed reference or screenshot proof
 4. `pending_transfer` created with proof/OCR data
 5. Merchant reviews in dashboard → confirms funds received
-6. **Current gap**: Non-order confirmation auto-approves booking (PR #741 fixes this)
+6. **Current behavior**: Non-order confirmation triggers booking confirmation automatically, regardless of merchant manual-approval setting
 
-**Owner-approved target (binding decisions from #721/#736):**
-- Bank transfer default **OFF** — requires explicit merchant opt-in
+**Already-approved Owner decisions (binding, from #721/#736):**
+- Bank transfer strict default **OFF** — requires explicit merchant opt-in (Option B, approved)
 - NG/GH + Pro/Premium + above country minimum only
-- OCR is informational review assistance only, never proof of receipt
-- **ALL** offline payments require explicit merchant approval for fulfillment
-- Separate "Confirm Payment Only" vs "Confirm Payment & Approve" actions
-- Zero Waaiio fees, zero Waaiio custody
+- OCR is informational review assistance, never proof of receipt
+- Merchant verification of offline funds and merchant booking approval are **separate decisions**
+- For **auto-accept merchants**: verified funds → booking automatically confirmed (no change to existing auto-accept behavior)
+- For **manual-approval merchants**: offer "Confirm Payment Only" and "Confirm Payment & Approve" actions
+- Zero Waaiio fees, zero Waaiio custody for offline transfers
 - Merchant-direct refund obligations via existing refunds ledger (Option X approved)
 
-**Dependency**: PR #741 (draft, `0e7270fa`) — addresses core separation but has CTO R2-R8 technical blockers
+**Dependency**: PR #741 (draft, `0e7270fa`, M479) addresses core separation. CTO R2-R8 technical blockers remain in #721.
+
+**Test evidence**: `lib/bot/flows/shared/__tests__/bank-transfer.test.ts` (11 tests on main)
 
 ### 5.5 Saved Card Support
 
-| Provider | Save Card | Skip | PIN Reuse | Evidence |
-|----------|-----------|------|-----------|---------|
-| Paystack | ✅ Post-payment offer | ✅ Decline option | ✅ 4-digit PIN (bcrypt) | PAY-003, PAY-004, SEC-004 |
-| Stripe | ✅ Checkout Session `saved_payment_method_options` | ✅ | ❌ No PIN (provider handles) | PAY-001, PAY-002 |
-| Flutterwave | ❌ Not supported | N/A | N/A | Deferred |
-| Square | ❌ Not supported | N/A | N/A | Not primary |
-
-Key invariants:
-- Card stored with provider, never Waaiio PAN/CVV
-- Paystack saved-card PIN session uses raw transport phone (DB-005)
-- Saved method ownership uses canonical `+E.164` phone (PAY-004)
-- Saved-card RPCs blocked for `anon`/`authenticated` (DB-004)
+| Provider | Save Card | Skip | PIN Reuse | Test Evidence |
+|----------|-----------|------|-----------|--------------|
+| Paystack | Post-payment offer | Decline option | 4-digit PIN (bcrypt) | `lib/payments/__tests__/paystack-card-authorization.test.ts`, `lib/payments/__tests__/saved-card-phase1-integration.test.ts` |
+| Stripe | Checkout `saved_payment_method_options` | Yes | No PIN (provider handles) | `lib/payments/__tests__/stripe-saved-card.test.ts`, `lib/payments/__tests__/stripe-saved-card-checkout.test.ts` |
+| Flutterwave | Not supported | N/A | N/A | N/A |
+| Square | Not supported | N/A | N/A | N/A |
 
 ### 5.6 Idempotency and Race Protection
 
-| Control | Mechanism | Evidence |
-|---------|-----------|---------|
-| Payment claim | Stage 1 idempotent claim | `process-success.ts` |
-| Stock application | `apply_order_stock_once` with FOR UPDATE | M333 migration |
-| Booking slot | `book_slot_atomic` with serialization | M137 migration |
-| Customer spend | `apply_payment_spend_once` with per-payment marker | M334 migration |
-| Promo finalization | `finalize_promo_reservation` with CAS guard | M333 migration |
-| Webhook dedup | `webhook_event_state_machine` table | M232 migration |
-| Confirmation dedup | Terminal effects manifest with semantic hash | Stage 3 |
-| Cancel race | CAS-guarded cancel with `status IN ('pending')` | Flow validate steps |
+| Control | Mechanism | Test Evidence |
+|---------|-----------|--------------|
+| Payment claim | Stage 1 idempotent claim | `lib/payments/__tests__/payment-idempotency.test.ts` |
+| Stock application | `apply_order_stock_once` with FOR UPDATE | `lib/__tests__/financial-authorization-db.test.ts` |
+| Booking slot | `book_slot_atomic` serialization | Tested in scheduling flow tests |
+| Customer spend | `apply_payment_spend_once` per-payment marker | `lib/__tests__/acc-244-manual-booking-spend.test.ts` |
+| Webhook dedup | `webhook_event_state_machine` | `lib/payments/__tests__/webhook-idempotency.test.ts` |
+| Confirmation dedup | Terminal effects manifest with semantic hash | `lib/payments/__tests__/process-success-finalization.test.ts` |
+| Cancel race | CAS-guarded with `status IN ('pending')` | `lib/payments/__tests__/payment-vs-cancel-concurrency.test.ts` |
 
 ---
 
 ## 6. Cross-Lane Dependency Map
 
-### 6.1 Active Unmerged PRs
+### 6.1 Active Unmerged PRs (verified via GitHub MCP 2026-10-28)
 
-| PR | Branch | HEAD SHA | Status | Files | Impact on #736 |
-|----|--------|----------|--------|-------|----------------|
-| **#731** | `feat/730-booking-reservation-ux` | `99ba6d7a` | DRAFT, CI 12/12 ✅ | 26 (+4328/-72) | **Blocks** `table_reservation` capability. Adds M476/M477/M478, `seating_resources` table, `book_table_atomic` RPC. |
-| **#740** | `security/705-api-key-issuance` | `5521e891` | DRAFT, blocked | 5 (+1156/-45) | No direct capability impact. API-key security. Adds M472/M473 (namespace collision with #731's M476+). |
-| **#741** | `fix/736-offline-merchant-approval` | `0e7270fa` | DRAFT, blocked | 19 (+1374/-127) | **Blocks** offline bank transfer certification. Adds M475, separates payment verification from fulfillment approval. CTO R2-R8 technical blockers remain. |
+| PR | Branch | HEAD SHA | Status | Migration Files | Capability Impact |
+|----|--------|----------|--------|-----------------|-------------------|
+| **#731** | `feat/730-booking-reservation-ux` | `99ba6d7a` | DRAFT, CI 12/12 green | M476, M477, M478 | Blocks `table_reservation` — adds `seating_resources` table, `book_table_atomic` RPC |
+| **#740** | `security/705-api-key-issuance` | `5521e891` | DRAFT, mergeable_state=blocked | **M474**, **M479** | No direct capability impact. API-key security (atomic issuance + close direct writes) |
+| **#741** | `fix/736-offline-merchant-approval` | `0e7270fa` | DRAFT, mergeable_state=blocked | **M479** | Blocks offline bank transfer certification — payment vs fulfillment separation |
 
-### 6.2 Migration Namespace Status
+### 6.2 Migration Namespace Collision
 
-- **Staging last applied**: M471 (via `supabase_migrations` history, 411 entries)
-- **Production last applied**: M425 (359 entries)
-- **Pending in PRs**: M472 (#740), M475 (#741), M476/M477/M478 (#731)
-- **Already applied**: `20261026153114` named `472_refund_fee_allocation_period_fix` — distinct from #740's numeric M472
-- **Collision risk**: #740 M472 and the already-applied timestamped 472 — different naming schemes, no actual conflict
+**COLLISION: PR #740 and PR #741 both claim migration number 479.**
+- PR #740: `479_api_key_close_direct_writes.sql`
+- PR #741: `479_offline_merchant_approval.sql`
 
-### 6.3 Dependency Effects on Certification
+This must be resolved before either PR can merge. One migration must be renumbered.
 
-| Capability | External Dependency | Effect |
-|-----------|-------------------|--------|
-| `table_reservation` | PR #731 (M476-M478, `seating_resources`, `book_table_atomic`) | Cannot certify until merged + migrated |
-| All offline payment paths | PR #741 (M475, merchant approval separation) | Cannot certify offline until merged; online paths unaffected |
-| API key issuance | PR #740 (M472-M473, atomic RPCs) | No direct capability impact; security improvement |
-| `ordering` + offline | PR #741 CTO R2-R8 blockers: `confirm_order_transfer_atomic` sets `orders.status='confirmed'` inside RPC | Cannot separate order payment from order approval without SQL authority fix |
+### 6.3 Migration Registry Status
+
+- **Staging last applied**: 411 entries, last canonical at M470/M471
+- **Production last applied**: 359 entries, last at M425
+- **Already-applied timestamped**: `20261026153114` named `472_refund_fee_allocation_period_fix` — distinct naming scheme, no collision with numeric M472+
+- **Not applied to either environment**: M474 (#740), M476-M478 (#731), M479 (collision)
+
+### 6.4 Dependency Effects on Capability Certification
+
+| Capability | External Dependency | Certification Effect |
+|-----------|-------------------|---------------------|
+| `table_reservation` | PR #731 (M476-M478) | Cannot certify until merged + migrated |
+| All offline payment paths | PR #741 (M479) + CTO R2-R8 blockers | Cannot certify offline until resolved; online paths unaffected |
+| API key issuance | PR #740 (M474, M479) | No capability impact; security improvement |
+| `ordering` + offline | `confirm_order_transfer_atomic` sets `orders.status='confirmed'` inside RPC | SQL authority gap for payment-only vs approval separation |
 
 ---
 
 ## 7. Implementation Gap Inventory
 
-### 7.1 Critical Gaps (P0 — Launch Blocking)
+### 7.1 P0 Gaps (Source-Verified)
 
-| ID | Gap | Affected Capabilities | Dependency | Severity |
-|----|-----|----------------------|------------|----------|
-| GAP-001 | Offline bank transfer default ON — should be strict OFF | All offline-eligible | PR #741 | P0 |
-| GAP-002 | Non-order offline confirm auto-approves booking | scheduling, appointment, reservation | PR #741 | P0 |
-| GAP-003 | No separate "Confirm Payment Only" vs "Confirm & Approve" | All offline-eligible manual-approval | PR #741 | P0 |
-| GAP-004 | `confirm_order_transfer_atomic` sets `orders.status='confirmed'` inside RPC — cannot defer fulfillment | ordering (offline) | PR #741 CTO blockers | P0 |
-| GAP-005 | No staging E2E verification of any capability | All | Phase D authorization | P0 |
+| ID | Gap | Evidence | Affected Capabilities | Dependency |
+|----|-----|---------|----------------------|------------|
+| GAP-001 | Offline bank transfer defaults ON when `payment_channels` metadata absent | `PaymentsTab.tsx` defaults to true when metadata absent; bot helper checks `!== false` | All offline-eligible | PR #741 (Owner Option B strict OFF already approved) |
+| GAP-002 | Non-order offline confirm auto-approves booking regardless of merchant manual-approval setting | `pending-transfers/[id]/route.ts` confirm path sets `bookings.status='confirmed'` | scheduling, appointment, reservation (offline) | PR #741 |
+| GAP-003 | No separate "Confirm Payment Only" vs "Confirm Payment & Approve" merchant actions | Absent from current `pending-transfers/[id]/route.ts` | Manual-approval merchants using offline | PR #741 |
+| GAP-004 | `confirm_order_transfer_atomic` RPC sets `orders.status='confirmed'` inside SQL — cannot defer fulfillment approval | M394 RPC SQL | ordering (offline) | PR #741 CTO blockers |
+| GAP-005 | No staging E2E verification of any capability | Phase D not authorized | All | Separate authorization needed |
 
-### 7.2 High Gaps (P1 — Should Fix Before Launch)
+### 7.2 P1 Gaps
 
-| ID | Gap | Affected Capabilities | Dependency | Severity |
-|----|-----|----------------------|------------|----------|
-| GAP-006 | `table_reservation` requires unmerged PR #731 | table_reservation | PR #731 merge + migration | P1 |
-| GAP-007 | `estimates`, `packages`, `multi_location` have no bot flow | estimates, packages, multi_location | Feature development | P1 (classify as unsupported for launch) |
-| GAP-008 | Only 2 certified languages (en, pcm) — 6 more populated but uncertified | All multilingual | Language certification effort | P1 |
-| GAP-009 | `waitlist` backing check returns `false` always — never shown in menu | waitlist | Contextual trigger only | P1 (by design) |
-| GAP-010 | `table_reservation` backing data check uses same query as `scheduling` | table_reservation | PR #731 should add specific check | P1 |
+| ID | Gap | Evidence | Affected | Dependency |
+|----|-----|---------|----------|------------|
+| GAP-006 | `table_reservation` requires unmerged PR #731 | PR #731 DRAFT with M476-M478 | table_reservation | PR #731 merge + migration |
+| GAP-007 | Migration namespace collision: M479 claimed by both PR #740 and #741 | GitHub MCP file listing for both PRs | API keys + offline approval | Renumbering required |
+| GAP-008 | `estimates`, `packages`, `multi_location` have no bot flow — customer interaction undefined | `flow-routing.ts` falls through to `select_service` | estimates, packages, multi_location | Owner decision on launch classification |
+| GAP-009 | `table_reservation` backing check uses same query as `scheduling` | `capability-selection.flow.ts` line 84-88 | table_reservation | PR #731 should add specific seating check |
+| GAP-010 | `membership`, `referral`, `reminders`, `staff`, `whatsapp_sign`, `reports`, `waiver` lack dedicated executable tests for their specific code paths | Test file search found no dedicated test files | 7 capabilities | Phase C test development |
 
-### 7.3 Medium Gaps (P2 — Post-Launch)
+### 7.3 P2 Gaps
 
-| ID | Gap | Affected Capabilities | Severity |
-|----|-----|----------------------|----------|
-| GAP-011 | Flutterwave deferred for new merchant setup | New Flutterwave merchants | P2 |
-| GAP-012 | Square not primary — limited integration | Square merchants | P2 |
-| GAP-013 | Dashboard "rendered" tests use `fs.readFileSync` not actual React render | All dashboard pages | P2 |
-| GAP-014 | 31 DB security tests in PR #740 skip without `TEST_DATABASE_URL` in CI | API key security | P2 |
+| ID | Gap | Evidence |
+|----|-----|---------|
+| GAP-011 | Flutterwave deferred for new merchant setup | `SETUP_AVAILABLE_GATEWAYS` excludes it; Owner decision 2026-10-24 |
+| GAP-012 | PR #731 dashboard tests use `fs.readFileSync` not actual React render | CTO R1 comment on #736 |
+| GAP-013 | 31 DB security tests in PR #740 skip without `TEST_DATABASE_URL` in CI | PR #740 description |
 
 ---
 
-## 8. Test Infrastructure and Phase B–E Plan
+## 8. Phase B-E Certification Plan
 
 ### 8.1 Existing Test Infrastructure
 
-| Category | Count | Location |
-|----------|-------|----------|
-| Total test files | 755 | Across `lib/__tests__/`, `lib/*/\__tests\__/`, `app/` |
-| `lib/__tests__/` | 427 | Core business logic tests |
-| Bot flow tests | In `lib/bot/flows/__tests__/` | Flow-specific tests |
-| Payment tests | 82 files in `lib/payments/__tests__/` | Provider, webhook, saved-card tests |
-| Channel tests | In `lib/channels/__tests__/` | Channel resolution tests |
-| Synthetic E2E | `synthetic-e2e/` | PR #728/#729 harness with Promptfoo, Locust, personas |
+| Category | Count | Location | Verification |
+|----------|-------|----------|-------------|
+| Total test files | 755 | Across `lib/__tests__/`, `lib/*/\__tests\__/`, `app/` | `find` count |
+| `lib/__tests__/` | 427 | Core business logic | `find` count |
+| Payment tests | 82 files | `lib/payments/__tests__/` | `find` count |
+| Channel tests | 3 files | `lib/channels/__tests__/` | `find` count |
+| Bot flow tests | Multiple | `lib/bot/__tests__/`, `lib/bot/flows/__tests__/` | `find` count |
+| Synthetic E2E harness | `synthetic-e2e/` directory | PR #728/#729 merged | Harness exists; not yet executed against staging |
 
-### 8.2 Synthetic E2E Infrastructure (PR #728/#729 — Merged)
+### 8.2 Phase B — Contract Finalization (CTO-approved scope)
 
-Source: `synthetic-e2e/`
+- Resolve capability count/classification per CTO R1 corrections (this commit)
+- Add read-first references to CLAUDE.md, AGENTS.md, RELEASE_GATE_V2.md (this commit)
+- Validate no existing `*.contract.json` conflicts with updated matrix
 
-- **Promptfoo config**: `promptfooconfig.yaml` — persona-based conversation testing
-- **Personas**: booking, ordering, payment, confused customer, stop/start customer
-- **Staging preflight**: `staging-preflight.ts` — SHA verification, project allowlist
-- **Threat model**: `THREAT_MODEL.md` — safety gates for staging execution
-- **Network deny tests**: `capture-transport.test.ts`, `network-deny.test.ts`
-- **Report templates**: Markdown + JSONL output format
+### 8.3 Phase C — Executable Lifecycle Testing
 
-### 8.3 Phase B — Implementation Gap Remediation
+| Test Category | Capabilities | Type | Status |
+|--------------|-------------|------|--------|
+| Capability menu routing (all 32) | All | Unit (Vitest) | Partial — `cas-004-*.test.ts` covers subset |
+| Payment lifecycle per provider | scheduling, ordering, ticketing, giving, reservation, crowdfunding, invoice | Integration | Partial — `process-success*.test.ts` covers |
+| Saved card save/skip/PIN | Paystack, Stripe | Unit + Integration | Tested — dedicated test files exist |
+| Offline bank transfer lifecycle | ordering, scheduling, reservation | Disposable PG | Partial — `bank-transfer.test.ts` (11 tests) |
+| Cross-tenant isolation | All | Disposable PG | Partial — `p0-table-exposure-db.test.ts` |
+| Channel resolution | All | Unit | Tested — 3 dedicated test files |
+| STOP/START consent | All | Unit + PG | Tested — 30 tests across 2 files |
+| Post-payment fulfillment per capability | All paid | Integration | Partial — `p0-post-payment-lifecycle.test.ts` |
+| Idempotency | All paid | Integration | Tested — dedicated test files |
 
-**Prerequisites**: CTO approval of Phase A contract
+### 8.4 Phase D — Safe Staging E2E (requires separate authorization)
 
-| Task | Dependencies | Estimated Scope |
-|------|-------------|-----------------|
-| Extend existing `docs/contracts/` with lifecycle matrix | None | Docs only |
-| Add read-first references in CLAUDE.md, AGENTS.md, RELEASE_GATE_V2.md | None | Docs only |
-| Classify unsupported capabilities (estimates, packages, multi_location) | Owner decision | Docs only |
+Reuses #728/#729 `synthetic-e2e/` infrastructure.
 
-### 8.4 Phase C — Executable Lifecycle Testing
-
-| Test Category | Capabilities | Type | Environment |
-|--------------|-------------|------|-------------|
-| Bot capability routing (all 32) | All | Unit (Vitest) | Local |
-| Payment lifecycle per provider | scheduling, ordering, ticketing, giving, reservation, crowdfunding, invoice | Integration | Local |
-| Saved card save/skip/PIN per provider | Paystack, Stripe | Unit + Integration | Local |
-| Offline bank transfer lifecycle | ordering, scheduling, reservation | Disposable PG | Local |
-| Cross-tenant isolation | All | Disposable PG | Local |
-| Channel resolution (dedicated + shared) | All | Unit | Local |
-| First-time vs returning customer | All | Unit | Local |
-| Navigation (back/cancel/exit/menu) | All | Unit | Local |
-| Language switching (en, pcm) | All | Unit | Local |
-| Post-payment fulfillment per capability | All paid | Integration | Local |
-| Idempotency (duplicate webhook, retry) | All paid | Integration | Local |
-
-### 8.5 Phase D — Safe Staging E2E
-
-**Prerequisites**: Phase C tests pass, staging deployment SHA verified, separate authorization
-
-| Scenario | Staging Requirements |
-|----------|---------------------|
-| Real merchant onboarding (Playwright) | Staging Vercel deployment at known SHA |
-| Bot multi-turn customer journey | Staging Supabase (`tqjvrzopvtczxfxiwmnz`) |
-| Provider test transactions (Paystack test, Stripe test) | Provider sandbox mode verified |
-| After-payment effects verification | DB state checks post-webhook |
-| Merchant dashboard verification | Playwright + TinyFish exploratory |
-| Dedicated + shared channel routing | Meta staging app with webhook |
-
-**Safety gates** (per `synthetic-e2e/THREAT_MODEL.md`):
-- Allowlisted staging project only
-- Provider test/sandbox mode (no real charges)
+**Prerequisites for each staging execution:**
+- Verified staging deployment SHA matching branch head
+- Staging Supabase project (`tqjvrzopvtczxfxiwmnz`) confirmed
+- Provider test/sandbox mode verified (no real charges)
 - Zero uncontrolled real Meta egress
-- Captured outbound behavior
-- Fixture ownership and safe cleanup
-- Separate authorization for each staging execution
+- Fixture ownership and safe cleanup plan
+- Separate Owner authorization
 
-### 8.6 Phase E — Final Release Gate
+### 8.5 Phase E — Final Release Gate
 
-| Gate | Evidence Required |
-|------|------------------|
-| All Phase C tests pass, zero skips | Exact-head CI run |
-| Phase D staging scenarios pass | Timestamped run logs, screenshots |
-| Cross-lane PRs (#731, #740, #741) merged or explicitly excluded | GitHub state |
+| Gate | Evidence |
+|------|---------|
+| All Phase C tests pass, zero targeted skips | Exact-head CI run |
+| Phase D staging scenarios pass | Timestamped run logs |
+| Cross-lane PRs resolved or explicitly excluded | GitHub state |
 | Owner product decisions resolved | GitHub issue comments |
-| Exact-SHA independent reviewer (ChatGPT CTO) | PR review |
+| Exact-SHA CTO review | PR review on final head |
 | Owner merge authorization | Explicit approval |
-| Post-merge protected main CI green | CI run evidence |
 
 ---
 
-## 9. Launch-Readiness Exception List
+## 9. Verification Transparency
 
-| Exception | Severity | Release Impact | Mitigation |
-|-----------|----------|---------------|------------|
-| `table_reservation` not certifiable (PR #731 unmerged) | P1 | Classify as "coming soon" for launch | Independent merge track |
-| Offline merchant approval incomplete (PR #741 unmerged + CTO blockers) | P0 | **Bank transfer default OFF** — online payments unaffected | PR #741 must complete before offline certification |
-| `estimates`, `packages`, `multi_location` unsupported in bot | P2 | Dashboard-only — no customer-facing gap | Document as "dashboard-only" capabilities |
-| Only 2 certified languages (en, pcm) | P1 | 6 additional languages fall back to English | Acceptable for NG/GH launch focus |
-| No staging E2E verification yet | P0 | Cannot certify deployed behavior | Phase D requires separate authorization |
-| Flutterwave deferred for new merchant setup | P2 | Existing Flutterwave merchants unaffected | Owner decision (2026-10-24) |
+### 9.1 What Was Independently Verified in Phase A
+
+| Area | Method | Evidence |
+|------|--------|---------|
+| All 32 capability IDs match `shared/capabilities.ts` | Direct file read | SHA `1c6ed975` |
+| `getUserFacingCapabilities()` logic and counts | Direct file read of `flow-routing.ts:36-42` | SHA `1c6ed975` |
+| `prepareCapabilityMenu()` backing data checks | Direct file read of `capability-selection.flow.ts:29-118` | SHA `1c6ed975` |
+| `getFirstStepForCapability()` routing | Direct file read of `capability-selection.flow.ts:121-140` | SHA `1c6ed975` |
+| Flow registry (18 flows in EXTENDED_REGISTRY) | Direct file read of `registry.ts` | SHA `1c6ed975` |
+| Channel resolver priority and isolation | Direct file read of `channel-resolver.ts` | SHA `1c6ed975` |
+| Language catalog and certification | Direct file read of `languages.ts` | SHA `1c6ed975` |
+| Gateway resolver routing | Direct file read of `gateway-resolver.ts` | SHA `1c6ed975` |
+| Existing test file inventory | `find` command on worktree | Local worktree |
+| Cross-lane PR files and migrations | GitHub MCP `get_files` for #731, #740, #741 | Live GitHub state 2026-10-28 |
+| Issue decisions | GitHub MCP `get_comments` for #736, #721, #507 | Live GitHub state 2026-10-28 |
+| CI status for PR #744 | `gh pr checks 744` | Run 40743423666 — 12/12 green |
+
+### 9.2 What Was NOT Independently Verified in Phase A
+
+Three background audit agents were launched to deeply inspect (1) bot capability routing, (2) payment flows and providers, (3) channel and multilingual systems. **All three failed due to context-size limits (554k tokens > 200k max).** The audit was completed through direct file reads of key source files listed in 9.1 above.
+
+The following areas were audited through targeted file reads but **not** through comprehensive multi-file trace or executable test runs:
+
+- Full `bot.service.ts` (2,478 lines) — only keyword handlers and escape hatches verified by grep
+- Full payment webhook handler chain — verified through contract files and test file existence, not line-by-line trace
+- Actual post-payment fulfillment for each capability — verified through `process-success.ts` contract, not traced per-capability
+- Real WhatsApp message delivery behavior
+- Actual staging database state
+- Provider sandbox/test mode configuration
 
 ---
 
 ## 10. Owner Product Decisions Required
 
-| Decision | Context | Impact |
-|----------|---------|--------|
-| Classify `estimates`, `packages`, `multi_location` for launch | No bot flow exists — dashboard-only | Whether to show in capability selection |
-| `table_reservation` launch status | PR #731 unmerged — include or exclude from Oct 30? | Capability availability |
-| Offline bank transfer launch status | PR #741 has CTO technical blockers — launch with online-only? | Payment method availability |
-| Additional certified languages | Only en + pcm certified — expand before launch? | Multilingual UX |
-| Merchant default-on vs default-off for bank transfer | Owner approved Option B (strict OFF) — confirm enforcement | All new merchants |
+These are presented as **recommendations requiring Owner decision**, not assertions of policy.
+
+| # | Decision | Context | Recommendation | Impact |
+|---|----------|---------|---------------|--------|
+| 1 | Launch classification: `estimates`, `packages`, `multi_location` | No bot flow exists; `getUserFacingCapabilities()` excludes them from menu; dashboard-only | **Recommend**: Classify as dashboard-only for launch. No customer-facing gap since they're already excluded from WhatsApp menu. | Capability documentation |
+| 2 | `table_reservation` launch status | PR #731 unmerged, has M476-M478 | **Recommend**: Track independently on its own merge timeline. Present evidence for Owner decision. | Capability availability |
+| 3 | Offline bank transfer: enforce approved Option B (strict OFF) | Option B already approved in #721. Current code defaults ON when metadata absent. | **Recommend**: PR #741 implements this but has CTO blockers. Online payments unaffected regardless. | Payment method availability |
+| 4 | Additional certified languages | Only en + pcm certified. 6 more populated but untested at runtime. | **Recommend**: Present evidence for Owner decision on whether to certify additional languages. | Multilingual UX |
+| 5 | Migration M479 collision resolution | PR #740 and #741 both claim M479 | **Recommend**: Renumber one (likely #741 to M480+) before either merges. | Merge ordering |
 
 ---
 
 ## 11. Evidence Summary
 
-| Evidence Type | Source | SHA |
-|--------------|--------|-----|
+| Evidence Type | Source File(s) | SHA |
+|--------------|----------------|-----|
 | Capability catalog | `shared/capabilities.ts` | `1c6ed975` |
 | Capability index | `docs/contracts/capability-index.json` | `1c6ed975` |
 | Flow registry | `lib/bot/flows/registry.ts` | `1c6ed975` |
@@ -552,8 +518,7 @@ Source: `synthetic-e2e/`
 | Language catalog | `lib/bot/languages.ts` | `1c6ed975` |
 | Flow localization | `lib/bot/flows/flow-localization.ts` | `1c6ed975` |
 | Existing contracts | `docs/contracts/*.contract.json` (8 files) | `1c6ed975` |
-| Existing tests | 755 test files | `1c6ed975` |
-| Synthetic E2E harness | `synthetic-e2e/` | `1c6ed975` |
-| Cross-lane PRs | #731, #740, #741 | GitHub MCP verified 2026-10-28 |
-| Issue decisions | #736 (13 comments), #721 (60 comments), #507 (15 comments) | GitHub MCP verified 2026-10-28 |
-| Governance | Operating Order, RELEASE_GATE_V2.md, AGENTS.md | `1c6ed975` |
+| PR #731 files | GitHub MCP `pull_request_read` | `99ba6d7a` |
+| PR #740 files | GitHub MCP `pull_request_read` | `5521e891` |
+| PR #741 files | GitHub MCP `pull_request_read` | `0e7270fa` |
+| CI run | `gh pr checks 744` | Run 40743423666 |
