@@ -941,30 +941,37 @@ describe('#730: Admin API and security', () => {
     expect(code).toMatch(/isTableRes && dateSeatingResourceId[\s\S]*?eq\('seating_resource_id'/);
   });
 
-  it('select_date.prompt: Table B booked does not block Table A dates', async () => {
+  it('select_date.prompt: busy Table B does not hide free Table A dates', async () => {
     const { getFlowStep } = await import('@/lib/bot/flows/registry');
     const step = getFlowStep('scheduling', 'select_date');
 
-    // Tomorrow's date for realistic test
+    // Setup: Table A (res-A) has capacity=1, Table B (res-B) is fully booked.
+    // When querying for res-A, the resource-scoped query returns NO bookings
+    // (because B's bookings are on a different resource_id).
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-    // Mock: Table A (res-A) has zero bookings — query scoped to res-A returns empty
+    // Mock supabase: tracks which resource_id was filtered
+    let capturedResourceId: string | null = null;
     const mockChain: any = {};
-    mockChain.eq = vi.fn().mockReturnValue(mockChain);
+    mockChain.eq = vi.fn((...args: any[]) => {
+      if (args[0] === 'seating_resource_id') capturedResourceId = args[1];
+      return mockChain;
+    });
     mockChain.in = vi.fn().mockReturnValue(mockChain);
     mockChain.gte = vi.fn().mockReturnValue(mockChain);
     mockChain.lte = vi.fn().mockReturnValue(mockChain);
-    mockChain.limit = vi.fn().mockResolvedValue({ data: [] }); // No bookings for this resource
+    // Return empty — Table A has no bookings (B's bookings are filtered out)
+    mockChain.limit = vi.fn().mockResolvedValue({ data: [] });
     const mockSupabase = { from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(mockChain) }) } as any;
 
     const ctx = {
       session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_date', version: 1,
         session_data: {
           _is_table_reservation: true,
-          seating_resource_id: 'res-A',
-          _seating_capacity: 1, // Capacity 1 so a single booking fills it
+          seating_resource_id: 'res-A', // Selecting Table A
+          _seating_capacity: 1,
           _service_max_capacity: 1,
           service_duration: 90,
           _service_available_days: [],
@@ -977,14 +984,101 @@ describe('#730: Admin API and security', () => {
 
     const msgs = await step!.prompt(ctx);
 
-    // Query must be scoped to seating_resource_id
-    const eqCalls = mockChain.eq.mock.calls.map((c: any[]) => c[0]);
-    expect(eqCalls).toContain('seating_resource_id');
+    // Verify query was scoped to res-A (not business-wide)
+    expect(capturedResourceId).toBe('res-A');
 
-    // With no bookings for res-A, dates should be available (not empty)
-    const hasButtons = msgs.some((m: any) => m.type === 'buttons' && m.buttons?.length > 0);
-    const hasList = msgs.some((m: any) => m.type === 'list' && m.items?.length > 0);
-    expect(hasButtons || hasList).toBe(true);
+    // Table A dates should be available (B's bookings don't affect A)
+    const hasDateChoices = msgs.some((m: any) =>
+      (m.type === 'buttons' && m.buttons?.length > 0) ||
+      (m.type === 'list' && m.items?.length > 0));
+    expect(hasDateChoices).toBe(true);
+  });
+
+  it('select_date.prompt: fully booked Table A hides its unavailable dates', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_date');
+
+    // Generate dates for the next 30 days with one booking per slot per day
+    const bookings: Array<{date: string; time: string}> = [];
+    for (let i = 1; i <= 30; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      const dateStr = d.toISOString().split('T')[0];
+      // Fill every hour from 08:00-22:00 (14 slots) for capacity=1 (default hours)
+      for (let h = 8; h < 22; h++) {
+        bookings.push({ date: dateStr, time: `${h.toString().padStart(2,'0')}:00` });
+      }
+    }
+
+    const mockChain: any = {};
+    mockChain.eq = vi.fn().mockReturnValue(mockChain);
+    mockChain.in = vi.fn().mockReturnValue(mockChain);
+    mockChain.gte = vi.fn().mockReturnValue(mockChain);
+    mockChain.lte = vi.fn().mockReturnValue(mockChain);
+    mockChain.limit = vi.fn().mockResolvedValue({ data: bookings });
+    const mockSupabase = { from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(mockChain) }) } as any;
+
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_date', version: 1,
+        session_data: {
+          _is_table_reservation: true,
+          seating_resource_id: 'res-A',
+          _seating_capacity: 1, // One booking fills it
+          _service_max_capacity: 1,
+          service_duration: 60,
+          _service_available_days: [],
+        },
+      },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', operating_hours: {}, metadata: {} },
+      supabase: mockSupabase, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1',
+      copyLang: 'en', t: (s: string) => Promise.resolve(s),
+    } as any;
+
+    const msgs = await step!.prompt(ctx);
+
+    // With all dates fully booked: should have no list items with date choices.
+    // The prompt may show "no dates available" text or a "pick a date" button
+    // that leads to an empty list. Verify no actual date postbacks are offered.
+    const listDates = msgs
+      .filter((m: any) => m.type === 'list')
+      .flatMap((m: any) => m.items || []);
+    expect(listDates.length).toBe(0); // No selectable dates for fully-booked resource
+  });
+
+  it('select_date.prompt: appointment/scheduling uses business-wide query (no resource filter)', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_date');
+
+    let capturedResourceFilter = false;
+    const mockChain: any = {};
+    mockChain.eq = vi.fn((...args: any[]) => {
+      if (args[0] === 'seating_resource_id') capturedResourceFilter = true;
+      return mockChain;
+    });
+    mockChain.in = vi.fn().mockReturnValue(mockChain);
+    mockChain.gte = vi.fn().mockReturnValue(mockChain);
+    mockChain.lte = vi.fn().mockReturnValue(mockChain);
+    mockChain.limit = vi.fn().mockResolvedValue({ data: [] });
+    const mockSupabase = { from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(mockChain) }) } as any;
+
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_date', version: 1,
+        session_data: {
+          // NOT a table reservation — normal scheduling
+          _service_max_capacity: 5,
+          service_duration: 30,
+          _service_available_days: [],
+        },
+      },
+      business: { id: 'b', name: 'T', slug: 't', category: 'salon' as const, flow_type: 'scheduling' as const, subscription_tier: 'free', country_code: 'NG', operating_hours: {}, metadata: {} },
+      supabase: mockSupabase, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1',
+      copyLang: 'en', t: (s: string) => Promise.resolve(s),
+    } as any;
+
+    await step!.prompt(ctx);
+
+    // Normal scheduling should NOT filter by seating_resource_id
+    expect(capturedResourceFilter).toBe(false);
   });
 
   it('select_date.prompt: missing seating_resource_id fails safe', async () => {
