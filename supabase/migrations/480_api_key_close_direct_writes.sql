@@ -1,4 +1,4 @@
--- 479_api_key_close_direct_writes.sql
+-- 480_api_key_close_direct_writes.sql
 -- Issue #705: Close direct authenticated DML bypass on api_keys table.
 --
 -- DESTRUCTIVE — apply ONLY after all app instances are deployed with
@@ -9,7 +9,7 @@
 --   1. Apply M474 (additive RPCs) — safe anytime
 --   2. Deploy app code using service-client RPCs
 --   3. Verify all instances serve correctly (no direct DML errors in logs)
---   4. Apply this migration (M479) to close the bypass
+--   4. Apply this migration (M480) to close the bypass
 --
 -- Rollback: GRANT INSERT, UPDATE, DELETE ON public.api_keys TO authenticated;
 
@@ -47,21 +47,21 @@ BEGIN
   SELECT has_table_privilege('service_role', 'public.api_keys', 'SELECT') INTO v_sr_select;
 
   IF v_auth_insert OR v_auth_update OR v_auth_delete THEN
-    RAISE EXCEPTION 'M479 verification FAILED: authenticated still has write access to api_keys';
+    RAISE EXCEPTION 'M480 verification FAILED: authenticated still has write access to api_keys';
   END IF;
 
   IF NOT v_auth_select THEN
-    RAISE EXCEPTION 'M479 verification FAILED: authenticated lost SELECT on api_keys';
+    RAISE EXCEPTION 'M480 verification FAILED: authenticated lost SELECT on api_keys';
   END IF;
 
   IF v_anon_insert THEN
-    RAISE EXCEPTION 'M479 verification FAILED: anon has INSERT on api_keys';
+    RAISE EXCEPTION 'M480 verification FAILED: anon has INSERT on api_keys';
   END IF;
 
   IF NOT v_sr_insert OR NOT v_sr_select THEN
-    RAISE EXCEPTION 'M479 verification FAILED: service_role missing CRUD on api_keys';
+    RAISE EXCEPTION 'M480 verification FAILED: service_role missing CRUD on api_keys';
   END IF;
 
-  RAISE NOTICE 'M479 self-verification PASSED: api_keys write-locked, authenticated SELECT preserved';
+  RAISE NOTICE 'M480 self-verification PASSED: api_keys write-locked, authenticated SELECT preserved';
 END;
 $$;

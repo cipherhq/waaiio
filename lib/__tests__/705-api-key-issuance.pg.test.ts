@@ -20,7 +20,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 
 const M474_PATH = path.resolve('supabase/migrations/474_api_key_atomic_issuance.sql');
-const M479_PATH = path.resolve('supabase/migrations/479_api_key_close_direct_writes.sql');
+const M480_PATH = path.resolve('supabase/migrations/480_api_key_close_direct_writes.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 // ── Disposable database safety guard ────────────────────────────
@@ -333,7 +333,7 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
     execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M474_PATH}"`, {
       encoding: 'utf-8', timeout: 30000,
     });
-    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M479_PATH}"`, {
+    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M480_PATH}"`, {
       encoding: 'utf-8', timeout: 30000,
     });
 
