@@ -1336,22 +1336,54 @@ export const schedulingFlow: FlowDefinition = {
 
         // Double-check slot availability (prevent race condition)
         const dateStr = ctx.session.session_data.date as string;
-        const staffId = ctx.session.session_data.staff_id as string | null;
-        const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
+        const isTableRes = ctx.session.session_data._is_table_reservation === true;
+        const valSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
 
-        let checkQuery = ctx.supabase
-          .from('bookings')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', ctx.business!.id)
-          .eq('date', dateStr)
-          .eq('time', input)
-          .in('status', ['confirmed', 'pending', 'in_progress']);
+        if (isTableRes && valSeatingResourceId) {
+          // Table reservations: duration-aware overlap check against SAME resource
+          // (authoritative concurrency is in book_table_atomic; this is UX-level)
+          const resDuration = (ctx.session.session_data._seating_duration as number) || 90;
+          const reqStartMin = timeToMinutes(input);
+          const reqEndMin = reqStartMin + resDuration;
 
-        if (staffId) checkQuery = checkQuery.eq('staff_id', staffId);
+          const { data: existingRes } = await ctx.supabase
+            .from('bookings')
+            .select('time, metadata')
+            .eq('seating_resource_id', valSeatingResourceId)
+            .eq('date', dateStr)
+            .in('status', ['confirmed', 'pending', 'in_progress']);
 
-        const { count } = await checkQuery;
-        if ((count || 0) >= maxCapacity) {
-          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.time_taken') };
+          const hasOverlap = (existingRes || []).some(b => {
+            if (!b.time) return false;
+            const bStartMin = timeToMinutes(b.time.slice(0, 5));
+            const bMeta = b.metadata as Record<string, unknown> | null;
+            const bDuration = (bMeta?.duration_minutes as number) || resDuration;
+            const bEndMin = bStartMin + bDuration;
+            return reqStartMin < bEndMin && reqEndMin > bStartMin;
+          });
+
+          if (hasOverlap) {
+            return { valid: false, errorMessage: 'That time is already reserved for this table. Try a different time.' };
+          }
+        } else {
+          // Standard service/appointment: business-wide slot count
+          const staffId = ctx.session.session_data.staff_id as string | null;
+          const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
+
+          let checkQuery = ctx.supabase
+            .from('bookings')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', ctx.business!.id)
+            .eq('date', dateStr)
+            .eq('time', input)
+            .in('status', ['confirmed', 'pending', 'in_progress']);
+
+          if (staffId) checkQuery = checkQuery.eq('staff_id', staffId);
+
+          const { count } = await checkQuery;
+          if ((count || 0) >= maxCapacity) {
+            return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.time_taken') };
+          }
         }
 
         ctx.intelligence.resetAbuse(ctx.from);
@@ -2877,12 +2909,19 @@ export const schedulingFlow: FlowDefinition = {
             }
           }
 
-          // Save pre-booking question answers if any
+          // Save pre-booking question answers if any — MERGE into existing metadata
+          // (table reservations store duration_minutes; must not be erased)
           const pbqAnswers = d._pbq_answers as Record<string, string> | undefined;
           if (pbqAnswers && Object.keys(pbqAnswers).length > 0) {
+            const { data: currentBooking } = await ctx.supabase
+              .from('bookings')
+              .select('metadata')
+              .eq('id', booking.id)
+              .single();
+            const existingMeta = (currentBooking?.metadata as Record<string, unknown>) || {};
             await ctx.supabase
               .from('bookings')
-              .update({ metadata: { custom_answers: pbqAnswers } })
+              .update({ metadata: { ...existingMeta, custom_answers: pbqAnswers } })
               .eq('id', booking.id);
           }
         }

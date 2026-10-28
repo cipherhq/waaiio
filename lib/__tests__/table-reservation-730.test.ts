@@ -554,6 +554,43 @@ describe('#730: Admin API and security', () => {
     expect(code).toContain("flow_type !== 'table_reservation'");
   });
 
+  it('PBQ custom_answers merges into existing metadata (preserves duration)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts'), 'utf-8');
+
+    // Must read existing metadata before writing (merge, not replace)
+    expect(code).toContain("select('metadata')");
+    expect(code).toContain('...existingMeta, custom_answers:');
+  });
+
+  it('select_time.validate scopes to seating_resource_id for table reservations', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts'), 'utf-8');
+
+    // validate must scope to resource for table reservations
+    expect(code).toContain('valSeatingResourceId');
+    expect(code).toContain("eq('seating_resource_id', valSeatingResourceId)");
+    // Must use duration-aware overlap, not simple count
+    expect(code).toContain('reqStartMin < bEndMin && reqEndMin > bStartMin');
+  });
+
+  it('capability switch clears stale table-reservation state', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/capability-selection.flow.ts'), 'utf-8');
+
+    // Must clear table state when switching away from table_reservation
+    expect(code).toContain("capId !== 'table_reservation'");
+    expect(code).toContain('_is_table_reservation');
+    expect(code).toContain('seating_resource_id');
+    expect(code).toContain('_seating_deposit');
+    expect(code).toContain('staleTableCleanup');
+    // Must also clear service state when switching TO table_reservation
+    expect(code).toContain("capId === 'table_reservation' && !ctx.session.session_data._is_table_reservation");
+  });
+
   it('WhatsApp hides reschedule button for table reservations', async () => {
     const fs = await import('fs');
     const path = await import('path');
