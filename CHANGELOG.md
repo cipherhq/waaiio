@@ -1,3 +1,9 @@
+### #736 — Phase A R3: migration reconciliation after PR #740 merge (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: Reconciled cross-lane dependency map against current GitHub state after PR #740 merged to main as `c3b33307`. (1) PR #740 moved from "active unmerged" to "merged" section — M474 applied to staging. (2) Added PR #745 (M480, DML lockdown follow-up). (3) Removed obsolete M479 collision claim — resolved by PR #740 renumbering before merge. (4) Updated all PR HEAD SHAs to current GitHub values. (5) Removed GAP-007 (collision) and GAP-013 (PR #740 DB test skip — PR merged with CI green). (6) Updated evidence summary with merge SHA and R3 verification dates.
+- **Affects**: Documentation only. No code, migrations, or runtime changes.
+- **Could break**: Nothing.
+
 ### #736 — Full 32-capability WhatsApp E2E certification contract — Phase A R2 (2026-10-28)
 
 - **`docs/contracts/736-capability-e2e-contract.md`**: R2 correction per CTO review. (1) Normalized 32-capability matrix with five orthogonal dimensions (entry type, bot implementation, test coverage, certification level, dependency status) — exactly 32 rows, no double-counting. (2) Corrected migration numbers: PR #740 uses M474+M479, PR #741 uses M479. Documented M479 namespace collision between #740 and #741. (3) Removed unauthorized launch conclusions — all launch timing decisions presented as Owner recommendations, not assertions. (4) Corrected offline payment vs booking approval language: auto-accept merchants keep auto-accept behavior after fund verification; manual-approval merchants get split Confirm Payment / Confirm & Approve actions. (5) Added Section 9 (Verification Transparency) documenting exactly what was independently verified vs unverified, including acknowledgment that 3 delegated agents failed due to context limits. (6) All claims now cite actual test file names and verification method.

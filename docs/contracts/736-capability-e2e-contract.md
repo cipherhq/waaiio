@@ -2,10 +2,11 @@
 
 > **Phase A: Contract, Dependency Audit, Traceability Matrix, and Certification Plan**
 >
-> Base SHA: `1c6ed9757d26ee849b9293c6c8ada67684e81ef3` (protected main)
+> Base SHA: `1c6ed9757d26ee849b9293c6c8ada67684e81ef3` (branch base)
+> Protected main: `c3b333079` (includes merged PR #740 / M474)
 > Lane: `audit/736-capability-e2e-contract`
 > Worktree: `~/Desktop/waaiio-agent-lanes/capability-e2e-736`
-> Date: 2026-10-28 (R2 correction: 2026-10-28)
+> Date: 2026-10-28 (R2: 2026-10-28, R3 migration reconciliation: 2026-10-29)
 
 ---
 
@@ -332,37 +333,41 @@ Source: `lib/bot/flows/shared/bank-transfer.ts`, `app/api/dashboard/pending-tran
 
 ## 6. Cross-Lane Dependency Map
 
-### 6.1 Active Unmerged PRs (verified via GitHub MCP 2026-10-28)
+### 6.1 Merged PRs
+
+| PR | Merge SHA | Migration | Status |
+|----|-----------|-----------|--------|
+| **#740** | `c3b33307` | **M474** (`474_api_key_atomic_issuance.sql`) | **Merged** to main. M474 applied to staging and DB-verified. Runtime smoke testing outstanding. Production M474 not yet applied. |
+
+### 6.2 Active Unmerged PRs (verified via GitHub MCP 2026-10-29)
 
 | PR | Branch | HEAD SHA | Status | Migration Files | Capability Impact |
 |----|--------|----------|--------|-----------------|-------------------|
-| **#731** | `feat/730-booking-reservation-ux` | `99ba6d7a` | DRAFT, CI 12/12 green | M476, M477, M478 | Blocks `table_reservation` — adds `seating_resources` table, `book_table_atomic` RPC |
-| **#740** | `security/705-api-key-issuance` | `5521e891` | DRAFT, mergeable_state=blocked | **M474**, **M479** | No direct capability impact. API-key security (atomic issuance + close direct writes) |
-| **#741** | `fix/736-offline-merchant-approval` | `0e7270fa` | DRAFT, mergeable_state=blocked | **M479** | Blocks offline bank transfer certification — payment vs fulfillment separation |
+| **#745** | `security/705-api-key-dml-lockdown` | `0efd6503` | DRAFT | M474 (dup of merged) + **M480** | No capability impact. DML lockdown follow-up to merged #740. |
+| **#731** | `feat/730-booking-reservation-ux` | `b1c6da9c` | DRAFT | **M476**, **M477**, **M478** | Blocks `table_reservation` — adds `seating_resources`, `book_table_atomic` RPC |
+| **#741** | `fix/736-offline-merchant-approval` | `88c22d71` | DRAFT | **M479** | Blocks offline bank transfer certification — payment vs fulfillment separation |
 
-### 6.2 Migration Namespace Collision
+### 6.3 Migration Namespace Map (no collisions)
 
-**COLLISION: PR #740 and PR #741 both claim migration number 479.**
-- PR #740: `479_api_key_close_direct_writes.sql`
-- PR #741: `479_offline_merchant_approval.sql`
+| Number | File | PR | Status |
+|--------|------|-----|--------|
+| M474 | `474_api_key_atomic_issuance.sql` | #740 (merged) | **Merged on main, staging-applied** |
+| M476 | `476_seating_resources_table_reservation.sql` | #731 | Draft, not applied |
+| M477 | `477_exclude_table_bookings_from_slot_capacity.sql` | #731 | Draft, not applied |
+| M478 | `478_reschedule_table_isolation.sql` | #731 | Draft, not applied |
+| M479 | `479_offline_merchant_approval.sql` | #741 | Draft, not applied |
+| M480 | `480_api_key_close_direct_writes.sql` | #745 | Draft, not applied |
 
-This must be resolved before either PR can merge. One migration must be renumbered.
-
-### 6.3 Migration Registry Status
-
-- **Staging last applied**: 411 entries, last canonical at M470/M471
-- **Production last applied**: 359 entries, last at M425
-- **Already-applied timestamped**: `20261026153114` named `472_refund_fee_allocation_period_fix` — distinct naming scheme, no collision with numeric M472+
-- **Not applied to either environment**: M474 (#740), M476-M478 (#731), M479 (collision)
+The prior M479 collision (reported in R2) is **resolved** — PR #740 was renumbered to M474 before merge; its DML lockdown was split to PR #745 as M480. All pending migrations now have unique numbers.
 
 ### 6.4 Dependency Effects on Capability Certification
 
 | Capability | External Dependency | Certification Effect |
 |-----------|-------------------|---------------------|
 | `table_reservation` | PR #731 (M476-M478) | Cannot certify until merged + migrated |
-| All offline payment paths | PR #741 (M479) + CTO R2-R8 blockers | Cannot certify offline until resolved; online paths unaffected |
-| API key issuance | PR #740 (M474, M479) | No capability impact; security improvement |
+| All offline payment paths | PR #741 (M479) + CTO R2-R8 blockers in #721 | Cannot certify offline until resolved; online paths unaffected |
 | `ordering` + offline | `confirm_order_transfer_atomic` sets `orders.status='confirmed'` inside RPC | SQL authority gap for payment-only vs approval separation |
+| API key DML lockdown | PR #745 (M480) | No capability impact; staged deploy after #740 runtime verification |
 
 ---
 
@@ -383,18 +388,16 @@ This must be resolved before either PR can merge. One migration must be renumber
 | ID | Gap | Evidence | Affected | Dependency |
 |----|-----|---------|----------|------------|
 | GAP-006 | `table_reservation` requires unmerged PR #731 | PR #731 DRAFT with M476-M478 | table_reservation | PR #731 merge + migration |
-| GAP-007 | Migration namespace collision: M479 claimed by both PR #740 and #741 | GitHub MCP file listing for both PRs | API keys + offline approval | Renumbering required |
-| GAP-008 | `estimates`, `packages`, `multi_location` have no bot flow — customer interaction undefined | `flow-routing.ts` falls through to `select_service` | estimates, packages, multi_location | Owner decision on launch classification |
-| GAP-009 | `table_reservation` backing check uses same query as `scheduling` | `capability-selection.flow.ts` line 84-88 | table_reservation | PR #731 should add specific seating check |
-| GAP-010 | `membership`, `referral`, `reminders`, `staff`, `whatsapp_sign`, `reports`, `waiver` lack dedicated executable tests for their specific code paths | Test file search found no dedicated test files | 7 capabilities | Phase C test development |
+| GAP-007 | `estimates`, `packages`, `multi_location` have no bot flow — customer interaction undefined | `flow-routing.ts` falls through to `select_service` | estimates, packages, multi_location | Owner decision on launch classification |
+| GAP-008 | `table_reservation` backing check uses same query as `scheduling` | `capability-selection.flow.ts` line 84-88 | table_reservation | PR #731 should add specific seating check |
+| GAP-009 | `membership`, `referral`, `reminders`, `staff`, `whatsapp_sign`, `reports`, `waiver` lack dedicated executable tests for their specific code paths | Test file search found no dedicated test files | 7 capabilities | Phase C test development |
 
 ### 7.3 P2 Gaps
 
 | ID | Gap | Evidence |
 |----|-----|---------|
-| GAP-011 | Flutterwave deferred for new merchant setup | `SETUP_AVAILABLE_GATEWAYS` excludes it; Owner decision 2026-10-24 |
-| GAP-012 | PR #731 dashboard tests use `fs.readFileSync` not actual React render | CTO R1 comment on #736 |
-| GAP-013 | 31 DB security tests in PR #740 skip without `TEST_DATABASE_URL` in CI | PR #740 description |
+| GAP-010 | Flutterwave deferred for new merchant setup | `SETUP_AVAILABLE_GATEWAYS` excludes it; Owner decision 2026-10-24 |
+| GAP-011 | PR #731 dashboard tests use `fs.readFileSync` not actual React render | CTO R1 comment on #736 |
 
 ---
 
@@ -471,9 +474,10 @@ Reuses #728/#729 `synthetic-e2e/` infrastructure.
 | Language catalog and certification | Direct file read of `languages.ts` | SHA `1c6ed975` |
 | Gateway resolver routing | Direct file read of `gateway-resolver.ts` | SHA `1c6ed975` |
 | Existing test file inventory | `find` command on worktree | Local worktree |
-| Cross-lane PR files and migrations | GitHub MCP `get_files` for #731, #740, #741 | Live GitHub state 2026-10-28 |
+| Cross-lane PR files and migrations | GitHub MCP + `gh api` for #731, #741, #745 | Live GitHub state 2026-10-29 |
+| PR #740 merged state | `git log origin/main`, GitHub MCP | Merge SHA `c3b33307`, 2026-10-29 |
 | Issue decisions | GitHub MCP `get_comments` for #736, #721, #507 | Live GitHub state 2026-10-28 |
-| CI status for PR #744 | `gh pr checks 744` | Run 40743423666 — 12/12 green |
+| CI status for PR #744 (R2) | `gh pr checks 744` | Run 40746741556 — 12/12 green on `4563ae56` |
 
 ### 9.2 What Was NOT Independently Verified in Phase A
 
@@ -500,7 +504,6 @@ These are presented as **recommendations requiring Owner decision**, not asserti
 | 2 | `table_reservation` launch status | PR #731 unmerged, has M476-M478 | **Recommend**: Track independently on its own merge timeline. Present evidence for Owner decision. | Capability availability |
 | 3 | Offline bank transfer: enforce approved Option B (strict OFF) | Option B already approved in #721. Current code defaults ON when metadata absent. | **Recommend**: PR #741 implements this but has CTO blockers. Online payments unaffected regardless. | Payment method availability |
 | 4 | Additional certified languages | Only en + pcm certified. 6 more populated but untested at runtime. | **Recommend**: Present evidence for Owner decision on whether to certify additional languages. | Multilingual UX |
-| 5 | Migration M479 collision resolution | PR #740 and #741 both claim M479 | **Recommend**: Renumber one (likely #741 to M480+) before either merges. | Merge ordering |
 
 ---
 
@@ -518,7 +521,8 @@ These are presented as **recommendations requiring Owner decision**, not asserti
 | Language catalog | `lib/bot/languages.ts` | `1c6ed975` |
 | Flow localization | `lib/bot/flows/flow-localization.ts` | `1c6ed975` |
 | Existing contracts | `docs/contracts/*.contract.json` (8 files) | `1c6ed975` |
-| PR #731 files | GitHub MCP `pull_request_read` | `99ba6d7a` |
-| PR #740 files | GitHub MCP `pull_request_read` | `5521e891` |
-| PR #741 files | GitHub MCP `pull_request_read` | `0e7270fa` |
-| CI run | `gh pr checks 744` | Run 40743423666 |
+| PR #740 (merged) | GitHub MCP, `git log origin/main` | Merge SHA `c3b33307` on main |
+| PR #745 files | GitHub API `pulls/745/files` | `0efd6503` |
+| PR #731 files | GitHub API `pulls/731/files` | `b1c6da9c` |
+| PR #741 files | GitHub API `pulls/741/files` | `88c22d71` |
+| CI run (R2) | `gh pr checks 744` | Run 40746741556 — 12/12 green on `4563ae56` |
