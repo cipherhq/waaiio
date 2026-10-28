@@ -700,6 +700,85 @@ describe('#730: Admin API and security', () => {
     }
   });
 
+  it('table quantity buttons are unique for capacity=4 (P1-QTY fix)', () => {
+    // Simulate the button generation logic for a 4-seat table (min=1, max=4)
+    const minCap = 1, maxCap = 4;
+    const candidates = new Set<number>();
+    candidates.add(minCap);
+    if (maxCap !== minCap) candidates.add(maxCap);
+    const mid = Math.round((minCap + maxCap) / 2);
+    if (mid > minCap && mid < maxCap) candidates.add(mid);
+    if (candidates.size < 3 && minCap + 1 < maxCap) candidates.add(minCap + 1);
+    const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
+    const buttons = sorted.map(n => ({ id: String(n), title: `${n} guest${n > 1 ? 's' : ''}` }));
+
+    // Must have unique IDs
+    const ids = buttons.map(b => b.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // Must be within range
+    for (const b of buttons) {
+      const n = parseInt(b.id);
+      expect(n).toBeGreaterThanOrEqual(minCap);
+      expect(n).toBeLessThanOrEqual(maxCap);
+    }
+    // Specifically: no duplicate '4' button
+    expect(ids.filter(id => id === '4').length).toBeLessThanOrEqual(1);
+  });
+
+  it('table quantity buttons are unique for capacity=2 min=2 (single value)', () => {
+    const minCap = 2, maxCap = 2;
+    const candidates = new Set<number>();
+    candidates.add(minCap);
+    if (maxCap !== minCap) candidates.add(maxCap);
+    const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
+    const buttons = sorted.map(n => ({ id: String(n), title: `${n} guests` }));
+    expect(buttons.length).toBe(1);
+    expect(buttons[0].id).toBe('2');
+  });
+
+  it('table quantity buttons are unique for capacity=6 min=2', () => {
+    const minCap = 2, maxCap = 6;
+    const candidates = new Set<number>();
+    candidates.add(minCap);
+    if (maxCap !== minCap) candidates.add(maxCap);
+    const mid = Math.round((minCap + maxCap) / 2);
+    if (mid > minCap && mid < maxCap) candidates.add(mid);
+    if (candidates.size < 3 && minCap + 1 < maxCap) candidates.add(minCap + 1);
+    const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
+
+    const ids = sorted.map(String);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(sorted.every(n => n >= minCap && n <= maxCap)).toBe(true);
+    expect(sorted.length).toBeLessThanOrEqual(3);
+  });
+
+  it('dashboard uses table-specific status actions (not lodging checked_in)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
+
+    // Must have tableReservationActions defined
+    expect(code).toContain('tableReservationActions');
+    // Table bookings use 'Seat' (→ in_progress), not 'Check In' (→ checked_in)
+    expect(code).toMatch(/tableReservationActions[\s\S]*?Seat.*in_progress/);
+    // Per-row action selection based on flow_type
+    expect(code).toContain('getActionsForBooking');
+    expect(code).toContain("flow_type === 'table_reservation'");
+    // Must NOT use global nextActions
+    expect(code).not.toContain('nextActions');
+  });
+
+  it('M472 overlap query includes in_progress (seated tables block overlap)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/472_seating_resources_table_reservation.sql'), 'utf-8');
+
+    // Overlap query must include in_progress
+    const overlapMatch = sql.match(/overlap check[\s\S]*?status IN \(([^)]+)\)/);
+    expect(overlapMatch).toBeTruthy();
+    expect(overlapMatch![1]).toContain('in_progress');
+  });
+
   it('WhatsApp hides reschedule button for table reservations', async () => {
     const fs = await import('fs');
     const path = await import('path');

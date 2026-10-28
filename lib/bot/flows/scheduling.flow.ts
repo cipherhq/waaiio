@@ -1714,27 +1714,29 @@ export const schedulingFlow: FlowDefinition = {
           }];
         }
 
-        // Table reservation: use seating capacity bounds
+        // Table reservation: generate unique buttons within [minCap, maxCap]
         const isTableReservation = ctx.session.session_data._is_table_reservation === true;
         if (isTableReservation) {
           const maxCap = (ctx.session.session_data._seating_capacity as number) || 10;
           const minCap = (ctx.session.session_data._seating_min_party as number) || 1;
-          const buttons = maxCap <= 3
-            ? [
-                ...(minCap <= 1 ? [{ id: '1', title: '1 guest' }] : []),
-                ...(minCap <= 2 && maxCap >= 2 ? [{ id: '2', title: '2 guests' }] : []),
-                ...(maxCap >= 3 ? [{ id: '3', title: '3 guests' }] : []),
-              ]
-            : [
-                { id: '2', title: '2 guests' },
-                { id: '4', title: '4 guests' },
-                ...(maxCap >= 6 ? [{ id: '6', title: '6 guests' }] : [{ id: String(maxCap), title: `${maxCap} guests` }]),
-              ];
-          const rangeLabel = minCap === 1 ? `1-${maxCap}` : `${minCap}-${maxCap}`;
+          // Generate up to 3 unique values within [minCap, maxCap]
+          const candidates = new Set<number>();
+          candidates.add(minCap);
+          if (maxCap !== minCap) candidates.add(maxCap);
+          const mid = Math.round((minCap + maxCap) / 2);
+          if (mid > minCap && mid < maxCap) candidates.add(mid);
+          // If still < 3 options and range allows, add another
+          if (candidates.size < 3 && minCap + 1 < maxCap) candidates.add(minCap + 1);
+          const sorted = Array.from(candidates).sort((a, b) => a - b).slice(0, 3);
+          const buttons = sorted.map(n => ({
+            id: String(n),
+            title: `${n} guest${n > 1 ? 's' : ''}`,
+          }));
+          const rangeLabel = minCap === maxCap ? `${minCap}` : `${minCap}-${maxCap}`;
           return [{
             type: 'buttons',
             body: `How many guests will be dining?\n\nType a number (${rangeLabel}).`,
-            buttons: buttons.length > 0 ? buttons : [{ id: String(minCap), title: `${minCap} guest${minCap > 1 ? 's' : ''}` }],
+            buttons,
           }];
         }
 

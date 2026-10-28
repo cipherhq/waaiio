@@ -100,6 +100,22 @@ const schedulingActions: Record<string, { label: string; next: string; color: st
   ],
 };
 
+// Actions for table reservation bookings (restaurants, lounges)
+const tableReservationActions: Record<string, { label: string; next: string; color: string }[]> = {
+  pending: [
+    { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
+    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
+  ],
+  confirmed: [
+    { label: 'Seat', next: 'in_progress', color: 'text-blue-600 hover:bg-blue-50' },
+    { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
+    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
+  ],
+  in_progress: [
+    { label: 'Complete', next: 'completed', color: 'text-gray-600 hover:bg-gray-50' },
+  ],
+};
+
 // Actions for reservation businesses (hotel, shortlet, car rental)
 const reservationActions: Record<string, { label: string; next: string; color: string }[]> = {
   pending: [
@@ -399,7 +415,12 @@ export default function BookingsPage() {
   const isReservationType = business.flow_type === 'reservation';
   const hasReservationCapability = business.capabilities?.includes('reservation' as any);
   const showReservations = isReservationType || hasReservationCapability;
-  const nextActions = showReservations ? reservationActions : schedulingActions;
+  // Per-row action set based on booking type (not global business capability)
+  const getActionsForBooking = (b: Booking) => {
+    if (b._isReservation) return reservationActions;
+    if (b.flow_type === 'table_reservation') return tableReservationActions;
+    return schedulingActions;
+  };
 
   const fetchBookings = useCallback(async () => {
     try {
@@ -899,7 +920,7 @@ export default function BookingsPage() {
                   <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap min-w-[5rem]">{r.reference_code}</td>
                   <td className="px-4 py-3">
                     {(() => {
-                      const actions = (nextActions[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next));
+                      const actions = (getActionsForBooking(r)[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next));
                       if (actions.length === 0) {
                         return <span className="text-xs text-gray-400 dark:text-gray-500">—</span>;
                       }
@@ -1660,10 +1681,10 @@ export default function BookingsPage() {
               )}
 
               {/* Actions */}
-              {nextActions[selected.status] && nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).length > 0 && (
+              {getActionsForBooking(selected)[selected.status] && getActionsForBooking(selected)[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).length > 0 && (
                 <div className="border-t border-gray-100 pt-4">
                   <div className="flex flex-wrap gap-2">
-                    {nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
+                    {getActionsForBooking(selected)[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
                       <button key={action.next}
                         onClick={() => { updateStatus(selected.id, action.next); setSelectedId(null); }}
                         className={`rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium ${action.color}`}>

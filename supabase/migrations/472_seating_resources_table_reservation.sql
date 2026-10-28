@@ -194,7 +194,7 @@ BEGIN
       AND b.date = p_date
       AND b.time = p_time::TIME
       AND b.party_size = p_party_size
-      AND b.status IN ('pending', 'confirmed')
+      AND b.status IN ('pending', 'confirmed', 'in_progress')
     LIMIT 1;
     IF FOUND THEN
       RETURN QUERY SELECT v_booking_id, v_ref, true;
