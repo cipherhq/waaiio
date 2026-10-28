@@ -891,19 +891,18 @@ describe('#730: Admin API and security', () => {
     expect(result.valid).toBe(false);
   });
 
-  it('dashboard uses table-specific status actions (not lodging checked_in)', async () => {
+  it('dashboard imports production-owned presentation module', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
 
-    // Must have tableReservationActions defined
-    expect(code).toContain('tableReservationActions');
-    // Table bookings use 'Seat' (→ in_progress), not 'Check In' (→ checked_in)
-    expect(code).toMatch(/tableReservationActions[\s\S]*?Seat.*in_progress/);
-    // Per-row action selection based on flow_type
+    // Must import from BookingPresentation (not define inline)
+    expect(code).toContain("from '@/components/dashboard/BookingPresentation'");
     expect(code).toContain('getActionsForBooking');
-    expect(code).toContain("flow_type === 'table_reservation'");
-    // Must NOT use global nextActions
+    expect(code).toContain('getColumnHeader');
+    expect(code).toContain('getRowResourceLabel');
+    // Must NOT have inline action definitions
+    expect(code).not.toMatch(/const schedulingActions.*Record/);
     expect(code).not.toContain('nextActions');
   });
 
@@ -918,16 +917,15 @@ describe('#730: Admin API and security', () => {
     expect(code).not.toMatch(/if \(isReservationType\) \{\s*setBookings/);
   });
 
-  it('dashboard joins seating_resources name for table bookings', async () => {
+  it('dashboard joins seating_resources and uses production resource label', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
 
-    // Must join seating_resources for name
     expect(code).toContain('seating_resources(name)');
     expect(code).toContain('seating_resource_name');
-    // Table bookings show resource name instead of staff_name
-    expect(code).toContain("r.flow_type === 'table_reservation' ? (r.seating_resource_name");
+    // Uses production getRowResourceLabel (not inline ternary)
+    expect(code).toContain('getRowResourceLabel(r)');
   });
 
   it('select_date.prompt scopes availability to seating_resource_id', async () => {
@@ -1144,14 +1142,14 @@ describe('#730: Admin API and security', () => {
     expect(usedIsNull).toBe(true);
   });
 
-  it('dashboard column header shows "Table / Seating" for table_reservations tab', async () => {
+  it('dashboard uses production getColumnHeader (not inline ternary)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
 
-    // Table Reservations tab must show "Table / Seating" header, not "Staff" or "Property"
-    expect(code).toContain("bookingType === 'table_reservations' ? 'Table / Seating' : 'Staff'");
-    // Lodging condition must not activate when bookingType is table_reservations
+    // Uses production getColumnHeader function
+    expect(code).toContain('getColumnHeader(bookingType)');
+    // Lodging condition still excludes table_reservations
     expect(code).toContain("bookingType !== 'table_reservations'");
   });
 

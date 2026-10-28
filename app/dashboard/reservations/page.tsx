@@ -11,13 +11,12 @@ import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import {
-  schedulingActions as _schedulingActions,
-  tableReservationActions as _tableReservationActions,
-  reservationActions as _reservationActions,
-  getActionsForBooking as _getActionsForBooking,
+  schedulingActions,
+  tableReservationActions,
+  reservationActions,
+  getActionsForBooking,
   getColumnHeader,
   getRowResourceLabel,
-  type BookingType as _BookingType,
 } from '@/components/dashboard/BookingPresentation';
 
 interface ServiceOption {
@@ -94,57 +93,8 @@ const reservationStatusLabels: Record<string, string> = {
   checked_out: 'Checked Out',
 };
 
-// Actions for scheduling businesses (appointments, bookings)
-const schedulingActions: Record<string, { label: string; next: string; color: string }[]> = {
-  pending: [
-    { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  confirmed: [
-    { label: 'Start', next: 'in_progress', color: 'text-blue-600 hover:bg-blue-50' },
-    { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  in_progress: [
-    { label: 'Complete', next: 'completed', color: 'text-gray-600 hover:bg-gray-50' },
-  ],
-};
-
-// Actions for table reservation bookings (restaurants, lounges)
-const tableReservationActions: Record<string, { label: string; next: string; color: string }[]> = {
-  pending: [
-    { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  confirmed: [
-    { label: 'Seat', next: 'in_progress', color: 'text-blue-600 hover:bg-blue-50' },
-    { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  in_progress: [
-    { label: 'Complete', next: 'completed', color: 'text-gray-600 hover:bg-gray-50' },
-  ],
-};
-
-// Actions for reservation businesses (hotel, shortlet, car rental)
-const reservationActions: Record<string, { label: string; next: string; color: string }[]> = {
-  pending: [
-    { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  confirmed: [
-    { label: 'Check In', next: 'checked_in', color: 'text-blue-600 hover:bg-blue-50' },
-    { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  checked_in: [
-    { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
-  ],
-  // Legacy status support (in_progress maps to checked_in)
-  in_progress: [
-    { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
-  ],
-};
+// Action maps, getActionsForBooking, getColumnHeader, getRowResourceLabel
+// are imported from @/components/dashboard/BookingPresentation (production-tested module).
 
 export default function BookingsPage() {
   const business = useBusiness();
@@ -425,12 +375,7 @@ export default function BookingsPage() {
   const isReservationType = business.flow_type === 'reservation';
   const hasReservationCapability = business.capabilities?.includes('reservation' as any);
   const showReservations = isReservationType || hasReservationCapability;
-  // Per-row action set based on booking type (not global business capability)
-  const getActionsForBooking = (b: Booking) => {
-    if (b._isReservation) return reservationActions;
-    if (b.flow_type === 'table_reservation') return tableReservationActions;
-    return schedulingActions;
-  };
+  // getActionsForBooking imported from BookingPresentation (production-tested)
 
   const fetchBookings = useCallback(async () => {
     try {
@@ -871,7 +816,7 @@ export default function BookingsPage() {
                 ) : (
                   <>
                     <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
-                      {bookingType === 'table_reservations' ? 'Table / Seating' : 'Staff'}
+                      {getColumnHeader(bookingType)}
                     </th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date & Time</th>
                     <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
@@ -914,7 +859,7 @@ export default function BookingsPage() {
                   ) : (
                     <>
                       <td className="hidden sm:table-cell px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                        {r.flow_type === 'table_reservation' ? (r.seating_resource_name || '—') : (r.staff_name || '—')}
+                        {getRowResourceLabel(r)}
                       </td>
                       <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
                         {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}
