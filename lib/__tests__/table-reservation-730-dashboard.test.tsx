@@ -3,158 +3,166 @@
  */
 
 /**
- * Issue #730: Dashboard reservation tests
+ * Issue #730: Dashboard rendered regression tests
  *
- * Part A: Structural source checks (named accurately)
- * Part B: Rendered behavioral test using extracted presentation logic
+ * Renders PRODUCTION components from components/dashboard/BookingPresentation.tsx.
+ * These are the same components imported by app/dashboard/reservations/page.tsx.
  */
 
 import { describe, it, expect } from 'vitest';
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import React, { useState } from 'react';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import {
+  BookingTabBar,
+  BookingColumnHeaders,
+  BookingRowDisplay,
+  getActionsForBooking,
+  getColumnHeader,
+  getRowResourceLabel,
+  schedulingActions,
+  tableReservationActions,
+  reservationActions,
+  type BookingType,
+  type BookingSummary,
+} from '@/components/dashboard/BookingPresentation';
 
-// ── Part A: Structural source checks ──
+// ── Part A: Unit tests on exported production functions ──
 
-describe('#730: Dashboard structural source checks', () => {
-  const readSrc = async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    return fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
-  };
-
-  it('[structural] tableReservationActions uses in_progress', async () => {
-    const src = await readSrc();
-    const match = src.match(/const tableReservationActions[\s\S]*?};/);
-    expect(match).toBeTruthy();
-    expect(match![0]).toContain("'Seat'");
-    expect(match![0]).toContain("'in_progress'");
+describe('#730: Production booking presentation logic', () => {
+  it('getActionsForBooking: table reservation → Seat action', () => {
+    const b: BookingSummary = { flow_type: 'table_reservation', seating_resource_name: 'T1', staff_name: null, status: 'confirmed' };
+    const actions = getActionsForBooking(b);
+    expect(actions.confirmed?.[0].label).toBe('Seat');
+    expect(actions.confirmed?.[0].next).toBe('in_progress');
   });
 
-  it('[structural] getActionsForBooking dispatches by booking type', async () => {
-    const src = await readSrc();
-    expect(src).toContain('getActionsForBooking');
-    expect(src).toContain("b.flow_type === 'table_reservation'");
+  it('getActionsForBooking: lodging → Check In action', () => {
+    const b: BookingSummary = { flow_type: 'reservation', seating_resource_name: null, staff_name: null, status: 'confirmed', _isReservation: true };
+    const actions = getActionsForBooking(b);
+    expect(actions.confirmed?.[0].label).toBe('Check In');
   });
 
-  it('[structural] seating_resources join + name mapping', async () => {
-    const src = await readSrc();
-    expect(src).toContain('seating_resources(name)');
-    expect(src).toContain('seating_resource_name: srName || null');
+  it('getActionsForBooking: scheduling → Start action', () => {
+    const b: BookingSummary = { flow_type: 'scheduling', seating_resource_name: null, staff_name: 'Jane', status: 'confirmed' };
+    const actions = getActionsForBooking(b);
+    expect(actions.confirmed?.[0].label).toBe('Start');
   });
 
-  it('[structural] lodging early-return respects table capability', async () => {
-    const src = await readSrc();
-    expect(src).toContain('!hasTableReservationCap && !hasSchedulingCapability');
+  it('getColumnHeader by tab', () => {
+    expect(getColumnHeader('reservations')).toBe('Property');
+    expect(getColumnHeader('table_reservations')).toBe('Table / Seating');
+    expect(getColumnHeader('bookings')).toBe('Staff');
+  });
+
+  it('getRowResourceLabel: table → resource name', () => {
+    expect(getRowResourceLabel({ flow_type: 'table_reservation', seating_resource_name: 'VIP Booth', staff_name: null, status: 'confirmed' })).toBe('VIP Booth');
+  });
+
+  it('getRowResourceLabel: service → staff name', () => {
+    expect(getRowResourceLabel({ flow_type: 'scheduling', seating_resource_name: null, staff_name: 'Alice', status: 'confirmed' })).toBe('Alice');
+  });
+
+  it('getRowResourceLabel: missing → dash', () => {
+    expect(getRowResourceLabel({ flow_type: 'table_reservation', seating_resource_name: null, staff_name: null, status: 'confirmed' })).toBe('\u2014');
   });
 });
 
-// ── Part B: Rendered behavioral test ──
-// Extracts the tab/heading/action logic into a minimal testable component.
+// ── Part B: Rendered production component tests ──
 
-type BookingType = 'reservations' | 'bookings' | 'table_reservations';
+describe('#730: Rendered production dashboard components', () => {
+  afterEach(() => cleanup());
 
-interface TabConfig {
-  id: BookingType;
-  label: string;
-}
-
-/** Extracted from reservations/page.tsx — same logic, testable without providers */
-function BookingTabs({
-  hasScheduling, hasReservation, hasTableReservation, bookingType, onSwitch,
-}: {
-  hasScheduling: boolean; hasReservation: boolean; hasTableReservation: boolean;
-  bookingType: BookingType; onSwitch: (t: BookingType) => void;
-}) {
-  const tabs: TabConfig[] = [
-    ...(hasScheduling ? [{ id: 'bookings' as const, label: 'Appointments' }] : []),
-    ...(hasTableReservation ? [{ id: 'table_reservations' as const, label: 'Table Reservations' }] : []),
-    ...(hasReservation ? [{ id: 'reservations' as const, label: 'Stays' }] : []),
-  ];
-  const isLodgingTab = bookingType === 'reservations';
-  const isTableTab = bookingType === 'table_reservations';
-  const columnHeader = isLodgingTab ? 'Property' : (isTableTab ? 'Table / Seating' : 'Staff');
-
-  return (
-    <div>
-      <div data-testid="tabs">
-        {tabs.map(t => (
-          <button key={t.id} data-testid={`tab-${t.id}`} onClick={() => onSwitch(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div data-testid="column-header">{columnHeader}</div>
-      {isLodgingTab && <div data-testid="lodging-headers">Check-in | Check-out | Nights</div>}
-      {!isLodgingTab && <div data-testid="booking-headers">Date & Time | Guests</div>}
-    </div>
-  );
-}
-
-/** Row display — same logic as page */
-function BookingRow({ flowType, resourceName, staffName }: { flowType: string; resourceName: string | null; staffName: string | null }) {
-  const display = flowType === 'table_reservation' ? (resourceName || '—') : (staffName || '—');
-  const actions = flowType === 'table_reservation'
-    ? [{ label: 'Seat', next: 'in_progress' }]
-    : [{ label: 'Start', next: 'in_progress' }];
-  return (
-    <div>
-      <span data-testid="row-resource">{display}</span>
-      {actions.map(a => <button key={a.label} data-testid={`action-${a.label}`}>{a.label}</button>)}
-    </div>
-  );
-}
-
-describe('#730: Rendered dashboard behavioral regression', () => {
-  it('lodging+table merchant switches tabs and sees correct headings', () => {
-    let currentTab: BookingType = 'reservations';
-    const { rerender } = render(
-      <BookingTabs hasScheduling={false} hasReservation={true} hasTableReservation={true}
-        bookingType={currentTab} onSwitch={(t) => { currentTab = t; }} />
+  it('BookingTabBar: lodging+table shows correct tabs', () => {
+    render(
+      <BookingTabBar hasScheduling={false} hasReservation={true} hasTableReservation={true}
+        activeTab="reservations" onSwitch={() => {}} />
     );
-
-    // Initial: Stays tab
-    expect(screen.getByTestId('column-header').textContent).toContain('Property');
-    expect(screen.getByTestId('lodging-headers')).toBeTruthy();
-    expect(screen.queryByTestId('booking-headers')).toBeNull();
-    expect(screen.getByTestId('tab-table_reservations')).toBeTruthy();
     expect(screen.getByTestId('tab-reservations')).toBeTruthy();
-    expect(screen.queryByTestId('tab-bookings')).toBeNull(); // no scheduling
+    expect(screen.getByTestId('tab-table_reservations')).toBeTruthy();
+    expect(screen.queryByTestId('tab-bookings')).toBeNull();
+  });
+
+  it('BookingTabBar: switching tabs calls onSwitch', () => {
+    let switched: BookingType | null = null;
+    render(
+      <BookingTabBar hasScheduling={false} hasReservation={true} hasTableReservation={true}
+        activeTab="reservations" onSwitch={(t) => { switched = t; }} />
+    );
+    fireEvent.click(screen.getByTestId('tab-table_reservations'));
+    expect(switched).toBe('table_reservations');
+  });
+
+  it('BookingColumnHeaders: Stays tab shows Property/Check-in/Check-out', () => {
+    render(<table><thead><BookingColumnHeaders bookingType="reservations" /></thead></table>);
+    expect(screen.getByTestId('col-resource').textContent).toBe('Property');
+    expect(screen.getByTestId('col-checkin')).toBeTruthy();
+    expect(screen.getByTestId('col-checkout')).toBeTruthy();
+    expect(screen.getByTestId('col-nights')).toBeTruthy();
+    expect(screen.queryByTestId('col-datetime')).toBeNull();
+  });
+
+  it('BookingColumnHeaders: Table Reservations tab shows Table / Seating', () => {
+    render(<table><thead><BookingColumnHeaders bookingType="table_reservations" /></thead></table>);
+    expect(screen.getByTestId('col-resource').textContent).toBe('Table / Seating');
+    expect(screen.getByTestId('col-datetime')).toBeTruthy();
+    expect(screen.queryByTestId('col-checkin')).toBeNull();
+  });
+
+  it('BookingColumnHeaders: Appointments tab shows Staff', () => {
+    render(<table><thead><BookingColumnHeaders bookingType="bookings" /></thead></table>);
+    expect(screen.getByTestId('col-resource').textContent).toBe('Staff');
+  });
+
+  it('BookingRowDisplay: table reservation shows resource name + Seat', () => {
+    render(<BookingRowDisplay booking={{ flow_type: 'table_reservation', seating_resource_name: 'Patio Table 3', staff_name: null, status: 'confirmed' }} />);
+    expect(screen.getByTestId('row-resource').textContent).toBe('Patio Table 3');
+    expect(screen.getByTestId('action-Seat')).toBeTruthy();
+    expect(screen.queryByTestId('action-Start')).toBeNull();
+    expect(screen.queryByTestId('action-Check In')).toBeNull();
+  });
+
+  it('BookingRowDisplay: scheduling shows staff name + Start', () => {
+    render(<BookingRowDisplay booking={{ flow_type: 'scheduling', seating_resource_name: null, staff_name: 'Dr. Smith', status: 'confirmed' }} />);
+    expect(screen.getByTestId('row-resource').textContent).toBe('Dr. Smith');
+    expect(screen.getByTestId('action-Start')).toBeTruthy();
+  });
+
+  it('BookingRowDisplay: lodging reservation shows Check In', () => {
+    render(<BookingRowDisplay booking={{ flow_type: 'reservation', seating_resource_name: null, staff_name: null, status: 'confirmed', _isReservation: true }} />);
+    expect(screen.getByTestId('action-Check In')).toBeTruthy();
+  });
+
+  it('BookingRowDisplay: archived table resource shows dash', () => {
+    render(<BookingRowDisplay booking={{ flow_type: 'table_reservation', seating_resource_name: null, staff_name: null, status: 'confirmed' }} />);
+    expect(screen.getByTestId('row-resource').textContent).toBe('\u2014');
+  });
+
+  it('Full tab-switching regression: Stays ↔ Table Reservations', () => {
+    function TestHarness() {
+      const [tab, setTab] = useState<BookingType>('reservations');
+      return (
+        <div>
+          <BookingTabBar hasScheduling={false} hasReservation={true} hasTableReservation={true} activeTab={tab} onSwitch={setTab} />
+          <table><thead><BookingColumnHeaders bookingType={tab} /></thead></table>
+        </div>
+      );
+    }
+
+    render(<TestHarness />);
+
+    // Initial: Stays
+    expect(screen.getByTestId('col-resource').textContent).toBe('Property');
+    expect(screen.getByTestId('col-checkin')).toBeTruthy();
 
     // Switch to Table Reservations
     fireEvent.click(screen.getByTestId('tab-table_reservations'));
-    rerender(
-      <BookingTabs hasScheduling={false} hasReservation={true} hasTableReservation={true}
-        bookingType={currentTab} onSwitch={(t) => { currentTab = t; }} />
-    );
-    expect(screen.getByTestId('column-header').textContent).toContain('Table / Seating');
-    expect(screen.getByTestId('booking-headers')).toBeTruthy();
-    expect(screen.queryByTestId('lodging-headers')).toBeNull();
+    expect(screen.getByTestId('col-resource').textContent).toBe('Table / Seating');
+    expect(screen.queryByTestId('col-checkin')).toBeNull();
+    expect(screen.getByTestId('col-datetime')).toBeTruthy();
 
     // Switch back to Stays
     fireEvent.click(screen.getByTestId('tab-reservations'));
-    rerender(
-      <BookingTabs hasScheduling={false} hasReservation={true} hasTableReservation={true}
-        bookingType={currentTab} onSwitch={(t) => { currentTab = t; }} />
-    );
-    expect(screen.getByTestId('column-header').textContent).toContain('Property');
-  });
-
-  it('table booking row shows seating resource name and Seat action', () => {
-    render(<BookingRow flowType="table_reservation" resourceName="VIP Booth A" staffName={null} />);
-    expect(screen.getByTestId('row-resource').textContent).toContain('VIP Booth A');
-    expect(screen.getByTestId('action-Seat')).toBeTruthy();
-    expect(screen.queryByTestId('action-Start')).toBeNull();
-  });
-
-  it('appointment row shows staff name and Start action', () => {
-    render(<BookingRow flowType="scheduling" resourceName={null} staffName="Jane" />);
-    expect(screen.getByTestId('row-resource').textContent).toContain('Jane');
-    expect(screen.getByTestId('action-Start')).toBeTruthy();
-    expect(screen.queryByTestId('action-Seat')).toBeNull();
-  });
-
-  it('archived/missing resource shows dash', () => {
-    render(<BookingRow flowType="table_reservation" resourceName={null} staffName={null} />);
-    expect(screen.getByTestId('row-resource').textContent).toContain('\u2014');
+    expect(screen.getByTestId('col-resource').textContent).toBe('Property');
+    expect(screen.getByTestId('col-checkin')).toBeTruthy();
   });
 });

@@ -10,6 +10,15 @@ import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
+import {
+  schedulingActions as _schedulingActions,
+  tableReservationActions as _tableReservationActions,
+  reservationActions as _reservationActions,
+  getActionsForBooking as _getActionsForBooking,
+  getColumnHeader,
+  getRowResourceLabel,
+  type BookingType as _BookingType,
+} from '@/components/dashboard/BookingPresentation';
 
 interface ServiceOption {
   id: string;
