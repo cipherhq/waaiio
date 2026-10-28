@@ -4,6 +4,18 @@ import { logger } from '@/lib/logger';
 
 type Params = { params: Promise<{ id: string }> };
 
+function csvEscapeField(value: string): string {
+  const trimmed = value.replace(/^[\s\x00]+/, '');
+  let safe = value;
+  if (trimmed && /^[=+\-@|]/.test(trimmed) && !/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) {
+    safe = "'" + value;
+  }
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
+    return `"${safe.replace(/"/g, '""')}"`;
+  }
+  return safe;
+}
+
 export async function GET(request: NextRequest, { params }: Params) {
   const { id } = await params;
   const supabase = await createClient();
@@ -55,8 +67,11 @@ export async function GET(request: NextRequest, { params }: Params) {
     const rows = allResponses || [];
     const csvHeader = 'phone,customer_name,responded_at';
     const csvRows = rows.map((r) => {
-      const name = (r.customer_name || '').replace(/"/g, '""');
-      return `${r.phone},"${name}",${r.responded_at}`;
+      return [
+        csvEscapeField(r.phone || ''),
+        csvEscapeField(r.customer_name || ''),
+        csvEscapeField(r.responded_at || ''),
+      ].join(',');
     });
     const csv = [csvHeader, ...csvRows].join('\n');
 

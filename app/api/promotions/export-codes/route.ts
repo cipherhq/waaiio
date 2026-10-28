@@ -13,13 +13,22 @@ const CSV_HEADER = 'display_suffix,outcome,status,claimed_at,claimed_by_phone\n'
 // (businesses need plaintext codes for printing, not winner allocation)
 const CSV_HEADER_FULL = 'code,display_suffix,status\n';
 
+function neutralizeFormulaPrefix(value: string): string {
+  const trimmed = value.replace(/^[\s\x00]+/, '');
+  if (!trimmed) return value;
+  if (!/^[=+\-@|]/.test(trimmed)) return value;
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) return value;
+  return "'" + value;
+}
+
 function escapeCsvField(value: string | null | undefined): string {
   if (value === null || value === undefined) return '';
   const str = String(value);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`;
+  const safe = neutralizeFormulaPrefix(str);
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return str;
+  return safe;
 }
 
 export async function GET(request: NextRequest) {

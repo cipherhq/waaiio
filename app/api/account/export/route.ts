@@ -20,14 +20,24 @@ import { logger } from '@/lib/logger';
 
 const EXPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-/** Escape a value for CSV: quote strings containing commas, quotes, or newlines */
+/** Neutralize spreadsheet formula injection in a raw cell value. */
+function neutralizeFormulaPrefix(value: string): string {
+  const trimmed = value.replace(/^[\s\x00]+/, '');
+  if (!trimmed) return value;
+  if (!/^[=+\-@|]/.test(trimmed)) return value;
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) return value;
+  return "'" + value;
+}
+
+/** Escape a value for CSV: neutralize formulas, then quote if needed */
 function csvEscape(value: unknown): string {
   if (value === null || value === undefined) return '';
   const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-    return `"${str.replace(/"/g, '""')}"`;
+  const safe = neutralizeFormulaPrefix(str);
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return str;
+  return safe;
 }
 
 /** Convert an array of objects to a CSV string */

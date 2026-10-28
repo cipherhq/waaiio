@@ -1,3 +1,15 @@
+/**
+ * Neutralize spreadsheet formula injection in a raw cell value.
+ * See lib/utils/csv-export.ts for full documentation.
+ */
+function neutralizeFormulaPrefix(value: string): string {
+  const trimmed = value.replace(/^[\s\x00]+/, '');
+  if (!trimmed) return value;
+  if (!/^[=+\-@|]/.test(trimmed)) return value;
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) return value;
+  return "'" + value;
+}
+
 /** Export an array of objects as a CSV file download. */
 export function downloadCSV(
   rows: Record<string, unknown>[],
@@ -10,10 +22,11 @@ export function downloadCSV(
 
   const escape = (val: unknown): string => {
     const str = val == null ? '' : String(val);
-    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-      return `"${str.replace(/"/g, '""')}"`;
+    const safe = neutralizeFormulaPrefix(str);
+    if (safe.includes(',') || safe.includes('"') || safe.includes('\n')) {
+      return `"${safe.replace(/"/g, '""')}"`;
     }
-    return str;
+    return safe;
   };
 
   const header = cols.map(c => escape(c.label)).join(',');
