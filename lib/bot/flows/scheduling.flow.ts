@@ -874,6 +874,12 @@ export const schedulingFlow: FlowDefinition = {
 
         const isTableRes = ctx.session.session_data._is_table_reservation === true;
         const dateSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
+
+        // Fail-safe: table reservation mode requires a selected resource
+        if (isTableRes && !dateSeatingResourceId) {
+          return [{ type: 'text' as const, text: 'Please select a table first. Send *Hi* to start over.' }];
+        }
+
         let bookingsQuery = ctx.supabase
           .from('bookings')
           .select('date, time')

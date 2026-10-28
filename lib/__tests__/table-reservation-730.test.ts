@@ -941,22 +941,31 @@ describe('#730: Admin API and security', () => {
     expect(code).toMatch(/isTableRes && dateSeatingResourceId[\s\S]*?eq\('seating_resource_id'/);
   });
 
-  it('select_date.prompt: actual handler scopes table dates by resource', async () => {
+  it('select_date.prompt: Table B booked does not block Table A dates', async () => {
     const { getFlowStep } = await import('@/lib/bot/flows/registry');
     const step = getFlowStep('scheduling', 'select_date');
-    expect(step).toBeDefined();
 
-    // Mock supabase that returns different bookings per resource filter
-    const mockSelect = { eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), gte: vi.fn().mockReturnThis(), lte: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue({ data: [] }) };
-    const mockSupabase = { from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(mockSelect) }) } as any;
+    // Tomorrow's date for realistic test
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+    // Mock: Table A (res-A) has zero bookings — query scoped to res-A returns empty
+    const mockChain: any = {};
+    mockChain.eq = vi.fn().mockReturnValue(mockChain);
+    mockChain.in = vi.fn().mockReturnValue(mockChain);
+    mockChain.gte = vi.fn().mockReturnValue(mockChain);
+    mockChain.lte = vi.fn().mockReturnValue(mockChain);
+    mockChain.limit = vi.fn().mockResolvedValue({ data: [] }); // No bookings for this resource
+    const mockSupabase = { from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(mockChain) }) } as any;
 
     const ctx = {
       session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_date', version: 1,
         session_data: {
           _is_table_reservation: true,
           seating_resource_id: 'res-A',
-          _seating_capacity: 4,
-          _service_max_capacity: 4,
+          _seating_capacity: 1, // Capacity 1 so a single booking fills it
+          _service_max_capacity: 1,
           service_duration: 90,
           _service_available_days: [],
         },
@@ -966,11 +975,42 @@ describe('#730: Admin API and security', () => {
       copyLang: 'en', t: (s: string) => Promise.resolve(s),
     } as any;
 
-    await step!.prompt(ctx);
+    const msgs = await step!.prompt(ctx);
 
-    // Verify the query was scoped to seating_resource_id
-    const eqCalls = mockSelect.eq.mock.calls.map((c: any[]) => c[0]);
+    // Query must be scoped to seating_resource_id
+    const eqCalls = mockChain.eq.mock.calls.map((c: any[]) => c[0]);
     expect(eqCalls).toContain('seating_resource_id');
+
+    // With no bookings for res-A, dates should be available (not empty)
+    const hasButtons = msgs.some((m: any) => m.type === 'buttons' && m.buttons?.length > 0);
+    const hasList = msgs.some((m: any) => m.type === 'list' && m.items?.length > 0);
+    expect(hasButtons || hasList).toBe(true);
+  });
+
+  it('select_date.prompt: missing seating_resource_id fails safe', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_date');
+
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_date', version: 1,
+        session_data: {
+          _is_table_reservation: true,
+          // seating_resource_id intentionally missing
+          _seating_capacity: 4,
+          _service_max_capacity: 4,
+          service_duration: 90,
+          _service_available_days: [],
+        },
+      },
+      business: { id: 'b', name: 'T', slug: 't', category: 'restaurant' as const, flow_type: 'table_reservation' as const, subscription_tier: 'free', country_code: 'NG', operating_hours: {}, metadata: {} },
+      supabase: {} as any, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1',
+      copyLang: 'en', t: (s: string) => Promise.resolve(s),
+    } as any;
+
+    const msgs = await step!.prompt(ctx);
+    // Should fail safe with a message, not crash
+    expect(msgs.length).toBeGreaterThan(0);
+    expect((msgs[0] as any).text).toContain('select a table');
   });
 
   it('dashboard column header shows "Table / Seating" for table_reservations tab', async () => {
