@@ -29,11 +29,17 @@ vi.mock('@/lib/constants', async (importOriginal) => {
   };
 });
 
-function createMockSupabase(bankAccount: Record<string, string> | null = null) {
+function createMockSupabase(bankAccount: Record<string, string> | null = null, businessMeta: Record<string, unknown> = { bank_transfer_enabled: true }) {
   const chain: Record<string, any> = {};
   chain.select = vi.fn().mockReturnValue(chain);
   chain.eq = vi.fn().mockReturnValue(chain);
   chain.maybeSingle = vi.fn().mockResolvedValue({ data: bankAccount, error: null });
+
+  // #736: businesses table mock returns metadata with bank_transfer_enabled
+  const bizChain: Record<string, any> = {};
+  bizChain.select = vi.fn().mockReturnValue(bizChain);
+  bizChain.eq = vi.fn().mockReturnValue(bizChain);
+  bizChain.single = vi.fn().mockResolvedValue({ data: { metadata: businessMeta }, error: null });
 
   const insertChain: Record<string, any> = {};
   insertChain.then = undefined;
@@ -42,6 +48,7 @@ function createMockSupabase(bankAccount: Record<string, string> | null = null) {
   return {
     from: vi.fn((table: string) => {
       if (table === 'business_bank_accounts') return chain;
+      if (table === 'businesses') return bizChain;
       if (table === 'pending_transfers') return { insert: insertFn };
       return chain;
     }),
