@@ -79,21 +79,42 @@ No production mutations, live provider traffic, real recipients, or untagged dat
 2. Verify SHA via `/api/release-identity` before each batch
 3. Abort if SHA changes mid-run
 
-## Fail-Closed Gates (sequential, all must pass)
+## Preflight Gates (matches `staging-preflight.ts`)
+
+Gates are classified as **statically verifiable** or **requires runtime evidence**.
+Static preparation completion does NOT imply staging execution approval.
+
+### Statically verifiable (checked by preflight code)
+
+| Gate | Check | Status |
+|------|-------|--------|
+| G1 | Staging URL matches allowlist | PASSED/FAILED |
+| G3 | Supabase ref is staging project | PASSED/FAILED |
+| G6 | 500 collision-free numeric phones via `generateBulkCustomers()` | PASSED/FAILED |
+
+### Requires runtime evidence (UNVERIFIED until proven)
+
+| Gate | What it needs | Current status |
+|------|--------------|---------------|
+| G2 | Vercel API deployment SHA binding (`verifyStagingIdentity()`) | **UNVERIFIED** — caller-supplied strings are not proof |
+| G4 | Provider-authoritative Stripe/Paystack sandbox mode check | **UNVERIFIED** — key prefix is defense-in-depth only |
+| G5 | Server-side deployed outbound capture (Meta + SMS + Email) | **UNVERIFIED** — not implemented on deployed staging |
+| G7 | Initialized, validated cleanup manifest with dry-run proof | **UNVERIFIED** — path string is not validation |
+
+### Execution authorization (separate from preflight)
 
 ```
-G1: Staging URL + Supabase ref verified ──────────────────┐
-G2: Deployment SHA matches expected ──────────────────────┤
-G3: Payment keys are test-mode (provider-authoritative) ──┤
-G4: Meta outbound capture proven OR webhooks disabled ────┤
-G5: Synthetic identities validated (digits only, unique) ──┤
-G6: No real email/phone in identity set ──────────────────┤
-G7: Cleanup manifest initialized ─────────────────────────┤
-                                                           ▼
-                                              BEGIN EXECUTION
+Static preparation (this PR) ────→ CTO safety review
+                                         │
+Runtime evidence collection ─────→ CTO execution clearance
+                                         │
+Pilot (10 customers) ────────────→ Owner authorization
+Wave 1 (100) ────────────────────→ Owner authorization
+Wave 2 (500) ────────────────────→ Owner authorization
 ```
 
-Any gate failure → entire run aborted, zero records created.
+`executionReady` is **always false** in the preflight report. Execution requires
+separate CTO + Owner gates for each wave.
 
 ## Dependencies (BLOCKED until separately authorized)
 
@@ -102,6 +123,7 @@ Any gate failure → entire run aborted, zero records created.
 | M470 `create_ticket_booking_checked` | **MISSING** on staging | Ticketing flows |
 | M471 `cancel_pending_*_for_navigation` | **MISSING** on staging | Navigation cancel |
 | M472 `book_table_atomic` + `seating_resources` | **MISSING** on staging | Table seating |
-| Server-side Meta outbound capture | **NOT IMPLEMENTED** | Remote webhook tests |
+| Server-side Meta outbound capture | **NOT IMPLEMENTED** | G5 verification |
+| Provider sandbox verification | **NOT PERFORMED** | G4 verification |
+| Cleanup manifest initialization | **NOT PERFORMED** | G7 verification |
 | `executeCleanup(dryRun=false)` | **THROWS** by design | Post-run cleanup |
-| Staging payment mode verification | **NOT YET PROVED** | Payment flows |

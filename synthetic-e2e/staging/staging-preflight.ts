@@ -1,17 +1,17 @@
 /**
- * Staging execution preflight — fail-closed safety verification.
+ * Staging execution preflight — static preparation report.
  *
- * Runs all gates (G1-G7) before any staging traffic is permitted.
- * Every gate must pass; any failure aborts the entire run.
+ * CTO R2 corrections:
+ * - Gates that require runtime evidence (G2 deployment SHA, G4 provider
+ *   sandbox, G5 outbound capture, G7 cleanup manifest) report UNVERIFIED
+ *   until actual sourced evidence exists. Caller-supplied booleans and
+ *   strings are NOT treated as authoritative proof.
+ * - G6 uses the same generateBulkCustomers() allocator validated by tests.
+ * - allPassed requires all statically verifiable gates to pass.
+ * - executionReady is always false — requires separate authorization.
  *
- * CTO R1 corrections:
- * - G1/G2: Require authoritative Vercel project ID and deployment SHA
- * - G4/G5: Fail closed when provider sandbox or outbound capture is unverified
- * - G7: Fail when cleanup manifest is missing or prerequisites are blocked
- * - allPassed is false whenever any mandatory prerequisite is BLOCKED
- *
- * This module produces a STATIC PREPARATION report. It does NOT authorize
- * staging execution — that requires separate CTO + Owner gates.
+ * This is a STATIC PREPARATION check. It identifies what has been verified
+ * and what remains UNVERIFIED for future execution authorization.
  */
 
 import {
@@ -23,33 +23,31 @@ import {
   STAGING_VERCEL_PROJECT_ID,
 } from '../lib/environment-guard';
 import {
+  generateBulkCustomers,
   isValidSyntheticPhone,
   createRunIdentity,
-  generateCustomerIdentity,
 } from '../lib/synthetic-identity';
 
 // ── Types ──
 
+export type GateStatus = 'PASSED' | 'FAILED' | 'UNVERIFIED';
+
 export interface PreflightConfig {
   stagingUrl: string;
-  /** Must match the Vercel-reported deployment SHA (not just 40-hex format) */
   deploymentSha: string;
-  /** Vercel project ID — must match STAGING_VERCEL_PROJECT_ID */
   vercelProjectId?: string;
   supabaseRef: string;
-  supabaseUrl?: string;
-  /** Caller-supplied key — G4 fails closed if absent */
   stripeSecretKey?: string;
   paystackSecretKey?: string;
-  /** G4 requires provider-authoritative sandbox proof, not just key prefix */
-  providerSandboxVerified?: boolean;
-  /** G5 requires deployed server-side outbound capture proof */
   metaAccessToken?: string;
-  serverSideMetaCaptureVerified?: boolean;
-  serverSideSmsCaptureVerified?: boolean;
-  serverSideEmailCaptureVerified?: boolean;
-  /** G7 requires a valid cleanup manifest path */
-  cleanupManifestPath?: string;
+  /** Caller-claimed flags — reported but NOT treated as authoritative proof */
+  callerClaims?: {
+    providerSandboxVerified?: boolean;
+    serverSideMetaCaptureVerified?: boolean;
+    serverSideSmsCaptureVerified?: boolean;
+    serverSideEmailCaptureVerified?: boolean;
+    cleanupManifestPath?: string;
+  };
   businessCount: number;
   customersPerBusiness: number;
 }
@@ -57,19 +55,20 @@ export interface PreflightConfig {
 export interface PreflightGate {
   id: string;
   name: string;
-  passed: boolean;
+  status: GateStatus;
   message: string;
-  fatal: boolean;
+  /** Whether this gate can be verified statically or requires runtime evidence */
+  requiresRuntimeEvidence: boolean;
 }
 
 export interface PreflightReport {
   runId: string;
   timestamp: string;
   deploymentSha: string;
-  /** Static preparation passed — NOT execution authorization */
-  allPassed: boolean;
-  /** Separate flag: true only when ALL prerequisites are met for execution */
-  executionReady: boolean;
+  /** All statically verifiable gates passed */
+  staticChecksPassed: boolean;
+  /** Always false — execution requires separate CTO + Owner authorization */
+  executionReady: false;
   gates: PreflightGate[];
   identityValidation: {
     totalCustomers: number;
@@ -77,6 +76,7 @@ export interface PreflightReport {
     allPhonesUnique: boolean;
     collisions: number;
   };
+  unverifiedPrerequisites: string[];
   blockedCapabilities: string[];
 }
 
@@ -86,167 +86,169 @@ export function runStagingPreflight(config: PreflightConfig): PreflightReport {
   const run = createRunIdentity();
   const gates: PreflightGate[] = [];
 
-  // G1: Staging URL + Vercel project identity
+  // ── G1: Staging URL (statically verifiable) ──
   try {
     assertStagingUrl(config.stagingUrl);
-    if (config.vercelProjectId && config.vercelProjectId !== STAGING_VERCEL_PROJECT_ID) {
-      throw new Error(
-        `Vercel project ID "${config.vercelProjectId}" does not match ` +
-        `staging project "${STAGING_VERCEL_PROJECT_ID}"`
-      );
-    }
-    const projectNote = config.vercelProjectId
-      ? `Vercel project ${config.vercelProjectId} verified`
-      : 'Vercel project ID not supplied — authoritative binding unverified';
     gates.push({
-      id: 'G1', name: 'Staging URL + project identity',
-      passed: !!config.vercelProjectId,
-      message: config.vercelProjectId ? `${config.stagingUrl} bound to ${projectNote}` : projectNote,
-      fatal: true,
+      id: 'G1', name: 'Staging URL format',
+      status: 'PASSED',
+      message: `${config.stagingUrl} matches staging allowlist`,
+      requiresRuntimeEvidence: false,
     });
   } catch (e) {
-    gates.push({ id: 'G1', name: 'Staging URL + project identity', passed: false, message: (e as Error).message, fatal: true });
+    gates.push({
+      id: 'G1', name: 'Staging URL format',
+      status: 'FAILED',
+      message: (e as Error).message,
+      requiresRuntimeEvidence: false,
+    });
   }
 
-  // G2: Deployment SHA — must be valid format AND independently verified against Vercel
+  // ── G2: Deployment SHA + Vercel project binding (REQUIRES runtime evidence) ──
+  // A caller-supplied SHA and project ID are NOT authoritative.
+  // Actual verification requires querying the Vercel API at runtime.
   const validShaFormat = /^[0-9a-f]{40}$/.test(config.deploymentSha);
-  // Format check alone is insufficient — caller must also bind to Vercel deployment
-  const shaVerified = validShaFormat && !!config.vercelProjectId;
+  const projectIdMatches = config.vercelProjectId === STAGING_VERCEL_PROJECT_ID;
   gates.push({
-    id: 'G2', name: 'Deployment SHA (authoritative)',
-    passed: shaVerified,
-    message: shaVerified
-      ? `SHA ${config.deploymentSha.slice(0, 8)} format valid + project bound`
-      : validShaFormat
-        ? 'SHA format valid but not bound to authoritative Vercel deployment — use verifyStagingIdentity()'
-        : `Invalid SHA format: ${config.deploymentSha}`,
-    fatal: true,
+    id: 'G2', name: 'Deployment SHA + Vercel binding',
+    status: 'UNVERIFIED',
+    message: validShaFormat && projectIdMatches
+      ? `SHA format valid and project ID matches staging, but NOT authoritatively ` +
+        `verified against Vercel API. Use verifyStagingIdentity() at runtime.`
+      : !validShaFormat
+        ? `Invalid SHA format: "${config.deploymentSha}"`
+        : `Project ID "${config.vercelProjectId || 'missing'}" does not match staging "${STAGING_VERCEL_PROJECT_ID}"`,
+    requiresRuntimeEvidence: true,
   });
 
-  // G3: Supabase ref
+  // ── G3: Supabase ref (statically verifiable) ──
   try {
     assertStagingSupabase(config.supabaseRef);
-    gates.push({ id: 'G3', name: 'Supabase ref', passed: true, message: `${config.supabaseRef} is staging`, fatal: true });
+    gates.push({
+      id: 'G3', name: 'Supabase staging ref',
+      status: 'PASSED',
+      message: `${config.supabaseRef} is the recognized staging project`,
+      requiresRuntimeEvidence: false,
+    });
   } catch (e) {
-    gates.push({ id: 'G3', name: 'Supabase ref', passed: false, message: (e as Error).message, fatal: true });
+    gates.push({
+      id: 'G3', name: 'Supabase staging ref',
+      status: 'FAILED',
+      message: (e as Error).message,
+      requiresRuntimeEvidence: false,
+    });
   }
 
-  // G4: Payment provider sandbox verification — FAIL CLOSED if unverified
-  let g4Passed = false;
-  let g4Message = '';
+  // ── G4: Provider sandbox (REQUIRES runtime evidence) ──
+  // Key prefix check is a static defense-in-depth, not authoritative sandbox proof.
+  let keyPrefixSafe = true;
   try {
     assertTestModePayments({ stripeSecretKey: config.stripeSecretKey, paystackSecretKey: config.paystackSecretKey });
-    if (!config.providerSandboxVerified) {
-      g4Message = 'FAIL-CLOSED: Provider sandbox mode not authoritatively verified. ' +
-        'Key prefix check passed but deployed app sandbox status is unproved. ' +
-        'Require provider-authoritative sandbox verification before payment flows.';
-    } else {
-      g4Passed = true;
-      g4Message = 'Provider sandbox mode authoritatively verified';
-    }
-  } catch (e) {
-    g4Message = (e as Error).message;
+  } catch {
+    keyPrefixSafe = false;
   }
-  gates.push({ id: 'G4', name: 'Provider sandbox (authoritative)', passed: g4Passed, message: g4Message, fatal: true });
+  gates.push({
+    id: 'G4', name: 'Provider sandbox mode',
+    status: keyPrefixSafe ? 'UNVERIFIED' : 'FAILED',
+    message: keyPrefixSafe
+      ? 'No live-mode key prefix detected (defense-in-depth). ' +
+        'Provider-authoritative sandbox verification NOT yet performed. ' +
+        'Requires Stripe/Paystack API mode check at runtime.'
+      : 'FAILED: Live-mode payment key prefix detected.',
+    requiresRuntimeEvidence: true,
+  });
 
-  // G5: Outbound delivery capture — Meta, SMS, AND email — FAIL CLOSED if any unverified
-  const metaCaptured = !!config.serverSideMetaCaptureVerified;
-  const smsCaptured = !!config.serverSideSmsCaptureVerified;
-  const emailCaptured = !!config.serverSideEmailCaptureVerified;
-  const allCaptured = metaCaptured && smsCaptured && emailCaptured;
-
-  // Also check Meta token
+  // ── G5: Outbound capture — Meta, SMS, Email (REQUIRES runtime evidence) ──
   let tokenSafe = true;
   try {
     assertNoRealMetaOutbound(config.metaAccessToken);
   } catch {
     tokenSafe = false;
   }
-
-  const g5Passed = allCaptured && tokenSafe;
-  const unverified: string[] = [];
-  if (!metaCaptured) unverified.push('Meta WhatsApp');
-  if (!smsCaptured) unverified.push('SMS');
-  if (!emailCaptured) unverified.push('Email');
-  if (!tokenSafe) unverified.push('Meta token (appears real)');
-
   gates.push({
     id: 'G5', name: 'Outbound capture (Meta + SMS + Email)',
-    passed: g5Passed,
-    message: g5Passed
-      ? 'All outbound channels captured and verified'
-      : `FAIL-CLOSED: Unverified outbound channels: ${unverified.join(', ')}. ` +
-        'Server-side capture must be independently proven before any staging traffic.',
-    fatal: true,
+    status: tokenSafe ? 'UNVERIFIED' : 'FAILED',
+    message: tokenSafe
+      ? 'Meta token absent or test-prefixed (defense-in-depth). ' +
+        'Server-side deployed outbound capture for Meta, SMS, and Email is ' +
+        'NOT verified. Requires independent runtime proof before staging traffic.'
+      : 'FAILED: Meta token appears to be a real credential.',
+    requiresRuntimeEvidence: true,
   });
 
-  // G6: Identity validation — collision-free within this run
+  // ── G6: Identity allocation (statically verifiable via bulk allocator) ──
   const totalCustomers = config.businessCount * config.customersPerBusiness;
   const allPhones = new Set<string>();
   let allPhonesNumeric = true;
   let collisions = 0;
   let identityError = '';
 
+  // Use the SAME generateBulkCustomers() allocator that the bulk tests validate
   for (let biz = 0; biz < config.businessCount; biz++) {
-    for (let i = 0; i < config.customersPerBusiness; i++) {
-      const journeyId = `biz${biz}-cust${i}`;
-      const customer = generateCustomerIdentity(run.runId, journeyId, i);
-      if (!isValidSyntheticPhone(customer.phone)) {
-        allPhonesNumeric = false;
+    try {
+      const customers = generateBulkCustomers(run.runId, config.customersPerBusiness, biz);
+      for (const c of customers) {
+        if (!isValidSyntheticPhone(c.phone)) allPhonesNumeric = false;
+        if (allPhones.has(c.phone)) {
+          collisions++;
+          if (!identityError) identityError = `Cross-business collision: ${c.phone}`;
+        }
+        allPhones.add(c.phone);
       }
-      if (allPhones.has(customer.phone)) {
-        collisions++;
-        if (!identityError) identityError = `Collision at biz${biz}-cust${i}: ${customer.phone}`;
-      }
-      allPhones.add(customer.phone);
+    } catch (e) {
+      identityError = (e as Error).message;
     }
   }
 
-  const identityPassed = allPhonesNumeric && collisions === 0 && allPhones.size === totalCustomers;
+  const identityPassed = allPhonesNumeric && collisions === 0 && allPhones.size === totalCustomers && !identityError;
   gates.push({
-    id: 'G6', name: 'Identity validation (within-run collision-free)',
-    passed: identityPassed,
+    id: 'G6', name: 'Identity allocation (within-run, bulk allocator)',
+    status: identityPassed ? 'PASSED' : 'FAILED',
     message: identityPassed
-      ? `${totalCustomers} unique numeric-only phones (within-run). ` +
-        'Cross-run and persisted-record collision check required before staging writes.'
-      : `FAILED: numeric=${allPhonesNumeric}, collisions=${collisions}, ` +
-        `unique=${allPhones.size}/${totalCustomers}. ${identityError}`,
-    fatal: true,
+      ? `${totalCustomers} collision-free numeric phones via generateBulkCustomers(). ` +
+        'Cross-run and persisted-record check required before staging writes.'
+      : `FAILED: ${identityError || `collisions=${collisions}, unique=${allPhones.size}/${totalCustomers}`}`,
+    requiresRuntimeEvidence: false,
   });
 
-  // G7: Cleanup manifest — FAIL if not provided or prerequisites blocked
-  const hasManifest = !!config.cleanupManifestPath;
+  // ── G7: Cleanup manifest (REQUIRES runtime evidence) ──
+  // A nonempty path string is NOT a validated, initialized manifest.
   gates.push({
-    id: 'G7', name: 'Cleanup manifest + prerequisites',
-    passed: hasManifest,
-    message: hasManifest
-      ? `Manifest path: ${config.cleanupManifestPath}`
-      : 'FAIL-CLOSED: No cleanup manifest provided. A valid manifest with ' +
-        'dry-run verification is required before any staging writes.',
-    fatal: true,
+    id: 'G7', name: 'Cleanup manifest',
+    status: 'UNVERIFIED',
+    message: 'Cleanup manifest initialization and validation requires runtime setup. ' +
+      'A manifest file path alone is not proof of a valid, initialized manifest. ' +
+      'executeCleanup(dryRun=false) throws by design.',
+    requiresRuntimeEvidence: true,
   });
 
-  // Blocked capabilities — these prevent executionReady even if gates pass
+  // ── Unverified prerequisites ──
+  const unverifiedPrerequisites = [
+    'Vercel deployment SHA binding (G2) — requires verifyStagingIdentity() API call',
+    'Provider sandbox mode (G4) — requires Stripe/Paystack API mode verification',
+    'Server-side Meta outbound capture (G5) — not implemented on deployed staging',
+    'Server-side SMS capture (G5) — not implemented',
+    'Server-side Email capture (G5) — not implemented',
+    'Cleanup manifest (G7) — requires runtime initialization and dry-run verification',
+    'Cross-run identity collision check — requires persisted-record query',
+  ];
+
   const blockedCapabilities = [
     'Ticketing (M470 create_ticket_booking_checked missing on staging)',
     'Navigation cancel (M471 cancel_pending_*_for_navigation missing on staging)',
     'Table seating (M472 book_table_atomic + seating_resources missing on staging)',
-    'Server-side Meta outbound capture (not implemented on deployed staging)',
-    'Server-side SMS capture (not implemented)',
-    'Server-side Email capture (not implemented)',
-    'Cleanup execution (executeCleanup dryRun=false throws by design)',
-    'Provider sandbox authoritative verification (not performed)',
   ];
 
-  const allGatesPassed = gates.every(g => g.passed);
+  // Static checks: only gates that DON'T require runtime evidence
+  const staticGates = gates.filter(g => !g.requiresRuntimeEvidence);
+  const staticChecksPassed = staticGates.every(g => g.status === 'PASSED');
 
   return {
     runId: run.runId,
     timestamp: new Date().toISOString(),
     deploymentSha: config.deploymentSha,
-    allPassed: allGatesPassed,
-    // executionReady is false whenever mandatory prerequisites are blocked
-    executionReady: false, // Always false — execution requires separate authorization
+    staticChecksPassed,
+    executionReady: false, // Always false — separate authorization required
     gates,
     identityValidation: {
       totalCustomers,
@@ -254,6 +256,7 @@ export function runStagingPreflight(config: PreflightConfig): PreflightReport {
       allPhonesUnique: collisions === 0,
       collisions,
     },
+    unverifiedPrerequisites,
     blockedCapabilities,
   };
 }

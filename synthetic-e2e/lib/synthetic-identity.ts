@@ -105,19 +105,21 @@ export function generateMerchantIdentity(runId: string, index = 0): MerchantIden
 }
 
 /**
- * Generate a synthetic customer identity.
- * Phone numbers use the reserved 1-555-000-xxxx range.
+ * Generate a single synthetic customer identity using hash-based allocation.
  *
- * CTO R3/Phase 2 fix: Phone suffix is strictly numeric (0-9 only),
- * run-scoped (includes runId in hash), and collision-free for up to
- * 10,000 customers per run (4-digit numeric suffix).
+ * WARNING: This hash-modulo approach does NOT guarantee uniqueness across
+ * customers or runs. For bulk allocation with collision-free guarantees,
+ * use generateBulkCustomers() instead.
+ *
+ * Phone numbers use the +15550xxxxxx reserved range but are NOT proven
+ * non-deliverable. Outbound transport containment is mandatory regardless.
  */
 export function generateCustomerIdentity(
   runId: string,
   journeyId: string,
   index = 0,
 ): CustomerIdentity {
-  // Hash includes runId for run-scoping: different runs never collide
+  // Hash-based: may collide. Use generateBulkCustomers() for guaranteed uniqueness.
   const hashBytes = createHash('sha256').update(`${runId}:${journeyId}:${index}`).digest();
   // Convert first 4 bytes to a 6-digit numeric suffix (000000-999999)
   const numericValue = hashBytes.readUInt32BE(0) % 1000000;
