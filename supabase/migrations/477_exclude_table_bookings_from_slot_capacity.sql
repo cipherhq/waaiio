@@ -189,8 +189,8 @@ BEGIN
   WHERE proname = 'book_slot_atomic'
     AND pronamespace = 'public'::regnamespace;
   IF v_src NOT ILIKE '%seating_resource_id IS NULL%' THEN
-    RAISE EXCEPTION '475 SELF-CHECK FAILED: book_slot_atomic missing table-reservation exclusion';
+    RAISE EXCEPTION '477 SELF-CHECK FAILED: book_slot_atomic missing table-reservation exclusion';
   END IF;
-  RAISE NOTICE '475 SELF-CHECK PASSED: book_slot_atomic excludes table reservations from capacity';
+  RAISE NOTICE '477 SELF-CHECK PASSED: book_slot_atomic excludes table reservations from capacity';
 END;
 $$;

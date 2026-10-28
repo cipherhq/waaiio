@@ -148,9 +148,9 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
     // Apply M474 + M475
     const fs = await import('fs');
     const path = await import('path');
-    const m474Path = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const m474Path = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     await sql(client, fs.readFileSync(m474Path, 'utf-8'));
-    const m475Path = path.join(process.cwd(), 'supabase/migrations/475_exclude_table_bookings_from_slot_capacity.sql');
+    const m475Path = path.join(process.cwd(), 'supabase/migrations/477_exclude_table_bookings_from_slot_capacity.sql');
     await sql(client, fs.readFileSync(m475Path, 'utf-8'));
 
     // Grants from earlier migrations that M474 depends on for SECURITY INVOKER:

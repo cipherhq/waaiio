@@ -117,14 +117,14 @@ describe('#730: Migration 472 SQL structure', () => {
   it('migration file exists', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     expect(fs.existsSync(migrationPath)).toBe(true);
   });
 
   it('migration contains required schema elements', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     // Enum extension
@@ -182,7 +182,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('weekday uses to_char(p_date) directly — no AT TIME ZONE', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     // Must use to_char(p_date, 'fmday') — NOT p_date AT TIME ZONE
@@ -193,7 +193,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('time comparisons use integer minutes (no TIME wrap)', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     // Must use EXTRACT(HOUR/MINUTE) for minutes-since-midnight
@@ -208,7 +208,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('advisory lock precedes idempotency lookup (concurrent retry safety)', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     // Advisory lock must appear BEFORE the idempotency lookup in the function body
@@ -222,7 +222,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('idempotency check matches full reservation identity', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     // Idempotency must match full reservation identity
@@ -236,7 +236,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('flat deposit: v_committed_total = v_committed_deposit (not multiplied)', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     // Total must equal flat deposit, not multiplied by party_size
@@ -248,7 +248,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('migration enforces availability in book_table_atomic', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     // Day-of-week enforcement
@@ -269,7 +269,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('migration has delete-guard trigger for referenced resources', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     expect(sql).toContain('guard_seating_resource_delete');
@@ -285,7 +285,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('migration includes admin RLS policies', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     expect(sql).toContain('seating_resources_admin_select');
@@ -297,7 +297,7 @@ describe('#730: Migration 472 SQL structure', () => {
   it('migration does NOT modify existing tables or functions unsafely', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const migrationPath = path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql');
+    const migrationPath = path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
     // Should not drop or replace existing functions (SQL statements, not comments)
@@ -524,7 +524,7 @@ describe('#730: Admin API and security', () => {
   it('migration rejects overnight availability windows and past-midnight reservations', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql'), 'utf-8');
+    const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql'), 'utf-8');
 
     expect(sql).toContain('seating_no_overnight');
     expect(sql).toContain('available_from < available_to');
@@ -1109,6 +1109,41 @@ describe('#730: Admin API and security', () => {
     expect((msgs[0] as any).text).toContain('select a table');
   });
 
+  it('select_time.prompt: service query excludes table bookings via .is(seating_resource_id, null)', async () => {
+    const { getFlowStep } = await import('@/lib/bot/flows/registry');
+    const step = getFlowStep('scheduling', 'select_time');
+
+    let usedIsNull = false;
+    const mockChain: any = {};
+    mockChain.eq = vi.fn().mockReturnValue(mockChain);
+    mockChain.is = vi.fn((...args: any[]) => {
+      if (args[0] === 'seating_resource_id' && args[1] === null) usedIsNull = true;
+      return mockChain;
+    });
+    mockChain.in = vi.fn().mockReturnValue(mockChain);
+    mockChain.then = undefined;
+    const mockFrom = { select: vi.fn().mockReturnValue(mockChain) };
+    const mockSupabase = { from: vi.fn().mockReturnValue(mockFrom) } as any;
+
+    const ctx = {
+      session: { id: 't', user_id: 'u', business_id: 'b', current_step: 'select_time', version: 1,
+        session_data: { date: '2026-10-30', _service_max_capacity: 5, service_duration: 30 },
+      },
+      business: { id: 'b', name: 'T', slug: 't', category: 'salon' as const, flow_type: 'scheduling' as const, subscription_tier: 'free', country_code: 'NG', operating_hours: {}, metadata: {} },
+      supabase: mockSupabase, sender: {} as any, standalone: {} as any, intelligence: {} as any, from: '+1',
+      copyLang: 'en', t: (s: string) => Promise.resolve(s),
+    } as any;
+
+    // Resolve the mock query chain
+    mockChain[Symbol.iterator] = undefined;
+    Object.defineProperty(mockChain, 'then', { value: undefined, configurable: true });
+
+    await step!.prompt(ctx);
+
+    // Service prompt must use .is('seating_resource_id', null) to exclude table bookings
+    expect(usedIsNull).toBe(true);
+  });
+
   it('dashboard column header shows "Table / Seating" for table_reservations tab', async () => {
     const fs = await import('fs');
     const path = await import('path');
@@ -1134,7 +1169,7 @@ describe('#730: Admin API and security', () => {
   it('M472 overlap query includes in_progress (seated tables block overlap)', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/474_seating_resources_table_reservation.sql'), 'utf-8');
+    const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/476_seating_resources_table_reservation.sql'), 'utf-8');
 
     // Overlap query must include in_progress
     const overlapMatch = sql.match(/overlap check[\s\S]*?status IN \(([^)]+)\)/);
