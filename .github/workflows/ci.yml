@@ -4283,8 +4283,8 @@ jobs:
           # Strip ANSI color codes before matching
           CLEAN_OUTPUT=$(echo "$OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')
           PASS_COUNT=$(echo "$CLEAN_OUTPUT" | grep -P '^\s*Tests\s' | grep -oP '(\d+) passed' | grep -oP '\d+')
-          if [ -z "$PASS_COUNT" ] || [ "$PASS_COUNT" -lt 23 ]; then
-            echo "❌ Expected at least 23 M472 DB tests, got ${PASS_COUNT:-0}."
+          if [ -z "$PASS_COUNT" ] || [ "$PASS_COUNT" -lt 24 ]; then
+            echo "❌ Expected at least 24 M472 DB tests, got ${PASS_COUNT:-0}."
             exit 1
           fi
 
