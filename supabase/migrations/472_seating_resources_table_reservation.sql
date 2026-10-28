@@ -342,9 +342,8 @@ $$;
 -- seating_resources are missing for service_role.
 -- ═══════════════════════════════════════════════════════
 GRANT INSERT ON public.bookings TO service_role;
-GRANT SELECT ON public.seating_resources TO service_role;
--- Sequences needed for gen_random_uuid() / reference_code on INSERT
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO service_role;
+-- SELECT + UPDATE needed: SELECT for reading resource data, UPDATE for FOR UPDATE row lock
+GRANT SELECT, UPDATE ON public.seating_resources TO service_role;
 
 -- ACL: service_role only (matches book_slot_atomic pattern)
 REVOKE ALL ON FUNCTION public.book_table_atomic(
