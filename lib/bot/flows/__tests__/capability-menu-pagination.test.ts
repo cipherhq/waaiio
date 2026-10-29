@@ -12,6 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { getStep } from './helpers';
 import { capabilitySelectionFlow } from '../capability-selection.flow';
+import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import type { FlowContext, PromptList } from '../types';
 
 const step = getStep(capabilitySelectionFlow, 'select_capability');
@@ -798,9 +799,138 @@ describe('lifecycle: prompt → navigate → select → payload', () => {
     expect(ctx.session.session_data._cap_menu_page).toBeUndefined();
     expect(ctx.session.session_data._cap_menu_total_pages).toBeUndefined();
 
-    // ── Step 7: next() routes to the capability's first step ──
+    // ── Step 7: next() routes to the selected capability's first step ──
+    // The selected cap is the first item on page 1; getFirstStepForCapability
+    // maps each cap to its entry step. Assert the specific expected step.
+    const selectedCap = targetCap.replace('cap_', '');
     const nextAfterSelect = await step.next!(ctx);
-    expect(nextAfterSelect).not.toBe('select_capability'); // should route to the capability flow
-    expect(typeof nextAfterSelect).toBe('string');
+    // Known mappings from getFirstStepForCapability — assert specific step
+    const expectedSteps: Record<string, string> = {
+      queue: 'queue_start', waiver: 'select_service',
+      appointment: 'select_appointment', scheduling: 'select_service',
+      giving: 'select_category', ordering: 'browse_catalog',
+      ticketing: 'select_event', reservation: 'select_apartment',
+      crowdfunding: 'select_campaign', chat: 'chat_start',
+      class_booking: 'select_service',
+    };
+    const expected = expectedSteps[selectedCap] || 'select_service';
+    expect(nextAfterSelect).toBe(expected);
+  });
+});
+
+// ── Sender-boundary test: MetaCloudService.sendList with production payload ──
+// Exercises the real production Meta payload builder (MetaCloudService.sendList)
+// with the items emitted by prompt(). Verifies the final interactive payload
+// enforces ≤10 rows per section and that capability/navigation IDs survive
+// the transformation unchanged. The network boundary (callApi → fetch) is stubbed.
+//
+// NOTE: MetaCloudSender.sendList is not exercised directly because its
+// withAttemptAndGuard requires a live Supabase financial-authority RPC.
+// Instead, we replicate MetaCloudSender.sendList's exact item→section/row
+// transformation (lines 566–582 of message-sender.ts) and feed the result
+// through the real MetaCloudService.sendList. This covers the Meta API
+// payload builder, section/row slicing, and truncation — the transport
+// boundary between the bot and the WhatsApp provider.
+
+describe('sender-boundary: MetaCloudService.sendList payload', () => {
+  /** Replicate MetaCloudSender.sendList's item→section mapping (lines 566–582) */
+  function senderTransform(promptList: PromptList) {
+    const truncTitle = promptList.title!.length > 24
+      ? promptList.title!.slice(0, 21) + '...' : promptList.title!;
+    const truncBody = promptList.body!.slice(0, 1024);
+    const truncButton = promptList.buttonLabel!.slice(0, 20);
+    return {
+      to: '+2341234567890',
+      headerText: truncTitle,
+      bodyText: truncBody,
+      buttonText: truncButton,
+      sections: [{
+        title: truncTitle,
+        rows: promptList.items.map(item => ({
+          id: item.postbackText,
+          title: item.title.length > 24 ? item.title.slice(0, 21) + '...' : item.title,
+          description: item.description ? item.description.slice(0, 72) : item.description,
+        })),
+      }],
+    };
+  }
+
+  it('page 0 and page 1 payloads have ≤10 rows and preserve IDs through MetaCloudService', async () => {
+    const cloud = new MetaCloudService({
+      accessToken: 'test-token',
+      phoneNumberId: 'test-phone',
+      wabaId: 'test-waba',
+    });
+
+    // Stub the network boundary — capture the payload passed to callApi
+    const capturedPayloads: Array<Record<string, unknown>> = [];
+    vi.spyOn(cloud as any, 'callApi').mockImplementation(async (_endpoint: string, body: Record<string, unknown>) => {
+      capturedPayloads.push(body);
+      return { messages: [{ id: 'wamid.test123' }] };
+    });
+
+    // ── Page 0 ──
+    const ctx0 = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+    const result0 = await step.prompt!(ctx0);
+    const msg0 = result0![0] as PromptList;
+
+    // Feed through real MetaCloudService.sendList
+    const cloudMsg0 = senderTransform(msg0);
+    await cloud.sendList(cloudMsg0);
+
+    // Inspect captured payload
+    const payload0 = capturedPayloads[0];
+    expect(payload0.type).toBe('interactive');
+    const interactive0 = payload0.interactive as any;
+    expect(interactive0.type).toBe('list');
+    const sections0 = interactive0.action.sections;
+    expect(sections0.length).toBe(1);
+    const rows0 = sections0[0].rows;
+    expect(rows0.length).toBeLessThanOrEqual(10);
+    expect(rows0.length).toBe(msg0.items.length); // no items lost in transport
+
+    // Verify IDs survive unchanged: cap_nav_more present, capability IDs intact
+    const ids0 = rows0.map((r: any) => r.id);
+    expect(ids0).toContain('cap_nav_more');
+    const capIds0 = ids0.filter((id: string) => id.startsWith('cap_') && !id.startsWith('cap_nav_'));
+    expect(capIds0.length).toBe(9); // 10 - 1 nav = 9 caps
+
+    // ── Page 1 ──
+    const ctx1 = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+      menuPage: 1,
+    });
+    const result1 = await step.prompt!(ctx1);
+    const msg1 = result1![0] as PromptList;
+
+    const cloudMsg1 = senderTransform(msg1);
+    await cloud.sendList(cloudMsg1);
+
+    const payload1 = capturedPayloads[1];
+    const interactive1 = payload1.interactive as any;
+    const rows1 = interactive1.action.sections[0].rows;
+    expect(rows1.length).toBeLessThanOrEqual(10);
+    expect(rows1.length).toBe(msg1.items.length);
+
+    // Verify IDs: cap_nav_prev present, capability IDs intact
+    const ids1 = rows1.map((r: any) => r.id);
+    expect(ids1).toContain('cap_nav_prev');
+    expect(ids1).not.toContain('cap_nav_more'); // last page
+
+    // All 11 capability IDs reachable across both payloads, no duplication
+    const allCapIds = [
+      ...capIds0,
+      ...ids1.filter((id: string) => id.startsWith('cap_') && !id.startsWith('cap_nav_')),
+    ];
+    expect(new Set(allCapIds).size).toBe(11);
+
+    // Verify each ID matches a known ELEVEN_CAPS entry
+    for (const id of allCapIds) {
+      expect(ELEVEN_CAPS).toContain(id.replace('cap_', ''));
+    }
   });
 });
