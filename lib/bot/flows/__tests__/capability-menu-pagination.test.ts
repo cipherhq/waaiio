@@ -818,119 +818,170 @@ describe('lifecycle: prompt → navigate → select → payload', () => {
   });
 });
 
-// ── Sender-boundary test: MetaCloudService.sendList with production payload ──
-// Exercises the real production Meta payload builder (MetaCloudService.sendList)
-// with the items emitted by prompt(). Verifies the final interactive payload
-// enforces ≤10 rows per section and that capability/navigation IDs survive
-// the transformation unchanged. The network boundary (callApi → fetch) is stubbed.
+// ── Sender-boundary test: real MetaCloudSender → MetaCloudService pipeline ──
+// Exercises the production MetaCloudSender.sendList (item→section/row mapping,
+// truncation, dispatch) → MetaCloudService.sendList (slice enforcement, final
+// interactive payload) with callApi stubbed at the network boundary.
 //
-// NOTE: MetaCloudSender.sendList is not exercised directly because its
-// withAttemptAndGuard requires a live Supabase financial-authority RPC.
-// Instead, we replicate MetaCloudSender.sendList's exact item→section/row
-// transformation (lines 566–582 of message-sender.ts) and feed the result
-// through the real MetaCloudService.sendList. This covers the Meta API
-// payload builder, section/row slicing, and truncation — the transport
-// boundary between the bot and the WhatsApp provider.
+// Flow-unit tests above call step.prompt()/validate()/next() directly and
+// simulate executor data-merging via Object.assign. They do not execute
+// database save/reload or the executor's persistence layer.
+//
+// This sender-boundary test uses the existing test fixtures:
+// - createTestSupabase() satisfies the Supabase null-check
+// - setSendAttemptGate(false) makes createAttempt return null on insert error
+// - assertMessagingAllowed and circuit breaker are stubbed via vi.doMock
+// No live DB, financial RPC, or Meta API calls occur.
 
-describe('sender-boundary: MetaCloudService.sendList payload', () => {
-  /** Replicate MetaCloudSender.sendList's item→section mapping (lines 566–582) */
-  function senderTransform(promptList: PromptList) {
-    const truncTitle = promptList.title!.length > 24
-      ? promptList.title!.slice(0, 21) + '...' : promptList.title!;
-    const truncBody = promptList.body!.slice(0, 1024);
-    const truncButton = promptList.buttonLabel!.slice(0, 20);
-    return {
-      to: '+2341234567890',
-      headerText: truncTitle,
-      bodyText: truncBody,
-      buttonText: truncButton,
-      sections: [{
-        title: truncTitle,
-        rows: promptList.items.map(item => ({
-          id: item.postbackText,
-          title: item.title.length > 24 ? item.title.slice(0, 21) + '...' : item.title,
-          description: item.description ? item.description.slice(0, 72) : item.description,
-        })),
-      }],
-    };
-  }
+describe('sender-boundary: real MetaCloudSender → MetaCloudService pipeline', () => {
+  it('More → Previous → More → queue selection: payloads ≤10 rows, IDs survive transport', async () => {
+    // ── Set up mocks for sender dependencies ──
+    vi.doMock('@/lib/channels/send-guard', () => ({
+      assertMessagingAllowed: async () => { /* allow all sends */ },
+    }));
+    vi.doMock('@/lib/circuit-breaker', () => ({
+      isCircuitOpen: () => false,
+      recordSuccess: () => {},
+      recordFailure: () => {},
+      CircuitBreakerOpenError: class extends Error {},
+    }));
+    // Stub createServiceClient so no live DB access if unexpectedly reached
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: () => { throw new Error('test: no live DB allowed'); },
+    }));
 
-  it('page 0 and page 1 payloads have ≤10 rows and preserve IDs through MetaCloudService', async () => {
-    const cloud = new MetaCloudService({
-      accessToken: 'test-token',
-      phoneNumberId: 'test-phone',
-      wabaId: 'test-waba',
-    });
+    const { MetaCloudSender } = await import('@/lib/channels/message-sender');
+    const { setSendAttemptGate, isSendAttemptGateOn } = await import('@/lib/channels/attempt-recording');
+    const { createTestSupabase } = await import('@/lib/__tests__/helpers/mock-supabase');
 
-    // Stub the network boundary — capture the payload passed to callApi
-    const capturedPayloads: Array<Record<string, unknown>> = [];
-    vi.spyOn(cloud as any, 'callApi').mockImplementation(async (_endpoint: string, body: Record<string, unknown>) => {
-      capturedPayloads.push(body);
-      return { messages: [{ id: 'wamid.test123' }] };
-    });
+    const priorGate = isSendAttemptGateOn();
+    setSendAttemptGate(false);
 
-    // ── Page 0 ──
-    const ctx0 = buildCtx({
-      capabilities: ELEVEN_CAPS,
-      tableCounts: ELEVEN_CAPS_BACKING,
-    });
-    const result0 = await step.prompt!(ctx0);
-    const msg0 = result0![0] as PromptList;
+    try {
+      // ── Construct real sender with stubbed cloud ──
+      const cloud = new MetaCloudService({
+        accessToken: 'test-token',
+        phoneNumberId: 'test-phone',
+        wabaId: 'test-waba',
+      });
+      const capturedPayloads: Array<Record<string, unknown>> = [];
+      vi.spyOn(cloud as any, 'callApi').mockImplementation(async (_ep: string, body: Record<string, unknown>) => {
+        capturedPayloads.push(body);
+        return { messages: [{ id: 'wamid.test-pagination' }] };
+      });
 
-    // Feed through real MetaCloudService.sendList
-    const cloudMsg0 = senderTransform(msg0);
-    await cloud.sendList(cloudMsg0);
+      const sender = new MetaCloudSender(cloud, createTestSupabase());
+      const ctx = buildCtx({
+        capabilities: ELEVEN_CAPS,
+        tableCounts: ELEVEN_CAPS_BACKING,
+        profileId: 'profile-1',
+        hasHistory: true,
+      });
+      sender.bindBusiness(ctx.business.id);
 
-    // Inspect captured payload
-    const payload0 = capturedPayloads[0];
-    expect(payload0.type).toBe('interactive');
-    const interactive0 = payload0.interactive as any;
-    expect(interactive0.type).toBe('list');
-    const sections0 = interactive0.action.sections;
-    expect(sections0.length).toBe(1);
-    const rows0 = sections0[0].rows;
-    expect(rows0.length).toBeLessThanOrEqual(10);
-    expect(rows0.length).toBe(msg0.items.length); // no items lost in transport
+      // ── Helper: render prompt and send through real sender ──
+      async function renderAndSend() {
+        const result = await step.prompt!(ctx);
+        const msg = result![0] as PromptList;
+        await sender.sendList({
+          to: ctx.from,
+          title: msg.title!,
+          body: msg.body!,
+          buttonLabel: msg.buttonLabel!,
+          items: msg.items,
+        });
+        return msg;
+      }
 
-    // Verify IDs survive unchanged: cap_nav_more present, capability IDs intact
-    const ids0 = rows0.map((r: any) => r.id);
-    expect(ids0).toContain('cap_nav_more');
-    const capIds0 = ids0.filter((id: string) => id.startsWith('cap_') && !id.startsWith('cap_nav_'));
-    expect(capIds0.length).toBe(9); // 10 - 1 nav = 9 caps
+      // ── Page 0: initial render + send ──
+      const msg0 = await renderAndSend();
+      const payload0 = capturedPayloads[0];
+      expect(payload0.type).toBe('interactive');
+      const rows0 = (payload0.interactive as any).action.sections[0].rows;
+      expect(rows0.length).toBeLessThanOrEqual(10);
+      expect(rows0.length).toBe(msg0.items.length);
+      const ids0 = rows0.map((r: any) => r.id);
+      expect(ids0).toContain('cap_nav_more');
 
-    // ── Page 1 ──
-    const ctx1 = buildCtx({
-      capabilities: ELEVEN_CAPS,
-      tableCounts: ELEVEN_CAPS_BACKING,
-      menuPage: 1,
-    });
-    const result1 = await step.prompt!(ctx1);
-    const msg1 = result1![0] as PromptList;
+      // ── Navigate: More → page 1 ──
+      const moreResult = await step.validate!('cap_nav_more', ctx);
+      expect(moreResult.valid).toBe(true);
+      Object.assign(ctx.session.session_data, moreResult.data);
+      expect(await step.next!(ctx)).toBe('select_capability');
 
-    const cloudMsg1 = senderTransform(msg1);
-    await cloud.sendList(cloudMsg1);
+      // ── Page 1: render + send ──
+      const msg1 = await renderAndSend();
+      const rows1 = (capturedPayloads[1].interactive as any).action.sections[0].rows;
+      expect(rows1.length).toBeLessThanOrEqual(10);
+      expect(rows1.length).toBe(msg1.items.length);
+      const ids1 = rows1.map((r: any) => r.id);
+      expect(ids1).toContain('cap_nav_prev');
+      expect(ids1).not.toContain('cap_nav_more');
 
-    const payload1 = capturedPayloads[1];
-    const interactive1 = payload1.interactive as any;
-    const rows1 = interactive1.action.sections[0].rows;
-    expect(rows1.length).toBeLessThanOrEqual(10);
-    expect(rows1.length).toBe(msg1.items.length);
+      // ── Navigate: Previous → page 0 ──
+      const prevResult = await step.validate!('cap_nav_prev', ctx);
+      expect(prevResult.valid).toBe(true);
+      Object.assign(ctx.session.session_data, prevResult.data);
+      expect(await step.next!(ctx)).toBe('select_capability');
 
-    // Verify IDs: cap_nav_prev present, capability IDs intact
-    const ids1 = rows1.map((r: any) => r.id);
-    expect(ids1).toContain('cap_nav_prev');
-    expect(ids1).not.toContain('cap_nav_more'); // last page
+      // ── Page 0 again: render + send ──
+      const msg0b = await renderAndSend();
+      const rows0b = (capturedPayloads[2].interactive as any).action.sections[0].rows;
+      expect(rows0b.length).toBeLessThanOrEqual(10);
+      expect(rows0b.length).toBe(msg0b.items.length);
+      const ids0b = rows0b.map((r: any) => r.id);
+      expect(ids0b).toContain('cap_nav_more');
+      // Same page 0 IDs as the first render
+      expect(ids0b).toEqual(ids0);
 
-    // All 11 capability IDs reachable across both payloads, no duplication
-    const allCapIds = [
-      ...capIds0,
-      ...ids1.filter((id: string) => id.startsWith('cap_') && !id.startsWith('cap_nav_')),
-    ];
-    expect(new Set(allCapIds).size).toBe(11);
+      // ── Navigate: More → page 1 again ──
+      const more2Result = await step.validate!('cap_nav_more', ctx);
+      expect(more2Result.valid).toBe(true);
+      Object.assign(ctx.session.session_data, more2Result.data);
+      expect(await step.next!(ctx)).toBe('select_capability');
 
-    // Verify each ID matches a known ELEVEN_CAPS entry
-    for (const id of allCapIds) {
-      expect(ELEVEN_CAPS).toContain(id.replace('cap_', ''));
+      // ── Page 1 again: render + send ──
+      const msg1b = await renderAndSend();
+      const rows1b = (capturedPayloads[3].interactive as any).action.sections[0].rows;
+      expect(rows1b.length).toBeLessThanOrEqual(10);
+
+      // ── Select queue from page 1 ──
+      // Find 'cap_queue' in the emitted payload IDs
+      const page1Ids = rows1b.map((r: any) => r.id);
+      expect(page1Ids).toContain('cap_queue');
+
+      const selectResult = await step.validate!('cap_queue', ctx);
+      expect(selectResult.valid).toBe(true);
+      expect(selectResult.data?.active_capability).toBe('queue');
+      Object.assign(ctx.session.session_data, selectResult.data);
+
+      // Pagination state cleaned up
+      expect(ctx.session.session_data._cap_menu_page).toBeUndefined();
+      expect(ctx.session.session_data._cap_menu_total_pages).toBeUndefined();
+
+      // next() routes to queue_start
+      expect(await step.next!(ctx)).toBe('queue_start');
+
+      // ── Verify all 11 capabilities + My Account reachable across pages ──
+      const allCapIds = new Set<string>();
+      for (const payload of capturedPayloads) {
+        const rows = (payload.interactive as any).action.sections[0].rows;
+        for (const r of rows) {
+          if (r.id.startsWith('cap_') && !r.id.startsWith('cap_nav_')) {
+            allCapIds.add(r.id);
+          }
+        }
+      }
+      // 11 capabilities + My Account (returning customer with profileId + history)
+      expect(allCapIds.size).toBe(12);
+      for (const cap of ELEVEN_CAPS) {
+        expect(allCapIds.has(`cap_${cap}`)).toBe(true);
+      }
+      expect(allCapIds.has('cap_my_account')).toBe(true);
+    } finally {
+      setSendAttemptGate(priorGate);
+      vi.restoreAllMocks();
+      vi.resetModules();
     }
   });
 });
