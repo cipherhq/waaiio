@@ -12,6 +12,7 @@
  * - sendOrEmail: both channels succeed/fail truthfully
  * - contracts/send: messageCategory on template and fallback
  * - waivers/sign: notification status tracking (customer + merchant)
+ * - Payment-request dashboard reports accepted delivery and preserves failed-send links
  * - Financial guard: conversation limit enforced before send
  * - Adjacent sender non-regression (structural, not behavioral)
  */
@@ -363,6 +364,23 @@ describe('Lane 1: Payment request send route', () => {
     const path = await import('path');
     const src = fs.readFileSync(path.join(process.cwd(), 'app/api/payment-request/send/route.ts'), 'utf-8');
     expect(src).toContain("emailResult.success ? 'accepted' : 'failed'");
+  });
+
+  it('payment-request dashboard checks the response success body before reporting sent', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/payment-request/page.tsx'), 'utf-8');
+    expect(src).toContain('res.ok && data.success === true');
+    expect(src).toContain('createdButNotDelivered');
+  });
+
+  it('payment-request dashboard preserves created links when delivery fails', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/payment-request/page.tsx'), 'utf-8');
+    expect(src).toContain('setUndeliveredPaymentRequests');
+    expect(src).toContain('Open payment link');
+    expect(src).toContain('do not submit this request again');
   });
 });
 

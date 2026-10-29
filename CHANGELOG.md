@@ -1,3 +1,10 @@
+### #736 Lane 1 R7 — Surface failed payment-request notifications (2026-10-29)
+
+- `app/dashboard/payment-request/page.tsx`: Inspect the API's delivery result instead of treating HTTP 200 alone as notification success. When the payment request was created but no channel accepted delivery, show its saved link/reference and prevent accidental resubmission; bulk results now distinguish sent, created-but-undelivered, and failed requests.
+- `lib/__tests__/lane01-outbound-delivery-status.test.ts`: Add regression checks for single and bulk dashboard status handling and preservation of created payment links.
+- **Affects**: Payment-request dashboard feedback when the payment link exists but notification delivery fails.
+- **Could break**: The form now clears after a payment request was created even when its notification failed, avoiding a duplicate request on resubmission.
+
 ### #736 Lane 1 R6 — Contract fallback and waiver email status corrections (2026-10-29)
 
 - `app/api/contracts/send/route.ts`: Count accepted email fallback as a successful signer notification and increment multi-signer delivery counts independently of WhatsApp message-ID persistence.
