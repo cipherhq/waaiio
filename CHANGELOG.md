@@ -1,3 +1,11 @@
+### #753 item 6 — Bot Text clarity for nontechnical merchants (2026-10-29)
+
+- **`app/dashboard/translations/page.tsx`**: Replaced raw message keys with human-readable labels, context descriptions, and "Your message" field labels. Now uses `editableKeys` from the API (not `allKeys`) so only merchant-editable messages appear. Added inline help explaining save/reset behavior, required placeholder tokens with explanations, and WhatsApp character limits for button/list titles. Search matches readable labels in addition to keys and text. Updated page help title and terminology ("messages" instead of "keys").
+- **`app/dashboard/translations/message-presentation.ts`** (new): Page-local presentation helper with human-readable names, context descriptions, placeholder explanations, and character limit metadata for all 40 business-editable message keys.
+- **`app/dashboard/translations/__tests__/bot-text-753.test.tsx`** (new): 17 jsdom rendered tests covering readable labels, search by readable name, correct save payload (business/key/language), clear-and-save reset (null value), validation and network error display, editable-key filtering, character limits, placeholder guidance, save/reset help text, page help title, and message count terminology.
+- **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
+- **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
+
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
 - **`lib/payments/send-confirmation.ts`**: Added campaign donation recipient/business resolution block (section 2b) between invoice and order fallback. When `payment.campaign_id` is set and no booking/reservation/invoice resolved the customer, queries `campaign_donations` for `donor_phone`, `business_id`, `reference_code`, and joins to `campaigns(title, businesses(name, country_code))`. Previously, standalone campaign donations had no resolution path — `customerPhone` and `businessId` stayed null, causing `retryable_failed` with `no_business_resolved` forever.
