@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
   createEvent: vi.fn(), fetch: vi.fn(),
 }));
 vi.mock('@/components/dashboard/DashboardProvider', () => ({
-  useBusiness: () => ({ id: 'business-1', name: 'Fixture', country_code: 'NG', currency: 'NGN', capabilities: ['ticketing'], subscription_tier: 'business' }),
+  useBusiness: () => ({ id: 'business-1', name: 'Fixture', category: 'other', country_code: 'NG', currency: 'NGN', capabilities: ['ticketing'], subscription_tier: 'business' }),
 }));
 vi.mock('@/lib/supabase/client', () => ({
   createClient: () => ({
