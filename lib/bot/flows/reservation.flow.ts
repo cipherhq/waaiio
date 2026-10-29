@@ -2,7 +2,7 @@ import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } fro
 import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -1427,16 +1427,19 @@ export const reservationFlow: FlowDefinition = {
           const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
           const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
 
-          await ctx.supabase
-            .from('pending_transfers')
-            .update({
-              proof_type: 'screenshot',
-              proof_image_url: ctx.mediaUrl,
-              verified_by_ocr: ocrMatches,
-              ocr_result: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date, confidence: ocr.confidence, fields_match: ocrMatches } : null,
-            })
-            .eq('reference_code', transferRef)
-            .eq('status', 'pending');
+          // #736 Finding 2: Route through atomic submit_transfer_proof RPC
+          const proofResult = await submitTransferProof(ctx.supabase, {
+            referenceCode: transferRef, businessId: ctx.business!.id,
+            proofType: 'screenshot', proofImageUrl: ctx.mediaUrl, proofText: null,
+            ocrResult: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference,
+              sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date,
+              confidence: ocr.confidence, fields_match: ocrMatches } : null,
+            verifiedByOcr: ocrMatches,
+          });
+          if (!proofResult.submitted) {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This transfer has expired. Please start a new reservation.') });
+            return { valid: true, data: { _action: 'transfer_expired' } };
+          }
 
           if (ctx.business) {
             const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';

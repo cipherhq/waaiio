@@ -664,7 +664,7 @@ BEGIN
     END IF;
   ELSIF v_entity_type = 'invoice' THEN
     IF NOT EXISTS (SELECT 1 FROM invoices WHERE id = v_transfer.invoice_id
-        AND business_id = p_business_id AND status IN ('sent', 'overdue')) THEN
+        AND business_id = p_business_id AND status IN ('sent', 'viewed', 'overdue')) THEN
       RETURN '{"confirmed":false,"reason":"invoice_not_payable_or_mismatch"}'::jsonb;
     END IF;
   END IF;
@@ -675,11 +675,14 @@ BEGIN
   WHERE id = p_transfer_id AND status = 'pending';
 
   -- 6. Create payment (major units, M394 provenance conventions)
+  -- #736 Finding 5: Set finalization_completed_at to prevent recovery cron
+  -- from selecting non-order direct payments for order-only reconciliation.
   INSERT INTO payments (
     business_id, amount, currency, status, payment_method, gateway,
     gateway_reference, gateway_status, paid_at,
     booking_id, invoice_id, reservation_id, campaign_id,
     payment_authority_version, gateway_fee, fee_policy_version,
+    finalization_completed_at,
     metadata
   ) VALUES (
     p_business_id, v_payment_amount,
@@ -689,6 +692,7 @@ BEGIN
     v_transfer.booking_id, v_transfer.invoice_id,
     v_transfer.reservation_id, v_transfer.campaign_id,
     1, 0, 0,
+    v_now,  -- finalization_completed_at: inline-finalized, exclude from recovery cron
     jsonb_build_object(
       'pending_transfer_id', p_transfer_id,
       'confirmed_by', p_confirmed_by,
@@ -744,7 +748,7 @@ BEGIN
     -- Invoice: payment IS completion (no separate approval needed)
     UPDATE invoices SET status = 'paid', paid_at = v_now
     WHERE id = v_transfer.invoice_id AND business_id = p_business_id
-      AND status IN ('sent', 'overdue');
+      AND status IN ('sent', 'viewed', 'overdue');
     GET DIAGNOSTICS v_rows = ROW_COUNT;
     IF v_rows < 1 THEN
       RAISE EXCEPTION 'invoice_update_failed: invoice % not payable', v_transfer.invoice_id;

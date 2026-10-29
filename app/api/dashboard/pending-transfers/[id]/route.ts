@@ -284,26 +284,29 @@ export async function PATCH(
         );
       }
 
-      // M394/Phase 2D: Delegate Stage 2→3 to canonical Payment Authority
-      // R2 item 11: Downstream failure cannot undo financial success
+      // #736 Finding 1: Only run Stage 2→3 when merchant also approves fulfillment.
+      // When approve_fulfillment=false, order is paid_pending_approval — defer
+      // fulfillment effects and notifications until explicit merchant approval.
       const paymentId = confirmResult.payment_id as string;
-      let finalizationStatus = 'pending';
-      try {
-        const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
-        const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
-        const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
-        const lifecycle = await resumeSuccessfulPaymentFinalization(
-          service, paymentId,
-          (sb, pay) => processSuccessfulPayment(sb, pay),
-          (sb, pay, opts) => sendProactiveConfirmation(sb, pay, { logPrefix: '[TRANSFER-CONFIRM]', exactEntityFamily: opts?.exactEntityFamily }),
-        );
-        finalizationStatus = lifecycle.status;
-      } catch (resumeErr) {
-        // Log but do NOT fail the financial confirmation
-        logger.error('[PENDING_TRANSFERS] Payment Authority resume error (non-fatal):', resumeErr);
-        Sentry.captureException(resumeErr, { tags: { component: 'pending-transfers', operation: 'resume-finalization' } });
-        finalizationStatus = 'error';
+      let finalizationStatus = approve_fulfillment ? 'pending' : 'deferred';
+      if (approve_fulfillment) {
+        try {
+          const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+          const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+          const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+          const lifecycle = await resumeSuccessfulPaymentFinalization(
+            service, paymentId,
+            (sb, pay) => processSuccessfulPayment(sb, pay),
+            (sb, pay, opts) => sendProactiveConfirmation(sb, pay, { logPrefix: '[TRANSFER-CONFIRM]', exactEntityFamily: opts?.exactEntityFamily }),
+          );
+          finalizationStatus = lifecycle.status;
+        } catch (resumeErr) {
+          logger.error('[PENDING_TRANSFERS] Payment Authority resume error (non-fatal):', resumeErr);
+          Sentry.captureException(resumeErr, { tags: { component: 'pending-transfers', operation: 'resume-finalization' } });
+          finalizationStatus = 'error';
+        }
       }
+      // When deferred: the approve route triggers Stage 2→3 after merchant approves.
 
       return NextResponse.json({ success: true, status: 'confirmed', finalization_status: finalizationStatus });
     }

@@ -10,7 +10,7 @@ import { createNotification } from './shared/notifications';
 import { getAuthorization, createPlan as createPaystackPlan, createSubscription as createPaystackSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import { getCardToken } from '@/lib/payments/flutterwave-recurring';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { logger } from '@/lib/logger';
@@ -809,25 +809,19 @@ export const paymentFlow: FlowDefinition = {
           const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
           const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
 
-          // Store proof image + OCR results on the pending_transfer
-          await ctx.supabase
-            .from('pending_transfers')
-            .update({
-              proof_type: 'screenshot',
-              proof_image_url: ctx.mediaUrl,
-              verified_by_ocr: ocrMatches,
-              ocr_result: ocr.confidence > 0 ? {
-                amount: ocr.amount,
-                reference: ocr.reference,
-                sender_name: ocr.senderName,
-                bank_name: ocr.bankName,
-                date: ocr.date,
-                confidence: ocr.confidence,
-                fields_match: ocrMatches,
-              } : null,
-            })
-            .eq('reference_code', transferRef)
-            .eq('status', 'pending');
+          // #736 Finding 2: Route through atomic submit_transfer_proof RPC
+          const proofResult = await submitTransferProof(ctx.supabase, {
+            referenceCode: transferRef, businessId: ctx.business!.id,
+            proofType: 'screenshot', proofImageUrl: ctx.mediaUrl, proofText: null,
+            ocrResult: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference,
+              sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date,
+              confidence: ocr.confidence, fields_match: ocrMatches } : null,
+            verifiedByOcr: ocrMatches,
+          });
+          if (!proofResult.submitted) {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This transfer has expired. Please start a new payment.') });
+            return { valid: true, data: { _action: 'transfer_expired' } };
+          }
 
           // Notify business owner about the transfer proof
           if (ctx.business) {

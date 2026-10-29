@@ -133,6 +133,57 @@ export async function createPendingTransfer(
 }
 
 /**
+ * Submit transfer proof through the atomic submit_transfer_proof RPC.
+ * Enforces DB-authoritative deadline, lock order, and immutable timestamps.
+ * Returns { submitted: true } or { submitted: false, reason: string }.
+ *
+ * Falls back to direct UPDATE only for transfers without a resolvable ID
+ * (should not happen in normal flow — createPendingTransfer returns the ref).
+ */
+export async function submitTransferProof(
+  supabase: SupabaseClient,
+  params: {
+    referenceCode: string;
+    businessId: string;
+    proofType: 'screenshot' | 'reference' | 'text';
+    proofImageUrl: string | null;
+    proofText: string | null;
+    ocrResult: Record<string, unknown> | null;
+    verifiedByOcr: boolean;
+  },
+): Promise<{ submitted: boolean; reason?: string }> {
+  // Look up transfer ID by reference_code + business_id
+  const { data: transfer } = await supabase
+    .from('pending_transfers')
+    .select('id')
+    .eq('reference_code', params.referenceCode)
+    .eq('business_id', params.businessId)
+    .eq('status', 'pending')
+    .maybeSingle();
+
+  if (!transfer?.id) {
+    return { submitted: false, reason: 'transfer_not_found_or_expired' };
+  }
+
+  const { data: result, error } = await supabase.rpc('submit_transfer_proof', {
+    p_transfer_id: transfer.id,
+    p_business_id: params.businessId,
+    p_proof_type: params.proofType,
+    p_proof_image_url: params.proofImageUrl,
+    p_proof_text: params.proofText,
+    p_ocr_result: params.ocrResult ? JSON.stringify(params.ocrResult) : null,
+    p_verified_by_ocr: params.verifiedByOcr,
+  });
+
+  if (error) {
+    logger.error('[BANK-TRANSFER] submit_transfer_proof RPC error:', error.message);
+    return { submitted: false, reason: error.message };
+  }
+
+  return result as { submitted: boolean; reason?: string };
+}
+
+/**
  * Format the bank transfer details block for WhatsApp messages.
  */
 export function formatBankTransferBlock(

@@ -439,7 +439,7 @@ export default function PendingTransfersPage() {
                         </span>
                       </td>
 
-                      {/* Actions (pending tab only) */}
+                      {/* Actions: pending tab = confirm/reject; confirmed tab = approve/reject for payment-only */}
                       {activeTab === 'pending' && (
                         <td className="px-4 py-2.5 text-center whitespace-nowrap">
                           <div className="flex items-center justify-center gap-2">
@@ -452,6 +452,55 @@ export default function PendingTransfersPage() {
                             <button
                               onClick={() => setRejectTarget(t)}
                               className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                      {/* #736 Finding 4: Second-step approve/reject for payment-only confirmed transfers */}
+                      {activeTab === 'confirmed' && t.status === 'confirmed' && (t.booking_id || t.order_id || (t as any).reservation_id) && (
+                        <td className="px-4 py-2.5 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={async () => {
+                                if (!confirm('Approve the booking/order for this payment?')) return;
+                                setActionLoading(true);
+                                try {
+                                  const action = t.order_id ? 'approve_order' : 'approve_booking';
+                                  const res = await fetch(`/api/dashboard/pending-transfers/${t.id}/approve`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action, business_id: business.id }),
+                                  });
+                                  if (res.ok) { fetchTransfers(); }
+                                  else { const d = await res.json().catch(() => ({})); alert(d.error || 'Approval failed'); }
+                                } catch { alert('Something went wrong.'); }
+                                setActionLoading(false);
+                              }}
+                              disabled={actionLoading}
+                              className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={async () => {
+                                const reason = prompt('Reason for rejection (optional):');
+                                if (reason === null) return; // cancelled
+                                setActionLoading(true);
+                                try {
+                                  const res = await fetch(`/api/dashboard/pending-transfers/${t.id}/approve`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'reject_order', business_id: business.id, reason: reason || 'merchant_rejected' }),
+                                  });
+                                  if (res.ok) { fetchTransfers(); }
+                                  else { const d = await res.json().catch(() => ({})); alert(d.error || 'Rejection failed'); }
+                                } catch { alert('Something went wrong.'); }
+                                setActionLoading(false);
+                              }}
+                              disabled={actionLoading}
+                              className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors disabled:opacity-50"
                             >
                               Reject
                             </button>

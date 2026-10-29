@@ -9,7 +9,7 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 
 // ── Invoice List ──
@@ -589,16 +589,18 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
       const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
       const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
 
-      await ctx.supabase
-        .from('pending_transfers')
-        .update({
-          proof_type: 'screenshot',
-          proof_image_url: ctx.mediaUrl,
-          verified_by_ocr: ocrMatches,
-          ocr_result: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date, confidence: ocr.confidence, fields_match: ocrMatches } : null,
-        })
-        .eq('reference_code', transferRef)
-        .eq('status', 'pending');
+      // #736 Finding 2: Route through atomic submit_transfer_proof RPC
+      const proofResult = await submitTransferProof(ctx.supabase, {
+        referenceCode: transferRef, businessId: ctx.business!.id,
+        proofType: 'screenshot', proofImageUrl: ctx.mediaUrl, proofText: null,
+        ocrResult: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference,
+          sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date,
+          confidence: ocr.confidence, fields_match: ocrMatches } : null,
+        verifiedByOcr: ocrMatches,
+      });
+      if (!proofResult.submitted) {
+        return [{ type: 'text' as const, text: await ctx.t('This transfer has expired. Please request a new invoice payment.') }];
+      }
 
       if (ctx.business) {
         const custName = (sd._invoice_customer_name as string) || 'Customer';
