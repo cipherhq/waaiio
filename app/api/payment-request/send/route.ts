@@ -159,6 +159,9 @@ export async function POST(request: NextRequest) {
     const emailSubject = `Payment Request from ${biz.name} — ${formatCurrency(amount, cc)}`;
 
     // Send WhatsApp message (with email fallback for cold numbers)
+    let waDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+    let emailDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+
     if (effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') {
       const resolver = new ChannelResolver(serviceClient);
       const resolved = await resolver.resolveByBusinessId(businessId);
@@ -179,7 +182,7 @@ export async function POST(request: NextRequest) {
         // Use provided email or look up from customer profile
         const fallbackEmail = email || await findCustomerEmail(serviceClient, phone, businessId);
 
-        await sendOrEmail({
+        const deliveryResult = await sendOrEmail({
           supabase: serviceClient,
           sender: resolved.sender,
           to: toPhone,
@@ -192,22 +195,39 @@ export async function POST(request: NextRequest) {
             html: paymentEmailTemplate.html,
           } : null,
         });
+
+        waDeliveryStatus = deliveryResult.whatsapp === 'sent' ? 'accepted' : 'failed';
+        emailDeliveryStatus = deliveryResult.email === 'sent' ? 'accepted'
+          : deliveryResult.email === 'failed' ? 'failed' : 'skipped';
+      } else {
+        waDeliveryStatus = 'failed';
+        logger.warn(`[PAYMENT-REQUEST] No WhatsApp channel for business ${businessId}`);
       }
     }
 
     // Send email-only (when sendVia is 'email' and no WhatsApp was attempted)
     if (effectiveSendVia === 'email' && email) {
-      await sendEmail({
-        to: email,
-        subject: emailSubject,
-        html: paymentEmailTemplate.html,
-      }).catch(err => logger.error('[PAYMENT-REQUEST] Email error:', err));
+      try {
+        await sendEmail({
+          to: email,
+          subject: emailSubject,
+          html: paymentEmailTemplate.html,
+        });
+        emailDeliveryStatus = 'accepted';
+      } catch (err) {
+        emailDeliveryStatus = 'failed';
+        logger.error('[PAYMENT-REQUEST] Email error:', err);
+      }
     }
 
+    const anyChannelAccepted = waDeliveryStatus === 'accepted' || emailDeliveryStatus === 'accepted';
+
     return NextResponse.json({
-      success: true,
+      success: anyChannelAccepted,
       paymentUrl,
       reference: refCode,
+      wa_delivery_status: waDeliveryStatus,
+      email_delivery_status: emailDeliveryStatus,
     });
   } catch (error) {
     logger.error('[PAYMENT-REQUEST] Error:', error);

@@ -118,6 +118,9 @@ export async function POST(request: NextRequest) {
       .single();
 
     // Send WhatsApp confirmation to customer (if phone provided and customer chose whatsapp/both)
+    // Waiver signing is already persisted — notification failures must not lose the signed state
+    // but must be exposed for safe retry.
+    let customerWaStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
     if (customer_phone && (sendVia === 'whatsapp' || sendVia === 'both')) {
       try {
         const cleanPhone = customer_phone.replace(/\D/g, '');
@@ -140,8 +143,12 @@ export async function POST(request: NextRequest) {
             `📎 Ref: WAI-${signed.id.slice(0, 6).toUpperCase()}`,
           ].join('\n');
           await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg });
+          customerWaStatus = 'accepted';
+        } else {
+          customerWaStatus = 'failed';
         }
       } catch (msgErr) {
+        customerWaStatus = 'failed';
         logger.warn('Failed to send waiver WhatsApp confirmation:', msgErr);
       }
     }
@@ -208,6 +215,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       waiver_id: signed.id,
+      notification_status: {
+        customer_whatsapp: customerWaStatus,
+      },
     });
   } catch (err) {
     logger.error('Waiver sign error:', err);
