@@ -5475,3 +5475,13 @@ If something breaks:
 - Extend existing format-hint regression coverage to verify the diagnostic and silence for ordinary invalid/winner/try-again outcomes.
 - **Affects**: Server-side visibility of promo verification RPC failures.
 - **Could break**: Log volume increases on RPC failures; customer responses, format hints and claim behavior remain unchanged.
+
+### #751 — Reuse Places autocomplete across address forms (2026-10-29)
+
+- Share Google Places loading across the existing address widgets and accept either existing public key name; retain manual entry on unavailable configuration/loading errors.
+- Keep structured address callbacks and restored values current; guard delayed predictions/details against later edits, selections and unmounts, with keyboard/pointer selection and listbox associations.
+- Add autocomplete to location create/edit and invoice customer-address forms. Existing onboarding, events, properties, parties, Settings and Discovery reuse the improved components; existing persistence and manual coordinate invalidation remain intact.
+- Add loader/component and real form-handler regression tests, including #485 coordinate contracts.
+- Preserve selected address details after blur/outside dismissal while keeping the menu closed; edits, new selections, record resets and unmounts still invalidate stale details.
+- **Affects**: Main-app physical-address entry. Admin Vite onboarding/event fields remain an explicit follow-up; no provider configuration or schema changes.
+- **Could break**: Shared browser widget loading/selection affects existing callers; live Google enablement/referrer behavior still needs runtime verification.
