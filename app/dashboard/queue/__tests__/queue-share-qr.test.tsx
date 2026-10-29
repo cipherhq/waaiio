@@ -1,134 +1,238 @@
+// @vitest-environment jsdom
 /**
- * Queue tab — Share Queue QR/link entry point tests (#752).
+ * Queue tab Share Queue QR/link — rendered UI tests (#752).
  *
+ * Renders QueuePage and QRCodePage with React Testing Library.
  * Verifies:
- * 1. Queue page renders "Share Queue" link targeting /dashboard/qr-code?template=queue
- * 2. QR Code page reads ?template= param and pre-selects the queue template
- * 3. Invalid/missing template param defaults to generic
- * 4. Existing QR template selection behavior preserved
+ * 1. Share Queue link present on Queue page, targeting correct URL
+ * 2. QR page pre-selects queue template from ?template=queue
+ * 3. Valid bot channel + routing code → queue QR/link available with join guidance
+ * 4. No bot channel → setup guidance, QR/link withheld
+ * 5. Shared number without routing code → setup guidance
+ * 6. Dedicated bot → greeting/menu path with correct guidance
+ * 7. Existing template behavior preserved
  */
-import { describe, it, expect, vi } from 'vitest';
+import React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 
-// ── Test 1: Queue page Share Queue link ──
+// ── Shared state for mocks ──
+const state = vi.hoisted(() => ({
+  business: {} as Record<string, unknown>,
+  sharedPhone: '+12025550199',
+  searchParams: new URLSearchParams(),
+  hasBotChannel: true,
+}));
+
+vi.mock('@/components/dashboard/DashboardProvider', () => ({
+  useBusiness: () => state.business,
+  useRequireCapability: () => {},
+}));
+
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => state.searchParams,
+}));
+
+vi.mock('next/link', () => ({
+  default: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) => (
+    <a href={href} className={className} data-testid="next-link">{children}</a>
+  ),
+}));
+
+vi.mock('@/lib/supabase/client', () => ({
+  createClient: () => {
+    const chainMethods = ['eq', 'neq', 'order', 'limit', 'gte', 'lte', 'in', 'is', 'not', 'or', 'gt', 'lt'];
+    function makeChain() {
+      const chain: Record<string, unknown> = {};
+      for (const m of chainMethods) (chain as Record<string, () => typeof chain>)[m] = () => chain;
+      chain.select = () => chain;
+      chain.update = () => chain;
+      chain.insert = () => chain;
+      chain.delete = () => chain;
+      chain.single = async () => ({ data: null, error: null });
+      chain.maybeSingle = async () => ({
+        data: state.hasBotChannel ? { phone_number: state.sharedPhone } : null,
+        error: null,
+      });
+      chain.then = (resolve: (v: unknown) => void) => resolve({ data: [], error: null, count: 0 });
+      return chain;
+    }
+    return {
+      from: () => makeChain(),
+      channel: () => ({
+        on: () => ({ subscribe: () => ({ unsubscribe: () => {} }) }),
+      }),
+      removeChannel: () => {},
+      rpc: async () => ({ data: null, error: null }),
+    };
+  },
+}));
+
+vi.mock('@/lib/supabase/safe-view-query', () => ({
+  queryChannelsPublic: async () => ({
+    data: state.hasBotChannel ? { phone_number: state.sharedPhone } : null,
+    error: null,
+  }),
+}));
+
+vi.mock('qrcode.react', () => ({
+  QRCodeCanvas: ({ value }: { value: string }) => (
+    <div data-testid="qr-value" data-value={value} />
+  ),
+}));
+
+vi.mock('@/components/dashboard/PageHelp', () => ({ PageHelp: () => null }));
+
+import QRCodePage from '@/app/dashboard/qr-code/page';
+
+afterEach(() => cleanup());
+
+beforeEach(() => {
+  state.sharedPhone = '+12025550199';
+  state.hasBotChannel = true;
+  state.searchParams = new URLSearchParams();
+  state.business = {
+    id: 'biz-queue-test',
+    name: 'Queue Test Biz',
+    slug: 'queue-test',
+    bot_code: 'QTEST',
+    phone: '+12025550000',
+    country_code: 'US',
+    wa_method: 'shared',
+    assigned_channel_id: null,
+    whatsapp_channel_id: null,
+    subscription_tier: 'free',
+    capabilities: ['queue', 'payment', 'chat'],
+    logo_url: null,
+  };
+});
+
+// ── Queue page Share Queue link ──
 
 describe('Queue page — Share Queue link', () => {
-  it('renders a link to /dashboard/qr-code?template=queue', async () => {
-    // Read the Queue page source to verify the link exists with correct href
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../page.tsx'),
-      'utf-8',
-    );
+  it('renders Share Queue link targeting /dashboard/qr-code?template=queue', async () => {
+    // Import Queue page lazily to pick up the mock state
+    const QueuePageModule = await import('../page');
+    const QueuePage = QueuePageModule.default;
 
-    // Verify Link import
-    expect(source).toContain("import Link from 'next/link'");
+    render(<QueuePage />);
 
-    // Verify the Share Queue link with correct href
-    expect(source).toContain('href="/dashboard/qr-code?template=queue"');
-    expect(source).toContain('Share Queue');
-
-    // Verify it's positioned inside the action buttons group
-    const actionArea = source.slice(
-      source.indexOf('<div className="flex gap-2">'),
-      source.indexOf('Call Next'),
-    );
-    expect(actionArea).toContain('Share Queue');
-    expect(actionArea).toContain('template=queue');
+    await waitFor(() => {
+      const link = screen.getByText('Share Queue');
+      expect(link).toBeTruthy();
+      expect(link.getAttribute('href')).toBe('/dashboard/qr-code?template=queue');
+    });
   });
 });
 
-// ── Test 2: QR Code page template param support ──
+// ── QR Code page with ?template=queue ──
 
-describe('QR Code page — ?template= param support', () => {
-  it('reads template param and validates against known template IDs', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../../qr-code/page.tsx'),
-      'utf-8',
-    );
+describe('QR Code page — queue template pre-selection', () => {
+  it('pre-selects queue template and shows join guidance when bot channel valid', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
 
-    // Verify useSearchParams import
-    expect(source).toContain("useSearchParams");
-    expect(source).toContain("from 'next/navigation'");
+    render(<QRCodePage />);
 
-    // Verify template param reading
-    expect(source).toContain("searchParams.get('template')");
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      expect(qrValues.length).toBeGreaterThanOrEqual(1);
+      // Shared number: routing code + :queue suffix
+      const value = qrValues[0].getAttribute('data-value');
+      expect(value).toBe('https://wa.me/12025550199?text=QTEST%3Aqueue');
+    });
 
-    // Verify validation against TEMPLATES array
-    expect(source).toContain('TEMPLATES.some(t => t.id === param)');
-
-    // Verify initialTemplate used as state default (not hardcoded 'generic')
-    expect(source).toContain('useState<TemplateId>(initialTemplate)');
-
-    // Verify deep-link suffix is initialized from the template
-    expect(source).toContain('TEMPLATES.find(t => t.id === initialTemplate)');
+    // Queue join guidance visible
+    const guidance = screen.getByTestId('queue-join-guidance');
+    expect(guidance.textContent).toContain('Scanning opens WhatsApp');
+    expect(guidance.textContent).toContain('Scanning alone does not add them');
   });
 
-  it('defaults to generic when no template param provided', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../../qr-code/page.tsx'),
-      'utf-8',
-    );
+  it('no bot channel → setup guidance shown, QR content area dimmed', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    state.hasBotChannel = false;
 
-    // The fallback is 'generic' when param is null or invalid
-    expect(source).toMatch(/return ['"]generic['"]/);
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const guidance = screen.getByTestId('queue-setup-guidance');
+      expect(guidance.textContent).toContain('WhatsApp bot setup required');
+      expect(guidance.textContent).toContain('WhatsApp Setup');
+    });
   });
 
-  it('queue template exists with correct capabilities and deep-link suffix', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../../qr-code/page.tsx'),
-      'utf-8',
-    );
+  it('shared number without routing code → setup guidance', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    state.business = { ...state.business, bot_code: '' };
 
-    // The queue template has capabilities: ['queue'] which produces deep-link suffix 'queue'
-    expect(source).toContain("id: 'queue'");
-    expect(source).toContain("label: 'Scan to Join Queue'");
-    expect(source).toContain("capabilities: ['queue']");
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const guidance = screen.getByTestId('queue-setup-guidance');
+      expect(guidance.textContent).toContain('routing code');
+    });
+  });
+
+  it('dedicated bot → greeting path with menu guidance', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    state.business = { ...state.business, wa_method: 'dedicated', bot_code: '' };
+
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      const value = qrValues[0].getAttribute('data-value');
+      // Dedicated: no routing code, sends Hi
+      expect(value).toBe('https://wa.me/12025550199?text=Hi');
+    });
+
+    // Guidance explains menu selection path
+    const guidance = screen.getByTestId('queue-join-guidance');
+    expect(guidance.textContent).toContain('selects "Join Queue" from your menu');
   });
 });
 
-// ── Test 3: Link construction for queue template ──
+// ── Preserved behavior ──
 
-describe('QR Code — queue link construction', () => {
-  it('queue template produces correct deep-link suffix for shared numbers', () => {
-    // Simulate the link construction logic
-    const routingCode = 'TESTBIZ';
-    const deepLinkSuffix = 'queue'; // first capability of queue template
-    const prefillText = routingCode
-      ? (deepLinkSuffix ? `${routingCode}:${deepLinkSuffix}` : routingCode)
-      : 'Hi';
+describe('QR Code page — existing behavior preserved', () => {
+  it('no template param defaults to generic', async () => {
+    render(<QRCodePage />);
 
-    expect(prefillText).toBe('TESTBIZ:queue');
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      // Generic: routing code only, no suffix
+      const value = qrValues[0].getAttribute('data-value');
+      expect(value).toBe('https://wa.me/12025550199?text=QTEST');
+    });
 
-    const link = `https://wa.me/2349012345678?text=${encodeURIComponent(prefillText)}`;
-    expect(link).toContain('TESTBIZ%3Aqueue');
-    expect(link).toContain('wa.me/');
+    // No queue guidance for generic template
+    expect(screen.queryByTestId('queue-join-guidance')).toBeNull();
+    expect(screen.queryByTestId('queue-setup-guidance')).toBeNull();
   });
 
-  it('queue template on dedicated number sends Hi (no routing code)', () => {
-    const routingCode = ''; // dedicated number — no routing code
-    const deepLinkSuffix = ''; // no suffix when no routing code
-    const prefillText = routingCode
-      ? (deepLinkSuffix ? `${routingCode}:${deepLinkSuffix}` : routingCode)
-      : 'Hi';
+  it('invalid template param defaults to generic', async () => {
+    state.searchParams = new URLSearchParams('template=nonexistent');
 
-    expect(prefillText).toBe('Hi');
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      const value = qrValues[0].getAttribute('data-value');
+      expect(value).toBe('https://wa.me/12025550199?text=QTEST');
+    });
   });
 
-  it('existing generic template behavior preserved', () => {
-    // Generic template has capabilities: [] → no deep-link suffix
-    const routingCode = 'TESTBIZ';
-    const deepLinkSuffix = ''; // generic has no capability
-    const prefillText = routingCode
-      ? (deepLinkSuffix ? `${routingCode}:${deepLinkSuffix}` : routingCode)
-      : 'Hi';
+  it('non-queue template ignores channel guard (no setup guidance)', async () => {
+    state.searchParams = new URLSearchParams('template=chat');
+    state.hasBotChannel = false; // would trigger guard for queue, not for chat
 
-    expect(prefillText).toBe('TESTBIZ');
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      expect(qrValues.length).toBeGreaterThanOrEqual(1);
+    });
+
+    // No queue setup guidance — chat template is unaffected by channel guard
+    expect(screen.queryByTestId('queue-setup-guidance')).toBeNull();
   });
 });

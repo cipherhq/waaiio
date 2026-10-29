@@ -55,6 +55,8 @@ export default function QRCodePage() {
   }, [searchParams]);
   const [channelPhone, setChannelPhone] = useState('');
   const [channelLoaded, setChannelLoaded] = useState(false);
+  // Track whether the resolved phone is a real bot channel (not just owner contact fallback)
+  const [hasBotChannel, setHasBotChannel] = useState(false);
 
   // Load the actual WhatsApp channel phone number (not business.phone which is the owner's contact)
   useEffect(() => {
@@ -73,13 +75,13 @@ export default function QRCodePage() {
       ]);
 
       // Priority: assigned > dedicated > shared > business.phone fallback
-      const resolved = assignedResult.data?.phone_number
+      const botChannelPhone = assignedResult.data?.phone_number
         || dedicatedResult.data?.phone_number
-        || sharedResult.data?.phone_number
-        || business.phone
-        || '';
+        || sharedResult.data?.phone_number;
+      const resolved = botChannelPhone || business.phone || '';
 
       setChannelPhone(resolved.replace(/[^0-9]/g, ''));
+      setHasBotChannel(!!botChannelPhone);
       setChannelLoaded(true);
     }
     loadChannelPhone();
@@ -135,6 +137,15 @@ export default function QRCodePage() {
   }
 
   const isAttendanceTemplate = selectedTemplate === 'attendance';
+  const isQueueTemplate = selectedTemplate === 'queue';
+
+  // Queue sharing requires a real bot channel (not contact-phone fallback)
+  // and, for shared numbers, a routing code to direct customers to the right business
+  const queueReady = isQueueTemplate
+    ? channelLoaded && hasBotChannel && (!isSharedNumber || !!routingCode)
+    : true;
+  const queueLoading = isQueueTemplate && !channelLoaded;
+
   const activeLink = isAttendanceTemplate
     ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/checkin/${business.id}`
     : `https://wa.me/${cleanPhone}?text=${encodeURIComponent(prefillText)}`;
@@ -448,7 +459,23 @@ export default function QRCodePage() {
         </div>
       )}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
+      {isQueueTemplate && queueLoading && (
+        <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          Loading WhatsApp channel…
+        </div>
+      )}
+
+      {isQueueTemplate && channelLoaded && !queueReady && (
+        <div data-testid="queue-setup-guidance" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>WhatsApp bot setup required for queue sharing.</strong>{' '}
+          {!hasBotChannel
+            ? <>Connect an active WhatsApp bot channel in <a href="/dashboard/whatsapp/connect" className="font-medium underline hover:no-underline">WhatsApp Setup</a> to share your queue QR code.</>
+            : <>Your shared WhatsApp number needs a routing code. Contact support or check your <a href="/dashboard/settings" className="font-medium underline hover:no-underline">Settings</a>.</>
+          }
+        </div>
+      )}
+
+      <div className={`mt-6 grid gap-6 lg:grid-cols-[1fr_380px]${isQueueTemplate && !queueReady ? ' pointer-events-none opacity-40' : ''}`}>
         {/* ── Left: Settings ── */}
         <div className="space-y-6">
           {/* WhatsApp Link */}
@@ -499,6 +526,17 @@ export default function QRCodePage() {
                 <p className="mt-1 text-xs text-gray-400">
                   Customers who scan this QR will open a WhatsApp chat with your business.
                 </p>
+              </div>
+            )}
+
+            {isQueueTemplate && queueReady && (
+              <div data-testid="queue-join-guidance" className="mt-3 rounded-lg border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+                <strong>How customers join:</strong> Scanning opens WhatsApp with a pre-filled message.{' '}
+                {routingCode
+                  ? 'The customer sends the message to join your queue directly — no menu needed.'
+                  : 'The customer sends the message, then selects "Join Queue" from your menu to join.'
+                }
+                {' '}Scanning alone does not add them to the queue.
               </div>
             )}
           </div>
