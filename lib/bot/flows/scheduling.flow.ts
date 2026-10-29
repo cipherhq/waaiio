@@ -3705,15 +3705,17 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
+        // #736 Finding 2: Route typed proof through atomic RPC (same as screenshot)
         if (d._awaiting_transfer_proof && text && !isIvePaidInput(text)) {
-          await ctx.supabase
-            .from('pending_transfers')
-            .update({
-              proof_type: 'text',
-              proof_text: input.trim(),
-            })
-            .eq('reference_code', d.bank_transfer_reference as string)
-            .eq('status', 'pending');
+          const textProofResult = await submitTransferProof(ctx.supabase, {
+            referenceCode: d.bank_transfer_reference as string, businessId: ctx.business!.id,
+            proofType: 'text', proofImageUrl: null, proofText: input.trim(),
+            ocrResult: null, verifiedByOcr: false,
+          });
+          if (!textProofResult.submitted) {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This transfer has expired. Please start a new booking.') });
+            return { valid: true, data: { _action: 'transfer_expired' } };
+          }
 
           await ctx.sender.sendText({
             to: ctx.from,

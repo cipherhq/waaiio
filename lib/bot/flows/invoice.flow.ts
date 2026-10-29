@@ -647,13 +647,16 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
     }
 
     // ── Text proof after tapping "I've Sent Transfer" ──
+    // #736 Finding 2: Route typed proof through atomic RPC
     if (sd._awaiting_transfer_proof && text && !isIvePaidInput(text)) {
-      await ctx.supabase
-        .from('pending_transfers')
-        .update({ proof_type: 'text', proof_text: input.trim() })
-        .eq('reference_code', sd.bank_transfer_reference as string)
-        .eq('status', 'pending');
-
+      const textProofResult = await submitTransferProof(ctx.supabase, {
+        referenceCode: sd.bank_transfer_reference as string, businessId: ctx.business!.id,
+        proofType: 'text', proofImageUrl: null, proofText: input.trim(),
+        ocrResult: null, verifiedByOcr: false,
+      });
+      if (!textProofResult.submitted) {
+        return { valid: false, errorMessage: 'This transfer has expired. Please request a new invoice payment.' };
+      }
       await ctx.sender.sendText({
         to: ctx.from,
         text: await ctx.t(`✅ Transfer reference received. *${ctx.business?.name || 'The business'}* will review and confirm your invoice payment shortly.\n\nRef: *${sd.bank_transfer_reference}*\n\nSend *Hi* to continue.`),

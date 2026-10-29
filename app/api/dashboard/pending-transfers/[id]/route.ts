@@ -95,6 +95,24 @@ export async function PATCH(
         }
 
         const exactPaymentId = candidates[0].id;
+
+        // #736 Finding: Check order status before retry — do NOT resume fulfillment
+        // for paid_pending_approval orders. Only confirmed orders get Stage 2/3 retry.
+        const { data: orderCheck } = await service
+          .from('orders')
+          .select('status')
+          .eq('id', transfer.order_id)
+          .single();
+        if (orderCheck?.status === 'paid_pending_approval') {
+          // Order is paid but not approved — retry is a no-op for fulfillment.
+          // Payment is already recorded. Merchant must use the approve route.
+          return NextResponse.json({
+            success: true, status: 'confirmed',
+            finalization_status: 'deferred',
+            message: 'Payment verified. Use Approve to confirm the order.',
+          });
+        }
+
         let retryFinalizationStatus = 'pending';
         try {
           const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');

@@ -459,12 +459,16 @@ export default function PendingTransfersPage() {
                         </td>
                       )}
                       {/* #736 Finding 4: Second-step approve/reject for payment-only confirmed transfers */}
+                      {/* #736 Finding 3: Show second-step actions only on confirmed tab for
+                          transfers with linked entities. Approve for bookings/reservations/orders;
+                          Reject only for orders (reject_paid_order RPC exists; no Owner-approved
+                          booking rejection policy). API returns 409 if entity already approved. */}
                       {activeTab === 'confirmed' && t.status === 'confirmed' && (t.booking_id || t.order_id || (t as any).reservation_id) && (
                         <td className="px-4 py-2.5 text-center whitespace-nowrap">
                           <div className="flex items-center justify-center gap-2">
                             <button
                               onClick={async () => {
-                                if (!confirm('Approve the booking/order for this payment?')) return;
+                                if (!confirm('Approve the booking/order for this verified payment?')) return;
                                 setActionLoading(true);
                                 try {
                                   const action = t.order_id ? 'approve_order' : 'approve_booking';
@@ -473,8 +477,9 @@ export default function PendingTransfersPage() {
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ action, business_id: business.id }),
                                   });
+                                  const d = await res.json().catch(() => ({}));
                                   if (res.ok) { fetchTransfers(); }
-                                  else { const d = await res.json().catch(() => ({})); alert(d.error || 'Approval failed'); }
+                                  else { alert(d.error || 'Approval failed — the entity may already be confirmed.'); }
                                 } catch { alert('Something went wrong.'); }
                                 setActionLoading(false);
                               }}
@@ -483,27 +488,31 @@ export default function PendingTransfersPage() {
                             >
                               Approve
                             </button>
-                            <button
-                              onClick={async () => {
-                                const reason = prompt('Reason for rejection (optional):');
-                                if (reason === null) return; // cancelled
-                                setActionLoading(true);
-                                try {
-                                  const res = await fetch(`/api/dashboard/pending-transfers/${t.id}/approve`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'reject_order', business_id: business.id, reason: reason || 'merchant_rejected' }),
-                                  });
-                                  if (res.ok) { fetchTransfers(); }
-                                  else { const d = await res.json().catch(() => ({})); alert(d.error || 'Rejection failed'); }
-                                } catch { alert('Something went wrong.'); }
-                                setActionLoading(false);
-                              }}
-                              disabled={actionLoading}
-                              className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors disabled:opacity-50"
-                            >
-                              Reject
-                            </button>
+                            {/* Reject only for orders — uses reject_paid_order with stock restore + refund obligation */}
+                            {t.order_id && (
+                              <button
+                                onClick={async () => {
+                                  const reason = prompt('Reason for rejection (optional):');
+                                  if (reason === null) return;
+                                  setActionLoading(true);
+                                  try {
+                                    const res = await fetch(`/api/dashboard/pending-transfers/${t.id}/approve`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ action: 'reject_order', business_id: business.id, reason: reason || 'merchant_rejected' }),
+                                    });
+                                    const d = await res.json().catch(() => ({}));
+                                    if (res.ok) { fetchTransfers(); }
+                                    else { alert(d.error || 'Rejection failed — the order may no longer be pending approval.'); }
+                                  } catch { alert('Something went wrong.'); }
+                                  setActionLoading(false);
+                                }}
+                                disabled={actionLoading}
+                                className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors disabled:opacity-50"
+                              >
+                                Reject Order
+                              </button>
+                            )}
                           </div>
                         </td>
                       )}
