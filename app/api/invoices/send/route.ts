@@ -86,10 +86,15 @@ export async function POST(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { invoice_id, channel } = body; // channel: 'whatsapp' | 'email' | 'both'
+    const { invoice_id, channel } = body;
 
     if (!invoice_id) {
       return NextResponse.json({ error: 'invoice_id is required' }, { status: 400 });
+    }
+
+    const sendVia = channel ?? 'whatsapp';
+    if (sendVia !== 'whatsapp' && sendVia !== 'email') {
+      return NextResponse.json({ error: 'channel must be whatsapp or email' }, { status: 400 });
     }
 
     // Fetch invoice with items
@@ -139,7 +144,7 @@ export async function POST(request: NextRequest) {
       .update({
         token,
         token_expires_at: expiresAt,
-        sent_via: channel || 'whatsapp',
+        sent_via: sendVia,
       })
       .eq('id', invoice_id);
 
@@ -149,12 +154,11 @@ export async function POST(request: NextRequest) {
       ? formatDisplayDate(invoice.due_date, 'brief-year', 'en', biz.country_code || 'NG')
       : 'On receipt';
 
-    const sendVia = channel || 'whatsapp';
     let waMessageId: string | null = null;
     let waDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
 
     // Send via WhatsApp
-    if ((sendVia === 'whatsapp' || sendVia === 'both') && invoice.customer_phone) {
+    if (sendVia === 'whatsapp' && invoice.customer_phone) {
       const message = [
         `\ud83e\uddf3 *Invoice from ${biz.name}*`,
         '',
@@ -265,7 +269,7 @@ export async function POST(request: NextRequest) {
 
     // Send via email
     let emailDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
-    if ((sendVia === 'email' || sendVia === 'both') && invoice.customer_email) {
+    if (sendVia === 'email' && invoice.customer_email) {
       // Slice 5B: Resolve customer language for invoice email
       let invLabels: undefined | import('@/lib/email/localize-email').InvoiceEmailLabels;
       let invWrapperLabels: undefined | import('@/lib/email/localize-email').EmailWrapperLabels;
@@ -337,7 +341,7 @@ export async function POST(request: NextRequest) {
       await service.from('notifications').insert({
         business_id: invoice.business_id,
         type: 'system',
-        channel: sendVia === 'both' ? 'whatsapp' : sendVia,
+        channel: sendVia,
         status: notifStatus,
         subject: anyChannelAccepted
           ? `Invoice sent — ${invoice.reference_code}`

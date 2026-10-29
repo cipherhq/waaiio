@@ -27,14 +27,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'businessId and amount are required' }, { status: 400 });
     }
 
+    if (sendVia !== 'whatsapp' && sendVia !== 'email' && sendVia !== 'auto') {
+      return NextResponse.json({ error: 'sendVia must be whatsapp, email, or auto' }, { status: 400 });
+    }
+
     const effectiveSendVia: string = sendVia === 'auto'
       ? (customerEmail && customerEmail.includes('@') ? 'email' : 'whatsapp')
       : sendVia;
 
-    if ((effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') && !customerPhone) {
+    if (effectiveSendVia === 'whatsapp' && !customerPhone) {
       return NextResponse.json({ error: 'Phone number is required for WhatsApp delivery' }, { status: 400 });
     }
-    if ((effectiveSendVia === 'email' || effectiveSendVia === 'both') && !customerEmail) {
+    if (effectiveSendVia === 'email' && !customerEmail) {
       return NextResponse.json({ error: 'Email is required for email delivery' }, { status: 400 });
     }
 
@@ -62,11 +66,11 @@ export async function POST(request: NextRequest) {
 
     const cc = (biz.country_code || 'NG') as CountryCode;
     const phone = customerPhone ? customerPhone.replace(/\D/g, '') : '';
-    if ((effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') && (!phone || phone.length < 7)) {
+    if (effectiveSendVia === 'whatsapp' && (!phone || phone.length < 7)) {
       return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
     }
     const email = customerEmail?.trim() || '';
-    if ((effectiveSendVia === 'email' || effectiveSendVia === 'both') && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (effectiveSendVia === 'email' && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
     }
 
@@ -162,7 +166,7 @@ export async function POST(request: NextRequest) {
     let waDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
     let emailDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
 
-    if (effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') {
+    if (effectiveSendVia === 'whatsapp') {
       const resolver = new ChannelResolver(serviceClient);
       const resolved = await resolver.resolveByBusinessId(businessId);
 

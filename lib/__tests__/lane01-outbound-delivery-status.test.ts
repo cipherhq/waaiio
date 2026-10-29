@@ -429,10 +429,10 @@ describe('Lane 1: Product decisions remain open (not resolved by this PR)', () =
     expect(true).toBe(true);
   });
 
-  it('partial channel status: PRODUCT DECISION NEEDED', () => {
-    // When send_via='both' and WhatsApp succeeds but email fails,
-    // the invoice is currently marked 'sent'. Decision needed:
-    // Should the dashboard distinguish full vs partial delivery?
+  it('automatic WhatsApp and email delivery status: PRODUCT DECISION NEEDED', () => {
+    // The explicit `both` option is removed, but payment-request WhatsApp sends
+    // may still email alongside WhatsApp when an address is available.
+    // Decision needed: should the dashboard distinguish partial delivery?
     expect(true).toBe(true);
   });
 

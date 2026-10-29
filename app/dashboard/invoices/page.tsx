@@ -110,7 +110,7 @@ export default function InvoicesPage() {
 
   // Send modal state
   const [sendModalInvoice, setSendModalInvoice] = useState<Invoice | null>(null);
-  const [sendChannel, setSendChannel] = useState<'whatsapp' | 'email' | 'both'>('whatsapp');
+  const [sendChannel, setSendChannel] = useState<'whatsapp' | 'email'>('whatsapp');
 
   // Mark paid modal
   const [markPaidInvoice, setMarkPaidInvoice] = useState<Invoice | null>(null);
@@ -917,7 +917,7 @@ export default function InvoicesPage() {
 
             <div className="mt-4 space-y-2">
               <p className="text-sm font-medium text-gray-700">Send via:</p>
-              {(['whatsapp', 'email', 'both'] as const).map(ch => (
+              {(['whatsapp', 'email'] as const).map(ch => (
                 <label key={ch} className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
@@ -927,7 +927,7 @@ export default function InvoicesPage() {
                     className="h-4 w-4 border-gray-300 text-brand focus:ring-brand"
                   />
                   <span className="text-sm text-gray-700 capitalize">
-                    {ch === 'both' ? 'WhatsApp & Email' : ch}
+                    {ch}
                     {ch === 'whatsapp' && !sendModalInvoice.customer_phone && ' (no phone)'}
                     {ch === 'email' && !sendModalInvoice.customer_email && ' (no email)'}
                   </span>

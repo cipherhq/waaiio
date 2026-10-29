@@ -1,3 +1,9 @@
+### #736 Lane 1 R4 — Remove explicit dual-channel send option (2026-10-29)
+
+- Invoice and payment-request dashboards now offer WhatsApp or email individually. Their APIs reject `both` and unsupported channel values; payment-request bulk `auto` routing remains available.
+- Existing payment-request WhatsApp behavior is unchanged: it may email alongside WhatsApp when an email address is available.
+- **PRODUCT DECISIONS remain open**: Invoice resend deduplication, prior message-ID retention, and partial-channel status for automatic WhatsApp+email delivery.
+
 ### #736 Lane 1 R2 — CTO corrections: contracts/send, sendOrEmail result inspection, waivers merchant status, behavioral tests (2026-10-29)
 
 - **`app/api/contracts/send/route.ts`**: Added `messageCategory: 'utility'` on template send and sendOrEmail fallback. Fixed email-only fallback to inspect `sendEmail` return value (`emailResult.success !== false`) instead of fire-and-forget. Template send now requires both `success !== false` AND `messageId` for truthful delivery.

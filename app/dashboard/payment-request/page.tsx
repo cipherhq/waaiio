@@ -27,7 +27,7 @@ interface CustomerSuggestion {
   name: string | null;
 }
 
-type SendVia = 'whatsapp' | 'email' | 'both';
+type SendVia = 'whatsapp' | 'email';
 type RequestMode = 'single' | 'bulk';
 
 function parseBulkRecipients(text: string): { phones: string[]; emails: string[] } {
@@ -129,7 +129,6 @@ export default function PaymentRequestPage() {
     if (!amount) return false;
     if (sendVia === 'whatsapp' && !phone.trim()) return false;
     if (sendVia === 'email' && !email.trim()) return false;
-    if (sendVia === 'both' && (!phone.trim() || !email.trim())) return false;
     return true;
   }
 
@@ -342,18 +341,12 @@ export default function PaymentRequestPage() {
                 >
                   Email
                 </button>
-                <button
-                  onClick={() => setSendVia('both')}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${sendVia === 'both' ? 'border-brand bg-brand/10 text-brand' : 'border-gray-200 text-gray-500'}`}
-                >
-                  Both
-                </button>
               </div>
             </div>
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              {/* Phone field — shown for whatsapp and both */}
-              {(sendVia === 'whatsapp' || sendVia === 'both') && (
+            <div className="mt-4 grid gap-4">
+              {/* Phone field — shown for WhatsApp */}
+              {sendVia === 'whatsapp' && (
                 <div className="relative">
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Customer Phone <span className="text-red-400">*</span>
@@ -414,8 +407,8 @@ export default function PaymentRequestPage() {
                 </div>
               )}
 
-              {/* Email field — shown for email and both */}
-              {(sendVia === 'email' || sendVia === 'both') && (
+              {/* Email field — shown for email */}
+              {sendVia === 'email' && (
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Customer Email <span className="text-red-400">*</span>
