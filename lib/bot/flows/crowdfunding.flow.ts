@@ -811,7 +811,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
         verifiedByOcr: ocrMatches,
       });
       if (!proofResult.submitted) {
-        return [{ type: 'text' as const, text: await ctx.t('This transfer has expired. Please start a new donation.') }];
+        return { valid: false, errorMessage: 'This transfer has expired. Please start a new donation.' };
       }
 
       if (ctx.business) {

@@ -599,7 +599,7 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
         verifiedByOcr: ocrMatches,
       });
       if (!proofResult.submitted) {
-        return [{ type: 'text' as const, text: await ctx.t('This transfer has expired. Please request a new invoice payment.') }];
+        return { valid: false, errorMessage: 'This transfer has expired. Please request a new invoice payment.' };
       }
 
       if (ctx.business) {
