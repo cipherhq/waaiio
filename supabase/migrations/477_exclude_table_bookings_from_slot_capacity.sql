@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
--- Migration 475: Exclude table reservations from service slot capacity
+-- Migration 477: Exclude table reservations from service slot capacity
 -- Issue: #730 — CTO R19 P1 booking isolation
 --
 -- book_slot_atomic (M383) counts ALL bookings for capacity.

@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
--- Migration 472: Seating Resources & Table Reservation
+-- Migration 476: Seating Resources & Table Reservation
 -- Issue: #730 — Booking UX parity
 --
 -- Creates seating_resources table for restaurant/lounge
@@ -378,7 +378,7 @@ BEGIN
     SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'public' AND table_name = 'seating_resources'
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: seating_resources table not found';
+    RAISE EXCEPTION '476 SELF-CHECK FAILED: seating_resources table not found';
   END IF;
 
   -- Verify RLS is enabled
@@ -388,7 +388,7 @@ BEGIN
     WHERE n.nspname = 'public' AND c.relname = 'seating_resources'
       AND c.relrowsecurity = true
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: RLS not enabled on seating_resources';
+    RAISE EXCEPTION '476 SELF-CHECK FAILED: RLS not enabled on seating_resources';
   END IF;
 
   -- Verify seating_resource_id column on bookings
@@ -397,7 +397,7 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'bookings'
       AND column_name = 'seating_resource_id'
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: seating_resource_id column not found on bookings';
+    RAISE EXCEPTION '476 SELF-CHECK FAILED: seating_resource_id column not found on bookings';
   END IF;
 
   -- Verify book_table_atomic function exists
@@ -405,7 +405,7 @@ BEGIN
     SELECT 1 FROM pg_proc
     WHERE proname = 'book_table_atomic'
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: book_table_atomic function not found';
+    RAISE EXCEPTION '476 SELF-CHECK FAILED: book_table_atomic function not found';
   END IF;
 
   -- Verify book_table_atomic is SECURITY INVOKER (not DEFINER)
@@ -415,7 +415,7 @@ BEGIN
     WHERE n.nspname = 'public' AND p.proname = 'book_table_atomic'
       AND p.prosecdef = true
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: book_table_atomic must be SECURITY INVOKER, not DEFINER';
+    RAISE EXCEPTION '476 SELF-CHECK FAILED: book_table_atomic must be SECURITY INVOKER, not DEFINER';
   END IF;
 
   -- Verify service_role has EXECUTE on book_table_atomic
@@ -424,7 +424,7 @@ BEGIN
     WHERE routine_schema = 'public' AND routine_name = 'book_table_atomic'
       AND grantee = 'service_role' AND privilege_type = 'EXECUTE'
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: service_role lacks EXECUTE on book_table_atomic';
+    RAISE EXCEPTION '476 SELF-CHECK FAILED: service_role lacks EXECUTE on book_table_atomic';
   END IF;
 
   -- Verify flow_type enum includes table_reservation
@@ -433,7 +433,7 @@ BEGIN
     JOIN pg_type t ON t.oid = e.enumtypid
     WHERE t.typname = 'flow_type' AND e.enumlabel = 'table_reservation'
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: table_reservation not in flow_type enum';
+    RAISE EXCEPTION '476 SELF-CHECK FAILED: table_reservation not in flow_type enum';
   END IF;
 
   -- Verify updated_at trigger
@@ -442,9 +442,9 @@ BEGIN
     WHERE tgname = 'trg_seating_resources_updated_at'
       AND tgrelid = 'public.seating_resources'::regclass
   ) THEN
-    RAISE EXCEPTION '472 SELF-CHECK FAILED: updated_at trigger not found on seating_resources';
+    RAISE EXCEPTION '476 SELF-CHECK FAILED: updated_at trigger not found on seating_resources';
   END IF;
 
-  RAISE NOTICE '472 SELF-CHECK PASSED: seating_resources + book_table_atomic + RLS + flow_type verified';
+  RAISE NOTICE '476 SELF-CHECK PASSED: seating_resources + book_table_atomic + RLS + flow_type verified';
 END;
 $$;

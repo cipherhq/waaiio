@@ -176,7 +176,7 @@ describe('#730: Migration 472 SQL structure', () => {
     expect(sql).toContain('v_committed_total');
 
     // Self-check
-    expect(sql).toContain('472 SELF-CHECK PASSED');
+    expect(sql).toContain('476 SELF-CHECK PASSED');
   });
 
   it('weekday uses to_char(p_date) directly — no AT TIME ZONE', async () => {
