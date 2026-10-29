@@ -89,11 +89,18 @@ async function loadContractRoute() {
   vi.doMock('@/lib/capabilities/api-guard', () => ({
     requireCapability: vi.fn(async () => ({ allowed: true })),
   }));
+  class MockChannelResolver {
+    async resolveByBusinessId() {
+      return { sender };
+    }
+
+    async getSharedChannelForCountry() {
+      return null;
+    }
+  }
+
   vi.doMock('@/lib/channels/channel-resolver', () => ({
-    ChannelResolver: vi.fn().mockImplementation(() => ({
-      resolveByBusinessId: vi.fn(async () => ({ sender })),
-      getSharedChannelForCountry: vi.fn(async () => null),
-    })),
+    ChannelResolver: MockChannelResolver,
   }));
   vi.doMock('@/lib/channels/send-or-email', () => ({ sendOrEmail, findCustomerEmail }));
   vi.doMock('@/lib/bot/conversation-guard', () => ({
@@ -125,8 +132,9 @@ describe('contracts/send route email fallback delivery status', () => {
       signer_email: 'customer@example.com',
     }));
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ message_delivered: true });
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
+    expect(responseBody).toMatchObject({ message_delivered: true });
     expect(sendOrEmail).toHaveBeenCalledOnce();
     expect(signerUpdates).not.toHaveBeenCalled();
     expect(contractUpdates).not.toHaveBeenCalled();
@@ -144,8 +152,9 @@ describe('contracts/send route email fallback delivery status', () => {
       ],
     }));
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ messages_delivered: 2 });
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
+    expect(responseBody).toMatchObject({ messages_delivered: 2 });
     expect(sendOrEmail).toHaveBeenCalledTimes(2);
     expect(signerUpdates).not.toHaveBeenCalled();
   });
