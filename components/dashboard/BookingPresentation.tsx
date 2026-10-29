@@ -96,6 +96,17 @@ export function isLodgingTab(bookingType: BookingType): boolean {
   return bookingType === 'reservations';
 }
 
+// ── Tab filter predicates ──
+
+/** Count/filter bookings for the Table Reservations tab badge and row set.
+ *  When Appointments tab is absent (no scheduling), includes ALL non-reservation
+ *  bookings to preserve access to legacy scheduling/payment/ticketing rows. */
+export function isTableReservationsTabRow(b: BookingSummary, hasScheduling: boolean): boolean {
+  if (b._isReservation) return false;
+  if (hasScheduling) return b.flow_type === 'table_reservation';
+  return true; // No Appointments tab — show all non-reservation rows
+}
+
 // ── Row display ──
 
 export function getRowResourceLabel(b: BookingSummary): string {

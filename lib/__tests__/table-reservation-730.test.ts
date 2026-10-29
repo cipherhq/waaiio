@@ -1142,17 +1142,22 @@ describe('#730: Admin API and security', () => {
     expect(usedIsNull).toBe(true);
   });
 
-  it('table+stays business without scheduling shows non-table bookings on Table Reservations tab', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
+  it('isTableReservationsTabRow: no scheduling → includes legacy bookings', async () => {
+    const { isTableReservationsTabRow } = await import('@/components/dashboard/BookingPresentation');
 
-    // When Appointments tab is hidden, table_reservations filter must include
-    // all non-reservation bookings (not just flow_type=table_reservation)
-    expect(code).toContain('hasSchedulingCapability');
-    expect(code).toContain("bookings.filter(b => !b._isReservation)"); // Fallback when no Appointments tab
-    // Comment documents the data-preservation intent
-    expect(code).toContain('Include all non-reservation bookings when no Appointments tab');
+    const tableBooking = { flow_type: 'table_reservation', seating_resource_name: 'T1', staff_name: null, status: 'confirmed' };
+    const legacyBooking = { flow_type: 'scheduling', seating_resource_name: null, staff_name: 'Jane', status: 'confirmed' };
+    const stayBooking = { flow_type: 'reservation', seating_resource_name: null, staff_name: null, status: 'confirmed', _isReservation: true };
+
+    // WITH scheduling capability: only table_reservation rows
+    expect(isTableReservationsTabRow(tableBooking, true)).toBe(true);
+    expect(isTableReservationsTabRow(legacyBooking, true)).toBe(false);
+    expect(isTableReservationsTabRow(stayBooking, true)).toBe(false);
+
+    // WITHOUT scheduling capability: all non-reservation rows (data preservation)
+    expect(isTableReservationsTabRow(tableBooking, false)).toBe(true);
+    expect(isTableReservationsTabRow(legacyBooking, false)).toBe(true);  // Legacy visible!
+    expect(isTableReservationsTabRow(stayBooking, false)).toBe(false);   // Stays still excluded
   });
 
   it('dashboard uses production getColumnHeader (not inline ternary)', async () => {

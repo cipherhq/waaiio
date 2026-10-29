@@ -17,6 +17,7 @@ import {
   getActionsForBooking,
   getColumnHeader,
   getRowResourceLabel,
+  isTableReservationsTabRow,
 } from '@/components/dashboard/BookingPresentation';
 
 interface ServiceOption {
@@ -341,14 +342,11 @@ export default function BookingsPage() {
   }, [selected?.id, selected?._isReservation, selected?.total_amount]);
 
   // Filter by booking type tab (no "All" tab — show one type at a time)
-  // When Appointments tab is hidden (no scheduling cap), non-table bookings must
-  // still be visible — show them alongside table reservations to preserve data access.
+  // Tab filtering uses the shared production predicate from BookingPresentation.
   const filteredByType = !hasMultipleTypes ? bookings
     : bookingType === 'reservations' ? bookings.filter(b => b._isReservation)
     : bookingType === 'table_reservations'
-      ? (hasSchedulingCapability
-        ? bookings.filter(b => !b._isReservation && b.flow_type === 'table_reservation')
-        : bookings.filter(b => !b._isReservation)) // Include all non-reservation bookings when no Appointments tab
+      ? bookings.filter(b => isTableReservationsTabRow(b, hasSchedulingCapability))
     : bookings.filter(b => !b._isReservation && b.flow_type !== 'table_reservation');
 
   const totalPages = Math.max(1, Math.ceil(filteredByType.length / perPage));
@@ -726,7 +724,7 @@ export default function BookingsPage() {
               {tab.label}
               <span className="ml-1.5 text-xs text-gray-400">
                 {tab.id === 'reservations' ? bookings.filter(b => b._isReservation).length
-                  : tab.id === 'table_reservations' ? bookings.filter(b => !b._isReservation && b.flow_type === 'table_reservation').length
+                  : tab.id === 'table_reservations' ? bookings.filter(b => isTableReservationsTabRow(b, hasSchedulingCapability)).length
                   : bookings.filter(b => !b._isReservation && b.flow_type !== 'table_reservation').length}
               </span>
             </button>

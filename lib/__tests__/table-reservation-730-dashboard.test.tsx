@@ -16,6 +16,7 @@ import {
   BookingTabBar,
   BookingColumnHeaders,
   BookingRowDisplay,
+  isTableReservationsTabRow,
   getActionsForBooking,
   getColumnHeader,
   getRowResourceLabel,
@@ -164,5 +165,43 @@ describe('#730: Rendered production dashboard components', () => {
     fireEvent.click(screen.getByTestId('tab-reservations'));
     expect(screen.getByTestId('col-resource').textContent).toBe('Property');
     expect(screen.getByTestId('col-checkin')).toBeTruthy();
+  });
+
+  it('table+stays without scheduling: badge matches displayed rows using production predicate', () => {
+    // Scenario: table_reservation + reservation enabled, scheduling disabled.
+    // Bookings: 1 table, 1 legacy scheduling, 1 stay
+    const bookings = [
+      { flow_type: 'table_reservation', _isReservation: false },
+      { flow_type: 'scheduling', _isReservation: false },      // Legacy
+      { flow_type: 'reservation', _isReservation: true },       // Stay
+    ];
+
+    const hasScheduling = false;
+
+    // Table Reservations tab filter (production predicate)
+    const tableTabRows = bookings.filter(b => isTableReservationsTabRow(b as any, hasScheduling));
+    expect(tableTabRows.length).toBe(2); // Both table + legacy
+
+    // Stays tab
+    const staysRows = bookings.filter(b => b._isReservation);
+    expect(staysRows.length).toBe(1);
+
+    // Appointments tab should NOT exist (no scheduling capability)
+    // Verify no rows are orphaned — all 3 bookings accounted for
+    expect(tableTabRows.length + staysRows.length).toBe(3);
+
+    // Badge count must equal displayed row count
+    const badgeCount = bookings.filter(b => isTableReservationsTabRow(b as any, hasScheduling)).length;
+    expect(badgeCount).toBe(tableTabRows.length);
+
+    // Tab bar should NOT show Appointments
+    const { container } = render(
+      <BookingTabBar hasScheduling={false} hasReservation={true} hasTableReservation={true}
+        activeTab="table_reservations" onSwitch={() => {}} />
+    );
+    expect(screen.queryByTestId('tab-bookings')).toBeNull();
+    expect(screen.getByTestId('tab-table_reservations')).toBeTruthy();
+    expect(screen.getByTestId('tab-reservations')).toBeTruthy();
+    cleanup();
   });
 });
