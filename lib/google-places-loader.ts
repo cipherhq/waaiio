@@ -30,7 +30,7 @@ export function loadGooglePlaces(): Promise<void> {
     };
     const ready = () => {
       if (window.google?.maps?.places) finish();
-      else if (window.google?.maps?.importLibrary) {
+      else if (typeof window.google?.maps?.importLibrary === 'function') {
         window.google.maps.importLibrary('places').then(() => {
           if (window.google?.maps?.places) finish();
           else finish(new Error('Places unavailable'));
@@ -41,7 +41,7 @@ export function loadGooglePlaces(): Promise<void> {
     const timeout = setTimeout(failed, 15000);
     script.addEventListener('load', ready);
     script.addEventListener('error', failed);
-    if (window.google?.maps?.importLibrary) ready();
+    if (typeof window.google?.maps?.importLibrary === 'function') ready();
     else if (!existing) {
       script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places`;
       script.async = true;
