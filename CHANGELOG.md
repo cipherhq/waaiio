@@ -1,3 +1,49 @@
+### #736 Lane 1 R7 — Surface failed payment-request notifications (2026-10-29)
+
+- `app/dashboard/payment-request/page.tsx`: Inspect the API's delivery result instead of treating HTTP 200 alone as notification success. When the payment request was created but no channel accepted delivery, show its saved link/reference and prevent accidental resubmission; bulk results now distinguish sent, created-but-undelivered, and failed requests.
+- `lib/__tests__/lane01-outbound-delivery-status.test.ts`: Add regression checks for single and bulk dashboard status handling and preservation of created payment links.
+- **Affects**: Payment-request dashboard feedback when the payment link exists but notification delivery fails.
+- **Could break**: The form now clears after a payment request was created even when its notification failed, avoiding a duplicate request on resubmission.
+
+### #736 Lane 1 R6 — Contract fallback and waiver email status corrections (2026-10-29)
+
+- `app/api/contracts/send/route.ts`: Count accepted email fallback as a successful signer notification and increment multi-signer delivery counts independently of WhatsApp message-ID persistence.
+- `app/api/waivers/sign/route.ts`: Inspect resolved email results for customer and merchant notifications and expose both statuses; the waiver remains signed even when a notification fails.
+- `lib/__tests__/lane01-delivery-fallback-routes.test.ts`: Add route-level behavioral coverage for email fallback success and resolved email rejection.
+- The contract route harness uses a constructable channel-resolver class mock and reports response details on failure.
+- **Affects**: Contract send responses and counts; waiver `notification_status`. WhatsApp message IDs remain written only when supplied by the WhatsApp provider.
+- **Could break**: Contract-send callers that treat `message_delivered` as WhatsApp-only may now receive `true` when the email fallback was accepted. Waiver responses gain customer/merchant email status fields.
+
+### #736 Lane 1 R5 — Invoice link and resend tracking integrity (2026-10-29)
+
+- Resends reuse a still-valid invoice token and refresh its expiry so previously sent links remain usable. Delivery stops before contacting a provider if the token cannot be persisted.
+- A failed WhatsApp resend records the latest attempt status without clearing the last acknowledged message ID. Database write failures after provider acceptance are logged and surfaced to the dashboard without inviting a duplicate retry.
+- **PRODUCT DECISIONS remain open**: invoice resend deduplication and partial-channel status for automatic WhatsApp-plus-email delivery.
+
+### #736 Lane 1 R4 — Remove explicit dual-channel send option (2026-10-29)
+
+- Invoice and payment-request dashboards now offer WhatsApp or email individually. Their APIs reject `both` and unsupported channel values; payment-request bulk `auto` routing remains available.
+- Existing payment-request WhatsApp behavior is unchanged: it may email alongside WhatsApp when an email address is available.
+- **PRODUCT DECISIONS remain open**: Invoice resend deduplication, prior message-ID retention, and partial-channel status for automatic WhatsApp+email delivery.
+
+### #736 Lane 1 R2 — CTO corrections: contracts/send, sendOrEmail result inspection, waivers merchant status, behavioral tests (2026-10-29)
+
+- **`app/api/contracts/send/route.ts`**: Added `messageCategory: 'utility'` on template send and sendOrEmail fallback. Fixed email-only fallback to inspect `sendEmail` return value (`emailResult.success !== false`) instead of fire-and-forget. Template send now requires both `success !== false` AND `messageId` for truthful delivery.
+- **`lib/channels/send-or-email.ts`**: Now inspects `sendText` return value for resolved `{success: false}` (not just thrown errors). Same for `sendEmail` return path. Backward-compatible — callers that don't pass `messageCategory` still work.
+- **`app/api/waivers/sign/route.ts`**: Customer sendText return value now inspected for `success: false`. Added `merchantWaStatus` tracking for owner notification. Response includes both `customer_whatsapp` and `merchant_whatsapp` in `notification_status`. Waiver signed state preserved regardless of notification failures.
+- **`lib/__tests__/lane01-outbound-delivery-status.test.ts`**: Replaced source-string-only tests with 31 executable behavioral + structural tests. Behavioral tests mock senders and exercise `sendOrEmail` directly: accepted, rejected (success:false), thrown provider/email. Structural tests verify contracts/send, waivers/sign, invoice, payment-request routes. Includes contract delivery, financial guard, and adjacent sender non-regression.
+- **PRODUCT DECISIONS remain open**: Invoice resend dedup, prior message-ID retention, partial-channel status. Tests document these as explicitly unresolved.
+- **Affects**: contracts/send, waivers/sign, sendOrEmail, invoices/send, payment-request/send. All outbound senders now truthfully report delivery.
+- **Could break**: Contracts/send callers that assumed `delivered: true` on template send without messageId will now see `delivered: false`.
+
+### #736 Lane 1 — Outbound customer delivery: truthful status reporting (2026-10-29)
+
+- **`app/api/invoices/send/route.ts`**: Fixed pre-emission false success. Removed reference to non-existent `wa_status_updated_at` column. `sendEmail` return value checked. All sends pass `messageCategory: 'utility'`.
+- **`app/api/payment-request/send/route.ts`**: Captures `sendOrEmail` result. Returns truthful `wa_delivery_status`/`email_delivery_status`. `messageCategory: 'utility'`.
+- **`app/api/waivers/sign/route.ts`**: Added `customerWaStatus` tracking. Customer/owner sends pass `messageCategory: 'utility'`.
+- **`lib/channels/send-or-email.ts`**: Added optional `messageCategory` passthrough to `sendText`.
+- **Affects**: Invoice send, payment request send, waiver sign. No changes to billing, Meta retry, or payment authority.
+
 ### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
 
 - **`docs/ops/subscription-messaging-credit-10pct-audit-2026-10-26.md`**: Surgical documentation corrections per CTO review. (1) Updated stale references: PRs #711 and #722 now noted as merged; #712 remains open draft on separate lane. (2) Moved Admin-control configurability from approved decisions to unresolved future implementation gates. (3) Explicitly distinguished four unresolved Owner decisions (discount/tax basis, annual billing, rounding rule, Admin-control design) from the already-approved 10% rate. (4) Clarified section 4 heading applies to the future implementation PR, not this documentation PR. (5) Labeled US/CA Premium 10% credit amounts as illustrative pending rounding approval. (6) Retained explicit "no merge without separate Owner authorization" in governance section.
