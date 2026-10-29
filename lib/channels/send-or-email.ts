@@ -20,6 +20,8 @@ interface SendOrEmailOpts {
   alwaysEmail?: boolean;
   /** If true, attempt SMS as final fallback when both WhatsApp and email fail (NG/GH only) */
   smsFallback?: boolean;
+  /** WhatsApp message classification per Meta policy (utility, marketing, service). Callers should set this explicitly. */
+  messageCategory?: string;
 }
 
 interface SendOrEmailResult {
@@ -49,7 +51,7 @@ export async function sendOrEmail(opts: SendOrEmailOpts): Promise<SendOrEmailRes
 
   // 1. Try WhatsApp
   try {
-    await sender.sendText({ to, text });
+    await sender.sendText({ to, text, messageCategory: opts.messageCategory });
     result.whatsapp = 'sent';
   } catch (err) {
     result.whatsapp = 'failed';

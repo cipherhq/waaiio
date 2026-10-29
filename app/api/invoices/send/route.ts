@@ -47,6 +47,7 @@ async function sendWhatsAppMessage(
         to: cleanPhone,
         templateName: 'invoice_payment_request',
         templateParams: [templateParams.businessName, templateParams.invoiceNumber, templateParams.amount],
+        messageCategory: 'utility',
       });
       if (result.success !== false && result.messageId) {
         return result.messageId;
@@ -58,7 +59,7 @@ async function sendWhatsAppMessage(
 
   // Fallback to plain text (within 24h window only)
   try {
-    const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
+    const result = await resolved.sender.sendText({ to: cleanPhone, text: message, messageCategory: 'utility' });
     if (result.success !== false && result.messageId) return result.messageId;
   } catch (waErr) {
     logger.warn('[INVOICE] sendText failed:', waErr);
@@ -174,14 +175,17 @@ export async function POST(request: NextRequest) {
       waDeliveryStatus = waMessageId ? 'accepted' : 'failed';
 
       // Record truthful delivery status regardless of outcome
-      await service
+      const { error: waUpdateErr } = await service
         .from('invoices')
         .update({
           wa_message_id: waMessageId,
           wa_delivery_status: waDeliveryStatus,
-          wa_status_updated_at: new Date().toISOString(),
         })
         .eq('id', invoice_id);
+
+      if (waUpdateErr) {
+        logger.error('[INVOICE] Failed to record WA delivery status:', waUpdateErr);
+      }
 
       // Send PDF attachment (non-blocking — don't fail the whole send if PDF fails)
       try {
@@ -250,6 +254,7 @@ export async function POST(request: NextRequest) {
               documentUrl: signedUrl.signedUrl,
               filename: `${invoice.reference_code}.pdf`,
               caption: `Invoice ${invoice.reference_code} from ${biz.name}`,
+              messageCategory: 'utility',
             });
           }
         }
@@ -294,14 +299,18 @@ export async function POST(request: NextRequest) {
       });
 
       try {
-        await sendEmail({
+        const emailResult = await sendEmail({
           to: invoice.customer_email,
           ...emailContent,
         });
-        emailDeliveryStatus = 'accepted';
+        // sendEmail returns { success: false } on provider error instead of throwing
+        emailDeliveryStatus = emailResult.success ? 'accepted' : 'failed';
+        if (!emailResult.success) {
+          logger.error('[INVOICE] Email send failed:', emailResult);
+        }
       } catch (emailErr) {
         emailDeliveryStatus = 'failed';
-        logger.error('[INVOICE] Email send failed:', emailErr);
+        logger.error('[INVOICE] Email send exception:', emailErr);
       }
     }
 

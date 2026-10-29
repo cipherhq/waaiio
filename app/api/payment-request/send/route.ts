@@ -189,6 +189,7 @@ export async function POST(request: NextRequest) {
           text: messageText,
           businessName: biz.name,
           alwaysEmail: true,
+          messageCategory: 'utility',
           email: fallbackEmail ? {
             address: fallbackEmail,
             subject: emailSubject,
@@ -208,15 +209,19 @@ export async function POST(request: NextRequest) {
     // Send email-only (when sendVia is 'email' and no WhatsApp was attempted)
     if (effectiveSendVia === 'email' && email) {
       try {
-        await sendEmail({
+        const emailResult = await sendEmail({
           to: email,
           subject: emailSubject,
           html: paymentEmailTemplate.html,
         });
-        emailDeliveryStatus = 'accepted';
+        // sendEmail returns { success: false } on provider error instead of throwing
+        emailDeliveryStatus = emailResult.success ? 'accepted' : 'failed';
+        if (!emailResult.success) {
+          logger.error('[PAYMENT-REQUEST] Email send failed:', emailResult);
+        }
       } catch (err) {
         emailDeliveryStatus = 'failed';
-        logger.error('[PAYMENT-REQUEST] Email error:', err);
+        logger.error('[PAYMENT-REQUEST] Email exception:', err);
       }
     }
 

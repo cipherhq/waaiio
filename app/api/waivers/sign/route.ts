@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
             '',
             `📎 Ref: WAI-${signed.id.slice(0, 6).toUpperCase()}`,
           ].join('\n');
-          await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg });
+          await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg, messageCategory: 'utility' });
           customerWaStatus = 'accepted';
         } else {
           customerWaStatus = 'failed';
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
 
         if (resolved) {
           const ownerMsg = `📋 New waiver signed: *${customerName}* signed "${template.title}".`;
-          await resolved.sender.sendText({ to: cleanPhone, text: ownerMsg });
+          await resolved.sender.sendText({ to: cleanPhone, text: ownerMsg, messageCategory: 'utility' });
         }
       } catch (ownerErr) {
         logger.warn('Failed to send waiver owner notification:', ownerErr);
