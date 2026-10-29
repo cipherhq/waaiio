@@ -195,12 +195,14 @@ export async function sendProactiveConfirmation(
   let serviceName = 'Payment';
   let referenceCode = '';
   let countryCode: CountryCode = 'US';
-  // Read authoritative payment currency (read-only, no calculation change)
+  // Read authoritative payment identity: currency + campaign_id for canonical context validation
   let paymentCurrencyCode: string | undefined;
+  let canonicalPaymentCampaignId: string | null = null;
   try {
-    const { data: payRow } = await supabase.from('payments').select('currency').eq('id', payment.id).maybeSingle();
+    const { data: payRow } = await supabase.from('payments').select('currency, campaign_id').eq('id', payment.id).maybeSingle();
     paymentCurrencyCode = payRow?.currency || undefined;
-  } catch { /* non-blocking */ }
+    canonicalPaymentCampaignId = payRow?.campaign_id || null;
+  } catch { /* non-blocking — campaign_id fallback is payment.campaign_id from claim */ }
   let bookingDate: string | undefined;
   let bookingTime: string | undefined;
   let bookingAddress: string | undefined;
@@ -308,38 +310,62 @@ export async function sendProactiveConfirmation(
 
   // ── 2b. Try campaign donation ──
   // Authoritative identity binding: donation must match both payment_id AND campaign_id
-  // from the claimed payment, with status='success'. This ensures the donor/business
-  // context is canonically tied to this specific payment+campaign relationship.
+  // from the canonical payment read, with status='success'. On ANY failure in this branch
+  // (error, missing, inconsistent), release claim and return retryable — no fallthrough
+  // to order/profile fallback after entering the campaign path.
   if (!customerPhone && payment.campaign_id) {
+    // Use canonical payment-read campaign_id when available; fall back to claim's
+    const effectiveCampaignId = canonicalPaymentCampaignId || payment.campaign_id;
+
     const { data: donation, error: donationError } = await supabase
       .from('campaign_donations')
       .select('donor_phone, donor_name, reference_code, business_id, campaign_id, campaigns(title, business_id, businesses(name, country_code))')
       .eq('payment_id', payment.id)
-      .eq('campaign_id', payment.campaign_id)
+      .eq('campaign_id', effectiveCampaignId)
       .eq('status', 'success')
       .maybeSingle();
 
     if (donationError) {
       logSafeError(logPrefix, 'campaign-donation-lookup', donationError);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_donation_lookup_error' };
     }
 
-    // Validate canonical context: donation must have a phone AND its campaign's
-    // business_id must match the donation's own business_id (consistency check)
-    if (donation?.donor_phone) {
-      const campaign = donation.campaigns as unknown as { title: string; business_id: string; businesses: { name: string; country_code?: string } | null } | null;
-      const campaignBizId = campaign?.business_id;
-      if (campaignBizId && campaignBizId !== donation.business_id) {
-        logger.warn(`${logPrefix} Campaign/donation business_id mismatch — campaign=${campaignBizId} donation=${donation.business_id}`);
-        // Inconsistent context — do not adopt; fall through to order/profile fallback
-      } else {
-        customerPhone = donation.donor_phone;
-        businessId = donation.business_id;
-        referenceCode = donation.reference_code || '';
-        if (campaign?.businesses?.name) businessName = campaign.businesses.name;
-        if (campaign?.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
-        serviceName = campaign?.title || 'Campaign Donation';
-      }
+    if (!donation) {
+      logger.warn(`${logPrefix} No matching campaign donation for payment=${payment.id} campaign=${effectiveCampaignId}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_donation_not_found' };
     }
+
+    // Validate canonical context: joined campaign must exist and its business_id
+    // must match the donation's own business_id
+    const campaign = donation.campaigns as unknown as { title: string; business_id: string; businesses: { name: string; country_code?: string } | null } | null;
+    const campaignBizId = campaign?.business_id;
+
+    if (!campaign || !campaignBizId) {
+      logger.warn(`${logPrefix} Campaign join missing for donation payment=${payment.id}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_context_missing' };
+    }
+
+    if (campaignBizId !== donation.business_id) {
+      logger.warn(`${logPrefix} Campaign/donation business_id mismatch — campaign=${campaignBizId} donation=${donation.business_id}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_business_mismatch' };
+    }
+
+    if (!donation.donor_phone) {
+      logger.warn(`${logPrefix} Donation has no donor_phone for payment=${payment.id}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_donor_phone_missing' };
+    }
+
+    customerPhone = donation.donor_phone;
+    businessId = donation.business_id;
+    referenceCode = donation.reference_code || '';
+    if (campaign.businesses?.name) businessName = campaign.businesses.name;
+    if (campaign.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
+    serviceName = campaign.title || 'Campaign Donation';
   }
 
   // ── 3. Fallback: orders via payment metadata ──
