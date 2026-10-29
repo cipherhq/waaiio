@@ -329,7 +329,7 @@ describe('pagination navigation', () => {
     expect(result.data?._cap_menu_navigate).toBe(true);
   });
 
-  it('cap_nav_more cannot exceed total pages', async () => {
+  it('cap_nav_more rejected on last page (no silent clamping)', async () => {
     const ctx = buildCtx({
       capabilities: ELEVEN_CAPS,
       tableCounts: ELEVEN_CAPS_BACKING,
@@ -337,11 +337,13 @@ describe('pagination navigation', () => {
     ctx.session.session_data._cap_menu_page = 1;
     ctx.session.session_data._cap_menu_total_pages = 2;
 
-    await step.validate!('cap_nav_more', ctx);
-    expect(ctx.session.session_data._cap_menu_page).toBe(1); // stays at max
+    const result = await step.validate!('cap_nav_more', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBeTruthy();
+    expect(ctx.session.session_data._cap_menu_page).toBe(1); // unchanged
   });
 
-  it('cap_nav_prev cannot go below 0', async () => {
+  it('cap_nav_prev rejected on page 0 (no silent clamping)', async () => {
     const ctx = buildCtx({
       capabilities: ELEVEN_CAPS,
       tableCounts: ELEVEN_CAPS_BACKING,
@@ -349,8 +351,10 @@ describe('pagination navigation', () => {
     ctx.session.session_data._cap_menu_page = 0;
     ctx.session.session_data._cap_menu_total_pages = 2;
 
-    await step.validate!('cap_nav_prev', ctx);
-    expect(ctx.session.session_data._cap_menu_page).toBe(0);
+    const result = await step.validate!('cap_nav_prev', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBeTruthy();
+    expect(ctx.session.session_data._cap_menu_page).toBe(0); // unchanged
   });
 
   it('next() returns select_capability when navigating pages', async () => {
@@ -454,5 +458,189 @@ describe('pagination edge cases', () => {
       if (item.postbackText.startsWith('cap_nav_')) continue;
       expect(item.postbackText).toMatch(/^cap_[a-z_]+$/);
     }
+  });
+});
+
+// ── Stale / replayed navigation rejection ──
+
+describe('stale navigation rejection', () => {
+  it('cap_nav_more rejected when no pagination state exists (stale session)', async () => {
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+    // No _cap_menu_page or _cap_menu_total_pages set — simulates stale/replayed postback
+    delete ctx.session.session_data._cap_menu_page;
+    delete ctx.session.session_data._cap_menu_total_pages;
+
+    const result = await step.validate!('cap_nav_more', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBeTruthy();
+  });
+
+  it('cap_nav_prev rejected when no pagination state exists (stale session)', async () => {
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+    delete ctx.session.session_data._cap_menu_page;
+    delete ctx.session.session_data._cap_menu_total_pages;
+
+    const result = await step.validate!('cap_nav_prev', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBeTruthy();
+  });
+
+  it('cap_nav_prev rejected when already on page 0', async () => {
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+    ctx.session.session_data._cap_menu_page = 0;
+    ctx.session.session_data._cap_menu_total_pages = 2;
+
+    const result = await step.validate!('cap_nav_prev', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBeTruthy();
+  });
+
+  it('cap_nav_more rejected when on last page', async () => {
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+    ctx.session.session_data._cap_menu_page = 1;
+    ctx.session.session_data._cap_menu_total_pages = 2;
+
+    const result = await step.validate!('cap_nav_more', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBeTruthy();
+  });
+
+  it('cap_nav_more with only _cap_menu_page but no _cap_menu_total_pages rejects', async () => {
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+    ctx.session.session_data._cap_menu_page = 0;
+    // _cap_menu_total_pages intentionally missing
+
+    const result = await step.validate!('cap_nav_more', ctx);
+    expect(result.valid).toBe(false);
+  });
+});
+
+// ── Capability selection validation ──
+
+describe('capability selection validation', () => {
+  it('cap_X postback rejected for capability NOT in business capabilities list', async () => {
+    const ctx = buildCtx({
+      capabilities: ['scheduling', 'chat'], // only these two
+      tableCounts: { services: 2 },
+    });
+
+    // Try selecting 'ordering' which is NOT in the capabilities list
+    const result = await step.validate!('cap_ordering', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBeTruthy();
+  });
+
+  it('cap_X postback accepted for capability that IS in business capabilities', async () => {
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+
+    const result = await step.validate!('cap_chat', ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?.active_capability).toBe('chat');
+  });
+
+  it('wrong-tenant isolation: session is keyed to business, cap from other biz context rejected', async () => {
+    // Simulate business A context with capabilities ['scheduling', 'chat']
+    const ctx = buildCtx({
+      capabilities: ['scheduling', 'chat'],
+      tableCounts: { services: 2 },
+    });
+    // A postback from a different business context (e.g. 'ticketing' which biz A doesn't have)
+    const result = await step.validate!('cap_ticketing', ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBeTruthy();
+  });
+});
+
+// ── Re-entry and reachability ──
+
+describe('re-entry and reachability', () => {
+  it('re-entry to menu resets pagination state (page starts at 0)', async () => {
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+      menuPage: 1, // simulate user was on page 1 before
+    });
+
+    // Simulate prompt re-entry (which happens after next() returns 'select_capability')
+    // prompt() should render from whatever page is in session_data
+    const result = await step.prompt!(ctx);
+    const msg = result![0] as PromptList;
+    expect(msg.type).toBe('list');
+
+    // After a capability selection, pagination state is cleaned up
+    const ctx2 = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+    ctx2.session.session_data._cap_menu_page = 1;
+    ctx2.session.session_data._cap_menu_total_pages = 2;
+    await step.validate!('cap_chat', ctx2);
+    // Pagination cleaned up after selection
+    expect(ctx2.session.session_data._cap_menu_page).toBeUndefined();
+    expect(ctx2.session.session_data._cap_menu_total_pages).toBeUndefined();
+
+    // Next prompt starts fresh at page 0
+    const ctx3 = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+    const result3 = await step.prompt!(ctx3);
+    const msg3 = result3![0] as PromptList;
+    const postbacks3 = getPostbacks(msg3);
+    // Page 0 — has More... but no Previous
+    expect(postbacks3).toContain('cap_nav_more');
+    expect(postbacks3).not.toContain('cap_nav_prev');
+  });
+
+  it('11th and 12th capability are reachable across pages', async () => {
+    // Use 12 capabilities to ensure both 11th and 12th are on page 2
+    const TWELVE_CAPS = [
+      ...ELEVEN_CAPS,
+      'table_reservation', // 12th cap — needs services backing data (already in ELEVEN_CAPS_BACKING)
+    ];
+
+    const allCapPostbacks = new Set<string>();
+
+    // Collect from all pages (up to 5 to be safe)
+    for (let page = 0; page < 5; page++) {
+      const ctx = buildCtx({
+        capabilities: TWELVE_CAPS,
+        tableCounts: ELEVEN_CAPS_BACKING,
+        menuPage: page,
+      });
+      const result = await step.prompt!(ctx);
+      const msg = result![0];
+      if (msg.type !== 'list') continue;
+      const postbacks = getPostbacks(msg);
+      for (const pb of postbacks) {
+        if (pb.startsWith('cap_') && !pb.startsWith('cap_nav_')) {
+          allCapPostbacks.add(pb);
+        }
+      }
+    }
+
+    // All 12 capabilities must be reachable — specifically the 11th and 12th
+    expect(allCapPostbacks.has('cap_queue')).toBe(true);      // was 10th in ELEVEN_CAPS
+    expect(allCapPostbacks.has('cap_waiver')).toBe(true);     // was 11th in ELEVEN_CAPS
+    expect(allCapPostbacks.has('cap_table_reservation')).toBe(true); // 12th
+    expect(allCapPostbacks.size).toBe(12);
   });
 });

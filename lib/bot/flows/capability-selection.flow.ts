@@ -399,12 +399,26 @@ const selectCapabilityStep: FlowStepConfig = {
 
     // ── Pagination navigation — "More..." / "← Previous" ──
     if (input === 'cap_nav_more' || input === 'cap_nav_prev') {
-      const currentPage = (ctx.session.session_data._cap_menu_page as number) || 0;
-      const totalPages = (ctx.session.session_data._cap_menu_total_pages as number) || 1;
+      const currentPage = ctx.session.session_data._cap_menu_page as number | undefined;
+      const totalPages = ctx.session.session_data._cap_menu_total_pages as number | undefined;
+
+      // Reject stale/replayed navigation — pagination state must exist from prompt()
+      if (currentPage === undefined || totalPages === undefined) {
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.stale_navigation'), persistSessionDataOnFailure: true };
+      }
+
+      // Reject impossible navigation: can't go forward from last page, can't go back from first
+      if (input === 'cap_nav_more' && currentPage >= totalPages - 1) {
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.stale_navigation'), persistSessionDataOnFailure: true };
+      }
+      if (input === 'cap_nav_prev' && currentPage <= 0) {
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.stale_navigation'), persistSessionDataOnFailure: true };
+      }
+
       if (input === 'cap_nav_more') {
-        ctx.session.session_data._cap_menu_page = Math.min(currentPage + 1, totalPages - 1);
+        ctx.session.session_data._cap_menu_page = currentPage + 1;
       } else {
-        ctx.session.session_data._cap_menu_page = Math.max(currentPage - 1, 0);
+        ctx.session.session_data._cap_menu_page = currentPage - 1;
       }
       // Signal reprompt — stay on select_capability and re-render with new page
       return { valid: true, data: { _cap_menu_navigate: true }, persistSessionDataOnFailure: true };
@@ -423,6 +437,11 @@ const selectCapabilityStep: FlowStepConfig = {
 
     if (input.startsWith('cap_')) {
       capId = input.replace('cap_', '') as CapabilityId;
+      // Verify capability is still in the business's session capabilities
+      // (guards against stale postback from a removed/changed capability)
+      if (!capabilities.includes(capId)) {
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.capability_unavailable'), persistSessionDataOnFailure: true };
+      }
     } else {
       // Numeric selection: "1", "2", etc.
       const num = parseInt(input, 10);
