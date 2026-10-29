@@ -142,8 +142,8 @@ export async function POST(request: NextRequest) {
             '',
             `📎 Ref: WAI-${signed.id.slice(0, 6).toUpperCase()}`,
           ].join('\n');
-          await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg, messageCategory: 'utility' });
-          customerWaStatus = 'accepted';
+          const waResult = await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg, messageCategory: 'utility' });
+          customerWaStatus = (waResult && waResult.success === false) ? 'failed' : 'accepted';
         } else {
           customerWaStatus = 'failed';
         }
@@ -171,6 +171,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Notify business owner — WhatsApp
+    let merchantWaStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
     if (biz?.phone) {
       try {
         const cleanPhone = biz.phone.replace(/\D/g, '');
@@ -181,9 +182,13 @@ export async function POST(request: NextRequest) {
 
         if (resolved) {
           const ownerMsg = `📋 New waiver signed: *${customerName}* signed "${template.title}".`;
-          await resolved.sender.sendText({ to: cleanPhone, text: ownerMsg, messageCategory: 'utility' });
+          const ownerResult = await resolved.sender.sendText({ to: cleanPhone, text: ownerMsg, messageCategory: 'utility' });
+          merchantWaStatus = (ownerResult && ownerResult.success === false) ? 'failed' : 'accepted';
+        } else {
+          merchantWaStatus = 'failed';
         }
       } catch (ownerErr) {
+        merchantWaStatus = 'failed';
         logger.warn('Failed to send waiver owner notification:', ownerErr);
       }
     }
@@ -217,6 +222,7 @@ export async function POST(request: NextRequest) {
       waiver_id: signed.id,
       notification_status: {
         customer_whatsapp: customerWaStatus,
+        merchant_whatsapp: merchantWaStatus,
       },
     });
   } catch (err) {

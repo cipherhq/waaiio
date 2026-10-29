@@ -57,9 +57,10 @@ async function sendWhatsAppMessage(
             templateParams.title,
           ],
           buttonParams: templateParams.token ? [templateParams.token] : undefined,
+          messageCategory: 'utility',
         });
-        sent = result.success !== false;
-        if (sent && result.messageId) messageId = result.messageId;
+        sent = result.success !== false && !!result.messageId;
+        if (sent) messageId = result.messageId!;
         if (sent) logger.info(`[CONTRACT] Template message sent to ${cleanPhone}`);
       } catch (tmplErr) {
         logger.warn(`[CONTRACT] Template message failed for ${cleanPhone}:`, tmplErr);
@@ -90,6 +91,7 @@ async function sendWhatsAppMessage(
         email: emailOpt,
         businessName: templateParams?.businessName,
         alwaysEmail: true,
+        messageCategory: 'utility',
       });
       sent = result.whatsapp === 'sent';
     }
@@ -107,9 +109,13 @@ async function sendWhatsAppMessage(
       });
       try {
         const { sendEmail } = await import('@/lib/email/client');
-        await sendEmail({ to: customerEmail, subject: emailPayload.subject, html: emailPayload.html });
-        sent = true;
-        logger.info(`[CONTRACT] Email-only delivery to ${customerEmail} (no WhatsApp channel)`);
+        const emailResult = await sendEmail({ to: customerEmail, subject: emailPayload.subject, html: emailPayload.html });
+        sent = emailResult.success !== false;
+        if (sent) {
+          logger.info(`[CONTRACT] Email-only delivery to ${customerEmail} (no WhatsApp channel)`);
+        } else {
+          logger.error(`[CONTRACT] Email delivery returned success:false for ${customerEmail}`);
+        }
       } catch (emailErr) {
         logger.error(`[CONTRACT] Email fallback also failed for ${customerEmail}:`, emailErr);
       }

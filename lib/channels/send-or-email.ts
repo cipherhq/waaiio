@@ -49,24 +49,31 @@ export async function sendOrEmail(opts: SendOrEmailOpts): Promise<SendOrEmailRes
     email: email?.address ? 'skipped' : 'no_address',
   };
 
-  // 1. Try WhatsApp
+  // 1. Try WhatsApp — inspect both thrown errors AND resolved {success:false}
   try {
-    await sender.sendText({ to, text, messageCategory: opts.messageCategory });
-    result.whatsapp = 'sent';
+    const waResult = await sender.sendText({ to, text, messageCategory: opts.messageCategory });
+    result.whatsapp = (waResult && waResult.success === false) ? 'failed' : 'sent';
+    if (result.whatsapp === 'failed') {
+      logger.warn(`[SEND_OR_EMAIL] WhatsApp sendText returned success:false for ${to}`);
+    }
   } catch (err) {
     result.whatsapp = 'failed';
     logger.warn(`[SEND_OR_EMAIL] WhatsApp failed for ${to}:`, err instanceof Error ? err.message : err);
   }
 
   // 2. Send email if: always-email mode, OR WhatsApp failed (fallback)
+  //    Inspect both thrown errors AND resolved {success:false}
   if (email?.address && (alwaysEmail || result.whatsapp === 'failed')) {
     try {
-      await sendEmail({
+      const emailResult = await sendEmail({
         to: email.address,
         subject: email.subject,
         html: email.html,
       });
-      result.email = 'sent';
+      result.email = (emailResult && emailResult.success === false) ? 'failed' : 'sent';
+      if (result.email === 'failed') {
+        logger.error(`[SEND_OR_EMAIL] sendEmail returned success:false for ${email.address}`);
+      }
     } catch (err) {
       result.email = 'failed';
       logger.error(`[SEND_OR_EMAIL] Email also failed for ${email.address}:`, err);
