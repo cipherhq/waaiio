@@ -291,7 +291,9 @@ export default function InvoicesPage() {
       if (res.ok && data.success) {
         setSendModalInvoice(null);
         await loadInvoices();
-        toast('Invoice sent');
+        toast(data.persistence_warning
+          ? 'Invoice was delivered, but some status details could not be saved. Check it before resending.'
+          : 'Invoice sent');
       } else {
         toast(data.error || 'Failed to send invoice');
       }

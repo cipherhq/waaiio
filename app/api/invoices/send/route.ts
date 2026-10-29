@@ -137,16 +137,23 @@ export async function POST(request: NextRequest) {
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const expiresAt = new Date(Date.now() + settings.invoice_expiry_days * 24 * 60 * 60 * 1000).toISOString();
 
-    // Persist token and URL immediately (needed for email link regardless of WA outcome).
+    // Persist the token before sending so every link sent to the customer resolves.
     // Status remains current (e.g. 'draft') until delivery is attempted.
-    await service
+    const { data: tokenRow, error: tokenPersistError } = await service
       .from('invoices')
       .update({
         token,
         token_expires_at: expiresAt,
         sent_via: sendVia,
       })
-      .eq('id', invoice_id);
+      .eq('id', invoice_id)
+      .select('id')
+      .maybeSingle();
+
+    if (tokenPersistError || !tokenRow) {
+      logger.error('[INVOICE] Failed to persist invoice link before send:', tokenPersistError ?? 'Invoice row was not updated');
+      return NextResponse.json({ error: 'Could not prepare invoice link. No message was sent.' }, { status: 500 });
+    }
 
     const invoiceUrl = `${appUrl}/invoice/${token}`;
     const formattedAmount = formatAmount(invoice.total_amount, invoice.currency);
@@ -156,6 +163,7 @@ export async function POST(request: NextRequest) {
 
     let waMessageId: string | null = null;
     let waDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+    let waTrackingUpdateFailed = false;
 
     // Send via WhatsApp
     if (sendVia === 'whatsapp' && invoice.customer_phone) {
@@ -178,16 +186,20 @@ export async function POST(request: NextRequest) {
 
       waDeliveryStatus = waMessageId ? 'accepted' : 'failed';
 
-      // Record truthful delivery status regardless of outcome
-      const { error: waUpdateErr } = await service
-        .from('invoices')
-        .update({
-          wa_message_id: waMessageId,
-          wa_delivery_status: waDeliveryStatus,
-        })
-        .eq('id', invoice_id);
+      // Record the latest attempt status while retaining the last acknowledged WAMID
+      // when a resend fails and therefore has no new message ID.
+      try {
+        const { error: waUpdateErr } = await service
+          .from('invoices')
+          .update({
+            ...(waMessageId ? { wa_message_id: waMessageId } : {}),
+            wa_delivery_status: waDeliveryStatus,
+          })
+          .eq('id', invoice_id);
 
-      if (waUpdateErr) {
+        if (waUpdateErr) throw waUpdateErr;
+      } catch (waUpdateErr) {
+        waTrackingUpdateFailed = true;
         logger.error('[INVOICE] Failed to record WA delivery status:', waUpdateErr);
       }
 
@@ -324,15 +336,25 @@ export async function POST(request: NextRequest) {
     // paid, overdue, or cancelled while delivery was in progress, preserve that
     // status rather than regressing it.
     const anyChannelAccepted = waDeliveryStatus === 'accepted' || emailDeliveryStatus === 'accepted';
+    let invoiceStatusUpdateFailed = false;
     if (anyChannelAccepted) {
-      await service
-        .from('invoices')
-        .update({
-          status: 'sent',
-          sent_at: new Date().toISOString(),
-        })
-        .eq('id', invoice_id)
-        .eq('status', 'draft');
+      try {
+        const { error: statusUpdateErr } = await service
+          .from('invoices')
+          .update({
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+          })
+          .eq('id', invoice_id)
+          .eq('status', 'draft');
+
+        if (statusUpdateErr) throw statusUpdateErr;
+      } catch (statusUpdateErr) {
+        // The provider already accepted the send; surface a warning rather than a
+        // failure response that could prompt the user to send the invoice again.
+        invoiceStatusUpdateFailed = true;
+        logger.error('[INVOICE] Delivery accepted but failed to persist invoice status:', statusUpdateErr);
+      }
     }
 
     // Create in-app notification with truthful status
@@ -359,6 +381,7 @@ export async function POST(request: NextRequest) {
       wa_message_id: waMessageId,
       wa_delivery_status: waDeliveryStatus,
       email_delivery_status: emailDeliveryStatus,
+      persistence_warning: waTrackingUpdateFailed || invoiceStatusUpdateFailed,
       expires_at: expiresAt,
     });
   } catch (err) {
