@@ -1,3 +1,11 @@
+### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
+
+- **`lib/payments/send-confirmation.ts`**: Added campaign donation recipient/business resolution block (section 2b) between invoice and order fallback. When `payment.campaign_id` is set and no booking/reservation/invoice resolved the customer, queries `campaign_donations` for `donor_phone`, `business_id`, `reference_code`, and joins to `campaigns(title, businesses(name, country_code))`. Previously, standalone campaign donations had no resolution path — `customerPhone` and `businessId` stayed null, causing `retryable_failed` with `no_business_resolved` forever.
+- **R2:** Payment read extended to include `campaign_id` for canonical identity validation. Campaign resolution now fail-closed: on error, missing donation, missing campaign join, business_id mismatch, or missing donor_phone, releases claim and returns `retryable_failed` with specific reason — no fallthrough to order/profile fallback.
+- **`lib/payments/__tests__/campaign-confirmation-recipient.test.ts`** (new): 10 behavioral tests (authority-v1, WhatsApp provenance, current channel resolver) — successful resolution + delivery + merchant notification, lookup error, missing donation, business_id mismatch, missing campaign join, missing donor_phone, denied WhatsApp channel, already-completed replay, claim renewal denial, booking+campaign precedence.
+- **Affects**: Post-payment confirmation delivery for standalone campaign/crowdfunding donations. Booking, reservation, invoice, and order paths unchanged.
+- **Could break**: Nothing — this is a new resolution path for a previously broken case. Existing paths are guarded by `!customerPhone &&` conditions.
+
 ### #736 Lane 1 R7 — Surface failed payment-request notifications (2026-10-29)
 
 - `app/dashboard/payment-request/page.tsx`: Inspect the API's delivery result instead of treating HTTP 200 alone as notification success. When the payment request was created but no channel accepted delivery, show its saved link/reference and prevent accidental resubmission; bulk results now distinguish sent, created-but-undelivered, and failed requests.
