@@ -18,7 +18,6 @@ import type { NextRequest, NextResponse } from 'next/server';
 
 // ─── Shared mock infrastructure ───
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let routeModule: any;
 
 const mockSingle = vi.fn();
@@ -184,7 +183,6 @@ function makePostRequest(body: Record<string, unknown>): NextRequest {
 }
 
 /** Configure the Supabase .single() mock to return a specific payment link. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mockPaymentLink(link: any) {
   mockSingle.mockResolvedValueOnce({ data: link, error: link ? null : { code: 'PGRST116' } });
 }
