@@ -3,10 +3,25 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
+/** Gateways that require a valid E.164 phone to initialize payment. */
+const PHONE_REQUIRED_GATEWAYS = new Set(['paystack', 'flutterwave']);
+
+const E164_REGEX = /^\+[1-9]\d{7,14}$/;
+
+/** Normalize a raw phone string to +E.164 or return null if invalid. */
+function normalizePhone(raw: string | undefined | null): string | null {
+  if (!raw || !raw.trim()) return null;
+  const trimmed = raw.trim().replace(/[\s\-()]/g, '');
+  const withPlus = trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
+  return E164_REGEX.test(withPlus) ? withPlus : null;
+}
 
 /**
  * POST /api/pay-link/pay — Public endpoint (CSRF-exempt).
  * Initializes payment for a scan-to-pay link.
+ *
+ * #736 fix: validate payer phone before creating any payment record so
+ * Paystack-routed businesses never leave orphaned pending rows.
  */
 export async function POST(request: NextRequest) {
   // Rate limit: 20 requests per minute per IP
@@ -103,38 +118,27 @@ export async function POST(request: NextRequest) {
   const currency = link.currency || gatewayResult.currency;
   const gatewayName = gatewayResult.gateway;
 
-  const refCode = `PL-${Date.now().toString(36).toUpperCase()}`;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-
-  // Create payment record
-  const { data: payment, error: payErr } = await supabase
-    .from('payments')
-    .insert({
-      business_id: link.business_id,
-      amount,
-      currency,
-      gateway: gatewayName,
-      gateway_reference: refCode,
-      status: 'pending',
-      metadata: {
-        payment_link_id: link.id,
-        customer_name: customer_name || null,
-        customer_phone: customer_phone || null,
-        source: 'scan_to_pay',
-      },
-    })
-    .select('id')
-    .single();
-
-  if (payErr) {
-    logger.error('[PAY-LINK] Failed to create payment record:', payErr);
+  // #736: Validate payer phone BEFORE creating any payment record.
+  // Paystack/Flutterwave require a valid E.164 phone for initialization;
+  // passing an empty string causes canonicalSavedCardPhone to return null,
+  // which makes the gateway return null and leaves an orphaned pending row.
+  const normalizedPhone = normalizePhone(customer_phone);
+  if (PHONE_REQUIRED_GATEWAYS.has(gatewayName) && !normalizedPhone) {
     return NextResponse.json(
-      { error: 'Failed to create payment' },
-      { status: 500 },
+      {
+        error: 'A valid phone number is required to pay. Please enter your phone number in international format (e.g. +234XXXXXXXXXX).',
+        code: 'PHONE_REQUIRED',
+      },
+      { status: 422 },
     );
   }
 
-  // Initialize gateway payment
+  const refCode = `PL-${Date.now().toString(36).toUpperCase()}`;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+
+  // Initialize gateway payment BEFORE creating a local payment record.
+  // The gateway adapter (paystack.ts, stripe.ts) creates its own payment row
+  // on success; pre-creating one here caused duplicate/orphaned rows (#736).
   try {
     const { getPaymentGatewayByName } = await import('@/lib/payments/factory');
     const gateway = getPaymentGatewayByName(gatewayName);
@@ -149,7 +153,7 @@ export async function POST(request: NextRequest) {
       currency,
       referenceCode: refCode,
       businessName: biz.name,
-      phone: customer_phone || '',
+      phone: normalizedPhone || '',
       userEmail: email,
       userId: '00000000-0000-0000-0000-000000000000', // anonymous payer
       callbackUrl: `${appUrl}/payment-success?ref=${refCode}`,
@@ -175,7 +179,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { error: 'Failed to initialize payment' },
+      { error: 'Failed to initialize payment. Please check your details and try again.' },
       { status: 500 },
     );
   } catch (err) {

@@ -13,6 +13,7 @@ interface PayLinkInfo {
   business_name: string;
   logo_url: string | null;
   country_code: string;
+  requires_phone: boolean;
 }
 
 type PageState = 'loading' | 'ready' | 'submitting' | 'error';
@@ -77,10 +78,18 @@ export default function ScanToPayPage() {
   const currency = linkInfo?.currency || CURRENCY_MAP[linkInfo?.country_code || 'US'] || 'USD';
   const isFixedAmount = linkInfo?.amount != null && linkInfo.amount > 0;
   const displayAmount = isFixedAmount ? linkInfo!.amount! : Number(customAmount) || 0;
+  const phoneRequired = linkInfo?.requires_phone ?? false;
+
+  // Basic E.164 check: starts with + followed by 8-15 digits
+  const phoneValue = customerPhone.trim().replace(/[\s\-()]/g, '');
+  const phoneWithPlus = phoneValue.startsWith('+') ? phoneValue : (phoneValue ? `+${phoneValue}` : '');
+  const phoneValid = !phoneRequired || /^\+[1-9]\d{7,14}$/.test(phoneWithPlus);
 
   const formValid =
     customerName.trim().length > 0 &&
-    displayAmount > 0;
+    displayAmount > 0 &&
+    phoneValid &&
+    (!phoneRequired || customerPhone.trim().length > 0);
 
   const canSubmit = formValid && state === 'ready';
 
@@ -97,14 +106,17 @@ export default function ScanToPayPage() {
           amount: displayAmount,
           customer_name: customerName.trim(),
           customer_email: customerEmail.trim() || undefined,
-          customer_phone: customerPhone.trim() || undefined,
+          customer_phone: phoneWithPlus || undefined,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        setErrorMsg(data.error || 'Payment failed. Please try again.');
+        const msg = data.code === 'PHONE_REQUIRED'
+          ? 'Please enter a valid phone number to continue.'
+          : (data.error || 'Payment failed. Please try again.');
+        setErrorMsg(msg);
         setState('ready');
         return;
       }
@@ -119,7 +131,7 @@ export default function ScanToPayPage() {
       setErrorMsg('Network error. Please try again.');
       setState('ready');
     }
-  }, [canSubmit, linkInfo, token, displayAmount, customerName, customerEmail, customerPhone]);
+  }, [canSubmit, linkInfo, token, displayAmount, customerName, customerEmail, phoneWithPlus]);
 
   // ── Loading ──
   if (state === 'loading') {
@@ -254,15 +266,32 @@ export default function ScanToPayPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Phone <span className="text-xs text-gray-400">(optional)</span>
+                Phone {phoneRequired
+                  ? <span className="text-red-500">*</span>
+                  : <span className="text-xs text-gray-400">(optional)</span>}
               </label>
               <input
                 type="tel"
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(e.target.value)}
-                placeholder="+1 (555) 000-0000"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder={phoneRequired ? '+234 800 000 0000' : '+1 (555) 000-0000'}
+                required={phoneRequired}
+                className={`w-full rounded-lg border px-3 py-2.5 text-sm focus:outline-none focus:ring-1 ${
+                  customerPhone.trim() && !phoneValid
+                    ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
+                    : 'border-gray-300 focus:border-blue-500 focus:ring-blue-500'
+                }`}
               />
+              {phoneRequired && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Enter your phone in international format (e.g. +234XXXXXXXXXX)
+                </p>
+              )}
+              {customerPhone.trim() && !phoneValid && (
+                <p className="mt-1 text-xs text-red-500">
+                  Please enter a valid phone number in international format
+                </p>
+              )}
             </div>
           </div>
 
