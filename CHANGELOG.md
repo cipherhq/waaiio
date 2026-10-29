@@ -1,3 +1,12 @@
+### #752 — Queue tab: Share Queue QR code and link (2026-10-29)
+
+- **`app/dashboard/queue/page.tsx`**: Added "Share Queue" link in the action buttons group (alongside Pause/Resume, Walk-in, Call Next). Links to `/dashboard/qr-code?template=queue`, opening the QR Code page with "Scan to Join Queue" pre-selected.
+- **`app/dashboard/qr-code/page.tsx`**: Added `?template=` URL parameter support via `useSearchParams()`. Validates the param against known template IDs; defaults to `generic` for invalid/missing values. Initial deep-link suffix computed from the pre-selected template.
+- **`lib/__tests__/issue-496-qr-production.test.tsx`**: Added `next/navigation` mock for `useSearchParams` compatibility. Existing 3 routing-safety tests preserved and passing.
+- **`app/dashboard/queue/__tests__/queue-share-qr.test.tsx`** (new): 7 focused tests — Share Queue link presence/href, template param reading/validation/default, queue template deep-link suffix construction for shared and dedicated numbers, generic template behavior preserved.
+- **Affects**: Queue dashboard page and QR Code dashboard page only. No bot flow, capability, schema, payment, or channel changes.
+- **Could break**: Nothing — new link and param support; existing QR behavior unchanged (default remains `generic` when no param).
+
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
 - **`lib/payments/send-confirmation.ts`**: Added campaign donation recipient/business resolution block (section 2b) between invoice and order fallback. When `payment.campaign_id` is set and no booking/reservation/invoice resolved the customer, queries `campaign_donations` for `donor_phone`, `business_id`, `reference_code`, and joins to `campaigns(title, businesses(name, country_code))`. Previously, standalone campaign donations had no resolution path — `customerPhone` and `businessId` stayed null, causing `retryable_failed` with `no_business_resolved` forever.

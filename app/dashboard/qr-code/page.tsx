@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
@@ -46,6 +47,12 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 
 export default function QRCodePage() {
   const business = useBusiness();
+  const searchParams = useSearchParams();
+  const initialTemplate = useMemo(() => {
+    const param = searchParams.get('template');
+    if (param && TEMPLATES.some(t => t.id === param)) return param as TemplateId;
+    return 'generic' as TemplateId;
+  }, [searchParams]);
   const [channelPhone, setChannelPhone] = useState('');
   const [channelLoaded, setChannelLoaded] = useState(false);
 
@@ -85,10 +92,14 @@ export default function QRCodePage() {
   const routingCode = isSharedNumber ? (business.bot_code || '') : '';
   const isWhitelabel = PRICING_TIERS[(business.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
 
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('generic');
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>(initialTemplate);
   const [copied, setCopied] = useState(false);
   // Deep-link suffix auto-set by template; routing code is always prepended separately
-  const [deepLinkSuffix, setDeepLinkSuffix] = useState('');
+  const [deepLinkSuffix, setDeepLinkSuffix] = useState(() => {
+    const tmpl = TEMPLATES.find(t => t.id === initialTemplate);
+    const cap = tmpl?.capabilities?.[0];
+    return cap && routingCode ? cap : '';
+  });
   const posterRef = useRef<HTMLDivElement>(null);
   const qrOnlyRef = useRef<HTMLDivElement>(null);
 
