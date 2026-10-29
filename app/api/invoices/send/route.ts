@@ -133,9 +133,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Monthly conversation limit reached (${convLimit.used}/${convLimit.limit}). Upgrade for more.` }, { status: 403 });
     }
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-    const token = generateToken();
+    const sendStartedAt = Date.now();
+    const existingTokenIsUsable = typeof invoice.token === 'string'
+      && invoice.token.length > 0
+      && (!invoice.token_expires_at || new Date(invoice.token_expires_at).getTime() > sendStartedAt);
+    // Reuse a live token on resend so previously sent invoice links remain valid.
+    const token = existingTokenIsUsable ? invoice.token : generateToken();
     const settings = await loadPlatformSettings({ useServiceClient: true });
-    const expiresAt = new Date(Date.now() + settings.invoice_expiry_days * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(sendStartedAt + settings.invoice_expiry_days * 24 * 60 * 60 * 1000).toISOString();
 
     // Persist the token before sending so every link sent to the customer resolves.
     // Status remains current (e.g. 'draft') until delivery is attempted.

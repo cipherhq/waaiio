@@ -1,6 +1,6 @@
 ### #736 Lane 1 R5 — Invoice link and resend tracking integrity (2026-10-29)
 
-- Invoice delivery now stops before contacting a provider when its newly generated public token cannot be persisted.
+- Resends reuse a still-valid invoice token and refresh its expiry so previously sent links remain usable. Delivery stops before contacting a provider if the token cannot be persisted.
 - A failed WhatsApp resend records the latest attempt status without clearing the last acknowledged message ID. Database write failures after provider acceptance are logged and surfaced to the dashboard without inviting a duplicate retry.
 - **PRODUCT DECISIONS remain open**: invoice resend deduplication and partial-channel status for automatic WhatsApp-plus-email delivery.
 
