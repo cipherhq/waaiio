@@ -49,7 +49,7 @@ function buildSelectionData(r: SeatingResource): Record<string, unknown> {
     service_duration: r.reservation_duration_minutes,
     service_price: r.deposit_amount,
     _service_price_is_variable: true,
-    _service_max_capacity: r.capacity,
+    _service_max_capacity: 1, // One reservation per table at a time (capacity is for party size)
     _is_table_reservation: true,
   };
 }
@@ -73,7 +73,7 @@ function setSeatingSessionData(ctx: FlowContext, r: SeatingResource) {
   ctx.session.session_data.service_duration = r.reservation_duration_minutes;
   ctx.session.session_data.service_price = r.deposit_amount;
   ctx.session.session_data._service_price_is_variable = true;
-  ctx.session.session_data._service_max_capacity = r.capacity;
+  ctx.session.session_data._service_max_capacity = 1; // One reservation per table at a time
   ctx.session.session_data._is_table_reservation = true;
 }
 

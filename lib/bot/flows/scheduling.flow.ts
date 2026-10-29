@@ -1210,6 +1210,18 @@ export const schedulingFlow: FlowDefinition = {
           }
         }
 
+        // Filter table-reservation slots where reservation end exceeds closing time
+        const isTableResPrompt = ctx.session.session_data._is_table_reservation === true;
+        if (isTableResPrompt && serviceDuration) {
+          const tableCloseTo = ctx.session.session_data._seating_available_to as string | null;
+          const effectiveClose = tableCloseTo || closeTime;
+          const closeMin = timeToMinutes(effectiveClose);
+          allSlots = allSlots.filter(slot => {
+            const slotStart = timeToMinutes(slot);
+            return slotStart + serviceDuration <= closeMin;
+          });
+        }
+
         // ── Availability check: remove fully booked slots ──
         const staffId = ctx.session.session_data.staff_id as string | null;
         const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;

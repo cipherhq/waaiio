@@ -410,6 +410,16 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: false, errorMessage: recoveryMsg, persistSessionDataOnFailure: true };
     }
 
+    // Clear stale transactional state BEFORE entity extraction (P2-3).
+    // Must run first so cleanup removes the PREVIOUS capability's data,
+    // not the newly extracted service/date/time from the current request.
+    const { clearStaleCapabilityState } = await import('./shared/capability-transition');
+    clearStaleCapabilityState(
+      ctx.session.session_data,
+      ctx.session.session_data.active_capability as string | undefined,
+      capId,
+    );
+
     // Entity extraction: use ctx.currentCanonical if available, otherwise ONE fresh parse
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
@@ -570,15 +580,6 @@ const selectCapabilityStep: FlowStepConfig = {
       }
       return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
     }
-
-    // Clear stale transactional state from previous capability (shared function).
-    // Prevents cross-capability deposit/resource contamination (P1-F6).
-    const { clearStaleCapabilityState } = await import('./shared/capability-transition');
-    clearStaleCapabilityState(
-      ctx.session.session_data,
-      ctx.session.session_data.active_capability as string | undefined,
-      capId,
-    );
 
     return {
       valid: true,
