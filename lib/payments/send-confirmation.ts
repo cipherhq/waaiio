@@ -307,11 +307,15 @@ export async function sendProactiveConfirmation(
   }
 
   // ── 2b. Try campaign donation ──
+  // Authoritative identity binding: donation must match both payment_id AND campaign_id
+  // from the claimed payment, with status='success'. This ensures the donor/business
+  // context is canonically tied to this specific payment+campaign relationship.
   if (!customerPhone && payment.campaign_id) {
     const { data: donation, error: donationError } = await supabase
       .from('campaign_donations')
-      .select('donor_phone, donor_name, reference_code, business_id, campaigns(title, businesses(name, country_code))')
+      .select('donor_phone, donor_name, reference_code, business_id, campaign_id, campaigns(title, business_id, businesses(name, country_code))')
       .eq('payment_id', payment.id)
+      .eq('campaign_id', payment.campaign_id)
       .eq('status', 'success')
       .maybeSingle();
 
@@ -319,14 +323,22 @@ export async function sendProactiveConfirmation(
       logSafeError(logPrefix, 'campaign-donation-lookup', donationError);
     }
 
-    if (donation) {
-      customerPhone = donation.donor_phone;
-      businessId = donation.business_id;
-      referenceCode = donation.reference_code || '';
-      const campaign = donation.campaigns as unknown as { title: string; businesses: { name: string; country_code?: string } | null } | null;
-      if (campaign?.businesses?.name) businessName = campaign.businesses.name;
-      if (campaign?.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
-      serviceName = campaign?.title || 'Campaign Donation';
+    // Validate canonical context: donation must have a phone AND its campaign's
+    // business_id must match the donation's own business_id (consistency check)
+    if (donation?.donor_phone) {
+      const campaign = donation.campaigns as unknown as { title: string; business_id: string; businesses: { name: string; country_code?: string } | null } | null;
+      const campaignBizId = campaign?.business_id;
+      if (campaignBizId && campaignBizId !== donation.business_id) {
+        logger.warn(`${logPrefix} Campaign/donation business_id mismatch — campaign=${campaignBizId} donation=${donation.business_id}`);
+        // Inconsistent context — do not adopt; fall through to order/profile fallback
+      } else {
+        customerPhone = donation.donor_phone;
+        businessId = donation.business_id;
+        referenceCode = donation.reference_code || '';
+        if (campaign?.businesses?.name) businessName = campaign.businesses.name;
+        if (campaign?.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
+        serviceName = campaign?.title || 'Campaign Donation';
+      }
     }
   }
 
