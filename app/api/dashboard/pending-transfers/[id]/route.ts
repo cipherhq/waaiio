@@ -96,19 +96,21 @@ export async function PATCH(
 
         const exactPaymentId = candidates[0].id;
 
-        // #736: Fail-closed order status check before retry finalization.
-        // Only 'confirmed' orders are eligible for Stage 2/3 retry.
-        // paid_pending_approval → deferred (merchant must approve first)
-        // cancelled / missing / error → rejected (no finalization)
+        // #736: Fail-closed order status + tenant check before retry finalization.
+        // Finding 1: Bind to business_id to prevent cross-tenant retry.
+        // Finding 2: Allow retries for approved lifecycle states (confirmed,
+        //   processing, shipped, ready, delivered) — these may need Stage 3
+        //   notification retry. Block pre-approval and terminal-ineligible states.
         const { data: orderCheck, error: orderCheckErr } = await service
           .from('orders')
-          .select('status')
+          .select('status, business_id')
           .eq('id', transfer.order_id)
+          .eq('business_id', business_id)
           .single();
 
         if (orderCheckErr || !orderCheck) {
           logger.error('[PENDING_TRANSFERS] Retry order lookup failed — fail closed:', orderCheckErr?.message);
-          return NextResponse.json({ error: 'Order not found or lookup failed' }, { status: 500 });
+          return NextResponse.json({ error: 'Order not found or access denied' }, { status: 500 });
         }
 
         if (orderCheck.status === 'paid_pending_approval') {
@@ -119,14 +121,18 @@ export async function PATCH(
           });
         }
 
-        if (orderCheck.status !== 'confirmed') {
-          // cancelled, draft, processing, shipped, delivered — not eligible for retry
+        // Ineligible: pre-payment or terminal-cancelled states
+        const INELIGIBLE_RETRY_STATES = new Set(['pending', 'draft', 'cancelled', 'paid_pending_approval']);
+        if (INELIGIBLE_RETRY_STATES.has(orderCheck.status)) {
           logger.warn(`[PENDING_TRANSFERS] Retry blocked: order ${transfer.order_id} status=${orderCheck.status}`);
           return NextResponse.json(
             { error: `Order is ${orderCheck.status} — not eligible for retry` },
             { status: 409 },
           );
         }
+        // Eligible: confirmed, processing, shipped, ready, delivered — legitimate
+        // post-approval states where Stage 2/3 retry may be needed for failed
+        // notifications or incomplete fulfillment effects.
 
         let retryFinalizationStatus = 'pending';
         try {

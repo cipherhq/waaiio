@@ -292,7 +292,7 @@ describe('R33-3: confirmed-transfer retry order-status guard', () => {
     payment_authority_version: 1,
   };
 
-  function setupRetryMocks(orderStatus: string | null, orderError: boolean = false) {
+  function setupRetryMocks(orderStatus: string | null, orderError: boolean = false, orderMissing: boolean = false) {
     vi.resetModules();
     mockFromHandler = (table: string) => {
       if (table === 'pending_transfers') return chain(confirmedTransfer);
@@ -312,7 +312,9 @@ describe('R33-3: confirmed-transfer retry order-status guard', () => {
         c.single = vi.fn().mockResolvedValue(
           orderError
             ? { data: null, error: { message: 'db error' } }
-            : { data: orderStatus ? { status: orderStatus } : null, error: null }
+            : orderMissing
+              ? { data: null, error: null }
+              : { data: orderStatus ? { status: orderStatus, business_id: 'biz-1' } : null, error: null }
         );
         return c;
       }
@@ -394,5 +396,63 @@ describe('R33-3: confirmed-transfer retry order-status guard', () => {
     expect(body.finalization_status).toBe('completed');
     const authority = await import('@/lib/payments/authority');
     expect(authority.resumeSuccessfulPaymentFinalization).toHaveBeenCalled();
+  });
+
+  it('missing order (null data, no error) → 500, no finalization', async () => {
+    setupRetryMocks(null, false, true);
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(500);
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('processing order → allows retry (post-approval state)', async () => {
+    setupRetryMocks('processing');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn().mockResolvedValue({ status: 'completed' }),
+    }));
+    vi.doMock('@/lib/payments/process-success', () => ({
+      processSuccessfulPayment: vi.fn().mockResolvedValue({ criticalSuccess: true }),
+    }));
+    vi.doMock('@/lib/payments/send-confirmation', () => ({
+      sendProactiveConfirmation: vi.fn().mockResolvedValue({ status: 'completed' }),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    const body = await res.json();
+    expect(body.finalization_status).toBe('completed');
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).toHaveBeenCalled();
+  });
+
+  it('pending order → 409, no finalization (pre-payment state)', async () => {
+    setupRetryMocks('pending');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(409);
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
   });
 });
