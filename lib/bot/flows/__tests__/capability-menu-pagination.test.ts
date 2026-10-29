@@ -15,6 +15,7 @@ import { capabilitySelectionFlow } from '../capability-selection.flow';
 import type { FlowContext, PromptList } from '../types';
 
 const step = getStep(capabilitySelectionFlow, 'select_capability');
+const myAccountStep = getStep(capabilitySelectionFlow, 'my_account_menu');
 
 // ── Helpers ──
 
@@ -226,18 +227,25 @@ describe('capability menu pagination (#736)', () => {
     }
   });
 
-  it('no page ever exceeds 10 rows (Meta API safety)', async () => {
-    // Test with various counts that could trigger edge cases
-    for (const count of [11, 12, 15, 20]) {
-      // Build capabilities list — use 'payment' + 'chat' + 'queue' (always available)
-      // plus enough backing-data caps to reach the count
-      const backingCaps = ['ordering', 'giving', 'appointment', 'scheduling',
-        'class_booking', 'ticketing', 'crowdfunding', 'reservation', 'table_reservation'];
-      const alwaysAvailable = ['payment', 'chat', 'queue'];
-      const caps = [...alwaysAvailable, ...backingCaps.slice(0, count - alwaysAvailable.length)];
-      if (caps.length < count) continue; // not enough test caps
+  it('no page ever exceeds 10 rows — verified at 9/10/11/12 boundaries', async () => {
+    // Test exact boundaries after eligibility filtering.
+    // 9 caps: all user-facing from ELEVEN_CAPS minus 2
+    const NINE_CAPS = ELEVEN_CAPS.slice(0, 9);
+    // 10 caps: ELEVEN_CAPS minus 1
+    const TEN_CAPS = ELEVEN_CAPS.slice(0, 10);
+    // 12 caps: ELEVEN_CAPS + table_reservation (needs services backing, already provided)
+    const TWELVE_CAPS = [...ELEVEN_CAPS, 'table_reservation'];
 
-      for (let page = 0; page < 10; page++) {
+    const boundaries: Array<{ label: string; caps: string[]; expectPages: number }> = [
+      { label: '9 caps', caps: NINE_CAPS, expectPages: 1 },
+      { label: '10 caps', caps: TEN_CAPS, expectPages: 1 },
+      { label: '11 caps', caps: ELEVEN_CAPS, expectPages: 2 },
+      { label: '12 caps', caps: TWELVE_CAPS, expectPages: 2 },
+    ];
+
+    for (const { label, caps, expectPages } of boundaries) {
+      const allItems: string[] = [];
+      for (let page = 0; page < expectPages + 1; page++) {
         const ctx = buildCtx({
           capabilities: caps,
           tableCounts: ELEVEN_CAPS_BACKING,
@@ -246,9 +254,17 @@ describe('capability menu pagination (#736)', () => {
         const result = await step.prompt!(ctx);
         const msg = result![0];
         if (msg.type === 'list') {
-          expect((msg as PromptList).items.length).toBeLessThanOrEqual(10);
+          const items = (msg as PromptList).items;
+          expect(items.length, `${label} page ${page} exceeds 10 rows`).toBeLessThanOrEqual(10);
+          expect(items.length, `${label} page ${page} is empty`).toBeGreaterThan(0);
+          allItems.push(...getPostbacks(msg));
         }
       }
+      // Verify total capability count matches (excluding nav items)
+      const capPostbacks = allItems.filter(p => p.startsWith('cap_') && !p.startsWith('cap_nav_'));
+      // Deduplicate: out-of-range pages clamp to last, so caps may repeat
+      const uniqueCaps = new Set(capPostbacks);
+      expect(uniqueCaps.size, `${label}: not all caps reachable`).toBe(caps.length);
     }
   });
 
@@ -556,13 +572,14 @@ describe('capability selection validation', () => {
     expect(result.data?.active_capability).toBe('chat');
   });
 
-  it('wrong-tenant isolation: session is keyed to business, cap from other biz context rejected', async () => {
-    // Simulate business A context with capabilities ['scheduling', 'chat']
+  it('cap_X postback rejected for capability absent from session (stale/foreign postback)', async () => {
+    // A session with only ['scheduling', 'chat'] rejects a postback for 'ticketing'
+    // which is not in this session's capability list — guards against stale or
+    // replayed postbacks from a different context
     const ctx = buildCtx({
       capabilities: ['scheduling', 'chat'],
       tableCounts: { services: 2 },
     });
-    // A postback from a different business context (e.g. 'ticketing' which biz A doesn't have)
     const result = await step.validate!('cap_ticketing', ctx);
     expect(result.valid).toBe(false);
     expect(result.errorMessage).toBeTruthy();
@@ -572,42 +589,76 @@ describe('capability selection validation', () => {
 // ── Re-entry and reachability ──
 
 describe('re-entry and reachability', () => {
-  it('re-entry to menu resets pagination state (page starts at 0)', async () => {
+  it('capability selection cleans up pagination, next prompt starts at page 0', async () => {
+    // Same session state throughout — simulates persisted session_data
     const ctx = buildCtx({
       capabilities: ELEVEN_CAPS,
       tableCounts: ELEVEN_CAPS_BACKING,
-      menuPage: 1, // simulate user was on page 1 before
     });
 
-    // Simulate prompt re-entry (which happens after next() returns 'select_capability')
-    // prompt() should render from whatever page is in session_data
-    const result = await step.prompt!(ctx);
-    const msg = result![0] as PromptList;
-    expect(msg.type).toBe('list');
+    // Step 1: prompt() renders page 0 and stores pagination state
+    await step.prompt!(ctx);
+    expect(ctx.session.session_data._cap_menu_page).toBe(0);
+    expect(ctx.session.session_data._cap_menu_total_pages).toBe(2);
 
-    // After a capability selection, pagination state is cleaned up
-    const ctx2 = buildCtx({
-      capabilities: ELEVEN_CAPS,
-      tableCounts: ELEVEN_CAPS_BACKING,
-    });
-    ctx2.session.session_data._cap_menu_page = 1;
-    ctx2.session.session_data._cap_menu_total_pages = 2;
-    await step.validate!('cap_chat', ctx2);
-    // Pagination cleaned up after selection
-    expect(ctx2.session.session_data._cap_menu_page).toBeUndefined();
-    expect(ctx2.session.session_data._cap_menu_total_pages).toBeUndefined();
+    // Step 2: select a capability — pagination state cleaned up
+    await step.validate!('cap_chat', ctx);
+    expect(ctx.session.session_data._cap_menu_page).toBeUndefined();
+    expect(ctx.session.session_data._cap_menu_total_pages).toBeUndefined();
 
-    // Next prompt starts fresh at page 0
-    const ctx3 = buildCtx({
-      capabilities: ELEVEN_CAPS,
-      tableCounts: ELEVEN_CAPS_BACKING,
-    });
-    const result3 = await step.prompt!(ctx3);
+    // Step 3: re-enter prompt — renders page 0, no stale page carried over
+    const result3 = await step.prompt!(ctx);
     const msg3 = result3![0] as PromptList;
     const postbacks3 = getPostbacks(msg3);
-    // Page 0 — has More... but no Previous
     expect(postbacks3).toContain('cap_nav_more');
     expect(postbacks3).not.toContain('cap_nav_prev');
+  });
+
+  it('My Account → Back round trip clears pagination state', async () => {
+    // Same session state — simulates persisted session across steps
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+      profileId: 'profile-1',
+      hasHistory: true,
+    });
+
+    // Step 1: prompt page 0, navigate to page 1
+    await step.prompt!(ctx);
+    expect(ctx.session.session_data._cap_menu_page).toBe(0);
+    const navResult = await step.validate!('cap_nav_more', ctx);
+    expect(navResult.valid).toBe(true);
+    expect(ctx.session.session_data._cap_menu_page).toBe(1);
+
+    // Step 2: re-render page 1 (after next() returns 'select_capability')
+    await step.prompt!(ctx);
+    expect(ctx.session.session_data._cap_menu_page).toBe(1);
+
+    // Step 3: select My Account — pagination state should be cleaned up
+    const myAcctResult = await step.validate!('cap_my_account', ctx);
+    expect(myAcctResult.valid).toBe(true);
+    expect(ctx.session.session_data._cap_menu_page).toBeUndefined();
+    expect(ctx.session.session_data._cap_menu_total_pages).toBeUndefined();
+
+    // Step 4: My Account next() routes to 'my_account_menu'
+    const nextStep = await step.next!(ctx);
+    expect(nextStep).toBe('my_account_menu');
+
+    // Step 5: In my_account_menu, user selects "Back" (acct_back)
+    const backResult = await myAccountStep.validate!('acct_back', ctx);
+    expect(backResult.valid).toBe(true);
+    // Executor merges validate data into session_data — simulate that
+    Object.assign(ctx.session.session_data, backResult.data);
+    const backRoute = await myAccountStep.next!(ctx);
+    expect(backRoute).toBe('select_capability');
+
+    // Step 6: Re-enter capability menu — starts at page 0, no stale state
+    const result6 = await step.prompt!(ctx);
+    const msg6 = result6![0] as PromptList;
+    const postbacks6 = getPostbacks(msg6);
+    expect(postbacks6).toContain('cap_nav_more');
+    expect(postbacks6).not.toContain('cap_nav_prev');
+    expect(ctx.session.session_data._cap_menu_page).toBe(0);
   });
 
   it('11th and 12th capability are reachable across pages', async () => {
@@ -642,5 +693,114 @@ describe('re-entry and reachability', () => {
     expect(allCapPostbacks.has('cap_waiver')).toBe(true);     // was 11th in ELEVEN_CAPS
     expect(allCapPostbacks.has('cap_table_reservation')).toBe(true); // 12th
     expect(allCapPostbacks.size).toBe(12);
+  });
+
+  it('menu shrink clears stale pagination state', async () => {
+    // Simulate: session was paginated (11 caps), then backing data removed
+    // so the refreshed menu now has ≤10 items → pagination state must clear
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS.slice(0, 8), // only 8 caps now
+      tableCounts: ELEVEN_CAPS_BACKING,
+      menuPage: 1, // stale page from prior 11-cap render
+    });
+    ctx.session.session_data._cap_menu_total_pages = 2; // stale
+
+    const result = await step.prompt!(ctx);
+    const msg = result![0];
+    // Should render as single-page (≤10 items after eligibility)
+    expect(msg.type).toBe('list');
+    // Stale pagination state must be cleared
+    expect(ctx.session.session_data._cap_menu_page).toBeUndefined();
+    expect(ctx.session.session_data._cap_menu_total_pages).toBeUndefined();
+    // No navigation items on a single-page menu
+    const postbacks = getPostbacks(msg);
+    expect(postbacks).not.toContain('cap_nav_more');
+    expect(postbacks).not.toContain('cap_nav_prev');
+  });
+});
+
+// ── Full prompt → navigate → select lifecycle with outbound payload inspection ──
+
+describe('lifecycle: prompt → navigate → select → payload', () => {
+  it('full round trip: render page 0, navigate to page 1, select cap, verify payloads', async () => {
+    const ctx = buildCtx({
+      capabilities: ELEVEN_CAPS,
+      tableCounts: ELEVEN_CAPS_BACKING,
+    });
+
+    // ── Step 1: prompt() renders page 0 ──
+    const result0 = await step.prompt!(ctx);
+    const msg0 = result0![0] as PromptList;
+    expect(msg0.type).toBe('list');
+    expect(msg0.items.length).toBeLessThanOrEqual(10);
+
+    // Verify outbound payload structure matches WhatsApp list format
+    expect(msg0.buttonLabel).toBeTruthy();
+    expect(msg0.title).toBeTruthy();
+    expect(msg0.body).toBeTruthy();
+
+    // Page 0 emits "More Options →" with postback 'cap_nav_more'
+    const moreItem = msg0.items.find(i => i.postbackText === 'cap_nav_more');
+    expect(moreItem).toBeDefined();
+    expect(moreItem!.title).toBeTruthy();
+
+    // Collect page 0 capability IDs
+    const page0Caps = msg0.items
+      .filter(i => i.postbackText.startsWith('cap_') && !i.postbackText.startsWith('cap_nav_'))
+      .map(i => i.postbackText);
+    expect(page0Caps.length).toBe(9); // 10 slots - 1 "More..." = 9 caps
+
+    // ── Step 2: validate() the emitted 'cap_nav_more' postback ──
+    const navResult = await step.validate!('cap_nav_more', ctx);
+    expect(navResult.valid).toBe(true);
+    expect(navResult.data?._cap_menu_navigate).toBe(true);
+    expect(ctx.session.session_data._cap_menu_page).toBe(1);
+    // Executor merges validate data into session_data — simulate that
+    Object.assign(ctx.session.session_data, navResult.data);
+
+    // ── Step 3: next() returns 'select_capability' for re-render ──
+    const nextAfterNav = await step.next!(ctx);
+    expect(nextAfterNav).toBe('select_capability');
+    expect(ctx.session.session_data._cap_menu_navigate).toBeUndefined();
+
+    // ── Step 4: prompt() re-renders page 1 ──
+    const result1 = await step.prompt!(ctx);
+    const msg1 = result1![0] as PromptList;
+    expect(msg1.type).toBe('list');
+    expect(msg1.items.length).toBeLessThanOrEqual(10);
+
+    // Page 1 has "← Previous" but no "More..."
+    const prevItem = msg1.items.find(i => i.postbackText === 'cap_nav_prev');
+    expect(prevItem).toBeDefined();
+    expect(msg1.items.find(i => i.postbackText === 'cap_nav_more')).toBeUndefined();
+
+    // Collect page 1 capability IDs
+    const page1Caps = msg1.items
+      .filter(i => i.postbackText.startsWith('cap_') && !i.postbackText.startsWith('cap_nav_'))
+      .map(i => i.postbackText);
+
+    // ── Step 5: All 11 caps reachable, no overlap between pages ──
+    const allCaps = new Set([...page0Caps, ...page1Caps]);
+    expect(allCaps.size).toBe(11);
+    // No duplicates across pages
+    const overlap = page0Caps.filter(c => page1Caps.includes(c));
+    expect(overlap).toHaveLength(0);
+
+    // ── Step 6: Select a capability from page 1 using its emitted postback ──
+    const targetCap = page1Caps[0]; // first capability on page 1
+    const selectResult = await step.validate!(targetCap, ctx);
+    expect(selectResult.valid).toBe(true);
+    expect(selectResult.data?.active_capability).toBe(targetCap.replace('cap_', ''));
+    // Executor merges validate data into session_data — simulate that
+    Object.assign(ctx.session.session_data, selectResult.data);
+
+    // Pagination state cleaned up after selection
+    expect(ctx.session.session_data._cap_menu_page).toBeUndefined();
+    expect(ctx.session.session_data._cap_menu_total_pages).toBeUndefined();
+
+    // ── Step 7: next() routes to the capability's first step ──
+    const nextAfterSelect = await step.next!(ctx);
+    expect(nextAfterSelect).not.toBe('select_capability'); // should route to the capability flow
+    expect(typeof nextAfterSelect).toBe('string');
   });
 });

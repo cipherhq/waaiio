@@ -274,6 +274,15 @@ const selectCapabilityStep: FlowStepConfig = {
       ...(merchantProtected.length ? { protectedValues: merchantProtected } : {}),
     };
 
+    const META_MAX_ROWS = 10;
+
+    // Clear stale pagination state if the refreshed menu no longer needs pagination
+    // (e.g., backing data removed so fewer capabilities now fit in a single page)
+    if (capItems.length <= META_MAX_ROWS) {
+      delete ctx.session.session_data._cap_menu_page;
+      delete ctx.session.session_data._cap_menu_total_pages;
+    }
+
     // SAFETY: never send an empty buttons/list payload to WhatsApp
     if (capItems.length === 0) {
       logger.warn('[CAPABILITY-MENU] Zero renderable capabilities', { businessId: ctx.business?.id });
@@ -297,7 +306,6 @@ const selectCapabilityStep: FlowStepConfig = {
     // WhatsApp list body max is 1024 chars — trim greeting if needed
     const listBody = bodyText.length > 1000 ? bodyText.slice(0, 997) + '...' : bodyText;
 
-    const META_MAX_ROWS = 10;
     const allListItems = capItems.map(i => ({ title: i.title, postbackText: i.postbackText }));
 
     // If everything fits in one page, no pagination needed
@@ -427,6 +435,9 @@ const selectCapabilityStep: FlowStepConfig = {
     // Handle "My Account" selection
     if (input === 'cap_my_account' || /^(my account|manage|my stuff)$/i.test(input.trim())) {
       ctx.session.session_data.active_capability = 'my_account';
+      // Clean up pagination state — My Account exits the paginated menu
+      delete ctx.session.session_data._cap_menu_page;
+      delete ctx.session.session_data._cap_menu_total_pages;
       return { valid: true, data: { active_capability: 'my_account' } };
     }
 
