@@ -5485,3 +5485,12 @@ If something breaks:
 - Preserve selected address details after blur/outside dismissal while keeping the menu closed; edits, new selections, record resets and unmounts still invalidate stale details.
 - **Affects**: Main-app physical-address entry. Admin Vite onboarding/event fields remain an explicit follow-up; no provider configuration or schema changes.
 - **Could break**: Shared browser widget loading/selection affects existing callers; live Google enablement/referrer behavior still needs runtime verification.
+
+### #751 — Admin physical-address autocomplete (2026-10-29)
+
+- Add a Vite-compatible Admin address adapter using the unchanged shared Google loader, with narrowly allowlisted browser-key mapping and optional example configuration.
+- Wire CustomerOnboarding address/city/state/postcode selection without changing selected country or submission stages; wire existing Events venue editing without changing permissions, save or audit paths.
+- Add rendered component/form tests for selection, manual fallback, cancellation, country/reset/back navigation and Events read-only denial.
+- **Files**: Admin address component/helper, CustomerOnboarding/Events, Vite config/example and focused Admin tests.
+- **Affects**: The two remaining Admin address editors. No provider settings, schema or main-app component changes.
+- **Could break**: Admin suggestion loading/selection and bundled public-key mapping; manual entry remains available. Live Google behavior requires separate deployment acceptance.
