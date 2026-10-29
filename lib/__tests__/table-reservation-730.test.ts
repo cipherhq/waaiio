@@ -1142,6 +1142,19 @@ describe('#730: Admin API and security', () => {
     expect(usedIsNull).toBe(true);
   });
 
+  it('table+stays business without scheduling shows non-table bookings on Table Reservations tab', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/dashboard/reservations/page.tsx'), 'utf-8');
+
+    // When Appointments tab is hidden, table_reservations filter must include
+    // all non-reservation bookings (not just flow_type=table_reservation)
+    expect(code).toContain('hasSchedulingCapability');
+    expect(code).toContain("bookings.filter(b => !b._isReservation)"); // Fallback when no Appointments tab
+    // Comment documents the data-preservation intent
+    expect(code).toContain('Include all non-reservation bookings when no Appointments tab');
+  });
+
   it('dashboard uses production getColumnHeader (not inline ternary)', async () => {
     const fs = await import('fs');
     const path = await import('path');
