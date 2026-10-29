@@ -96,21 +96,36 @@ export async function PATCH(
 
         const exactPaymentId = candidates[0].id;
 
-        // #736 Finding: Check order status before retry — do NOT resume fulfillment
-        // for paid_pending_approval orders. Only confirmed orders get Stage 2/3 retry.
-        const { data: orderCheck } = await service
+        // #736: Fail-closed order status check before retry finalization.
+        // Only 'confirmed' orders are eligible for Stage 2/3 retry.
+        // paid_pending_approval → deferred (merchant must approve first)
+        // cancelled / missing / error → rejected (no finalization)
+        const { data: orderCheck, error: orderCheckErr } = await service
           .from('orders')
           .select('status')
           .eq('id', transfer.order_id)
           .single();
-        if (orderCheck?.status === 'paid_pending_approval') {
-          // Order is paid but not approved — retry is a no-op for fulfillment.
-          // Payment is already recorded. Merchant must use the approve route.
+
+        if (orderCheckErr || !orderCheck) {
+          logger.error('[PENDING_TRANSFERS] Retry order lookup failed — fail closed:', orderCheckErr?.message);
+          return NextResponse.json({ error: 'Order not found or lookup failed' }, { status: 500 });
+        }
+
+        if (orderCheck.status === 'paid_pending_approval') {
           return NextResponse.json({
             success: true, status: 'confirmed',
             finalization_status: 'deferred',
             message: 'Payment verified. Use Approve to confirm the order.',
           });
+        }
+
+        if (orderCheck.status !== 'confirmed') {
+          // cancelled, draft, processing, shipped, delivered — not eligible for retry
+          logger.warn(`[PENDING_TRANSFERS] Retry blocked: order ${transfer.order_id} status=${orderCheck.status}`);
+          return NextResponse.json(
+            { error: `Order is ${orderCheck.status} — not eligible for retry` },
+            { status: 409 },
+          );
         }
 
         let retryFinalizationStatus = 'pending';
