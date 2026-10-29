@@ -112,12 +112,12 @@ export async function POST(request: NextRequest) {
         'phone_number_id', 'created_at', 'updated_at',
       ],
       businesses: [
-        'id', 'name', 'slug', 'category', 'country_code', 'currency',
+        'id', 'name', 'slug', 'category', 'country_code',
         'owner_id', 'status', 'payout_mode', 'verification_level',
         'payout_limit_monthly', 'created_at', 'updated_at',
         'description', 'address', 'city', 'state', 'zip_code',
-        'phone', 'email', 'website', 'logo_url', 'cover_url',
-        'timezone', 'booking_advance_days', 'booking_cancel_hours',
+        'phone', 'email', 'logo_url', 'cover_photo_url',
+        'timezone', 'max_advance_booking_days', 'cancellation_window_hours',
       ],
       // ── Support tables (enforced for non-admin only) ──
       bookings: [
