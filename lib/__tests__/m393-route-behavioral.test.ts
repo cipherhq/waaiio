@@ -292,7 +292,10 @@ describe('R33-3: confirmed-transfer retry order-status guard', () => {
     payment_authority_version: 1,
   };
 
-  function setupRetryMocks(orderStatus: string | null, orderError: boolean = false, orderMissing: boolean = false) {
+  function setupRetryMocks(
+    orderStatus: string | null,
+    opts: { orderError?: boolean; orderMissing?: boolean } = {},
+  ) {
     vi.resetModules();
     mockFromHandler = (table: string) => {
       if (table === 'pending_transfers') return chain(confirmedTransfer);
@@ -310,10 +313,11 @@ describe('R33-3: confirmed-transfer retry order-status guard', () => {
       if (table === 'orders') {
         const c = chain();
         c.single = vi.fn().mockResolvedValue(
-          orderError
-            ? { data: null, error: { message: 'db error' } }
-            : orderMissing
-              ? { data: null, error: null }
+          opts.orderError
+            ? { data: null, error: { message: 'db error', code: '42P01' } }
+            : opts.orderMissing
+              // Supabase .single() returns PGRST116 error when no rows match
+              ? { data: null, error: { message: 'JSON object requested, multiple (or no) rows returned', code: 'PGRST116' } }
               : { data: orderStatus ? { status: orderStatus, business_id: 'biz-1' } : null, error: null }
         );
         return c;
@@ -358,7 +362,7 @@ describe('R33-3: confirmed-transfer retry order-status guard', () => {
   });
 
   it('order lookup error → 500, no finalization', async () => {
-    setupRetryMocks(null, true);
+    setupRetryMocks(null, { orderError: true });
     vi.doMock('@/lib/payments/authority', () => ({
       resumeSuccessfulPaymentFinalization: vi.fn(),
     }));
@@ -399,7 +403,7 @@ describe('R33-3: confirmed-transfer retry order-status guard', () => {
   });
 
   it('missing order (null data, no error) → 500, no finalization', async () => {
-    setupRetryMocks(null, false, true);
+    setupRetryMocks(null, { orderMissing: true });
     vi.doMock('@/lib/payments/authority', () => ({
       resumeSuccessfulPaymentFinalization: vi.fn(),
     }));
@@ -441,6 +445,43 @@ describe('R33-3: confirmed-transfer retry order-status guard', () => {
 
   it('pending order → 409, no finalization (pre-payment state)', async () => {
     setupRetryMocks('pending');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(409);
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('cross-business order (missing due to business_id filter) → 500, no finalization', async () => {
+    // .single() with business_id mismatch returns PGRST116 (no rows) — same as missing
+    setupRetryMocks(null, { orderMissing: true });
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toContain('Order not found');
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('unknown/future status → 409, fail closed (allowlist enforced)', async () => {
+    setupRetryMocks('some_unknown_future_status');
     vi.doMock('@/lib/payments/authority', () => ({
       resumeSuccessfulPaymentFinalization: vi.fn(),
     }));

@@ -121,18 +121,16 @@ export async function PATCH(
           });
         }
 
-        // Ineligible: pre-payment or terminal-cancelled states
-        const INELIGIBLE_RETRY_STATES = new Set(['pending', 'draft', 'cancelled', 'paid_pending_approval']);
-        if (INELIGIBLE_RETRY_STATES.has(orderCheck.status)) {
+        // Explicit allowlist: only post-approval lifecycle states eligible for
+        // Stage 2/3 retry. Unknown/future states fail closed.
+        const ELIGIBLE_RETRY_STATES = new Set(['confirmed', 'processing', 'shipped', 'ready', 'delivered']);
+        if (!ELIGIBLE_RETRY_STATES.has(orderCheck.status)) {
           logger.warn(`[PENDING_TRANSFERS] Retry blocked: order ${transfer.order_id} status=${orderCheck.status}`);
           return NextResponse.json(
             { error: `Order is ${orderCheck.status} — not eligible for retry` },
             { status: 409 },
           );
         }
-        // Eligible: confirmed, processing, shipped, ready, delivered — legitimate
-        // post-approval states where Stage 2/3 retry may be needed for failed
-        // notifications or incomplete fulfillment effects.
 
         let retryFinalizationStatus = 'pending';
         try {
