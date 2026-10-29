@@ -5451,3 +5451,10 @@ If something breaks:
 2. Find changes from that date above
 3. Each entry has the affected file(s)
 4. Revert or fix the specific change
+
+### #580 — Observe promo claim RPC failures safely (2026-10-29)
+
+- Add a fixed error diagnostic with business/campaign identifiers when `claim_promo_code` returns an RPC error. Arbitrary error fields and submitted claim data are excluded.
+- Extend existing format-hint regression coverage to verify the diagnostic and silence for ordinary invalid/winner/try-again outcomes.
+- **Affects**: Server-side visibility of promo verification RPC failures.
+- **Could break**: Log volume increases on RPC failures; customer responses, format hints and claim behavior remain unchanged.
