@@ -285,6 +285,60 @@ describe('Lane 1: Invoice send route delivery truthfulness', () => {
   });
 });
 
+// ─── Invoice status race guard ─────────────────────────────────────
+
+describe('Lane 1: Invoice status race guard — draft-only transition', () => {
+  it('invoices/send status update is guarded by .eq("status","draft")', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(path.join(process.cwd(), 'app/api/invoices/send/route.ts'), 'utf-8');
+
+    // The status:'sent' update must include .eq('status', 'draft') to prevent
+    // regressing a paid/viewed/overdue invoice back to 'sent'.
+    // Find the update block that sets status:'sent'
+    const sentUpdateIdx = src.indexOf("status: 'sent'");
+    expect(sentUpdateIdx).toBeGreaterThan(-1);
+
+    // The .eq('status', 'draft') guard must appear after the .eq('id', invoice_id)
+    // but within the same statement chain
+    const afterSent = src.slice(sentUpdateIdx);
+    const eqDraft = afterSent.indexOf(".eq('status', 'draft')");
+    expect(eqDraft).toBeGreaterThan(-1);
+    // Must be within 200 chars of the status:'sent' line (same Supabase chain)
+    expect(eqDraft).toBeLessThan(200);
+  });
+
+  it('invoices/send preserves advanced status (paid/viewed) on concurrent update', async () => {
+    // Simulate: invoice is 'paid' when the status update fires.
+    // The .eq('status', 'draft') guard means the UPDATE WHERE clause
+    // won't match, so 0 rows update — status stays 'paid'.
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(path.join(process.cwd(), 'app/api/invoices/send/route.ts'), 'utf-8');
+
+    // Verify the guard is present AND that there is NO unconditional
+    // .update({ status: 'sent' }) without the draft guard
+    const updateBlocks = [...src.matchAll(/\.update\(\{[^}]*status:\s*'sent'[^}]*\}\)/gs)];
+    expect(updateBlocks.length).toBeGreaterThan(0);
+
+    for (const block of updateBlocks) {
+      // Each status:'sent' update must be followed by .eq('status', 'draft')
+      const afterBlock = src.slice(block.index!);
+      const nextSemicolon = afterBlock.indexOf(';');
+      const chain = afterBlock.slice(0, nextSemicolon > 0 ? nextSemicolon : 300);
+      expect(chain).toContain(".eq('status', 'draft')");
+    }
+  });
+
+  it('allowed invoice statuses are draft, sent, viewed, paid, overdue, cancelled', async () => {
+    // Verify against migration 063 CHECK constraint
+    const fs = await import('fs');
+    const path = await import('path');
+    const migration = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/063_invoices.sql'), 'utf-8');
+    expect(migration).toContain("CHECK (status IN ('draft', 'sent', 'viewed', 'paid', 'overdue', 'cancelled'))");
+  });
+});
+
 // ─── Payment request send: structural validation ───────────────────
 
 describe('Lane 1: Payment request send route', () => {

@@ -316,6 +316,9 @@ export async function POST(request: NextRequest) {
 
     // Mark invoice as sent ONLY after at least one delivery channel succeeded.
     // "accepted" means provider acknowledged the send — not proof of delivery.
+    // Guard: only transition draft → sent. If the invoice advanced to viewed,
+    // paid, overdue, or cancelled while delivery was in progress, preserve that
+    // status rather than regressing it.
     const anyChannelAccepted = waDeliveryStatus === 'accepted' || emailDeliveryStatus === 'accepted';
     if (anyChannelAccepted) {
       await service
@@ -324,7 +327,8 @@ export async function POST(request: NextRequest) {
           status: 'sent',
           sent_at: new Date().toISOString(),
         })
-        .eq('id', invoice_id);
+        .eq('id', invoice_id)
+        .eq('status', 'draft');
     }
 
     // Create in-app notification with truthful status
