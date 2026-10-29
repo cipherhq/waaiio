@@ -306,6 +306,30 @@ export async function sendProactiveConfirmation(
     }
   }
 
+  // ── 2b. Try campaign donation ──
+  if (!customerPhone && payment.campaign_id) {
+    const { data: donation, error: donationError } = await supabase
+      .from('campaign_donations')
+      .select('donor_phone, donor_name, reference_code, business_id, campaigns(title, businesses(name, country_code))')
+      .eq('payment_id', payment.id)
+      .eq('status', 'success')
+      .maybeSingle();
+
+    if (donationError) {
+      logSafeError(logPrefix, 'campaign-donation-lookup', donationError);
+    }
+
+    if (donation) {
+      customerPhone = donation.donor_phone;
+      businessId = donation.business_id;
+      referenceCode = donation.reference_code || '';
+      const campaign = donation.campaigns as unknown as { title: string; businesses: { name: string; country_code?: string } | null } | null;
+      if (campaign?.businesses?.name) businessName = campaign.businesses.name;
+      if (campaign?.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
+      serviceName = campaign?.title || 'Campaign Donation';
+    }
+  }
+
   // ── 3. Fallback: orders via payment metadata ──
   if (!customerPhone) {
     const { data: paymentFull } = await supabase
