@@ -1,3 +1,11 @@
+### #736 Lane 1 R6 — Contract fallback and waiver email status corrections (2026-10-29)
+
+- `app/api/contracts/send/route.ts`: Count accepted email fallback as a successful signer notification and increment multi-signer delivery counts independently of WhatsApp message-ID persistence.
+- `app/api/waivers/sign/route.ts`: Inspect resolved email results for customer and merchant notifications and expose both statuses; the waiver remains signed even when a notification fails.
+- `lib/__tests__/lane01-delivery-fallback-routes.test.ts`: Add route-level behavioral coverage for email fallback success and resolved email rejection.
+- **Affects**: Contract send responses and counts; waiver `notification_status`. WhatsApp message IDs remain written only when supplied by the WhatsApp provider.
+- **Could break**: Contract-send callers that treat `message_delivered` as WhatsApp-only may now receive `true` when the email fallback was accepted. Waiver responses gain customer/merchant email status fields.
+
 ### #736 Lane 1 R5 — Invoice link and resend tracking integrity (2026-10-29)
 
 - Resends reuse a still-valid invoice token and refresh its expiry so previously sent links remain usable. Delivery stops before contacting a provider if the token cannot be persisted.

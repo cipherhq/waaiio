@@ -93,7 +93,9 @@ async function sendWhatsAppMessage(
         alwaysEmail: true,
         messageCategory: 'utility',
       });
-      sent = result.whatsapp === 'sent';
+      const whatsappAccepted = result.whatsapp === 'sent';
+      const emailAccepted = result.email === 'sent';
+      sent = whatsappAccepted || emailAccepted;
     }
   } else {
     // No WhatsApp channel — try email-only as last resort
@@ -284,12 +286,14 @@ export async function POST(request: NextRequest) {
           service, business_id, biz.country_code, signer.signer_phone, message,
           { businessName: biz.name, title, signUrl, signerName: signer.signer_name || undefined, token: signer.token },
         );
+        if (delivered) deliveredCount++;
+
+        // Persist WhatsApp tracking only when WhatsApp supplied a message ID.
         if (delivered && waMessageId) {
           await service
             .from('contract_signers')
             .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent', wa_status_updated_at: new Date().toISOString() })
             .eq('id', signer.id);
-          deliveredCount++;
         }
       }
 

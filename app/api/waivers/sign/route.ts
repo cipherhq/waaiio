@@ -121,6 +121,7 @@ export async function POST(request: NextRequest) {
     // Waiver signing is already persisted — notification failures must not lose the signed state
     // but must be exposed for safe retry.
     let customerWaStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+    let customerEmailStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
     if (customer_phone && (sendVia === 'whatsapp' || sendVia === 'both')) {
       try {
         const cleanPhone = customer_phone.replace(/\D/g, '');
@@ -159,19 +160,25 @@ export async function POST(request: NextRequest) {
         const { sendEmail } = await import('@/lib/email/client');
         const { businessFrom } = await import('@/lib/email/templates');
 
-        await sendEmail({
+        const emailResult = await sendEmail({
           to: customer_email,
           from: businessFrom(biz?.name || 'Business'),
           subject: `Waiver Signed - ${template.title}`,
           html: `<p>Hi ${esc(first_name || customerName)},</p><p>You have signed the <strong>"${esc(template.title)}"</strong> waiver for <strong>${esc(biz?.name || 'the business')}</strong>.</p><p><strong>Reference:</strong> WAI-${signed.id.slice(0, 6).toUpperCase()}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p><p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/w/view/${signed.id}?token=${signed.access_token}" style="display:inline-block;background:#6C2BD9;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">View Signed Copy</a></p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
         });
+        customerEmailStatus = emailResult.success ? 'accepted' : 'failed';
+        if (!emailResult.success) {
+          logger.warn('Waiver email confirmation returned success:false');
+        }
       } catch (emailErr) {
+        customerEmailStatus = 'failed';
         logger.warn('Failed to send waiver email confirmation:', emailErr);
       }
     }
 
     // Notify business owner — WhatsApp
     let merchantWaStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+    let merchantEmailStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
     if (biz?.phone) {
       try {
         const cleanPhone = biz.phone.replace(/\D/g, '');
@@ -207,13 +214,18 @@ export async function POST(request: NextRequest) {
         const viewUrl = `${appUrl}/w/view/${signed.id}?token=${signed.access_token}`;
         const refCode = `WAI-${signed.id.slice(0, 6).toUpperCase()}`;
 
-        await sendOwnerEmail({
+        const emailResult = await sendOwnerEmail({
           to: owner.email,
           subject: `New Waiver Signed — ${esc(customerName)} signed "${esc(template.title)}"`,
           html: `<p>A new waiver has been signed for <strong>${esc(biz?.name || 'your business')}</strong>.</p><p><strong>Customer:</strong> ${esc(customerName)}</p>${customer_phone ? `<p><strong>Phone:</strong> ${esc(customer_phone)}</p>` : ''}${customer_email ? `<p><strong>Email:</strong> ${esc(customer_email)}</p>` : ''}<p><strong>Waiver:</strong> ${esc(template.title)}</p><p><strong>Reference:</strong> ${refCode}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p><p><a href="${viewUrl}" style="display:inline-block;background:#6C2BD9;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">View Signed Waiver</a></p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
         });
+        merchantEmailStatus = emailResult.success ? 'accepted' : 'failed';
+        if (!emailResult.success) {
+          logger.warn('Waiver owner email returned success:false');
+        }
       }
     } catch (ownerEmailErr) {
+      merchantEmailStatus = 'failed';
       logger.warn('Failed to send waiver owner email:', ownerEmailErr);
     }
 
@@ -222,7 +234,9 @@ export async function POST(request: NextRequest) {
       waiver_id: signed.id,
       notification_status: {
         customer_whatsapp: customerWaStatus,
+        customer_email: customerEmailStatus,
         merchant_whatsapp: merchantWaStatus,
+        merchant_email: merchantEmailStatus,
       },
     });
   } catch (err) {
