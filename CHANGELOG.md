@@ -5474,5 +5474,6 @@ If something breaks:
 - Keep structured address callbacks and restored values current; guard delayed predictions/details against later edits, selections and unmounts, with keyboard/pointer selection and listbox associations.
 - Add autocomplete to location create/edit and invoice customer-address forms. Existing onboarding, events, properties, parties, Settings and Discovery reuse the improved components; existing persistence and manual coordinate invalidation remain intact.
 - Add loader/component and real form-handler regression tests, including #485 coordinate contracts.
+- Preserve selected address details after blur/outside dismissal while keeping the menu closed; edits, new selections, record resets and unmounts still invalidate stale details.
 - **Affects**: Main-app physical-address entry. Admin Vite onboarding/event fields remain an explicit follow-up; no provider configuration or schema changes.
 - **Could break**: Shared browser widget loading/selection affects existing callers; live Google enablement/referrer behavior still needs runtime verification.

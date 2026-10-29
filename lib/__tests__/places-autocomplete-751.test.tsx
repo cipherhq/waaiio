@@ -71,6 +71,24 @@ describe('#751 controlled Places input', () => {
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 
+  it.each(['blur', 'outside pointerdown'])('keeps selected details after %s with the menu closed', async dismissal => {
+    const changed = vi.fn(); render(<Controlled changed={changed} />); await ready();
+    await type('Main'); suggestions(); fireEvent.click(screen.getByRole('option'));
+    expect(getDetails).toHaveBeenCalledOnce();
+    expect(changed).toHaveBeenLastCalledWith(prediction.description, undefined);
+    const input = screen.getByRole('combobox');
+    if (dismissal === 'blur') fireEvent.blur(input);
+    else fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('listbox')).toBeNull();
+    act(() => details[0](place, 'OK'));
+    expect(changed).toHaveBeenLastCalledWith(place.formatted_address, {
+      address: place.formatted_address, lat: 6.5, lng: 3.4, city: 'Lagos', placeId: 'place-1',
+    });
+    expect((input as HTMLInputElement).value).toBe(place.formatted_address);
+    expect(input.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
   it('supports pointer/click selection and keeps text if details fail', async () => {
     render(<Controlled />); await ready(); await type('Main'); suggestions();
     fireEvent.pointerDown(screen.getByRole('option'));

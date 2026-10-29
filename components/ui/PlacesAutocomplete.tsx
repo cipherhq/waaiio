@@ -45,6 +45,7 @@ export default function PlacesAutocomplete({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
+  const detailsRequestRef = useRef(0);
   const mountedRef = useRef(false);
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
@@ -69,6 +70,7 @@ export default function PlacesAutocomplete({
       active = false;
       mountedRef.current = false;
       requestRef.current++;
+      detailsRequestRef.current++;
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       autocompleteServiceRef.current = null;
       placesServiceRef.current = null;
@@ -79,6 +81,7 @@ export default function PlacesAutocomplete({
   useEffect(() => {
     if (value !== valueRef.current) {
       valueRef.current = value;
+      detailsRequestRef.current++;
       dismiss();
     }
   }, [value]);
@@ -93,6 +96,7 @@ export default function PlacesAutocomplete({
 
   function handleInputChange(event: React.ChangeEvent<HTMLInputElement>) {
     const input = event.target.value;
+    detailsRequestRef.current++;
     dismiss();
     valueRef.current = input;
     onChangeRef.current(input); // No place data: parents invalidate stale coordinates.
@@ -115,7 +119,8 @@ export default function PlacesAutocomplete({
 
   function selectPrediction(prediction: Prediction) {
     dismiss();
-    const request = requestRef.current;
+    // Menu dismissal must not discard details for the selected address.
+    const request = ++detailsRequestRef.current;
     // Commit text immediately, even when details are unavailable.
     valueRef.current = prediction.description;
     onChangeRef.current(prediction.description);
@@ -125,7 +130,7 @@ export default function PlacesAutocomplete({
         placeId: prediction.place_id,
         fields: ['formatted_address', 'geometry', 'address_components'],
       }, (place, status) => {
-        if (!mountedRef.current || request !== requestRef.current) return;
+        if (!mountedRef.current || request !== detailsRequestRef.current) return;
         if (status !== google.maps.places.PlacesServiceStatus.OK || !place?.formatted_address) return;
         const lat = place.geometry?.location?.lat();
         const lng = place.geometry?.location?.lng();
