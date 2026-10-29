@@ -449,17 +449,14 @@ describe('POST /api/pay-link/pay — actual route', () => {
   });
 
   it('active NG -> Paystack/NGN payment row + provider URL', async () => {
-    const ctx = mockLink('active', 'NG');
+    mockLink('active', 'NG');
     mockResolveBusinessGateway.mockResolvedValue({gateway:'paystack',currency:'NGN',source:'country_default'});
     const mockInit = vi.fn().mockResolvedValue({url:'https://paystack.com/pay',reference:'PS-REF'});
     vi.doMock('@/lib/payments/factory', () => ({ getPaymentGateway:vi.fn(), getPaymentGatewayByName:vi.fn(()=>({name:'paystack',initializePayment:mockInit})) }));
     const{POST}=await import('@/app/api/pay-link/pay/route');
-    const res = await POST(makeReq('/p',{token:'t',amount:5000,customer_name:'N',customer_phone:'+234'}));
+    const res = await POST(makeReq('/p',{token:'t',amount:5000,customer_name:'N',customer_phone:'+2341234567890'}));
     expect(res.status).toBeLessThan(400);
-    // Payment row used correct gateway+currency
-    expect(ctx.paymentInserts.length).toBeGreaterThanOrEqual(1);
-    expect(ctx.paymentInserts[0].gateway).toBe('paystack');
-    expect(ctx.paymentInserts[0].currency).toBe('NGN');
+    // Gateway adapter creates payment row internally (#736: route no longer inserts directly)
     // Factory received Paystack
     const{getPaymentGatewayByName}=await import('@/lib/payments/factory');
     expect(getPaymentGatewayByName).toHaveBeenCalledWith('paystack');
@@ -469,15 +466,14 @@ describe('POST /api/pay-link/pay — actual route', () => {
   });
 
   it('active US -> Stripe/USD payment row + provider URL', async () => {
-    const ctx = mockLink('active', 'US');
+    mockLink('active', 'US');
     mockResolveBusinessGateway.mockResolvedValue({gateway:'stripe',currency:'USD',source:'country_default'});
     const mockInit = vi.fn().mockResolvedValue({url:'https://stripe.com/pay',reference:'ST-REF'});
     vi.doMock('@/lib/payments/factory', () => ({ getPaymentGateway:vi.fn(), getPaymentGatewayByName:vi.fn(()=>({name:'stripe',initializePayment:mockInit})) }));
     const{POST}=await import('@/app/api/pay-link/pay/route');
-    const res = await POST(makeReq('/p',{token:'t',amount:5000,customer_name:'N',customer_phone:'+1555'}));
+    const res = await POST(makeReq('/p',{token:'t',amount:5000,customer_name:'N',customer_phone:'+15551234567'}));
     expect(res.status).toBeLessThan(400);
-    expect(ctx.paymentInserts[0].gateway).toBe('stripe');
-    expect(ctx.paymentInserts[0].currency).toBe('USD');
+    // Gateway adapter creates payment row internally (#736: route no longer inserts directly)
     const{getPaymentGatewayByName}=await import('@/lib/payments/factory');
     expect(getPaymentGatewayByName).toHaveBeenCalledWith('stripe');
   });
@@ -494,7 +490,7 @@ describe('POST /api/pay-link/pay — actual route', () => {
     mockResolveBusinessGateway.mockResolvedValue({gateway:'paystack',currency:'NGN',source:'country_default'});
     vi.doMock('@/lib/payments/factory', () => ({ getPaymentGateway:vi.fn(), getPaymentGatewayByName:vi.fn(()=>({name:'paystack',initializePayment:vi.fn().mockRejectedValue(new Error('timeout'))})) }));
     const{POST}=await import('@/app/api/pay-link/pay/route');
-    const res = await POST(makeReq('/p',{token:'t',amount:5000,customer_name:'N',customer_phone:'+234'}));
+    const res = await POST(makeReq('/p',{token:'t',amount:5000,customer_name:'N',customer_phone:'+2341234567890'}));
     expect(res.status).toBeGreaterThanOrEqual(400);
     // Only paystack was attempted — no fallback to stripe
     const{getPaymentGatewayByName}=await import('@/lib/payments/factory');
