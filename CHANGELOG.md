@@ -61,6 +61,8 @@
 
 ### #762 W03 — Recognize bot-test activity in the Overview checklist (2026-10-30)
 
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
 - Read positive own-business inbound conversation usage across all months, retaining existing inbound-chat evidence. Configuration and outbound activity alone do not complete the test step; returned or rejected query errors do not fabricate evidence.
 - Reset checklist state for each business and ignore obsolete asynchronous results, including automatic dismissal writes after a switch.
 - Add rendered component coverage for evidence filters, failures, business switching/dismissal and preserved setup, WhatsApp and payout predicates.
