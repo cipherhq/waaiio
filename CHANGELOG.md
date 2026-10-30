@@ -46,6 +46,12 @@
 - Added actual-handler and rendered-page coverage for refused actions, supported Paystack setup, historical account visibility and password-protected change/disconnect.
 - Preserved country routing, financial dispatch, manual-bank settlement, reconciliation and nonaffected providers.
 
+### #762 / #777 — Admin PATCH and email CORS transport (2026-10-30)
+
+- Added PATCH to both existing admin middleware allow-method lists so allowlisted admin clients can complete PATCH preflight.
+- Applied the existing admin CORS helper to email OPTIONS and every POST outcome, including validation, authorization, rate-limit and failure responses; preserved rate-limit headers and existing authentication/provider behavior.
+- Added 18 actual-middleware and 35 actual-email-handler tests with synthetic auth/provider boundaries covering allowed and unknown origins, preflight, authorized/denied requests and error outcomes. These tests do not certify hosted authentication, RLS or recipient email delivery.
+
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
 - **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
