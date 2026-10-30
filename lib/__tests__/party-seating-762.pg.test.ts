@@ -90,6 +90,8 @@ suite('M486 actual migrations and atomic seating (disposable PG)', () => {
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.event_invites TO service_role, authenticated;
 
     `);
+    // CI's template businesses.owner_id references auth.users; seed both owners first.
+    await pool.query('INSERT INTO auth.users(id) VALUES($1),($2)', [owner,other]);
     await pool.query(readFileSync(join(process.cwd(), 'supabase/migrations/457_party_tables_seats.sql'), 'utf8'));
     await fixtures();
     await pool.query('UPDATE public.event_invites SET table_id=$1 WHERE id=$2', [t1,i1]);
