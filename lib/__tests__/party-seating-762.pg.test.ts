@@ -33,16 +33,16 @@ suite('M486 actual migrations and atomic seating (disposable PG)', () => {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         raw_app_meta_data JSONB DEFAULT '{}'
       );
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT COALESCE(
           NULLIF(current_setting('request.jwt.claim.sub', true), ''),
           NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
         )::uuid;
-      $ LANGUAGE SQL STABLE;
+      $$ LANGUAGE SQL STABLE;
 
-      DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $;
-      DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $;
-      DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $;
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $$;
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+      DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$;
 
       GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
       GRANT SELECT ON auth.users TO service_role;
