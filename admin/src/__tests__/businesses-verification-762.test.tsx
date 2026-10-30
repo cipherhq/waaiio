@@ -98,9 +98,9 @@ beforeEach(() => {
   f.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/capabilities')) return stateResponse();
     const body = JSON.parse(String(init?.body || '{}'));
-    if (url.endsWith('/prepare')) { f.prepare(body); return new Response(JSON.stringify({ stepUpId: '00000000-0000-0000-0000-000000000762', factorId: 'factor', challengeId: 'challenge' })); }
+    if (url.endsWith('/prepare')) { const response = await f.prepare(body); if (response) return response; return new Response(JSON.stringify({ stepUpId: '00000000-0000-0000-0000-000000000762', factorId: 'factor', challengeId: 'challenge' })); }
     if (url.endsWith('/verify')) return new Response(JSON.stringify({ session: { access_token: 'rotated-token', refresh_token: 'synthetic-refresh' } }));
-    if (url.endsWith('/verification/review')) return f.mutation(body, init);
+    if (url.endsWith('/verification/review') || url.endsWith('/messaging-suspension')) return f.mutation(body, init);
     throw new Error('Unexpected request');
   });
   vi.stubGlobal('fetch', f.fetch);
@@ -200,5 +200,53 @@ describe('Businesses verification and fees through actual MFA hook', () => {
     await act(async () => pending.resolve(new Response('{"success":true,"verification_level":"full","verification_status":"verified","payout_limit_monthly":999}')));
     expect(screen.getByRole('button', { name: 'Basic', exact: true })).toBeDisabled();
     expect(screen.queryByText('M 999')).not.toBeInTheDocument();
+  });
+});
+
+describe('shared Businesses authorization preparation lifecycle', () => {
+  const prepared = () => new Response('{"stepUpId":"00000000-0000-0000-0000-000000000762","factorId":"factor","challengeId":"challenge"}');
+  it.each(['resolve', 'reject'])('drains cancelled preparation before a new selection can authorize (%s)', async outcome => {
+    let resolve!: (value: Response) => void;
+    let reject!: (error: Error) => void;
+    f.prepare.mockReturnValueOnce(new Promise<Response>((yes, no) => { resolve = yes; reject = no; }));
+    render(<Businesses />); await open(); await ready();
+    await userEvent.click(screen.getByRole('button', { name: 'Standard', exact: true }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Reason for change' }), 'Alpha');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm and authorize' }));
+    await waitFor(() => expect(f.prepare).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    await open('Beta Shop'); await ready();
+    expect(screen.getByRole('button', { name: 'Standard', exact: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Suspend Messaging' })).toBeDisabled();
+    await act(async () => outcome === 'resolve' ? resolve(prepared()) : reject(new Error('late failure')));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Standard', exact: true })).not.toBeDisabled());
+    expect(screen.queryByPlaceholderText('000000')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Standard', exact: true }));
+    await reasonAndConfirm();
+    expect(f.prepare).toHaveBeenCalledTimes(2);
+    expect(f.prepare.mock.calls[1][0].targetId).toBe('00000000-0000-0000-0000-000000000002');
+    await authorize(); await screen.findByText('Saved. The displayed values are the server result.');
+    expect(f.mutation).toHaveBeenCalledTimes(1);
+    expect(f.mutation.mock.calls[0][0].business_id).toBe('00000000-0000-0000-0000-000000000002');
+  });
+  it.each(['review', 'messaging'])('serializes %s preparation against the other shared caller', async first => {
+    const pending = deferred<Response>(); f.prepare.mockReturnValueOnce(pending.promise);
+    vi.stubGlobal('prompt', vi.fn().mockReturnValue('reviewed messaging'));
+    render(<Businesses />); await open(); await ready();
+    if (first === 'review') {
+      await userEvent.click(screen.getByRole('button', { name: 'Standard', exact: true }));
+      await userEvent.type(screen.getByRole('textbox', { name: 'Reason for change' }), 'Reviewed');
+      await userEvent.click(screen.getByRole('button', { name: 'Confirm and authorize' }));
+    } else await userEvent.click(screen.getByRole('button', { name: 'Suspend Messaging' }));
+    await waitFor(() => expect(f.prepare).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: 'Standard', exact: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Suspend Messaging' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: first === 'review' ? 'Suspend Messaging' : 'Standard', exact: true }));
+    expect(f.prepare).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve(prepared())); await screen.findByPlaceholderText('000000');
+    expect(screen.getByRole('button', { name: 'Suspend Messaging' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Suspend Messaging' })).not.toBeDisabled());
+    expect(f.mutation).not.toHaveBeenCalled();
   });
 });

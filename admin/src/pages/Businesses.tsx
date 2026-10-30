@@ -120,6 +120,12 @@ export default function Businesses() {
   const [statusSaving, setStatusSaving] = useState(false);
   const [suspensionSaving, setSuspensionSaving] = useState(false);
   const stepUp = useStepUp();
+  // Hold this lock until the shared hook's async transition settles, even after
+  // selection cancellation. A late prepare/verify can then never overwrite a newer flow.
+  const stepUpFlightRef = useRef(false);
+  const [stepUpFlight, setStepUpFlight] = useState(false);
+  const suspensionOperationRef = useRef<object | null>(null);
+  const stepUpBlocked = stepUpFlight || (stepUp.isActive && stepUp.state.phase !== 'error');
   const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
   // WhatsApp channel assignment
   const [channels, setChannels] = useState<Array<{ id: string; phone_number: string; display_name: string; country_code: string }>>([]);
@@ -143,17 +149,12 @@ export default function Businesses() {
     setReviewReason('');
     setReviewMessage('');
     setCustomFeeSaving(false);
-    if (reviewOperationRef.current) {
-      reviewOperationRef.current = null;
-      stepUpCallbackRef.current = null;
-      stepUp.reset();
-    }
     return () => {
-      if (reviewOperationRef.current) {
-        reviewOperationRef.current = null;
-        stepUpCallbackRef.current = null;
-        stepUp.reset();
-      }
+      reviewOperationRef.current = null;
+      suspensionOperationRef.current = null;
+      stepUpCallbackRef.current = null;
+      // In-flight hook transitions are drained by their owner before unlocking.
+      if (!stepUpFlightRef.current) stepUp.reset();
     };
   }, [selectedId]);
 
@@ -166,7 +167,7 @@ export default function Businesses() {
   }, [stepUp.state.phase, stepUp.state.error]);
 
   function openReview(action: 'set_level' | 'set_custom_fees', level?: string, clear = false) {
-    if (!selected || !isFullAdmin || reviewOperationRef.current || stepUp.isPending) return;
+    if (!selected || !isFullAdmin || reviewOperationRef.current || stepUpFlightRef.current || stepUpBlocked) return;
     const percentage = clear || !customFeePercentage.trim() ? null : Number(customFeePercentage);
     const flat = clear || !customFeeFlat.trim() ? null : Number(customFeeFlat);
     if (action === 'set_custom_fees' &&
@@ -191,13 +192,15 @@ export default function Businesses() {
   }
 
   async function confirmReview() {
-    if (!reviewDraft || !reviewReason.trim() || reviewOperationRef.current || !isFullAdmin) return;
+    if (!reviewDraft || !reviewReason.trim() || reviewOperationRef.current || stepUpFlightRef.current || stepUpBlocked || !isFullAdmin) return;
     const draft = { ...reviewDraft };
     const businessId = draft.businessId;
     const params = { scope: 'business_verification_review', action: draft.action,
       ...(draft.action === 'set_level' ? { level: draft.level } : {
         custom_fee_percentage: draft.custom_fee_percentage, custom_fee_flat: draft.custom_fee_flat }),
       reason: reviewReason.trim() };
+    stepUpFlightRef.current = true;
+    setStepUpFlight(true);
     const operation = {};
     reviewOperationRef.current = operation;
     const current = () => reviewOperationRef.current === operation && selectedIdRef.current === businessId;
@@ -242,13 +245,16 @@ export default function Businesses() {
         description: draft.action === 'set_level' ? `Set verification to ${draft.level}: ${params.reason}` :
           `Set custom fees: ${draft.custom_fee_percentage ?? 'tier default'}%, flat ${draft.custom_fee_flat ?? 'tier default'}. ${params.reason}`,
         onAuthorized });
-      if (!current()) stepUp.reset();
     } catch (error) {
       if (current()) {
         reviewOperationRef.current = null;
         setCustomFeeSaving(false);
         setReviewMessage(error instanceof Error ? error.message : 'Authorization failed');
       }
+    } finally {
+      if (!current()) stepUp.reset();
+      stepUpFlightRef.current = false;
+      setStepUpFlight(false);
     }
   }
 
@@ -512,17 +518,25 @@ export default function Businesses() {
   }
 
   async function handleToggleSuspension() {
-    if (!selected || !isFullAdmin) return;
+    if (!selected || !isFullAdmin || stepUpFlightRef.current || stepUpBlocked || reviewOperationRef.current) return;
     const newState = !selected.messaging_suspended;
     const reasonInput = newState
       ? prompt('Reason for suspending messaging (optional):')
       : prompt('Reason for resuming messaging (optional):');
     if (reasonInput === null) return;
     const reason = reasonInput.trim() || null;
+    const businessId = selected.id;
+    const operation = {};
+    suspensionOperationRef.current = operation;
+    const current = () => suspensionOperationRef.current === operation && selectedIdRef.current === businessId;
+    stepUpFlightRef.current = true;
+    setStepUpFlight(true);
     setSuspensionSaving(true);
     try {
       const onAuthorized = async (stepUpId: string) => {
+        if (!current()) return;
         const { data: sessionData } = await supabase.auth.getSession();
+        if (!current()) return;
         const token = sessionData?.session?.access_token;
         if (!token) { alert('Session expired'); return; }
         const apiUrl = import.meta.env.VITE_API_URL || '';
@@ -538,8 +552,9 @@ export default function Businesses() {
           if (data.code === 'step_up_required') { alert('Step-up authorization failed'); return; }
           throw new Error(data.error || 'Failed');
         }
+        if (!current()) return;
         setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, messaging_suspended: newState } : b));
-        setSelected(prev => prev ? { ...prev, messaging_suspended: newState } : prev);
+        setSelected(prev => prev?.id === businessId ? { ...prev, messaging_suspended: newState } : prev);
       };
       stepUpCallbackRef.current = onAuthorized;
       await stepUp.execute({
@@ -550,10 +565,14 @@ export default function Businesses() {
         onAuthorized,
       });
     } catch (err) {
+      if (!current()) return;
       console.error('Suspension toggle error:', err);
       alert('Failed to toggle messaging suspension');
       stepUp.reset();
     } finally {
+      if (!current()) stepUp.reset();
+      stepUpFlightRef.current = false;
+      setStepUpFlight(false);
       setSuspensionSaving(false);
     }
   }
@@ -921,7 +940,7 @@ export default function Businesses() {
                   </span>
                   <button
                     onClick={handleToggleSuspension}
-                    disabled={suspensionSaving}
+                    disabled={suspensionSaving || stepUpBlocked || customFeeSaving}
                     className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-50 ${
                       selected.messaging_suspended
                         ? 'bg-green-600 hover:bg-green-700'
@@ -971,7 +990,7 @@ export default function Businesses() {
                   {['unverified', 'basic', 'standard', 'full'].map(level => (
                     <button
                       key={level}
-                      disabled={selected.verification_level === level || customFeeSaving || stepUp.isPending}
+                      disabled={selected.verification_level === level || customFeeSaving || stepUpBlocked}
                       onClick={() => openReview('set_level', level)}
                       className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                         selected.verification_level === level
@@ -1149,14 +1168,14 @@ export default function Businesses() {
                 <div className="mt-3 flex items-center gap-2">
                   <button
                     onClick={() => openReview('set_custom_fees')}
-                    disabled={customFeeSaving || stepUp.isPending}
+                    disabled={customFeeSaving || stepUpBlocked}
                     className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                   >
                     {customFeeSaving ? '...' : 'Save Override'}
                   </button>
                   <button
                     onClick={() => openReview('set_custom_fees', undefined, true)}
-                    disabled={customFeeSaving || stepUp.isPending || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
+                    disabled={customFeeSaving || stepUpBlocked || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
                     className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
                   >
                     Clear Override
@@ -1308,10 +1327,15 @@ export default function Businesses() {
         error={stepUp.state.error}
         loading={stepUp.state.phase === 'verifying'}
         onSubmit={async (code) => {
-          if (reviewSubmitRef.current || !stepUpCallbackRef.current) return;
+          if (reviewSubmitRef.current || stepUpFlightRef.current || !stepUpCallbackRef.current) return;
           reviewSubmitRef.current = true;
+          stepUpFlightRef.current = true;
+          setStepUpFlight(true);
           try { await stepUp.submitCode(code, stepUpCallbackRef.current); }
           finally {
+            if (!stepUpCallbackRef.current) stepUp.reset();
+            stepUpFlightRef.current = false;
+            setStepUpFlight(false);
             reviewSubmitRef.current = false;
             if (!reviewOperationRef.current) setCustomFeeSaving(false);
           }

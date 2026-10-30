@@ -57,13 +57,15 @@ export default function Verification() {
   const callbackRef = useRef<((id: string) => Promise<void>) | null>(null);
   const operationRef = useRef<object | null>(null);
   const submitRef = useRef(false);
+  const flightRef = useRef(false);
+  const [flight, setFlight] = useState(false);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected?.id || null;
   const [message, setMessage] = useState('');
   const [reviewConfirmation, setReviewConfirmation] = useState<'approve' | 'reject' | null>(null);
   useEffect(() => {
     setReviewNotes(''); setRejectionReason(''); setReviewConfirmation(null); setMessage(''); setProcessing(false);
-    return () => { operationRef.current = null; callbackRef.current = null; stepUp.reset(); };
+    return () => { operationRef.current = null; callbackRef.current = null; if (!flightRef.current) stepUp.reset(); };
   }, [selected?.id]);
   useEffect(() => {
     if (stepUp.state.phase === 'error' && operationRef.current) {
@@ -153,7 +155,7 @@ export default function Verification() {
   }
 
   async function confirmReview() {
-    if (!selected || !reviewConfirmation || operationRef.current) return;
+    if (!selected || !reviewConfirmation || operationRef.current || flightRef.current) return;
     const requestId = selected.id;
     const businessId = selected.business_id;
     const action = reviewConfirmation;
@@ -161,6 +163,8 @@ export default function Verification() {
     const notes = reviewNotes.trim() || null;
     const reason = rejectionReason.trim();
     if (action === 'reject' && !reason) return;
+    flightRef.current = true;
+    setFlight(true);
     const operation = {};
     operationRef.current = operation;
     const current = () => operationRef.current === operation && selectedRef.current === requestId;
@@ -219,13 +223,16 @@ export default function Verification() {
       await stepUp.execute({ actionType: 'commercial_config', targetId: businessId, params,
         description: `${action === 'approve' ? 'Approve as ' + level : 'Reject verification'} — ${action === 'approve' ? notes || 'No notes' : reason}. Documents: ${document_ids.length}`,
         onAuthorized });
-      if (!current()) stepUp.reset();
     } catch (error) {
       if (current()) {
         operationRef.current = null;
         setProcessing(false);
         setMessage(error instanceof Error ? error.message : 'Authorization failed');
       }
+    } finally {
+      if (!current()) stepUp.reset();
+      flightRef.current = false;
+      setFlight(false);
     }
   }
 
@@ -339,8 +346,8 @@ export default function Verification() {
             {reviewConfirmation && (
               <section aria-label="Confirm verification review" className="space-y-3 rounded border p-4">
                 <p>{reviewConfirmation === 'approve' ? `Approve as ${selected.requested_level}: ${reviewNotes.trim() || 'No notes'}` : `Reject: ${rejectionReason.trim()}`}</p>
-                <button onClick={confirmReview} disabled={processing} className="rounded bg-brand px-3 py-2 text-white">Confirm and authorize</button>
-                <button onClick={cancelReview} disabled={processing} className="ml-3">Cancel review</button>
+                <button onClick={confirmReview} disabled={flight || processing} className="rounded bg-brand px-3 py-2 text-white">Confirm and authorize</button>
+                <button onClick={cancelReview} disabled={flight || processing} className="ml-3">Cancel review</button>
               </section>
             )}
             {/* Current Status */}
@@ -407,7 +414,7 @@ export default function Verification() {
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Notes (optional)</label>
                   <textarea
-                    aria-label="Review notes" disabled={processing || !!reviewConfirmation}
+                    aria-label="Review notes" disabled={flight || processing || !!reviewConfirmation}
                     value={reviewNotes}
                     onChange={e => setReviewNotes(e.target.value)}
                     rows={2}
@@ -416,7 +423,7 @@ export default function Verification() {
                   />
                   <button
                     onClick={() => setReviewConfirmation('approve')}
-                    disabled={processing || !!reviewConfirmation}
+                    disabled={flight || processing || !!reviewConfirmation}
                     className="mt-2 w-full rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
                   >
                     {processing ? 'Processing...' : `Approve — Set to ${LEVEL_LABELS[selected.requested_level]}`}
@@ -427,7 +434,7 @@ export default function Verification() {
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Rejection Reason</label>
                   <textarea
-                    aria-label="Rejection reason" disabled={processing || !!reviewConfirmation}
+                    aria-label="Rejection reason" disabled={flight || processing || !!reviewConfirmation}
                     value={rejectionReason}
                     onChange={e => setRejectionReason(e.target.value)}
                     rows={2}
@@ -436,7 +443,7 @@ export default function Verification() {
                   />
                   <button
                     onClick={() => setReviewConfirmation('reject')}
-                    disabled={processing || !!reviewConfirmation || !rejectionReason.trim()}
+                    disabled={flight || processing || !!reviewConfirmation || !rejectionReason.trim()}
                     className="mt-2 w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
                   >
                     {processing ? 'Processing...' : 'Reject Verification'}
@@ -452,10 +459,12 @@ export default function Verification() {
         description={stepUp.state.description} error={stepUp.state.error}
         loading={stepUp.state.phase === 'verifying'}
         onSubmit={async code => {
-          if (submitRef.current || !callbackRef.current) return;
+          if (submitRef.current || flightRef.current || !callbackRef.current) return;
           submitRef.current = true;
+          flightRef.current = true;
+          setFlight(true);
           try { await stepUp.submitCode(code, callbackRef.current); }
-          finally { submitRef.current = false; }
+          finally { if (!callbackRef.current) stepUp.reset(); flightRef.current = false; setFlight(false); submitRef.current = false; }
         }}
         onCancel={cancelReview}
       />

@@ -48,7 +48,7 @@ beforeEach(() => {
   f.mutation.mockImplementation(async () => { f.saved = true; return new Response('{"success":true}'); });
   f.fetch.mockImplementation(async (url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body));
-    if (url.endsWith('/prepare')) { f.prepare(body); return new Response('{"stepUpId":"00000000-0000-0000-0000-000000000762","factorId":"factor","challengeId":"challenge"}'); }
+    if (url.endsWith('/prepare')) { const response = await f.prepare(body); if (response) return response; return new Response('{"stepUpId":"00000000-0000-0000-0000-000000000762","factorId":"factor","challengeId":"challenge"}'); }
     if (url.endsWith('/verify')) return new Response('{"session":{"access_token":"rotated-token","refresh_token":"synthetic-refresh"}}');
     if (url.endsWith('/verification/review')) return f.mutation(body, init);
     throw new Error('Unexpected request');
@@ -140,5 +140,29 @@ describe('Verification actual mounted review and MFA flow', () => {
     await act(async () => resolve(new Response('{"success":true}')));
     expect(screen.getByRole('button', { name: 'Reject Verification' })).toBeInTheDocument();
     expect(screen.queryByText('Review saved. The displayed status is the server result.')).not.toBeInTheDocument();
+  });
+});
+
+describe('Verification deferred preparation lifecycle', () => {
+  it.each(['resolve', 'reject'])('blocks newer preparation until cancelled request settles (%s)', async outcome => {
+    let resolve!: (value: Response) => void;
+    let reject!: (error: Error) => void;
+    f.prepare.mockReturnValueOnce(new Promise<Response>((yes, no) => { resolve = yes; reject = no; }));
+    render(<Verification />); await open(); await start('approve');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm and authorize' }));
+    await waitFor(() => expect(f.prepare).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true })); await open('Beta Shop');
+    expect(screen.getByRole('button', { name: /Approve — Set to/ })).toBeDisabled();
+    await act(async () => outcome === 'resolve'
+      ? resolve(new Response('{"stepUpId":"00000000-0000-0000-0000-000000000762","factorId":"factor","challengeId":"challenge"}'))
+      : reject(new Error('late failure')));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Approve — Set to/ })).not.toBeDisabled());
+    expect(screen.queryByPlaceholderText('000000')).not.toBeInTheDocument();
+    await start('approve'); await confirm();
+    expect(f.prepare).toHaveBeenCalledTimes(2);
+    expect(f.prepare.mock.calls[1][0].targetId).toBe('00000000-0000-0000-0000-000000000002');
+    await authorize(); await screen.findByText('Review saved. The displayed status is the server result.');
+    expect(f.mutation).toHaveBeenCalledTimes(1);
+    expect(f.mutation.mock.calls[0][0].business_id).toBe('00000000-0000-0000-0000-000000000002');
   });
 });
