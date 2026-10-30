@@ -1,3 +1,10 @@
+### #762 — Verified Paystack fee and finalization snapshot (2026-10-30)
+
+- **`lib/payments/provider-adapters.ts`, `lib/payments/webhook-handler.ts`**: Share validated Paystack minor-to-integer-major-unit normalization, distinguish absent fees from supplied zero, and pass explicit observations instead of standalone webhook fee updates.
+- **`lib/payments/authority.ts`, `supabase/migrations/485_verified_gateway_fee_claim.sql`**: Accept eligible verified fees and seal their finalization snapshot atomically through a distinct service-role RPC. Preserve the legacy claim signature, lease/token recovery, pinned fee policy and direct-transfer behavior; keep historical classification and sealed snapshots immutable.
+- **Tests**: Actual reconciliation/fee-insertion coverage in `lib/payments/__tests__/verified-fee-persistence-762.test.ts`, adapter normalization coverage in `lib/payments/__tests__/provider-adapters.test.ts`, and real two-session migration/RPC/rollback/ACL coverage in `lib/__tests__/verified-gateway-fee-claim-762.pg.test.ts`.
+- **Affects / could break**: Paystack fee observation and shared finalization claim/retry paths. Application/schema alignment requires separately authorized M485 rollout; deploying the caller before its RPC exists can prevent finalization. Other providers retain their existing scalar behavior. No historical repair, hosted rollout or settlement certification is claimed.
+
 ### #762 — Directory search: fix enum category filter via computed text field (2026-10-30)
 
 - **`supabase/migrations/483_directory_category_text_computed.sql`** (new): SECURITY INVOKER computed field `public.category_text(public.businesses)` casts the `business_category` enum to filterable text for PostgREST ILIKE queries. service_role only grants, explicit NOTIFY pgrst cache reload, data-independent self-test via `to_regprocedure` + `jsonb_populate_record` synthetic eval.

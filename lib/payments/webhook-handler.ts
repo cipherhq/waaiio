@@ -4,6 +4,7 @@ import { getServerPostHog } from '@/lib/posthog/server';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
 import { reconcilePayment } from './reconcile';
+import { normalizePaystackGatewayFee } from './provider-adapters';
 import { normalizePaystackCardAuthorization, persistPaystackCardAuthorization } from './paystack-card-authorization';
 
 /**
@@ -34,6 +35,7 @@ export async function processPaystackChargeSuccess(
   supabase: SupabaseClient,
   scope?: PaymentScope,
 ): Promise<SuccessOutcome> {
+  const verifiedGatewayFee = normalizePaystackGatewayFee(data.fees);
   let existingPayment: Record<string, unknown> | null;
   if (scope) {
     const { data: p, error } = await supabase
@@ -66,9 +68,6 @@ export async function processPaystackChargeSuccess(
 
   if (existingPayment.status === 'success' && existingPayment.payment_authority_version !== 1) return 'already_finalized';
   if (existingPayment.status === 'success' && existingPayment.finalization_completed_at) return 'already_finalized';
-
-  const paystackFeeKobo = (data.fees as number) || 0;
-  const gatewayFee = Math.round(paystackFeeKobo / 100);
 
   const webhookAmountKobo = data.amount as number;
   const expectedKobo = Math.round((existingPayment.amount as number) * 100);
@@ -114,7 +113,6 @@ export async function processPaystackChargeSuccess(
         payment_method: (data.channel as string) || 'card',
         card_last_four: (authorization?.last4 as string) || null,
         card_brand: (authorization?.brand as string) || null,
-        gateway_fee: gatewayFee,
       })
       .eq('id', scope.paymentId)
       .eq('business_id', scope.businessId)
@@ -127,7 +125,6 @@ export async function processPaystackChargeSuccess(
         payment_method: (data.channel as string) || 'card',
         card_last_four: (authorization?.last4 as string) || null,
         card_brand: (authorization?.brand as string) || null,
-        gateway_fee: gatewayFee,
       })
       .eq('gateway_reference', reference);
   }
@@ -162,7 +159,7 @@ export async function processPaystackChargeSuccess(
       cardLast4: (authorization?.last4 as string) || undefined,
       cardBrand: (authorization?.brand as string) || undefined,
       cardAuthorization,
-      gatewayFee,
+      verifiedGatewayFee,
       providerStatus: 'success',
       verifiedAt: new Date().toISOString(),
     },
