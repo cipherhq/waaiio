@@ -109,4 +109,28 @@ describe('rendered Parties dashboard seating #762',()=>{
     expect(screen.queryByRole('button',{name:'Confirm seating'})).toBeNull();
     expect(snapshot.guests[0].table_id).toBeNull();
   });
+  it('displays saved table, group and pin values after commit and full remount',async()=>{
+    snapshot.tables[0].capacity=2;
+    snapshot.groups=[{id:'family',name:'Family',table_ids:['a']}];
+    snapshot.guests[0].seating_group_id='family';
+    snapshot.guests.push({id:'two',guest_name:'Jordan',status:'accepted',plus_ones:0,
+      table_id:'a',seating_pinned:true,seating_group_id:'family'});
+    await open();
+    fireEvent.click(screen.getByRole('button',{name:'Randomize and preview'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Confirm seating'}));
+    await waitFor(()=>expect(snapshot.fingerprint).toBe('saved'));
+    await waitFor(()=>expect(screen.queryByText('Review seating')).toBeNull());
+    cleanup();
+    const readsBeforeRemount=calls.filter(c=>c.op==='snapshot').length;
+    await open();
+    await waitFor(()=>expect(calls.filter(c=>c.op==='snapshot').length).toBeGreaterThan(readsBeforeRemount));
+    expect(await screen.findByText(/^Alex · 1 seat · Table A$/)).toBeTruthy();
+    expect(await screen.findByText(/^Jordan · 1 seat · Table A · Pinned$/)).toBeTruthy();
+    expect((screen.getByLabelText('Seating group for Alex') as HTMLSelectElement).value).toBe('family');
+    expect((screen.getByLabelText('Seating group for Jordan') as HTMLSelectElement).value).toBe('family');
+    expect(screen.getByRole('button',{name:'Pin Alex'})).toBeTruthy();
+    expect(screen.getByRole('button',{name:'Unpin Jordan'})).toBeTruthy();
+    expect(screen.queryByText('Review seating')).toBeNull();
+  });
+
 });

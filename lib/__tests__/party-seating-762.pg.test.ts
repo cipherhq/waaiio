@@ -215,8 +215,30 @@ suite('M486 actual migrations and atomic seating (disposable PG)', () => {
     await expect(rpc('save_group',{id:g,name:'Family',table_ids:[t2]})).rejects.toMatchObject({code:'23514'});
     expect((await rpc('snapshot')).groups[0].table_ids).toEqual([t1]);
   });
+  it('reads group rename/delete and refuses deletion while referenced', async () => {
+    const created = await rpc('save_group',{ name:'Family',table_ids:[t1,t2] });
+    const gid = created.groups[0].id;
+    await rpc('save_group',{ id:gid,name:'Friends',table_ids:[t1,t2] });
+    expect((await rpc('snapshot')).groups).toEqual([{id:gid,name:'Friends',table_ids:[t1,t2]}]);
+    await rpc('membership',{invite_id:i1,group_id:gid});
+    await expect(rpc('delete_group',{id:gid})).rejects.toMatchObject({code:'23503'});
+    expect((await rpc('snapshot')).groups[0].name).toBe('Friends');
+    expect((await rpc('snapshot')).guests.find((g: {id:string})=>g.id===i1).seating_group_id).toBe(gid);
+    await rpc('membership',{invite_id:i1,group_id:null});
+    await rpc('delete_group',{id:gid});
+    expect((await rpc('snapshot')).groups).toEqual([]);
+    expect((await pool.query('SELECT * FROM public.party_seating_group_tables WHERE group_id=$1',[gid])).rows).toEqual([]);
+  });
   it.each(['manual','growth','capacity','group'])('rejects stale commit after concurrent %s write', async kind => {
+    let permissionGroup: string | null = null;
+    if (kind === 'group') {
+      const configured = await rpc('save_group',{ name:'Family',table_ids:[t1,t2] });
+      permissionGroup = configured.groups[0].id;
+      await rpc('membership',{invite_id:i1,group_id:permissionGroup});
+    }
     const payload = await plan();
+    const beforeAssignments = (await rpc('snapshot')).guests.map((g: {id:string;table_id:string|null;seating_pinned:boolean}) =>
+      ({id:g.id,table_id:g.table_id,seating_pinned:g.seating_pinned}));
     const writer = await pool.connect();
     const committer = await pool.connect();
     try {
@@ -235,9 +257,15 @@ suite('M486 actual migrations and atomic seating (disposable PG)', () => {
       if(kind==='manual') await writer.query('UPDATE public.event_invites SET table_id=$1 WHERE id=$2',[t1,i1]);
       if(kind==='growth') await writer.query('UPDATE public.event_invites SET plus_ones=1 WHERE id=$1',[i1]);
       if(kind==='capacity') await writer.query('UPDATE public.party_tables SET capacity=3 WHERE id=$1',[t1]);
-      if(kind==='group') await writer.query('INSERT INTO public.party_seating_groups(id,party_id,business_id,name) VALUES($1,$2,$3,$4)',[group,party,business,'New']);
+      if(kind==='group') await writer.query('DELETE FROM public.party_seating_group_tables WHERE group_id=$1 AND table_id=$2',[permissionGroup,t1]);
       await writer.query('COMMIT');
       expect((await waiting).code).toBe('40001');
+      if (kind === 'group') {
+        const after = await rpc('snapshot');
+        expect(after.groups.find((g: {id:string})=>g.id===permissionGroup).table_ids).toEqual([t2]);
+        expect(after.guests.map((g: {id:string;table_id:string|null;seating_pinned:boolean}) =>
+          ({id:g.id,table_id:g.table_id,seating_pinned:g.seating_pinned}))).toEqual(beforeAssignments);
+      }
     } finally { await writer.query('ROLLBACK'); writer.release(); committer.release(); }
   }, 15000);
   it('serializes competing commits, allowing one and rejecting the stale other', async () => {
