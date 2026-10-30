@@ -176,7 +176,7 @@ describe('secured selected-capability loading and mutation readback', () => {
   });
   it.each([false, true])('waits for authoritative cascade readback after selected=%s mutation', async initiallySelected => {
     const pending = deferred<Response>();
-    f.fetch.mockResolvedValueOnce(stateResponse(initiallySelected ? [cap.id] : []))
+    f.fetch.mockResolvedValueOnce(stateResponse(initiallySelected ? [cap.id] : [], initiallySelected ? [cap.id] : []))
       .mockResolvedValueOnce(new Response('{"success":true}', { status: 200 }))
       .mockReturnValueOnce(pending.promise);
     render(<Businesses />); await open(); await ready();
@@ -190,6 +190,18 @@ describe('secured selected-capability loading and mutation readback', () => {
     await act(async () => pending.resolve(stateResponse([second.id], [second.id]))); await ready();
     expect(toggle()).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByRole('switch', { name: 'Selected ' + second.label })).toHaveAttribute('aria-checked', 'true');
+    expect(within(toggle().parentElement!).queryByText('Admin')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('switch', { name: 'Selected ' + second.label }).parentElement!).getByText('Admin')).toBeInTheDocument();
+  });
+  it('removes an override badge when authoritative readback clears overrides but keeps the selection', async () => {
+    f.fetch.mockResolvedValueOnce(stateResponse([cap.id], [cap.id]))
+      .mockResolvedValueOnce(new Response('{"success":true}', { status: 200 }))
+      .mockResolvedValueOnce(stateResponse([cap.id], []));
+    render(<Businesses />); await open(); await ready();
+    expect(within(toggle().parentElement!).getByText('Admin')).toBeInTheDocument();
+    await userEvent.click(toggle()); await waitFor(() => expect(f.fetch).toHaveBeenCalledTimes(3)); await ready();
+    expect(toggle()).toHaveAttribute('aria-checked', 'true');
+    expect(within(toggle().parentElement!).queryByText('Admin')).not.toBeInTheDocument();
   });
   it('prevents duplicate POSTs before a pending mutation finishes', async () => {
     const pending = deferred<Response>();
