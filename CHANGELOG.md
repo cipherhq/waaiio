@@ -346,6 +346,14 @@
 - **`WAAIIO_ENGINEERING_OPERATING_ORDER.md`**: Canonical three-step proof/minimal-scope/completion rule within existing Phase A, CTO, and Owner gates; no extra approval round.
 - **Impact:** Agent instructions and review scope only. No application logic, migrations, runtime configuration, or provider behavior changed. **Potential risk:** Narrower change scope may defer unrelated cleanups; genuine critical findings still escalate under existing rules.
 
+### #762 W27 — Confirm account preference persistence (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- Check account preference reads and returned update rows before acknowledging a save; preserve unrelated metadata and recorded terms acceptance.
+- Show retryable load/save failures in Account settings, use confirmed persisted preferences, disable toggles while saving, and keep optional browser-cache/audit failures separate from server persistence.
+- Add actual-handler stateful tests and rendered save/remount regression coverage. No migration or merchant Broadcast policy change.
+
 ### #596 Finance UI reconciliation — fix schema mismatch, error handling, currency safety (2026-10-20)
 
 - **`admin/src/pages/Finance.tsx`**: (1) Fixed `business_payouts` query selecting nonexistent `currency` column — now selects real columns (`business_id, net_amount, platform_fee, gateway_fee, status, created_at`) with currency inferred from business country_code via `bizCurrencyMap`. (2) Added `Promise.allSettled` error handling with degraded-state banner and retry — prevents indefinite loading spinner or silent zeros on query failure. (3) Applied country filter to payout metrics (previously ignored). (4) Payout metric cards now use business-inferred currency (same pattern as Admin Payouts page) instead of reading nonexistent column. (5) Changed category ranking from cross-currency sum to transaction count. (6) Monthly rollup now uses filtered data and removes unverifiable payout column (no business_id to infer currency in rollup). (7) Country breakdown uses per-currency `formatMultiCurrency()` instead of single-currency assumption. (8) CSV export disabled pending server-side complete export implementation. (9) Labels corrected: "Revenue" → "Payment Volume" where appropriate.
