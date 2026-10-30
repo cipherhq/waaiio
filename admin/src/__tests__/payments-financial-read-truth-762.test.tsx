@@ -47,8 +47,20 @@ beforeEach(() => {
       then: (resolve: any, reject: any) => (mutation ? Promise.resolve({ data: [], error: null }) : plans[table]()).then(resolve, reject),
     }; return q;
   });
-  vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => Promise<void>) => { h.refresh = fn; return 1; }) as typeof setInterval);
-  vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {});
+  const nativeSetInterval = globalThis.setInterval.bind(globalThis);
+  const nativeClearInterval = globalThis.clearInterval.bind(globalThis);
+  const ownedInterval = Symbol('Payments refresh interval') as unknown as ReturnType<typeof setInterval>;
+  vi.spyOn(globalThis, 'setInterval').mockImplementation(((...args: Parameters<typeof setInterval>) => {
+    const [callback, delay] = args;
+    if (delay === 30_000) {
+      h.refresh = callback as () => Promise<void>;
+      return ownedInterval;
+    }
+    return nativeSetInterval(...args);
+  }) as typeof setInterval);
+  vi.spyOn(globalThis, 'clearInterval').mockImplementation(handle => {
+    if (handle !== ownedInterval) nativeClearInterval(handle);
+  });
   vi.spyOn(window, 'confirm').mockReturnValue(true); vi.spyOn(window, 'alert').mockImplementation(() => {});
   h.getSession.mockImplementation(async () => ({ data: { session: { access_token: h.token, user: { id: 'synthetic-admin' } } } }));
   h.setSession.mockImplementation(async ({ access_token }) => { h.token = access_token; return { error: null }; });
