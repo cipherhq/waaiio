@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 import { supabase, adminDb } from '@/lib/supabase';
@@ -89,10 +89,21 @@ export default function Businesses() {
     totalFees: number;
     totalGatewayFees: number;
     totalPayouts: number;
+    processingPayouts: number;
     totalRefunds: number;
     bookingCount: number;
     payoutHistory: Array<{ id: string; net_amount: number; status: string; period_start: string; period_end: string; paid_at: string | null }>;
   } | null>(null);
+  const [financialError, setFinancialError] = useState('');
+  const [financialBusinessId, setFinancialBusinessId] = useState<string | null>(null);
+  const [financialReload, setFinancialReload] = useState(0);
+  const [capLoad, setCapLoad] = useState<{ businessId: string | null; status: 'loading' | 'ready' | 'error'; error: string }>({ businessId: null, status: 'loading', error: '' });
+  const capRequestRef = useRef(0);
+  const selectionGenerationRef = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selected?.id || null;
+  const capMutationRef = useRef(false);
+  const selectedId = selected?.id || null;
   // Custom fee override state
   const [customFeePercentage, setCustomFeePercentage] = useState('');
   const [customFeeFlat, setCustomFeeFlat] = useState('');
@@ -186,20 +197,6 @@ export default function Businesses() {
         });
       });
 
-    // Load capabilities + overrides
-    adminDb
-      .from('business_capabilities')
-      .select('capability')
-      .eq('business_id', selected.id)
-      .eq('is_enabled', true)
-      .then(({ data }) => setSelectedCaps((data || []).map(r => r.capability)));
-
-    adminDb
-      .from('capability_overrides')
-      .select('capability')
-      .eq('business_id', selected.id)
-      .then(({ data }) => setSelectedOverrides((data || []).map(r => r.capability)));
-
     // Load services list
     adminDb
       .from('services')
@@ -227,26 +224,91 @@ export default function Businesses() {
       .maybeSingle()
       .then(({ data }) => setSelectedBankAccount(data || null));
 
-    // Load financial summary
+  }, [selected]);
+
+  const loadCapabilities = useCallback(async (businessId: string, saved = false) => {
+    const requestId = ++capRequestRef.current;
+    const current = () => requestId === capRequestRef.current && selectedIdRef.current === businessId;
+    setCapLoad({ businessId, status: 'loading', error: '' });
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (error || !token) throw new Error('Session expired. Please log in again.');
+      if (!current()) return;
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiUrl}/api/admin/businesses/${businessId}/capabilities`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('Could not load selected capabilities. Please retry.');
+      const state = await response.json();
+      if (!state || !Array.isArray(state.capabilities) || !Array.isArray(state.overrides)
+        || !state.capabilities.every((value: unknown) => typeof value === 'string')
+        || !state.overrides.every((value: unknown) => typeof value === 'string')) {
+        throw new Error('Could not load selected capabilities. Please retry.');
+      }
+      if (!current()) return;
+      setSelectedCaps(state.capabilities);
+      setSelectedOverrides(state.overrides);
+      setCapLoad({ businessId, status: 'ready', error: '' });
+    } catch (error) {
+      if (!current()) return;
+      setCapLoad({
+        businessId, status: 'error',
+        error: saved ? 'Capability saved, but refreshed state could not be loaded. Retry before making another change.'
+          : error instanceof Error ? error.message : 'Could not load selected capabilities. Please retry.',
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    ++selectionGenerationRef.current;
+    ++capRequestRef.current;
+    capMutationRef.current = false;
+    setCapSaving(null);
+    setSelectedCaps([]);
+    setSelectedOverrides([]);
+    setCapLoad({ businessId: selectedId, status: 'loading', error: '' });
+    if (selectedId) void loadCapabilities(selectedId);
+    return () => { ++capRequestRef.current; ++selectionGenerationRef.current; };
+  }, [selectedId, loadCapabilities]);
+
+  useEffect(() => {
+    let active = true;
+    setSelectedFinancials(null);
+    setFinancialBusinessId(null);
+    setFinancialError('');
+    if (!selectedId) return;
+    const businessId = selectedId;
     Promise.all([
-      adminDb.from('payments').select('amount').eq('business_id', selected.id).eq('status', 'success'),
-      adminDb.from('platform_fees').select('fee_total, gateway_fee').eq('business_id', selected.id).is('refunded_at', null),
-      adminDb.from('business_payouts').select('net_amount, status').eq('business_id', selected.id).in('status', ['paid', 'processing']),
-      adminDb.from('payments').select('refund_amount').eq('business_id', selected.id).gt('refund_amount', 0),
-      adminDb.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', selected.id),
-      adminDb.from('business_payouts').select('id, net_amount, status, period_start, period_end, paid_at').eq('business_id', selected.id).order('created_at', { ascending: false }).limit(10),
-    ]).then(([payments, fees, payouts, refunds, bookings, payoutHistory]) => {
+      adminDb.from('payments').select('amount, refund_amount').eq('business_id', businessId).in('status', ['success', 'refunded']),
+      adminDb.from('platform_fees').select('fee_total, gateway_fee').eq('business_id', businessId).is('refunded_at', null),
+      adminDb.from('business_payouts').select('net_amount, status').eq('business_id', businessId).in('status', ['paid', 'processing']),
+      adminDb.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', businessId),
+      adminDb.from('business_payouts').select('id, net_amount, status, period_start, period_end, paid_at').eq('business_id', businessId).order('created_at', { ascending: false }).limit(10),
+    ]).then(([payments, fees, payouts, bookings, payoutHistory]) => {
+      if (!active || selectedIdRef.current !== businessId) return;
+      if ([payments, fees, payouts, bookings, payoutHistory].some(result => result.error)) {
+        throw new Error('Financial summary could not be loaded. Please retry.');
+      }
       setSelectedFinancials({
         totalRevenue: (payments.data || []).reduce((sum, p) => sum + Number(p.amount || 0), 0),
+        totalRefunds: (payments.data || []).reduce((sum, p) => sum + Number(p.refund_amount || 0), 0),
         totalFees: (fees.data || []).reduce((sum, f) => sum + Number(f.fee_total || 0), 0),
         totalGatewayFees: (fees.data || []).reduce((sum, f) => sum + Number(f.gateway_fee || 0), 0),
-        totalPayouts: (payouts.data || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
-        totalRefunds: (refunds.data || []).reduce((sum, r) => sum + Number(r.refund_amount || 0), 0),
+        totalPayouts: (payouts.data || []).filter(p => p.status === 'paid').reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
+        processingPayouts: (payouts.data || []).filter(p => p.status === 'processing').reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
         bookingCount: bookings.count || 0,
         payoutHistory: payoutHistory.data || [],
       });
+      setFinancialBusinessId(businessId);
+    }).catch(() => {
+      if (active && selectedIdRef.current === businessId) {
+        setFinancialBusinessId(businessId);
+        setFinancialError('Financial summary could not be loaded. Please retry.');
+      }
     });
-  }, [selected]);
+    return () => { active = false; };
+  }, [selectedId, financialReload]);
 
   async function handleTierChange() {
     if (!selected || selectedTier === selected.subscription_tier || !isFullAdmin) return;
@@ -404,47 +466,38 @@ export default function Businesses() {
     }
   }
 
-  async function handleCapToggle(bizId: string, bizTier: string, capId: string, isCurrentlyEnabled: boolean) {
+  async function handleCapToggle(bizId: string, capId: string, isCurrentlySelected: boolean) {
+    if (!isFullAdmin || capMutationRef.current || capLoad.businessId !== bizId || capLoad.status !== 'ready') return;
+    capMutationRef.current = true;
     setCapSaving(capId);
+    const generation = selectionGenerationRef.current;
+    const current = () => generation === selectionGenerationRef.current && selectedIdRef.current === bizId;
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
+      const { data: sessionData, error } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
-      if (!token) { alert('Session expired. Please log in again.'); return; }
-
+      if (error || !token) throw new Error('Session expired. Please log in again.');
+      if (!current()) return;
       const apiUrl = import.meta.env.VITE_API_URL || '';
-      const action = isCurrentlyEnabled ? 'revoke' : 'grant';
-
+      const action = isCurrentlySelected ? 'revoke' : 'grant';
       const res = await fetch(`${apiUrl}/api/admin/businesses/${bizId}/capabilities`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ capability: capId, action, reason: 'Admin toggled' }),
       });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-        alert(`Failed to ${action} capability: ${err.error || 'Unknown error'}`);
-        return;
-      }
-
-      // Re-fetch authoritative state from server (RPC may cascade dependencies)
-      const refreshRes = await fetch(`${apiUrl}/api/admin/businesses/${bizId}/capabilities`, {
-        headers: { Authorization: `Bearer ${token}` },
+      if (!res.ok) throw new Error('Capability change failed. Retry loading the state before trying again.');
+      if (!current()) return;
+      await loadCapabilities(bizId, true);
+    } catch (error) {
+      if (!current()) return;
+      setCapLoad({
+        businessId: bizId, status: 'error',
+        error: error instanceof Error ? error.message : 'Capability change failed. Please retry.',
       });
-      if (refreshRes.ok) {
-        const state = await refreshRes.json();
-        setSelectedCaps(state.capabilities || []);
-        setSelectedOverrides(state.overrides || []);
-      } else {
-        alert('Capability updated but failed to refresh state. Please reload the page.');
-      }
-    } catch (err) {
-      console.error('Capability toggle error:', err);
-      alert('Failed to update capability. Please try again.');
     } finally {
-      setCapSaving(null);
+      if (current()) {
+        capMutationRef.current = false;
+        setCapSaving(null);
+      }
     }
   }
 
@@ -892,13 +945,15 @@ export default function Businesses() {
             )}
 
             {/* Financial Summary */}
-            {selectedFinancials && (
+            {financialError && financialBusinessId === selected.id && <div role="alert" className="mt-4 text-sm text-red-600">{financialError} <button type="button" onClick={() => setFinancialReload(value => value + 1)}>Retry financial summary</button></div>}
+            {financialBusinessId !== selected.id && <p className="mt-4 text-sm text-gray-500">Loading financial summary…</p>}
+            {selectedFinancials && financialBusinessId === selected.id && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Financial Summary</p>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-gray-900">{fmtCurrency(selectedFinancials.totalRevenue, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
-                    <p className="text-[10px] text-gray-500">Total Revenue</p>
+                    <p className="text-[10px] text-gray-500">Collections</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-brand">{fmtCurrency(selectedFinancials.totalFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
@@ -910,7 +965,7 @@ export default function Businesses() {
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-green-600">{fmtCurrency(selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
-                    <p className="text-[10px] text-gray-500">Total Payouts</p>
+                    <p className="text-[10px] text-gray-500">Paid payouts</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-red-500">{fmtCurrency(selectedFinancials.totalRefunds, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
@@ -919,9 +974,12 @@ export default function Businesses() {
                 </div>
                 <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
                   <span>{selectedFinancials.bookingCount} total bookings</span>
-                  <span>Net: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
-                  <span>Balance: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds - selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Processing reservations: {fmtCurrency(selectedFinancials.processingPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Net retained: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalRefunds - selectedFinancials.totalFees - selectedFinancials.totalGatewayFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Accounting remainder: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalRefunds - selectedFinancials.totalFees - selectedFinancials.totalGatewayFees - selectedFinancials.totalPayouts - selectedFinancials.processingPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
                 </div>
+
+                <p className="mt-2 text-xs text-gray-500">Accounting remainder is not the available-to-withdraw balance. It does not reconcile custody, other pending reservations, adjustments or currency differences.</p>
 
                 {/* Payout History */}
                 {selectedFinancials.payoutHistory.length > 0 && (
@@ -1137,10 +1195,16 @@ export default function Businesses() {
                   {PLAN_LABELS[selected.subscription_tier as SubscriptionTier] || selected.subscription_tier}
                 </span>
               </div>
+              <p className="mb-2 text-xs text-gray-500">Selected capabilities may be paused by the business's current entitlement policy.</p>
+              {capLoad.businessId !== selected.id || capLoad.status === 'loading' ? <p role="status">Loading selected capabilities…</p> : null}
+              {capLoad.businessId === selected.id && capLoad.status === 'error' && (
+                <div role="alert" className="mb-2 text-sm text-red-600">{capLoad.error} <button type="button" onClick={() => void loadCapabilities(selected.id)}>Retry capabilities</button></div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 {CAPABILITIES.map(cap => {
-                  const isEnabled = selectedCaps.includes(cap.id);
-                  const isOverridden = selectedOverrides.includes(cap.id);
+                  const capsReady = capLoad.businessId === selected.id && capLoad.status === 'ready';
+                  const isEnabled = capsReady && selectedCaps.includes(cap.id);
+                  const isOverridden = capsReady && selectedOverrides.includes(cap.id);
                   const requiredTier = CAPABILITY_TIER_REQUIREMENTS[cap.id];
                   const isSaving = capSaving === cap.id;
 
@@ -1167,8 +1231,11 @@ export default function Businesses() {
                       </div>
                       <button
                         type="button"
-                        disabled={isSaving}
-                        onClick={() => handleCapToggle(selected.id, selected.subscription_tier, cap.id, isEnabled)}
+                        role="switch"
+                        aria-label={`Selected ${cap.label}`}
+                        aria-checked={isEnabled}
+                        disabled={!isFullAdmin || !capsReady || capSaving !== null}
+                        onClick={() => handleCapToggle(selected.id, cap.id, isEnabled)}
                         className={`flex h-5 w-9 flex-shrink-0 items-center rounded-full transition ${
                           isEnabled ? 'bg-brand' : 'bg-gray-200'
                         } ${isSaving ? 'opacity-50' : 'cursor-pointer'}`}
