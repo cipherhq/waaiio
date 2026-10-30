@@ -174,7 +174,7 @@ BEGIN
 END $$;
 
 CREATE FUNCTION private.converge_event_ticket_booking(p_booking_id uuid,p_event_id uuid,p_ticket_type_id uuid,p_quantity integer)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,extensions AS $$
 DECLARE b public.bookings%ROWTYPE; e public.events%ROWTYPE; st public.event_ticket_issuance_state%ROWTYPE;
  v_tier uuid; v_session_tier uuid; v_op uuid; v_pay uuid; v_number integer; v_tickets jsonb; v_count integer; v_tier_count integer; v_followups integer:=0;
 BEGIN
@@ -282,7 +282,7 @@ BEGIN
 END $$;
 
 CREATE FUNCTION private.claim_event_cancellation_notification(p_recipient_id uuid)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,extensions AS $$
 DECLARE r public.event_cancellation_recipients%ROWTYPE; v_token uuid:=gen_random_uuid();
 BEGIN
   UPDATE public.event_cancellation_recipients SET state='claimed',claim_token=v_token,claim_expires_at=clock_timestamp()+interval '30 seconds'
