@@ -8,8 +8,9 @@
  * - In dedicated workflow (REQUIRE_POSTGREST=1): missing infra → FAIL
  * - In canonical CI (no env): 1 skipped placeholder (dedicated workflow provides coverage)
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { NextRequest } from 'next/server';
 import { searchMarketplace, loadDirectoryHiddenIds } from '../search';
 
 const RAW_POSTGREST_URL = process.env.POSTGREST_URL;
@@ -199,11 +200,20 @@ describe('directory search — real PostgREST (#762)', () => {
 
   // ── Location containment ──
 
-  it('locationText=Lagos constrains to Lagos businesses', async () => {
+  it('locationText=Lagos includes Lagos business and excludes Abuja', async () => {
+    // Skyline Corp is spa in Abuja; search for spa in Lagos should exclude it
+    const result = await searchMarketplace(supabase, { category: 'spa', locationText: 'Lagos', limit: 50 });
+    expect(result.ok).toBe(true);
+    const names = ours(result.results.map(r => r.name));
+    // Skyline Corp is an otherwise-eligible spa — but in Abuja, not Lagos
+    expect(names).not.toContain(`${TEST_PREFIX}Skyline Corp`);
+  });
+
+  it('locationText=Lagos includes Lagos barber', async () => {
     const result = await searchMarketplace(supabase, { category: 'barber', locationText: 'Lagos', limit: 50 });
     expect(result.ok).toBe(true);
     const names = ours(result.results.map(r => r.name));
-    expect(names).toContain(`${TEST_PREFIX}Zenith Cuts`); // Lagos barber
+    expect(names).toContain(`${TEST_PREFIX}Zenith Cuts`);
   });
 
   // ── Eligibility exclusions ──
@@ -275,35 +285,82 @@ describe('directory search — real PostgREST (#762)', () => {
     expect(result.error).toBeTruthy();
   });
 
-  // ── Directory GET 200/503 via searchMarketplace results ──
+  // ── Actual directory GET handler: 200 / 503 / 429 ──
 
-  it('successful search returns ok=true (maps to GET 200)', async () => {
-    const result = await searchMarketplace(supabase, { category: 'barber', limit: 50 });
-    expect(result.ok).toBe(true);
-    expect(result.results.length).toBeGreaterThan(0);
+  it('GET /api/directory?category=barber → 200 with businesses', async () => {
+    // Mock createServiceClient to return our PostgREST-backed client
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => supabase }));
+    vi.doMock('@/lib/rate-limit', () => ({
+      rateLimitResponseAsync: async () => null, // no rate limit
+      getRateLimitKey: () => 'test-key',
+    }));
+
+    const { GET } = await import('@/app/api/directory/route');
+    const req = new NextRequest('http://localhost/api/directory?category=barber');
+    const resp = await GET(req);
+
+    expect(resp.status).toBe(200);
+    const data = await resp.json();
+    expect(Array.isArray(data.businesses)).toBe(true);
+    expect(data.businesses.length).toBeGreaterThan(0);
+    // Verify structure
+    expect(data.businesses[0]).toHaveProperty('name');
+    expect(data.businesses[0]).toHaveProperty('category');
+
+    vi.resetModules();
   });
 
-  it('search with invalid excludeIds returns ok=false (maps to GET 503)', async () => {
-    const result = await searchMarketplace(supabase, {
-      category: 'barber', limit: 50,
-      excludeIds: ['not-a-uuid'],
+  it('GET /api/directory with query failure → 503', async () => {
+    // Create a client that produces a genuine DB query error
+    const failClient = createClient(RAW_POSTGREST_URL!, SERVICE_ROLE_KEY!, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: {
+        fetch: (input, init) => {
+          let url = typeof input === 'string' ? input : (input as Request).url;
+          url = url.replace('/rest/v1/', '/');
+          // Inject a broken table name to cause a real PostgREST query failure
+          if (url.includes('/businesses')) {
+            url = url.replace('/businesses', '/nonexistent_table_762');
+          }
+          return fetch(url, init);
+        },
+      },
     });
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain('Invalid hidden-business exclusion list');
+
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => failClient }));
+    vi.doMock('@/lib/rate-limit', () => ({
+      rateLimitResponseAsync: async () => null,
+      getRateLimitKey: () => 'test-key',
+    }));
+
+    const { GET } = await import('@/app/api/directory/route');
+    const req = new NextRequest('http://localhost/api/directory?category=barber');
+    const resp = await GET(req);
+
+    expect(resp.status).toBe(503);
+    const data = await resp.json();
+    expect(data.error).toContain('temporarily unavailable');
+
+    vi.resetModules();
   });
 
-  // ── Rate limit: controlled simulation via invalid rapid-fire validation ──
+  it('GET /api/directory when rate-limited → 429', async () => {
+    // Mock rate limiter to return a 429 response
+    const { NextResponse } = await import('next/server');
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => supabase }));
+    vi.doMock('@/lib/rate-limit', () => ({
+      rateLimitResponseAsync: async () =>
+        NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 }),
+      getRateLimitKey: () => 'test-key',
+    }));
 
-  it('rate limit path: rateLimitResponseAsync is wired in the route handler', async () => {
-    // The actual rate limit is enforced by the route handler, not searchMarketplace.
-    // We verify the rate-limit function is imported and called by reading the route source.
-    // A real 429 test would require calling the Next.js route handler directly.
-    // This is documented as a controlled-dependency limitation.
-    const routeSource = await import('fs').then(fs =>
-      fs.readFileSync(require('path').resolve(__dirname, '../../../app/api/directory/route.ts'), 'utf-8'),
-    );
-    expect(routeSource).toContain('rateLimitResponseAsync');
-    expect(routeSource).toContain("'directory'");
+    const { GET } = await import('@/app/api/directory/route');
+    const req = new NextRequest('http://localhost/api/directory?category=barber');
+    const resp = await GET(req);
+
+    expect(resp.status).toBe(429);
+
+    vi.resetModules();
   });
 
   // ── Negative controls with specific expected errors ──
@@ -317,12 +374,18 @@ describe('directory search — real PostgREST (#762)', () => {
     expect(body).toContain('operator does not exist');
   });
 
-  it('NEGATIVE: category::text cast → PostgREST 400 unsupported', async () => {
-    // PostgREST does not support horizontal casts in filter syntax
+  it('NEGATIVE: category::text cast → PostgREST parser/filter rejection', async () => {
+    // PostgREST does not support horizontal casts; the :: is treated as part of the
+    // column name, producing a "column not found" or similar parser rejection
     const resp = await fetch(`${RAW_POSTGREST_URL}/businesses?category::text=ilike.%25barber%25&limit=1`, {
       headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`, apikey: SERVICE_ROLE_KEY! },
     });
     expect(resp.status).toBeGreaterThanOrEqual(400);
+    const body = await resp.json();
+    // PostgREST rejects the :: syntax as an unknown column or invalid filter
+    expect(body.message || body.details || JSON.stringify(body)).toMatch(
+      /column|not exist|parse|unknown|filter|syntax/i,
+    );
   });
 
   it('POSITIVE: category_text computed field → PostgREST 200', async () => {
