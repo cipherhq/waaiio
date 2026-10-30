@@ -109,6 +109,8 @@
 
 ### #753 — Poll send-result accounting (2026-10-30)
 
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
 - `app/api/polls/[id]/send/route.ts`: count the shared sender’s `{ sent: false }` result as failed; retain true-result counting, thrown-error handling and processing of remaining recipients.
 - `app/api/polls/__tests__/polls-api.test.ts`: exercise the actual send handler with active owned polls, valid session boundaries and a controllable helper mock for true, false, thrown and mixed outcomes. Assert helper reach, recipient order and reconciled totals; preserve existing denial tests.
 - **Affects**: Poll send response counts only. Helper acceptance does not prove customer receipt; shared sender, session preparation, guards and poll lifecycle are unchanged.
