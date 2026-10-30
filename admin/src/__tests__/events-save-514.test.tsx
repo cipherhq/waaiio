@@ -28,9 +28,10 @@ const revision = '2026-01-01T00:00:00Z';
 function reply(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status }); }
 function commit(body: any) {
   const row = mock.rows[0];
+  const newlyCancelled = row.status !== 'cancelled' && body.changes.status === 'cancelled';
   Object.assign(row, body.changes, { updated_at: '2026-02-01T00:00:00Z' });
   const result = { committed: true, event: { ...row }, operation_id: body.operation_id,
-    cancelled: row.status === 'cancelled', cancelled_tickets: 2, refunds_pending: 1,
+    cancelled: newlyCancelled, cancelled_tickets: 2, refunds_pending: 1,
     notifications: { accepted: 0, pending: 1, failed: 0, ambiguous: 1, total: 2 } };
   mock.operations.set(body.operation_id, result);
   return result;
@@ -145,6 +146,56 @@ describe('#514 Admin event save', () => {
     expect(mock.put.mock.calls[0][1].changes).toMatchObject({ status: 'cancelled', venue: 'Corrected hall' });
     expect(confirm).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])('reports the actual unavailable sentinel without verified notification totals (refresh failure: %s)', async refreshFails => {
+    mock.put.mockImplementationOnce(async (_path, body) => {
+      const result = commit(body);
+      result.notifications = { accepted: 0, pending: 0, failed: 0, ambiguous: 0, total: 0, unavailable: true } as any;
+      mock.readError = refreshFails;
+      return reply(result);
+    });
+    render(<Events />); await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel Event' }));
+    await screen.findByText(/Notification status is unavailable/);
+    const message = screen.getByRole('status');
+    expect(message).toHaveTextContent('Event cancelled permanently.');
+    expect(message).toHaveTextContent('no refund has been executed');
+    expect(message).not.toHaveTextContent('Notifications:');
+    expect(message).not.toHaveTextContent('0 accepted by provider');
+    expect(message).not.toHaveTextContent('0 pending');
+    expect(message).not.toHaveTextContent('outcome is unknown');
+    expect(mock.rows[0].status).toBe('cancelled');
+    if (refreshFails) {
+      expect(message).toHaveTextContent('Saved, but');
+      mock.readError = false;
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh saved event' }));
+    }
+    await waitFor(() => expect(screen.queryByLabelText('Venue')).toBeNull());
+    expect(screen.getByRole('status')).toHaveTextContent('Notification status is unavailable');
+    expect(mock.put).toHaveBeenCalledOnce();
+  });
+  it.each(['pending original cancellation', 'legacy unknown history'])('reports a cancelled detail edit as saved with %s', async history => {
+    mock.rows[0].status = 'cancelled';
+    const original = { cancelled: true, notifications: { accepted: 0, pending: 2, failed: 0, ambiguous: 0, total: 2 } };
+    if (history === 'pending original cancellation') mock.operations.set('original-cancellation', original);
+    render(<Events />); await open();
+    edit('Venue', 'Corrected cancelled venue'); save();
+    await waitFor(() => expect(screen.queryByLabelText('Venue')).toBeNull());
+    expect(screen.getByRole('status')).toHaveTextContent(/^Event saved\.$/);
+    const body = mock.put.mock.calls[0][1];
+    expect(body.operation_id).not.toBe('original-cancellation');
+    expect(mock.operations.get(body.operation_id).cancelled).toBe(false);
+    expect(mock.operations.get('original-cancellation')).toBe(history === 'pending original cancellation' ? original : undefined);
+    expect(screen.getByRole('status')).not.toHaveTextContent('Notifications:');
+    expect(screen.getByRole('status')).not.toHaveTextContent('invalidated');
+    expect(confirm).not.toHaveBeenCalled();
+    await open();
+    expect(screen.getByLabelText('Venue')).toHaveValue('Corrected cancelled venue');
+    expect(screen.getByLabelText('Event status')).toHaveValue('cancelled');
+    expect(screen.getByLabelText('Event status')).toBeDisabled();
+    expect(screen.getByText(/restarting requires a new event/)).toBeTruthy();
+  });
+
   it.each(['operations', 'finance', 'support'])('keeps %s read-only', async role => {
     mock.role = role; render(<Events />); fireEvent.click(await screen.findByText('Concert'));
     expect(screen.queryByRole('button', { name: 'Save Changes' })).toBeNull();

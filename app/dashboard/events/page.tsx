@@ -446,7 +446,7 @@ export default function EventsPage() {
         const message = 'Event cancelled permanently. ' + (result.cancelled_tickets ?? 0) +
           ' valid ticket(s) invalidated. ' + (result.refunds_pending ?? 0) +
           ' paid ticket(s) flagged for refund follow-up; no refund has been executed. ' +
-          (n ? 'Notifications: ' + n.accepted + ' accepted by provider, ' + n.pending + ' pending, ' +
+          (n && n.unavailable !== true ? 'Notifications: ' + n.accepted + ' accepted by provider, ' + n.pending + ' pending, ' +
             n.failed + ' failed, ' + n.ambiguous + ' needing reconciliation. Acceptance does not confirm delivery.' : 'Notification status is unavailable.');
         setEventMessage(message);
         const rows = await loadEvents();
@@ -522,6 +522,7 @@ export default function EventsPage() {
     }
 
     setSaving(false);
+    if (view === 'edit' && originalStatus === 'cancelled') setEventMessage('Event saved.');
     setView('list');
     loadEvents();
   }

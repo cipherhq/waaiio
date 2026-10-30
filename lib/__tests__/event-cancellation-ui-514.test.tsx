@@ -82,6 +82,52 @@ describe('#514 merchant cancellation UI', () => {
     expect(screen.getByRole('status').textContent).toContain('Acceptance does not confirm delivery');
     expect(mock.writes).toHaveLength(0);
   });
+
+  it.each([false, true])('keeps committed cancellation visible for the actual unavailable sentinel (refresh failure: %s)', async refreshFails => {
+    mock.fetch.mockImplementationOnce(async (_url, init) => {
+      const result = commit(JSON.parse(init.body));
+      result.notifications = { accepted: 0, pending: 0, failed: 0, ambiguous: 0, total: 0, unavailable: true } as any;
+      mock.readError = refreshFails;
+      return reply(result);
+    });
+    render(<EventsPage />); await open(); cancel();
+    await screen.findByText(/Notification status is unavailable/);
+    const message = screen.getByRole('status').textContent;
+    expect(message).toContain('Event cancelled permanently.');
+    expect(message).toContain('no refund has been executed');
+    expect(message).not.toContain('Notifications:');
+    expect(message).not.toContain('0 accepted by provider');
+    expect(message).not.toContain('0 pending');
+    expect(message).not.toContain('outcome is unknown');
+    expect(mock.rows[0].status).toBe('cancelled');
+    if (refreshFails) {
+      expect(message).toContain('Saved, but');
+      mock.readError = false;
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh cancelled event' }));
+    }
+    await waitFor(() => expect(screen.queryByLabelText('Event status')).toBeNull());
+    expect(screen.getByRole('status').textContent).toContain('Notification status is unavailable');
+    expect(mock.fetch).toHaveBeenCalledOnce();
+    expect(mock.writes).toHaveLength(0);
+  });
+  it.each(['pending original cancellation', 'legacy unknown history'])('reports a saved cancelled detail edit without claiming notification history: %s', async history => {
+    mock.rows[0].status = 'cancelled';
+    const original = { cancelled: true, notifications: { accepted: 0, pending: 2, failed: 0, ambiguous: 0, total: 2 } };
+    if (history === 'pending original cancellation') mock.operations.set('original-cancellation', original);
+    render(<EventsPage />); await open();
+    fireEvent.change(screen.getByLabelText('Venue'), { target: { value: 'Corrected cancelled venue' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(screen.queryByLabelText('Event status')).toBeNull());
+    expect(screen.getByRole('status').textContent).toBe('Event saved.');
+    expect(mock.operations.get('original-cancellation')).toBe(history === 'pending original cancellation' ? original : undefined);
+    expect(mock.rows[0]).toMatchObject({ status: 'cancelled', venue: 'Corrected cancelled venue' });
+    expect(mock.fetch).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    await open();
+    expect((screen.getByLabelText('Venue') as HTMLInputElement).value).toBe('Corrected cancelled venue');
+    expect((screen.getByLabelText('Event status') as HTMLSelectElement).disabled).toBe(true);
+  });
+
   it('retains the form on rejection and does not announce cancellation', async () => {
     mock.fetch.mockResolvedValue(reply({ error: 'Event changed; refresh first' }, 409));
     render(<EventsPage />); await open(); cancel();

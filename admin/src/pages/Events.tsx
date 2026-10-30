@@ -194,10 +194,11 @@ export default function Events() {
       pendingSave.current = null;
       setUnresolved(false);
       const notifications = result.notifications;
-      const message = result.cancelled
+      // The operation flag distinguishes a new cancellation from a detail edit of a cancelled event.
+      const message = result.cancelled === true
         ? 'Event cancelled permanently. ' + (result.cancelled_tickets ?? 0) + ' valid ticket(s) invalidated. ' +
           (result.refunds_pending ?? 0) + ' paid ticket(s) flagged for refund follow-up; no refund has been executed. ' +
-          (notifications ? 'Notifications: ' + notifications.accepted + ' accepted by provider, ' +
+          (notifications && notifications.unavailable !== true ? 'Notifications: ' + notifications.accepted + ' accepted by provider, ' +
             notifications.pending + ' pending, ' + notifications.failed + ' failed, ' +
             notifications.ambiguous + ' needing reconciliation. Acceptance does not confirm delivery.' : 'Notification status is unavailable.')
         : 'Event saved.';
