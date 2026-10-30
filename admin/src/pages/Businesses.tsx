@@ -108,6 +108,11 @@ export default function Businesses() {
   const [customFeePercentage, setCustomFeePercentage] = useState('');
   const [customFeeFlat, setCustomFeeFlat] = useState('');
   const [customFeeSaving, setCustomFeeSaving] = useState(false);
+  const [reviewDraft, setReviewDraft] = useState<{ businessId: string; action: 'set_level' | 'set_custom_fees'; level?: string; custom_fee_percentage?: number | null; custom_fee_flat?: number | null } | null>(null);
+  const [reviewReason, setReviewReason] = useState('');
+  const [reviewMessage, setReviewMessage] = useState('');
+  const reviewOperationRef = useRef<object | null>(null);
+  const reviewSubmitRef = useRef(false);
   const [capSaving, setCapSaving] = useState<string | null>(null);
   const [selectedTier, setSelectedTier] = useState('');
   const [tierSaving, setTierSaving] = useState(false);
@@ -131,6 +136,121 @@ export default function Businesses() {
   // Payout verification limits now live in countries.verification_tiers;
   // the server route resolves them per-country — no client-side lookup needed.
   const perPage = 20;
+
+
+  useEffect(() => {
+    setReviewDraft(null);
+    setReviewReason('');
+    setReviewMessage('');
+    setCustomFeeSaving(false);
+    if (reviewOperationRef.current) {
+      reviewOperationRef.current = null;
+      stepUpCallbackRef.current = null;
+      stepUp.reset();
+    }
+    return () => {
+      if (reviewOperationRef.current) {
+        reviewOperationRef.current = null;
+        stepUpCallbackRef.current = null;
+        stepUp.reset();
+      }
+    };
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (stepUp.state.phase === 'error' && reviewOperationRef.current) {
+      reviewOperationRef.current = null;
+      setCustomFeeSaving(false);
+      setReviewMessage(stepUp.state.error || 'Authorization failed');
+    }
+  }, [stepUp.state.phase, stepUp.state.error]);
+
+  function openReview(action: 'set_level' | 'set_custom_fees', level?: string, clear = false) {
+    if (!selected || !isFullAdmin || reviewOperationRef.current || stepUp.isPending) return;
+    const percentage = clear || !customFeePercentage.trim() ? null : Number(customFeePercentage);
+    const flat = clear || !customFeeFlat.trim() ? null : Number(customFeeFlat);
+    if (action === 'set_custom_fees' &&
+        ((percentage !== null && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) ||
+         (flat !== null && (!Number.isSafeInteger(flat) || flat < 0)))) {
+      setReviewMessage('Enter a percentage from 0 to 100 and a non-negative whole flat fee.');
+      return;
+    }
+    setReviewReason('');
+    setReviewMessage('');
+    setReviewDraft({ businessId: selected.id, action,
+      ...(action === 'set_level' ? { level } : { custom_fee_percentage: percentage, custom_fee_flat: flat }) });
+  }
+
+  function cancelReview() {
+    reviewOperationRef.current = null;
+    stepUpCallbackRef.current = null;
+    stepUp.reset();
+    setCustomFeeSaving(false);
+    setReviewDraft(null);
+    setReviewReason('');
+  }
+
+  async function confirmReview() {
+    if (!reviewDraft || !reviewReason.trim() || reviewOperationRef.current || !isFullAdmin) return;
+    const draft = { ...reviewDraft };
+    const businessId = draft.businessId;
+    const params = { scope: 'business_verification_review', action: draft.action,
+      ...(draft.action === 'set_level' ? { level: draft.level } : {
+        custom_fee_percentage: draft.custom_fee_percentage, custom_fee_flat: draft.custom_fee_flat }),
+      reason: reviewReason.trim() };
+    const operation = {};
+    reviewOperationRef.current = operation;
+    const current = () => reviewOperationRef.current === operation && selectedIdRef.current === businessId;
+    setCustomFeeSaving(true);
+    setReviewMessage('');
+    const onAuthorized = async (stepUpId: string) => {
+      if (!current()) return;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!current()) return;
+        const token = sessionData.session?.access_token;
+        if (!token) throw new Error('Session expired');
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const response = await fetch(`${apiUrl}/api/verification/review`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ business_id: businessId, ...params, stepUpId }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Save failed; reload before authorizing another attempt.');
+        if (!current()) return;
+        const patch = draft.action === 'set_level'
+          ? { verification_level: result.verification_level, verification_status: result.verification_status, payout_limit_monthly: result.payout_limit_monthly }
+          : { custom_fee_percentage: result.custom_fee_percentage, custom_fee_flat: result.custom_fee_flat };
+        setSelected(previous => previous?.id === businessId ? { ...previous, ...patch } : previous);
+        setBusinesses(previous => previous.map(b => b.id === businessId ? { ...b, ...patch } : b));
+        if (draft.action === 'set_custom_fees') {
+          setCustomFeePercentage(result.custom_fee_percentage == null ? '' : String(result.custom_fee_percentage));
+          setCustomFeeFlat(result.custom_fee_flat == null ? '' : String(result.custom_fee_flat));
+        }
+        setReviewDraft(null);
+        setReviewMessage('Saved. The displayed values are the server result.');
+      } catch (error) {
+        if (current()) setReviewMessage(error instanceof Error ? error.message : 'Save failed. Reload before trying again.');
+        throw error;
+      } finally {
+        if (current()) { reviewOperationRef.current = null; setCustomFeeSaving(false); }
+      }
+    };
+    stepUpCallbackRef.current = onAuthorized;
+    try {
+      await stepUp.execute({ actionType: 'commercial_config', targetId: businessId, params,
+        description: draft.action === 'set_level' ? `Set verification to ${draft.level}: ${params.reason}` :
+          `Set custom fees: ${draft.custom_fee_percentage ?? 'tier default'}%, flat ${draft.custom_fee_flat ?? 'tier default'}. ${params.reason}`,
+        onAuthorized });
+      if (!current()) stepUp.reset();
+    } catch (error) {
+      if (current()) {
+        reviewOperationRef.current = null;
+        setCustomFeeSaving(false);
+        setReviewMessage(error instanceof Error ? error.message : 'Authorization failed');
+      }
+    }
+  }
 
   async function loadData() {
     const [bizRes, chRes] = await Promise.all([
@@ -851,34 +971,8 @@ export default function Businesses() {
                   {['unverified', 'basic', 'standard', 'full'].map(level => (
                     <button
                       key={level}
-                      disabled={selected.verification_level === level}
-                      onClick={async () => {
-                        const reasonInput = prompt(`Reason for setting verification to "${level}" for ${selected.name}:`);
-                        if (!reasonInput) return;
-                        try {
-                          const { data: sessionData } = await supabase.auth.getSession();
-                          const token = sessionData?.session?.access_token;
-                          if (!token) { alert('Session expired'); return; }
-                          const apiUrl = import.meta.env.VITE_API_URL || '';
-                          const res = await fetch(`${apiUrl}/api/verification/review`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                            body: JSON.stringify({
-                              business_id: selected.id,
-                              action: 'set_level',
-                              level,
-                              reason: reasonInput.trim(),
-                            }),
-                          });
-                          const data = await res.json();
-                          if (!res.ok) throw new Error(data.error || 'Failed');
-                          setSelected({ ...selected, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly });
-                          setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly } : b));
-                        } catch (err) {
-                          console.error('Verification level change error:', err);
-                          alert(err instanceof Error ? err.message : 'Failed to update verification level');
-                        }
-                      }}
+                      disabled={selected.verification_level === level || customFeeSaving || stepUp.isPending}
+                      onClick={() => openReview('set_level', level)}
                       className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                         selected.verification_level === level
                           ? 'bg-brand text-white'
@@ -891,6 +985,22 @@ export default function Businesses() {
                 </div>
               )}
             </div>
+
+
+            {reviewMessage && <p role="status" className="mt-3 text-sm">{reviewMessage}</p>}
+            {reviewDraft && reviewDraft.businessId === selected.id && (
+              <section aria-label="Review business change" className="mt-4 space-y-3 rounded-lg border p-4">
+                <p>{reviewDraft.action === 'set_level' ? `Set verification to ${reviewDraft.level}` :
+                  `Custom fee: ${reviewDraft.custom_fee_percentage ?? 'tier default'}%, flat ${reviewDraft.custom_fee_flat ?? 'tier default'}`}</p>
+                <label className="block text-sm">Reason for change
+                  <textarea aria-label="Reason for change" value={reviewReason} disabled={customFeeSaving}
+                    onChange={e => setReviewReason(e.target.value)} className="mt-1 w-full rounded border p-2" />
+                </label>
+                <button disabled={customFeeSaving || !reviewReason.trim()} onClick={confirmReview}
+                  className="rounded bg-brand px-3 py-2 text-white disabled:opacity-50">Confirm and authorize</button>
+                <button disabled={customFeeSaving} onClick={cancelReview} className="ml-3">Cancel change</button>
+              </section>
+            )}
 
             {selectedPayout && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
@@ -1015,6 +1125,7 @@ export default function Businesses() {
                       step="0.01"
                       min="0"
                       max="100"
+                      aria-label="Custom Fee %" disabled={customFeeSaving || !!reviewDraft}
                       value={customFeePercentage}
                       onChange={e => setCustomFeePercentage(e.target.value)}
                       placeholder="e.g. 1.5"
@@ -1027,6 +1138,7 @@ export default function Businesses() {
                       type="number"
                       step="1"
                       min="0"
+                      aria-label="Custom Flat Fee" disabled={customFeeSaving || !!reviewDraft}
                       value={customFeeFlat}
                       onChange={e => setCustomFeeFlat(e.target.value)}
                       placeholder="e.g. 50"
@@ -1036,77 +1148,15 @@ export default function Businesses() {
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <button
-                    onClick={async () => {
-                      setCustomFeeSaving(true);
-                      try {
-                        const feePercentage = customFeePercentage.trim() !== '' ? parseFloat(customFeePercentage) : null;
-                        const feeFlat = customFeeFlat.trim() !== '' ? parseInt(customFeeFlat, 10) : null;
-                        const reasonInput = prompt('Reason for setting custom fees:');
-                        if (!reasonInput) { setCustomFeeSaving(false); return; }
-                        const { data: sessionData } = await supabase.auth.getSession();
-                        const token = sessionData?.session?.access_token;
-                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
-                        const apiUrl = import.meta.env.VITE_API_URL || '';
-                        const res = await fetch(`${apiUrl}/api/verification/review`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({
-                            business_id: selected.id,
-                            action: 'set_custom_fees',
-                            custom_fee_percentage: feePercentage,
-                            custom_fee_flat: feeFlat,
-                            reason: reasonInput.trim(),
-                          }),
-                        });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Failed');
-                        setSelected({ ...selected, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat });
-                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat } : b));
-                      } catch (err) {
-                        console.error('Custom fee save error:', err);
-                        alert(err instanceof Error ? err.message : 'Failed to save custom fees');
-                      } finally {
-                        setCustomFeeSaving(false);
-                      }
-                    }}
-                    disabled={customFeeSaving}
+                    onClick={() => openReview('set_custom_fees')}
+                    disabled={customFeeSaving || stepUp.isPending}
                     className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                   >
                     {customFeeSaving ? '...' : 'Save Override'}
                   </button>
                   <button
-                    onClick={async () => {
-                      setCustomFeeSaving(true);
-                      try {
-                        const { data: sessionData } = await supabase.auth.getSession();
-                        const token = sessionData?.session?.access_token;
-                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
-                        const apiUrl = import.meta.env.VITE_API_URL || '';
-                        const res = await fetch(`${apiUrl}/api/verification/review`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({
-                            business_id: selected.id,
-                            action: 'set_custom_fees',
-                            custom_fee_percentage: null,
-                            custom_fee_flat: null,
-                            reason: 'Clearing custom fee overrides',
-                          }),
-                        });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Failed');
-                        setCustomFeePercentage('');
-                        setCustomFeeFlat('');
-                        setSelected({ ...selected, custom_fee_percentage: null, custom_fee_flat: null });
-                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: null, custom_fee_flat: null } : b));
-                      } catch (err) {
-                        console.error('Custom fee clear error:', err);
-                        alert('Failed to clear custom fees');
-                      } finally {
-                        setCustomFeeSaving(false);
-                      }
-                    }}
-                    disabled={customFeeSaving || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
+                    onClick={() => openReview('set_custom_fees', undefined, true)}
+                    disabled={customFeeSaving || stepUp.isPending || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
                     className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
                   >
                     Clear Override
@@ -1253,12 +1303,20 @@ export default function Businesses() {
         )}
       </DetailModal>
       <StepUpDialog
-        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        open={!!stepUpCallbackRef.current && (stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying')}
         description={stepUp.state.description}
         error={stepUp.state.error}
         loading={stepUp.state.phase === 'verifying'}
-        onSubmit={(code) => { if (stepUpCallbackRef.current) stepUp.submitCode(code, stepUpCallbackRef.current); }}
-        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+        onSubmit={async (code) => {
+          if (reviewSubmitRef.current || !stepUpCallbackRef.current) return;
+          reviewSubmitRef.current = true;
+          try { await stepUp.submitCode(code, stepUpCallbackRef.current); }
+          finally {
+            reviewSubmitRef.current = false;
+            if (!reviewOperationRef.current) setCustomFeeSaving(false);
+          }
+        }}
+        onCancel={() => { if (reviewOperationRef.current) cancelReview(); else { stepUp.reset(); stepUpCallbackRef.current = null; } }}
       />
     </div>
   );
