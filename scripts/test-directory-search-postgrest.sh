@@ -133,14 +133,27 @@ if [ "$HTTP_STATUS" != "200" ]; then
 fi
 echo "category_text field accessible (HTTP 200)."
 
-# ── Run tests ──
-# REQUIRE_POSTGREST=1: fail hard if infra missing (should not happen here)
-# POSTGREST_URL: raw PostgREST endpoint for direct HTTP negative controls
-# SUPABASE_URL: Supabase-compatible URL (PostgREST with /rest/v1 prefix handled by test)
+# ── Run tests with zero-skip enforcement ──
 echo "Running PostgREST integration tests..."
+TEST_OUTPUT=$(mktemp)
 POSTGREST_URL="http://localhost:${POSTGREST_PORT}" \
 SERVICE_ROLE_KEY="${SERVICE_ROLE_JWT}" \
 REQUIRE_POSTGREST=1 \
-npx vitest run lib/marketplace/__tests__/directory-search-postgrest.test.ts
+npx vitest run lib/marketplace/__tests__/directory-search-postgrest.test.ts 2>&1 | tee "${TEST_OUTPUT}"
+VITEST_EXIT=$?
 
-echo "All directory search PostgREST tests passed."
+if [ "$VITEST_EXIT" -ne 0 ]; then
+  echo "FAIL: vitest exited with code ${VITEST_EXIT}" >&2
+  rm -f "${TEST_OUTPUT}"
+  exit 1
+fi
+
+# ── Mechanical zero-skip enforcement ──
+SKIPPED=$(grep -oP '\d+ skipped' "${TEST_OUTPUT}" | head -1 | grep -oP '\d+' || echo "0")
+rm -f "${TEST_OUTPUT}"
+if [ "${SKIPPED}" != "0" ]; then
+  echo "FAIL: dedicated PostgREST suite must have zero skips, found ${SKIPPED}" >&2
+  exit 1
+fi
+
+echo "All directory search PostgREST tests passed (zero skips)."
