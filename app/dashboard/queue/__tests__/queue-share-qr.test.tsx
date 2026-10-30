@@ -240,16 +240,9 @@ describe('QR Code page — existing behavior preserved', () => {
 // ── Handler guards: copy/download blocked when queue not ready ──
 
 describe('QR Code page — queue artifact guards', () => {
-  it('no bot channel → Copy button click does not write to clipboard', async () => {
+  it('no bot channel → link/QR/copy artifacts withheld entirely', async () => {
     state.searchParams = new URLSearchParams('template=queue');
     state.hasBotChannel = false;
-
-    const writeText = vi.fn();
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      writable: true,
-      configurable: true,
-    });
 
     render(<QRCodePage />);
 
@@ -257,10 +250,11 @@ describe('QR Code page — queue artifact guards', () => {
       expect(screen.getByTestId('queue-setup-guidance')).toBeTruthy();
     });
 
-    // Find and click Copy button — should be guarded
-    const copyBtn = screen.getByText('Copy');
-    copyBtn.click();
-    expect(writeText).not.toHaveBeenCalled();
+    // Copy button, QR canvases and link are withheld (not rendered, not just dimmed)
+    expect(screen.queryByText('Copy')).toBeNull();
+    expect(screen.queryByTestId('qr-value')).toBeNull();
+    // Template selector remains usable
+    expect(screen.getByText('Poster Template')).toBeTruthy();
   });
 
   it('valid bot channel → QR content area is NOT dimmed', async () => {
