@@ -259,6 +259,8 @@
 
 ### #762 W27 — Confirm account preference persistence (2026-10-30)
 
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
 - Check account preference reads and returned update rows before acknowledging a save; preserve unrelated metadata and recorded terms acceptance.
 - Show retryable load/save failures in Account settings, use confirmed persisted preferences, disable toggles while saving, and keep optional browser-cache/audit failures separate from server persistence.
 - Add actual-handler stateful tests and rendered save/remount regression coverage. No migration or merchant Broadcast policy change.
