@@ -183,26 +183,6 @@ export async function sendProactiveConfirmation(
     payment_authority_version: claim.payment_authority_version ?? null,
   };
 
-  // M481: resolve a cancelled ticket event before success-only messaging.
-  // This RPC checks authoritative booking/event state and is a no-op for other payments.
-  if (payment.booking_id) {
-    const { data: cancellation, error: cancellationError } = await supabase.rpc(
-      'terminate_cancelled_event_confirmation',
-      { p_payment_id: payment.id, p_claim_token: claimToken },
-    );
-    if (cancellationError || !cancellation) {
-      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
-      return { status: 'retryable_failed', retryable: true, reason: 'event_cancellation_resolution_failed' };
-    }
-    if (cancellation.terminated === true) {
-      return { status: 'not_deliverable', retryable: false, reason: 'event_cancelled_followup_recorded' };
-    }
-    if (cancellation.reason !== 'not_cancelled') {
-      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
-      return { status: 'retryable_failed', retryable: true, reason: cancellation.reason || 'event_cancellation_resolution_failed' };
-    }
-  }
-
   // Track whether any external sends have occurred (affects release safety)
   // Conservative: set BEFORE attempting any external/non-idempotent operation.
   // Once true, never returns to false. Prevents claim release after indeterminate sends.
@@ -255,6 +235,27 @@ export async function sendProactiveConfirmation(
       const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string; payment_gateway?: string } | null;
       const svc = booking.services as unknown as { name: string; duration_minutes?: number; service_type?: string } | null;
       bookingFlowType = booking.flow_type || undefined;
+      // M481: resolve a cancelled ticket event before success-only messaging.
+      // This RPC checks authoritative booking/event state and is a no-op for other payments.
+      if (bookingFlowType === 'ticketing') {
+        const { data: cancellation, error: cancellationError } = await supabase.rpc(
+          'terminate_cancelled_event_confirmation',
+          { p_payment_id: payment.id, p_claim_token: claimToken },
+        );
+        if (cancellationError || !cancellation) {
+          await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+          return { status: 'retryable_failed', retryable: true, reason: 'event_cancellation_resolution_failed' };
+        }
+        if (cancellation.terminated === true) {
+          return { status: 'not_deliverable', retryable: false, reason: 'event_cancelled_followup_recorded' };
+        }
+        if (cancellation.reason !== 'not_cancelled') {
+          await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+          return { status: 'retryable_failed', retryable: true, reason: cancellation.reason || 'event_cancellation_resolution_failed' };
+        }
+      }
+
+
       bookingServiceType = svc?.service_type || undefined;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;

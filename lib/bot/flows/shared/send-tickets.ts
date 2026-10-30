@@ -168,7 +168,14 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     // Email remains supplemental to the WhatsApp-first ticket contract.
     logger.error('[TICKETS] Email send error:', emailErr);
   }
-  await dispatchTicketPurchaseWebhooks({ ...opts, tickets });
+  try {
+    await dispatchTicketPurchaseWebhooks({ ...opts, tickets });
+  } catch (error) {
+    if (error instanceof EventTicketEmissionError && error.reason === 'event_cancelled') {
+      return { success: false, tickets: [], error: 'event_cancelled_followup_recorded' };
+    }
+    throw error;
+  }
 
   return { success: true, tickets };
 }
@@ -242,7 +249,7 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
           documentUrl: signedUrlData.signedUrl,
           filename: `${eventName.replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 40)} - Tickets.pdf`,
           caption: fillFlowCopy(ticketCopyLang, 'notification.ticket_pdf_caption', { quantity: String(quantity), ticketLabel, eventName }),
-          messageCategory: 'service',
+          messageCategory: 'service', noRetry: true,
         }));
         logger.info('[TICKETS] PDF sent to', phone);
       }
@@ -262,7 +269,7 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
     const imageUrl = `${appUrl}/api/tickets/image?code=${encodeURIComponent(ticket.ticketCode)}`;
 
     try {
-      await emitTicketArtifact(opts, 'whatsapp', `image:${ticket.ticketCode}`, () => sender.sendImage({ to: phone, imageUrl, caption, messageCategory: 'service' }));
+      await emitTicketArtifact(opts, 'whatsapp', `image:${ticket.ticketCode}`, () => sender.sendImage({ to: phone, imageUrl, caption, messageCategory: 'service', noRetry: true }));
       logger.info('[TICKETS] Ticket image sent for', ticket.ticketCode);
     } catch (err) {
       if (!(err instanceof EventTicketEmissionError) || err.reason !== 'ticket_provider_rejected') throw err;
@@ -339,9 +346,36 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
   logger.info('[TICKETS] Email sent to', email, '| booking:', bookingId);
 }
 
+/** Dispatcher returns void, so completion is not evidence of provider acceptance. */
+async function dispatchAuthorizedTicketWebhook(
+  opts: TicketDeliveryContext,
+  eventType: 'ticket.purchased' | 'event.sold_out',
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const { data: permit, error } = await opts.supabase.rpc('authorize_event_ticket_emission', {
+    p_booking_id: opts.bookingId, p_channel: 'webhook', p_emission_key: eventType,
+  });
+  if (error || !permit) throw new EventTicketEmissionError('ticket_emission_authority_unavailable');
+  if (permit.authorized !== true) {
+    // Any prior attempt is durable: the dispatcher provides no safe replay proof.
+    if (permit.reason === 'already_authorized') return;
+    throw new EventTicketEmissionError(permit.reason || 'ticket_emission_not_authorized');
+  }
+  try {
+    await dispatchWebhook(opts.supabase, opts.businessId, eventType, payload);
+  } catch (error) {
+    logger.error('[TICKETS] Webhook dispatch outcome unresolved:', error);
+  }
+  // The dispatcher owns endpoint-specific delivery records. Never invent an ID.
+  const { error: finalError } = await opts.supabase.rpc('finalize_event_ticket_emission', {
+    p_emission_id: permit.emission_id, p_state: 'ambiguous', p_provider_message_id: null,
+  });
+  if (finalError) logger.warn('[TICKETS] Webhook attempt remains unresolved');
+}
+
 async function dispatchTicketPurchaseWebhooks(opts: TicketDeliveryContext): Promise<void> {
   const { supabase, businessId, bookingId, eventId, eventName, guestName, guestPhone, referenceCode, quantity, tickets } = opts;
-  dispatchWebhook(supabase, businessId, 'ticket.purchased', {
+  await dispatchAuthorizedTicketWebhook(opts, 'ticket.purchased', {
     event_id: eventId,
     event_name: eventName,
     booking_id: bookingId,
@@ -350,7 +384,7 @@ async function dispatchTicketPurchaseWebhooks(opts: TicketDeliveryContext): Prom
     guest_phone: guestPhone,
     quantity,
     ticket_codes: tickets.map(t => t.ticketCode),
-  }).catch(err => logger.error('[TICKETS] Webhook dispatch error:', err));
+  });
 
   // 10. Check if event is sold out → dispatch event.sold_out
   const { data: evt } = await supabase
@@ -360,11 +394,11 @@ async function dispatchTicketPurchaseWebhooks(opts: TicketDeliveryContext): Prom
     .single();
 
   if (evt && evt.tickets_sold >= evt.total_tickets) {
-    dispatchWebhook(supabase, businessId, 'event.sold_out', {
+    await dispatchAuthorizedTicketWebhook(opts, 'event.sold_out', {
       event_id: eventId,
       event_name: eventName,
       total_tickets: evt.total_tickets,
-    }).catch(err => logger.error('[TICKETS] Sold-out webhook error:', err));
+    });
   }
 
 }

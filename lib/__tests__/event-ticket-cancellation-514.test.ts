@@ -2,19 +2,39 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mocks = vi.hoisted(() => ({
+  dispatch: vi.fn(), guard: vi.fn(), financial: vi.fn(), pdf: vi.fn(),
   provider: vi.fn(), email: vi.fn(), template: vi.fn(() => ({ subject: 'Ticket', html: 'Ticket' })),
 }));
 vi.mock('resend', () => ({ Resend: class { emails = { send: mocks.provider }; } }));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), withContext: () => ({ error: vi.fn() }) } }));
-vi.mock('@/lib/pdf/ticket-generator', () => ({ generateTicketsPdf: vi.fn().mockRejectedValue(new Error('PDF unavailable')) }));
+vi.mock('@/lib/pdf/ticket-generator', () => ({ generateTicketsPdf: mocks.pdf }));
 vi.mock('@/lib/payments/proactive-localization', () => ({ resolveProactiveLocalization: vi.fn().mockResolvedValue({ language: 'en' }) }));
 vi.mock('@/lib/email/client', () => ({ sendEmail: mocks.email }));
 vi.mock('@/lib/email/templates', () => ({ ticketConfirmationEmail: mocks.template }));
 vi.mock('@/lib/whitelabel', () => ({ isWhiteLabel: () => false }));
 vi.mock('@/lib/payments/session-terminalization', () => ({ terminalizeOriginatingSession: vi.fn().mockResolvedValue({ status: 'no_origin' }) }));
 
-import { ensureCanonicalTicketRows, deliverTicketsWhatsApp, deliverTicketsEmail } from '@/lib/bot/flows/shared/send-tickets';
+vi.mock('@/lib/webhooks/dispatcher', () => ({ dispatchWebhook: mocks.dispatch }));
+vi.mock('@/lib/channels/send-guard', () => ({ assertMessagingAllowed: mocks.guard }));
+vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({ rpc: mocks.financial }) }));
+vi.mock('@/lib/circuit-breaker', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/circuit-breaker')>(),
+  isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(),
+}));
+vi.mock('@/lib/channels/attempt-recording', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/channels/attempt-recording')>(),
+  createAttempt: vi.fn().mockResolvedValue('attempt'),
+  updateAttemptContext: vi.fn().mockResolvedValue(undefined),
+  markSending: vi.fn().mockResolvedValue(undefined),
+  markAccepted: vi.fn().mockResolvedValue(undefined),
+  markFailed: vi.fn().mockResolvedValue(undefined),
+  markAmbiguous: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { MetaCloudSender } from '@/lib/channels/message-sender';
+import { MetaApiError } from '@/lib/channels/meta-api-error';
+import { sendTicketsAfterPurchase, ensureCanonicalTicketRows, deliverTicketsWhatsApp, deliverTicketsEmail } from '@/lib/bot/flows/shared/send-tickets';
 import { ensurePaidTicketState } from '@/lib/payments/ticket-business-state';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { authorizeAndFinalize } from '@/lib/payments/authority';
@@ -56,7 +76,14 @@ function deliveryOpts(db: SupabaseClient, sender?: any) {
     quantity: 1, tickets: [ticket],
   };
 }
-beforeEach(() => { vi.clearAllMocks(); mocks.email.mockResolvedValue({ success: true, id: 'email-id' }); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.email.mockResolvedValue({ success: true, id: 'email-id' });
+  mocks.pdf.mockRejectedValue(new Error('PDF unavailable'));
+  mocks.dispatch.mockResolvedValue(undefined);
+  mocks.guard.mockResolvedValue(undefined);
+  mocks.financial.mockResolvedValue({ data: { enforcement_required: false }, error: null });
+});
 
 describe('M481 actual ticket adapters', () => {
   it('returns only the canonical issued set', async () => {
@@ -116,6 +143,7 @@ describe('both actual ticket delivery boundaries', () => {
     await deliverTicketsWhatsApp(deliveryOpts(db, sender));
     await deliverTicketsWhatsApp(deliveryOpts(db, sender));
     expect(sender.sendImage).toHaveBeenCalledOnce();
+    expect(sender.sendImage).toHaveBeenCalledWith(expect.objectContaining({ noRetry: true }));
   });
   it('ambiguous WhatsApp attempt is not retried or converted to text fallback', async () => {
     const { db, states } = deliveryDb();
@@ -162,7 +190,9 @@ describe('actual Authority → confirmation cancellation mapping', () => {
       payment_authority_version: 1, finalization_completed_at: '2026-10-30T00:00:00Z',
       booking_id: 'booking', invoice_id: null, campaign_id: null, reservation_id: null, order_id: null, metadata: null };
     const db = {
-      from: vi.fn(() => chain(payment)),
+      from: vi.fn((table: string) => chain(table === 'bookings'
+        ? { flow_type: 'ticketing', guest_phone: '+15551234567', business_id: 'biz', businesses: { name: 'Event' } }
+        : payment)),
       rpc: vi.fn(async (name: string) => {
         if (name === 'claim_payment_confirmation') return { data: terminated
           ? { claimed: false, reason: 'already_terminated', terminal_reason: 'event_cancelled_followup_recorded' }
@@ -232,5 +262,124 @@ describe('actual email helper retry control', () => {
     const { sendEmail } = await vi.importActual<typeof import('@/lib/email/client')>('@/lib/email/client');
     expect(await sendEmail({ ...input, noRetry: true })).toEqual({ success: true, dev: true });
     expect(mocks.provider).not.toHaveBeenCalled();
+  });
+});
+
+describe('actual media sender single-attempt option', () => {
+  afterEach(() => vi.useRealTimers());
+  function senderFixture(method: 'sendImage' | 'sendDocument') {
+    const provider = vi.fn();
+    const sender = new MetaCloudSender({ [method]: provider } as never, {} as SupabaseClient);
+    sender.bindBusiness('business');
+    const send = (noRetry?: boolean) => method === 'sendImage'
+      ? sender.sendImage({ to: '+15551234567', imageUrl: 'https://example.invalid/ticket', noRetry })
+      : sender.sendDocument({ to: '+15551234567', documentUrl: 'https://example.invalid/ticket.pdf', filename: 'Ticket.pdf', noRetry });
+    return { provider, send };
+  }
+  it.each(['sendImage', 'sendDocument'] as const)('%s noRetry makes one provider invocation after 5xx', async method => {
+    const { provider, send } = senderFixture(method);
+    provider.mockRejectedValue(new MetaApiError('Cloud API error: 503', 503));
+    await expect(send(true)).rejects.toThrow('503');
+    expect(provider).toHaveBeenCalledOnce();
+    expect(mocks.guard).toHaveBeenCalled();
+    expect(mocks.financial).toHaveBeenCalledWith('check_or_authorize_send', { p_attempt_id: 'attempt' });
+  });
+  it.each(['sendImage', 'sendDocument'] as const)('%s preserves default retry behavior', async method => {
+    vi.useFakeTimers();
+    const { provider, send } = senderFixture(method);
+    provider.mockRejectedValueOnce(new MetaApiError('Cloud API error: 503', 503))
+      .mockResolvedValue({ messageId: 'wamid-retry' });
+    const pending = send();
+    await vi.runAllTimersAsync();
+    expect(await pending).toEqual({ success: true, messageId: 'wamid-retry' });
+    expect(provider).toHaveBeenCalledTimes(2);
+  });
+  it.each(['sendImage', 'sendDocument'] as const)('%s noRetry retains authorization rejection', async method => {
+    const { provider, send } = senderFixture(method);
+    mocks.guard.mockRejectedValueOnce(new Error('Messaging suspended'));
+    await expect(send(true)).rejects.toThrow('Messaging suspended');
+    expect(provider).not.toHaveBeenCalled();
+  });
+  it('actual sender failure persists ambiguous ticket state without fallback or resend', async () => {
+    const { db, states } = deliveryDb();
+    const provider = vi.fn().mockRejectedValue(new MetaApiError('Cloud API error: 503', 503));
+    const sender = new MetaCloudSender({ sendImage: provider } as never, {} as SupabaseClient);
+    sender.bindBusiness('business');
+    await expect(deliverTicketsWhatsApp(deliveryOpts(db, sender))).rejects.toThrow('ambiguous');
+    await expect(deliverTicketsWhatsApp(deliveryOpts(db, sender))).rejects.toThrow('already_authorized');
+    expect(provider).toHaveBeenCalledOnce();
+    expect([...states.values()]).toEqual(['ambiguous']);
+  });
+  it('the actual ticket PDF boundary propagates noRetry', async () => {
+    const { db } = deliveryDb();
+    mocks.pdf.mockResolvedValueOnce(Buffer.from('ticket pdf'));
+    Object.assign(db, { storage: { from: () => ({
+      upload: vi.fn().mockResolvedValue({ error: null }),
+      createSignedUrl: vi.fn().mockResolvedValue({ data: { signedUrl: 'https://example.invalid/ticket.pdf' }, error: null }),
+    }) } });
+    const sender = {
+      sendDocument: vi.fn().mockResolvedValue({ messageId: 'wamid-pdf' }),
+      sendImage: vi.fn().mockResolvedValue({ messageId: 'wamid-image' }),
+      sendText: vi.fn(),
+    };
+    await deliverTicketsWhatsApp(deliveryOpts(db, sender));
+    expect(sender.sendDocument).toHaveBeenCalledWith(expect.objectContaining({ noRetry: true }));
+    expect(sender.sendImage).toHaveBeenCalledWith(expect.objectContaining({ noRetry: true }));
+  });
+});
+
+describe('actual ticket purchase webhook authorization', () => {
+  function fixture(soldOut = false) {
+    const options = { cancelled: false };
+    const { db, states } = deliveryDb(options);
+    const previous = db.rpc as unknown as ReturnType<typeof vi.fn>;
+    const original = previous.getMockImplementation()!;
+    previous.mockImplementation((name: string, args: Record<string, string>) => {
+      if (name === 'converge_event_ticket_booking') return Promise.resolve({
+        data: { success: true, outcome: 'issued', tickets: [ticket] }, error: null,
+      });
+      return original(name, args);
+    });
+    (db.from as unknown as ReturnType<typeof vi.fn>).mockImplementation((table: string) =>
+      chain(table === 'events'
+        ? { tickets_sold: soldOut ? 1 : 0, total_tickets: 1 }
+        : { name: 'Venue', subscription_tier: 'free' }));
+    return { db, states, options };
+  }
+  it('cancellation after email but before webhook authorization suppresses purchase dispatch', async () => {
+    const { db, options } = fixture();
+    mocks.email.mockImplementationOnce(async () => {
+      options.cancelled = true;
+      return { success: true, id: 'email-id' };
+    });
+    expect(await sendTicketsAfterPurchase(deliveryOpts(db))).toMatchObject({
+      success: false, error: 'event_cancelled_followup_recorded',
+    });
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+  });
+  it('rechecks event authority separately before sold-out dispatch', async () => {
+    const { db, options } = fixture(true);
+    mocks.dispatch.mockImplementationOnce(async () => { options.cancelled = true; });
+    expect((await sendTicketsAfterPurchase(deliveryOpts(db))).success).toBe(false);
+    expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.dispatch).toHaveBeenCalledWith(db, 'biz', 'ticket.purchased', expect.any(Object));
+  });
+  it('void dispatcher results remain ambiguous and are never blindly replayed', async () => {
+    const { db, states } = fixture(true);
+    await sendTicketsAfterPurchase(deliveryOpts(db));
+    await sendTicketsAfterPurchase(deliveryOpts(db));
+    expect(mocks.dispatch).toHaveBeenCalledTimes(2);
+    expect(states.get('webhook:ticket.purchased')).toBe('ambiguous');
+    expect(states.get('webhook:event.sold_out')).toBe('ambiguous');
+    expect(db.rpc).toHaveBeenCalledWith('finalize_event_ticket_emission', {
+      p_emission_id: 'webhook:ticket.purchased', p_state: 'ambiguous', p_provider_message_id: null,
+    });
+  });
+  it('documents that a dispatch already authorized before cancellation may finish', async () => {
+    const { db, options, states } = fixture();
+    mocks.dispatch.mockImplementationOnce(async () => { options.cancelled = true; });
+    await sendTicketsAfterPurchase(deliveryOpts(db));
+    expect(mocks.dispatch).toHaveBeenCalledOnce();
+    expect(states.get('webhook:ticket.purchased')).toBe('ambiguous');
   });
 });
