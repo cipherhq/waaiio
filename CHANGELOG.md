@@ -197,6 +197,8 @@
 
 ### #762 W25 — Distinguish Audience load errors from empty results (2026-10-30)
 
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
 - **`app/dashboard/audiences/page.tsx`**: Show “No audiences yet” only when the list is empty and no error is present. Preserve loaded audience rows when deletion fails.
 - **`lib/__tests__/engage-audiences-load.test.tsx`**: Add rendered coverage for delayed loading, populated and empty success, denied/server responses, network and non-JSON failures, and failed deletion with existing rows.
 - Presentation-only correction; the separate staging access-contract discrepancy for already-merged M432 is unchanged.
