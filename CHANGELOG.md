@@ -138,6 +138,14 @@
 - **Affects**: Only the convert endpoint for oversized/malformed inputs. Normal images under 10 MB / 8 000 px convert identically.
 - **Could break**: Images exceeding 10 MB download, 8 000 px per axis, 36 MP pixels, or producing >4.5 MB JPEG output are now rejected (413). No such images exist in normal product/event usage — dashboard uploads are capped at 4096×4096 by sanitizeImage(). Memory measured: Sharp/libvips uses streaming tiles, ~135–167 MB peak RSS even at 100 MP; 36 MP conservative.
 
+### #753 — Refresh business logo preview after upload (2026-10-30)
+
+- `app/dashboard/settings/tabs/BusinessTab.tsx`: retain the immediate successful-upload preview, request router refresh only on success, and synchronize only logo state when refreshed business identity/logo props change. Other unsaved form state remains intact.
+- `lib/__tests__/business-logo-753.test.tsx`: rendered Settings/Provider lifecycle coverage for success, delayed refresh after tab remount, preserved edits, rejected/network-failed uploads and business identity changes using synthetic responses.
+- `lib/__tests__/address-forms-751.test.tsx`: add only the required router mock for the existing BusinessTab fixture; preserve address assertions.
+- **Affects**: Dashboard logo preview/context refresh. Upload API, validation, ownership, storage, Places behavior and paid-branding policy are unchanged.
+- **Could break**: Framework refresh timing can temporarily show the prior logo before updated props arrive. Tests mock upload/network boundaries and do not certify live persistence or image availability.
+
 ### Audit NB-5: SECURITY DEFINER ACL hardening (2026-10-24)
 
 - **`supabase/migrations/463_secdef_acl_audit_hardening.sql`** (new): Hardens 6 exposed SECURITY DEFINER functions. `calculate_volume_discount`: adds missing `SET search_path = public`, REVOKEs anon+authenticated (bot-only via service client). `check_conversation_limit`: REVOKEs anon+authenticated (legacy function, no active TS callers). Dashboard revenue RPCs (`get_business_revenue`, `get_order_revenue`, `get_outstanding_invoices`): REVOKEs anon only (keeps authenticated for dashboard). `check_business_role`: REVOKEs anon only (keeps authenticated for RLS policies). Inline verification assertions validate all grants.
@@ -5533,11 +5541,3 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
-
-### #753 — Refresh business logo preview after upload (2026-10-30)
-
-- `app/dashboard/settings/tabs/BusinessTab.tsx`: retain the immediate successful-upload preview, request router refresh only on success, and synchronize only logo state when refreshed business identity/logo props change. Other unsaved form state remains intact.
-- `lib/__tests__/business-logo-753.test.tsx`: rendered Settings/Provider lifecycle coverage for success, delayed refresh after tab remount, preserved edits, rejected/network-failed uploads and business identity changes using synthetic responses.
-- `lib/__tests__/address-forms-751.test.tsx`: add only the required router mock for the existing BusinessTab fixture; preserve address assertions.
-- **Affects**: Dashboard logo preview/context refresh. Upload API, validation, ownership, storage, Places behavior and paid-branding policy are unchanged.
-- **Could break**: Framework refresh timing can temporarily show the prior logo before updated props arrive. Tests mock upload/network boundaries and do not certify live persistence or image availability.
