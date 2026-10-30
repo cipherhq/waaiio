@@ -89,6 +89,13 @@
 - **Affects**: Queue dashboard page and QR Code dashboard page only. No bot flow, capability, schema, payment, or channel changes.
 - **Could break**: Queue QR sharing requires a real bot channel — businesses without one see setup guidance. Other templates retain existing fallback behavior.
 
+### #762 / #780 — Broadcast submission and history outcomes (2026-10-30)
+
+- Validate the current session and recipient reads, require HTTP success plus an explicit API acknowledgement before recording sent history, and count the recipients actually submitted.
+- Show rejected or unknown submission outcomes and accepted submissions whose history write fails separately; preserve the draft on these outcomes and prevent duplicate submission from the mounted page.
+- Describe history as recorded status rather than confirmed recipient delivery. Preserve disabled WhatsApp/SMS channels and existing audience semantics.
+- Added 26 mounted-page tests with synthetic session, database and request boundaries. Page-local duplicate protection does not provide durable cross-reload idempotency, and API acknowledgement does not certify email delivery.
+
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
 - **`lib/payments/send-confirmation.ts`**: Added campaign donation recipient/business resolution block (section 2b) between invoice and order fallback. When `payment.campaign_id` is set and no booking/reservation/invoice resolved the customer, queries `campaign_donations` for `donor_phone`, `business_id`, `reference_code`, and joins to `campaigns(title, businesses(name, country_code))`. Previously, standalone campaign donations had no resolution path — `customerPhone` and `businessId` stayed null, causing `retryable_failed` with `no_business_resolved` forever.
