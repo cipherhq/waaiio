@@ -331,4 +331,62 @@ describe('QR Code page — queue artifact guards', () => {
       expect(value).toBe('https://wa.me/12025550199?text=QTEST%3Aqueue');
     });
   });
+
+  it('assigned dedicated channel + shared business preference → queue uses dedicated (no routing code)', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    // Business preference says shared, but assigned channel is dedicated
+    state.business = { ...state.business, wa_method: 'shared', bot_code: 'QTEST', assigned_channel_id: 'ch-ded-1' };
+    state.channelType = 'dedicated'; // assigned channel's actual type
+
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      expect(qrValues.length).toBeGreaterThanOrEqual(1);
+      // Dedicated channel: no routing code, sends Hi
+      const value = qrValues[0].getAttribute('data-value');
+      expect(value).toBe('https://wa.me/12025550199?text=Hi');
+    });
+
+    // Join guidance shows menu path for dedicated
+    const guidance = screen.getByTestId('queue-join-guidance');
+    expect(guidance.textContent).toContain('selects "Join Queue" from your menu');
+  });
+
+  it('assigned dedicated channel + shared preference + no bot code → queue artifacts available (Hi path)', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    // Shared preference with bot code, but assigned channel is dedicated → code unused
+    state.business = { ...state.business, wa_method: 'shared', bot_code: '', assigned_channel_id: 'ch-ded-2' };
+    state.channelType = 'dedicated';
+
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      expect(qrValues.length).toBeGreaterThanOrEqual(1);
+      const value = qrValues[0].getAttribute('data-value');
+      // Dedicated channel without code: Hi greeting
+      expect(value).toBe('https://wa.me/12025550199?text=Hi');
+    });
+
+    // No setup guidance — dedicated channel is valid even without routing code
+    expect(screen.queryByTestId('queue-setup-guidance')).toBeNull();
+  });
+
+  it('assigned shared channel + non-shared preference → queue uses shared routing', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    // Business says dedicated, but assigned channel metadata says shared
+    state.business = { ...state.business, wa_method: 'dedicated', bot_code: 'QBIZ', assigned_channel_id: 'ch-shared-1' };
+    state.channelType = 'shared'; // assigned channel's actual type is shared
+
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      expect(qrValues.length).toBeGreaterThanOrEqual(1);
+      // Shared channel: routing code + :queue suffix
+      const value = qrValues[0].getAttribute('data-value');
+      expect(value).toBe('https://wa.me/12025550199?text=QBIZ%3Aqueue');
+    });
+  });
 });

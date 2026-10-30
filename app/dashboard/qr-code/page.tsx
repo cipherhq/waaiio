@@ -113,10 +113,9 @@ export default function QRCodePage() {
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>(initialTemplate);
 
   const isQueueTemplate = selectedTemplate === 'queue';
-  // Routing context: for queue, a shared fallback channel needs shared-channel
-  // routing even if business.wa_method says dedicated. Other templates use wa_method.
+  // Queue routing uses the resolved channel's type; other templates use business preference.
   const businessIsShared = !business.wa_method || business.wa_method === 'shared';
-  const isSharedNumber = (isQueueTemplate && channelLoaded && resolvedChannelIsShared) || businessIsShared;
+  const isSharedNumber = isQueueTemplate ? resolvedChannelIsShared : businessIsShared;
   const routingCode = isSharedNumber ? (business.bot_code || '') : '';
   const isWhitelabel = PRICING_TIERS[(business.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
   const [copied, setCopied] = useState(false);
