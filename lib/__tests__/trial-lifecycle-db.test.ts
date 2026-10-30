@@ -86,7 +86,7 @@ function createTestBusiness(opts: {
 
   // All fixture creation is strict — errors fail the test
   const ownerId = psql(`SELECT gen_random_uuid();`);
-  psql(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${ownerId}', 'test-m372-${bizCounter}-${Date.now()}@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
+  psql(`INSERT INTO auth.users (id, email, phone_confirmed_at, raw_app_meta_data) VALUES ('${ownerId}', 'test-m372-${bizCounter}-${Date.now()}@test.com', NOW(), '{}') ON CONFLICT (id) DO UPDATE SET phone_confirmed_at = COALESCE(auth.users.phone_confirmed_at, NOW());`);
 
   psql(`
     INSERT INTO public.profiles (id, first_name, last_name, role)
@@ -798,7 +798,7 @@ describe.skipIf(!canRun)('shared finalization eligibility', () => {
     const slug = `test-biz-${bizCounter}-${Date.now()}`;
     const botCode = `TB${bizCounter}${Date.now()}`;
     const ownerId = psql(`SELECT gen_random_uuid();`);
-    psql(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${ownerId}', 'test-m372-shared-${Date.now()}@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
+    psql(`INSERT INTO auth.users (id, email, phone_confirmed_at, raw_app_meta_data) VALUES ('${ownerId}', 'test-m372-shared-${Date.now()}@test.com', NOW(), '{}') ON CONFLICT (id) DO UPDATE SET phone_confirmed_at = COALESCE(auth.users.phone_confirmed_at, NOW());`);
     psql(`INSERT INTO public.profiles (id, first_name, last_name, role) VALUES ('${ownerId}', 'Test', 'User', 'restaurant_owner') ON CONFLICT (id) DO NOTHING;`);
     const bizId = psql(`
       INSERT INTO public.businesses (owner_id, name, slug, bot_code, city, address, phone, category,

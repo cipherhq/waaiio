@@ -15,9 +15,89 @@ import {
   type RuleCondition,
   type RuleContext,
 } from './rules-engine';
+import type { MetaCloudService } from '@/lib/channels/meta-cloud';
+import { logger } from '@/lib/logger';
 
 const EXTERNAL_ACTIONS = new Set(['send_message', 'send_template', 'notify_owner']);
 const TERMINAL_ACTION_STATES = new Set(['completed', 'failed', 'indeterminate']);
+
+/** Supported internal categories for financial authorization. */
+type FinancialCategory = 'utility' | 'marketing' | 'authentication';
+
+/** Normalize Meta's uppercase category to internal lowercase. */
+function normalizeMetaCategory(metaCategory: string): FinancialCategory | null {
+  const upper = metaCategory.toUpperCase();
+  if (upper === 'UTILITY') return 'utility';
+  if (upper === 'MARKETING') return 'marketing';
+  if (upper === 'AUTHENTICATION') return 'authentication';
+  return null;
+}
+
+/**
+ * Resolve a template's approved category from the sender's actual WABA via Meta API.
+ * Uses the already-resolved MetaCloudService from the ResolvedChannel (decrypted
+ * credentials, correct WABA). No independent channel query — the caller provides
+ * the exact cloud instance that will send the template.
+ *
+ * Fail closed: returns null if cloud unavailable, template not found on this WABA,
+ * template not APPROVED, or category unrecognized.
+ */
+/**
+ * Attempt a paginated template lookup against the WABA.
+ * Returns the normalized category if found and APPROVED, null if definitively not found.
+ * Throws on transient API errors so the caller can distinguish and retry.
+ */
+async function lookupTemplateCategory(
+  cloud: MetaCloudService,
+  templateName: string,
+): Promise<FinancialCategory | null> {
+  let after: string | undefined;
+  const MAX_PAGES = 10;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    // Let API errors propagate — caller handles retry vs definitive failure
+    const result = await cloud.getTemplates({ fields: 'name,status,category', after });
+    const match = result.data.find(t => t.name === templateName && t.status === 'APPROVED');
+    if (match) return normalizeMetaCategory(match.category);
+    if (!result.paging?.next || !result.paging?.cursors?.after) break;
+    after = result.paging.cursors.after;
+  }
+  return null; // Exhausted all pages — template not found or not APPROVED
+}
+
+const LOOKUP_RETRIES = 2;
+const LOOKUP_RETRY_DELAY_MS = 1500;
+
+/**
+ * Resolve a template's approved category from the sender's actual WABA via Meta API.
+ *
+ * Retries transient Meta API errors (timeout, 5xx) up to LOOKUP_RETRIES times with
+ * backoff. This handles the common case where Meta's control-plane is momentarily
+ * unavailable but recovers quickly.
+ *
+ * Returns null (definitive not-found) only after all retries succeed without finding
+ * the template. Throws only if all retries are exhausted on API errors, so the caller
+ * can distinguish "definitely not approved" from "couldn't reach Meta."
+ */
+export async function resolveTemplateCategory(
+  cloud: MetaCloudService | undefined | null,
+  templateName: string,
+): Promise<FinancialCategory | null> {
+  if (!cloud) return null;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= LOOKUP_RETRIES; attempt++) {
+    try {
+      return await lookupTemplateCategory(cloud, templateName);
+    } catch (err) {
+      lastError = err;
+      if (attempt < LOOKUP_RETRIES) {
+        await new Promise(r => setTimeout(r, LOOKUP_RETRY_DELAY_MS * (attempt + 1)));
+      }
+    }
+  }
+  // All retries exhausted on API errors — throw so caller knows this is transient,
+  // not a definitive "template does not exist" (which returns null).
+  throw lastError;
+}
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -41,6 +121,8 @@ async function executeFrozenAction(
   row: FrozenRuleAction,
   context: RuleContext,
   sender?: MessageSender,
+  cloud?: MetaCloudService,
+  categoryResolver: (c: MetaCloudService | undefined | null, t: string) => Promise<FinancialCategory | null> = resolveTemplateCategory,
 ): Promise<void> {
   if (row.status === 'sending') {
     // The provider boundary was crossed by a prior worker. Reconcile to the
@@ -61,12 +143,51 @@ async function executeFrozenAction(
     action_payload: payload,
     priority: 0,
   };
+  // Merchant-authored rule text: do NOT force a category. The inbound sender's
+  // default applies for in-window replies; proactive sends without a category
+  // are blocked by the financial gate (fail-closed) until the rules engine
+  // supports explicit category classification for merchant-authored content.
   const sendMessage = sender
     ? async (phone: string, text: string) => { await sender.sendText({ to: phone, text }); }
     : undefined;
+  // For send_template: resolve category BEFORE the sending fence.
+  // resolveTemplateCategory retries transient Meta API errors (2 retries with backoff).
+  // - Returns a category: lookup succeeded, proceed to emission
+  // - Returns null: template definitively not APPROVED on this WABA → mark failed
+  // - Throws: all retries exhausted on API errors → mark failed (retries were attempted)
+  // Both null and throw mark the action as 'failed' (terminal, pre-emission).
+  // The existing lifecycle has no pending→pending retry path, so inline retry inside
+  // resolveTemplateCategory is the recovery mechanism for transient Meta failures.
+  let preResolvedCategory: FinancialCategory | undefined;
+  if (row.action_type === 'send_template' && payload.template_name) {
+    try {
+      const resolved = await categoryResolver(cloud, payload.template_name as string);
+      if (!resolved) {
+        // Template not APPROVED or category unrecognized — definitive rejection.
+        const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
+        if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
+        return;
+      }
+      preResolvedCategory = resolved;
+    } catch (lookupErr) {
+      // All inline retries exhausted — Meta API persistently unavailable.
+      // Mark failed (pre-emission terminal). No emission or financial reservation occurred.
+      logger.withContext({ op: 'sealed-rule-actions.pre-fence-lookup', ruleId: row.rule_id })
+        .error('[SEALED-RULES] Template category lookup failed after retries — marking failed');
+      const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
+      if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
+      return;
+    }
+  }
+
   const sendTemplate = sender?.sendTemplate
     ? async (phone: string, templateName: string, templateParams: string[]) => {
-      await sender.sendTemplate!({ to: phone, templateName, templateParams });
+      // Category was pre-resolved before the sending fence — safe to emit.
+      const category = preResolvedCategory;
+      if (!category) {
+        throw new Error(`sealed_template_category_unresolved:${templateName}`);
+      }
+      await sender.sendTemplate!({ to: phone, templateName, templateParams, messageCategory: category });
     }
     : undefined;
 
@@ -112,8 +233,13 @@ export async function runSealedRuleActions(params: {
   event: string;
   context: RuleContext;
   sender?: MessageSender;
+  /** Already-resolved MetaCloudService from the sender's channel (decrypted, correct WABA). */
+  cloud?: MetaCloudService;
+  /** @internal Test-only override for template category resolution. */
+  _resolveTemplateCategory?: (cloud: MetaCloudService | undefined | null, templateName: string) => Promise<FinancialCategory | null>;
 }): Promise<{ actionCount: number; terminalCount: number }> {
-  const { supabase, paymentId, businessId, event, context, sender } = params;
+  const { supabase, paymentId, businessId, event, context, sender, cloud } = params;
+  const categoryResolver = params._resolveTemplateCategory || resolveTemplateCategory;
   const existing = await readRuleActionManifest(supabase, paymentId);
   if (!existing.ok) throw new Error(`rule_manifest_lookup_failed:${existing.error}`);
 
@@ -153,7 +279,7 @@ export async function runSealedRuleActions(params: {
   }
 
   for (const row of frozen.rows) {
-    await executeFrozenAction(supabase, paymentId, businessId, row, context, sender);
+    await executeFrozenAction(supabase, paymentId, businessId, row, context, sender, cloud, categoryResolver);
   }
 
   const finalRows = await readFrozenRuleActions(supabase, paymentId);

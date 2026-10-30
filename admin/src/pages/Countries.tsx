@@ -658,6 +658,10 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   const [pskGrowthRef, setPskGrowthRef] = useState('');
   const [pskBusinessRef, setPskBusinessRef] = useState('');
 
+  // Paystack tier prices (major units) — required for atomic plan+price cutover
+  const [pskGrowthPrice, setPskGrowthPrice] = useState<number | ''>('');
+  const [pskBusinessPrice, setPskBusinessPrice] = useState<number | ''>('');
+
   const selectedCountry = countries.find(c => c.code === selectedCode);
   const activeGateway = selectedCountry?.payment_gateway || '';
 
@@ -676,6 +680,11 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
     setFlwBusinessRef(businessRefs.flutterwave || '');
     setPskGrowthRef(growthRefs.paystack || '');
     setPskBusinessRef(businessRefs.paystack || '');
+    // Initialize tier prices from current country pricing
+    const growthPrice = pricing.growth?.price as number | undefined;
+    const businessPrice = pricing.business?.price as number | undefined;
+    setPskGrowthPrice(typeof growthPrice === 'number' && growthPrice > 0 ? growthPrice : '');
+    setPskBusinessPrice(typeof businessPrice === 'number' && businessPrice > 0 ? businessPrice : '');
   }, [selectedCode, countries]);
 
   async function loadVersion() {
@@ -712,12 +721,31 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       const capturedVersion = versionId;
       const capturedRefs = planRefs;
 
+      // Build tier_prices for Paystack atomic cutover
+      let capturedTierPrices: Record<string, { price: number }> | null = null;
+      const hasPskRefs = !!(pskGrowthRef.trim() || pskBusinessRef.trim());
+      if (activeGateway === 'paystack' && hasPskRefs) {
+        // When Paystack plan refs are present, both prices MUST be valid positive finite numbers
+        const gp = typeof pskGrowthPrice === 'number' && Number.isFinite(pskGrowthPrice) && pskGrowthPrice > 0 ? pskGrowthPrice : null;
+        const bp = typeof pskBusinessPrice === 'number' && Number.isFinite(pskBusinessPrice) && pskBusinessPrice > 0 ? pskBusinessPrice : null;
+        if (!gp || !bp) {
+          setError('Both Growth and Business prices are required when saving Paystack plan codes.');
+          setSaving(false);
+          return;
+        }
+        capturedTierPrices = {
+          growth: { price: gp },
+          business: { price: bp },
+        };
+      }
+
       const onAuthorized = async (stepUpId: string) => {
         const res = await apiCall({
           action: 'save_refs',
           country_code: capturedCode,
           plan_refs: capturedRefs,
           expected_version_id: capturedVersion,
+          ...(capturedTierPrices ? { tier_prices: capturedTierPrices } : {}),
           stepUpId,
         });
 
@@ -745,8 +773,11 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
           country_code: capturedCode,
           plan_refs: capturedRefs,
           expected_version_id: capturedVersion,
+          ...(capturedTierPrices ? { tier_prices: capturedTierPrices } : {}),
         },
-        description: `Save provider plan refs for ${capturedCode}`,
+        description: capturedTierPrices
+          ? `Save plan refs + update prices for ${capturedCode}`
+          : `Save provider plan refs for ${capturedCode}`,
         onAuthorized,
       });
     } catch (err) {
@@ -903,6 +934,39 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
                 <input className={inputClass} value={pskBusinessRef} onChange={e => setPskBusinessRef(e.target.value)} placeholder="e.g. PLN_def456" />
               </div>
             </div>
+
+            {activeGateway === 'paystack' && (
+              <>
+                <h4 className="text-sm font-semibold text-gray-700">Paystack Tier Prices (major units)</h4>
+                <p className="text-xs text-gray-500 -mt-2 mb-1">Atomic cutover: prices update together with plan codes. Preflight verifies amounts match the Paystack plans.</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Growth Monthly Price ({selectedCountry?.currency_code})</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      className={inputClass}
+                      value={pskGrowthPrice}
+                      onChange={e => setPskGrowthPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      placeholder="e.g. 49000"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Business Monthly Price ({selectedCountry?.currency_code})</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      className={inputClass}
+                      value={pskBusinessPrice}
+                      onChange={e => setPskBusinessPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      placeholder="e.g. 99000"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             <div>
               <h4 className="text-sm font-semibold text-gray-700">Stripe</h4>

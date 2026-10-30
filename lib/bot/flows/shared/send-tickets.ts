@@ -36,17 +36,6 @@ export interface SendTicketsOptions {
   translate?: (text: string) => Promise<string>;
 }
 
-/** Generate a short unique ticket code like "TK-A3F8X2" */
-function generateTicketCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous I/O/0/1
-  const randomBytes = crypto.getRandomValues(new Uint8Array(6));
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars[randomBytes[i] % chars.length];
-  }
-  return `TK-${code}`;
-}
-
 /**
  * After a ticket purchase:
  * 1. Generate unique ticket codes
@@ -69,6 +58,52 @@ export interface TicketDeliveryContext extends SendTicketsOptions {
   tickets: TicketCreationResult['tickets'];
 }
 
+/** Durable Event emission result; never convert ambiguity into a fallback send. */
+export class EventTicketEmissionError extends Error {
+  constructor(public readonly reason: string) { super(reason); }
+}
+
+async function emitTicketArtifact(
+  opts: TicketDeliveryContext,
+  channel: 'whatsapp' | 'email',
+  key: string,
+  send: () => Promise<{ messageId?: string; id?: string; success?: boolean; error?: unknown } | undefined>,
+): Promise<void> {
+  const { data: permit, error } = await opts.supabase.rpc('authorize_event_ticket_emission', {
+    p_booking_id: opts.bookingId, p_channel: channel, p_emission_key: key,
+  });
+  if (error || !permit) throw new EventTicketEmissionError('ticket_emission_authority_unavailable');
+  if (permit.authorized !== true) {
+    if (permit.state === 'accepted') return;
+    throw new EventTicketEmissionError(permit.reason || 'ticket_emission_not_authorized');
+  }
+  let result: Awaited<ReturnType<typeof send>>;
+  try {
+    result = await send();
+  } catch (err) {
+    // Conservatively unknown unless the provider gave an explicit client rejection.
+    const status = typeof err === 'object' && err !== null
+      ? Number((err as { httpStatus?: number; statusCode?: number }).httpStatus ||
+        (err as { statusCode?: number }).statusCode || 0) : 0;
+    const definite = status >= 400 && status < 500 && status !== 408;
+    await opts.supabase.rpc('finalize_event_ticket_emission', {
+      p_emission_id: permit.emission_id, p_state: definite ? 'failed' : 'ambiguous',
+      p_provider_message_id: null,
+    });
+    throw new EventTicketEmissionError(definite ? 'ticket_provider_rejected' : 'ticket_emission_ambiguous');
+  }
+  const providerId = result?.messageId || result?.id;
+  const returnedStatus = result?.error && typeof result.error === 'object'
+    ? Number((result.error as { statusCode?: number }).statusCode || 0) : 0;
+  const rejected = result?.success === false && returnedStatus >= 400 && returnedStatus < 500 && returnedStatus !== 408;
+  const state = providerId && result?.success !== false ? 'accepted' : rejected ? 'failed' : 'ambiguous';
+  const { data: final, error: finalError } = await opts.supabase.rpc('finalize_event_ticket_emission', {
+    p_emission_id: permit.emission_id, p_state: state, p_provider_message_id: providerId || null,
+  });
+  if (finalError || final?.finalized !== true) throw new EventTicketEmissionError('ticket_emission_finalize_unresolved');
+  if (state !== 'accepted') throw new EventTicketEmissionError(rejected ? 'ticket_provider_rejected' : 'ticket_emission_ambiguous');
+}
+
 /**
  * Pure canonical ticket-row convergence. NO delivery side effects.
  * Creates/repairs the exact {1..N} ticket row set for a booking.
@@ -82,78 +117,23 @@ export async function ensureCanonicalTicketRows(opts: {
   guestPhone: string;
   quantity: number;
 }): Promise<TicketCreationResult> {
-  const { supabase, businessId, bookingId, eventId, guestName, guestPhone, quantity } = opts;
-  const expectedNumbers = new Set(Array.from({ length: quantity }, (_, i) => i + 1));
-  const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
-
-  const { data: existingTickets, error: existingError } = await supabase
-    .from('event_tickets')
-    .select('ticket_code, ticket_number')
-    .eq('booking_id', bookingId);
-
-  if (existingError) {
-    logger.error('[TICKETS] Failed to check existing tickets:', existingError.message);
-    return { success: false, tickets: [], error: 'existing_ticket_lookup_failed' };
+  const { supabase, bookingId, eventId, quantity } = opts;
+  const { data, error } = await supabase.rpc('converge_event_ticket_booking', {
+    p_booking_id: bookingId, p_event_id: eventId, p_ticket_type_id: null, p_quantity: quantity,
+  });
+  if (error || !data) return { success: false, tickets: [], error: 'ticket_convergence_failed' };
+  if (data.outcome === 'cancelled_followup_recorded') {
+    return { success: false, tickets: [], error: 'event_cancelled_followup_recorded' };
   }
-
-  const existingNumbers = new Set((existingTickets || []).map(t => t.ticket_number));
-  const missingNumbers = [...expectedNumbers].filter(n => !existingNumbers.has(n));
-
-  if (missingNumbers.length > 0) {
-    const rows = missingNumbers.map(n => ({
-      business_id: businessId,
-      booking_id: bookingId,
-      event_id: eventId,
-      ticket_code: generateTicketCode(),
-      ticket_number: n,
-      guest_name: guestName,
-      guest_phone: phone,
-      status: 'valid',
-    }));
-
-    const { error: insertError } = await supabase
-      .from('event_tickets')
-      .insert(rows);
-
-    if (insertError) {
-      if (insertError.code === '23505') {
-        logger.info('[TICKETS] UNIQUE conflict — concurrent worker created rows for booking', bookingId);
-      } else {
-        logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
-        return { success: false, tickets: [], error: 'insert_failed' };
-      }
-    } else {
-      logger.info('[TICKETS] Inserted', rows.length, 'missing event_tickets for booking', bookingId);
-    }
-  } else {
-    logger.info('[TICKETS] All', quantity, 'tickets already exist for booking', bookingId);
+  if (data.success !== true || data.outcome !== 'issued' || !Array.isArray(data.tickets) ||
+      data.tickets.length !== quantity) {
+    return { success: false, tickets: [], error: data.reason || 'canonical_set_incomplete' };
   }
-
-  // Authoritative final re-read of canonical ticket state
-  const { data: finalTickets, error: finalError } = await supabase
-    .from('event_tickets')
-    .select('ticket_code, ticket_number')
-    .eq('booking_id', bookingId)
-    .order('ticket_number', { ascending: true });
-
-  if (finalError) {
-    logger.error('[TICKETS] Final ticket re-read failed:', finalError.message);
-    return { success: false, tickets: [], error: 'final_reread_failed' };
-  }
-
-  const finalNumbers = new Set((finalTickets || []).map(t => t.ticket_number));
-  const allPresent = [...expectedNumbers].every(n => finalNumbers.has(n));
-  const exactCount = (finalTickets?.length ?? 0) === quantity;
-  const allInRange = (finalTickets || []).every(t => expectedNumbers.has(t.ticket_number));
-  if (!allPresent || !exactCount || !allInRange) {
-    logger.error('[TICKETS] Canonical ticket set invalid: expected', [...expectedNumbers], 'got', [...finalNumbers], 'count', finalTickets?.length);
+  const numbers = new Set(data.tickets.map((ticket: { ticketNumber: number }) => ticket.ticketNumber));
+  if (numbers.size !== quantity || !Array.from({ length: quantity }, (_, i) => i + 1).every(n => numbers.has(n))) {
     return { success: false, tickets: [], error: 'canonical_set_incomplete' };
   }
-
-  return {
-    success: true,
-    tickets: finalTickets!.map(t => ({ ticketCode: t.ticket_code, ticketNumber: t.ticket_number, totalTickets: quantity })),
-  };
+  return { success: true, tickets: data.tickets };
 }
 
 export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promise<TicketCreationResult> {
@@ -182,10 +162,20 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   try {
     await deliverTicketsEmail({ ...opts, tickets });
   } catch (emailErr) {
+    if (emailErr instanceof EventTicketEmissionError && emailErr.reason === 'event_cancelled') {
+      return { success: false, tickets: [], error: 'event_cancelled_followup_recorded' };
+    }
     // Email remains supplemental to the WhatsApp-first ticket contract.
     logger.error('[TICKETS] Email send error:', emailErr);
   }
-  await dispatchTicketPurchaseWebhooks({ ...opts, tickets });
+  try {
+    await dispatchTicketPurchaseWebhooks({ ...opts, tickets });
+  } catch (error) {
+    if (error instanceof EventTicketEmissionError && error.reason === 'event_cancelled') {
+      return { success: false, tickets: [], error: 'event_cancelled_followup_recorded' };
+    }
+    throw error;
+  }
 
   return { success: true, tickets };
 }
@@ -254,18 +244,20 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
         .createSignedUrl(storagePath, 86400);
 
       if (!signedUrlError && signedUrlData?.signedUrl) {
-        await sender.sendDocument({
+        await emitTicketArtifact(opts, 'whatsapp', 'document', () => sender.sendDocument({
           to: phone,
           documentUrl: signedUrlData.signedUrl,
           filename: `${eventName.replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 40)} - Tickets.pdf`,
           caption: fillFlowCopy(ticketCopyLang, 'notification.ticket_pdf_caption', { quantity: String(quantity), ticketLabel, eventName }),
-        });
+          messageCategory: 'service', noRetry: true,
+        }));
         logger.info('[TICKETS] PDF sent to', phone);
       }
     } else {
       logger.error('[TICKETS] PDF upload failed:', uploadError.message);
     }
   } catch (pdfErr) {
+    if (pdfErr instanceof EventTicketEmissionError && pdfErr.reason !== 'ticket_provider_rejected') throw pdfErr;
     logger.error('[TICKETS] PDF generation failed (continuing to QR):', pdfErr);
   }
 
@@ -277,12 +269,14 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
     const imageUrl = `${appUrl}/api/tickets/image?code=${encodeURIComponent(ticket.ticketCode)}`;
 
     try {
-      await sender.sendImage({ to: phone, imageUrl, caption });
+      await emitTicketArtifact(opts, 'whatsapp', `image:${ticket.ticketCode}`, () => sender.sendImage({ to: phone, imageUrl, caption, messageCategory: 'service', noRetry: true }));
       logger.info('[TICKETS] Ticket image sent for', ticket.ticketCode);
     } catch (err) {
+      if (!(err instanceof EventTicketEmissionError) || err.reason !== 'ticket_provider_rejected') throw err;
       logger.error('[TICKETS] Ticket image send failed for', ticket.ticketCode, ':', err);
       // A successful text fallback still preserves a usable ticket/verification URL.
-      await sender.sendText({ to: phone, text: await t(caption) });
+      const fallbackText = await t(caption);
+      await emitTicketArtifact(opts, 'whatsapp', `text:${ticket.ticketCode}`, () => sender.sendText({ to: phone, text: fallbackText, messageCategory: 'service', noRetry: true }));
     }
   }
   logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);
@@ -348,14 +342,40 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
     labels: ticketEmailLabels,
     wrapperLabels: ticketWrapperLabels,
   });
-  const result = await sendEmail({ to: email, ...emailContent });
-  if (!result.success) throw new Error('ticket_email_send_failed');
+  await emitTicketArtifact(opts, 'email', 'ticket', () => sendEmail({ to: email!, ...emailContent, noRetry: true }));
   logger.info('[TICKETS] Email sent to', email, '| booking:', bookingId);
+}
+
+/** Dispatcher returns void, so completion is not evidence of provider acceptance. */
+async function dispatchAuthorizedTicketWebhook(
+  opts: TicketDeliveryContext,
+  eventType: 'ticket.purchased' | 'event.sold_out',
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const { data: permit, error } = await opts.supabase.rpc('authorize_event_ticket_emission', {
+    p_booking_id: opts.bookingId, p_channel: 'webhook', p_emission_key: eventType,
+  });
+  if (error || !permit) throw new EventTicketEmissionError('ticket_emission_authority_unavailable');
+  if (permit.authorized !== true) {
+    // Any prior attempt is durable: the dispatcher provides no safe replay proof.
+    if (permit.reason === 'already_authorized') return;
+    throw new EventTicketEmissionError(permit.reason || 'ticket_emission_not_authorized');
+  }
+  try {
+    await dispatchWebhook(opts.supabase, opts.businessId, eventType, payload);
+  } catch (error) {
+    logger.error('[TICKETS] Webhook dispatch outcome unresolved:', error);
+  }
+  // The dispatcher owns endpoint-specific delivery records. Never invent an ID.
+  const { error: finalError } = await opts.supabase.rpc('finalize_event_ticket_emission', {
+    p_emission_id: permit.emission_id, p_state: 'ambiguous', p_provider_message_id: null,
+  });
+  if (finalError) logger.warn('[TICKETS] Webhook attempt remains unresolved');
 }
 
 async function dispatchTicketPurchaseWebhooks(opts: TicketDeliveryContext): Promise<void> {
   const { supabase, businessId, bookingId, eventId, eventName, guestName, guestPhone, referenceCode, quantity, tickets } = opts;
-  dispatchWebhook(supabase, businessId, 'ticket.purchased', {
+  await dispatchAuthorizedTicketWebhook(opts, 'ticket.purchased', {
     event_id: eventId,
     event_name: eventName,
     booking_id: bookingId,
@@ -364,7 +384,7 @@ async function dispatchTicketPurchaseWebhooks(opts: TicketDeliveryContext): Prom
     guest_phone: guestPhone,
     quantity,
     ticket_codes: tickets.map(t => t.ticketCode),
-  }).catch(err => logger.error('[TICKETS] Webhook dispatch error:', err));
+  });
 
   // 10. Check if event is sold out → dispatch event.sold_out
   const { data: evt } = await supabase
@@ -374,11 +394,11 @@ async function dispatchTicketPurchaseWebhooks(opts: TicketDeliveryContext): Prom
     .single();
 
   if (evt && evt.tickets_sold >= evt.total_tickets) {
-    dispatchWebhook(supabase, businessId, 'event.sold_out', {
+    await dispatchAuthorizedTicketWebhook(opts, 'event.sold_out', {
       event_id: eventId,
       event_name: eventName,
       total_tickets: evt.total_tickets,
-    }).catch(err => logger.error('[TICKETS] Sold-out webhook error:', err));
+    });
   }
 
 }

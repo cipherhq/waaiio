@@ -6,7 +6,7 @@ export interface InitPaymentOpts {
   orderId?: string;
   invoiceId?: string;
   reservationId?: string;
-  userId: string;
+  userId: string | null;
   amount: number;
   currency: string;
   referenceCode: string;

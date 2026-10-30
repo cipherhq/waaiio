@@ -33,6 +33,9 @@ export async function GET(request: NextRequest) {
 
   try {
     // ── Phase 1: Fresh trial activation ──
+    // Exclude businesses permanently marked ineligible (metadata.trial_ineligible = 'true')
+    // to prevent queue starvation. Uses OR with IS NULL to include businesses with
+    // default/empty metadata (JSON extraction returns NULL for missing keys).
     const { data: businesses, error: queryError } = await supabase
       .from('businesses')
       .select('id, name')
@@ -40,6 +43,8 @@ export async function GET(request: NextRequest) {
       .eq('status', 'active')
       .is('trial_ends_at', null)
       .or('whatsapp_channel_id.not.is.null,wa_method.eq.shared')
+      .or('metadata->>trial_ineligible.is.null,metadata->>trial_ineligible.neq.true')
+      .order('created_at', { ascending: true })
       .limit(100);
 
     if (queryError) {
@@ -67,6 +72,34 @@ export async function GET(request: NextRequest) {
         } else {
           pending++;
           const reason = parsed?.reason || 'unknown';
+
+          // Terminal denials: mark business as permanently ineligible so it
+          // exits the trial_ends_at IS NULL queue and doesn't starve eligible
+          // businesses. Uses mark_trial_ineligible RPC for atomic JSONB key
+          // update — preserves all other metadata keys. Does NOT set
+          // trial_ends_at (no fake trial clock).
+          //
+          // Only owner_already_has_trial is truly permanent — the owner's
+          // other business already has a trial grant and owner_id is immutable.
+          //
+          // phone_not_verified and not_free_tier are NOT terminal — a user can
+          // complete OTP later or a subscription can change. These remain
+          // retryable (the cron re-attempts them each run).
+          if (reason === 'owner_already_has_trial') {
+            try {
+              const { error: markErr } = await supabase.rpc('mark_trial_ineligible', {
+                p_business_id: biz.id,
+                p_reason: reason,
+              });
+              if (markErr) {
+                // Best-effort: denial is already enforced by M465 RPC.
+                // If marking fails, business stays in queue but RPC blocks grant.
+                console.warn(`[TRIAL-ACTIVATION-CRON] mark_trial_ineligible error for ${biz.id}:`, markErr.message);
+              }
+            } catch (markExc) {
+              console.warn(`[TRIAL-ACTIVATION-CRON] mark_trial_ineligible exception for ${biz.id}:`, markExc);
+            }
+          }
 
           if (
             reason === 'missing_trial_credit_config' ||

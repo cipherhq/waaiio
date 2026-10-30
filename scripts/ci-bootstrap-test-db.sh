@@ -51,10 +51,12 @@ $$ LANGUAGE SQL STABLE;
 
 -- Minimal auth.users table (only CI-guaranteed columns)
 -- Must include phone column: handle_new_user() trigger references NEW.phone
+-- Must include phone_confirmed_at: M465 activate_trial_if_eligible checks it
 CREATE TABLE IF NOT EXISTS auth.users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT,
   phone TEXT,
+  phone_confirmed_at TIMESTAMPTZ,
   raw_app_meta_data JSONB DEFAULT '{}'
 );
 
@@ -111,9 +113,10 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, an
 -- The main branch CI passes without any ALTER DEFAULT PRIVILEGES.
 
 -- Seed common test user (many test suites reference this UUID)
-INSERT INTO auth.users (id, email) VALUES
-  ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
-  ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
+-- phone_confirmed_at set so M465 activate_trial_if_eligible phone check passes
+INSERT INTO auth.users (id, email, phone_confirmed_at) VALUES
+  ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local', NOW()),
+  ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local', NOW())
 ON CONFLICT (id) DO NOTHING;
 EOSQL
 echo "✅ Supabase schema prerequisites created"

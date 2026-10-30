@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { type CountryCode } from '@/lib/constants';
 import { PhoneInput } from '@/components/auth/PhoneInput';
+import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Location {
@@ -175,7 +176,14 @@ export default function LocationsPage() {
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Address <span className="text-red-400">*</span></label>
-              <input type="text" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="Full street address" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              <PlacesAutocomplete
+                value={form.address}
+                onChange={(address, place) => setForm(prev => ({
+                  ...prev, address, city: place?.city ?? prev.city,
+                }))}
+                placeholder="Full street address"
+                ariaLabel="Location address"
+              />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>

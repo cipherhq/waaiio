@@ -580,12 +580,14 @@ describe('Admin UI — two-step Preview then Confirm & Send', () => {
 // ── STOP handling ──
 
 describe('STOP handling — launch subscriber opt-out', () => {
-  it('bot.service.ts updates launch_subscribers on STOP without blocking commerce', () => {
+  it('bot.service.ts handles platform opt-out independently from merchant STOP (#721)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
     expect(src).toContain("launch_subscribers");
     expect(src).toContain("opted_out");
-    expect(src).toContain('then(() => {}, () => {})');
+    // #721: Platform opt-out is now handled via _recordPlatformOptOut with proper error checking,
+    // not fire-and-forget. The old fire-and-forget pattern was removed per Owner Decision 2.
+    expect(src).toContain("_recordPlatformOptOut");
   });
 });
 

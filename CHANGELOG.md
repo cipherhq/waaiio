@@ -1,3 +1,268 @@
+### #762 — Verified Paystack fee and finalization snapshot (2026-10-30)
+
+- **`lib/payments/provider-adapters.ts`, `lib/payments/webhook-handler.ts`**: Share validated Paystack minor-to-integer-major-unit normalization, distinguish absent fees from supplied zero, and pass explicit observations instead of standalone webhook fee updates.
+- **`lib/payments/authority.ts`, `supabase/migrations/485_verified_gateway_fee_claim.sql`**: Accept eligible verified fees and seal their finalization snapshot atomically through a distinct service-role RPC. Preserve the legacy claim signature, lease/token recovery, pinned fee policy and direct-transfer behavior; keep historical classification and sealed snapshots immutable.
+- **Tests**: Actual reconciliation/fee-insertion coverage in `lib/payments/__tests__/verified-fee-persistence-762.test.ts`, adapter normalization coverage in `lib/payments/__tests__/provider-adapters.test.ts`, and real two-session migration/RPC/rollback/ACL coverage in `lib/__tests__/verified-gateway-fee-claim-762.pg.test.ts`.
+- **Affects / could break**: Paystack fee observation and shared finalization claim/retry paths. Application/schema alignment requires separately authorized M485 rollout; deploying the caller before its RPC exists can prevent finalization. Other providers retain their existing scalar behavior. No historical repair, hosted rollout or settlement certification is claimed.
+
+### #762 — Directory search: fix enum category filter via computed text field (2026-10-30)
+
+- **`supabase/migrations/483_directory_category_text_computed.sql`** (new): SECURITY INVOKER computed field `public.category_text(public.businesses)` casts the `business_category` enum to filterable text for PostgREST ILIKE queries. service_role only grants, explicit NOTIFY pgrst cache reload, data-independent self-test via `to_regprocedure` + `jsonb_populate_record` synthetic eval.
+- **`lib/marketplace/search.ts`**: Changed 3 ILIKE filters from `category` (enum — causes PostgreSQL `operator does not exist` error) to `category_text` (computed text field). Fixes 503 errors on all directory searches with category or free-text queries.
+- **`lib/marketplace/__tests__/discovery-search-query.test.ts`**: Updated 2 mock assertions to match `category_text` filter.
+- **`lib/marketplace/__tests__/directory-search-postgrest.test.ts`** (new): Real PostgREST integration tests — category exact/partial/case/synonym/legacy, country+category, all eligibility exclusions, hidden IDs, empty results, negative controls (old enum ilike fails).
+- **`scripts/test-directory-search-postgrest.sh`** (new): Disposable PG + PostgREST test runner with role bootstrap, migration apply, cache verification, and cleanup.
+- **`.github/workflows/directory-search-postgrest.yml`** (new): Dedicated CI workflow for PostgREST integration tests on PRs/pushes affecting directory/marketplace paths.
+- **Affects**: Public directory search (`/api/directory`), bot directory handler, SSR directory page. Category and free-text search queries require M483 migration applied and PostgREST schema cache reloaded before application deployment. Country-only filter was already working and is unaffected.
+- **Deployment dependency**: M483 must be applied and PostgREST must reload its schema cache (NOTIFY pgrst included in migration) before the application code using `category_text` is deployed. Deploying the app before the migration will cause category/text searches to return PostgREST "unknown column" errors instead of the current enum errors. Existing `.eq('category', ...)` calls elsewhere use the native enum and are unaffected.
+
+### #762 — Admin verification confirmation and operation-bound MFA (#775) (2026-10-30)
+
+- Businesses uses visible reason/confirmation UI for verification-level changes and custom-fee save/clear. Verification confirms approval/rejection with optional approval notes and required rejection reasons; saved results and failures are shown in-page.
+- Both callers use the existing MFA flow and retrieve the current Bearer token after session rotation. Authorization binds the business, action and normalized fields, including sorted document IDs. The review route validates inputs and document ownership before single-use consumption, preserving admin/AAL2 checks, service writes, payout-limit policy, fee units and null-versus-zero semantics.
+- Shared authorization transitions are serialized across selection changes and messaging suspension. Mounted, route and disposable-PostgreSQL tests cover authorization, cancellation, duplicate/stale responses, ownership, CORS and competing consumption. Six existing review fixtures were updated without weakening their assertions.
+- **Affects**: Admin Businesses and Verification, plus the four verification-review actions. No new schema or provider operation.
+- **Could break**: Client/server authorization contracts and asynchronous confirmation state; deploy compatible callers and route together. Consumption and subsequent writes are not one transaction, so partial-write failures remain possible and are reported without automatic replay. Source/CI evidence does not establish deployed acceptance.
+
+### #762 — Admin financial summary and authenticated capability reads (#773, inherited by #775) (2026-10-30)
+
+- Businesses counts successful/refunded collections, subtracts refunds once and retained platform/gateway fees, and shows paid payouts separately from processing reservations. The accounting remainder is explicitly distinguished from an available-to-withdraw balance; failed reads are shown as errors.
+- Capability reads use the authenticated admin API and distinguish missing businesses from read failures. Editing waits for authoritative capability/override readback, with duplicate and stale-response guards and visible retry states; existing mutation authority is retained.
+- **Affects**: Admin financial presentation and selected-capability loading/readback. No payment, payout or refund writer, fee-refund allocation policy, or schema change.
+- **Could break**: Read-response consumers, financial-query handling or selection/readback state. Mounted and actual-handler tests cover these boundaries; displayed accounting and selected capabilities are not settlement or effective-entitlement guarantees.
+
+### #762 W06 — Recorded payout explanations and linked destinations (2026-10-30)
+
+- Payout history now returns a merchant-safe projection, bounded recorded-state explanations and server-masked linked payout destinations using authenticated permitted-column reads. Historical inactive accounts remain linked; missing details and read failures are distinguished.
+- Account and History views consume the same `payouts` response and explanation fields. Recent records are no longer discarded by the Account view; History supports held/review-required filters and shows recorded context separately from proof of settlement.
+- Added actual read-handler and mounted-consumer coverage for authorization, tenant-bound destination reads, safe projection/masking, state/reason variants, history filters and errors. The inherited W05 rendered fixture changes only `records` to `payouts`, retaining all assertions.
+- **Affects**: Merchant payout history presentation/read API only; inherited W05 setup restrictions remain intact. No financial-state writers, currency aggregation, schema, collection confirmations or provider operations changed.
+- **Could break**: Read-response consumers or linked-account lookup/projection; canonical combined-head CI and independent review are required. Displayed context is recorded history, not current eligibility or a settlement guarantee.
+
+### #762 W05 — Disable new Flutterwave payout setup (2026-10-30)
+
+- Removed Flutterwave from new payout provider choices and normalized stale setup selections locally without rewriting saved destinations.
+- Banks, account resolution and payout setup now return an unavailable response for new Flutterwave actions, preserving authentication, ownership and password checks.
+- Added actual-handler and rendered-page coverage for refused actions, supported Paystack setup, historical account visibility and password-protected change/disconnect.
+- Preserved country routing, financial dispatch, manual-bank settlement, reconciliation and nonaffected providers.
+
+### #762 / #777 — Admin PATCH and email CORS transport (2026-10-30)
+
+- Added PATCH to both existing admin middleware allow-method lists so allowlisted admin clients can complete PATCH preflight.
+- Applied the existing admin CORS helper to email OPTIONS and every POST outcome, including validation, authorization, rate-limit and failure responses; preserved rate-limit headers and existing authentication/provider behavior.
+- Added 18 actual-middleware and 35 actual-email-handler tests with synthetic auth/provider boundaries covering allowed and unknown origins, preflight, authorized/denied requests and error outcomes. These tests do not certify hosted authentication, RLS or recipient email delivery.
+
+### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
+
+- **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
+- **`components/ui/PlacesAutocomplete.tsx`**: Replaced Legacy `AutocompleteService`/`PlacesService` with per-instance `PlacesSession` from `places-provider`. Session reset on unmount and value change.
+- **`components/ui/AddressAutocomplete.tsx`**: Replaced Legacy `Autocomplete` widget with custom dropdown + per-instance `PlacesSession`. Country restriction via `includedRegionCodes` (no unsupported `includedPrimaryTypes: ['address']`). Parent notified on selection text before details. Predictions/details invalidated on external defaultValue and country changes.
+- **R2:** Removed unsupported `includedPrimaryTypes: ['address']` (P1). Added parent notification on selection text (P2). Per-instance session tokens replace global tokens (P2). Admin uses `toPlace()` from matched prediction + `mainText?.` optional chaining (P2).
+- **R3:** Fixed parent feedback loop (P1) — valueRef tracking prevents echo-reset. Session lifecycle — generation counter, dispatch-time token consumption. Admin exposes reset(), passes _raw directly.
+- **`admin/src/lib/googlePlaces.ts`**: Per-factory session token. Details fetched via `toPlace()` from matched prediction (not `new Place({id})`). Optional `mainText?.text` fallback.
+- **`lib/__tests__/places-autocomplete-751.test.tsx`**: 22 tests rewritten. Covers per-instance sessions, selection parent notification, country/defaultValue invalidation, no unsupported types, keyboard/pointer selection, coordinates, stale responses, manual fallback, attribution.
+- **`lib/__tests__/discovery-settings-wiring-485.test.ts`**: Two assertions migrated from Legacy source strings to New API: `addressComponents` field request and city derivation in `places-provider.ts`.
+- **Affects**: All address autocomplete surfaces — onboarding, Events, Parties, Settings, Discovery, Locations, Properties, Invoices, Admin onboarding, Admin Events. Component interfaces unchanged; callers not modified.
+- **Could break**: Requires Places API (New) enabled on the Google Cloud project. If only Legacy API is enabled, autocomplete degrades to manual entry (same as missing config).
+
+### #753 item 6 — Bot Text clarity for nontechnical merchants (2026-10-29)
+
+- **`app/dashboard/translations/page.tsx`**: Replaced raw message keys with human-readable labels, context descriptions, and "Your message" field labels. Now uses `editableKeys` from the API (not `allKeys`) so only merchant-editable messages appear. Added inline help explaining save/reset behavior, required placeholder tokens with explanations, and WhatsApp character limits for button/list titles. Search matches readable labels in addition to keys and text. Updated page help title and terminology ("messages" instead of "keys").
+- **R2 — accurate language labels**: Default text is now labeled by its actual source: same-language platform text shows "Default ({langName})", English-only fallback shows "English reference" (not "Current default"), and English tab shows plain "Default". This prevents merchants from mistaking English reference text for their selected language's bot output.
+- **`app/dashboard/translations/message-presentation.ts`** (new): Page-local presentation helper with human-readable names, context descriptions, placeholder explanations, and character limit metadata for all 40 business-editable message keys.
+- **`app/dashboard/translations/__tests__/bot-text-753.test.tsx`** (new): 21 jsdom rendered tests covering readable labels, search by readable name, correct save payload with readback verification, clear-and-save reset with readback, English-only reference labeling, same-language default labeling, validation and network error display, editable-key filtering, character limits, placeholder guidance, save/reset help text, page help title, message count terminology, and narrow/desktop viewport rendering.
+- **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
+- **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
+
+### #762 — System Health database readability and counts (2026-10-30)
+
+- **`admin/src/pages/SystemHealth.tsx`**: Use the returned count for head-only reads, preserving genuine zero and showing missing counts as unavailable. Check returned and thrown errors for every service and table statistic, including both payment-table reads; failed reads affect overall status while independent probes continue.
+- **Refresh and scope**: Clear previous results while checking and recover after read failures. Labels describe database readability and do not certify provider availability or complete payment flows; authenticated identity, RLS and probe queries are unchanged.
+- **Mounted verification**: `admin/src/__tests__/system-health-762.test.tsx` passed 56 tests with zero skips in Admin job124334567531, canonical CI41134821502, source020b7a7623496b5b34025f051729574859b483d8 / checkout4a3b0134c478d891a89a355e03b10d68cf0984d6. Admin build and all12 CI jobs passed; deployment/runtime certification remains separate.
+
+### #752 — Queue tab: Share Queue QR code and link (2026-10-29)
+
+- **`app/dashboard/queue/page.tsx`**: Added "Share Queue" link in the action buttons group (alongside Pause/Resume, Walk-in, Call Next). Links to `/dashboard/qr-code?template=queue`, opening the QR Code page with "Scan to Join Queue" pre-selected.
+- **`app/dashboard/qr-code/page.tsx`**: Added `?template=` URL parameter support via `useSearchParams()`. Queue template requires resolved active bot channel; routing uses the channel's actual `channel_type` (not business preference). Artifacts withheld when setup incomplete. Reactive suffix via `useMemo`. Customer join guidance on dashboard and all 4 poster formats.
+- **`lib/__tests__/issue-496-qr-production.test.tsx`**: Added `next/navigation` mock for `useSearchParams` compatibility. Existing 3 routing-safety tests preserved and passing.
+- **`app/dashboard/queue/__tests__/queue-share-qr.test.tsx`** (new): 15 rendered UI tests — Share Queue link, queue pre-selection + guidance, channel guard (no bot, shared w/o code), artifact withholding, canonical QR/clipboard match, shared-fallback routing, assigned dedicated + shared pref, assigned shared + non-shared pref, dedicated/generic/invalid defaults.
+- **Affects**: Queue dashboard page and QR Code dashboard page only. No bot flow, capability, schema, payment, or channel changes.
+- **Could break**: Queue QR sharing requires a real bot channel — businesses without one see setup guidance. Other templates retain existing fallback behavior.
+
+### #762 / #780 — Broadcast submission and history outcomes (2026-10-30)
+
+- Validate the current session and recipient reads, require HTTP success plus an explicit API acknowledgement before recording sent history, and count the recipients actually submitted.
+- Show rejected or unknown submission outcomes and accepted submissions whose history write fails separately; preserve the draft on these outcomes and prevent duplicate submission from the mounted page.
+- Describe history as recorded status rather than confirmed recipient delivery. Preserve disabled WhatsApp/SMS channels and existing audience semantics.
+- Added 26 mounted-page tests with synthetic session, database and request boundaries. Page-local duplicate protection does not provide durable cross-reload idempotency, and API acknowledgement does not certify email delivery.
+
+### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
+
+- **`lib/payments/send-confirmation.ts`**: Added campaign donation recipient/business resolution block (section 2b) between invoice and order fallback. When `payment.campaign_id` is set and no booking/reservation/invoice resolved the customer, queries `campaign_donations` for `donor_phone`, `business_id`, `reference_code`, and joins to `campaigns(title, businesses(name, country_code))`. Previously, standalone campaign donations had no resolution path — `customerPhone` and `businessId` stayed null, causing `retryable_failed` with `no_business_resolved` forever.
+- **R2:** Payment read extended to include `campaign_id` for canonical identity validation. Campaign resolution now fail-closed: on error, missing donation, missing campaign join, business_id mismatch, or missing donor_phone, releases claim and returns `retryable_failed` with specific reason — no fallthrough to order/profile fallback.
+- **`lib/payments/__tests__/campaign-confirmation-recipient.test.ts`** (new): 10 behavioral tests (authority-v1, WhatsApp provenance, current channel resolver) — successful resolution + delivery + merchant notification, lookup error, missing donation, business_id mismatch, missing campaign join, missing donor_phone, denied WhatsApp channel, already-completed replay, claim renewal denial, booking+campaign precedence.
+- **Affects**: Post-payment confirmation delivery for standalone campaign/crowdfunding donations. Booking, reservation, invoice, and order paths unchanged.
+- **Could break**: Nothing — this is a new resolution path for a previously broken case. Existing paths are guarded by `!customerPhone &&` conditions.
+
+### #514 — Durable Event saves and final cancellation (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- Admin Events saves use authenticated server authority, optimistic revisions and durable operation readback. Editors retain changes on failed or uncertain saves; persisted cancellation and notification progress are reported separately.
+- Merchant cancellation uses the same atomic event operation. Cancellation is final; restarting requires a new event.
+- M481 records cancellation, affected tickets, notification recipients, paid refund follow-ups and admin audit together. Service-only RPCs serialize ticket issuance and emission authorization against cancellation; ambiguous provider attempts are not automatically replayed.
+- Paid cancellation records follow-up without reporting ticket issuance or customer confirmation. Existing payment accounting and refund policy remain unchanged.
+- Ticket email opts into one application-level provider attempt through an optional shared helper flag; other email callers retain their existing retries.
+- Added mounted UI, route/domain, actual delivery-helper and disposable PostgreSQL coverage. Validation is pending remote CI; no local tests, hosted migrations, live sends, merge or deployment performed.
+
+### #736 Lane 1 R7 — Surface failed payment-request notifications (2026-10-29)
+
+- `app/dashboard/payment-request/page.tsx`: Inspect the API's delivery result instead of treating HTTP 200 alone as notification success. When the payment request was created but no channel accepted delivery, show its saved link/reference and prevent accidental resubmission; bulk results now distinguish sent, created-but-undelivered, and failed requests.
+- `lib/__tests__/lane01-outbound-delivery-status.test.ts`: Add regression checks for single and bulk dashboard status handling and preservation of created payment links.
+- **Affects**: Payment-request dashboard feedback when the payment link exists but notification delivery fails.
+- **Could break**: The form now clears after a payment request was created even when its notification failed, avoiding a duplicate request on resubmission.
+
+### #736 Lane 1 R6 — Contract fallback and waiver email status corrections (2026-10-29)
+
+- `app/api/contracts/send/route.ts`: Count accepted email fallback as a successful signer notification and increment multi-signer delivery counts independently of WhatsApp message-ID persistence.
+- `app/api/waivers/sign/route.ts`: Inspect resolved email results for customer and merchant notifications and expose both statuses; the waiver remains signed even when a notification fails.
+- `lib/__tests__/lane01-delivery-fallback-routes.test.ts`: Add route-level behavioral coverage for email fallback success and resolved email rejection.
+- The contract route harness uses a constructable channel-resolver class mock and reports response details on failure.
+- **Affects**: Contract send responses and counts; waiver `notification_status`. WhatsApp message IDs remain written only when supplied by the WhatsApp provider.
+- **Could break**: Contract-send callers that treat `message_delivered` as WhatsApp-only may now receive `true` when the email fallback was accepted. Waiver responses gain customer/merchant email status fields.
+
+### #736 Lane 1 R5 — Invoice link and resend tracking integrity (2026-10-29)
+
+- Resends reuse a still-valid invoice token and refresh its expiry so previously sent links remain usable. Delivery stops before contacting a provider if the token cannot be persisted.
+- A failed WhatsApp resend records the latest attempt status without clearing the last acknowledged message ID. Database write failures after provider acceptance are logged and surfaced to the dashboard without inviting a duplicate retry.
+- **PRODUCT DECISIONS remain open**: invoice resend deduplication and partial-channel status for automatic WhatsApp-plus-email delivery.
+
+### #762 W03 — Recognize bot-test activity in the Overview checklist (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- Read positive own-business inbound conversation usage across all months, retaining existing inbound-chat evidence. Configuration and outbound activity alone do not complete the test step; returned or rejected query errors do not fabricate evidence.
+- Reset checklist state for each business and ignore obsolete asynchronous results, including automatic dismissal writes after a switch.
+- Add rendered component coverage for evidence filters, failures, business switching/dismissal and preserved setup, WhatsApp and payout predicates.
+- **Affects**: Overview checklist presentation only; inbound activity is not proof of response delivery. No API, schema, bot writer or payout-readiness changes.
+- **Could break**: Checklist loading/completion/dismissal behavior; focused tests exercise those transitions. Deployed RLS and provider delivery are outside the mocked suite.
+
+### #736 Lane 1 R4 — Remove explicit dual-channel send option (2026-10-29)
+
+- Invoice and payment-request dashboards now offer WhatsApp or email individually. Their APIs reject `both` and unsupported channel values; payment-request bulk `auto` routing remains available.
+- Existing payment-request WhatsApp behavior is unchanged: it may email alongside WhatsApp when an email address is available.
+- **PRODUCT DECISIONS remain open**: Invoice resend deduplication, prior message-ID retention, and partial-channel status for automatic WhatsApp+email delivery.
+
+### #736 Lane 1 R2 — CTO corrections: contracts/send, sendOrEmail result inspection, waivers merchant status, behavioral tests (2026-10-29)
+
+- **`app/api/contracts/send/route.ts`**: Added `messageCategory: 'utility'` on template send and sendOrEmail fallback. Fixed email-only fallback to inspect `sendEmail` return value (`emailResult.success !== false`) instead of fire-and-forget. Template send now requires both `success !== false` AND `messageId` for truthful delivery.
+- **`lib/channels/send-or-email.ts`**: Now inspects `sendText` return value for resolved `{success: false}` (not just thrown errors). Same for `sendEmail` return path. Backward-compatible — callers that don't pass `messageCategory` still work.
+- **`app/api/waivers/sign/route.ts`**: Customer sendText return value now inspected for `success: false`. Added `merchantWaStatus` tracking for owner notification. Response includes both `customer_whatsapp` and `merchant_whatsapp` in `notification_status`. Waiver signed state preserved regardless of notification failures.
+- **`lib/__tests__/lane01-outbound-delivery-status.test.ts`**: Replaced source-string-only tests with 31 executable behavioral + structural tests. Behavioral tests mock senders and exercise `sendOrEmail` directly: accepted, rejected (success:false), thrown provider/email. Structural tests verify contracts/send, waivers/sign, invoice, payment-request routes. Includes contract delivery, financial guard, and adjacent sender non-regression.
+- **PRODUCT DECISIONS remain open**: Invoice resend dedup, prior message-ID retention, partial-channel status. Tests document these as explicitly unresolved.
+- **Affects**: contracts/send, waivers/sign, sendOrEmail, invoices/send, payment-request/send. All outbound senders now truthfully report delivery.
+- **Could break**: Contracts/send callers that assumed `delivered: true` on template send without messageId will now see `delivered: false`.
+
+### #736 Lane 1 — Outbound customer delivery: truthful status reporting (2026-10-29)
+
+- **`app/api/invoices/send/route.ts`**: Fixed pre-emission false success. Removed reference to non-existent `wa_status_updated_at` column. `sendEmail` return value checked. All sends pass `messageCategory: 'utility'`.
+- **`app/api/payment-request/send/route.ts`**: Captures `sendOrEmail` result. Returns truthful `wa_delivery_status`/`email_delivery_status`. `messageCategory: 'utility'`.
+- **`app/api/waivers/sign/route.ts`**: Added `customerWaStatus` tracking. Customer/owner sends pass `messageCategory: 'utility'`.
+- **`lib/channels/send-or-email.ts`**: Added optional `messageCategory` passthrough to `sendText`.
+- **Affects**: Invoice send, payment request send, waiver sign. No changes to billing, Meta retry, or payment authority.
+
+### #762 W21 — Public invoice checkout identity and destination (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- Public invoice checkout now passes a nullable anonymous payer through the existing payment persistence contract. Initialization input types accept null; Stripe omits anonymous user metadata while preserving authenticated payer metadata.
+- Invoice checkout returns the stored provider authorization URL for fresh and reused payments instead of constructing a Paystack destination from the transaction reference. Existing Stripe session and short-link fallbacks remain available.
+- Added `lib/__tests__/invoice-public-checkout-762.test.ts` exercising the actual invoice handler, shared initializer and Paystack/Stripe adapters with stateful synthetic database responses and intercepted HTTP. Covers nullable persistence, exact URLs, reuse, failure withholding, invoice gates and country/amount authority.
+- **Affects**: Public invoice payment initiation and initialization input compatibility. No schema, webhook, finalization or payment-provider configuration changes.
+- **Could break**: Checkout destination selection or nullable payer serialization; canonical cloud CI and independent review are required. Synthetic coverage does not establish live-provider or deployment acceptance.
+
+### #736 Lane 3 — WhatsApp capability menu pagination for 11+ items (2026-10-28, R2 2026-10-29)
+
+- **`lib/bot/flows/capability-selection.flow.ts`**: Added pagination to the capability selection menu. When a business has more than 10 user-facing capabilities (the Meta Cloud API max rows per list section), the menu is split across pages with "More Options" and "Previous" navigation items. Each page never exceeds 10 rows. Pagination state (`_cap_menu_page`, `_cap_menu_total_pages`) is stored in session_data and cleaned up on capability selection or when returning from inline handlers (waiver, promo). The `validate()` method handles `cap_nav_more` and `cap_nav_prev` inputs to change pages; `next()` routes back to `select_capability` for re-render. My Account remains accessible on the last page. No changes to the single-page path (10 or fewer items).
+- **R2 fix (P2):** Pagination state now cleared on My Account selection (`validate()`) and when a refreshed menu shrinks below 10 items (`prompt()`). Previously, selecting My Account returned before the cleanup at end-of-validate; returning via Back carried the stale page number. Similarly, if backing data was removed so fewer capabilities appeared, the single-page prompt paths retained stale pagination state.
+- **`lib/bot/flows/flow-localization.ts`**: Added `nav.more_options`, `nav.more_desc`, `nav.previous_page`, `nav.previous_desc` keys across all 8 certified/populated locales (en, pcm, yo, ig, ha, tw, fr, es). Added the button-title keys to `BUTTON_TITLE_KEYS` registry.
+- **`lib/bot/flows/__tests__/capability-menu-pagination.test.ts`** (new): 29 tests — flow-unit tests covering pagination rendering, navigation validate/next, My Account preservation, stable IDs, edge cases (out-of-range page clamp, exact 11 items split, Meta max-rows safety at 9/10/11/12 boundaries), My Account → Back round-trip cleanup, menu-shrink cleanup, full prompt→navigate→select lifecycle with executor data-merge simulation, and sender-boundary test exercising real `MetaCloudSender.sendList` → `MetaCloudService.sendList` pipeline with `createTestSupabase()`, `setSendAttemptGate(false)`, stubbed `assertMessagingAllowed`/circuit-breaker, and `callApi` stubbed at the network boundary. Verifies ≤10 rows per section and that capability/navigation IDs survive the full sender transformation. Includes More → Previous → More → queue selection round-trip with emitted postback IDs, executor data-merge simulation, and specific `queue_start` next-step assertion.
+- **Affects**: WhatsApp bot capability selection menu. Only businesses with 11+ user-facing capabilities trigger pagination. All existing single-page behavior unchanged. No database, payment, migration, or API route changes.
+- **Could break**: If a business has exactly 10 user-facing capabilities + My Account (returning customer) = 11 items, the 11th item now appears on page 2 instead of being silently dropped. This is the intended fix.
+
+### #753 — Bot completion display pending action measurement (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- `app/dashboard/analytics/page.tsx`: show “Not yet measured” on the Bot Completion Rate card with “Successful customer actions are not measured yet.” Remove only the unused bot completion percentage state and calculation.
+- **Affects**: Bot completion card presentation. Booking-completion figures, other session counters, queries, filters and date behavior are unchanged.
+- **Could break**: The longer card wording may wrap differently at narrow widths; no rendered browser verification is claimed. Action measurement and the end-date correction remain separate work.
+
+### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
+
+- **`docs/ops/subscription-messaging-credit-10pct-audit-2026-10-26.md`**: Surgical documentation corrections per CTO review. (1) Updated stale references: PRs #711 and #722 now noted as merged; #712 remains open draft on separate lane. (2) Moved Admin-control configurability from approved decisions to unresolved future implementation gates. (3) Explicitly distinguished four unresolved Owner decisions (discount/tax basis, annual billing, rounding rule, Admin-control design) from the already-approved 10% rate. (4) Clarified section 4 heading applies to the future implementation PR, not this documentation PR. (5) Labeled US/CA Premium 10% credit amounts as illustrative pending rounding approval. (6) Retained explicit "no merge without separate Owner authorization" in governance section.
+- **Affects**: Documentation only. No application code, migrations, database configuration, payment providers, messaging paths, or runtime behavior changed.
+- **Could break**: Nothing. No code imports or runtime dependencies on this document.
+
+### #721 — STOP P1 corrections: consent-routing, provenance, Option C (2026-10-27)
+
+- **`lib/bot/bot.service.ts`**: Fixed 5 CTO-identified P1 findings on PR #727:
+  - **CONSENT-ROUTING**: Added early pending-STOP dispatcher BEFORE `get_bot_context` RPC call (~line 572). Directly queries `bot_sessions` for pending-STOP picker/Option-C sessions. On match: executes opt-out with CAS atomic claim, channel verification, and persistence proof. Bypasses the `get_bot_context` dependency that could pick the wrong session on production (M323 RPC newest-wins). Existing session handler retained as FALLBACK.
+  - **TENANT PROVENANCE**: Changed all pending-STOP session creation to store resolved `channelId` (from `whatsapp_channels` lookup) instead of raw `destinationPhone`. Channel lookup failures now fail closed (reject) instead of proceeding. Both early dispatcher and fallback handlers verify current `destinationPhone` maps to the same `channelId`.
+  - **OWNER OPTION C**: Added multi-merchant + platform handling. When 2+ candidates AND active launch subscription: shows Option C (merchant vs platform) first. If user picks merchant: transitions to merchant picker. If user picks platform: executes platform opt-out directly. Previously this case fell through to picker-only (no platform option).
+  - **DATA/REPLAY SAFETY**: Added fail-closed error handling on business lookup, launch subscriber lookup, and channel resolution in `_handleStopRequest`. Failed reads now return error messages instead of proceeding as "not subscribed".
+- **`lib/__tests__/stop-persistence-db.test.ts`** (new): 9 hermetic real-PG tests for opt-out persistence invariants (INSERT, 23505 dedup, multi-business isolation, STOP/START lifecycle, partial index verification). Follows `trial-one-per-owner-db.test.ts` pattern.
+- **`lib/__tests__/stop-merchant-resolution.test.ts`** (new): 21 behavioral/structural tests covering all STOP paths: dedicated channel, shared channel resolution, Option C single/multi-merchant, cross-channel replay rejection, channel lookup fail-closed, rate limiting, START merchant-scoped, CAS atomic claims, early dispatcher ordering.
+- **Affects**: STOP/START message handling, pending-STOP session creation, channel provenance verification. No changes to payment flows, bot flow engine, database schema, or broadcast sending.
+- **Could break**: Channel lookup failures that were previously silently ignored will now reject STOP selection replies (fail closed). Multi-merchant + platform users will see an additional Option C step before the picker.
+
+### #721 — STOP/UNSUBSCRIBE persistence hotfix (2026-10-27)
+
+- **`lib/bot/bot.service.ts`**: Fixed P0 STOP handler that never persisted opt-outs. The `.upsert({...}, { onConflict: 'phone,business_id,channel' })` failed with PostgreSQL 42P10 because the table uses an expression-based partial unique index, not a plain column constraint. Replaced with `INSERT` + 23505 conflict detection with row-ID proof. Moved STOP/START before rate limit so opt-out is never throttled. STOP now scoped to current merchant (dedicated channel) or resolved via session history (shared channel). When both merchant and platform contexts exist, shows Option C disambiguation. START scoped to identified merchant on dedicated channels. Added `_handleStopRequest`, `_handleStartRequest`, `_recordMerchantOptOut`, `_recordPlatformOptOut`, `_resolveStopCandidates`, `_fetchBizSummaries` private methods. Added pending-STOP/Option-C handling in `select_business_suggestion` step. Removed fire-and-forget `launch_subscribers` update from merchant STOP block — platform opt-out now handled independently.
+- **`app/api/broadcasts/send/route.ts`**: Fixed opt-out check that used phone-only `.maybeSingle()` with no error handling — fails open with multiple merchant rows. Now uses `business_id`-scoped `count` query with `head: true` and explicit error handling (suppresses send on error).
+- **`app/api/cron/scheduled-broadcasts/route.ts`**: Same fix as broadcasts/send — scoped to `broadcast.business_id`, count-based, error-guarded.
+- **`lib/growth/eligibility-service.ts`**: Added error destructuring to opt-out check. On query failure, returns `opted_out` status (fail closed) instead of silently proceeding.
+- **`lib/__tests__/bot-recovery-messaging-682.test.ts`**: Updated known exception line numbers (546, 3648) in the structural provenance test to account for line shifts from the STOP handler refactor.
+- **Affects**: STOP/START message handling, broadcast opt-out filtering, growth eligibility checks. No changes to payment flows, bot flow engine, session lifecycle, or database schema.
+- **Could break**: STOP now requires merchant context resolution on shared channels, which adds 1-2 extra queries. Users who previously received false "unsubscribed" confirmations will now see accurate results. Broadcasts that previously ignored opt-outs (due to missing business_id filter) will now correctly suppress sends.
+
+### #753 — Poll send-result accounting (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- `app/api/polls/[id]/send/route.ts`: count the shared sender’s `{ sent: false }` result as failed; retain true-result counting, thrown-error handling and processing of remaining recipients.
+- `app/api/polls/__tests__/polls-api.test.ts`: exercise the actual send handler with active owned polls, valid session boundaries and a controllable helper mock for true, false, thrown and mixed outcomes. Assert helper reach, recipient order and reconciled totals; preserve existing denial tests.
+- **Affects**: Poll send response counts only. Helper acceptance does not prove customer receipt; shared sender, session preparation, guards and poll lifecycle are unchanged.
+- **Could break**: Callers now correctly see failed counts for helper-declined sends that were previously reported sent. Mocked route tests do not certify provider delivery.
+
+### #716 — Ticket tier purchase and capacity guards (2026-10-25)
+
+- **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
+- **`app/api/events/purchase/route.ts`**: Handles `tier_paused` RPC error with 409 and descriptive message, matching existing `price_changed` pattern.
+- **`lib/__tests__/ticket-tier-guards-m470-db.test.ts`** (new): 33+ tests — structural verification of migration (is_active SELECT under FOR UPDATE, tier_paused RAISE, CHECK constraint, ACL re-application), web route error handling, and real-PG functional tests (constraint enforcement, capacity increase, equal-to-sold boundary).
+- **`lib/__tests__/event-ticket-tier-edit-716.test.ts`**: Added tests for `tier_paused` route handling and WhatsApp bot `is_active` filter verification.
+- **Affects**: `purchase_tickets_atomic` RPC (web ticket purchase), `event_ticket_types` table constraints. No changes to `finalize_free_ticket_booking` (preserves already-paid bookings), bot flow logic, payment gateways, or existing ticket/booking data.
+- **Could break**: Direct API or partner API updates that decrease `total_tickets` on saved tiers will now fail with `capacity_decrease_blocked` trigger exception. This matches the dashboard's existing prohibition on saved-tier capacity decreases.
+- **Requires**: Migration must be applied to staging/production after merge.
+
+### #650 Image conversion resource hardening (2026-10-25)
+
+- **`app/api/images/convert/route.ts`**: Hardened with bounded resource controls. (1) Replaced unbounded `response.arrayBuffer()` with incremental streaming download enforcing a 10 MB byte ceiling. (2) Added 15 s upstream timeout via AbortController — returns 504 whether timeout fires during connect or body download (TimeoutError class distinguishes from stream errors). (3) Sharp `limitInputPixels: 36 MP`, 8 000 px per-axis dimension check. (4) `resize(4096, 4096)` output cap with mozjpeg. (5) JPEG output bounded to 4.5 MB (WhatsApp 5 MB limit with margin) — tries reduced quality 65 once, rejects if still over. (6) Diagnostic logging uses only safe event categories and numeric status — no URLs, paths, or sensitive tokens. (7) Non-OK upstream responses explicitly discarded via `body.cancel()`. Content-Length advisory-only; actual bytes enforced.
+- **`lib/security/__tests__/sanitize-image.test.ts`**: 28 new regression tests (49 total). Covers: PNG/WebP/JPEG conversion, cache headers, Content-Length rejection, missing/falsified Content-Length bypass, streaming cutoff, timeout during connect and during stalled body (real AbortController behavior), stream cleanup on size rejection, non-OK body discards, dimension width/height rejection at 8 000 px, boundary acceptance, random bytes rejection, upstream 404/500, diagnostic log URL leak prevention, error response leak prevention, WhatsApp output size enforcement, high-entropy noise image, 4096×4096 solid color output sizing, product image compatibility.
+- **Preserves**: URL origin allowlist (PR #649), rate limiting (30/60s), redirect rejection, JPEG response format with caching.
+- **Affects**: Only the convert endpoint for oversized/malformed inputs. Normal images under 10 MB / 8 000 px convert identically.
+- **Could break**: Images exceeding 10 MB download, 8 000 px per axis, 36 MP pixels, or producing >4.5 MB JPEG output are now rejected (413). No such images exist in normal product/event usage — dashboard uploads are capped at 4096×4096 by sanitizeImage(). Memory measured: Sharp/libvips uses streaming tiles, ~135–167 MB peak RSS even at 100 MP; 36 MP conservative.
+
+### #753 — Refresh business logo preview after upload (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- `app/dashboard/settings/tabs/BusinessTab.tsx`: retain the immediate successful-upload preview, request router refresh only on success, and synchronize only logo state when refreshed business identity/logo props change. Other unsaved form state remains intact.
+- `lib/__tests__/business-logo-753.test.tsx`: rendered Settings/Provider lifecycle coverage for success, delayed refresh after tab remount, preserved edits, rejected/network-failed uploads and business identity changes using synthetic responses.
+- `lib/__tests__/address-forms-751.test.tsx`: add only the required router mock for the existing BusinessTab fixture; preserve address assertions.
+- **Affects**: Dashboard logo preview/context refresh. Upload API, validation, ownership, storage, Places behavior and paid-branding policy are unchanged.
+- **Could break**: Framework refresh timing can temporarily show the prior logo before updated props arrive. Tests mock upload/network boundaries and do not certify live persistence or image availability.
+
 ### Audit NB-5: SECURITY DEFINER ACL hardening (2026-10-24)
 
 - **`supabase/migrations/463_secdef_acl_audit_hardening.sql`** (new): Hardens 6 exposed SECURITY DEFINER functions. `calculate_volume_discount`: adds missing `SET search_path = public`, REVOKEs anon+authenticated (bot-only via service client). `check_conversation_limit`: REVOKEs anon+authenticated (legacy function, no active TS callers). Dashboard revenue RPCs (`get_business_revenue`, `get_order_revenue`, `get_outstanding_invoices`): REVOKEs anon only (keeps authenticated for dashboard). `check_business_role`: REVOKEs anon only (keeps authenticated for RLS policies). Inline verification assertions validate all grants.
@@ -22,6 +287,14 @@
 - **`lib/__tests__/circuit-breaker-financial-exclusion.test.ts`** (new): 3 tests proving financial denials don't trigger `recordFailure`, financial RPC errors don't trigger it either, but real Meta 5xx errors still do.
 - **Affects**: Financial authorization billing currency resolution (authorize_message_send RPC), circuit breaker error classification. No changes to payment gateways, subscription pricing, purchased balances, rate configuration, expiry policies, or WhatsApp delivery routing.
 - **Could break**: Existing tests that assume recipient_country_code drives currency (tests 3, 8, 23 in financial-authorization-db.test.ts create attempts with recipient country matching the allowance currency — those still pass because the test businesses default to NG country_code with NGN allowances).
+
+### #762 W22 — Repair Payments Received booking query (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- **`app/dashboard/payments/page.tsx`**: Select the explicit outgoing payment-to-booking FK for left/inner embeds and consume the returned nullable booking object throughout source labels, customer/contact, references and details. Preserves business/RLS scope, success/deletion filters, count/range/order, booking-less rows and separate error/empty states.
+- **`lib/__tests__/payments-received-762.test.tsx`** (new): Mounted-page regression coverage for query shape, object/null rendering, filters, pagination/search, errors/retry and stale responses. **`lib/__tests__/payment-source-classification.test.ts`**: Align the inner-join assertion with the explicit FK.
+- **Impact/risk:** Payment-list reads/display only; a relationship or response-shape regression could prevent loading or hide booking detail. Cloud CI supplies execution evidence; rendered mocks do not certify deployed PostgREST/RLS. No financial writes, provider logic, schema or ACL changes.
 
 ### #682 Bot Recovery — Messaging reliability fixes (2026-10-24)
 
@@ -54,6 +327,14 @@
 - **`scripts/qa-staging.sh`** (B5): Require valid 40-hex `E2E_DEPLOYMENT_SHA` for non-loopback targets.
 - **`lib/__tests__/qa-staging-guard.test.ts`**: Expanded to 38 tests covering B1 (wrong/missing/production supabaseProjectRef), B2 (route method regression), B3 (guard coverage, service worker blocking), B4 (retry truthfulness, all-skipped detection), B5 (SHA requirement).
 - Codex: UNAVAILABLE (usage limit). CTO is reviewer of record.
+
+### #762 W25 — Distinguish Audience load errors from empty results (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- **`app/dashboard/audiences/page.tsx`**: Show “No audiences yet” only when the list is empty and no error is present. Preserve loaded audience rows when deletion fails.
+- **`lib/__tests__/engage-audiences-load.test.tsx`**: Add rendered coverage for delayed loading, populated and empty success, denied/server responses, network and non-JSON failures, and failed deletion with existing rows.
+- Presentation-only correction; the separate staging access-contract discrepancy for already-merged M432 is unchanged.
 
 ### #671 QA Phase B — staging fixture/workflow hardening (2026-10-22)
 
@@ -116,6 +397,14 @@
 - **`CLAUDE.md`**: Require a short proven-need/acceptance contract, smallest justified diff, and stop-at-definition-of-done discipline. Bug allegations use existing independent evidence verification; new features follow approved requirements.
 - **`WAAIIO_ENGINEERING_OPERATING_ORDER.md`**: Canonical three-step proof/minimal-scope/completion rule within existing Phase A, CTO, and Owner gates; no extra approval round.
 - **Impact:** Agent instructions and review scope only. No application logic, migrations, runtime configuration, or provider behavior changed. **Potential risk:** Narrower change scope may defer unrelated cleanups; genuine critical findings still escalate under existing rules.
+
+### #762 W27 — Confirm account preference persistence (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- Check account preference reads and returned update rows before acknowledging a save; preserve unrelated metadata and recorded terms acceptance.
+- Show retryable load/save failures in Account settings, use confirmed persisted preferences, disable toggles while saving, and keep optional browser-cache/audit failures separate from server persistence.
+- Add actual-handler stateful tests and rendered save/remount regression coverage. No migration or merchant Broadcast policy change.
 
 ### #596 Finance UI reconciliation — fix schema mismatch, error handling, currency safety (2026-10-20)
 
@@ -5359,3 +5648,50 @@ If something breaks:
 2. Find changes from that date above
 3. Each entry has the affected file(s)
 4. Revert or fix the specific change
+
+### #580 — Observe promo claim RPC failures safely (2026-10-29)
+
+- Add a fixed error diagnostic with business/campaign identifiers when `claim_promo_code` returns an RPC error. Arbitrary error fields and submitted claim data are excluded.
+- Extend existing format-hint regression coverage to verify the diagnostic and silence for ordinary invalid/winner/try-again outcomes.
+- **Affects**: Server-side visibility of promo verification RPC failures.
+- **Could break**: Log volume increases on RPC failures; customer responses, format hints and claim behavior remain unchanged.
+
+### #751 — Reuse Places autocomplete across address forms (2026-10-29)
+
+- Share Google Places loading across the existing address widgets and accept either existing public key name; retain manual entry on unavailable configuration/loading errors.
+- Keep structured address callbacks and restored values current; guard delayed predictions/details against later edits, selections and unmounts, with keyboard/pointer selection and listbox associations.
+- Add autocomplete to location create/edit and invoice customer-address forms. Existing onboarding, events, properties, parties, Settings and Discovery reuse the improved components; existing persistence and manual coordinate invalidation remain intact.
+- Add loader/component and real form-handler regression tests, including #485 coordinate contracts.
+- Preserve selected address details after blur/outside dismissal while keeping the menu closed; edits, new selections, record resets and unmounts still invalidate stale details.
+- **Affects**: Main-app physical-address entry. Admin Vite onboarding/event fields remain an explicit follow-up; no provider configuration or schema changes.
+- **Could break**: Shared browser widget loading/selection affects existing callers; live Google enablement/referrer behavior still needs runtime verification.
+
+### #751 — Admin physical-address autocomplete (2026-10-29)
+
+- Add a Vite-compatible Admin address adapter using the unchanged shared Google loader, with narrowly allowlisted browser-key mapping and optional example configuration.
+- Wire CustomerOnboarding address/city/state/postcode selection without changing selected country or submission stages; wire existing Events venue editing without changing permissions, save or audit paths.
+- Add rendered component/form tests for selection, manual fallback, cancellation, country/reset/back navigation and Events read-only denial.
+- **Files**: Admin address component/helper, CustomerOnboarding/Events, Vite config/example and focused Admin tests.
+- **Affects**: The two remaining Admin address editors. No provider settings, schema or main-app component changes.
+- **Could break**: Admin suggestion loading/selection and bundled public-key mapping; manual entry remains available. Live Google behavior requires separate deployment acceptance.
+
+### #753 — Bot Text default explanation and readback evidence (2026-10-29)
+
+- `app/dashboard/translations/page.tsx`: explain when the selected language's built-in bot default is unavailable for display, preserving exact-language and English-reference labels.
+- `app/dashboard/translations/__tests__/bot-text-753.test.tsx`: gate post-save GET completion and assert distinct server-returned state for save/clear; retain payload/null-delete checks. Add unavailable-default coverage.
+- Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
+- **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
+- **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
+
+### #526 — Factual homepage setup heading (2026-10-29)
+
+- `app/(marketing)/HomeClient.tsx`: replace “Up and running in minutes” with “Set up your business on WhatsApp”.
+- **Affects**: Only the homepage setup heading; no timing promise, layout, links, pricing or signup behavior changes.
+- **Could break**: Heading wrapping at narrow widths; existing homepage tests/build and available preview checks supply evidence. The wider #526 audit remains out of scope.
+
+### #762 — Reviewed party seating groups and pinned assignments (2026-10-30)
+
+- **Party dashboard and seating planner**: Add one organizer-set seating group per invitation, explicit allowed tables, persistent manual pins, and randomized previews for unpinned guests. Invitations and plus-ones stay together; ungrouped guests use remaining capacity. Preview shows weighted occupancy and overflow; a partial plan requires explicit acknowledgment.
+- **Seating API and M486**: Recompute the reviewed plan server-side, reject stale/conflicting plans, and commit validated assignments atomically with replay protection. Preserve pinned arrangements and existing M457 capacity guards, including rollback of capacity-conflicting RSVP growth. Existing assignments migrate as pinned.
+- **Tests**: Actual planner, HTTP handler, mounted dashboard and six updated adapter regression cases; disposable PostgreSQL tests load real M457/M486 migrations and exercise scoped authorization, pins, swaps, rollback, partial acknowledgment and concurrency. Exact-head execution evidence is recorded on PR #776; jsdom is not browser layout proof.
+- **Affects / could break**: Party seating configuration, assignment and database write serialization. Application/schema alignment requires separately authorized M486 rollout; new seating controls require the new RPC. Hosted migration, deployed acceptance and browser layout verification remain separate. Custom RSVP questions and reminders are not implemented by this entry.

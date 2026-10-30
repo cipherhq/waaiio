@@ -224,7 +224,9 @@ jobs:
   # ── Admin Application ──
   admin-app:
     name: Admin App (install, build)
-    runs-on: ubuntu-latest
+    # Pin to ubuntu-24.04: Playwright 1.59.1 cannot install Chromium on ubuntu-latest (26.04).
+    # Remove this pin after upgrading Playwright to a version that supports 26.04.
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -1669,6 +1671,39 @@ jobs:
           node tests/verify-605-provider-boundary.mjs
           echo "✅ M452 all disposable-PG and static checks complete."
 
+      - name: "M471 navigation cancellation payment-safety tests (disposable PG)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m471_test
+          createdb --maintenance-db=waaiio_test waaiio_m471_test
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m471_test
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+          echo "Running M471 navigation cancellation payment-safety tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/bot/__tests__/navigation-cancellation-db.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then echo "❌ M471 tests failed."; exit $TEST_EXIT; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M471 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M471 tests passed."
+            exit 1
+          fi
+          echo "✅ M471 navigation cancellation tests complete — zero skips, zero failures."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m471_test
+
       - name: "DB delta analysis (advisory)"
         env:
           PGHOST: localhost
@@ -2806,6 +2841,38 @@ jobs:
           fi
           echo "✅ Ticket purchase security tests complete — zero skips, zero failures."
 
+      - name: M470 Ticket tier guards tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M470 ticket tier guards DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/ticket-tier-guards-m470-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M470 ticket tier guards tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M470 tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M470 tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M470 ticket tier guards tests complete — zero skips, zero failures."
+
       - name: Migration 356 Customer360/Financials tests
         env:
           PGHOST: localhost
@@ -3326,6 +3393,33 @@ jobs:
             exit 1
           fi
           echo "✅ Migration 372 trial lifecycle tests complete — zero skips, zero failures."
+
+      - name: "Migration 465 trial one-per-owner tests"
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 465 trial one-per-owner tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/trial-one-per-owner-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 465 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 465 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 465 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 465 trial one-per-owner tests complete — zero skips, zero failures."
 
       - name: "Sender expiry-race integration test"
         env:

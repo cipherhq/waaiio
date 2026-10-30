@@ -15,6 +15,8 @@ vi.mock('@/lib/admin-auth', () => ({
   requirePlatformAdmin: vi.fn(),
 }));
 
+vi.mock('@/lib/admin-step-up', () => ({ consumeStepUp: vi.fn().mockResolvedValue(true) }));
+
 // Mock service client
 const mockUpdate = vi.fn();
 const mockSelect = vi.fn();
@@ -49,7 +51,7 @@ vi.mock('@/lib/constants', async () => {
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest('http://localhost:3000/api/verification/review', {
     method: 'POST',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ stepUpId: '00000000-0000-0000-0000-000000000762', ...body }),
     headers: { 'Content-Type': 'application/json' },
   });
 }
@@ -64,7 +66,7 @@ describe('POST /api/verification/review', () => {
     vi.mocked(requirePlatformAdmin).mockResolvedValue(null);
 
     const { POST } = await import('@/app/api/verification/review/route');
-    const res = await POST(makeRequest({ business_id: 'biz-1', action: 'set_level', level: 'standard', reason: 'test' }));
+    const res = await POST(makeRequest({ business_id: '00000000-0000-0000-0000-000000000001', action: 'set_level', level: 'standard', reason: 'test' }));
     expect(res.status).toBe(401);
   });
 
@@ -89,7 +91,7 @@ describe('POST /api/verification/review', () => {
     });
 
     const { POST } = await import('@/app/api/verification/review/route');
-    const res = await POST(makeRequest({ business_id: 'biz-1', action: 'set_level', level: 'standard' }));
+    const res = await POST(makeRequest({ business_id: '00000000-0000-0000-0000-000000000001', action: 'set_level', level: 'standard' }));
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toContain('Reason is required');
@@ -132,7 +134,7 @@ describe('POST /api/verification/review', () => {
           update: () => ({
             eq: () => ({
               select: () => Promise.resolve({
-                data: [{ id: 'biz-1', verification_level: 'standard', verification_status: 'verified', payout_limit_monthly: 500_000 }],
+                data: [{ id: '00000000-0000-0000-0000-000000000001', verification_level: 'standard', verification_status: 'verified', payout_limit_monthly: 500_000 }],
                 error: null,
               }),
             }),
@@ -143,7 +145,7 @@ describe('POST /api/verification/review', () => {
     });
 
     const { POST } = await import('@/app/api/verification/review/route');
-    const res = await POST(makeRequest({ business_id: 'biz-1', action: 'set_level', level: 'standard', reason: 'KYC complete' }));
+    const res = await POST(makeRequest({ business_id: '00000000-0000-0000-0000-000000000001', action: 'set_level', level: 'standard', reason: 'KYC complete' }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
@@ -154,7 +156,7 @@ describe('POST /api/verification/review', () => {
       expect.objectContaining({
         action: 'set_verification_level',
         entityType: 'business',
-        entityId: 'biz-1',
+        entityId: '00000000-0000-0000-0000-000000000001',
       }),
     );
   });
@@ -191,7 +193,7 @@ describe('POST /api/verification/review', () => {
           update: () => ({
             eq: () => ({
               select: () => Promise.resolve({
-                data: [{ id: 'biz-1', verification_level: 'basic', verification_status: 'verified', payout_limit_monthly: 500_000 }],
+                data: [{ id: '00000000-0000-0000-0000-000000000001', verification_level: 'basic', verification_status: 'verified', payout_limit_monthly: 500_000 }],
                 error: null,
               }),
             }),
@@ -202,7 +204,7 @@ describe('POST /api/verification/review', () => {
     });
 
     const { POST } = await import('@/app/api/verification/review/route');
-    const res = await POST(makeRequest({ business_id: 'biz-1', action: 'set_level', level: 'basic', reason: 'Downgrade' }));
+    const res = await POST(makeRequest({ business_id: '00000000-0000-0000-0000-000000000001', action: 'set_level', level: 'basic', reason: 'Downgrade' }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.verification_level).toBe('basic');
@@ -215,7 +217,7 @@ describe('POST /api/verification/review', () => {
     vi.mocked(requirePlatformAdmin).mockResolvedValue(null);
 
     const { POST } = await import('@/app/api/verification/review/route');
-    const res = await POST(makeRequest({ business_id: 'biz-1', action: 'set_level', level: 'standard', reason: 'test' }));
+    const res = await POST(makeRequest({ business_id: '00000000-0000-0000-0000-000000000001', action: 'set_level', level: 'standard', reason: 'test' }));
     expect(res.status).toBe(401);
   });
 
@@ -240,7 +242,7 @@ describe('POST /api/verification/review', () => {
 
     const { POST } = await import('@/app/api/verification/review/route');
     const res = await POST(makeRequest({
-      business_id: 'biz-1',
+      business_id: '00000000-0000-0000-0000-000000000001',
       action: 'set_custom_fees',
       custom_fee_percentage: 3.5,
       custom_fee_flat: 50,
@@ -282,7 +284,7 @@ describe('POST /api/verification/review', () => {
           update: () => ({
             eq: () => ({
               select: () => Promise.resolve({
-                data: [{ id: 'biz-1', custom_fee_percentage: 3.5, custom_fee_flat: 50 }],
+                data: [{ id: '00000000-0000-0000-0000-000000000001', custom_fee_percentage: 3.5, custom_fee_flat: 50 }],
                 error: null,
               }),
             }),
@@ -294,7 +296,7 @@ describe('POST /api/verification/review', () => {
 
     const { POST } = await import('@/app/api/verification/review/route');
     const res = await POST(makeRequest({
-      business_id: 'biz-1',
+      business_id: '00000000-0000-0000-0000-000000000001',
       action: 'set_custom_fees',
       custom_fee_percentage: 3.5,
       custom_fee_flat: 50,
@@ -311,7 +313,7 @@ describe('POST /api/verification/review', () => {
       expect.objectContaining({
         action: 'set_custom_fees',
         entityType: 'business',
-        entityId: 'biz-1',
+        entityId: '00000000-0000-0000-0000-000000000001',
       }),
     );
   });
@@ -336,9 +338,145 @@ describe('POST /api/verification/review', () => {
     });
 
     const { POST } = await import('@/app/api/verification/review/route');
-    const res = await POST(makeRequest({ business_id: 'biz-1', action: 'reject' }));
+    const res = await POST(makeRequest({ business_id: '00000000-0000-0000-0000-000000000001', action: 'reject' }));
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toContain('reason');
+  });
+});
+
+describe('operation-bound verification review and CORS', () => {
+  const businessId = '00000000-0000-0000-0000-000000000001';
+  const docA = '00000000-0000-0000-0000-000000000011';
+  const docB = '00000000-0000-0000-0000-000000000012';
+  const stepUpId = '00000000-0000-0000-0000-000000000762';
+  const writes: string[] = [];
+  let foreignDocument = false;
+  let failWrite = '';
+  const actions = [
+    { action: 'set_level', level: 'standard', reason: 'review complete' },
+    { action: 'set_custom_fees', custom_fee_percentage: 0, custom_fee_flat: 0, reason: 'review complete' },
+    { action: 'approve', level: 'standard', notes: 'review complete', document_ids: [docB, docA] },
+    { action: 'reject', reason: 'review incomplete', document_ids: [docB, docA] },
+  ];
+  beforeEach(async () => {
+    vi.clearAllMocks(); writes.length = 0; foreignDocument = false; failWrite = '';
+    const { requirePlatformAdmin } = await import('@/lib/admin-auth');
+    vi.mocked(requirePlatformAdmin).mockResolvedValue({
+      userId: 'admin', email: 'synthetic@example.test', role: 'admin', aal: 'aal2', bearerToken: 'token', sessionId: 'session',
+    });
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    vi.mocked(consumeStepUp).mockReset().mockResolvedValue(true);
+    mockFrom.mockImplementation((table: string) => {
+      let mutation: Record<string, unknown> | null = null;
+      const result = () => ({
+        data: mutation ? (table === 'business_documents' ? [{ id: docA }, { id: docB }] : [{ id: businessId, ...mutation }]) :
+          table === 'business_documents' ? (foreignDocument ? [{ id: docA }] : [{ id: docA }, { id: docB }]) : [],
+        error: mutation && failWrite === table ? { message: 'synthetic failure' } : null,
+      });
+      const chain = {
+        select: () => chain, eq: () => chain, in: () => chain,
+        update: (value: Record<string, unknown>) => { mutation = value; writes.push(table); return chain; },
+        single: async () => ({ data: table === 'businesses' ? { name: 'Synthetic', owner_id: 'owner', country_code: 'NG' } : null, error: null }),
+        then: (resolve: (value: ReturnType<typeof result>) => unknown) => Promise.resolve(result()).then(resolve),
+      };
+      return chain;
+    });
+  });
+  it.each(actions)('authorizes and persists $action after validation', async payload => {
+    const { POST } = await import('@/app/api/verification/review/route');
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    const { requirePlatformAdmin } = await import('@/lib/admin-auth');
+    const res = await POST(makeRequest({ business_id: businessId, ...payload }));
+    expect(res.status).toBe(200);
+    expect(requirePlatformAdmin).toHaveBeenCalledWith(expect.anything(), { requiredRole: 'admin' });
+    const params = { ...payload, scope: 'business_verification_review',
+      ...('document_ids' in payload ? { document_ids: [docA, docB] } : {}) };
+    expect(consumeStepUp).toHaveBeenCalledWith(expect.anything(), stepUpId, 'commercial_config', businessId, params);
+    expect(writes).toContain('businesses');
+  });
+  it.each(actions)('missing authorization makes no mutation for $action', async payload => {
+    const { POST } = await import('@/app/api/verification/review/route');
+    const res = await POST(makeRequest({ business_id: businessId, ...payload, stepUpId: null }));
+    expect(res.status).toBe(403); expect(writes).toEqual([]);
+  });
+  it.each(actions)('mismatched/replayed authorization makes no mutation for $action', async payload => {
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    vi.mocked(consumeStepUp).mockRejectedValue(new Error('not authorized'));
+    const { POST } = await import('@/app/api/verification/review/route');
+    const res = await POST(makeRequest({ business_id: businessId, ...payload }));
+    expect(res.status).toBe(403); expect(writes).toEqual([]);
+  });
+  it('does not consume or write when document ownership fails', async () => {
+    foreignDocument = true;
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    const { POST } = await import('@/app/api/verification/review/route');
+    const response = await POST(makeRequest({ business_id: businessId, ...actions[2] }));
+    expect(response.status).toBe(400);
+    expect(consumeStepUp).not.toHaveBeenCalled(); expect(writes).toEqual([]);
+  });
+  it.each([
+    { action: 'set_level', level: 'invalid', reason: 'test' },
+    { action: 'set_level', level: 'basic', reason: '  ' },
+    { action: 'approve', level: 'invalid' },
+    { action: 'approve', document_ids: [docA, docA] },
+    { action: 'reject', reason: 2 },
+    { action: 'set_custom_fees', reason: 'test', custom_fee_percentage: 101 },
+    { action: 'set_custom_fees', reason: 'test', custom_fee_flat: 1.5 },
+    { action: 'set_custom_fees', reason: 'test', custom_fee_flat: -1 },
+  ])('invalid input creates no write or consumption: %j', async payload => {
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    const { POST } = await import('@/app/api/verification/review/route');
+    expect((await POST(makeRequest({ business_id: businessId, ...payload }))).status).toBe(400);
+    expect(consumeStepUp).not.toHaveBeenCalled(); expect(writes).toEqual([]);
+  });
+  it('normalizes notes, reasons and document order and preserves null versus zero', async () => {
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    const { POST } = await import('@/app/api/verification/review/route');
+    await POST(makeRequest({ business_id: businessId, action: 'set_custom_fees', reason: '  clear  ', custom_fee_percentage: null, custom_fee_flat: 0 }));
+    expect(consumeStepUp).toHaveBeenLastCalledWith(expect.anything(), stepUpId, 'commercial_config', businessId,
+      { scope: 'business_verification_review', action: 'set_custom_fees', reason: 'clear', custom_fee_percentage: null, custom_fee_flat: 0 });
+    await POST(makeRequest({ business_id: businessId, action: 'approve', notes: '  ', document_ids: [docB, docA] }));
+    expect(consumeStepUp).toHaveBeenLastCalledWith(expect.anything(), stepUpId, 'commercial_config', businessId,
+      { scope: 'business_verification_review', action: 'approve', level: 'basic', notes: null, document_ids: [docA, docB] });
+  });
+  it('retains truthful partial-write failure and requires a new authorization', async () => {
+    failWrite = 'businesses';
+    const { POST } = await import('@/app/api/verification/review/route');
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    const result = await POST(makeRequest({ business_id: businessId, ...actions[2] }));
+    expect(result.status).toBe(500);
+    expect((await result.json()).error).toContain('documents were already updated');
+    expect(writes).toEqual(['business_documents', 'verification_requests', 'businesses']);
+    writes.length = 0;
+    vi.mocked(consumeStepUp).mockRejectedValue(new Error('used'));
+    expect((await POST(makeRequest({ business_id: businessId, ...actions[2] }))).status).toBe(403);
+    expect(writes).toEqual([]);
+  });
+  it.each(['https://admin.waaiio.com', 'https://admin-staging.waaiio.com', 'https://untrusted.example'])('CORS boundary for %s on preflight, success and errors', async origin => {
+    const { POST, OPTIONS } = await import('@/app/api/verification/review/route');
+    const allowed = origin.includes('untrusted') ? '' : origin;
+    const preflight = await OPTIONS(new NextRequest('http://localhost/api/verification/review', { method: 'OPTIONS', headers: { Origin: origin } }));
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(allowed);
+    expect(preflight.headers.get('Access-Control-Allow-Headers')).toContain('Authorization');
+    for (const body of [
+      { business_id: businessId, ...actions[0], stepUpId },
+      { business_id: businessId, ...actions[0], stepUpId: null },
+      { business_id: businessId, action: 'invalid' },
+    ]) {
+      const res = await POST(new NextRequest('http://localhost/api/verification/review', {
+        method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }));
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe(allowed);
+    }
+    const { requirePlatformAdmin } = await import('@/lib/admin-auth');
+    vi.mocked(requirePlatformAdmin).mockResolvedValue(null);
+    const denied = await POST(new NextRequest('http://localhost/api/verification/review', {
+      method: 'POST', headers: { Origin: origin }, body: '{}',
+    }));
+    expect(denied.status).toBe(401);
+    expect(denied.headers.get('Access-Control-Allow-Origin')).toBe(allowed);
+    expect(writes.filter(t => t === 'businesses')).toHaveLength(1);
   });
 });

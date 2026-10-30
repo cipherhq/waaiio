@@ -191,7 +191,7 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
     lines.push('', `Open your dashboard to manage this order.`);
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
-    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+    sender.sendText({ to: phone, text: lines.join('\n'), messageCategory: 'service' }).catch(err =>
       logger.error('[NOTIFY-OWNER] WhatsApp error:', err),
     );
   }
@@ -312,7 +312,7 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
     lines.push('', `Open your dashboard to respond with a price.`);
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
-    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+    sender.sendText({ to: phone, text: lines.join('\n'), messageCategory: 'service' }).catch(err =>
       logger.error('[NOTIFY-OWNER] Quote WhatsApp error:', err),
     );
 
@@ -328,6 +328,7 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
         to: phone,
         imageUrl: styleUrl,
         caption: `Style reference from ${customerName}`,
+        messageCategory: 'service',
       }).catch(err => logger.error('[NOTIFY-OWNER] Style photo send error:', err));
     }
   }
@@ -394,7 +395,7 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
     lines.push('', `Open your dashboard to manage this booking.`);
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
-    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+    sender.sendText({ to: phone, text: lines.join('\n'), messageCategory: 'service' }).catch(err =>
       logger.error('[NOTIFY-OWNER] Booking WhatsApp error:', err),
     );
   }
@@ -460,7 +461,7 @@ export async function notifyOwnerNewTicketSale(opts: NotifyTicketSaleOpts): Prom
     ];
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
-    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+    sender.sendText({ to: phone, text: lines.join('\n'), messageCategory: 'service' }).catch(err =>
       logger.error('[NOTIFY-OWNER] Ticket sale WhatsApp error:', err),
     );
   }
@@ -520,7 +521,7 @@ export async function notifyOwnerNewDonation(opts: NotifyDonationOpts): Promise<
     ].filter(Boolean);
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
-    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+    sender.sendText({ to: phone, text: lines.join('\n'), messageCategory: 'service' }).catch(err =>
       logger.error('[NOTIFY-OWNER] Donation WhatsApp error:', err),
     );
   }
@@ -580,7 +581,7 @@ export async function notifyOwnerNewPayment(opts: NotifyPaymentOpts): Promise<vo
     ];
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
-    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+    sender.sendText({ to: phone, text: lines.join('\n'), messageCategory: 'service' }).catch(err =>
       logger.error('[NOTIFY-OWNER] Payment WhatsApp error:', err),
     );
   }
@@ -639,7 +640,7 @@ export async function notifyOwnerNewInvoicePayment(opts: NotifyInvoicePaymentOpt
     ];
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
-    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+    sender.sendText({ to: phone, text: lines.join('\n'), messageCategory: 'service' }).catch(err =>
       logger.error('[NOTIFY-OWNER] Invoice payment WhatsApp error:', err),
     );
   }
@@ -691,7 +692,7 @@ export async function notifyOwnerNewQueueCheckin(opts: NotifyQueueCheckinOpts): 
     ];
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
-    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+    sender.sendText({ to: phone, text: lines.join('\n'), messageCategory: 'service' }).catch(err =>
       logger.error('[NOTIFY-OWNER] Queue checkin WhatsApp error:', err),
     );
   }
@@ -724,7 +725,7 @@ export async function notifyOwnerGeneric(opts: {
     // WhatsApp
     if (info.notifyWhatsApp && info.notifyWhatsAppPhone && opts.sender) {
       const phone = info.notifyWhatsAppPhone.startsWith('+') ? info.notifyWhatsAppPhone.slice(1) : info.notifyWhatsAppPhone;
-      opts.sender.sendText({ to: phone, text: opts.whatsappText }).catch(err =>
+      opts.sender.sendText({ to: phone, text: opts.whatsappText, messageCategory: 'service' }).catch(err =>
         logger.error('[NOTIFY-OWNER] Generic WhatsApp error:', err),
       );
     }

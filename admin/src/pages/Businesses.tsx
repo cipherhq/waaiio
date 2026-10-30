@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 import { supabase, adminDb } from '@/lib/supabase';
@@ -89,14 +89,30 @@ export default function Businesses() {
     totalFees: number;
     totalGatewayFees: number;
     totalPayouts: number;
+    processingPayouts: number;
     totalRefunds: number;
     bookingCount: number;
     payoutHistory: Array<{ id: string; net_amount: number; status: string; period_start: string; period_end: string; paid_at: string | null }>;
   } | null>(null);
+  const [financialError, setFinancialError] = useState('');
+  const [financialBusinessId, setFinancialBusinessId] = useState<string | null>(null);
+  const [financialReload, setFinancialReload] = useState(0);
+  const [capLoad, setCapLoad] = useState<{ businessId: string | null; status: 'loading' | 'ready' | 'error'; error: string }>({ businessId: null, status: 'loading', error: '' });
+  const capRequestRef = useRef(0);
+  const selectionGenerationRef = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selected?.id || null;
+  const capMutationRef = useRef(false);
+  const selectedId = selected?.id || null;
   // Custom fee override state
   const [customFeePercentage, setCustomFeePercentage] = useState('');
   const [customFeeFlat, setCustomFeeFlat] = useState('');
   const [customFeeSaving, setCustomFeeSaving] = useState(false);
+  const [reviewDraft, setReviewDraft] = useState<{ businessId: string; action: 'set_level' | 'set_custom_fees'; level?: string; custom_fee_percentage?: number | null; custom_fee_flat?: number | null } | null>(null);
+  const [reviewReason, setReviewReason] = useState('');
+  const [reviewMessage, setReviewMessage] = useState('');
+  const reviewOperationRef = useRef<object | null>(null);
+  const reviewSubmitRef = useRef(false);
   const [capSaving, setCapSaving] = useState<string | null>(null);
   const [selectedTier, setSelectedTier] = useState('');
   const [tierSaving, setTierSaving] = useState(false);
@@ -104,6 +120,12 @@ export default function Businesses() {
   const [statusSaving, setStatusSaving] = useState(false);
   const [suspensionSaving, setSuspensionSaving] = useState(false);
   const stepUp = useStepUp();
+  // Hold this lock until the shared hook's async transition settles, even after
+  // selection cancellation. A late prepare/verify can then never overwrite a newer flow.
+  const stepUpFlightRef = useRef(false);
+  const [stepUpFlight, setStepUpFlight] = useState(false);
+  const suspensionOperationRef = useRef<object | null>(null);
+  const stepUpBlocked = stepUpFlight || (stepUp.isActive && stepUp.state.phase !== 'error');
   const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
   // WhatsApp channel assignment
   const [channels, setChannels] = useState<Array<{ id: string; phone_number: string; display_name: string; country_code: string }>>([]);
@@ -120,6 +142,121 @@ export default function Businesses() {
   // Payout verification limits now live in countries.verification_tiers;
   // the server route resolves them per-country — no client-side lookup needed.
   const perPage = 20;
+
+
+  useEffect(() => {
+    setReviewDraft(null);
+    setReviewReason('');
+    setReviewMessage('');
+    setCustomFeeSaving(false);
+    return () => {
+      reviewOperationRef.current = null;
+      suspensionOperationRef.current = null;
+      stepUpCallbackRef.current = null;
+      // In-flight hook transitions are drained by their owner before unlocking.
+      if (!stepUpFlightRef.current) stepUp.reset();
+    };
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (stepUp.state.phase === 'error' && reviewOperationRef.current) {
+      reviewOperationRef.current = null;
+      setCustomFeeSaving(false);
+      setReviewMessage(stepUp.state.error || 'Authorization failed');
+    }
+  }, [stepUp.state.phase, stepUp.state.error]);
+
+  function openReview(action: 'set_level' | 'set_custom_fees', level?: string, clear = false) {
+    if (!selected || !isFullAdmin || reviewOperationRef.current || stepUpFlightRef.current || stepUpBlocked) return;
+    const percentage = clear || !customFeePercentage.trim() ? null : Number(customFeePercentage);
+    const flat = clear || !customFeeFlat.trim() ? null : Number(customFeeFlat);
+    if (action === 'set_custom_fees' &&
+        ((percentage !== null && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) ||
+         (flat !== null && (!Number.isSafeInteger(flat) || flat < 0)))) {
+      setReviewMessage('Enter a percentage from 0 to 100 and a non-negative whole flat fee.');
+      return;
+    }
+    setReviewReason('');
+    setReviewMessage('');
+    setReviewDraft({ businessId: selected.id, action,
+      ...(action === 'set_level' ? { level } : { custom_fee_percentage: percentage, custom_fee_flat: flat }) });
+  }
+
+  function cancelReview() {
+    reviewOperationRef.current = null;
+    stepUpCallbackRef.current = null;
+    stepUp.reset();
+    setCustomFeeSaving(false);
+    setReviewDraft(null);
+    setReviewReason('');
+  }
+
+  async function confirmReview() {
+    if (!reviewDraft || !reviewReason.trim() || reviewOperationRef.current || stepUpFlightRef.current || stepUpBlocked || !isFullAdmin) return;
+    const draft = { ...reviewDraft };
+    const businessId = draft.businessId;
+    const params = { scope: 'business_verification_review', action: draft.action,
+      ...(draft.action === 'set_level' ? { level: draft.level } : {
+        custom_fee_percentage: draft.custom_fee_percentage, custom_fee_flat: draft.custom_fee_flat }),
+      reason: reviewReason.trim() };
+    stepUpFlightRef.current = true;
+    setStepUpFlight(true);
+    const operation = {};
+    reviewOperationRef.current = operation;
+    const current = () => reviewOperationRef.current === operation && selectedIdRef.current === businessId;
+    setCustomFeeSaving(true);
+    setReviewMessage('');
+    const onAuthorized = async (stepUpId: string) => {
+      if (!current()) return;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!current()) return;
+        const token = sessionData.session?.access_token;
+        if (!token) throw new Error('Session expired');
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const response = await fetch(`${apiUrl}/api/verification/review`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ business_id: businessId, ...params, stepUpId }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Save failed; reload before authorizing another attempt.');
+        if (!current()) return;
+        const patch = draft.action === 'set_level'
+          ? { verification_level: result.verification_level, verification_status: result.verification_status, payout_limit_monthly: result.payout_limit_monthly }
+          : { custom_fee_percentage: result.custom_fee_percentage, custom_fee_flat: result.custom_fee_flat };
+        setSelected(previous => previous?.id === businessId ? { ...previous, ...patch } : previous);
+        setBusinesses(previous => previous.map(b => b.id === businessId ? { ...b, ...patch } : b));
+        if (draft.action === 'set_custom_fees') {
+          setCustomFeePercentage(result.custom_fee_percentage == null ? '' : String(result.custom_fee_percentage));
+          setCustomFeeFlat(result.custom_fee_flat == null ? '' : String(result.custom_fee_flat));
+        }
+        setReviewDraft(null);
+        setReviewMessage('Saved. The displayed values are the server result.');
+      } catch (error) {
+        if (current()) setReviewMessage(error instanceof Error ? error.message : 'Save failed. Reload before trying again.');
+        throw error;
+      } finally {
+        if (current()) { reviewOperationRef.current = null; setCustomFeeSaving(false); }
+      }
+    };
+    stepUpCallbackRef.current = onAuthorized;
+    try {
+      await stepUp.execute({ actionType: 'commercial_config', targetId: businessId, params,
+        description: draft.action === 'set_level' ? `Set verification to ${draft.level}: ${params.reason}` :
+          `Set custom fees: ${draft.custom_fee_percentage ?? 'tier default'}%, flat ${draft.custom_fee_flat ?? 'tier default'}. ${params.reason}`,
+        onAuthorized });
+    } catch (error) {
+      if (current()) {
+        reviewOperationRef.current = null;
+        setCustomFeeSaving(false);
+        setReviewMessage(error instanceof Error ? error.message : 'Authorization failed');
+      }
+    } finally {
+      if (!current()) stepUp.reset();
+      stepUpFlightRef.current = false;
+      setStepUpFlight(false);
+    }
+  }
 
   async function loadData() {
     const [bizRes, chRes] = await Promise.all([
@@ -186,20 +323,6 @@ export default function Businesses() {
         });
       });
 
-    // Load capabilities + overrides
-    adminDb
-      .from('business_capabilities')
-      .select('capability')
-      .eq('business_id', selected.id)
-      .eq('is_enabled', true)
-      .then(({ data }) => setSelectedCaps((data || []).map(r => r.capability)));
-
-    adminDb
-      .from('capability_overrides')
-      .select('capability')
-      .eq('business_id', selected.id)
-      .then(({ data }) => setSelectedOverrides((data || []).map(r => r.capability)));
-
     // Load services list
     adminDb
       .from('services')
@@ -227,26 +350,91 @@ export default function Businesses() {
       .maybeSingle()
       .then(({ data }) => setSelectedBankAccount(data || null));
 
-    // Load financial summary
+  }, [selected]);
+
+  const loadCapabilities = useCallback(async (businessId: string, saved = false) => {
+    const requestId = ++capRequestRef.current;
+    const current = () => requestId === capRequestRef.current && selectedIdRef.current === businessId;
+    setCapLoad({ businessId, status: 'loading', error: '' });
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (error || !token) throw new Error('Session expired. Please log in again.');
+      if (!current()) return;
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiUrl}/api/admin/businesses/${businessId}/capabilities`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('Could not load selected capabilities. Please retry.');
+      const state = await response.json();
+      if (!state || !Array.isArray(state.capabilities) || !Array.isArray(state.overrides)
+        || !state.capabilities.every((value: unknown) => typeof value === 'string')
+        || !state.overrides.every((value: unknown) => typeof value === 'string')) {
+        throw new Error('Could not load selected capabilities. Please retry.');
+      }
+      if (!current()) return;
+      setSelectedCaps(state.capabilities);
+      setSelectedOverrides(state.overrides);
+      setCapLoad({ businessId, status: 'ready', error: '' });
+    } catch (error) {
+      if (!current()) return;
+      setCapLoad({
+        businessId, status: 'error',
+        error: saved ? 'Capability saved, but refreshed state could not be loaded. Retry before making another change.'
+          : error instanceof Error ? error.message : 'Could not load selected capabilities. Please retry.',
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    ++selectionGenerationRef.current;
+    ++capRequestRef.current;
+    capMutationRef.current = false;
+    setCapSaving(null);
+    setSelectedCaps([]);
+    setSelectedOverrides([]);
+    setCapLoad({ businessId: selectedId, status: 'loading', error: '' });
+    if (selectedId) void loadCapabilities(selectedId);
+    return () => { ++capRequestRef.current; ++selectionGenerationRef.current; };
+  }, [selectedId, loadCapabilities]);
+
+  useEffect(() => {
+    let active = true;
+    setSelectedFinancials(null);
+    setFinancialBusinessId(null);
+    setFinancialError('');
+    if (!selectedId) return;
+    const businessId = selectedId;
     Promise.all([
-      adminDb.from('payments').select('amount').eq('business_id', selected.id).eq('status', 'success'),
-      adminDb.from('platform_fees').select('fee_total, gateway_fee').eq('business_id', selected.id).is('refunded_at', null),
-      adminDb.from('business_payouts').select('net_amount, status').eq('business_id', selected.id).in('status', ['paid', 'processing']),
-      adminDb.from('payments').select('refund_amount').eq('business_id', selected.id).gt('refund_amount', 0),
-      adminDb.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', selected.id),
-      adminDb.from('business_payouts').select('id, net_amount, status, period_start, period_end, paid_at').eq('business_id', selected.id).order('created_at', { ascending: false }).limit(10),
-    ]).then(([payments, fees, payouts, refunds, bookings, payoutHistory]) => {
+      adminDb.from('payments').select('amount, refund_amount').eq('business_id', businessId).in('status', ['success', 'refunded']),
+      adminDb.from('platform_fees').select('fee_total, gateway_fee').eq('business_id', businessId).is('refunded_at', null),
+      adminDb.from('business_payouts').select('net_amount, status').eq('business_id', businessId).in('status', ['paid', 'processing']),
+      adminDb.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', businessId),
+      adminDb.from('business_payouts').select('id, net_amount, status, period_start, period_end, paid_at').eq('business_id', businessId).order('created_at', { ascending: false }).limit(10),
+    ]).then(([payments, fees, payouts, bookings, payoutHistory]) => {
+      if (!active || selectedIdRef.current !== businessId) return;
+      if ([payments, fees, payouts, bookings, payoutHistory].some(result => result.error)) {
+        throw new Error('Financial summary could not be loaded. Please retry.');
+      }
       setSelectedFinancials({
         totalRevenue: (payments.data || []).reduce((sum, p) => sum + Number(p.amount || 0), 0),
+        totalRefunds: (payments.data || []).reduce((sum, p) => sum + Number(p.refund_amount || 0), 0),
         totalFees: (fees.data || []).reduce((sum, f) => sum + Number(f.fee_total || 0), 0),
         totalGatewayFees: (fees.data || []).reduce((sum, f) => sum + Number(f.gateway_fee || 0), 0),
-        totalPayouts: (payouts.data || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
-        totalRefunds: (refunds.data || []).reduce((sum, r) => sum + Number(r.refund_amount || 0), 0),
+        totalPayouts: (payouts.data || []).filter(p => p.status === 'paid').reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
+        processingPayouts: (payouts.data || []).filter(p => p.status === 'processing').reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
         bookingCount: bookings.count || 0,
         payoutHistory: payoutHistory.data || [],
       });
+      setFinancialBusinessId(businessId);
+    }).catch(() => {
+      if (active && selectedIdRef.current === businessId) {
+        setFinancialBusinessId(businessId);
+        setFinancialError('Financial summary could not be loaded. Please retry.');
+      }
     });
-  }, [selected]);
+    return () => { active = false; };
+  }, [selectedId, financialReload]);
 
   async function handleTierChange() {
     if (!selected || selectedTier === selected.subscription_tier || !isFullAdmin) return;
@@ -330,17 +518,25 @@ export default function Businesses() {
   }
 
   async function handleToggleSuspension() {
-    if (!selected || !isFullAdmin) return;
+    if (!selected || !isFullAdmin || stepUpFlightRef.current || stepUpBlocked || reviewOperationRef.current) return;
     const newState = !selected.messaging_suspended;
     const reasonInput = newState
       ? prompt('Reason for suspending messaging (optional):')
       : prompt('Reason for resuming messaging (optional):');
     if (reasonInput === null) return;
     const reason = reasonInput.trim() || null;
+    const businessId = selected.id;
+    const operation = {};
+    suspensionOperationRef.current = operation;
+    const current = () => suspensionOperationRef.current === operation && selectedIdRef.current === businessId;
+    stepUpFlightRef.current = true;
+    setStepUpFlight(true);
     setSuspensionSaving(true);
     try {
       const onAuthorized = async (stepUpId: string) => {
+        if (!current()) return;
         const { data: sessionData } = await supabase.auth.getSession();
+        if (!current()) return;
         const token = sessionData?.session?.access_token;
         if (!token) { alert('Session expired'); return; }
         const apiUrl = import.meta.env.VITE_API_URL || '';
@@ -356,8 +552,9 @@ export default function Businesses() {
           if (data.code === 'step_up_required') { alert('Step-up authorization failed'); return; }
           throw new Error(data.error || 'Failed');
         }
+        if (!current()) return;
         setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, messaging_suspended: newState } : b));
-        setSelected(prev => prev ? { ...prev, messaging_suspended: newState } : prev);
+        setSelected(prev => prev?.id === businessId ? { ...prev, messaging_suspended: newState } : prev);
       };
       stepUpCallbackRef.current = onAuthorized;
       await stepUp.execute({
@@ -368,10 +565,14 @@ export default function Businesses() {
         onAuthorized,
       });
     } catch (err) {
+      if (!current()) return;
       console.error('Suspension toggle error:', err);
       alert('Failed to toggle messaging suspension');
       stepUp.reset();
     } finally {
+      if (!current()) stepUp.reset();
+      stepUpFlightRef.current = false;
+      setStepUpFlight(false);
       setSuspensionSaving(false);
     }
   }
@@ -404,47 +605,38 @@ export default function Businesses() {
     }
   }
 
-  async function handleCapToggle(bizId: string, bizTier: string, capId: string, isCurrentlyEnabled: boolean) {
+  async function handleCapToggle(bizId: string, capId: string, isCurrentlySelected: boolean) {
+    if (!isFullAdmin || capMutationRef.current || capLoad.businessId !== bizId || capLoad.status !== 'ready') return;
+    capMutationRef.current = true;
     setCapSaving(capId);
+    const generation = selectionGenerationRef.current;
+    const current = () => generation === selectionGenerationRef.current && selectedIdRef.current === bizId;
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
+      const { data: sessionData, error } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
-      if (!token) { alert('Session expired. Please log in again.'); return; }
-
+      if (error || !token) throw new Error('Session expired. Please log in again.');
+      if (!current()) return;
       const apiUrl = import.meta.env.VITE_API_URL || '';
-      const action = isCurrentlyEnabled ? 'revoke' : 'grant';
-
+      const action = isCurrentlySelected ? 'revoke' : 'grant';
       const res = await fetch(`${apiUrl}/api/admin/businesses/${bizId}/capabilities`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ capability: capId, action, reason: 'Admin toggled' }),
       });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-        alert(`Failed to ${action} capability: ${err.error || 'Unknown error'}`);
-        return;
-      }
-
-      // Re-fetch authoritative state from server (RPC may cascade dependencies)
-      const refreshRes = await fetch(`${apiUrl}/api/admin/businesses/${bizId}/capabilities`, {
-        headers: { Authorization: `Bearer ${token}` },
+      if (!res.ok) throw new Error('Capability change failed. Retry loading the state before trying again.');
+      if (!current()) return;
+      await loadCapabilities(bizId, true);
+    } catch (error) {
+      if (!current()) return;
+      setCapLoad({
+        businessId: bizId, status: 'error',
+        error: error instanceof Error ? error.message : 'Capability change failed. Please retry.',
       });
-      if (refreshRes.ok) {
-        const state = await refreshRes.json();
-        setSelectedCaps(state.capabilities || []);
-        setSelectedOverrides(state.overrides || []);
-      } else {
-        alert('Capability updated but failed to refresh state. Please reload the page.');
-      }
-    } catch (err) {
-      console.error('Capability toggle error:', err);
-      alert('Failed to update capability. Please try again.');
     } finally {
-      setCapSaving(null);
+      if (current()) {
+        capMutationRef.current = false;
+        setCapSaving(null);
+      }
     }
   }
 
@@ -748,7 +940,7 @@ export default function Businesses() {
                   </span>
                   <button
                     onClick={handleToggleSuspension}
-                    disabled={suspensionSaving}
+                    disabled={suspensionSaving || stepUpBlocked || customFeeSaving}
                     className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-50 ${
                       selected.messaging_suspended
                         ? 'bg-green-600 hover:bg-green-700'
@@ -798,34 +990,8 @@ export default function Businesses() {
                   {['unverified', 'basic', 'standard', 'full'].map(level => (
                     <button
                       key={level}
-                      disabled={selected.verification_level === level}
-                      onClick={async () => {
-                        const reasonInput = prompt(`Reason for setting verification to "${level}" for ${selected.name}:`);
-                        if (!reasonInput) return;
-                        try {
-                          const { data: sessionData } = await supabase.auth.getSession();
-                          const token = sessionData?.session?.access_token;
-                          if (!token) { alert('Session expired'); return; }
-                          const apiUrl = import.meta.env.VITE_API_URL || '';
-                          const res = await fetch(`${apiUrl}/api/verification/review`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                            body: JSON.stringify({
-                              business_id: selected.id,
-                              action: 'set_level',
-                              level,
-                              reason: reasonInput.trim(),
-                            }),
-                          });
-                          const data = await res.json();
-                          if (!res.ok) throw new Error(data.error || 'Failed');
-                          setSelected({ ...selected, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly });
-                          setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly } : b));
-                        } catch (err) {
-                          console.error('Verification level change error:', err);
-                          alert(err instanceof Error ? err.message : 'Failed to update verification level');
-                        }
-                      }}
+                      disabled={selected.verification_level === level || customFeeSaving || stepUpBlocked}
+                      onClick={() => openReview('set_level', level)}
                       className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                         selected.verification_level === level
                           ? 'bg-brand text-white'
@@ -838,6 +1004,22 @@ export default function Businesses() {
                 </div>
               )}
             </div>
+
+
+            {reviewMessage && <p role="status" className="mt-3 text-sm">{reviewMessage}</p>}
+            {reviewDraft && reviewDraft.businessId === selected.id && (
+              <section aria-label="Review business change" className="mt-4 space-y-3 rounded-lg border p-4">
+                <p>{reviewDraft.action === 'set_level' ? `Set verification to ${reviewDraft.level}` :
+                  `Custom fee: ${reviewDraft.custom_fee_percentage ?? 'tier default'}%, flat ${reviewDraft.custom_fee_flat ?? 'tier default'}`}</p>
+                <label className="block text-sm">Reason for change
+                  <textarea aria-label="Reason for change" value={reviewReason} disabled={customFeeSaving}
+                    onChange={e => setReviewReason(e.target.value)} className="mt-1 w-full rounded border p-2" />
+                </label>
+                <button disabled={customFeeSaving || !reviewReason.trim()} onClick={confirmReview}
+                  className="rounded bg-brand px-3 py-2 text-white disabled:opacity-50">Confirm and authorize</button>
+                <button disabled={customFeeSaving} onClick={cancelReview} className="ml-3">Cancel change</button>
+              </section>
+            )}
 
             {selectedPayout && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
@@ -892,13 +1074,15 @@ export default function Businesses() {
             )}
 
             {/* Financial Summary */}
-            {selectedFinancials && (
+            {financialError && financialBusinessId === selected.id && <div role="alert" className="mt-4 text-sm text-red-600">{financialError} <button type="button" onClick={() => setFinancialReload(value => value + 1)}>Retry financial summary</button></div>}
+            {financialBusinessId !== selected.id && <p className="mt-4 text-sm text-gray-500">Loading financial summary…</p>}
+            {selectedFinancials && financialBusinessId === selected.id && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Financial Summary</p>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-gray-900">{fmtCurrency(selectedFinancials.totalRevenue, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
-                    <p className="text-[10px] text-gray-500">Total Revenue</p>
+                    <p className="text-[10px] text-gray-500">Collections</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-brand">{fmtCurrency(selectedFinancials.totalFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
@@ -910,7 +1094,7 @@ export default function Businesses() {
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-green-600">{fmtCurrency(selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
-                    <p className="text-[10px] text-gray-500">Total Payouts</p>
+                    <p className="text-[10px] text-gray-500">Paid payouts</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-red-500">{fmtCurrency(selectedFinancials.totalRefunds, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
@@ -919,9 +1103,12 @@ export default function Businesses() {
                 </div>
                 <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
                   <span>{selectedFinancials.bookingCount} total bookings</span>
-                  <span>Net: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
-                  <span>Balance: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds - selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Processing reservations: {fmtCurrency(selectedFinancials.processingPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Net retained: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalRefunds - selectedFinancials.totalFees - selectedFinancials.totalGatewayFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Accounting remainder: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalRefunds - selectedFinancials.totalFees - selectedFinancials.totalGatewayFees - selectedFinancials.totalPayouts - selectedFinancials.processingPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
                 </div>
+
+                <p className="mt-2 text-xs text-gray-500">Accounting remainder is not the available-to-withdraw balance. It does not reconcile custody, other pending reservations, adjustments or currency differences.</p>
 
                 {/* Payout History */}
                 {selectedFinancials.payoutHistory.length > 0 && (
@@ -957,6 +1144,7 @@ export default function Businesses() {
                       step="0.01"
                       min="0"
                       max="100"
+                      aria-label="Custom Fee %" disabled={customFeeSaving || !!reviewDraft}
                       value={customFeePercentage}
                       onChange={e => setCustomFeePercentage(e.target.value)}
                       placeholder="e.g. 1.5"
@@ -969,6 +1157,7 @@ export default function Businesses() {
                       type="number"
                       step="1"
                       min="0"
+                      aria-label="Custom Flat Fee" disabled={customFeeSaving || !!reviewDraft}
                       value={customFeeFlat}
                       onChange={e => setCustomFeeFlat(e.target.value)}
                       placeholder="e.g. 50"
@@ -978,77 +1167,15 @@ export default function Businesses() {
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <button
-                    onClick={async () => {
-                      setCustomFeeSaving(true);
-                      try {
-                        const feePercentage = customFeePercentage.trim() !== '' ? parseFloat(customFeePercentage) : null;
-                        const feeFlat = customFeeFlat.trim() !== '' ? parseInt(customFeeFlat, 10) : null;
-                        const reasonInput = prompt('Reason for setting custom fees:');
-                        if (!reasonInput) { setCustomFeeSaving(false); return; }
-                        const { data: sessionData } = await supabase.auth.getSession();
-                        const token = sessionData?.session?.access_token;
-                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
-                        const apiUrl = import.meta.env.VITE_API_URL || '';
-                        const res = await fetch(`${apiUrl}/api/verification/review`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({
-                            business_id: selected.id,
-                            action: 'set_custom_fees',
-                            custom_fee_percentage: feePercentage,
-                            custom_fee_flat: feeFlat,
-                            reason: reasonInput.trim(),
-                          }),
-                        });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Failed');
-                        setSelected({ ...selected, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat });
-                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat } : b));
-                      } catch (err) {
-                        console.error('Custom fee save error:', err);
-                        alert(err instanceof Error ? err.message : 'Failed to save custom fees');
-                      } finally {
-                        setCustomFeeSaving(false);
-                      }
-                    }}
-                    disabled={customFeeSaving}
+                    onClick={() => openReview('set_custom_fees')}
+                    disabled={customFeeSaving || stepUpBlocked}
                     className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                   >
                     {customFeeSaving ? '...' : 'Save Override'}
                   </button>
                   <button
-                    onClick={async () => {
-                      setCustomFeeSaving(true);
-                      try {
-                        const { data: sessionData } = await supabase.auth.getSession();
-                        const token = sessionData?.session?.access_token;
-                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
-                        const apiUrl = import.meta.env.VITE_API_URL || '';
-                        const res = await fetch(`${apiUrl}/api/verification/review`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({
-                            business_id: selected.id,
-                            action: 'set_custom_fees',
-                            custom_fee_percentage: null,
-                            custom_fee_flat: null,
-                            reason: 'Clearing custom fee overrides',
-                          }),
-                        });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Failed');
-                        setCustomFeePercentage('');
-                        setCustomFeeFlat('');
-                        setSelected({ ...selected, custom_fee_percentage: null, custom_fee_flat: null });
-                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: null, custom_fee_flat: null } : b));
-                      } catch (err) {
-                        console.error('Custom fee clear error:', err);
-                        alert('Failed to clear custom fees');
-                      } finally {
-                        setCustomFeeSaving(false);
-                      }
-                    }}
-                    disabled={customFeeSaving || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
+                    onClick={() => openReview('set_custom_fees', undefined, true)}
+                    disabled={customFeeSaving || stepUpBlocked || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
                     className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
                   >
                     Clear Override
@@ -1137,10 +1264,16 @@ export default function Businesses() {
                   {PLAN_LABELS[selected.subscription_tier as SubscriptionTier] || selected.subscription_tier}
                 </span>
               </div>
+              <p className="mb-2 text-xs text-gray-500">Selected capabilities may be paused by the business's current entitlement policy.</p>
+              {capLoad.businessId !== selected.id || capLoad.status === 'loading' ? <p role="status">Loading selected capabilities…</p> : null}
+              {capLoad.businessId === selected.id && capLoad.status === 'error' && (
+                <div role="alert" className="mb-2 text-sm text-red-600">{capLoad.error} <button type="button" onClick={() => void loadCapabilities(selected.id)}>Retry capabilities</button></div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 {CAPABILITIES.map(cap => {
-                  const isEnabled = selectedCaps.includes(cap.id);
-                  const isOverridden = selectedOverrides.includes(cap.id);
+                  const capsReady = capLoad.businessId === selected.id && capLoad.status === 'ready';
+                  const isEnabled = capsReady && selectedCaps.includes(cap.id);
+                  const isOverridden = capsReady && selectedOverrides.includes(cap.id);
                   const requiredTier = CAPABILITY_TIER_REQUIREMENTS[cap.id];
                   const isSaving = capSaving === cap.id;
 
@@ -1167,8 +1300,11 @@ export default function Businesses() {
                       </div>
                       <button
                         type="button"
-                        disabled={isSaving}
-                        onClick={() => handleCapToggle(selected.id, selected.subscription_tier, cap.id, isEnabled)}
+                        role="switch"
+                        aria-label={`Selected ${cap.label}`}
+                        aria-checked={isEnabled}
+                        disabled={!isFullAdmin || !capsReady || capSaving !== null}
+                        onClick={() => handleCapToggle(selected.id, cap.id, isEnabled)}
                         className={`flex h-5 w-9 flex-shrink-0 items-center rounded-full transition ${
                           isEnabled ? 'bg-brand' : 'bg-gray-200'
                         } ${isSaving ? 'opacity-50' : 'cursor-pointer'}`}
@@ -1186,12 +1322,25 @@ export default function Businesses() {
         )}
       </DetailModal>
       <StepUpDialog
-        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        open={!!stepUpCallbackRef.current && (stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying')}
         description={stepUp.state.description}
         error={stepUp.state.error}
         loading={stepUp.state.phase === 'verifying'}
-        onSubmit={(code) => { if (stepUpCallbackRef.current) stepUp.submitCode(code, stepUpCallbackRef.current); }}
-        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+        onSubmit={async (code) => {
+          if (reviewSubmitRef.current || stepUpFlightRef.current || !stepUpCallbackRef.current) return;
+          reviewSubmitRef.current = true;
+          stepUpFlightRef.current = true;
+          setStepUpFlight(true);
+          try { await stepUp.submitCode(code, stepUpCallbackRef.current); }
+          finally {
+            if (!stepUpCallbackRef.current) stepUp.reset();
+            stepUpFlightRef.current = false;
+            setStepUpFlight(false);
+            reviewSubmitRef.current = false;
+            if (!reviewOperationRef.current) setCustomFeeSaving(false);
+          }
+        }}
+        onCancel={() => { if (reviewOperationRef.current) cancelReview(); else { stepUp.reset(); stepUpCallbackRef.current = null; } }}
       />
     </div>
   );

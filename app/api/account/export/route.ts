@@ -20,26 +20,7 @@ import { logger } from '@/lib/logger';
 
 const EXPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-/** Escape a value for CSV: quote strings containing commas, quotes, or newlines */
-function csvEscape(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
-/** Convert an array of objects to a CSV string */
-function arrayToCsv(rows: Record<string, unknown>[]): string {
-  if (rows.length === 0) return '';
-  const headers = Object.keys(rows[0]);
-  const lines = [
-    headers.join(','),
-    ...rows.map((row) => headers.map((h) => csvEscape(row[h])).join(',')),
-  ];
-  return lines.join('\n');
-}
+import { csvEscape, arrayToCsv } from './csv-serializer';
 
 export async function POST(request: NextRequest) {
   const format = request.nextUrl.searchParams.get('format') || 'json';

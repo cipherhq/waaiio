@@ -33,6 +33,7 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 import { renderPromoEntryMessage, type PromoEntryCampaign } from '@/lib/promotions/entry';
+import { logger } from '@/lib/logger';
 import { looksLikePromoCode } from '@/lib/promotions/verify';
 
 // ══════════════════════════════════════════════════════════
@@ -172,6 +173,7 @@ describe('#248-F4: Entry message format hint', () => {
 
 describe('#248-F4: Invalid code response format hint (verify.ts)', () => {
   beforeEach(() => {
+    vi.mocked(logger.error).mockClear();
     mockRpc.mockReset();
     mockChain.single.mockReset();
   });
@@ -231,6 +233,7 @@ describe('#248-F4: Invalid code response format hint (verify.ts)', () => {
     expect(result.result).toBe('invalid');
     expect(result.message).toContain('That code is not valid.');
     expect(result.message).toContain('Expected format: *XXXX-XXXX-XXXX*');
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   it('invalid result omits format hint when campaign has no code_format', async () => {
@@ -324,7 +327,12 @@ describe('#248-F4: Invalid code response format hint (verify.ts)', () => {
     // RPC returns an error (not a data result)
     mockRpc.mockResolvedValueOnce({
       data: null,
-      error: { message: 'RPC failed' },
+      error: {
+        message: 'RPC failed: private submitted code',
+        details: 'private phone and code hash',
+        hint: 'private request payload',
+        code: 'private arbitrary error code',
+      },
     });
 
     const { verifyPromoCode } = await import('@/lib/promotions/verify');
@@ -338,6 +346,12 @@ describe('#248-F4: Invalid code response format hint (verify.ts)', () => {
     expect(result.result).toBe('invalid');
     expect(result.message).toContain('Code not recognized.');
     expect(result.message).toContain('Expected format: *WIN-XXXXXX*');
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      'promo.verify', 'claim_promo_code RPC failed',
+      { businessId: 'biz1', campaignId: 'camp-rpc' },
+    );
+    // Exact argument assertion excludes arbitrary RPC fields and claim input.
   });
 
   it('winner result does NOT get format hint appended', async () => {
@@ -396,6 +410,7 @@ describe('#248-F4: Invalid code response format hint (verify.ts)', () => {
       keyword: 'WIN',
     });
 
+    expect(logger.error).not.toHaveBeenCalled();
     expect(result.result).toBe('winner');
     expect(result.message).toContain('Congratulations! You won iPhone!');
     // Format hint should NOT be present on winner messages
@@ -450,6 +465,7 @@ describe('#248-F4: Invalid code response format hint (verify.ts)', () => {
       keyword: 'TRY',
     });
 
+    expect(logger.error).not.toHaveBeenCalled();
     expect(result.result).toBe('try_again');
     expect(result.message).toBe('Better luck next time!');
     // Format hint should NOT be present on try_again messages

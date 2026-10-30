@@ -158,18 +158,59 @@ export const ticketingFlow: FlowDefinition = {
       id: 'select_ticket_type',
       async skipIf(ctx: FlowContext): Promise<boolean> {
         const eventId = ctx.session.session_data.event_id as string;
-        const { data: types } = await ctx.supabase
+
+        // #716: Clear stale tier state from prior event selection
+        delete ctx.session.session_data._all_tiers_paused;
+        delete ctx.session.session_data._ticket_types;
+
+        // #716: Distinguish tierless events from tiered events with all tiers paused.
+        // First check if ANY tiers exist (active or not) for this event.
+        const { data: allTiers, error: tierErr } = await ctx.supabase
+          .from('event_ticket_types')
+          .select('id, is_active')
+          .eq('event_id', eventId)
+          .limit(1);
+
+        // Treat query errors as errors, not as tierless — fail closed
+        if (tierErr) {
+          ctx.session.session_data._all_tiers_paused = true;
+          return false; // show unavailable message
+        }
+
+        if (!allTiers || allTiers.length === 0) {
+          // Genuinely tierless event — use event-level price
+          return true;
+        }
+
+        // Event has configured tiers — only show active ones
+        const { data: types, error: activeErr } = await ctx.supabase
           .from('event_ticket_types')
           .select('id, name, price, total_tickets, tickets_sold, is_active')
           .eq('event_id', eventId)
           .eq('is_active', true)
           .order('sort_order');
 
-        if (!types || types.length === 0) return true; // No types — use event-level price
+        if (activeErr || !types || types.length === 0) {
+          // All tiers paused (or query error) — fail closed
+          ctx.session.session_data._all_tiers_paused = true;
+          return false;
+        }
         ctx.session.session_data._ticket_types = types;
         return false;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        // #716: All tiers paused — show unavailable, don't fall through to event-level
+        if (ctx.session.session_data._all_tiers_paused) {
+          return [{
+            type: 'buttons',
+            body: 'Sorry, tickets for this event are currently unavailable. The organizer has paused all ticket types.',
+            buttons: [
+              { id: 'back_to_events', title: getFlowCopy(ctx.copyLang, 'ticketing.other_events') },
+              { id: 'cancel_tickets', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
+            ],
+          }];
+        }
+
         const types = ctx.session.session_data._ticket_types as Array<{ id: string; name: string; price: number; total_tickets: number; tickets_sold: number }>;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
@@ -344,9 +385,13 @@ export const ticketingFlow: FlowDefinition = {
         if (ticketTypeId) {
           const { data: tt } = await ctx.supabase
             .from('event_ticket_types')
-            .select('total_tickets, tickets_sold')
+            .select('total_tickets, tickets_sold, is_active')
             .eq('id', ticketTypeId)
             .single();
+          // #716: Reject stale sessions where organizer paused the tier
+          if (tt && !tt.is_active) {
+            return { valid: false, errorMessage: 'Sorry, this ticket type is no longer available. Type *cancel* to start over.' };
+          }
           available = tt ? tt.total_tickets - tt.tickets_sold : 0;
         } else {
           const { data: event } = await ctx.supabase
@@ -540,7 +585,12 @@ export const ticketingFlow: FlowDefinition = {
           }
         }
 
-        // If booking already exists (e.g. retry after crash), reuse existing — prevent duplicate INSERT
+        // #716: DB-atomic booking creation via create_ticket_booking_checked RPC.
+        // Acquires FOR UPDATE lock on the tier row, checks is_active + availability,
+        // and creates the booking in a single transaction. Closes the TOCTOU gap
+        // between application-level reads and INSERT. Does NOT increment tickets_sold
+        // (deferred to finalize_free_ticket_booking after payment).
+        // Idempotent: returns existing booking if bot_session_id matches.
         const isNewBooking = !(d.booking_id && d.reference_code);
         let booking: { id: string; reference_code: string };
         let freshlyCreated = false;
@@ -548,47 +598,39 @@ export const ticketingFlow: FlowDefinition = {
         if (!isNewBooking) {
           booking = { id: d.booking_id as string, reference_code: d.reference_code as string };
         } else {
-          const { data: bookingData, error } = await ctx.supabase
-            .from('bookings')
-            .insert({
-              business_id: ctx.business!.id,
-              user_id: userId,
-              event_id: d.event_id as string,
-              date: d.event_date as string,
-              time: (d.event_time as string) || '00:00',
-              party_size: qty,
-              flow_type: 'ticketing',
-              channel: 'whatsapp',
-              deposit_amount: total,
-              deposit_status: total > 0 ? 'pending' : 'none',
-              status: total > 0 ? 'pending' : 'confirmed',
-              total_amount: total,
-              quantity: qty,
-              guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-              guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-              notes: `Tickets for: ${d.event_name}`,
-              bot_session_id: ctx.session.id,
-            })
-            .select('id, reference_code')
-            .single();
+          const { data: rpcResult, error: rpcErr } = await ctx.supabase
+            .rpc('create_ticket_booking_checked', {
+              p_business_id: ctx.business!.id,
+              p_event_id: d.event_id as string,
+              p_ticket_type_id: (d.ticket_type_id as string) || null,
+              p_quantity: qty,
+              p_user_id: userId,
+              p_total_amount: total,
+              p_guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              p_guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+              p_bot_session_id: ctx.session.id,
+              p_expected_price: d.event_price as number,
+            });
 
-          if (error || !bookingData) {
-            // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)
-            const { data: existing } = await ctx.supabase
-              .from('bookings')
-              .select('id, reference_code')
-              .eq('bot_session_id', ctx.session.id)
-              .in('status', ['pending', 'confirmed'])
-              .single();
-            if (existing) {
-              booking = existing;
-            } else {
-              return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
+          if (rpcErr) {
+            // Tier paused or all-paused between selection and booking
+            if (rpcErr.message?.includes('tier_paused') || rpcErr.message?.includes('all_tiers_paused')) {
+              return [{ type: 'text' as const, text: await ctx.t('Sorry, this ticket type is no longer available. Send *Hi* to start over.') }];
             }
-          } else {
-            booking = bookingData;
-            freshlyCreated = true;
+            if (rpcErr.message?.includes('price_changed')) {
+              return [{ type: 'text' as const, text: await ctx.t('The ticket price has changed. Send *Hi* to start over with the updated price.') }];
+            }
+            logger.withContext({ op: 'ticketing.create-booking-rpc', ...safeLogErrorContext(rpcErr) }).error('[TICKETING] create_ticket_booking_checked failed');
+            return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
           }
+
+          const row = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
+          if (!row?.success) {
+            return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ticketing.sold_out') || 'Sorry, this event just sold out!' }];
+          }
+
+          booking = { id: row.booking_id, reference_code: row.reference_code };
+          freshlyCreated = true;
 
           // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
           // For free events, it's incremented below before confirmation.
