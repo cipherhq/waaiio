@@ -1,7 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useId } from 'react';
 import { loadGooglePlaces } from '@/lib/google-places-loader';
+import {
+  fetchPredictions,
+  fetchPlaceDetails,
+  resetSession,
+  isNewApiAvailable,
+  type NormalizedPrediction,
+} from '@/lib/places-provider';
 
 interface AddressResult {
   address: string;
@@ -29,98 +36,168 @@ export default function AddressAutocomplete({
   countryCode,
   className = '',
 }: AddressAutocompleteProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [predictions, setPredictions] = useState<NormalizedPrediction[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [ready, setReady] = useState(false);
   const [value, setValue] = useState(defaultValue);
+  const listId = useId();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestRef = useRef(0);
+  const detailsRequestRef = useRef(0);
+  const mountedRef = useRef(false);
 
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
+  function dismiss() {
+    requestRef.current++;
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    setPredictions([]);
+    setActiveIndex(-1);
+  }
+
   useEffect(() => { setValue(defaultValue); }, [defaultValue]);
 
   useEffect(() => {
+    mountedRef.current = true;
     let active = true;
     loadGooglePlaces().then(() => {
-      if (active) setLoaded(true);
+      if (active && isNewApiAvailable()) setReady(true);
     }).catch(() => { /* Manual entry remains available. */ });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      mountedRef.current = false;
+      requestRef.current++;
+      detailsRequestRef.current++;
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      resetSession();
+    };
   }, []);
 
-  // Initialize autocomplete
+  // Country change resets session.
   useEffect(() => {
-    if (!loaded || !inputRef.current || autocompleteRef.current) return;
+    resetSession();
+  }, [countryCode]);
 
-    const options: google.maps.places.AutocompleteOptions = {
-      types: ['address'],
-      fields: ['address_components', 'formatted_address', 'geometry'],
-    };
-
-    let autocomplete: google.maps.places.Autocomplete;
-    try {
-      autocomplete = new google.maps.places.Autocomplete(inputRef.current, options);
-    } catch {
-      return; // Unavailable provider: retain the manual input.
+  useEffect(() => {
+    function outside(event: PointerEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) dismiss();
     }
-    autocompleteRef.current = autocomplete;
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, []);
 
-    const listener = autocomplete.addListener('place_changed', () => {
-      const place = autocomplete.getPlace();
-      if (!place.address_components) return;
+  function handleInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.target.value;
+    detailsRequestRef.current++;
+    dismiss();
+    setValue(input);
+    onManualChange?.(input);
+    if (!input.trim() || !ready) return;
+    const request = requestRef.current;
+    debounceTimerRef.current = setTimeout(async () => {
+      if (!mountedRef.current || request !== requestRef.current) return;
+      try {
+        const results = await fetchPredictions({
+          input,
+          includedRegionCodes: countryCode ? [countryCode.toLowerCase()] : undefined,
+          includedPrimaryTypes: ['address'],
+        });
+        if (!mountedRef.current || request !== requestRef.current) return;
+        setPredictions(results);
+        setActiveIndex(-1);
+      } catch {
+        if (mountedRef.current && request === requestRef.current) setPredictions([]);
+      }
+    }, 300);
+  }
 
-      let streetNumber = '';
-      let route = '';
-      let city = '';
-      let state = '';
-      let zipCode = '';
-      let country = '';
-
-      const find = (type: string) => place.address_components!.find(c => c.types.includes(type));
-      streetNumber = find('street_number')?.long_name || '';
-      route = find('route')?.long_name || '';
-      city = find('locality')?.long_name || find('postal_town')?.long_name || find('administrative_area_level_2')?.long_name || '';
-      state = find('administrative_area_level_1')?.long_name || '';
-      zipCode = find('postal_code')?.long_name || '';
-      country = find('country')?.short_name || '';
-
-      const address = (streetNumber ? `${streetNumber} ${route}` : route).trim() || place.formatted_address || '';
-      const formattedAddress = place.formatted_address || address;
-      setValue(formattedAddress);
-
-      const latitude = place.geometry?.location?.lat();
-      const longitude = place.geometry?.location?.lng();
+  async function selectPrediction(prediction: NormalizedPrediction) {
+    dismiss();
+    const request = ++detailsRequestRef.current;
+    setValue(prediction.description);
+    try {
+      const result = await fetchPlaceDetails(prediction, [
+        'formattedAddress', 'addressComponents', 'location',
+      ]);
+      if (!mountedRef.current || request !== detailsRequestRef.current) return;
+      const c = result.components;
+      const address = (c.streetNumber ? `${c.streetNumber} ${c.route}` : c.route).trim() || result.formattedAddress;
+      setValue(result.formattedAddress);
 
       onSelectRef.current({
-        address, city, state, zipCode, country,
-        latitude: Number.isFinite(latitude) && Number.isFinite(longitude) ? latitude : undefined,
-        longitude: Number.isFinite(latitude) && Number.isFinite(longitude) ? longitude : undefined,
-        formattedAddress,
+        address,
+        city: c.city,
+        state: c.state,
+        zipCode: c.postalCode,
+        country: c.country,
+        latitude: result.lat,
+        longitude: result.lng,
+        formattedAddress: result.formattedAddress,
       });
-    });
-    return () => {
-      listener.remove();
-      autocompleteRef.current = null;
-    };
-  }, [loaded]); // The listener reads current callbacks through a ref.
+    } catch {
+      // The selected description remains editable; no fields are fabricated.
+    }
+  }
 
-  useEffect(() => {
-    autocompleteRef.current?.setComponentRestrictions(
-      countryCode ? { country: countryCode.toLowerCase() } : { country: [] }
-    );
-  }, [loaded, countryCode]);
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Escape') { dismiss(); return; }
+    if (!predictions.length) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveIndex(prev => prev < predictions.length - 1 ? prev + 1 : 0);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveIndex(prev => prev > 0 ? prev - 1 : predictions.length - 1);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      if (activeIndex >= 0) selectPrediction(predictions[activeIndex]);
+    }
+  }
 
   return (
-    <input
-      ref={inputRef}
-      type="text"
-      value={value}
-      onChange={(e) => {
-        setValue(e.target.value);
-        // Update parent address on manual typing (don't clear city/state/zip)
-        onManualChange?.(e.target.value);
-      }}
-      placeholder="Start typing your address..."
-      className={`w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100 ${className}`}
-    />
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={value}
+        onChange={handleInputChange}
+        onKeyDown={handleKeyDown}
+        onBlur={dismiss}
+        placeholder="Start typing your address..."
+        className={`w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100 ${className}`}
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={predictions.length > 0}
+        aria-haspopup="listbox"
+        aria-autocomplete="list"
+        aria-controls={predictions.length ? listId : undefined}
+        aria-activedescendant={activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
+      />
+      {predictions.length > 0 && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+          <ul id={listId} role="listbox" className="max-h-60 overflow-auto">
+            {predictions.map((prediction, index) => (
+              <li
+                id={`${listId}-${index}`}
+                key={prediction.placeId}
+                role="option"
+                aria-selected={index === activeIndex}
+                onPointerDown={event => event.preventDefault()}
+                onClick={() => selectPrediction(prediction)}
+                onMouseEnter={() => setActiveIndex(index)}
+                className={`cursor-pointer px-4 py-2.5 text-sm transition ${index === activeIndex ? 'bg-brand-50 text-brand-700' : 'text-gray-700 hover:bg-gray-50'}`}
+              >
+                <span className="font-medium">{prediction.mainText}</span>
+                {prediction.secondaryText && <span className="ml-1 text-gray-400">{prediction.secondaryText}</span>}
+              </li>
+            ))}
+          </ul>
+          <div className="border-t border-gray-100 px-3 py-1.5 text-right">
+            <span className="text-[10px] text-gray-300">Powered by Google</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,3 +1,13 @@
+### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
+
+- **`lib/places-provider.ts`** (new): Shared New API adapter — `fetchAutocompleteSuggestions()`, `toPlace()`, `fetchFields()` with explicit session tokens, normalized result types mapping camelCase New API fields (`.longText`/`.shortText`) to existing component contracts.
+- **`components/ui/PlacesAutocomplete.tsx`**: Replaced Legacy `AutocompleteService`/`PlacesService` with `places-provider` New API calls. Added `isNewApiAvailable()` readiness check. Session tokens reset on unmount and value change. Dropdown rendering and keyboard/pointer selection preserved.
+- **`components/ui/AddressAutocomplete.tsx`**: Replaced Legacy `Autocomplete` widget with custom dropdown + New API via `places-provider`. Country restriction uses `includedRegionCodes`, address type uses `includedPrimaryTypes: ['address']`. Component interface (onSelect, onManualChange, defaultValue, countryCode) unchanged.
+- **`admin/src/lib/googlePlaces.ts`**: Rewrote factory to use New API internally while preserving the `PredictionService`/`DetailsService` callback interface consumed by Admin component. Maps New API camelCase fields to Legacy-shaped `long_name`/`short_name` for Admin component compatibility.
+- **`lib/__tests__/places-autocomplete-751.test.tsx`**: 18 tests rewritten to mock at provider boundary. Covers keyboard/pointer selection, structured coordinates/city, blur/dismiss details, failed details, no-geometry, stale responses, manual fallback, empty results, session reset, country restriction, no Legacy constructors called.
+- **Affects**: All address autocomplete surfaces — onboarding, Events, Parties, Settings, Discovery, Locations, Properties, Invoices, Admin onboarding, Admin Events. Component interfaces unchanged; callers not modified.
+- **Could break**: Requires Places API (New) enabled on the Google Cloud project. If only Legacy API is enabled, autocomplete degrades to manual entry (same as missing config). The `isNewApiAvailable()` check prevents errors but shows no suggestions.
+
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
 - **`lib/payments/send-confirmation.ts`**: Added campaign donation recipient/business resolution block (section 2b) between invoice and order fallback. When `payment.campaign_id` is set and no booking/reservation/invoice resolved the customer, queries `campaign_donations` for `donor_phone`, `business_id`, `reference_code`, and joins to `campaigns(title, businesses(name, country_code))`. Previously, standalone campaign donations had no resolution path — `customerPhone` and `businessId` stayed null, causing `retryable_failed` with `no_business_resolved` forever.
