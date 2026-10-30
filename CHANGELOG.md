@@ -39,6 +39,8 @@
 
 ### #514 — Durable Event saves and final cancellation (2026-10-30)
 
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
 - Admin Events saves use authenticated server authority, optimistic revisions and durable operation readback. Editors retain changes on failed or uncertain saves; persisted cancellation and notification progress are reported separately.
 - Merchant cancellation uses the same atomic event operation. Cancellation is final; restarting requires a new event.
 - M481 records cancellation, affected tickets, notification recipients, paid refund follow-ups and admin audit together. Service-only RPCs serialize ticket issuance and emission authorization against cancellation; ambiguous provider attempts are not automatically replayed.
