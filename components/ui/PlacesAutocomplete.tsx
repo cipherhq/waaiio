@@ -2,6 +2,12 @@
 
 import { useEffect, useRef, useState, useId } from 'react';
 import { loadGooglePlaces } from '@/lib/google-places-loader';
+import {
+  createPlacesSession,
+  isNewApiAvailable,
+  type NormalizedPrediction,
+  type PlacesSession,
+} from '@/lib/places-provider';
 
 interface PlaceData {
   address: string;
@@ -20,15 +26,6 @@ interface PlacesAutocompleteProps {
   ariaLabel?: string;
 }
 
-interface Prediction {
-  place_id: string;
-  description: string;
-  structured_formatting: {
-    main_text: string;
-    secondary_text: string;
-  };
-}
-
 export default function PlacesAutocomplete({
   value,
   onChange,
@@ -37,17 +34,17 @@ export default function PlacesAutocomplete({
   id,
   ariaLabel,
 }: PlacesAutocompleteProps) {
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [predictions, setPredictions] = useState<NormalizedPrediction[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [ready, setReady] = useState(false);
   const listId = useId();
-  const autocompleteServiceRef = useRef<google.maps.places.AutocompleteService | null>(null);
-  const placesServiceRef = useRef<google.maps.places.PlacesService | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
   const detailsRequestRef = useRef(0);
   const mountedRef = useRef(false);
   const valueRef = useRef(value);
+  const sessionRef = useRef<PlacesSession | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -62,9 +59,10 @@ export default function PlacesAutocomplete({
     mountedRef.current = true;
     let active = true;
     loadGooglePlaces().then(() => {
-      if (!active) return;
-      autocompleteServiceRef.current = new google.maps.places.AutocompleteService();
-      placesServiceRef.current = new google.maps.places.PlacesService(document.createElement('div'));
+      if (active && isNewApiAvailable()) {
+        sessionRef.current = createPlacesSession();
+        setReady(true);
+      }
     }).catch(() => { /* Manual entry remains available. */ });
     return () => {
       active = false;
@@ -72,8 +70,8 @@ export default function PlacesAutocomplete({
       requestRef.current++;
       detailsRequestRef.current++;
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      autocompleteServiceRef.current = null;
-      placesServiceRef.current = null;
+      sessionRef.current?.reset();
+      sessionRef.current = null;
     };
   }, []);
 
@@ -83,6 +81,7 @@ export default function PlacesAutocomplete({
       valueRef.current = value;
       detailsRequestRef.current++;
       dismiss();
+      sessionRef.current?.reset();
     }
   }, [value]);
 
@@ -100,50 +99,43 @@ export default function PlacesAutocomplete({
     dismiss();
     valueRef.current = input;
     onChangeRef.current(input); // No place data: parents invalidate stale coordinates.
-    if (!input.trim()) return;
+    if (!input.trim()) { sessionRef.current?.reset(); return; }
+    if (!ready) return;
     const request = requestRef.current;
-    debounceTimerRef.current = setTimeout(() => {
-      if (!autocompleteServiceRef.current || request !== requestRef.current) return;
+    debounceTimerRef.current = setTimeout(async () => {
+      if (!mountedRef.current || request !== requestRef.current) return;
       try {
-        autocompleteServiceRef.current.getPlacePredictions({ input }, (results, status) => {
-          if (!mountedRef.current || request !== requestRef.current) return;
-          setPredictions(status === google.maps.places.PlacesServiceStatus.OK && results
-            ? results as unknown as Prediction[] : []);
-          setActiveIndex(-1);
-        });
+        const results = await sessionRef.current!.fetchPredictions({ input });
+        if (!mountedRef.current || request !== requestRef.current) return;
+        setPredictions(results);
+        setActiveIndex(-1);
       } catch {
         if (mountedRef.current && request === requestRef.current) setPredictions([]);
       }
     }, 300);
   }
 
-  function selectPrediction(prediction: Prediction) {
+  async function selectPrediction(prediction: NormalizedPrediction) {
     dismiss();
     // Menu dismissal must not discard details for the selected address.
     const request = ++detailsRequestRef.current;
     // Commit text immediately, even when details are unavailable.
     valueRef.current = prediction.description;
     onChangeRef.current(prediction.description);
-    if (!placesServiceRef.current) return;
     try {
-      placesServiceRef.current.getDetails({
-        placeId: prediction.place_id,
-        fields: ['formatted_address', 'geometry', 'address_components'],
-      }, (place, status) => {
-        if (!mountedRef.current || request !== detailsRequestRef.current) return;
-        if (status !== google.maps.places.PlacesServiceStatus.OK || !place?.formatted_address) return;
-        const lat = place.geometry?.location?.lat();
-        const lng = place.geometry?.location?.lng();
-        valueRef.current = place.formatted_address;
-        if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-          onChangeRef.current(place.formatted_address);
-          return;
-        }
-        const findType = (type: string) => place.address_components?.find(c => c.types.includes(type))?.long_name;
-        const city = findType('locality') || findType('postal_town') || findType('administrative_area_level_2');
-        onChangeRef.current(place.formatted_address, {
-          address: place.formatted_address, lat, lng, placeId: prediction.place_id, city,
-        });
+      const result = await sessionRef.current!.fetchPlaceDetails(prediction);
+      if (!mountedRef.current || request !== detailsRequestRef.current) return;
+      valueRef.current = result.formattedAddress;
+      if (typeof result.lat !== 'number' || typeof result.lng !== 'number') {
+        onChangeRef.current(result.formattedAddress);
+        return;
+      }
+      onChangeRef.current(result.formattedAddress, {
+        address: result.formattedAddress,
+        lat: result.lat,
+        lng: result.lng,
+        placeId: result.placeId,
+        city: result.components.city || undefined,
       });
     } catch {
       // The selected description remains editable; no coordinates are fabricated.
@@ -191,7 +183,7 @@ export default function PlacesAutocomplete({
             {predictions.map((prediction, index) => (
               <li
                 id={`${listId}-${index}`}
-                key={prediction.place_id}
+                key={prediction.placeId}
                 role="option"
                 aria-selected={index === activeIndex}
                 onPointerDown={event => event.preventDefault()}
@@ -199,8 +191,8 @@ export default function PlacesAutocomplete({
                 onMouseEnter={() => setActiveIndex(index)}
                 className={`cursor-pointer px-3 py-2.5 text-sm transition ${index === activeIndex ? 'bg-brand-50 text-brand-700' : 'text-gray-700 hover:bg-gray-50'}`}
               >
-                <span className="font-medium">{prediction.structured_formatting.main_text}</span>
-                {prediction.structured_formatting.secondary_text && <span className="ml-1 text-gray-400">{prediction.structured_formatting.secondary_text}</span>}
+                <span className="font-medium">{prediction.mainText}</span>
+                {prediction.secondaryText && <span className="ml-1 text-gray-400">{prediction.secondaryText}</span>}
               </li>
             ))}
           </ul>

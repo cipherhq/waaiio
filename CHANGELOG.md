@@ -1,3 +1,16 @@
+### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
+
+- **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
+- **`components/ui/PlacesAutocomplete.tsx`**: Replaced Legacy `AutocompleteService`/`PlacesService` with per-instance `PlacesSession` from `places-provider`. Session reset on unmount and value change.
+- **`components/ui/AddressAutocomplete.tsx`**: Replaced Legacy `Autocomplete` widget with custom dropdown + per-instance `PlacesSession`. Country restriction via `includedRegionCodes` (no unsupported `includedPrimaryTypes: ['address']`). Parent notified on selection text before details. Predictions/details invalidated on external defaultValue and country changes.
+- **R2:** Removed unsupported `includedPrimaryTypes: ['address']` (P1). Added parent notification on selection text (P2). Per-instance session tokens replace global tokens (P2). Admin uses `toPlace()` from matched prediction + `mainText?.` optional chaining (P2).
+- **R3:** Fixed parent feedback loop (P1) — valueRef tracking prevents echo-reset. Session lifecycle — generation counter, dispatch-time token consumption. Admin exposes reset(), passes _raw directly.
+- **`admin/src/lib/googlePlaces.ts`**: Per-factory session token. Details fetched via `toPlace()` from matched prediction (not `new Place({id})`). Optional `mainText?.text` fallback.
+- **`lib/__tests__/places-autocomplete-751.test.tsx`**: 22 tests rewritten. Covers per-instance sessions, selection parent notification, country/defaultValue invalidation, no unsupported types, keyboard/pointer selection, coordinates, stale responses, manual fallback, attribution.
+- **`lib/__tests__/discovery-settings-wiring-485.test.ts`**: Two assertions migrated from Legacy source strings to New API: `addressComponents` field request and city derivation in `places-provider.ts`.
+- **Affects**: All address autocomplete surfaces — onboarding, Events, Parties, Settings, Discovery, Locations, Properties, Invoices, Admin onboarding, Admin Events. Component interfaces unchanged; callers not modified.
+- **Could break**: Requires Places API (New) enabled on the Google Cloud project. If only Legacy API is enabled, autocomplete degrades to manual entry (same as missing config).
+
 ### #753 item 6 — Bot Text clarity for nontechnical merchants (2026-10-29)
 
 - **`app/dashboard/translations/page.tsx`**: Replaced raw message keys with human-readable labels, context descriptions, and "Your message" field labels. Now uses `editableKeys` from the API (not `allKeys`) so only merchant-editable messages appear. Added inline help explaining save/reset behavior, required placeholder tokens with explanations, and WhatsApp character limits for button/list titles. Search matches readable labels in addition to keys and text. Updated page help title and terminology ("messages" instead of "keys").
@@ -5503,6 +5516,15 @@ If something breaks:
 - Preserve selected address details after blur/outside dismissal while keeping the menu closed; edits, new selections, record resets and unmounts still invalidate stale details.
 - **Affects**: Main-app physical-address entry. Admin Vite onboarding/event fields remain an explicit follow-up; no provider configuration or schema changes.
 - **Could break**: Shared browser widget loading/selection affects existing callers; live Google enablement/referrer behavior still needs runtime verification.
+
+### #751 — Admin physical-address autocomplete (2026-10-29)
+
+- Add a Vite-compatible Admin address adapter using the unchanged shared Google loader, with narrowly allowlisted browser-key mapping and optional example configuration.
+- Wire CustomerOnboarding address/city/state/postcode selection without changing selected country or submission stages; wire existing Events venue editing without changing permissions, save or audit paths.
+- Add rendered component/form tests for selection, manual fallback, cancellation, country/reset/back navigation and Events read-only denial.
+- **Files**: Admin address component/helper, CustomerOnboarding/Events, Vite config/example and focused Admin tests.
+- **Affects**: The two remaining Admin address editors. No provider settings, schema or main-app component changes.
+- **Could break**: Admin suggestion loading/selection and bundled public-key mapping; manual entry remains available. Live Google behavior requires separate deployment acceptance.
 
 ### #753 — Bot Text default explanation and readback evidence (2026-10-29)
 
