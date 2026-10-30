@@ -78,18 +78,18 @@ const OWNER_ID = '00000000-0000-0000-0000-000000000000'; // seeded by ci-bootstr
 
 // Fixture businesses — category-only matches use unrelated names/descriptions
 const FIXTURES = [
-  { name: `${TEST_PREFIX}Zenith Cuts`,      category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Premium grooming salon',   bot_code: 'ZENITH',  status: 'active', discovery_enabled: true,  messaging_suspended: false },
-  { name: `${TEST_PREFIX}Moonlight Lounge`,  category: 'bar',        city: 'Lagos',   country_code: 'NG', description: 'Cocktails and music',     bot_code: 'MOONLT',  status: 'active', discovery_enabled: true,  messaging_suspended: false },
-  { name: `${TEST_PREFIX}Skyline Corp`,      category: 'spa',        city: 'Abuja',   country_code: 'NG', description: 'Office supplies only',     bot_code: 'SKYLINE', status: 'active', discovery_enabled: true,  messaging_suspended: false },
-  { name: `${TEST_PREFIX}Glow Medspa`,       category: 'medspa',     city: 'Lagos',   country_code: 'NG', description: 'Clinical aesthetics',      bot_code: 'GLOW',    status: 'active', discovery_enabled: true,  messaging_suspended: false },
-  { name: `${TEST_PREFIX}Global Ventures`,   category: 'restaurant', city: 'Accra',   country_code: 'GH', description: 'International trade',      bot_code: 'GLOBAL',  status: 'active', discovery_enabled: true,  messaging_suspended: false },
-  { name: `${TEST_PREFIX}US Bistro`,         category: 'restaurant', city: 'NYC',     country_code: 'US', description: 'Fine dining',              bot_code: 'USBIST',  status: 'active', discovery_enabled: true,  messaging_suspended: false },
-  { name: `${TEST_PREFIX}Legacy Shop`,       category: 'other',      city: 'Lagos',   country_code: 'NG', description: 'General store',            bot_code: 'LEGACY',  status: 'active', discovery_enabled: true,  messaging_suspended: false },
+  { name: `${TEST_PREFIX}Zenith Cuts`,      category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Premium grooming salon',   bot_code: 'ZENITH',  status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '1 Test St', phone: '+2340000000001' },
+  { name: `${TEST_PREFIX}Moonlight Lounge`,  category: 'bar',        city: 'Lagos',   country_code: 'NG', description: 'Cocktails and music',     bot_code: 'MOONLT',  status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '2 Test St', phone: '+2340000000002' },
+  { name: `${TEST_PREFIX}Skyline Corp`,      category: 'spa',        city: 'Abuja',   country_code: 'NG', description: 'Office supplies only',     bot_code: 'SKYLINE', status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '3 Test St', phone: '+2340000000003' },
+  { name: `${TEST_PREFIX}Glow Medspa`,       category: 'medspa',     city: 'Lagos',   country_code: 'NG', description: 'Clinical aesthetics',      bot_code: 'GLOW',    status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '4 Test St', phone: '+2340000000004' },
+  { name: `${TEST_PREFIX}Global Ventures`,   category: 'restaurant', city: 'Accra',   country_code: 'GH', description: 'International trade',      bot_code: 'GLOBAL',  status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '5 Test St', phone: '+2330000000005' },
+  { name: `${TEST_PREFIX}US Bistro`,         category: 'restaurant', city: 'NYC',     country_code: 'US', description: 'Fine dining',              bot_code: 'USBIST',  status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '6 Test St', phone: '+15550000006' },
+  { name: `${TEST_PREFIX}Legacy Shop`,       category: 'other',      city: 'Lagos',   country_code: 'NG', description: 'General store',            bot_code: 'LEGACY',  status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '7 Test St', phone: '+2340000000007' },
   // Ineligible fixtures
-  { name: `${TEST_PREFIX}Hidden Barber`,     category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Hidden from directory',    bot_code: 'HIDDEN',  status: 'active', discovery_enabled: false, messaging_suspended: false },
-  { name: `${TEST_PREFIX}Suspended Spa`,     category: 'spa',        city: 'Lagos',   country_code: 'NG', description: 'Suspended business',       bot_code: 'SUSPND',  status: 'active', discovery_enabled: true,  messaging_suspended: true  },
-  { name: `${TEST_PREFIX}No Bot Code`,       category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'No bot configured',        bot_code: null,      status: 'active', discovery_enabled: true,  messaging_suspended: false },
-  { name: `${TEST_PREFIX}Pending Setup`,     category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Not yet active',           bot_code: 'PENDING', status: 'setup',  discovery_enabled: true,  messaging_suspended: false },
+  { name: `${TEST_PREFIX}Hidden Barber`,     category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Hidden from directory',    bot_code: 'HIDDEN',  status: 'active', discovery_enabled: false, messaging_suspended: false, address: '8 Test St', phone: '+2340000000008' },
+  { name: `${TEST_PREFIX}Suspended Spa`,     category: 'spa',        city: 'Lagos',   country_code: 'NG', description: 'Suspended business',       bot_code: 'SUSPND',  status: 'active', discovery_enabled: true,  messaging_suspended: true,  address: '9 Test St', phone: '+2340000000009' },
+  { name: `${TEST_PREFIX}No Bot Code`,       category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'No bot configured',        bot_code: null,      status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '10 Test St', phone: '+2340000000010' },
+  { name: `${TEST_PREFIX}Pending Setup`,     category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Not yet active',           bot_code: 'PENDING', status: 'setup',  discovery_enabled: true,  messaging_suspended: false, address: '11 Test St', phone: '+2340000000011' },
 ];
 
 beforeAll(async () => {
@@ -109,6 +109,8 @@ beforeAll(async () => {
         status: f.status,
         discovery_enabled: f.discovery_enabled,
         messaging_suspended: f.messaging_suspended,
+        address: f.address,
+        phone: f.phone,
         slug: f.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         owner_id: OWNER_ID,
       })
