@@ -63,6 +63,47 @@ interface ServiceStats {
   featured: number;
 }
 
+
+type ResourceRead<T> = { status: 'loading' | 'ready' | 'error'; data: T | null; retry: () => void };
+
+// A request identity changes during render on selection changes, before effects
+// can run. Results from an earlier selection or retry never become visible.
+function useBusinessResource<T>(businessId: string | null, read: (id: string) => Promise<T>): ResourceRead<T> {
+  const [request, setRequest] = useState({ businessId, generation: 0 });
+  const [result, setResult] = useState<{ request: typeof request; status: 'ready' | 'error'; data: T | null } | null>(null);
+  if (request.businessId !== businessId) {
+    setRequest({ businessId, generation: request.generation + 1 });
+  }
+  const requestRef = useRef(request);
+  requestRef.current = request;
+  const readRef = useRef(read);
+  readRef.current = read;
+  useEffect(() => {
+    if (!businessId || request.businessId !== businessId) return;
+    let cancelled = false;
+    const current = () => !cancelled && requestRef.current === request;
+    void readRef.current(businessId).then(data => {
+      if (current()) setResult({ request, status: 'ready', data });
+    }).catch(() => {
+      if (current()) setResult({ request, status: 'error', data: null });
+    });
+    return () => { cancelled = true; };
+  }, [businessId, request]);
+  const visible = request.businessId === businessId && result?.request === request ? result : null;
+  return {
+    status: visible?.status || 'loading',
+    data: visible?.status === 'ready' ? visible.data : null,
+    retry: () => setRequest(previous => ({ businessId, generation: previous.generation + 1 })),
+  };
+}
+
+function ResourceNotice({ label, resource }: { label: string; resource: ResourceRead<unknown> }) {
+  if (resource.status === 'ready') return null;
+  return resource.status === 'loading'
+    ? <p role="status">Loading {label}… <button type="button" onClick={resource.retry}>Retry {label}</button></p>
+    : <p role="alert">{label} unavailable. <button type="button" onClick={resource.retry}>Retry {label}</button></p>;
+}
+
 function isDemo(b: Business): boolean {
   return (b.bot_code || '').startsWith('test-') || (b.name || '').startsWith('Test ');
 }
@@ -80,8 +121,6 @@ export default function Businesses() {
   const [showDemo, setShowDemo] = useState(false);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Business | null>(null);
-  const [selectedPayout, setSelectedPayout] = useState<PayoutAccount | null>(null);
-  const [selectedServiceStats, setSelectedServiceStats] = useState<ServiceStats | null>(null);
   const [selectedCaps, setSelectedCaps] = useState<string[]>([]);
   const [selectedOverrides, setSelectedOverrides] = useState<string[]>([]);
   const [selectedFinancials, setSelectedFinancials] = useState<{
@@ -134,11 +173,45 @@ export default function Businesses() {
   const [editValue, setEditValue] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   // Products & Services
-  const [selectedBankAccount, setSelectedBankAccount] = useState<{ bank_name: string | null; account_number: string | null; status: string } | null>(null);
-  const [selectedServices, setSelectedServices] = useState<Array<{ id: string; name: string; price: number | null; duration_minutes: number | null; is_active: boolean; status: string | null }>>([]);
-  const [selectedProducts, setSelectedProducts] = useState<Array<{ id: string; name: string; price: number | null; stock: number | null; is_active: boolean }>>([]);
   const [showServices, setShowServices] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
+
+  const payoutResource = useBusinessResource<PayoutAccount | null>(selectedId, async id => {
+    const { data, error } = await adminDb.from('payout_accounts')
+      .select('id, gateway, bank_name, account_name, account_number, is_active')
+      .eq('business_id', id).eq('is_active', true).maybeSingle();
+    if (error) throw error;
+    return data;
+  });
+  const statsResource = useBusinessResource<ServiceStats>(selectedId, async id => {
+    const { data, error } = await adminDb.from('services').select('id, billing_type, is_featured').eq('business_id', id);
+    if (error || !Array.isArray(data)) throw new Error('Service statistics unavailable');
+    return { total: data.length, recurring: data.filter(s => s.billing_type === 'recurring').length, featured: data.filter(s => s.is_featured).length };
+  });
+  const servicesResource = useBusinessResource<Array<{ id: string; name: string; price: number | null; duration_minutes: number | null; is_active: boolean; status: string | null }>>(selectedId, async id => {
+    const { data, error } = await adminDb.from('services').select('id, name, price, duration_minutes, is_active, status')
+      .eq('business_id', id).is('deleted_at', null).order('sort_order');
+    if (error || !Array.isArray(data)) throw new Error('Services unavailable');
+    return data;
+  });
+  const productsResource = useBusinessResource<Array<{ id: string; name: string; price: number | null; stock_quantity: number | null; is_active: boolean }>>(selectedId, async id => {
+    const { data, error } = await adminDb.from('products').select('id, name, price, stock_quantity, is_active')
+      .eq('business_id', id).is('deleted_at', null).order('sort_order');
+    if (error || !Array.isArray(data)) throw new Error('Products unavailable');
+    return data;
+  });
+  const bankResource = useBusinessResource<{ bank_name: string | null; account_number: string | null; status: string } | null>(selectedId, async id => {
+    const { data, error } = await adminDb.from('business_bank_accounts').select('bank_name, account_number, status')
+      .eq('business_id', id).limit(1).maybeSingle();
+    if (error) throw error;
+    return data;
+  });
+  const selectedPayout = payoutResource.data;
+  const selectedServiceStats = statsResource.data;
+  const selectedServices = servicesResource.data || [];
+  const selectedProducts = productsResource.data || [];
+  const selectedBankAccount = bankResource.data;
+
   // Payout verification limits now live in countries.verification_tiers;
   // the server route resolves them per-country — no client-side lookup needed.
   const perPage = 20;
@@ -281,19 +354,14 @@ export default function Businesses() {
     loadData();
   }, []);
 
-  // Load payout account and service stats when business is selected
+  // Keep existing selection-dependent editing defaults.
   useEffect(() => {
     if (!selected) {
-      setSelectedPayout(null);
-      setSelectedServiceStats(null);
       setSelectedCaps([]);
       setSelectedOverrides([]);
       setSelectedFinancials(null);
-      setSelectedBankAccount(null);
       setSelectedTier('');
       setSelectedStatus('');
-      setSelectedServices([]);
-      setSelectedProducts([]);
       setShowServices(false);
       setShowProducts(false);
       return;
@@ -302,53 +370,6 @@ export default function Businesses() {
     setSelectedStatus(selected.status);
     setCustomFeePercentage(selected.custom_fee_percentage != null ? String(selected.custom_fee_percentage) : '');
     setCustomFeeFlat(selected.custom_fee_flat != null ? String(selected.custom_fee_flat) : '');
-    adminDb
-      .from('payout_accounts')
-      .select('id, gateway, bank_name, account_name, account_number, is_active')
-      .eq('business_id', selected.id)
-      .eq('is_active', true)
-      .maybeSingle()
-      .then(({ data }) => setSelectedPayout(data));
-
-    adminDb
-      .from('services')
-      .select('id, billing_type, is_featured')
-      .eq('business_id', selected.id)
-      .then(({ data }) => {
-        const svcs = data || [];
-        setSelectedServiceStats({
-          total: svcs.length,
-          recurring: svcs.filter(s => s.billing_type === 'recurring').length,
-          featured: svcs.filter(s => s.is_featured).length,
-        });
-      });
-
-    // Load services list
-    adminDb
-      .from('services')
-      .select('id, name, price, duration_minutes, is_active, status')
-      .eq('business_id', selected.id)
-      .is('deleted_at', null)
-      .order('sort_order')
-      .then(({ data }) => setSelectedServices(data || []));
-
-    // Load products list
-    adminDb
-      .from('products')
-      .select('id, name, price, stock, is_active')
-      .eq('business_id', selected.id)
-      .is('deleted_at', null)
-      .order('sort_order')
-      .then(({ data }) => setSelectedProducts(data || []));
-
-    // Load bank account
-    adminDb
-      .from('business_bank_accounts')
-      .select('bank_name, account_number, status')
-      .eq('business_id', selected.id)
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => setSelectedBankAccount(data || null));
 
   }, [selected]);
 
@@ -1021,17 +1042,19 @@ export default function Businesses() {
               </section>
             )}
 
-            {selectedPayout && (
+            {(
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Payout Account</p>
-                <div className="space-y-2">
+                <ResourceNotice label="payout account" resource={payoutResource} />
+                {payoutResource.status === 'ready' && !selectedPayout && <p>No active payout account</p>}
+                {selectedPayout && <div className="space-y-2">
                   <DetailRow label="Gateway" value={selectedPayout.gateway} />
                   {selectedPayout.bank_name && <DetailRow label="Bank" value={selectedPayout.bank_name} />}
                   {selectedPayout.account_name && <DetailRow label="Account Name" value={selectedPayout.account_name} />}
                   {selectedPayout.account_number && (
                     <DetailRow label="Account" value={`****${selectedPayout.account_number.slice(-4)}`} />
                   )}
-                </div>
+                </div>}
               </div>
             )}
 
@@ -1047,7 +1070,8 @@ export default function Businesses() {
                       : 'All channels (default)'
                   }
                 />
-                {selectedBankAccount ? (
+                <ResourceNotice label="bank account" resource={bankResource} />
+                {bankResource.status === 'ready' && (selectedBankAccount ? (
                   <>
                     <DetailRow label="Bank" value={selectedBankAccount.bank_name || '—'} />
                     <DetailRow
@@ -1058,18 +1082,19 @@ export default function Businesses() {
                   </>
                 ) : (
                   <p className="text-xs text-gray-400">No bank account configured</p>
-                )}
+                ))}
               </div>
             </div>
 
-            {selectedServiceStats && (
+            {(
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Services</p>
-                <div className="space-y-2">
+                <ResourceNotice label="service statistics" resource={statsResource} />
+                {selectedServiceStats && <div className="space-y-2">
                   <DetailRow label="Total Services" value={String(selectedServiceStats.total)} />
                   <DetailRow label="Recurring Services" value={String(selectedServiceStats.recurring)} />
                   <DetailRow label="Featured Services" value={String(selectedServiceStats.featured)} />
-                </div>
+                </div>}
               </div>
             )}
 
@@ -1188,16 +1213,18 @@ export default function Businesses() {
             )}
 
             {/* Services */}
-            {selectedServices.length > 0 && (
+            {(
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <button
                   onClick={() => setShowServices(!showServices)}
                   className="flex w-full items-center justify-between"
                 >
-                  <p className="text-xs font-semibold text-gray-500 uppercase">Services ({selectedServices.length})</p>
+                  <p className="text-xs font-semibold text-gray-500 uppercase">Services{servicesResource.status === 'ready' ? ` (${selectedServices.length})` : ''}</p>
                   <span className="text-xs text-gray-400">{showServices ? 'Collapse' : 'Expand'}</span>
                 </button>
-                {showServices && (
+                <ResourceNotice label="services" resource={servicesResource} />
+                {servicesResource.status === 'ready' && selectedServices.length === 0 && <p>No services found</p>}
+                {servicesResource.status === 'ready' && showServices && (
                   <div className="mt-3 space-y-1.5">
                     {selectedServices.map(svc => (
                       <div key={svc.id} className="flex items-center justify-between rounded bg-white px-3 py-2 text-xs">
@@ -1223,16 +1250,18 @@ export default function Businesses() {
             )}
 
             {/* Products */}
-            {selectedProducts.length > 0 && (
+            {(
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <button
                   onClick={() => setShowProducts(!showProducts)}
                   className="flex w-full items-center justify-between"
                 >
-                  <p className="text-xs font-semibold text-gray-500 uppercase">Products ({selectedProducts.length})</p>
+                  <p className="text-xs font-semibold text-gray-500 uppercase">Products{productsResource.status === 'ready' ? ` (${selectedProducts.length})` : ''}</p>
                   <span className="text-xs text-gray-400">{showProducts ? 'Collapse' : 'Expand'}</span>
                 </button>
-                {showProducts && (
+                <ResourceNotice label="products" resource={productsResource} />
+                {productsResource.status === 'ready' && selectedProducts.length === 0 && <p>No products found</p>}
+                {productsResource.status === 'ready' && showProducts && (
                   <div className="mt-3 space-y-1.5">
                     {selectedProducts.map(prod => (
                       <div key={prod.id} className="flex items-center justify-between rounded bg-white px-3 py-2 text-xs">
@@ -1241,7 +1270,7 @@ export default function Businesses() {
                           <span className="text-gray-600">
                             {prod.price != null ? fmtCurrency(prod.price, getCurrencyCode((selected?.country_code || 'NG') as CountryCode)) : 'Free'}
                           </span>
-                          <span className="text-gray-500">Stock: {prod.stock ?? 'N/A'}</span>
+                          <span className="text-gray-500">Stock: {prod.stock_quantity ?? 'N/A'}</span>
                           <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
                             prod.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                           }`}>
