@@ -1,3 +1,18 @@
+### #762 — Admin verification confirmation and operation-bound MFA (#775) (2026-10-30)
+
+- Businesses uses visible reason/confirmation UI for verification-level changes and custom-fee save/clear. Verification confirms approval/rejection with optional approval notes and required rejection reasons; saved results and failures are shown in-page.
+- Both callers use the existing MFA flow and retrieve the current Bearer token after session rotation. Authorization binds the business, action and normalized fields, including sorted document IDs. The review route validates inputs and document ownership before single-use consumption, preserving admin/AAL2 checks, service writes, payout-limit policy, fee units and null-versus-zero semantics.
+- Shared authorization transitions are serialized across selection changes and messaging suspension. Mounted, route and disposable-PostgreSQL tests cover authorization, cancellation, duplicate/stale responses, ownership, CORS and competing consumption. Six existing review fixtures were updated without weakening their assertions.
+- **Affects**: Admin Businesses and Verification, plus the four verification-review actions. No new schema or provider operation.
+- **Could break**: Client/server authorization contracts and asynchronous confirmation state; deploy compatible callers and route together. Consumption and subsequent writes are not one transaction, so partial-write failures remain possible and are reported without automatic replay. Source/CI evidence does not establish deployed acceptance.
+
+### #762 — Admin financial summary and authenticated capability reads (#773, inherited by #775) (2026-10-30)
+
+- Businesses counts successful/refunded collections, subtracts refunds once and retained platform/gateway fees, and shows paid payouts separately from processing reservations. The accounting remainder is explicitly distinguished from an available-to-withdraw balance; failed reads are shown as errors.
+- Capability reads use the authenticated admin API and distinguish missing businesses from read failures. Editing waits for authoritative capability/override readback, with duplicate and stale-response guards and visible retry states; existing mutation authority is retained.
+- **Affects**: Admin financial presentation and selected-capability loading/readback. No payment, payout or refund writer, fee-refund allocation policy, or schema change.
+- **Could break**: Read-response consumers, financial-query handling or selection/readback state. Mounted and actual-handler tests cover these boundaries; displayed accounting and selected capabilities are not settlement or effective-entitlement guarantees.
+
 ### #762 — Directory search: fix enum category filter via computed text field (2026-10-30)
 
 - **`supabase/migrations/483_directory_category_text_computed.sql`** (new): SECURITY INVOKER computed field `public.category_text(public.businesses)` casts the `business_category` enum to filterable text for PostgREST ILIKE queries. service_role only grants, explicit NOTIFY pgrst cache reload, data-independent self-test via `to_regprocedure` + `jsonb_populate_record` synthetic eval.
