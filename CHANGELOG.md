@@ -5533,3 +5533,9 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
+
+### #526 — Factual homepage setup heading (2026-10-29)
+
+- `app/(marketing)/HomeClient.tsx`: replace “Up and running in minutes” with “Set up your business on WhatsApp”.
+- **Affects**: Only the homepage setup heading; no timing promise, layout, links, pricing or signup behavior changes.
+- **Could break**: Heading wrapping at narrow widths; existing homepage tests/build and available preview checks supply evidence. The wider #526 audit remains out of scope.
