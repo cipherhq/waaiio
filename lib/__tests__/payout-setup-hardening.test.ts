@@ -396,14 +396,14 @@ describe('Payout resolve: no mock when key missing', () => {
     expect((await res.json()).error).toContain('not configured');
   });
 
-  it('returns 503 for flutterwave when FLUTTERWAVE_SECRET_KEY is missing', async () => {
+  it('returns 400 unavailable for flutterwave even when its key is missing', async () => {
     delete process.env.FLUTTERWAVE_SECRET_KEY;
     const mod = await loadResolveRoute();
     const res = await mod.POST(makePostRequest('/api/payouts/resolve', {
       gateway: 'flutterwave', bank_code: '058', account_number: '0123456789',
     }));
-    expect(res.status).toBe(503);
-    expect((await res.json()).error).toContain('not configured');
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('Flutterwave is unavailable for new payout setup');
   });
 });
 
@@ -516,3 +516,154 @@ describe('Payout disconnect: re-auth uses throwaway client, not session client',
 
 // DB permission and atomicity tests are in payout-account-swap.pg.test.ts
 // (run against real Postgres in the P0 security ACL CI job)
+
+
+describe('W05: Flutterwave unavailable for new payout setup', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    vi.stubEnv('PAYSTACK_SECRET_KEY', 'sk_test_fixture');
+    vi.stubEnv('WAAIIO_ENVIRONMENT', 'staging');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  function configure(opts: {
+    key?: string;
+    mode?: string;
+    userId?: string | null;
+    owner?: boolean;
+    passwordValid?: boolean;
+  } = {}) {
+    vi.stubEnv('FLUTTERWAVE_SECRET_KEY', opts.key || '');
+    const provider = vi.fn();
+    vi.stubGlobal('fetch', provider);
+    const rpc = vi.fn().mockResolvedValue({ data: 'new-payout', error: null });
+    const writes = vi.fn();
+    const notice = vi.fn().mockResolvedValue({ success: true });
+    const reauth = vi.fn().mockResolvedValue({
+      error: opts.passwordValid === false ? { message: 'Invalid credentials' } : null,
+    });
+    mockSessionClient({
+      userId: opts.userId,
+      businessData: opts.owner === false ? null : {
+        ...BIZ_DATA, payout_mode: opts.mode || 'platform_managed',
+      },
+    });
+    vi.doMock('@supabase/supabase-js', () => ({
+      createClient: vi.fn().mockReturnValue({ auth: { signInWithPassword: reauth } }),
+    }));
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({ rpc, from: writes }),
+    }));
+    vi.doMock('@/lib/email/client', () => ({ sendEmail: notice }));
+    vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
+    return { provider, rpc, writes, notice, reauth };
+  }
+
+  function expectNoEffects(effects: ReturnType<typeof configure>) {
+    expect(effects.provider).not.toHaveBeenCalled();
+    expect(effects.rpc).not.toHaveBeenCalled();
+    expect(effects.writes).not.toHaveBeenCalled();
+    expect(effects.notice).not.toHaveBeenCalled();
+  }
+
+  it.each(['', 'FLWSECK_TEST-fixture'])('refuses repeated bank requests with key %j', async (key) => {
+    const effects = configure({ key });
+    const { GET } = await import('@/app/api/payouts/banks/route');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await GET(new NextRequest('http://localhost:3000/api/payouts/banks?gateway=flutterwave&country=NG'));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'Flutterwave is unavailable for new payout setup' });
+    }
+    expectNoEffects(effects);
+  });
+
+  it.each(['', 'FLWSECK_TEST-fixture'])('refuses account resolution with key %j', async (key) => {
+    const effects = configure({ key });
+    const { POST } = await import('@/app/api/payouts/resolve/route');
+    const response = await POST(makePostRequest('/api/payouts/resolve', {
+      gateway: 'flutterwave', bank_code: '058', account_number: '0123456789',
+    }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Flutterwave is unavailable for new payout setup' });
+    expectNoEffects(effects);
+  });
+
+  it.each([
+    ['', 'platform_managed'],
+    ['FLWSECK_TEST-fixture', 'platform_managed'],
+    ['', 'direct_split'],
+    ['FLWSECK_TEST-fixture', 'direct_split'],
+  ])('refuses destination setup with key %j and mode %s', async (key, mode) => {
+    const effects = configure({ key, mode });
+    const { POST } = await import('@/app/api/payouts/setup/route');
+    const response = await POST(makePostRequest('/api/payouts/setup', { ...SETUP_BODY, gateway: 'flutterwave' }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Flutterwave is unavailable for new payout setup' });
+    expect(effects.reauth).toHaveBeenCalledWith({ email: 'user@test.com', password: 'correct-pass' });
+    expectNoEffects(effects);
+  });
+
+  it('preserves authentication for unavailable account resolution', async () => {
+    const effects = configure({ userId: null });
+    const { POST } = await import('@/app/api/payouts/resolve/route');
+    const response = await POST(makePostRequest('/api/payouts/resolve', { ...SETUP_BODY, gateway: 'flutterwave' }));
+    expect(response.status).toBe(401);
+    expectNoEffects(effects);
+  });
+
+  it.each([
+    { label: 'unauthenticated', userId: null, owner: true, passwordValid: true, password: 'correct-pass', status: 401 },
+    { label: 'missing password', userId: 'user-1', owner: true, passwordValid: true, password: '', status: 403 },
+    { label: 'wrong password', userId: 'user-1', owner: true, passwordValid: false, password: 'wrong', status: 403 },
+    { label: 'non-owner', userId: 'user-1', owner: false, passwordValid: true, password: 'correct-pass', status: 404 },
+  ])('preserves setup denial: $label', async ({ userId, owner, passwordValid, password, status }) => {
+    const effects = configure({ userId, owner, passwordValid });
+    const { POST } = await import('@/app/api/payouts/setup/route');
+    const response = await POST(makePostRequest('/api/payouts/setup', { ...SETUP_BODY, gateway: 'flutterwave', password }));
+    expect(response.status).toBe(status);
+    expectNoEffects(effects);
+  });
+
+  it('keeps Paystack banks usable and cached after a refused Flutterwave request', async () => {
+    const effects = configure({ key: 'FLWSECK_TEST-fixture' });
+    effects.provider.mockResolvedValue({ json: async () => ({ status: true, data: [{ code: '058', name: 'Fixture Bank' }] }) });
+    const { GET } = await import('@/app/api/payouts/banks/route');
+    const refused = await GET(new NextRequest('http://localhost:3000/api/payouts/banks?gateway=flutterwave&country=NG'));
+    expect(refused.status).toBe(400);
+    expect(effects.provider).not.toHaveBeenCalled();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await GET(new NextRequest('http://localhost:3000/api/payouts/banks?gateway=paystack&country=NG'));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ banks: [
+        { code: '001', name: 'Test Bank (staging only)' },
+        { code: '058', name: 'Fixture Bank' },
+      ] });
+    }
+    expect(effects.provider).toHaveBeenCalledTimes(1);
+    expect(effects.provider.mock.calls[0][0]).toBe('https://api.paystack.co/bank?country=nigeria');
+  });
+
+  it('keeps verified Paystack resolution and destination setup usable', async () => {
+    const effects = configure();
+    effects.provider.mockResolvedValue({ json: async () => ({ status: true, data: { account_name: 'Fixture Merchant' } }) });
+    const resolve = await import('@/app/api/payouts/resolve/route');
+    const resolved = await resolve.POST(makePostRequest('/api/payouts/resolve', SETUP_BODY));
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toEqual({ account_name: 'Fixture Merchant' });
+    const setup = await import('@/app/api/payouts/setup/route');
+    const saved = await setup.POST(makePostRequest('/api/payouts/setup', SETUP_BODY));
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ success: true, verified: true, account_name: 'Fixture Merchant' });
+    expect(effects.provider).toHaveBeenCalledTimes(2);
+    expect(effects.rpc).toHaveBeenCalledWith('swap_payout_account', expect.objectContaining({
+      p_business_id: 'biz-1', p_gateway: 'paystack', p_account_name: 'Fixture Merchant', p_verified_at: expect.any(String),
+    }));
+    expect(effects.notice).toHaveBeenCalledTimes(1);
+    expect(effects.writes).not.toHaveBeenCalled();
+  });
+});

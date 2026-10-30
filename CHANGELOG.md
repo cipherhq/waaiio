@@ -1,3 +1,10 @@
+### #762 W05 — Disable new Flutterwave payout setup (2026-10-30)
+
+- Removed Flutterwave from new payout provider choices and normalized stale setup selections locally without rewriting saved destinations.
+- Banks, account resolution and payout setup now return an unavailable response for new Flutterwave actions, preserving authentication, ownership and password checks.
+- Added actual-handler and rendered-page coverage for refused actions, supported Paystack setup, historical account visibility and password-protected change/disconnect.
+- Preserved country routing, financial dispatch, manual-bank settlement, reconciliation and nonaffected providers.
+
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
 - **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
