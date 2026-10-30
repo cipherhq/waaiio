@@ -70,7 +70,7 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/dashboard/payouts');
   fixture.fetch.mockImplementation(async (input: string, init?: RequestInit) => {
     if (input.startsWith('/api/payouts/balance')) return response({}, false);
-    if (input.startsWith('/api/payouts/history')) return response({ records: [{
+    if (input.startsWith('/api/payouts/history')) return response({ payouts: [{
       id: 'paid-fixture', period_start: '2026-01-01', period_end: '2026-01-07',
       net_amount: 1250, status: 'paid', created_at: '2026-01-08',
     }] });

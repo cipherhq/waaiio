@@ -52,6 +52,9 @@ interface PayoutRecord {
   gateway_fee: number;
   net_amount: number;
   status: string;
+  status_explanation?: string;
+  recorded_context?: string[];
+  linked_destination?: string;
   paid_at: string | null;
   created_at: string;
 }
@@ -156,7 +159,7 @@ export default function PayoutsPage() {
           const res = await fetch(`/api/payouts/history?business_id=${business.id}&page=1`);
           if (res.ok) {
             const data = await res.json();
-            setRecentPayouts((data.records || []).slice(0, 5));
+            setRecentPayouts((data.payouts || []).slice(0, 5));
           }
         } catch { /* ignore */ }
       } else if (!terms) {
@@ -800,6 +803,9 @@ export default function PayoutsPage() {
                           }`}>
                             {p.status}
                           </span>
+                          {p.status_explanation && <p className="mt-2 max-w-xs text-xs text-gray-600">{p.status_explanation}</p>}
+                          {p.recorded_context && <p className="mt-1 max-w-xs text-xs text-gray-500">Recorded context: {p.recorded_context.join(' ')}</p>}
+                          {p.linked_destination && <p className="mt-1 max-w-xs text-xs text-gray-500">Linked payout account: {p.linked_destination}</p>
                         </td>
                       </tr>
                     ))}
