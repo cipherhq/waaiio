@@ -1,0 +1,40 @@
+name: Directory search PostgREST integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/marketplace/**'
+      - 'supabase/migrations/483_*'
+      - 'app/api/directory/**'
+      - 'scripts/test-directory-search-postgrest.sh'
+      - '.github/workflows/directory-search-postgrest.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lib/marketplace/**'
+      - 'supabase/migrations/483_*'
+      - 'app/api/directory/**'
+
+permissions:
+  contents: read
+
+jobs:
+  directory-postgrest:
+    name: "Directory search (PostgREST + disposable PG)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run PostgREST integration tests
+        run: ./scripts/test-directory-search-postgrest.sh
