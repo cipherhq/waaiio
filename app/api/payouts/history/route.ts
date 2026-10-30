@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
 
-const PAYOUT_COLUMNS = [
-  'id', 'period_start', 'period_end', 'gross_amount', 'platform_fee', 'gateway_fee',
-  'net_amount', 'status', 'transfer_method', 'transfer_reference', 'notes',
-  'paid_at', 'created_at', 'payout_account_id', 'flags',
-].join(', ');
+const PAYOUT_COLUMNS = 'id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, transfer_method, transfer_reference, notes, paid_at, created_at, payout_account_id, flags';
 
 // M446 permits these authenticated columns; do not use a service client or
 // provider account identifiers to explain a merchant's linked destination.
