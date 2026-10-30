@@ -571,7 +571,7 @@ describe('W05: Flutterwave unavailable for new payout setup', () => {
     expect(effects.notice).not.toHaveBeenCalled();
   }
 
-  it.each(['', 'FLWSECK_TEST-fixture'])('refuses repeated bank requests with key %j', async (key) => {
+  it.each(['', 'fixture-flutterwave-key'])('refuses repeated bank requests with key %j', async (key) => {
     const effects = configure({ key });
     const { GET } = await import('@/app/api/payouts/banks/route');
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -582,7 +582,7 @@ describe('W05: Flutterwave unavailable for new payout setup', () => {
     expectNoEffects(effects);
   });
 
-  it.each(['', 'FLWSECK_TEST-fixture'])('refuses account resolution with key %j', async (key) => {
+  it.each(['', 'fixture-flutterwave-key'])('refuses account resolution with key %j', async (key) => {
     const effects = configure({ key });
     const { POST } = await import('@/app/api/payouts/resolve/route');
     const response = await POST(makePostRequest('/api/payouts/resolve', {
@@ -595,9 +595,9 @@ describe('W05: Flutterwave unavailable for new payout setup', () => {
 
   it.each([
     ['', 'platform_managed'],
-    ['FLWSECK_TEST-fixture', 'platform_managed'],
+    ['fixture-flutterwave-key', 'platform_managed'],
     ['', 'direct_split'],
-    ['FLWSECK_TEST-fixture', 'direct_split'],
+    ['fixture-flutterwave-key', 'direct_split'],
   ])('refuses destination setup with key %j and mode %s', async (key, mode) => {
     const effects = configure({ key, mode });
     const { POST } = await import('@/app/api/payouts/setup/route');
@@ -630,7 +630,7 @@ describe('W05: Flutterwave unavailable for new payout setup', () => {
   });
 
   it('keeps Paystack banks usable and cached after a refused Flutterwave request', async () => {
-    const effects = configure({ key: 'FLWSECK_TEST-fixture' });
+    const effects = configure({ key: 'fixture-flutterwave-key' });
     effects.provider.mockResolvedValue({ json: async () => ({ status: true, data: [{ code: '058', name: 'Fixture Bank' }] }) });
     const { GET } = await import('@/app/api/payouts/banks/route');
     const refused = await GET(new NextRequest('http://localhost:3000/api/payouts/banks?gateway=flutterwave&country=NG'));

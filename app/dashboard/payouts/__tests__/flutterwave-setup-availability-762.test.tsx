@@ -153,7 +153,7 @@ describe('W05 rendered payout setup availability', () => {
     historicalAccount();
     render(<PayoutsPage />);
     await screen.findByText('Payout account connected');
-    fireEvent.click(screen.getByRole('button', { name: 'Disconnect', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
     const disconnect = screen.getByRole('button', { name: 'Disconnect Account' }) as HTMLButtonElement;
     expect(disconnect.disabled).toBe(true);
     expect(fixture.fetch.mock.calls.some(([url]) => url === '/api/payouts/disconnect')).toBe(false);
