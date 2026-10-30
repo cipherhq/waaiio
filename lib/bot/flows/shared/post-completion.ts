@@ -347,6 +347,28 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           earnedPoints = Math.floor(amountPaid / pointsPerCurrency);
           if (earnedPoints < 1) earnedPoints = 1;
         }
+        // Apply membership tier multiplier (base points first, then multiply).
+        // Uses phoneWithPlus to match customer_profiles.phone canonical format.
+        if (capabilities.includes('membership')) {
+          try {
+            const { data: tierRow } = await supabase
+              .from('customer_profiles')
+              .select('membership_tiers!inner(points_multiplier, is_active, business_id)')
+              .eq('business_id', businessId)
+              .eq('phone', phoneWithPlus)
+              .not('membership_tier_id', 'is', null)
+              .maybeSingle();
+            const tier = tierRow?.membership_tiers as { points_multiplier?: number; is_active?: boolean; business_id?: string } | null;
+            if (tier && tier.is_active && tier.business_id === businessId) {
+              const multiplier = Number(tier.points_multiplier) || 1;
+              if (multiplier > 1) {
+                earnedPoints = Math.floor(earnedPoints * multiplier);
+              }
+            }
+          } catch (tierErr) {
+            logger.withContext({ op: 'post-completion.legacy-tier-lookup', ...safeLogErrorContext(tierErr) }).warn('[POST-COMPLETION] Tier lookup failed, using base points');
+          }
+        }
         const { data: existing } = await supabase.from('loyalty_points').select('id, points_balance, total_earned, visit_count').eq('business_id', businessId).eq('customer_phone', customerPhone).maybeSingle();
         if (existing) {
           await supabase.from('loyalty_points').update({ points_balance: existing.points_balance + earnedPoints, total_earned: existing.total_earned + earnedPoints, visit_count: existing.visit_count + 1, customer_name: customerName || undefined }).eq('id', existing.id);

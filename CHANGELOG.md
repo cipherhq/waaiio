@@ -1,3 +1,11 @@
+### #762 W17 — Fix loyalty tier multiplier and sidebar gating (2026-10-30)
+
+- **`supabase/migrations/484_fix_loyalty_tier_multiplier.sql`** (new): Replaces M387 `apply_payment_loyalty_once` RPC with corrected tier lookup. The original read from `customer_memberships` (a table that was never created), silently falling back to multiplier 1. The fix joins `customer_profiles.membership_tier_id` → `membership_tiers` with tenant-bound `mt.business_id = cp.business_id`, `is_active` guard, explicit default 1 via `IF NOT FOUND`, and qualified `public.` relation references. All other M387 behavior preserved: payment resolution, idempotency, balance/earned/visit mutations, transaction insert, replay, ACL.
+- **`lib/bot/flows/shared/post-completion.ts`**: Legacy (no-paymentId) path now applies the tier multiplier using `phoneWithPlus` identity to match `customer_profiles.phone`. Base points calculated first, then `floor(base * multiplier)` when multiplier > 1. Inactive/missing/cross-business tiers default to 1x. Lookup errors caught and logged, not thrown.
+- **`components/dashboard/Sidebar.tsx`**: Added `requireAllCapabilities?: boolean` to NavItem interface. Loyalty Tiers entry now uses ALL (both `loyalty` AND `membership` required). Gating logic at line 639 uses `.every()` when flag is true, `.some()` otherwise. All other sidebar entries unchanged (ANY semantics preserved).
+- **Affects**: Loyalty point earning (paid and legacy paths), Sidebar navigation for Loyalty Tiers. No discount behavior, reward balances/rules, booking, giving/payment notification, or bot routing changes.
+- **Could break**: Customers with active tiers will now earn multiplied points (previously always 1x). This is the intended behavior, not a regression. Sidebar "Loyalty Tiers" now hidden for businesses with only `loyalty` capability (previously shown but redirected on click).
+
 ### #762 W06 — Recorded payout explanations and linked destinations (2026-10-30)
 
 - Payout history now returns a merchant-safe projection, bounded recorded-state explanations and server-masked linked payout destinations using authenticated permitted-column reads. Historical inactive accounts remain linked; missing details and read failures are distinguished.
