@@ -39,7 +39,8 @@ interface Payout {
 const PER_PAGE = 20;
 
 async function getAccessToken(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error('Session unavailable');
   return data?.session?.access_token || null;
 }
 
@@ -89,6 +90,45 @@ export default function ResellerPayouts() {
   const stepUp = useStepUp();
   const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
+  const [loadError, setLoadError] = useState('');
+  const [selectorError, setSelectorError] = useState('');
+  const [selectorLoading, setSelectorLoading] = useState(true);
+  const listGeneration = useRef(0);
+  const selectorGeneration = useRef(0);
+  const contextGeneration = useRef(0);
+  const previewGeneration = useRef(0);
+  const actionGeneration = useRef(0);
+  const listReady = useRef(false);
+  const selectorReady = useRef(false);
+  const previewReady = useRef(false);
+  const modalOpen = useRef(false);
+  const selectedId = useRef<string | null>(null);
+
+  function invalidateAuthorization() {
+    actionGeneration.current++;
+    stepUpCallbackRef.current = null;
+    stepUp.reset();
+  }
+  function invalidatePreview() {
+    contextGeneration.current++;
+    previewGeneration.current++;
+    previewReady.current = false;
+    setGenGrossCommission(null);
+    setGenCalculating(false);
+    setGenError('');
+    invalidateAuthorization();
+  }
+  function closeGenerateModal() {
+    modalOpen.current = false;
+    invalidatePreview();
+    setGenerateOpen(false);
+  }
+  function selectPayout(payout: Payout | null) {
+    selectedId.current = payout?.id || null;
+    invalidateAuthorization();
+    setSelected(payout);
+  }
+
   // Summary stats
   const totalPending = payouts.filter(p => p.status === 'pending').reduce((sum, p) => sum + p.net_amount, 0);
   const totalApproved = payouts.filter(p => p.status === 'approved').reduce((sum, p) => sum + p.net_amount, 0);
@@ -97,71 +137,108 @@ export default function ResellerPayouts() {
 
   useEffect(() => {
     loadData();
+    if (isFullAdmin) loadResellers();
+    return () => {
+      listGeneration.current++;
+      selectorGeneration.current++;
+      contextGeneration.current++;
+      previewGeneration.current++;
+      actionGeneration.current++;
+      listReady.current = false;
+      selectorReady.current = false;
+      previewReady.current = false;
+      modalOpen.current = false;
+    };
   }, []);
 
   async function loadData() {
+    const generation = ++listGeneration.current;
+    listReady.current = false;
+    invalidateAuthorization();
     setLoading(true);
+    setLoadError('');
+    setPayouts([]);
+    setSelected(null);
     try {
       const token = await getAccessToken();
-      if (!token) {
-        setPayouts([]);
-        setLoading(false);
-        return;
-      }
-
+      if (!token) throw new Error('Session unavailable');
       const apiUrl = import.meta.env.VITE_API_URL || '';
-
-      // Load payouts via authenticated server route
       const res = await fetch(`${apiUrl}/api/admin/reseller-payouts`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        setPayouts(data.payouts || []);
-      } else {
-        console.warn('Failed to load reseller payouts:', res.status);
-        setPayouts([]);
+      if (!res.ok) throw new Error('Payouts unavailable');
+      const data = await res.json();
+      if (!Array.isArray(data?.payouts)) throw new Error('Payouts unavailable');
+      if (generation !== listGeneration.current) return;
+      listReady.current = true;
+      setPayouts(data.payouts);
+      const current = data.payouts.find((p: Payout) => p.id === selectedId.current) || null;
+      selectedId.current = current?.id || null;
+      setSelected(current);
+    } catch {
+      if (generation === listGeneration.current) {
+        selectedId.current = null;
+        setLoadError('Payout list refresh unavailable. Retry reading the list; this does not mean an earlier acknowledged operation failed.');
       }
-
-      // Load resellers for the generate modal dropdown (admin-only UI control)
-      if (isFullAdmin) {
-        const { data: resellerRows } = await adminDb
-          .from('resellers')
-          .select('id, company_name, commission_percentage, created_at')
-          .order('company_name', { ascending: true });
-        setResellers(resellerRows || []);
-      }
-    } catch (err) {
-      console.error('Failed to load payout data:', err);
     } finally {
-      setLoading(false);
+      if (generation === listGeneration.current) setLoading(false);
+    }
+  }
+
+  async function loadResellers() {
+    const generation = ++selectorGeneration.current;
+    selectorReady.current = false;
+    invalidatePreview();
+    setSelectorLoading(true);
+    setSelectorError('');
+    setResellers([]);
+    try {
+      const { data, error } = await adminDb.from('resellers')
+        .select('id, company_name, commission_percentage, created_at')
+        .order('company_name', { ascending: true });
+      if (error || !Array.isArray(data)) throw new Error('Resellers unavailable');
+      if (generation === selectorGeneration.current) {
+        setResellers(data);
+        selectorReady.current = true;
+      }
+    } catch {
+      if (generation === selectorGeneration.current) setSelectorError('Reseller selection unavailable.');
+    } finally {
+      if (generation === selectorGeneration.current) setSelectorLoading(false);
     }
   }
 
   // Non-authoritative UI preview: estimate gross commission for the generate modal
   // The server POST route performs the authoritative calculation
   async function calculateCommission() {
-    if (!genResellerId || !genPeriodStart || !genPeriodEnd) return;
-
+    if (!selectorReady.current || !modalOpen.current || !genResellerId || !genPeriodStart || !genPeriodEnd) return;
+    const generation = ++previewGeneration.current;
+    const context = contextGeneration.current;
+    previewReady.current = false;
+    invalidateAuthorization();
+    setGenError('');
     setGenCalculating(true);
     setGenGrossCommission(null);
     try {
       // Convention: [period_start, period_end) — period_end is EXCLUSIVE
       // Matches server-side semantics: fee at period_end belongs to NEXT period
-      const { data: feeRows } = await adminDb
+      const { data: feeRows, error } = await adminDb
         .from('platform_fees')
         .select('reseller_commission')
         .eq('reseller_id', genResellerId)
         .gte('created_at', genPeriodStart)
         .lt('created_at', genPeriodEnd);
 
+      if (error || !Array.isArray(feeRows)) throw new Error('Preview unavailable');
       const total = (feeRows || []).reduce((sum, f) => sum + (f.reseller_commission || 0), 0);
-      setGenGrossCommission(total);
-    } catch (err) {
-      console.error('Failed to calculate commission:', err);
+      if (generation === previewGeneration.current && context === contextGeneration.current && modalOpen.current) {
+        previewReady.current = true;
+        setGenGrossCommission(total);
+      }
+    } catch {
+      if (generation === previewGeneration.current && context === contextGeneration.current) setGenError('Commission preview unavailable. Retry Preview.');
     } finally {
-      setGenCalculating(false);
+      if (generation === previewGeneration.current && context === contextGeneration.current) setGenCalculating(false);
     }
   }
 
@@ -176,6 +253,8 @@ export default function ResellerPayouts() {
   }
 
   function openGenerateModal() {
+    invalidatePreview();
+    modalOpen.current = true;
     setGenResellerId('');
     setGenPeriodStart('');
     setGenPeriodEnd('');
@@ -188,6 +267,7 @@ export default function ResellerPayouts() {
   }
 
   function handleResellerChange(resellerId: string) {
+    invalidatePreview();
     setGenResellerId(resellerId);
     setGenHoldbackPct(String(getDefaultHoldback(resellerId)));
     setGenGrossCommission(null);
@@ -195,14 +275,24 @@ export default function ResellerPayouts() {
 
   // Create payout via authenticated server route — gated by step-up MFA
   async function handleGeneratePayout() {
-    if (!genResellerId || !genPeriodStart || !genPeriodEnd) return;
+    if (!isFullAdmin || !selectorReady.current || !previewReady.current || !modalOpen.current || !genResellerId || !genPeriodStart || !genPeriodEnd) return;
+    const authorization = ++actionGeneration.current;
+    const context = contextGeneration.current;
+    const preview = previewGeneration.current;
+    const selector = selectorGeneration.current;
+    const isCurrent = () => authorization === actionGeneration.current
+      && context === contextGeneration.current && preview === previewGeneration.current
+      && selector === selectorGeneration.current && selectorReady.current
+      && previewReady.current && modalOpen.current;
 
     setGenSaving(true);
     setGenError('');
 
     try {
       const onAuthorized = async (stepUpId: string) => {
+        if (!isCurrent()) return;
         const token = await getAccessToken();
+        if (!isCurrent()) return;
         if (!token) {
           setGenError('Session expired — please re-login');
           return;
@@ -236,7 +326,7 @@ export default function ResellerPayouts() {
           return;
         }
 
-        setGenerateOpen(false);
+        closeGenerateModal();
         await loadData();
       };
 
@@ -263,6 +353,11 @@ export default function ResellerPayouts() {
 
   // Approve/reject/mark_paid via authenticated server route — gated by step-up MFA
   async function handleAction(payoutId: string, action: 'approve' | 'reject' | 'pay') {
+    if (!isFullAdmin || !listReady.current || !payouts.some(p => p.id === payoutId)) return;
+    const authorization = ++actionGeneration.current;
+    const generation = listGeneration.current;
+    const isCurrent = () => authorization === actionGeneration.current
+      && generation === listGeneration.current && listReady.current;
     setActionLoading(payoutId);
 
     // Map UI action 'pay' to server action 'mark_paid'
@@ -275,7 +370,9 @@ export default function ResellerPayouts() {
 
     try {
       const onAuthorized = async (stepUpId: string) => {
+        if (!isCurrent()) return;
         const token = await getAccessToken();
+        if (!isCurrent()) return;
         if (!token) {
           alert('Session expired — please re-login');
           return;
@@ -303,6 +400,7 @@ export default function ResellerPayouts() {
 
         // Close detail modal if viewing this payout
         if (selected?.id === payoutId) {
+          selectedId.current = null;
           setSelected(null);
         }
 
@@ -354,6 +452,7 @@ export default function ResellerPayouts() {
         {isFullAdmin && (
           <button
             onClick={openGenerateModal}
+            disabled={selectorLoading || !!selectorError}
             className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700"
           >
             <Plus className="h-4 w-4" />
@@ -362,7 +461,11 @@ export default function ResellerPayouts() {
         )}
       </div>
 
+      <button onClick={loadData} className="text-sm text-brand">Refresh payouts</button>
+      {loadError && <p role="alert">{loadError} <button onClick={loadData}>Retry payouts</button></p>}
+      {isFullAdmin && selectorError && <p role="alert">{selectorError} <button onClick={loadResellers}>Retry resellers</button></p>}
       {/* Summary cards */}
+      {!loading && !loadError && (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Total Payouts" value={totalPayouts} icon={FileText} color="blue" />
         <SummaryCard label="Pending" value={fmtCurrency(totalPending / 100, 'USD')} icon={AlertCircle} color="yellow" />
@@ -370,6 +473,7 @@ export default function ResellerPayouts() {
         <SummaryCard label="Paid Out" value={fmtCurrency(totalPaid / 100, 'USD')} icon={Wallet} color="green" />
       </div>
 
+      )}
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -418,6 +522,8 @@ export default function ResellerPayouts() {
                   Loading payouts...
                 </td>
               </tr>
+            ) : loadError ? (
+              <tr><td colSpan={9}>Payout data unavailable.</td></tr>
             ) : paginated.length === 0 ? (
               <tr>
                 <td colSpan={9} className="px-4 py-12 text-center text-gray-400">
@@ -429,7 +535,7 @@ export default function ResellerPayouts() {
                 <tr
                   key={p.id}
                   className="hover:bg-gray-50 cursor-pointer transition"
-                  onClick={() => setSelected(p)}
+                  onClick={() => selectPayout(p)}
                 >
                   <td className="px-4 py-3 font-medium text-gray-900">{p.company_name}</td>
                   <td className="px-4 py-3 text-gray-600">
@@ -484,7 +590,7 @@ export default function ResellerPayouts() {
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
       {/* Detail Modal */}
-      <DetailModal open={!!selected} onClose={() => setSelected(null)} title="Payout Details" wide>
+      <DetailModal open={!!selected} onClose={() => selectPayout(null)} title="Payout Details" wide>
         {selected && (
           <div className="space-y-3 text-sm">
             <DetailRow label="Reseller" value={selected.company_name} />
@@ -541,7 +647,7 @@ export default function ResellerPayouts() {
       {/* Generate Payout Modal */}
       <DetailModal
         open={generateOpen}
-        onClose={() => setGenerateOpen(false)}
+        onClose={closeGenerateModal}
         title="Generate Reseller Payout"
         wide
       >
@@ -549,6 +655,8 @@ export default function ResellerPayouts() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Reseller</label>
             <select
+              aria-label="Reseller"
+              disabled={selectorLoading || !!selectorError}
               value={genResellerId}
               onChange={e => handleResellerChange(e.target.value)}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
@@ -565,8 +673,9 @@ export default function ResellerPayouts() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Period Start</label>
               <input
                 type="date"
+                aria-label="Period Start"
                 value={genPeriodStart}
-                onChange={e => { setGenPeriodStart(e.target.value); setGenGrossCommission(null); }}
+                onChange={e => { invalidatePreview(); setGenPeriodStart(e.target.value); }}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
               />
             </div>
@@ -574,8 +683,9 @@ export default function ResellerPayouts() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Period End</label>
               <input
                 type="date"
+                aria-label="Period End"
                 value={genPeriodEnd}
-                onChange={e => { setGenPeriodEnd(e.target.value); setGenGrossCommission(null); }}
+                onChange={e => { invalidatePreview(); setGenPeriodEnd(e.target.value); }}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
               />
             </div>
@@ -583,12 +693,13 @@ export default function ResellerPayouts() {
 
           <button
             onClick={calculateCommission}
-            disabled={!genResellerId || !genPeriodStart || !genPeriodEnd || genCalculating}
+            disabled={selectorLoading || !!selectorError || !genResellerId || !genPeriodStart || !genPeriodEnd || genCalculating}
             className="w-full rounded-xl border border-brand px-4 py-2.5 text-sm font-medium text-brand transition hover:bg-brand/5 disabled:opacity-50"
           >
-            {genCalculating ? 'Calculating...' : 'Preview Commission (estimate)'}
+            {genCalculating ? 'Calculating...' : genError ? 'Retry Preview' : 'Preview Commission (estimate)'}
           </button>
 
+          {genError && <p role="alert" className="text-sm text-red-600">{genError}</p>}
           {genGrossCommission !== null && (
             <>
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2 text-sm">
@@ -620,19 +731,21 @@ export default function ResellerPayouts() {
                     max={100}
                     step={1}
                     value={genHoldbackPct}
-                    onChange={e => setGenHoldbackPct(e.target.value)}
+                    onChange={e => { invalidateAuthorization(); setGenHoldbackPct(e.target.value); }}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                   />
                   <p className="mt-1 text-xs text-gray-400">Default 10% for first 90 days.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Deductions (cents)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Deductions (major units)</label>
+                  <p className="text-xs text-gray-400">The entered amount is passed unchanged to the server.</p>
                   <input
                     type="number"
                     min={0}
                     step={100}
+                    aria-label="Deductions (major units)"
                     value={genDeductions}
-                    onChange={e => setGenDeductions(e.target.value)}
+                    onChange={e => { invalidateAuthorization(); setGenDeductions(e.target.value); }}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                   />
                 </div>
@@ -642,20 +755,17 @@ export default function ResellerPayouts() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
                 <textarea
                   value={genNotes}
-                  onChange={e => setGenNotes(e.target.value)}
+                  onChange={e => { invalidateAuthorization(); setGenNotes(e.target.value); }}
                   placeholder="Optional notes about this payout..."
                   rows={2}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                 />
               </div>
 
-              {genError && (
-                <p className="text-sm text-red-600">{genError}</p>
-              )}
 
               <button
                 onClick={handleGeneratePayout}
-                disabled={genSaving || genNetAmount <= 0}
+                disabled={genSaving || !previewReady.current || !selectorReady.current || genNetAmount <= 0}
                 className="w-full rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
               >
                 {genSaving ? 'Creating Payout...' : `Create Payout (est. ${fmtCurrency(genNetAmount / 100, 'USD')})`}
@@ -675,7 +785,7 @@ export default function ResellerPayouts() {
             stepUp.submitCode(code, stepUpCallbackRef.current);
           }
         }}
-        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+        onCancel={invalidateAuthorization}
       />
     </div>
   );
