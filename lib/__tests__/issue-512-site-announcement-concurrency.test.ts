@@ -5,7 +5,7 @@
  * overwrite newer fields in platform_settings.site_announcement, plus the
  * staging regression where a cached GET version made fresh forms look stale.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -81,6 +81,12 @@ function makePutRequest(body: Record<string, unknown>) {
 describe('Issue #512: Site Announcement route optimistic concurrency', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(NEXT_VERSION));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('fresh GET bypasses the data cache and observes a newer DB version on the next read', async () => {
