@@ -4,11 +4,21 @@
 - **`components/ui/PlacesAutocomplete.tsx`**: Replaced Legacy `AutocompleteService`/`PlacesService` with per-instance `PlacesSession` from `places-provider`. Session reset on unmount and value change.
 - **`components/ui/AddressAutocomplete.tsx`**: Replaced Legacy `Autocomplete` widget with custom dropdown + per-instance `PlacesSession`. Country restriction via `includedRegionCodes` (no unsupported `includedPrimaryTypes: ['address']`). Parent notified on selection text before details. Predictions/details invalidated on external defaultValue and country changes.
 - **R2:** Removed unsupported `includedPrimaryTypes: ['address']` (P1). Added parent notification on selection text (P2). Per-instance session tokens replace global tokens (P2). Admin uses `toPlace()` from matched prediction + `mainText?.` optional chaining (P2).
+- **R3:** Fixed parent feedback loop (P1) — valueRef tracking prevents echo-reset. Session lifecycle — generation counter, dispatch-time token consumption. Admin exposes reset(), passes _raw directly.
 - **`admin/src/lib/googlePlaces.ts`**: Per-factory session token. Details fetched via `toPlace()` from matched prediction (not `new Place({id})`). Optional `mainText?.text` fallback.
 - **`lib/__tests__/places-autocomplete-751.test.tsx`**: 22 tests rewritten. Covers per-instance sessions, selection parent notification, country/defaultValue invalidation, no unsupported types, keyboard/pointer selection, coordinates, stale responses, manual fallback, attribution.
 - **`lib/__tests__/discovery-settings-wiring-485.test.ts`**: Two assertions migrated from Legacy source strings to New API: `addressComponents` field request and city derivation in `places-provider.ts`.
 - **Affects**: All address autocomplete surfaces — onboarding, Events, Parties, Settings, Discovery, Locations, Properties, Invoices, Admin onboarding, Admin Events. Component interfaces unchanged; callers not modified.
 - **Could break**: Requires Places API (New) enabled on the Google Cloud project. If only Legacy API is enabled, autocomplete degrades to manual entry (same as missing config).
+
+### #753 item 6 — Bot Text clarity for nontechnical merchants (2026-10-29)
+
+- **`app/dashboard/translations/page.tsx`**: Replaced raw message keys with human-readable labels, context descriptions, and "Your message" field labels. Now uses `editableKeys` from the API (not `allKeys`) so only merchant-editable messages appear. Added inline help explaining save/reset behavior, required placeholder tokens with explanations, and WhatsApp character limits for button/list titles. Search matches readable labels in addition to keys and text. Updated page help title and terminology ("messages" instead of "keys").
+- **R2 — accurate language labels**: Default text is now labeled by its actual source: same-language platform text shows "Default ({langName})", English-only fallback shows "English reference" (not "Current default"), and English tab shows plain "Default". This prevents merchants from mistaking English reference text for their selected language's bot output.
+- **`app/dashboard/translations/message-presentation.ts`** (new): Page-local presentation helper with human-readable names, context descriptions, placeholder explanations, and character limit metadata for all 40 business-editable message keys.
+- **`app/dashboard/translations/__tests__/bot-text-753.test.tsx`** (new): 21 jsdom rendered tests covering readable labels, search by readable name, correct save payload with readback verification, clear-and-save reset with readback, English-only reference labeling, same-language default labeling, validation and network error display, editable-key filtering, character limits, placeholder guidance, save/reset help text, page help title, message count terminology, and narrow/desktop viewport rendering.
+- **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
+- **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
 
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
@@ -5506,3 +5516,11 @@ If something breaks:
 - **Files**: Admin address component/helper, CustomerOnboarding/Events, Vite config/example and focused Admin tests.
 - **Affects**: The two remaining Admin address editors. No provider settings, schema or main-app component changes.
 - **Could break**: Admin suggestion loading/selection and bundled public-key mapping; manual entry remains available. Live Google behavior requires separate deployment acceptance.
+
+### #753 — Bot Text default explanation and readback evidence (2026-10-29)
+
+- `app/dashboard/translations/page.tsx`: explain when the selected language's built-in bot default is unavailable for display, preserving exact-language and English-reference labels.
+- `app/dashboard/translations/__tests__/bot-text-753.test.tsx`: gate post-save GET completion and assert distinct server-returned state for save/clear; retain payload/null-delete checks. Add unavailable-default coverage.
+- Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
+- **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
+- **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
