@@ -1,12 +1,14 @@
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
-- **`lib/places-provider.ts`** (new): Shared New API adapter — `fetchAutocompleteSuggestions()`, `toPlace()`, `fetchFields()` with explicit session tokens, normalized result types mapping camelCase New API fields (`.longText`/`.shortText`) to existing component contracts.
-- **`components/ui/PlacesAutocomplete.tsx`**: Replaced Legacy `AutocompleteService`/`PlacesService` with `places-provider` New API calls. Added `isNewApiAvailable()` readiness check. Session tokens reset on unmount and value change. Dropdown rendering and keyboard/pointer selection preserved.
-- **`components/ui/AddressAutocomplete.tsx`**: Replaced Legacy `Autocomplete` widget with custom dropdown + New API via `places-provider`. Country restriction uses `includedRegionCodes`, address type uses `includedPrimaryTypes: ['address']`. Component interface (onSelect, onManualChange, defaultValue, countryCode) unchanged.
-- **`admin/src/lib/googlePlaces.ts`**: Rewrote factory to use New API internally while preserving the `PredictionService`/`DetailsService` callback interface consumed by Admin component. Maps New API camelCase fields to Legacy-shaped `long_name`/`short_name` for Admin component compatibility.
-- **`lib/__tests__/places-autocomplete-751.test.tsx`**: 18 tests rewritten to mock at provider boundary. Covers keyboard/pointer selection, structured coordinates/city, blur/dismiss details, failed details, no-geometry, stale responses, manual fallback, empty results, session reset, country restriction, no Legacy constructors called.
+- **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
+- **`components/ui/PlacesAutocomplete.tsx`**: Replaced Legacy `AutocompleteService`/`PlacesService` with per-instance `PlacesSession` from `places-provider`. Session reset on unmount and value change.
+- **`components/ui/AddressAutocomplete.tsx`**: Replaced Legacy `Autocomplete` widget with custom dropdown + per-instance `PlacesSession`. Country restriction via `includedRegionCodes` (no unsupported `includedPrimaryTypes: ['address']`). Parent notified on selection text before details. Predictions/details invalidated on external defaultValue and country changes.
+- **R2:** Removed unsupported `includedPrimaryTypes: ['address']` (P1). Added parent notification on selection text (P2). Per-instance session tokens replace global tokens (P2). Admin uses `toPlace()` from matched prediction + `mainText?.` optional chaining (P2).
+- **`admin/src/lib/googlePlaces.ts`**: Per-factory session token. Details fetched via `toPlace()` from matched prediction (not `new Place({id})`). Optional `mainText?.text` fallback.
+- **`lib/__tests__/places-autocomplete-751.test.tsx`**: 22 tests rewritten. Covers per-instance sessions, selection parent notification, country/defaultValue invalidation, no unsupported types, keyboard/pointer selection, coordinates, stale responses, manual fallback, attribution.
+- **`lib/__tests__/discovery-settings-wiring-485.test.ts`**: Two assertions migrated from Legacy source strings to New API: `addressComponents` field request and city derivation in `places-provider.ts`.
 - **Affects**: All address autocomplete surfaces — onboarding, Events, Parties, Settings, Discovery, Locations, Properties, Invoices, Admin onboarding, Admin Events. Component interfaces unchanged; callers not modified.
-- **Could break**: Requires Places API (New) enabled on the Google Cloud project. If only Legacy API is enabled, autocomplete degrades to manual entry (same as missing config). The `isNewApiAvailable()` check prevents errors but shows no suggestions.
+- **Could break**: Requires Places API (New) enabled on the Google Cloud project. If only Legacy API is enabled, autocomplete degrades to manual entry (same as missing config).
 
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 

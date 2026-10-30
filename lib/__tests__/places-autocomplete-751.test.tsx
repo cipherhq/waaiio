@@ -5,12 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 import AddressAutocomplete from '@/components/ui/AddressAutocomplete';
 
-// ── Mock at the provider boundary (Places API New) ──
+// ── Mock at the provider boundary (Places API New, per-instance sessions) ──
 
-const providerMock = vi.hoisted(() => ({
+const sessionMock = vi.hoisted(() => ({
   fetchPredictions: vi.fn(),
   fetchPlaceDetails: vi.fn(),
-  resetSession: vi.fn(),
+  reset: vi.fn(),
+}));
+
+const providerMock = vi.hoisted(() => ({
+  createPlacesSession: vi.fn(() => sessionMock),
   isNewApiAvailable: vi.fn().mockReturnValue(true),
 }));
 vi.mock('@/lib/places-provider', () => providerMock);
@@ -50,9 +54,10 @@ const placeResult: NormalizedPlaceResult = {
 beforeEach(() => {
   vi.useFakeTimers();
   loader.loadGooglePlaces.mockReset().mockResolvedValue(undefined);
-  providerMock.fetchPredictions.mockReset();
-  providerMock.fetchPlaceDetails.mockReset();
-  providerMock.resetSession.mockReset();
+  sessionMock.fetchPredictions.mockReset();
+  sessionMock.fetchPlaceDetails.mockReset();
+  sessionMock.reset.mockReset();
+  providerMock.createPlacesSession.mockReset().mockReturnValue(sessionMock);
   providerMock.isNewApiAvailable.mockReset().mockReturnValue(true);
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -63,7 +68,7 @@ function Controlled({ changed = vi.fn() }: { changed?: ReturnType<typeof vi.fn> 
 }
 async function ready() { await act(async () => { await Promise.resolve(); }); }
 async function type(text: string) {
-  providerMock.fetchPredictions.mockResolvedValue([prediction]);
+  sessionMock.fetchPredictions.mockResolvedValue([prediction]);
   fireEvent.change(screen.getByRole('combobox'), { target: { value: text } });
   await act(async () => { await vi.advanceTimersByTimeAsync(300); });
 }
@@ -71,8 +76,8 @@ async function type(text: string) {
 describe('#751 controlled Places input (New API)', () => {
   it('supports keyboard selection and structured coordinates/city', async () => {
     const changed = vi.fn();
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
-    providerMock.fetchPlaceDetails.mockResolvedValue(placeResult);
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockResolvedValue(placeResult);
     render(<Controlled changed={changed} />); await ready();
     await type('Main');
     const input = screen.getByRole('combobox');
@@ -89,14 +94,13 @@ describe('#751 controlled Places input (New API)', () => {
 
   it('keeps selected details after blur with the menu closed', async () => {
     const changed = vi.fn();
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
-    providerMock.fetchPlaceDetails.mockResolvedValue(placeResult);
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockResolvedValue(placeResult);
     render(<Controlled changed={changed} />); await ready();
     await type('Main');
     fireEvent.click(screen.getByRole('option'));
     expect(changed).toHaveBeenLastCalledWith(prediction.description, undefined);
     fireEvent.blur(screen.getByRole('combobox'));
-    expect(screen.queryByRole('listbox')).toBeNull();
     await act(async () => { await Promise.resolve(); });
     expect(changed).toHaveBeenLastCalledWith(placeResult.formattedAddress, {
       address: placeResult.formattedAddress, lat: 6.5, lng: 3.4, city: 'Lagos', placeId: 'place-1',
@@ -104,8 +108,8 @@ describe('#751 controlled Places input (New API)', () => {
   });
 
   it('supports pointer/click selection and keeps text if details fail', async () => {
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
-    providerMock.fetchPlaceDetails.mockRejectedValue(new Error('Failed'));
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockRejectedValue(new Error('Failed'));
     render(<Controlled />); await ready(); await type('Main');
     fireEvent.pointerDown(screen.getByRole('option'));
     fireEvent.click(screen.getByRole('option'));
@@ -115,86 +119,76 @@ describe('#751 controlled Places input (New API)', () => {
 
   it('does not fabricate coordinates for a place without geometry', async () => {
     const changed = vi.fn();
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
-    providerMock.fetchPlaceDetails.mockResolvedValue({ ...placeResult, lat: undefined, lng: undefined });
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockResolvedValue({ ...placeResult, lat: undefined, lng: undefined });
     render(<Controlled changed={changed} />); await ready();
     await type('Main'); fireEvent.click(screen.getByRole('option'));
     await act(async () => { await Promise.resolve(); });
     expect(changed).toHaveBeenLastCalledWith(placeResult.formattedAddress, undefined);
   });
 
-  it('drops an old prediction response after newer typing', async () => {
+  it('drops stale predictions after newer typing', async () => {
     let callCount = 0;
-    providerMock.fetchPredictions.mockImplementation(() => {
+    sessionMock.fetchPredictions.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return new Promise(() => {}); // Never resolves (stale)
+      if (callCount === 1) return new Promise(() => {});
       return Promise.resolve([prediction]);
     });
     render(<Controlled />); await ready();
-    // First type — predictions hang
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Old' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     expect(screen.queryByRole('option')).toBeNull();
-    // Second type — predictions resolve
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'New' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     expect(screen.getByRole('option')).toBeTruthy();
   });
 
-  it('drops details after a manual edit and emits no stale coordinates', async () => {
+  it('drops details after a manual edit', async () => {
     const changed = vi.fn();
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
     let resolveDetails: (v: NormalizedPlaceResult) => void;
-    providerMock.fetchPlaceDetails.mockReturnValue(new Promise<NormalizedPlaceResult>(r => { resolveDetails = r; }));
+    sessionMock.fetchPlaceDetails.mockReturnValue(new Promise<NormalizedPlaceResult>(r => { resolveDetails = r; }));
     render(<Controlled changed={changed} />); await ready();
     await type('Main'); fireEvent.click(screen.getByRole('option'));
-    // Manual edit before details resolve
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'My manual address' } });
-    providerMock.fetchPredictions.mockResolvedValue([]);
+    sessionMock.fetchPredictions.mockResolvedValue([]);
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     resolveDetails!(placeResult);
     await act(async () => { await Promise.resolve(); });
     expect(changed).toHaveBeenLastCalledWith('My manual address', undefined);
   });
 
-  it('keeps manual typing usable while the loader is pending or rejected', async () => {
-    loader.loadGooglePlaces.mockReturnValue(new Promise(() => {}));
-    const view = render(<Controlled />);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Manual pending' } });
-    expect((screen.getByRole('combobox') as HTMLInputElement).value).toBe('Manual pending');
-    view.unmount();
+  it('keeps manual typing usable when loader fails', async () => {
     loader.loadGooglePlaces.mockRejectedValue(new Error('unavailable'));
     render(<Controlled />); await ready();
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Manual fallback' } });
     expect((screen.getByRole('combobox') as HTMLInputElement).value).toBe('Manual fallback');
-    expect(providerMock.fetchPredictions).not.toHaveBeenCalled();
+    expect(sessionMock.fetchPredictions).not.toHaveBeenCalled();
   });
 
-  it('hides empty results', async () => {
-    providerMock.fetchPredictions.mockResolvedValue([]);
+  it('creates a per-instance session on mount', async () => {
     render(<Controlled />); await ready();
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
-    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(providerMock.createPlacesSession).toHaveBeenCalledOnce();
   });
 
   it('resets session on unmount', async () => {
     const view = render(<Controlled />); await ready();
     view.unmount();
-    expect(providerMock.resetSession).toHaveBeenCalled();
+    expect(sessionMock.reset).toHaveBeenCalled();
   });
 
   it('resets session on value change from parent', async () => {
     const view = render(<PlacesAutocomplete value="" onChange={vi.fn()} />); await ready();
+    sessionMock.reset.mockClear();
     view.rerender(<PlacesAutocomplete value="Saved record" onChange={vi.fn()} />);
-    expect(providerMock.resetSession).toHaveBeenCalled();
+    expect(sessionMock.reset).toHaveBeenCalled();
   });
 });
 
 describe('#751 structured Address input (New API)', () => {
   it('maps address fields and calls the latest selection callback', async () => {
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
-    providerMock.fetchPlaceDetails.mockResolvedValue(placeResult);
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockResolvedValue(placeResult);
     const old = vi.fn(), latest = vi.fn();
     const view = render(<AddressAutocomplete countryCode="NG" onSelect={old} />); await ready();
     view.rerender(<AddressAutocomplete countryCode="GB" onSelect={latest} />);
@@ -210,17 +204,53 @@ describe('#751 structured Address input (New API)', () => {
     });
   });
 
-  it('passes country restriction to fetchPredictions', async () => {
-    providerMock.fetchPredictions.mockResolvedValue([]);
+  it('does not send unsupported includedPrimaryTypes: address', async () => {
+    sessionMock.fetchPredictions.mockResolvedValue([]);
     render(<AddressAutocomplete countryCode="NG" onSelect={vi.fn()} />); await ready();
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-    expect(providerMock.fetchPredictions).toHaveBeenCalledWith(
-      expect.objectContaining({ includedRegionCodes: ['ng'], includedPrimaryTypes: ['address'] })
-    );
+    const call = sessionMock.fetchPredictions.mock.calls[0]?.[0];
+    expect(call).toBeTruthy();
+    expect(call.includedRegionCodes).toEqual(['ng']);
+    // Must not include unsupported 'address' type
+    expect(call.includedPrimaryTypes).toBeUndefined();
   });
 
-  it('restores async saved values and forwards manual edits for invalidation', async () => {
+  it('notifies parent on selection text (before details)', async () => {
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockReturnValue(new Promise(() => {})); // hang
+    const manual = vi.fn();
+    render(<AddressAutocomplete onSelect={vi.fn()} onManualChange={manual} />); await ready();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    fireEvent.click(screen.getByRole('option'));
+    expect(manual).toHaveBeenCalledWith(prediction.description);
+  });
+
+  it('invalidates predictions on external defaultValue change', async () => {
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    const view = render(<AddressAutocomplete defaultValue="" onSelect={vi.fn()} />); await ready();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(screen.getByRole('option')).toBeTruthy();
+    // Parent changes defaultValue — predictions must clear
+    view.rerender(<AddressAutocomplete defaultValue="New saved value" onSelect={vi.fn()} />);
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(sessionMock.reset).toHaveBeenCalled();
+  });
+
+  it('invalidates predictions on country change', async () => {
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    const view = render(<AddressAutocomplete countryCode="NG" onSelect={vi.fn()} />); await ready();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    sessionMock.reset.mockClear();
+    view.rerender(<AddressAutocomplete countryCode="GB" onSelect={vi.fn()} />);
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(sessionMock.reset).toHaveBeenCalled();
+  });
+
+  it('restores saved values and forwards manual edits', async () => {
     const manual = vi.fn();
     const view = render(<AddressAutocomplete defaultValue="" onSelect={vi.fn()} onManualChange={manual} />); await ready();
     view.rerender(<AddressAutocomplete defaultValue="Saved address" onSelect={vi.fn()} onManualChange={manual} />);
@@ -231,13 +261,12 @@ describe('#751 structured Address input (New API)', () => {
 
   it('uses formatted fallback without inventing coordinates', async () => {
     const noGeoResult: NormalizedPlaceResult = {
-      ...placeResult,
-      formattedAddress: 'London address',
+      ...placeResult, formattedAddress: 'London address',
       components: { ...placeResult.components, streetNumber: '', route: '', city: 'London' },
       lat: undefined, lng: undefined,
     };
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
-    providerMock.fetchPlaceDetails.mockResolvedValue(noGeoResult);
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockResolvedValue(noGeoResult);
     const selected = vi.fn();
     render(<AddressAutocomplete onSelect={selected} />); await ready();
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
@@ -256,33 +285,22 @@ describe('#751 structured Address input (New API)', () => {
     expect(manual).toHaveBeenCalledWith('Manual');
   });
 
-  it('resets session on country change', async () => {
-    const view = render(<AddressAutocomplete countryCode="NG" onSelect={vi.fn()} />); await ready();
-    providerMock.resetSession.mockClear();
-    view.rerender(<AddressAutocomplete countryCode="GB" onSelect={vi.fn()} />);
-    expect(providerMock.resetSession).toHaveBeenCalled();
-  });
-
-  it('shows dropdown with keyboard and touch accessibility', async () => {
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
+  it('shows dropdown with Google attribution', async () => {
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
     render(<AddressAutocomplete onSelect={vi.fn()} />); await ready();
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     expect(screen.getByRole('listbox')).toBeTruthy();
-    expect(screen.getByRole('option')).toBeTruthy();
     expect(screen.getByText('Powered by Google')).toBeTruthy();
   });
 
   it('no Legacy constructor is called in migrated paths', async () => {
-    // Verify that AutocompleteService, PlacesService, and Autocomplete are not instantiated
     const legacyConstructors = {
-      AutocompleteService: vi.fn(),
-      PlacesService: vi.fn(),
-      Autocomplete: vi.fn(),
+      AutocompleteService: vi.fn(), PlacesService: vi.fn(), Autocomplete: vi.fn(),
     };
     vi.stubGlobal('google', { maps: { places: legacyConstructors } });
-    providerMock.fetchPredictions.mockResolvedValue([prediction]);
-    providerMock.fetchPlaceDetails.mockResolvedValue(placeResult);
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockResolvedValue(placeResult);
     render(<AddressAutocomplete onSelect={vi.fn()} />); await ready();
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });

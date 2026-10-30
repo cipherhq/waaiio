@@ -3,11 +3,10 @@
 import { useEffect, useRef, useState, useId } from 'react';
 import { loadGooglePlaces } from '@/lib/google-places-loader';
 import {
-  fetchPredictions,
-  fetchPlaceDetails,
-  resetSession,
+  createPlacesSession,
   isNewApiAvailable,
   type NormalizedPrediction,
+  type PlacesSession,
 } from '@/lib/places-provider';
 
 interface AddressResult {
@@ -46,6 +45,7 @@ export default function AddressAutocomplete({
   const requestRef = useRef(0);
   const detailsRequestRef = useRef(0);
   const mountedRef = useRef(false);
+  const sessionRef = useRef<PlacesSession | null>(null);
 
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
@@ -57,13 +57,26 @@ export default function AddressAutocomplete({
     setActiveIndex(-1);
   }
 
-  useEffect(() => { setValue(defaultValue); }, [defaultValue]);
+  // External defaultValue change: update display and invalidate stale predictions/details.
+  const prevDefaultRef = useRef(defaultValue);
+  useEffect(() => {
+    if (defaultValue !== prevDefaultRef.current) {
+      prevDefaultRef.current = defaultValue;
+      setValue(defaultValue);
+      detailsRequestRef.current++;
+      dismiss();
+      sessionRef.current?.reset();
+    }
+  }, [defaultValue]);
 
   useEffect(() => {
     mountedRef.current = true;
     let active = true;
     loadGooglePlaces().then(() => {
-      if (active && isNewApiAvailable()) setReady(true);
+      if (active && isNewApiAvailable()) {
+        sessionRef.current = createPlacesSession();
+        setReady(true);
+      }
     }).catch(() => { /* Manual entry remains available. */ });
     return () => {
       active = false;
@@ -71,13 +84,20 @@ export default function AddressAutocomplete({
       requestRef.current++;
       detailsRequestRef.current++;
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      resetSession();
+      sessionRef.current?.reset();
+      sessionRef.current = null;
     };
   }, []);
 
-  // Country change resets session.
+  // Country change: invalidate stale predictions/details and reset session.
+  const prevCountryRef = useRef(countryCode);
   useEffect(() => {
-    resetSession();
+    if (countryCode !== prevCountryRef.current) {
+      prevCountryRef.current = countryCode;
+      detailsRequestRef.current++;
+      dismiss();
+      sessionRef.current?.reset();
+    }
   }, [countryCode]);
 
   useEffect(() => {
@@ -99,10 +119,9 @@ export default function AddressAutocomplete({
     debounceTimerRef.current = setTimeout(async () => {
       if (!mountedRef.current || request !== requestRef.current) return;
       try {
-        const results = await fetchPredictions({
+        const results = await sessionRef.current!.fetchPredictions({
           input,
           includedRegionCodes: countryCode ? [countryCode.toLowerCase()] : undefined,
-          includedPrimaryTypes: ['address'],
         });
         if (!mountedRef.current || request !== requestRef.current) return;
         setPredictions(results);
@@ -117,8 +136,10 @@ export default function AddressAutocomplete({
     dismiss();
     const request = ++detailsRequestRef.current;
     setValue(prediction.description);
+    // Notify parent of the selected text immediately (coordinates still pending).
+    onManualChange?.(prediction.description);
     try {
-      const result = await fetchPlaceDetails(prediction, [
+      const result = await sessionRef.current!.fetchPlaceDetails(prediction, [
         'formattedAddress', 'addressComponents', 'location',
       ]);
       if (!mountedRef.current || request !== detailsRequestRef.current) return;

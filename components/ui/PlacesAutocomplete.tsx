@@ -3,11 +3,10 @@
 import { useEffect, useRef, useState, useId } from 'react';
 import { loadGooglePlaces } from '@/lib/google-places-loader';
 import {
-  fetchPredictions,
-  fetchPlaceDetails,
-  resetSession,
+  createPlacesSession,
   isNewApiAvailable,
   type NormalizedPrediction,
+  type PlacesSession,
 } from '@/lib/places-provider';
 
 interface PlaceData {
@@ -45,6 +44,7 @@ export default function PlacesAutocomplete({
   const detailsRequestRef = useRef(0);
   const mountedRef = useRef(false);
   const valueRef = useRef(value);
+  const sessionRef = useRef<PlacesSession | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -59,7 +59,10 @@ export default function PlacesAutocomplete({
     mountedRef.current = true;
     let active = true;
     loadGooglePlaces().then(() => {
-      if (active && isNewApiAvailable()) setReady(true);
+      if (active && isNewApiAvailable()) {
+        sessionRef.current = createPlacesSession();
+        setReady(true);
+      }
     }).catch(() => { /* Manual entry remains available. */ });
     return () => {
       active = false;
@@ -67,7 +70,8 @@ export default function PlacesAutocomplete({
       requestRef.current++;
       detailsRequestRef.current++;
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      resetSession();
+      sessionRef.current?.reset();
+      sessionRef.current = null;
     };
   }, []);
 
@@ -77,7 +81,7 @@ export default function PlacesAutocomplete({
       valueRef.current = value;
       detailsRequestRef.current++;
       dismiss();
-      resetSession();
+      sessionRef.current?.reset();
     }
   }, [value]);
 
@@ -100,7 +104,7 @@ export default function PlacesAutocomplete({
     debounceTimerRef.current = setTimeout(async () => {
       if (!mountedRef.current || request !== requestRef.current) return;
       try {
-        const results = await fetchPredictions({ input });
+        const results = await sessionRef.current!.fetchPredictions({ input });
         if (!mountedRef.current || request !== requestRef.current) return;
         setPredictions(results);
         setActiveIndex(-1);
@@ -118,7 +122,7 @@ export default function PlacesAutocomplete({
     valueRef.current = prediction.description;
     onChangeRef.current(prediction.description);
     try {
-      const result = await fetchPlaceDetails(prediction);
+      const result = await sessionRef.current!.fetchPlaceDetails(prediction);
       if (!mountedRef.current || request !== detailsRequestRef.current) return;
       valueRef.current = result.formattedAddress;
       if (typeof result.lat !== 'number' || typeof result.lng !== 'number') {
