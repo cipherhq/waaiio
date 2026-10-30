@@ -52,6 +52,17 @@
 - **Affects**: Post-payment confirmation delivery for standalone campaign/crowdfunding donations. Booking, reservation, invoice, and order paths unchanged.
 - **Could break**: Nothing — this is a new resolution path for a previously broken case. Existing paths are guarded by `!customerPhone &&` conditions.
 
+### #514 — Durable Event saves and final cancellation (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- Admin Events saves use authenticated server authority, optimistic revisions and durable operation readback. Editors retain changes on failed or uncertain saves; persisted cancellation and notification progress are reported separately.
+- Merchant cancellation uses the same atomic event operation. Cancellation is final; restarting requires a new event.
+- M481 records cancellation, affected tickets, notification recipients, paid refund follow-ups and admin audit together. Service-only RPCs serialize ticket issuance and emission authorization against cancellation; ambiguous provider attempts are not automatically replayed.
+- Paid cancellation records follow-up without reporting ticket issuance or customer confirmation. Existing payment accounting and refund policy remain unchanged.
+- Ticket email opts into one application-level provider attempt through an optional shared helper flag; other email callers retain their existing retries.
+- Added mounted UI, route/domain, actual delivery-helper and disposable PostgreSQL coverage. Validation is pending remote CI; no local tests, hosted migrations, live sends, merge or deployment performed.
+
 ### #736 Lane 1 R7 — Surface failed payment-request notifications (2026-10-29)
 
 - `app/dashboard/payment-request/page.tsx`: Inspect the API's delivery result instead of treating HTTP 200 alone as notification success. When the payment request was created but no channel accepted delivery, show its saved link/reference and prevent accidental resubmission; bulk results now distinguish sent, created-but-undelivered, and failed requests.
