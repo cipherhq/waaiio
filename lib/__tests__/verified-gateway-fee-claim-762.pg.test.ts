@@ -76,7 +76,7 @@ dbDescribe('M485 verified fee claim — real PostgreSQL', () => {
       proacl::text AS acl FROM pg_proc WHERE oid='claim_payment_finalization(uuid)'::regprocedure`)).rows[0];
     // Fail after the full DDL and self-checks, before COMMIT; then compare prior state.
     const sql = migration('485_verified_gateway_fee_claim.sql');
-    await expect(admin.query(sql.replace(/COMMIT;\s*$/, "DO $$ BEGIN RAISE EXCEPTION 'rollback_probe'; END $$; COMMIT;"))).rejects.toThrow('rollback_probe');
+    await expect(admin.query(sql.replace(/COMMIT;\s*$/, () => "DO $$ BEGIN RAISE EXCEPTION 'rollback_probe'; END $$; COMMIT;"))).rejects.toThrow('rollback_probe');
     await admin.query('ROLLBACK');
     const after = (await admin.query(`SELECT pg_get_functiondef('claim_payment_finalization(uuid)'::regprocedure) AS definition,
       proacl::text AS acl FROM pg_proc WHERE oid='claim_payment_finalization(uuid)'::regprocedure`)).rows[0];
