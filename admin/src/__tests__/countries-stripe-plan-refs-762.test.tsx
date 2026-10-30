@@ -84,6 +84,48 @@ describe('#762 mounted Countries Stripe reference flow', () => {
     expect(JSON.stringify(h.countries.map(c => c.pricing))).toBe(originalPricing); expect(h.writes).not.toHaveBeenCalled();
     expect(h.rpc.mock.calls.every(([name]) => name === 'get_effective_commercial_config')).toBe(true);
   });
+  it('omits untouched absent Stripe refs while saving valid other-provider refs', async () => {
+    h.countries[0].pricing.growth.provider_plan_refs = { paystack: 'PLN_syntheticPro' };
+    h.countries[0].pricing.business.provider_plan_refs = { flutterwave: '123456' };
+    render(<Countries />); await screen.findByRole('option', { name: /US —/ });
+    fireEvent.change(screen.getByLabelText('Provider country'), { target: { value: 'US' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save Plan Refs' }).hasAttribute('disabled')).toBe(false));
+    expect((screen.getByLabelText('Pro Stripe Price ID') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Premium Stripe Price ID') as HTMLInputElement).value).toBe('');
+    await prepare(); authorize(); await waitFor(() => expect(saves()).toHaveLength(1));
+    const payload = { action: 'save_refs', country_code: 'US', plan_refs: {
+      growth: { paystack: 'PLN_syntheticPro' }, business: { flutterwave: '123456' },
+    }, expected_version_id: 'synthetic-version-1', stepUpId: 'synthetic-step' };
+    expect(body(saves()[0])).toEqual(payload);
+    const { stepUpId: _step, ...params } = payload;
+    expect(body(requests('/prepare')[0]).params).toEqual({ ...params, tier_prices: null });
+    await screen.findByText('Plan refs saved successfully');
+  });
+  it.each(['Pro Stripe Price ID', 'Premium Stripe Price ID'])('denies clearing configured %s before step-up or save', async label => {
+    render(<Countries />); await select();
+    fireEvent.change(screen.getByLabelText(label), { target: { value: ' ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Plan Refs' }));
+    await screen.findByText('Enter a valid Stripe Price ID; clearing a configured or edited reference is not supported.');
+    expect(requests('/prepare')).toHaveLength(0); expect(saves()).toHaveLength(0);
+  });
+  it('unchanged context saves exactly once after delayed current-token resolution', async () => {
+    const pending = deferred<ReturnType<typeof session>>(); let tokenWait = false;
+    h.getSession.mockImplementation(async () => {
+      if (h.token === 'synthetic-current-token' && !tokenWait) { tokenWait = true; return pending.promise; }
+      return session();
+    });
+    render(<Countries />); await select('CA');
+    fireEvent.change(screen.getByLabelText('Pro Stripe Price ID'), { target: { value: 'price_syntheticCaptured' } });
+    await prepare(); authorize(); await waitFor(() => expect(tokenWait).toBe(true));
+    expect(saves()).toHaveLength(0);
+    await act(async () => { pending.resolve({ data: { session: { access_token: 'synthetic-resolved-token' } }, error: null }); await pending.promise; });
+    await screen.findByText('Plan refs saved successfully');
+    expect(saves()).toHaveLength(1);
+    expect(body(saves()[0])).toEqual({ action: 'save_refs', country_code: 'CA', plan_refs: {
+      growth: { stripe: 'price_syntheticCaptured' }, business: { stripe: 'price_syntheticCAPremium' },
+    }, expected_version_id: 'synthetic-version-1', stepUpId: 'synthetic-step' });
+    expect(saves()[0][1].headers.Authorization).toBe('Bearer synthetic-resolved-token');
+  });
   it('switches countries without carrying edited references', async () => {
     render(<Countries />); await select(); fireEvent.change(screen.getByLabelText('Pro Stripe Price ID'), { target: { value: 'price_edited' } });
     await select('GB'); await select('CA'); await select('US'); expect(saves()).toHaveLength(0);

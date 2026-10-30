@@ -660,6 +660,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   const [stripeGrowthRef, setStripeGrowthRef] = useState('');
   const [stripeBusinessRef, setStripeBusinessRef] = useState('');
   const [refsCountry, setRefsCountry] = useState('');
+  const [stripeEdited, setStripeEdited] = useState({ growth: false, business: false });
   const generationRef = useRef(0);
   const contextRef = useRef('');
   const mountedRef = useRef(true);
@@ -674,7 +675,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   const activeGateway = selectedCountry?.payment_gateway || '';
 
   const context = JSON.stringify([selectedCode, selectedCountry?.pricing, activeGateway, versionId, canMutate,
-    flwGrowthRef, flwBusinessRef, pskGrowthRef, pskBusinessRef, stripeGrowthRef, stripeBusinessRef, pskGrowthPrice, pskBusinessPrice]);
+    flwGrowthRef, flwBusinessRef, pskGrowthRef, pskBusinessRef, stripeGrowthRef, stripeBusinessRef, stripeEdited, pskGrowthPrice, pskBusinessPrice]);
   if (contextRef.current !== context) {
     contextRef.current = context;
     generationRef.current += 1;
@@ -695,6 +696,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
     stepUpCallbackRef.current = null;
     stepUp.reset();
     setRefsCountry('');
+    setStripeEdited({ growth: false, business: false });
     if (!selectedCountry) return;
     const pricing = selectedCountry.pricing as Record<string, Record<string, unknown>> || {};
     const growthRefs = (pricing.growth?.provider_plan_refs || {}) as Record<string, string>;
@@ -752,8 +754,18 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       if (flwBusinessRef.trim()) planRefs.business.flutterwave = flwBusinessRef.trim();
       if (pskGrowthRef.trim()) planRefs.growth.paystack = pskGrowthRef.trim();
       if (pskBusinessRef.trim()) planRefs.business.paystack = pskBusinessRef.trim();
-      if (activeGateway === 'stripe') planRefs.growth.stripe = stripeGrowthRef.trim();
-      if (activeGateway === 'stripe') planRefs.business.stripe = stripeBusinessRef.trim();
+      if (activeGateway === 'stripe') {
+        const pricing = selectedCountry?.pricing as Record<string, Record<string, unknown>> | undefined;
+        for (const [tier, value] of [['growth', stripeGrowthRef], ['business', stripeBusinessRef]] as const) {
+          const existing = pricing?.[tier]?.provider_plan_refs;
+          const configured = existing !== null && typeof existing === 'object' &&
+            Object.prototype.hasOwnProperty.call(existing, 'stripe');
+          if (value.trim()) planRefs[tier].stripe = value.trim();
+          else if (configured || stripeEdited[tier]) {
+            throw new Error('Enter a valid Stripe Price ID; clearing a configured or edited reference is not supported.');
+          }
+        }
+      }
 
       const capturedCode = selectedCode;
       const capturedVersion = versionId;
@@ -1023,11 +1035,11 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
               <div className="grid grid-cols-2 gap-4 mt-2">
                 <label className={labelClass}>Pro Stripe Price ID
                   <input aria-label="Pro Stripe Price ID" disabled={activeGateway !== 'stripe' || !canMutate} className={inputClass} value={stripeGrowthRef}
-                    onChange={e => setStripeGrowthRef(e.target.value)} placeholder="price_..." />
+                    onChange={e => { setStripeGrowthRef(e.target.value); setStripeEdited(prev => ({ ...prev, growth: true })); }} placeholder="price_..." />
                 </label>
                 <label className={labelClass}>Premium Stripe Price ID
                   <input aria-label="Premium Stripe Price ID" disabled={activeGateway !== 'stripe' || !canMutate} className={inputClass} value={stripeBusinessRef}
-                    onChange={e => setStripeBusinessRef(e.target.value)} placeholder="price_..." />
+                    onChange={e => { setStripeBusinessRef(e.target.value); setStripeEdited(prev => ({ ...prev, business: true })); }} placeholder="price_..." />
                 </label>
               </div>
               <p className="text-xs text-gray-500 mt-1">Prices are verified against this country's existing monthly pricing. Saving Stripe references does not change prices, fees or trials.</p>
