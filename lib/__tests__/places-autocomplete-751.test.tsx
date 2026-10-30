@@ -323,18 +323,20 @@ describe('#751 structured Address input (New API)', () => {
     expect(sessionMock.reset).toHaveBeenCalled();
   });
 
-  it('controlled parent echo does not cancel typing or selection (StepDetails pattern)', async () => {
+  it('controlled parent echo: typing yields suggestions, deferred selection after blur delivers structured fields', async () => {
     // Simulates StepDetails/Discovery: onManualChange feeds back into defaultValue
     sessionMock.fetchPredictions.mockResolvedValue([prediction]);
-    sessionMock.fetchPlaceDetails.mockResolvedValue(placeResult);
+    // Details are deferred — unresolved through blur
+    let resolveDetails!: (v: NormalizedPlaceResult) => void;
+    sessionMock.fetchPlaceDetails.mockReturnValue(new Promise<NormalizedPlaceResult>(r => { resolveDetails = r; }));
+    const selectedFields = vi.fn();
     function ParentEcho() {
       const [addr, setAddr] = useState('');
-      const [selected, setSelected] = useState<unknown>(null);
       return (
         <AddressAutocomplete
           defaultValue={addr}
           onManualChange={setAddr}
-          onSelect={(r) => { setAddr(r.formattedAddress || ''); setSelected(r); }}
+          onSelect={(r) => { setAddr(r.formattedAddress || ''); selectedFields(r); }}
         />
       );
     }
@@ -345,11 +347,26 @@ describe('#751 structured Address input (New API)', () => {
     // Predictions should still appear (not cancelled by echo)
     expect(sessionMock.fetchPredictions).toHaveBeenCalled();
     expect(screen.getByRole('option')).toBeTruthy();
-    // Select and let details resolve after blur
+    // Select — details still pending
     fireEvent.click(screen.getByRole('option'));
+    expect(selectedFields).not.toHaveBeenCalled();
+    // Blur while details are still unresolved
     fireEvent.blur(screen.getByRole('combobox'));
+    expect(selectedFields).not.toHaveBeenCalled();
+    // Now resolve details — structured fields should still reach the parent
+    resolveDetails(placeResult);
     await act(async () => { await Promise.resolve(); });
-    // The structured fields should have been delivered via onSelect
+    expect(selectedFields).toHaveBeenCalledOnce();
+    expect(selectedFields).toHaveBeenCalledWith(expect.objectContaining({
+      address: '10 Main Street',
+      city: 'Lagos',
+      state: 'Lagos State',
+      zipCode: '100001',
+      country: 'NG',
+      latitude: 6.5,
+      longitude: 3.4,
+      formattedAddress: placeResult.formattedAddress,
+    }));
     expect((screen.getByRole('combobox') as HTMLInputElement).value).toBe(placeResult.formattedAddress);
   });
 

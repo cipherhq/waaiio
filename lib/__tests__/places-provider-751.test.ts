@@ -393,7 +393,34 @@ describe('#751 places-provider adapter', () => {
     expect(isNewApiAvailable()).toBe(false);
   });
 
-  // ── 15. Suggestions without placePrediction are filtered out ──
+  // ── 15. Rejected details → fresh token for next search ──
+  it('rejected fetchPlaceDetails still consumes the token; next search gets fresh', async () => {
+    const { createPlacesSession } = await loadProvider();
+
+    const failPlace = {
+      fetchFields: vi.fn(async () => { throw new Error('DENIED'); }),
+      formattedAddress: null,
+      addressComponents: undefined,
+      location: null,
+    };
+    const pred = makePrediction({ placeId: 'fail', text: 'Fail Place', place: failPlace });
+    fetchMock.mockResolvedValue({ suggestions: [pred] });
+
+    const session = createPlacesSession();
+    const results = await session.fetchPredictions({ input: 'Fail' });
+    expect(tokenInstances.length).toBe(1);
+
+    // Details fail — token was consumed at dispatch, so it should still be gone.
+    await expect(session.fetchPlaceDetails(results[0])).rejects.toThrow('DENIED');
+
+    // Next search should get a fresh token.
+    fetchMock.mockResolvedValue({ suggestions: [] });
+    await session.fetchPredictions({ input: 'After fail' });
+    expect(tokenInstances.length).toBe(2);
+    expect(tokenInstances[0]).not.toBe(tokenInstances[1]);
+  });
+
+  // ── 16. Suggestions without placePrediction are filtered out ──
   it('filters out suggestions that lack placePrediction', async () => {
     const { createPlacesSession } = await loadProvider();
 

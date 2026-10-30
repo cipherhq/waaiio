@@ -113,4 +113,21 @@ describe('#751 Admin address input', () => {
     expect(screen.queryByRole('option')).toBeNull();
     await select(1); view.unmount(); changed.mockClear(); act(() => details[0](place, 'OK')); expect(changed).not.toHaveBeenCalled();
   });
+  it('clearing input invokes reset on the services', async () => {
+    render(<Controlled />); await ready();
+    await type('Main'); offer();
+    // Clear
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
+    expect(provider.reset).toHaveBeenCalled();
+  });
+  it('selected prediction _raw is passed to getDetails', async () => {
+    const rawMarker = { toPlace: vi.fn() };
+    const predWithRaw = { ...suggestion, _raw: rawMarker };
+    provider.predict.mockReset().mockImplementation((_request, callback) => callback([predWithRaw], 'OK'));
+    render(<Controlled />); await ready();
+    await type('Main');
+    fireEvent.click(screen.getByRole('option'));
+    expect(provider.details).toHaveBeenCalledOnce();
+    expect(provider.details.mock.calls[0][0]._raw).toBe(rawMarker);
+  });
 });
