@@ -74,6 +74,12 @@
 - **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
 - **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
 
+### #762 — System Health database readability and counts (2026-10-30)
+
+- **`admin/src/pages/SystemHealth.tsx`**: Use the returned count for head-only reads, preserving genuine zero and showing missing counts as unavailable. Check returned and thrown errors for every service and table statistic, including both payment-table reads; failed reads affect overall status while independent probes continue.
+- **Refresh and scope**: Clear previous results while checking and recover after read failures. Labels describe database readability and do not certify provider availability or complete payment flows; authenticated identity, RLS and probe queries are unchanged.
+- **Mounted verification**: `admin/src/__tests__/system-health-762.test.tsx` passed 56 tests with zero skips in Admin job124334567531, canonical CI41134821502, source020b7a7623496b5b34025f051729574859b483d8 / checkout4a3b0134c478d891a89a355e03b10d68cf0984d6. Admin build and all12 CI jobs passed; deployment/runtime certification remains separate.
+
 ### #752 — Queue tab: Share Queue QR code and link (2026-10-29)
 
 - **`app/dashboard/queue/page.tsx`**: Added "Share Queue" link in the action buttons group (alongside Pause/Resume, Walk-in, Call Next). Links to `/dashboard/qr-code?template=queue`, opening the QR Code page with "Scan to Join Queue" pre-selected.
