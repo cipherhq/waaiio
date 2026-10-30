@@ -5533,3 +5533,11 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
+
+### #762 W03 — Recognize bot-test activity in the Overview checklist (2026-10-30)
+
+- Read positive own-business inbound conversation usage across all months, retaining existing inbound-chat evidence. Configuration and outbound activity alone do not complete the test step; returned or rejected query errors do not fabricate evidence.
+- Reset checklist state for each business and ignore obsolete asynchronous results, including automatic dismissal writes after a switch.
+- Add rendered component coverage for evidence filters, failures, business switching/dismissal and preserved setup, WhatsApp and payout predicates.
+- **Affects**: Overview checklist presentation only; inbound activity is not proof of response delivery. No API, schema, bot writer or payout-readiness changes.
+- **Could break**: Checklist loading/completion/dismissal behavior; focused tests exercise those transitions. Deployed RLS and provider delivery are outside the mocked suite.
