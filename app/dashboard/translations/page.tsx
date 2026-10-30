@@ -510,6 +510,12 @@ export default function TranslationsPage() {
                             </p>
                           )}
 
+                          {!hasExactLang && (
+                            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+                              The built-in bot default for {langName} is not shown here.
+                            </p>
+                          )}
+
                           {/* Placeholder guidance */}
                           {placeholderHelp && (
                             <div className="mb-2 flex flex-wrap gap-1.5">

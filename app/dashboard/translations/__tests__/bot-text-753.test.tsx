@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 /* ── Hoisted state for mock control ── */
 
@@ -252,14 +252,17 @@ describe('Bot Text page', () => {
   });
 
   it('sends correct payload on save and refreshes rendered state', async () => {
-    // After save, the GET reload returns the new override — verify it renders
+    // A distinct server value proves the field is rebuilt from the completed GET.
     const updatedOverrides = [
-      { id: 'ov-new', lang: 'en', key: 'menu.what_to_do', value: 'Pick something:', updated_at: '2026-10-29' },
+      { id: 'ov-new', lang: 'en', key: 'menu.what_to_do', value: 'Server-confirmed choice:', updated_at: '2026-10-29' },
     ];
+    let finishReload!: (data: ReturnType<typeof makeApiResponse>) => void;
+    const reloadBody = new Promise<ReturnType<typeof makeApiResponse>>(resolve => { finishReload = resolve; });
+    const reloadJson = vi.fn(() => reloadBody);
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, makeApiResponse()))
       .mockResolvedValueOnce(jsonResponse(200, { success: true, upserted: 1, deleted: 0 }))
-      .mockResolvedValueOnce(jsonResponse(200, makeApiResponse(updatedOverrides)));
+      .mockResolvedValueOnce({ ok: true, status: 200, json: reloadJson });
 
     render(<TranslationsPage />);
 
@@ -304,7 +307,13 @@ describe('Bot Text page', () => {
     expect(menuOverride.lang).toBe('en');
     expect(menuOverride.value).toBe('Pick something:');
 
-    // After reload, loadData resets language to pcm; switch back to English
+    await waitFor(() => {
+      expect(reloadJson).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls.filter(call => call[0] === '/api/translations?businessId=biz-test-001')).toHaveLength(2);
+    });
+    await act(async () => { finishReload(makeApiResponse(updatedOverrides)); await reloadBody; });
+
+    // After the server response completes, loadData resets language to pcm.
     await waitFor(() => {
       expect(screen.getByText('Changes saved')).toBeTruthy();
     });
@@ -313,7 +322,7 @@ describe('Bot Text page', () => {
     // The saved value should appear in the textarea
     await waitFor(() => {
       const refreshedTextareas = screen.getAllByRole('textbox') as HTMLTextAreaElement[];
-      const refreshedMenu = refreshedTextareas.find(t => t.value === 'Pick something:');
+      const refreshedMenu = refreshedTextareas.find(t => t.value === 'Server-confirmed choice:');
       expect(refreshedMenu).toBeTruthy();
     });
   });
@@ -322,11 +331,15 @@ describe('Bot Text page', () => {
     const existingOverrides = [
       { id: 'ov-1', lang: 'en', key: 'menu.what_to_do', value: 'Custom text', updated_at: '2026-01-01' },
     ];
-    // After clear-and-save, the reload returns no overrides (default restored)
+    // The cleared key is absent; another server-only value proves the GET repopulated edits.
+    const clearedReadback = makeApiResponse([{ lang: 'pcm', key: 'cap.scheduling', value: 'Server readback marker' }]);
+    let finishReload!: (data: ReturnType<typeof makeApiResponse>) => void;
+    const reloadBody = new Promise<ReturnType<typeof makeApiResponse>>(resolve => { finishReload = resolve; });
+    const reloadJson = vi.fn(() => reloadBody);
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, makeApiResponse(existingOverrides)))
       .mockResolvedValueOnce(jsonResponse(200, { success: true, upserted: 0, deleted: 1 }))
-      .mockResolvedValueOnce(jsonResponse(200, makeApiResponse([])));
+      .mockResolvedValueOnce({ ok: true, status: 200, json: reloadJson });
 
     render(<TranslationsPage />);
 
@@ -362,8 +375,13 @@ describe('Bot Text page', () => {
       expect(menuOverride.value).toBeNull();
     });
 
-    // After reload, loadData resets language to pcm; switch back to English
     await waitFor(() => {
+      expect(reloadJson).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls.filter(call => call[0] === '/api/translations?businessId=biz-test-001')).toHaveLength(2);
+    });
+    await act(async () => { finishReload(clearedReadback); await reloadBody; });
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Server readback marker')).toBeTruthy();
       expect(screen.getByText('Changes saved')).toBeTruthy();
     });
     fireEvent.click(screen.getByText('English'));
@@ -510,6 +528,21 @@ describe('Bot Text page', () => {
     expect(englishRefLabels.length).toBeGreaterThan(0);
   });
 
+  it('explains unavailable built-in defaults with or without English reference text', async () => {
+    const response = makeApiResponse();
+    response.platformOverrides = response.platformOverrides.filter(item => item.key !== 'cap.ordering');
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, response));
+    render(<TranslationsPage />);
+    await screen.findByText('Menu prompt');
+    const messageRow = (key: string) => screen.getByText(key).parentElement!.parentElement!;
+    const unavailable = 'The built-in bot default for Nigerian Pidgin is not shown here.';
+    expect(within(messageRow('cap.scheduling')).getByText(unavailable)).toBeTruthy();
+    expect(within(messageRow('cap.scheduling')).getByText('English reference:')).toBeTruthy();
+    expect(within(messageRow('cap.ordering')).getByText(unavailable)).toBeTruthy();
+    expect(within(messageRow('cap.ordering')).queryByText('English reference:')).toBeNull();
+    expect(within(messageRow('menu.what_to_do')).queryByText(unavailable)).toBeNull();
+  });
+
   it('shows "Default" without language qualifier when English is selected', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, makeApiResponse()));
 
@@ -529,8 +562,8 @@ describe('Bot Text page', () => {
     });
   });
 
-  it('renders at narrow viewport (375px) without overflow', async () => {
-    // Simulate a narrow mobile viewport
+  it('keeps editor controls in the DOM with jsdom innerWidth 375', async () => {
+    // DOM-presence check only: jsdom does not calculate layout or overflow.
     Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 375 });
     window.dispatchEvent(new Event('resize'));
 
@@ -542,7 +575,7 @@ describe('Bot Text page', () => {
       expect(screen.getByText('Menu prompt')).toBeTruthy();
     });
 
-    // Core elements present and accessible at narrow width
+    // Core controls remain present; browser layout is separate evidence.
     expect(screen.getByText('Bot Text')).toBeTruthy();
     expect(screen.getByPlaceholderText('Search messages...')).toBeTruthy();
     expect(screen.getByText('Save Changes')).toBeTruthy();
@@ -552,7 +585,7 @@ describe('Bot Text page', () => {
     expect(labels.length).toBeGreaterThan(0);
   });
 
-  it('renders at desktop viewport (1280px) with all elements', async () => {
+  it('keeps editor controls in the DOM with jsdom innerWidth 1280', async () => {
     Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1280 });
     window.dispatchEvent(new Event('resize'));
 
@@ -564,7 +597,7 @@ describe('Bot Text page', () => {
       expect(screen.getByText('Menu prompt')).toBeTruthy();
     });
 
-    // All elements present at desktop width
+    // DOM-presence assertions do not establish desktop layout.
     expect(screen.getByText('Bot Text')).toBeTruthy();
     expect(screen.getByPlaceholderText('Search messages...')).toBeTruthy();
     expect(screen.getByText('Save Changes')).toBeTruthy();
