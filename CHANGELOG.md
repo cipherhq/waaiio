@@ -1,9 +1,3 @@
-### #762 W25 — Distinguish Audience load errors from empty results (2026-10-30)
-
-- **`app/dashboard/audiences/page.tsx`**: Show “No audiences yet” only when the list is empty and no error is present. Preserve loaded audience rows when deletion fails.
-- **`lib/__tests__/engage-audiences-load.test.tsx`**: Add rendered coverage for delayed loading, populated and empty success, denied/server responses, network and non-JSON failures, and failed deletion with existing rows.
-- Presentation-only correction; the separate staging access-contract discrepancy for already-merged M432 is unchanged.
-
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
 - **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
@@ -200,6 +194,12 @@
 - **`scripts/qa-staging.sh`** (B5): Require valid 40-hex `E2E_DEPLOYMENT_SHA` for non-loopback targets.
 - **`lib/__tests__/qa-staging-guard.test.ts`**: Expanded to 38 tests covering B1 (wrong/missing/production supabaseProjectRef), B2 (route method regression), B3 (guard coverage, service worker blocking), B4 (retry truthfulness, all-skipped detection), B5 (SHA requirement).
 - Codex: UNAVAILABLE (usage limit). CTO is reviewer of record.
+
+### #762 W25 — Distinguish Audience load errors from empty results (2026-10-30)
+
+- **`app/dashboard/audiences/page.tsx`**: Show “No audiences yet” only when the list is empty and no error is present. Preserve loaded audience rows when deletion fails.
+- **`lib/__tests__/engage-audiences-load.test.tsx`**: Add rendered coverage for delayed loading, populated and empty success, denied/server responses, network and non-JSON failures, and failed deletion with existing rows.
+- Presentation-only correction; the separate staging access-contract discrepancy for already-merged M432 is unchanged.
 
 ### #671 QA Phase B — staging fixture/workflow hardening (2026-10-22)
 
