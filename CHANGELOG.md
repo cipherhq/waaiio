@@ -85,6 +85,8 @@
 
 ### #762 W21 — Public invoice checkout identity and destination (2026-10-30)
 
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
 - Public invoice checkout now passes a nullable anonymous payer through the existing payment persistence contract. Initialization input types accept null; Stripe omits anonymous user metadata while preserving authenticated payer metadata.
 - Invoice checkout returns the stored provider authorization URL for fresh and reused payments instead of constructing a Paystack destination from the transaction reference. Existing Stripe session and short-link fallbacks remain available.
 - Added `lib/__tests__/invoice-public-checkout-762.test.ts` exercising the actual invoice handler, shared initializer and Paystack/Stripe adapters with stateful synthetic database responses and intercepted HTTP. Covers nullable persistence, exact URLs, reuse, failure withholding, invoice gates and country/amount authority.
