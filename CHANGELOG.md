@@ -1,3 +1,12 @@
+### #514 — Durable Event saves and final cancellation (2026-10-30)
+
+- Admin Events saves use authenticated server authority, optimistic revisions and durable operation readback. Editors retain changes on failed or uncertain saves; persisted cancellation and notification progress are reported separately.
+- Merchant cancellation uses the same atomic event operation. Cancellation is final; restarting requires a new event.
+- M481 records cancellation, affected tickets, notification recipients, paid refund follow-ups and admin audit together. Service-only RPCs serialize ticket issuance and emission authorization against cancellation; ambiguous provider attempts are not automatically replayed.
+- Paid cancellation records follow-up without reporting ticket issuance or customer confirmation. Existing payment accounting and refund policy remain unchanged.
+- Ticket email opts into one application-level provider attempt through an optional shared helper flag; other email callers retain their existing retries.
+- Added mounted UI, route/domain, actual delivery-helper and disposable PostgreSQL coverage. Validation is pending remote CI; no local tests, hosted migrations, live sends, merge or deployment performed.
+
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
 - **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.

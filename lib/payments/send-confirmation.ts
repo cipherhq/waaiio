@@ -148,6 +148,10 @@ export async function sendProactiveConfirmation(
   }
 
   if (!claim?.claimed) {
+    if (claim?.reason === 'already_terminated' &&
+        claim.terminal_reason === 'event_cancelled_followup_recorded') {
+      return { status: 'not_deliverable', retryable: false, reason: 'event_cancelled_followup_recorded' };
+    }
     if (claim?.already_completed) {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
       // K2/Refinement 1: Retry pending saved-card CTA via stored channel_id
@@ -178,6 +182,26 @@ export async function sendProactiveConfirmation(
     order_id: claim.order_id || null,
     payment_authority_version: claim.payment_authority_version ?? null,
   };
+
+  // M481: resolve a cancelled ticket event before success-only messaging.
+  // This RPC checks authoritative booking/event state and is a no-op for other payments.
+  if (payment.booking_id) {
+    const { data: cancellation, error: cancellationError } = await supabase.rpc(
+      'terminate_cancelled_event_confirmation',
+      { p_payment_id: payment.id, p_claim_token: claimToken },
+    );
+    if (cancellationError || !cancellation) {
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'event_cancellation_resolution_failed' };
+    }
+    if (cancellation.terminated === true) {
+      return { status: 'not_deliverable', retryable: false, reason: 'event_cancelled_followup_recorded' };
+    }
+    if (cancellation.reason !== 'not_cancelled') {
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: cancellation.reason || 'event_cancellation_resolution_failed' };
+    }
+  }
 
   // Track whether any external sends have occurred (affects release safety)
   // Conservative: set BEFORE attempting any external/non-idempotent operation.
