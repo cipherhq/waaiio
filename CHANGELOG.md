@@ -5533,3 +5533,11 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
+
+### #753 — Refresh business logo preview after upload (2026-10-30)
+
+- `app/dashboard/settings/tabs/BusinessTab.tsx`: retain the immediate successful-upload preview, request router refresh only on success, and synchronize only logo state when refreshed business identity/logo props change. Other unsaved form state remains intact.
+- `lib/__tests__/business-logo-753.test.tsx`: rendered Settings/Provider lifecycle coverage for success, delayed refresh after tab remount, preserved edits, rejected/network-failed uploads and business identity changes using synthetic responses.
+- `lib/__tests__/address-forms-751.test.tsx`: add only the required router mock for the existing BusinessTab fixture; preserve address assertions.
+- **Affects**: Dashboard logo preview/context refresh. Upload API, validation, ownership, storage, Places behavior and paid-branding policy are unchanged.
+- **Could break**: Framework refresh timing can temporarily show the prior logo before updated props arrive. Tests mock upload/network boundaries and do not certify live persistence or image availability.
