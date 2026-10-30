@@ -36,7 +36,7 @@ function response(body: unknown, status = 200): Response {
 
 function expectNoEmptyClaim() {
   expect(screen.queryByText('No audiences yet')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Create Audience', exact: true })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Create Audience' })).toBeNull();
 }
 
 beforeEach(() => {
@@ -72,8 +72,8 @@ describe('W25 Audience list load states', () => {
 
     expect(await screen.findByRole('heading', { name: segment.name })).toBeTruthy();
     expect(screen.getByText(segment.description)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
     expectNoEmptyClaim();
   });
 
@@ -82,8 +82,8 @@ describe('W25 Audience list load states', () => {
     render(<AudiencesPage />);
 
     expect(await screen.findByText('No audiences yet')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create Audience', exact: true }));
-    expect(screen.getByRole('heading', { name: 'New Audience', exact: true })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create Audience' }));
+    expect(screen.getByRole('heading', { name: 'New Audience' })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -124,13 +124,13 @@ describe('W25 Audience list load states', () => {
     render(<AudiencesPage />);
 
     await screen.findByRole('heading', { name: segment.name });
-    fireEvent.click(screen.getByRole('button', { name: 'Delete', exact: true }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     expect(await screen.findByText('Failed to delete segment')).toBeTruthy();
     expect(screen.getByRole('heading', { name: segment.name })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Confirm', exact: true }).hasAttribute('disabled')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Confirm' }).hasAttribute('disabled')).toBe(false);
     expectNoEmptyClaim();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenLastCalledWith(
