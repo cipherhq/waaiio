@@ -68,12 +68,16 @@ export interface FetchPredictionsRequest {
 /** Create a per-input session with its own token lifecycle. */
 export function createPlacesSession(): PlacesSession {
   let token: google.maps.places.AutocompleteSessionToken | null = null;
+  let generation = 0; // Prevents stale details from clearing a newer session.
 
   function getToken(): google.maps.places.AutocompleteSessionToken {
     if (!token) token = new google.maps.places.AutocompleteSessionToken();
     return token;
   }
-  function consumeToken() { token = null; }
+  function consumeToken(gen: number) {
+    // Only consume if this completion belongs to the current generation.
+    if (gen === generation) token = null;
+  }
 
   return {
     async fetchPredictions(request: FetchPredictionsRequest): Promise<NormalizedPrediction[]> {
@@ -110,9 +114,12 @@ export function createPlacesSession(): PlacesSession {
       prediction: NormalizedPrediction,
       fields: string[] = ['formattedAddress', 'addressComponents', 'location'],
     ): Promise<NormalizedPlaceResult> {
+      // Retire the selected session at dispatch (before async work).
+      const gen = generation;
+      consumeToken(gen);
+
       const place = prediction._raw.toPlace();
       await place.fetchFields({ fields });
-      consumeToken();
 
       const components = extractAddressComponents(place.addressComponents);
       const lat = place.location?.lat();
@@ -127,7 +134,7 @@ export function createPlacesSession(): PlacesSession {
       };
     },
 
-    reset() { consumeToken(); },
+    reset() { generation++; token = null; },
   };
 }
 

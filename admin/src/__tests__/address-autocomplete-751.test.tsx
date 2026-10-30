@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
 
-const provider = vi.hoisted(() => ({ create: vi.fn(), predict: vi.fn(), details: vi.fn() }));
+const provider = vi.hoisted(() => ({ create: vi.fn(), predict: vi.fn(), details: vi.fn(), reset: vi.fn() }));
 vi.mock('@/lib/googlePlaces', () => ({ createGooglePlacesServices: provider.create }));
 const predictions: Array<(data: unknown, status: string) => void> = [];
 const details: Array<(data: unknown, status: string) => void> = [];
@@ -18,7 +18,8 @@ beforeEach(() => {
   predictions.length = 0; details.length = 0;
   provider.predict.mockReset().mockImplementation((_request, callback) => predictions.push(callback));
   provider.details.mockReset().mockImplementation((_request, callback) => details.push(callback));
-  provider.create.mockReset().mockResolvedValue({ predictions: { getPlacePredictions: provider.predict }, details: { getDetails: provider.details } });
+  provider.reset.mockReset();
+  provider.create.mockReset().mockResolvedValue({ predictions: { getPlacePredictions: provider.predict }, details: { getDetails: provider.details }, reset: provider.reset });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 function Controlled({ changed = vi.fn(), country = 'NG' }: { changed?: ReturnType<typeof vi.fn>; country?: string }) {

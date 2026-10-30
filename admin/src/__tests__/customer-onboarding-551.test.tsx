@@ -89,7 +89,7 @@ describe('#551 Admin customer onboarding journey', () => {
     fireEvent.change(screen.getByLabelText('Business phone'), { target: { value: '+2348012345678' } });
   }
   function enablePlaces() {
-    provider.create.mockResolvedValue({ predictions: { getPlacePredictions: provider.predict }, details: { getDetails: provider.details } });
+    provider.create.mockResolvedValue({ predictions: { getPlacePredictions: provider.predict }, details: { getDetails: provider.details }, reset: vi.fn() });
     provider.predict.mockImplementation((_request, callback) => callback([{
       place_id: 'one', description: '10 Main Street, Lagos',
       structured_formatting: { main_text: '10 Main Street', secondary_text: 'Lagos' },

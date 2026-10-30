@@ -27,7 +27,7 @@ import Events from '@/pages/Events';
 const place = { formatted_address: '10 Main Street, Lagos', address_components: [] };
 beforeEach(() => {
   vi.clearAllMocks(); mocks.role = 'admin'; mocks.writes = [];
-  mocks.create.mockReset().mockResolvedValue({ predictions: { getPlacePredictions: mocks.predict }, details: { getDetails: mocks.details } });
+  mocks.create.mockReset().mockResolvedValue({ predictions: { getPlacePredictions: mocks.predict }, details: { getDetails: mocks.details }, reset: vi.fn() });
   mocks.predict.mockReset().mockImplementation((_request, callback) => callback([{
     place_id: 'one', description: 'Main Street', structured_formatting: { main_text: 'Main Street', secondary_text: 'Lagos' },
   }], 'OK'));

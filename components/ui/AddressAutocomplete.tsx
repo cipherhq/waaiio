@@ -58,10 +58,12 @@ export default function AddressAutocomplete({
   }
 
   // External defaultValue change: update display and invalidate stale predictions/details.
-  const prevDefaultRef = useRef(defaultValue);
+  // Only reset when the new defaultValue genuinely differs from the local value
+  // (parent echoing typed text back is not an external reset).
+  const valueRef = useRef(value);
   useEffect(() => {
-    if (defaultValue !== prevDefaultRef.current) {
-      prevDefaultRef.current = defaultValue;
+    if (defaultValue !== valueRef.current) {
+      valueRef.current = defaultValue;
       setValue(defaultValue);
       detailsRequestRef.current++;
       dismiss();
@@ -112,6 +114,7 @@ export default function AddressAutocomplete({
     const input = event.target.value;
     detailsRequestRef.current++;
     dismiss();
+    valueRef.current = input;
     setValue(input);
     onManualChange?.(input);
     if (!input.trim() || !ready) return;
@@ -135,6 +138,7 @@ export default function AddressAutocomplete({
   async function selectPrediction(prediction: NormalizedPrediction) {
     dismiss();
     const request = ++detailsRequestRef.current;
+    valueRef.current = prediction.description;
     setValue(prediction.description);
     // Notify parent of the selected text immediately (coordinates still pending).
     onManualChange?.(prediction.description);
@@ -145,6 +149,7 @@ export default function AddressAutocomplete({
       if (!mountedRef.current || request !== detailsRequestRef.current) return;
       const c = result.components;
       const address = (c.streetNumber ? `${c.streetNumber} ${c.route}` : c.route).trim() || result.formattedAddress;
+      valueRef.current = result.formattedAddress;
       setValue(result.formattedAddress);
 
       onSelectRef.current({

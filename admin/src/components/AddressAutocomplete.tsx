@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useId } from 'react';
 import { createGooglePlacesServices, type Prediction, type PredictionService, type DetailsService } from '@/lib/googlePlaces';
 
+type ServicesResult = Awaited<ReturnType<typeof createGooglePlacesServices>>;
+
 export interface AddressFields {
   address: string;
   city: string;
@@ -34,6 +36,7 @@ export default function AddressAutocomplete({
   const listId = useId();
   const autocompleteServiceRef = useRef<PredictionService | null>(null);
   const placesServiceRef = useRef<DetailsService | null>(null);
+  const servicesRef = useRef<ServicesResult | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
@@ -56,6 +59,7 @@ export default function AddressAutocomplete({
     let active = true;
     createGooglePlacesServices().then(services => {
       if (!active) return;
+      servicesRef.current = services;
       autocompleteServiceRef.current = services.predictions;
       placesServiceRef.current = services.details;
     }).catch(() => { /* Manual entry remains available. */ });
@@ -65,8 +69,10 @@ export default function AddressAutocomplete({
       requestRef.current++;
       detailsRequestRef.current++;
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      servicesRef.current?.reset();
       autocompleteServiceRef.current = null;
       placesServiceRef.current = null;
+      servicesRef.current = null;
     };
   }, []);
 
@@ -77,6 +83,7 @@ export default function AddressAutocomplete({
       countryRef.current = countryCode;
       detailsRequestRef.current++;
       dismiss();
+      servicesRef.current?.reset();
     }
   }, [value, countryCode]);
 
@@ -123,6 +130,7 @@ export default function AddressAutocomplete({
       placesServiceRef.current.getDetails({
         placeId: prediction.place_id,
         fields: ['formatted_address', 'address_components'],
+        _raw: prediction._raw,
       }, (place, status) => {
         if (!mountedRef.current || request !== detailsRequestRef.current) return;
         if (status !== 'OK' || !place?.formatted_address) return;

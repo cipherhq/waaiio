@@ -33,7 +33,7 @@ export interface PredictionService {
 
 export interface DetailsService {
   getDetails(
-    request: { placeId: string; fields: string[] },
+    request: { placeId: string; fields: string[]; /** Pass raw prediction for session-aware toPlace(). */ _raw?: google.maps.places.PlacePrediction },
     callback: (place: Place | null, status: string) => void,
   ): void;
 }
@@ -43,6 +43,8 @@ export interface DetailsService {
 export async function createGooglePlacesServices(): Promise<{
   predictions: PredictionService;
   details: DetailsService;
+  /** Reset session token (call on record/country/clear changes). */
+  reset: () => void;
 }> {
   await loadGooglePlaces();
 
@@ -50,16 +52,13 @@ export async function createGooglePlacesServices(): Promise<{
     throw new Error('Places API (New) is not available');
   }
 
-  // Per-instance token; consumed on selection, fresh for next search.
   let _token: google.maps.places.AutocompleteSessionToken | null = null;
+  let generation = 0;
+
   function token(): google.maps.places.AutocompleteSessionToken {
     if (!_token) _token = new google.maps.places.AutocompleteSessionToken();
     return _token;
   }
-  function consumeToken() { _token = null; }
-
-  // Keep the most recent predictions so getDetails can call toPlace() on the matching one.
-  let lastPredictions: Prediction[] = [];
 
   const predictions: PredictionService = {
     getPlacePredictions(request, callback) {
@@ -86,7 +85,6 @@ export async function createGooglePlacesServices(): Promise<{
               },
               _raw: s.placePrediction,
             }));
-          lastPredictions = mapped;
           callback(mapped.length ? mapped : null, mapped.length ? 'OK' : 'ZERO_RESULTS');
         })
         .catch(() => callback(null, 'ERROR'));
@@ -95,34 +93,27 @@ export async function createGooglePlacesServices(): Promise<{
 
   const details: DetailsService = {
     getDetails(request, callback) {
-      // Use toPlace() from the matching prediction to preserve the session token association.
-      const match = lastPredictions.find(p => p.place_id === request.placeId);
-      const rawPrediction = match?._raw;
-      if (!rawPrediction) {
-        // Fallback: construct Place from ID (loses session token billing benefit).
-        const place = new google.maps.places.Place({ id: request.placeId });
-        place.fetchFields({ fields: ['formattedAddress', 'addressComponents'] })
-          .then(() => {
-            consumeToken();
-            if (!place.formattedAddress) { callback(null, 'NOT_FOUND'); return; }
-            callback(mapPlace(place), 'OK');
-          })
-          .catch(() => { consumeToken(); callback(null, 'ERROR'); });
-        return;
-      }
+      // Retire session token at dispatch (before async). Use the passed _raw
+      // prediction for toPlace() to preserve session association.
+      const gen = generation;
+      if (gen === generation) _token = null;
 
-      const place = rawPrediction.toPlace();
+      const raw = request._raw;
+      const place = raw ? raw.toPlace() : new google.maps.places.Place({ id: request.placeId });
       place.fetchFields({ fields: ['formattedAddress', 'addressComponents'] })
         .then(() => {
-          consumeToken();
           if (!place.formattedAddress) { callback(null, 'NOT_FOUND'); return; }
           callback(mapPlace(place), 'OK');
         })
-        .catch(() => { consumeToken(); callback(null, 'ERROR'); });
+        .catch(() => callback(null, 'ERROR'));
     },
   };
 
-  return { predictions, details };
+  return {
+    predictions,
+    details,
+    reset() { generation++; _token = null; },
+  };
 }
 
 /** Map New API Place to Legacy-shaped Place interface. */
