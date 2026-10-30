@@ -5533,3 +5533,11 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
+
+### #762 W21 — Public invoice checkout identity and destination (2026-10-30)
+
+- Public invoice checkout now passes a nullable anonymous payer through the existing payment persistence contract. Initialization input types accept null; Stripe omits anonymous user metadata while preserving authenticated payer metadata.
+- Invoice checkout returns the stored provider authorization URL for fresh and reused payments instead of constructing a Paystack destination from the transaction reference. Existing Stripe session and short-link fallbacks remain available.
+- Added `lib/__tests__/invoice-public-checkout-762.test.ts` exercising the actual invoice handler, shared initializer and Paystack/Stripe adapters with stateful synthetic database responses and intercepted HTTP. Covers nullable persistence, exact URLs, reuse, failure withholding, invoice gates and country/amount authority.
+- **Affects**: Public invoice payment initiation and initialization input compatibility. No schema, webhook, finalization or payment-provider configuration changes.
+- **Could break**: Checkout destination selection or nullable payer serialization; canonical cloud CI and independent review are required. Synthetic coverage does not establish live-provider or deployment acceptance.
