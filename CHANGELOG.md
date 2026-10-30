@@ -140,6 +140,8 @@
 
 ### #753 — Refresh business logo preview after upload (2026-10-30)
 
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
 - `app/dashboard/settings/tabs/BusinessTab.tsx`: retain the immediate successful-upload preview, request router refresh only on success, and synchronize only logo state when refreshed business identity/logo props change. Other unsaved form state remains intact.
 - `lib/__tests__/business-logo-753.test.tsx`: rendered Settings/Provider lifecycle coverage for success, delayed refresh after tab remount, preserved edits, rejected/network-failed uploads and business identity changes using synthetic responses.
 - `lib/__tests__/address-forms-751.test.tsx`: add only the required router mock for the existing BusinessTab fixture; preserve address assertions.
