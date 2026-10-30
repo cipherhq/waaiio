@@ -85,6 +85,16 @@
 - A failed WhatsApp resend records the latest attempt status without clearing the last acknowledged message ID. Database write failures after provider acceptance are logged and surfaced to the dashboard without inviting a duplicate retry.
 - **PRODUCT DECISIONS remain open**: invoice resend deduplication and partial-channel status for automatic WhatsApp-plus-email delivery.
 
+### #762 W03 — Recognize bot-test activity in the Overview checklist (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- Read positive own-business inbound conversation usage across all months, retaining existing inbound-chat evidence. Configuration and outbound activity alone do not complete the test step; returned or rejected query errors do not fabricate evidence.
+- Reset checklist state for each business and ignore obsolete asynchronous results, including automatic dismissal writes after a switch.
+- Add rendered component coverage for evidence filters, failures, business switching/dismissal and preserved setup, WhatsApp and payout predicates.
+- **Affects**: Overview checklist presentation only; inbound activity is not proof of response delivery. No API, schema, bot writer or payout-readiness changes.
+- **Could break**: Checklist loading/completion/dismissal behavior; focused tests exercise those transitions. Deployed RLS and provider delivery are outside the mocked suite.
+
 ### #736 Lane 1 R4 — Remove explicit dual-channel send option (2026-10-29)
 
 - Invoice and payment-request dashboards now offer WhatsApp or email individually. Their APIs reject `both` and unsupported channel values; payment-request bulk `auto` routing remains available.
