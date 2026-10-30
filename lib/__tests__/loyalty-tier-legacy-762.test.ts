@@ -69,13 +69,17 @@ describe('#762 legacy loyalty tier multiplier contracts', () => {
     expect(legacySection).toContain('Math.floor(earnedPoints * multiplier)');
   });
 
-  it('legacy path catches tier lookup errors without throwing', () => {
+  it('legacy path throws on tier lookup error (does not silently award at 1x)', () => {
     const legacySection = postCompletionSource.slice(
       postCompletionSource.indexOf("capabilities.includes('membership')"),
       postCompletionSource.indexOf('loyalty_transactions')
     );
-    expect(legacySection).toContain('catch');
-    expect(legacySection).toContain('Tier lookup failed');
+    // Must check tierError and throw — no try/catch that silently continues
+    expect(legacySection).toContain('tierError');
+    expect(legacySection).toContain('throw new Error');
+    expect(legacySection).toContain('legacy_tier_lookup_failed');
+    // Must NOT have a catch block that silently continues with base points
+    expect(legacySection).not.toContain('catch (tierErr)');
   });
 
   it('legacy path calculates base points BEFORE multiplier (base-then-multiply)', () => {

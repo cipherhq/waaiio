@@ -663,11 +663,15 @@ export function Sidebar() {
       availableToAdd.push(item);
       continue;
     }
-    // Check if ANY of the item's capabilities are available on the current tier
-    const canActivate = item.capabilities.some(cap => {
+    // For ALL-required items, every capability must be on the current tier.
+    // For ANY items, at least one suffices.
+    const tierCheck = (cap: CapabilityId) => {
       const requiredTier = CAPABILITY_TIER_REQUIREMENTS[cap];
       return requiredTier ? tierRank[requiredTier] <= currentTierRank : true;
-    });
+    };
+    const canActivate = item.requireAllCapabilities
+      ? item.capabilities.every(tierCheck)
+      : item.capabilities.some(tierCheck);
     if (canActivate) {
       availableToAdd.push(item);
     } else {

@@ -148,6 +148,18 @@ describe('Sidebar capability gating (#762)', () => {
     });
   });
 
+  describe('Loyalty Tiers Add Features classification (ALL contract)', () => {
+    it('Loyalty Tiers not in essential nav when only loyalty enabled (moves to Add Features)', () => {
+      setCaps('loyalty');
+      render(<Sidebar />);
+      // With only loyalty, Loyalty Tiers fails ALL check and goes to moreItems
+      // It should NOT appear as an essential nav link
+      const links = screen.getAllByRole('link');
+      const tierLink = links.find(link => link.textContent?.trim() === 'Loyalty Tiers');
+      expect(tierLink).toBeUndefined();
+    });
+  });
+
   describe('Bookings (capabilities: [scheduling, appointment, reservation, table_reservation], ANY semantics)', () => {
     it('is shown when only scheduling is present (ANY of the four)', () => {
       setCaps('scheduling');

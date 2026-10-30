@@ -349,24 +349,22 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         }
         // Apply membership tier multiplier (base points first, then multiply).
         // Uses phoneWithPlus to match customer_profiles.phone canonical format.
+        // Errors propagate to the outer loyalty catch — do not silently award at 1x.
         if (capabilities.includes('membership')) {
-          try {
-            const { data: tierRow } = await supabase
-              .from('customer_profiles')
-              .select('membership_tiers!inner(points_multiplier, is_active, business_id)')
-              .eq('business_id', businessId)
-              .eq('phone', phoneWithPlus)
-              .not('membership_tier_id', 'is', null)
-              .maybeSingle();
-            const tier = tierRow?.membership_tiers as { points_multiplier?: number; is_active?: boolean; business_id?: string } | null;
-            if (tier && tier.is_active && tier.business_id === businessId) {
-              const multiplier = Number(tier.points_multiplier) || 1;
-              if (multiplier > 1) {
-                earnedPoints = Math.floor(earnedPoints * multiplier);
-              }
+          const { data: tierRow, error: tierError } = await supabase
+            .from('customer_profiles')
+            .select('membership_tiers!inner(points_multiplier, is_active, business_id)')
+            .eq('business_id', businessId)
+            .eq('phone', phoneWithPlus)
+            .not('membership_tier_id', 'is', null)
+            .maybeSingle();
+          if (tierError) throw new Error(`legacy_tier_lookup_failed: ${tierError.message}`);
+          const tier = tierRow?.membership_tiers as { points_multiplier?: number; is_active?: boolean; business_id?: string } | null;
+          if (tier && tier.is_active && tier.business_id === businessId) {
+            const multiplier = Number(tier.points_multiplier) || 1;
+            if (multiplier > 1) {
+              earnedPoints = Math.floor(earnedPoints * multiplier);
             }
-          } catch (tierErr) {
-            logger.withContext({ op: 'post-completion.legacy-tier-lookup', ...safeLogErrorContext(tierErr) }).warn('[POST-COMPLETION] Tier lookup failed, using base points');
           }
         }
         const { data: existing } = await supabase.from('loyalty_points').select('id, points_balance, total_earned, visit_count').eq('business_id', businessId).eq('customer_phone', customerPhone).maybeSingle();
