@@ -1,9 +1,3 @@
-### #762 W22 — Repair Payments Received booking query (2026-10-30)
-
-- **`app/dashboard/payments/page.tsx`**: Select the explicit outgoing payment-to-booking FK for left/inner embeds and consume the returned nullable booking object throughout source labels, customer/contact, references and details. Preserves business/RLS scope, success/deletion filters, count/range/order, booking-less rows and separate error/empty states.
-- **`lib/__tests__/payments-received-762.test.tsx`** (new): Mounted-page regression coverage for query shape, object/null rendering, filters, pagination/search, errors/retry and stale responses. **`lib/__tests__/payment-source-classification.test.ts`**: Align the inner-join assertion with the explicit FK.
-- **Impact/risk:** Payment-list reads/display only; a relationship or response-shape regression could prevent loading or hide booking detail. Cloud CI supplies execution evidence; rendered mocks do not certify deployed PostgREST/RLS. No financial writes, provider logic, schema or ACL changes.
-
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
 - **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
@@ -168,6 +162,12 @@
 - **`lib/__tests__/circuit-breaker-financial-exclusion.test.ts`** (new): 3 tests proving financial denials don't trigger `recordFailure`, financial RPC errors don't trigger it either, but real Meta 5xx errors still do.
 - **Affects**: Financial authorization billing currency resolution (authorize_message_send RPC), circuit breaker error classification. No changes to payment gateways, subscription pricing, purchased balances, rate configuration, expiry policies, or WhatsApp delivery routing.
 - **Could break**: Existing tests that assume recipient_country_code drives currency (tests 3, 8, 23 in financial-authorization-db.test.ts create attempts with recipient country matching the allowance currency — those still pass because the test businesses default to NG country_code with NGN allowances).
+
+### #762 W22 — Repair Payments Received booking query (2026-10-30)
+
+- **`app/dashboard/payments/page.tsx`**: Select the explicit outgoing payment-to-booking FK for left/inner embeds and consume the returned nullable booking object throughout source labels, customer/contact, references and details. Preserves business/RLS scope, success/deletion filters, count/range/order, booking-less rows and separate error/empty states.
+- **`lib/__tests__/payments-received-762.test.tsx`** (new): Mounted-page regression coverage for query shape, object/null rendering, filters, pagination/search, errors/retry and stale responses. **`lib/__tests__/payment-source-classification.test.ts`**: Align the inner-join assertion with the explicit FK.
+- **Impact/risk:** Payment-list reads/display only; a relationship or response-shape regression could prevent loading or hide booking detail. Cloud CI supplies execution evidence; rendered mocks do not certify deployed PostgREST/RLS. No financial writes, provider logic, schema or ACL changes.
 
 ### #682 Bot Recovery — Messaging reliability fixes (2026-10-24)
 
