@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
+import type { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
@@ -43,6 +44,8 @@ interface PostCompletionParams {
   translate?: (text: string) => Promise<string>;
   /** Authoritative ISO 4217 currency code from the payment (read-only display) */
   currencyCode?: string | null;
+  /** Already-resolved MetaCloudService for the sender's channel (decrypted credentials, correct WABA) */
+  cloud?: MetaCloudService;
 }
 
 function generateReferralCode(): string {
@@ -59,7 +62,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, paymentId, claimToken, whatsappOriginMissingChannel, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, paymentId, claimToken, whatsappOriginMissingChannel, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate, cloud } = params;
   const t = translate ?? ((text: string) => Promise.resolve(text));
 
   // Parallel: load capabilities + business data in one round-trip
@@ -244,6 +247,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
                 documentUrl: signedUrlData.signedUrl,
                 filename: `receipt-${referenceCode || paymentId.slice(0, 8)}.pdf`,
                 caption: getFlowCopy(receiptLang, 'notification.receipt_caption'),
+                messageCategory: 'service',
               });
               return true;
             },
@@ -268,6 +272,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
             documentUrl: signedUrlData.signedUrl,
             filename: `receipt-${referenceCode || 'payment'}.pdf`,
             caption: getFlowCopy(receiptLang, 'notification.receipt_caption'),
+            messageCategory: 'service',
           });
         }
       }
@@ -318,7 +323,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           const notifyResult = await driveExternalEffect(
             supabase, paymentId, 'customer_loyalty_whatsapp', claimToken,
             async () => {
-              await sender.sendText({ to: customerPhone, text: await t(loyaltyMsg) });
+              await sender.sendText({ to: customerPhone, text: await t(loyaltyMsg), messageCategory: 'service' });
               return true;
             },
           );
@@ -356,7 +361,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
         if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
         else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
-        if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
+        if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated, messageCategory: 'service' })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.loyalty', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Loyalty error');
@@ -447,13 +452,15 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         supabase, paymentId, 'automation_rule_handoff', claimToken,
         async () => {
           const { runSealedRuleActions } = await import('@/lib/bot/automation/sealed-rule-actions');
-          await runSealedRuleActions({ supabase, paymentId, businessId, event: ruleEvent, context: automationContext, sender });
+          await runSealedRuleActions({ supabase, paymentId, businessId, event: ruleEvent, context: automationContext, sender, cloud });
         },
       );
       if (!ruleResult.ok) throw new Error(`automation_rule_handoff_failed:${ruleResult.error}`);
     } else {
       // Legacy path: no paymentId, execute rules directly
       await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
+      // Merchant-authored rule text: do NOT force a category. Proactive sends
+      // without a category are blocked by the financial gate (fail-closed).
       const sendMsg = async (to: string, text: string) => {
         if (!sender) throw new Error('rule_sender_unavailable');
         await sender.sendText({ to, text });

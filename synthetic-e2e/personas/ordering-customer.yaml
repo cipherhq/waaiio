@@ -1,0 +1,48 @@
+# Promptfoo persona: Product Ordering Customer
+#
+# Simulates a customer ordering a product with variations,
+# including inventory edge cases.
+#
+# Issue #728: Required persona for product variations and inventory.
+
+description: "Customer ordering a product with size/color variations"
+
+vars:
+  customer_name: "SynthCustomer 0003"
+  business_name: "SynthBiz"
+  product: "T-shirt"
+
+prompts:
+  - role: user
+    content: "Hi, I want to order a {{product}}"
+  - role: user
+    content: "Large, blue"
+  - role: user
+    content: "Just 1 please"
+  - role: user
+    content: "Yes, confirm the order"
+
+assertions:
+  - type: contains-any
+    value:
+      - "order"
+      - "product"
+      - "item"
+    description: "Bot should acknowledge ordering intent"
+  - type: contains-any
+    value:
+      - "size"
+      - "color"
+      - "variation"
+      - "option"
+    description: "Bot should ask about product variations"
+  - type: contains-any
+    value:
+      - "confirm"
+      - "total"
+      - "pay"
+      - "checkout"
+    description: "Bot should present order summary or payment"
+  - type: not-contains
+    value: "error"
+    description: "Bot should not show internal errors"

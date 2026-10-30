@@ -35,6 +35,10 @@ vi.mock('@/lib/supabase/safe-view-query', () => ({
   }),
 }));
 
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 vi.mock('qrcode.react', () => ({
   QRCodeCanvas: ({ value }: { value: string }) => (
     <div data-testid="qr-value" data-value={value} />

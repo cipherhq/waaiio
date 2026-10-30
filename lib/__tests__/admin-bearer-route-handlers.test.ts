@@ -175,10 +175,10 @@ describe('verification/review: document pre-validation and ordered writes', () =
   } = {}) {
     const defaults = {
       bizSelectResult: { data: { name: 'Test Biz', owner_id: 'u1', country_code: 'NG' }, error: null },
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
       reqUpdateResult: { data: null, error: null },
-      bizUpdateResult: { data: [{ id: 'b1' }], error: null },
+      bizUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000001' }], error: null },
       profileResult: { data: { email: 'test@test.com' }, error: null },
     };
     const cfg = { ...defaults, ...overrides };
@@ -240,7 +240,8 @@ describe('verification/review: document pre-validation and ordered writes', () =
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['foreign-doc'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'approve', level: 'basic', document_ids: ['00000000-0000-0000-0000-000000000013'],
       }),
     );
     expect(res.status).toBe(400);
@@ -253,12 +254,13 @@ describe('verification/review: document pre-validation and ordered writes', () =
   it('approve: missing document_id returns 400 with no writes', async () => {
     // Pre-validation finds 1 owned doc out of 2 requested
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1', 'nonexistent'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'approve', level: 'basic', document_ids: ['00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000014'],
       }),
     );
     expect(res.status).toBe(400);
@@ -271,15 +273,16 @@ describe('verification/review: document pre-validation and ordered writes', () =
   it('approve: business update fails AFTER docs/requests succeed returns 500 with log', async () => {
     // Documents and requests write successfully, then business update errors
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
       reqUpdateResult: { data: null, error: null },
       bizUpdateResult: { data: null, error: { message: 'db error' } },
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'approve', level: 'basic', document_ids: ['00000000-0000-0000-0000-000000000011'],
       }),
     );
     expect(res.status).toBe(500);
@@ -292,16 +295,17 @@ describe('verification/review: document pre-validation and ordered writes', () =
 
   it('approve: happy path writes docs, then requests, then business', async () => {
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
       reqUpdateResult: { data: null, error: null },
-      bizUpdateResult: { data: [{ id: 'b1' }], error: null },
+      bizUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000001' }], error: null },
       profileResult: { data: { email: 'test@test.com' }, error: null },
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'approve', level: 'basic', document_ids: ['00000000-0000-0000-0000-000000000011'],
       }),
     );
     expect(res.status).toBe(200);
@@ -311,15 +315,16 @@ describe('verification/review: document pre-validation and ordered writes', () =
 
   it('reject: business update fails after docs/requests succeed returns 500', async () => {
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
       reqUpdateResult: { data: null, error: null },
       bizUpdateResult: { data: null, error: { message: 'db error' } },
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'reject', reason: 'incomplete docs', document_ids: ['d1'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'reject', reason: 'incomplete docs', document_ids: ['00000000-0000-0000-0000-000000000011'],
       }),
     );
     expect(res.status).toBe(500);
@@ -332,13 +337,14 @@ describe('verification/review: document pre-validation and ordered writes', () =
   it('reject: documents update affected wrong count returns 500', async () => {
     // Pre-validation says 2 docs exist, but UPDATE only touches 1
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }, { id: 'd2' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null }, // only 1 updated, expected 2
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }, { id: '00000000-0000-0000-0000-000000000012' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null }, // only 1 updated, expected 2
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'reject', reason: 'bad docs', document_ids: ['d1', 'd2'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'reject', reason: 'bad docs', document_ids: ['00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000012'],
       }),
     );
     expect(res.status).toBe(500);

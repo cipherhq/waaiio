@@ -7,7 +7,9 @@
  * Real database concurrency and trigger enforcement is tested in
  * party-b1-seat-authority.pg.test.ts (requires TEST_DATABASE_URL).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('@/lib/api-auth', () => ({ authenticateRequest: vi.fn() }));
 
 // ════════════════════════════════════════════════════════════════
 // S1: assignGuest (RPC-based)
@@ -166,363 +168,104 @@ describe('bulkAssignByTag (RPC)', () => {
 // ════════════════════════════════════════════════════════════════
 // S4: autoAssign
 // ════════════════════════════════════════════════════════════════
-describe('autoAssign', () => {
-  it('returns error when no tables defined', async () => {
-    const { autoAssign } = await import('@/lib/parties/table-assignment');
-
-    const mockFrom = vi.fn(() => ({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            order: vi.fn(() => Promise.resolve({ data: [] })),
-          })),
-        })),
-      })),
-    }));
-    const supabase = { from: mockFrom, rpc: vi.fn() } as any;
-
-    const result = await autoAssign(supabase, 'party-1', 'biz-1');
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('No tables');
+describe('autoAssign reviewed preview / atomic commit', () => {
+  const party = '00000000-0000-4000-a762-000000000001';
+  const table = '00000000-0000-4000-a762-000000000002';
+  const guest = '00000000-0000-4000-a762-000000000003';
+  const companion = '00000000-0000-4000-a762-000000000004';
+  let snapshot: import('@/lib/parties/seating-planner').SeatingSnapshot;
+  let rpc: ReturnType<typeof vi.fn>;
+  let failCommit: string | null;
+  let client: import('@supabase/supabase-js').SupabaseClient;
+  beforeEach(async () => {
+    const { authenticateRequest } = await import('@/lib/api-auth');
+    const { POST } = await import('@/app/api/parties/[partyId]/seating/route');
+    const { NextRequest } = await import('next/server');
+    snapshot = { fingerprint:'original', tables:[{ id:table,name:'One',capacity:3 }], groups:[],
+      guests:[{ id:guest,guest_name:'Guest',status:'accepted',plus_ones:2,table_id:null,seating_pinned:false,seating_group_id:null }] };
+    failCommit=null;
+    rpc=vi.fn(async (_name: string,args: {p_operation:string;p_payload:Record<string,unknown>}) => {
+      if(args.p_operation==='replay') return {data:null,error:null};
+      if(args.p_operation==='commit') {
+        if(failCommit) return {data:null,error:{code:failCommit}};
+        const assignments=args.p_payload.assignments as {invite_id:string;table_id:string|null}[];
+        snapshot={...snapshot,fingerprint:'saved',guests:snapshot.guests.map(g=>({...g,table_id:assignments.find(a=>a.invite_id===g.id)?.table_id||null}))};
+        return {data:{success:true,snapshot},error:null};
+      }
+      return {data:structuredClone(snapshot),error:null};
+    });
+    vi.mocked(authenticateRequest).mockResolvedValue({user:{id:guest},service:{rpc} } as unknown as Awaited<ReturnType<typeof authenticateRequest>>);
+    client={rpc:vi.fn(),from:vi.fn()} as unknown as import('@supabase/supabase-js').SupabaseClient;
+    // Exercise the production HTTP handler and real planner through the client adapter.
+    vi.stubGlobal('fetch',vi.fn(async (_url: string,init: RequestInit) =>
+      POST(new NextRequest('http://localhost/api/parties/'+party+'/seating',{method:'POST',body:init.body}),
+        {params:Promise.resolve({partyId:party})})));
   });
-
-  it('assigns guest with plus_ones to table that fits, skips smaller tables', async () => {
-    const { autoAssign } = await import('@/lib/parties/table-assignment');
-
-    // Table T1: capacity 3, 0 seated. Table T2: capacity 5, 0 seated.
-    // Guest A: 2 plus_ones (weight 3). Guest B: 0 plus_ones (weight 1).
-    // A fits in T1 (3 seats, weight 3). B goes to T1 too? No, 3-3=0 remaining.
-    // B goes to T2.
-
-    let fromCallCount = 0;
-    const mockFrom = vi.fn((table: string) => {
-      if (table === 'party_tables') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => Promise.resolve({
-                  data: [
-                    { id: 't1', capacity: 3, sort_order: 0 },
-                    { id: 't2', capacity: 5, sort_order: 1 },
-                  ],
-                })),
-              })),
-            })),
-          })),
-        };
-      }
-      if (table === 'event_invites') {
-        fromCallCount++;
-        // First call: unassigned guests with plus_ones
-        if (fromCallCount === 1) {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  is: vi.fn(() => ({
-                    in: vi.fn(() => Promise.resolve({
-                      data: [
-                        { id: 'inv-a', plus_ones: 2 },
-                        { id: 'inv-b', plus_ones: 0 },
-                      ],
-                    })),
-                  })),
-                })),
-              })),
-            })),
-          };
-        }
-        // Subsequent calls: table occupancy queries (empty tables)
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => Promise.resolve({ data: [] })),
-          })),
-        };
-      }
-      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
+  afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
+  async function preview() {
+    const {autoAssign}=await import('@/lib/parties/table-assignment');
+    return autoAssign(client,party,'business',7);
+  }
+  async function commit(p: import('@/lib/parties/seating-planner').SeatingPreview, acknowledgePartial=false) {
+    const {seatingRequest}=await import('@/lib/parties/table-assignment');
+    return seatingRequest<{success:boolean;snapshot:typeof snapshot}>(party,{
+      op:'commit',seed:p.seed,fingerprint:p.snapshot.fingerprint,planHash:p.planHash,acknowledgePartial,
     });
-
-    const rpcCalls: Array<{ ids: string[]; tableId: string }> = [];
-    const mockRpc = vi.fn((name: string, args: any) => {
-      rpcCalls.push({ ids: args.p_invite_ids, tableId: args.p_table_id });
-      return Promise.resolve({
-        data: { success: true, assigned: args.p_invite_ids.length },
-        error: null,
-      });
-    });
-
-    const supabase = { from: mockFrom, rpc: mockRpc } as any;
-    const result = await autoAssign(supabase, 'party-1', 'biz-1');
-
-    expect(result.success).toBe(true);
-    expect(result.assigned).toBe(2);
-    expect(result.skipped).toBe(0);
-
-    // T1 should get inv-a (weight 3 = capacity 3), T2 should get inv-b (weight 1)
-    expect(rpcCalls).toHaveLength(2);
-    expect(rpcCalls[0].tableId).toBe('t1');
-    expect(rpcCalls[0].ids).toEqual(['inv-a']);
-    expect(rpcCalls[1].tableId).toBe('t2');
-    expect(rpcCalls[1].ids).toEqual(['inv-b']);
+  }
+  it('no tables yields visible overflow in a preview and no write',async()=>{
+    snapshot.tables=[];
+    const p=await preview();
+    expect(p.plan.overflow).toEqual([guest]);
+    expect(p.plan.assignments[0].table_id).toBeNull();
+    expect(rpc.mock.calls.every(c=>c[1].p_operation==='snapshot')).toBe(true);
+    expect(client.rpc).not.toHaveBeenCalled();
   });
-
-  it('skips unplaceable guests without blocking later valid ones', async () => {
-    const { autoAssign } = await import('@/lib/parties/table-assignment');
-
-    // Single table, capacity 2. Guest A: 3 plus_ones (weight 4, too big).
-    // Guest B: 0 plus_ones (weight 1, fits).
-    let fromCallCount = 0;
-    const mockFrom = vi.fn((table: string) => {
-      if (table === 'party_tables') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => Promise.resolve({
-                  data: [{ id: 't1', capacity: 2, sort_order: 0 }],
-                })),
-              })),
-            })),
-          })),
-        };
-      }
-      if (table === 'event_invites') {
-        fromCallCount++;
-        if (fromCallCount === 1) {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  is: vi.fn(() => ({
-                    in: vi.fn(() => Promise.resolve({
-                      data: [
-                        { id: 'inv-big', plus_ones: 3 },
-                        { id: 'inv-small', plus_ones: 0 },
-                      ],
-                    })),
-                  })),
-                })),
-              })),
-            })),
-          };
-        }
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => Promise.resolve({ data: [] })),
-          })),
-        };
-      }
-      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
-    });
-
-    const rpcCalls: Array<{ ids: string[] }> = [];
-    const mockRpc = vi.fn((_name: string, args: any) => {
-      rpcCalls.push({ ids: args.p_invite_ids });
-      return Promise.resolve({
-        data: { success: true, assigned: args.p_invite_ids.length },
-        error: null,
-      });
-    });
-
-    const supabase = { from: mockFrom, rpc: mockRpc } as any;
-    const result = await autoAssign(supabase, 'party-1', 'biz-1');
-
-    expect(result.success).toBe(true);
-    expect(result.assigned).toBe(1); // only inv-small placed
-    expect(result.skipped).toBe(1); // inv-big couldn't fit
-    expect(rpcCalls[0].ids).toEqual(['inv-small']); // big guest skipped, small assigned
+  it('preserves weighted indivisible companions and capacity without fixed table order',async()=>{
+    snapshot.tables.unshift({id:companion,name:'Small',capacity:1});
+    const p=await preview();
+    expect(p.plan.assignments).toEqual([{invite_id:guest,table_id:table}]);
+    expect(p.plan.occupancy.find(t=>t.table_id===table)?.used).toBe(3);
+    expect(p.plan.overflow).toEqual([]);
+    expect(rpc.mock.calls.some(c=>c[1].p_operation==='commit')).toBe(false);
   });
-
-  it('handles RPC rejection gracefully and tries next table', async () => {
-    const { autoAssign } = await import('@/lib/parties/table-assignment');
-
-    let fromCallCount = 0;
-    const mockFrom = vi.fn((table: string) => {
-      if (table === 'party_tables') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => Promise.resolve({
-                  data: [
-                    { id: 't1', capacity: 2, sort_order: 0 },
-                    { id: 't2', capacity: 5, sort_order: 1 },
-                  ],
-                })),
-              })),
-            })),
-          })),
-        };
-      }
-      if (table === 'event_invites') {
-        fromCallCount++;
-        if (fromCallCount === 1) {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  is: vi.fn(() => ({
-                    in: vi.fn(() => Promise.resolve({
-                      data: [{ id: 'inv-1', plus_ones: 0 }],
-                    })),
-                  })),
-                })),
-              })),
-            })),
-          };
-        }
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => Promise.resolve({ data: [] })),
-          })),
-        };
-      }
-      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
-    });
-
-    let rpcCallNum = 0;
-    const mockRpc = vi.fn(() => {
-      rpcCallNum++;
-      if (rpcCallNum === 1) {
-        // T1 rejects (simulate concurrent capacity fill)
-        return Promise.resolve({
-          data: { success: false, error: 'Table capacity exceeded' },
-          error: null,
-        });
-      }
-      // T2 accepts
-      return Promise.resolve({
-        data: { success: true, assigned: 1 },
-        error: null,
-      });
-    });
-
-    const supabase = { from: mockFrom, rpc: mockRpc } as any;
-    const result = await autoAssign(supabase, 'party-1', 'biz-1');
-
-    expect(result.success).toBe(true);
-    expect(result.assigned).toBe(1);
-    expect(mockRpc).toHaveBeenCalledTimes(2); // tried T1, then T2
+  it('shows oversized overflow and fitting guests without automatic partial writes',async()=>{
+    snapshot.guests[0].plus_ones=4;
+    snapshot.guests.push({...snapshot.guests[0],id:companion,guest_name:'Fits',plus_ones:0});
+    const p=await preview();
+    expect(p.plan.overflow).toEqual([guest]);
+    expect(p.plan.assignments.find(a=>a.invite_id===companion)?.table_id).toBe(table);
+    expect(rpc.mock.calls.some(c=>c[1].p_operation==='commit')).toBe(false);
   });
-
-  it('returns success:false when ALL table RPCs reject', async () => {
-    const { autoAssign } = await import('@/lib/parties/table-assignment');
-
-    let fromCallCount = 0;
-    const mockFrom = vi.fn((table: string) => {
-      if (table === 'party_tables') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => Promise.resolve({
-                  data: [{ id: 't1', capacity: 5, sort_order: 0 }],
-                })),
-              })),
-            })),
-          })),
-        };
-      }
-      if (table === 'event_invites') {
-        fromCallCount++;
-        if (fromCallCount === 1) {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  is: vi.fn(() => ({
-                    in: vi.fn(() => Promise.resolve({
-                      data: [{ id: 'inv-1', plus_ones: 0 }],
-                    })),
-                  })),
-                })),
-              })),
-            })),
-          };
-        }
-        return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
-      }
-      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
-    });
-
-    // Every RPC rejects
-    const mockRpc = vi.fn(() => Promise.resolve({
-      data: { success: false, error: 'Table capacity exceeded' },
-      error: null,
-    }));
-
-    const supabase = { from: mockFrom, rpc: mockRpc } as any;
-    const result = await autoAssign(supabase, 'party-1', 'biz-1');
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('rejected');
-    expect(result.assigned).toBe(0);
+  it('stale or capacity rejection requires a new preview with no alternative-table retry',async()=>{
+    const p=await preview();
+    snapshot.fingerprint='changed';
+    await expect(commit(p)).rejects.toThrow('Seating changed');
+    expect(rpc.mock.calls.some(c=>c[1].p_operation==='commit')).toBe(false);
+    const fresh=await preview();
+    failCommit='23514';
+    await expect(commit(fresh)).rejects.toThrow('conflicts');
+    expect(rpc.mock.calls.filter(c=>c[1].p_operation==='commit')).toHaveLength(1);
   });
-
-  it('returns success:true with partial assignment when some RPCs fail', async () => {
-    const { autoAssign } = await import('@/lib/parties/table-assignment');
-
-    let fromCallCount = 0;
-    const mockFrom = vi.fn((table: string) => {
-      if (table === 'party_tables') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => Promise.resolve({
-                  data: [
-                    { id: 't1', capacity: 2, sort_order: 0 },
-                    { id: 't2', capacity: 5, sort_order: 1 },
-                  ],
-                })),
-              })),
-            })),
-          })),
-        };
-      }
-      if (table === 'event_invites') {
-        fromCallCount++;
-        if (fromCallCount === 1) {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  is: vi.fn(() => ({
-                    in: vi.fn(() => Promise.resolve({
-                      data: [
-                        { id: 'inv-1', plus_ones: 0 },
-                        { id: 'inv-2', plus_ones: 0 },
-                      ],
-                    })),
-                  })),
-                })),
-              })),
-            })),
-          };
-        }
-        return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
-      }
-      return { select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [] })) })) };
-    });
-
-    let rpcCallNum = 0;
-    const mockRpc = vi.fn(() => {
-      rpcCallNum++;
-      if (rpcCallNum === 1) {
-        // T1 rejects (concurrent fill)
-        return Promise.resolve({ data: { success: false, error: 'capacity exceeded' }, error: null });
-      }
-      // T2 accepts
-      return Promise.resolve({ data: { success: true, assigned: 2 }, error: null });
-    });
-
-    const supabase = { from: mockFrom, rpc: mockRpc } as any;
-    const result = await autoAssign(supabase, 'party-1', 'biz-1');
-
-    // Partial success: T1 failed but T2 succeeded
-    expect(result.success).toBe(true);
-    expect(result.assigned).toBe(2);
+  it('propagates atomic failure with no successful assignment result',async()=>{
+    const p=await preview();
+    failCommit='XX000';
+    await expect(commit(p)).rejects.toThrow('Unable to save seating');
+    expect(snapshot.guests[0].table_id).toBeNull();
+    expect(rpc.mock.calls.filter(c=>c[1].p_operation==='commit')).toHaveLength(1);
+  });
+  it('commits only acknowledged displayed partial assignments and never reports partial success after failure',async()=>{
+    snapshot.guests.push({...snapshot.guests[0],id:companion,plus_ones:4});
+    const p=await preview();
+    await expect(commit(p)).rejects.toThrow('acknowledge');
+    expect(rpc.mock.calls.some(c=>c[1].p_operation==='commit')).toBe(false);
+    const saved=await commit(p,true);
+    expect(saved.success).toBe(true);
+    const actual=rpc.mock.calls.find(c=>c[1].p_operation==='commit')?.[1].p_payload.assignments;
+    expect(actual).toEqual(p.plan.assignments);
+    expect(saved.snapshot.guests.find(g=>g.id===companion)?.table_id).toBeNull();
+    const next=await preview();
+    failCommit='23514';
+    await expect(commit(next,true)).rejects.toThrow('conflicts');
   });
 });
 
