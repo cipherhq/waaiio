@@ -293,4 +293,28 @@ suite('M481 cancellation versus issuance, emission and payment confirmation',()=
     }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');await a.end();await b.end();}
   },10000);
 
+  it('editing a cancelled event preserves original cancellation authority for paid convergence',async()=>{
+    const f=await seed(true,false);
+    await mutate(f);
+    const revision=(await db.query('SELECT updated_at::text AS v FROM public.events WHERE id=$1',[f.event])).rows[0].v;
+    const editId=id();
+    expect((await mutate(f,{name:'Corrected cancelled title'},db,editId,revision)).cancelled).toBe(false);
+    expect(await rpc(db,'converge_event_ticket_booking',[f.booking,f.event,f.tier,2])).toMatchObject({
+      success:false,outcome:'cancelled_followup_recorded',followup_recorded:true,tickets:[]
+    });
+    expect((await db.query('SELECT operation_id,payment_id FROM public.event_cancelled_payment_followups')).rows).toEqual([{operation_id:f.operation,payment_id:f.payment}]);
+    expect((await db.query('SELECT count(*)::int AS n FROM public.event_tickets')).rows[0].n).toBe(0);
+    expect((await db.query('SELECT tickets_sold FROM public.events WHERE id=$1',[f.event])).rows[0].tickets_sold).toBe(0);
+  });
+
+  it('a saved edit does not fabricate cancellation authority for a legacy cancelled event',async()=>{
+    const f=await seed(true,false);
+    await db.query("UPDATE public.events SET status='cancelled' WHERE id=$1",[f.event]);
+    const revision=(await db.query('SELECT updated_at::text AS v FROM public.events WHERE id=$1',[f.event])).rows[0].v;
+    expect((await mutate(f,{name:'Corrected legacy title'},db,f.operation,revision)).cancelled).toBe(false);
+    expect(await rpc(db,'converge_event_ticket_booking',[f.booking,f.event,f.tier,2])).toEqual({success:false,reason:'legacy_cancellation_unverified'});
+    expect((await db.query('SELECT count(*)::int AS n FROM public.event_cancelled_payment_followups')).rows[0].n).toBe(0);
+    expect((await db.query('SELECT count(*)::int AS n FROM public.event_tickets')).rows[0].n).toBe(0);
+  });
+
 });

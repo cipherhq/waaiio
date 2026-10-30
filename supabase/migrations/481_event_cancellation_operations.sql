@@ -7,13 +7,18 @@ GRANT USAGE ON SCHEMA private TO service_role;
 
 CREATE TABLE public.event_mutation_operations (
   id uuid PRIMARY KEY,
-  event_id uuid NOT NULL REFERENCES public.events(id) ON DELETE RESTRICT,
+  -- Retain immutable identity after an ordinary unsold event is deleted.
+  event_id uuid NOT NULL,
   business_id uuid NOT NULL REFERENCES public.businesses(id) ON DELETE RESTRICT,
   actor_id uuid NOT NULL,
   actor_kind text NOT NULL CHECK (actor_kind IN ('admin','merchant')),
   request_payload jsonb NOT NULL,
   response_payload jsonb NOT NULL DEFAULT '{}',
   is_cancellation boolean NOT NULL DEFAULT false,
+  -- Cancellation evidence remains restrictive; ordinary saves add no deletion policy.
+  cancellation_event_id uuid GENERATED ALWAYS AS
+    (CASE WHEN is_cancellation THEN event_id ELSE NULL END) STORED
+    REFERENCES public.events(id) ON DELETE RESTRICT,
   affected_ticket_ids uuid[] NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
@@ -167,7 +172,7 @@ BEGIN
     VALUES(p_actor_id,CASE WHEN v_cancel THEN 'cancel_event' ELSE 'edit_event' END,'events',p_event_id,
       jsonb_build_object('operationId',p_operation_id,'businessId',p_business_id,'changedFields',(SELECT jsonb_agg(k) FROM jsonb_object_keys(p_changes) k)));
   END IF;
-  v_result:=jsonb_build_object('success',true,'event',to_jsonb(v_event),'operation_id',p_operation_id,'cancelled',v_event.status::text='cancelled',
+  v_result:=jsonb_build_object('success',true,'event',to_jsonb(v_event),'operation_id',p_operation_id,'cancelled',v_cancel,
     'counts',jsonb_build_object('cancelled_tickets',v_count,'recipients',v_recipients,'refunds_pending',v_paid));
   UPDATE public.event_mutation_operations SET response_payload=v_result WHERE id=p_operation_id;
   RETURN v_result;

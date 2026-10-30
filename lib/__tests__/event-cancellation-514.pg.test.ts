@@ -77,7 +77,7 @@ async function install() {
     GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO service_role;
     GRANT SELECT ON auth.users TO service_role;
     ALTER TABLE public.events ENABLE ROW LEVEL SECURITY;
-    GRANT SELECT,UPDATE ON public.events TO authenticated;
+    GRANT SELECT,UPDATE,DELETE ON public.events TO authenticated;
     GRANT SELECT ON public.businesses TO authenticated;
     CREATE POLICY owner_events ON public.events TO authenticated
       USING(business_id IN (SELECT id FROM public.businesses WHERE owner_id=NULLIF(current_setting('request.jwt.claim.sub',true),'')::uuid))
@@ -238,4 +238,58 @@ suite('M481 event cancellation transaction and notification authority', () => {
     expect((await rpc(db,'finalize_event_cancellation_notification',[rid,claim.claim_token,'accepted','provider-514'])).finalized).toBe(true);
     expect((await rpc(db,'claim_event_cancellation_notification',[rid])).claimed).toBe(false);
   });
+  it('ordinary save preserves permitted unsold-event deletion while retaining operation and audit identity',async()=>{
+    const f=await seed(false,false);
+    await db.query('DELETE FROM public.bookings WHERE id=$1',[f.booking]);
+    await db.query('DELETE FROM public.event_ticket_types WHERE id=$1',[f.tier]);
+    const saved=await mutate(f,{name:'Corrected unsold event'});
+    expect(saved).toMatchObject({success:true,cancelled:false});
+    await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[f.owner]);
+    await db.query('SET ROLE authenticated');
+    expect((await db.query('DELETE FROM public.events WHERE id=$1 RETURNING id',[f.event])).rows).toEqual([{id:f.event}]);
+    await db.query('RESET ROLE');
+    const operation=(await db.query('SELECT event_id,cancellation_event_id,is_cancellation,response_payload FROM public.event_mutation_operations WHERE id=$1',[f.operation])).rows[0];
+    expect(operation).toMatchObject({event_id:f.event,cancellation_event_id:null,is_cancellation:false,response_payload:saved});
+    expect((await db.query('SELECT entity_id FROM public.admin_audit_logs WHERE entity_id=$1',[f.event])).rows).toEqual([{entity_id:f.event}]);
+  });
+
+  it('cancellation evidence still restricts deletion and survives the rejected delete',async()=>{
+    const f=await seed(false,false);
+    await db.query('DELETE FROM public.bookings WHERE id=$1',[f.booking]);
+    await db.query('DELETE FROM public.event_ticket_types WHERE id=$1',[f.tier]);
+    const cancelled=await mutate(f);
+    await expect(db.query('DELETE FROM public.events WHERE id=$1',[f.event])).rejects.toMatchObject({code:'23503'});
+    expect((await db.query('SELECT cancellation_event_id,response_payload FROM public.event_mutation_operations WHERE id=$1',[f.operation])).rows[0]).toEqual({cancellation_event_id:f.event,response_payload:cancelled});
+    expect((await db.query('SELECT entity_id FROM public.admin_audit_logs WHERE entity_id=$1',[f.event])).rows).toEqual([{entity_id:f.event}]);
+  });
+
+  it('a new edit operation on a cancelled event saves without replacing original pending effects or history',async()=>{
+    const f=await seed();
+    const original=await mutate(f);
+    const before=(await db.query('SELECT * FROM public.event_cancellation_recipients WHERE operation_id=$1',[f.operation])).rows;
+    expect(before).toHaveLength(1);
+    expect(before[0].state).toBe('pending');
+    const revision=(await db.query('SELECT updated_at::text AS v FROM public.events WHERE id=$1',[f.event])).rows[0].v;
+    const editId=id();
+    const edited=await mutate(f,{name:'Corrected cancelled event',status:'cancelled'},db,editId,revision);
+    expect(edited).toMatchObject({success:true,cancelled:false,event:{status:'cancelled',name:'Corrected cancelled event'},counts:{cancelled_tickets:0,recipients:0,refunds_pending:0}});
+    expect((await db.query('SELECT * FROM public.event_cancellation_recipients WHERE operation_id=$1',[f.operation])).rows).toEqual(before);
+    expect((await db.query('SELECT count(*)::int AS n FROM public.event_cancellation_recipients WHERE operation_id=$1',[editId])).rows[0].n).toBe(0);
+    expect((await db.query('SELECT response_payload FROM public.event_mutation_operations WHERE id=$1',[f.operation])).rows[0].response_payload).toEqual(original);
+    expect((await db.query('SELECT count(*)::int AS n FROM public.alerts')).rows[0].n).toBe(1);
+    expect(await mutate(f)).toEqual({...original,replayed:true});
+    expect((await db.query('SELECT id FROM public.event_mutation_operations WHERE is_cancellation')).rows).toEqual([{id:f.operation}]);
+  });
+
+  it('a new edit on a legacy cancelled event leaves unknown cancellation history unknown',async()=>{
+    const f=await seed(false,false);
+    await db.query("UPDATE public.events SET status='cancelled' WHERE id=$1",[f.event]);
+    const revision=(await db.query('SELECT updated_at::text AS v FROM public.events WHERE id=$1',[f.event])).rows[0].v;
+    const edited=await mutate(f,{venue:'Corrected legacy venue',status:'cancelled'},db,f.operation,revision);
+    expect(edited).toMatchObject({success:true,cancelled:false,event:{status:'cancelled',venue:'Corrected legacy venue'}});
+    expect((await db.query('SELECT count(*)::int AS n FROM public.event_mutation_operations WHERE is_cancellation')).rows[0].n).toBe(0);
+    expect((await db.query('SELECT count(*)::int AS n FROM public.event_cancellation_recipients')).rows[0].n).toBe(0);
+    expect((await db.query('SELECT count(*)::int AS n FROM public.alerts')).rows[0].n).toBe(0);
+  });
+
 });
