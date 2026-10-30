@@ -109,6 +109,16 @@
 - **`lib/channels/send-or-email.ts`**: Added optional `messageCategory` passthrough to `sendText`.
 - **Affects**: Invoice send, payment request send, waiver sign. No changes to billing, Meta retry, or payment authority.
 
+### #762 W21 — Public invoice checkout identity and destination (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- Public invoice checkout now passes a nullable anonymous payer through the existing payment persistence contract. Initialization input types accept null; Stripe omits anonymous user metadata while preserving authenticated payer metadata.
+- Invoice checkout returns the stored provider authorization URL for fresh and reused payments instead of constructing a Paystack destination from the transaction reference. Existing Stripe session and short-link fallbacks remain available.
+- Added `lib/__tests__/invoice-public-checkout-762.test.ts` exercising the actual invoice handler, shared initializer and Paystack/Stripe adapters with stateful synthetic database responses and intercepted HTTP. Covers nullable persistence, exact URLs, reuse, failure withholding, invoice gates and country/amount authority.
+- **Affects**: Public invoice payment initiation and initialization input compatibility. No schema, webhook, finalization or payment-provider configuration changes.
+- **Could break**: Checkout destination selection or nullable payer serialization; canonical cloud CI and independent review are required. Synthetic coverage does not establish live-provider or deployment acceptance.
+
 ### #736 Lane 3 — WhatsApp capability menu pagination for 11+ items (2026-10-28, R2 2026-10-29)
 
 - **`lib/bot/flows/capability-selection.flow.ts`**: Added pagination to the capability selection menu. When a business has more than 10 user-facing capabilities (the Meta Cloud API max rows per list section), the menu is split across pages with "More Options" and "Previous" navigation items. Each page never exceeds 10 rows. Pagination state (`_cap_menu_page`, `_cap_menu_total_pages`) is stored in session_data and cleaned up on capability selection or when returning from inline handlers (waiver, promo). The `validate()` method handles `cap_nav_more` and `cap_nav_prev` inputs to change pages; `next()` routes back to `select_capability` for re-render. My Account remains accessible on the last page. No changes to the single-page path (10 or fewer items).
