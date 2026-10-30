@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   sharedPhone: '+12025550199',
   searchParams: new URLSearchParams(),
   hasBotChannel: true,
+  channelType: 'shared' as string, // resolved channel type: 'shared' | 'dedicated'
 }));
 
 vi.mock('@/components/dashboard/DashboardProvider', () => ({
@@ -41,19 +42,31 @@ vi.mock('next/link', () => ({
 
 vi.mock('@/lib/supabase/client', () => ({
   createClient: () => {
-    const chainMethods = ['eq', 'neq', 'order', 'limit', 'gte', 'lte', 'in', 'is', 'not', 'or', 'gt', 'lt'];
+    const chainMethods = ['neq', 'order', 'limit', 'gte', 'lte', 'in', 'is', 'not', 'or', 'gt', 'lt'];
+    // Track the channel_type filter to distinguish dedicated vs other queries
     function makeChain() {
+      let isDedicatedQuery = false;
       const chain: Record<string, unknown> = {};
       for (const m of chainMethods) (chain as Record<string, () => typeof chain>)[m] = () => chain;
       chain.select = () => chain;
       chain.update = () => chain;
       chain.insert = () => chain;
       chain.delete = () => chain;
+      chain.eq = (...args: unknown[]) => {
+        // Detect dedicated channel query: .eq('channel_type', 'dedicated')
+        if (args[0] === 'channel_type' && args[1] === 'dedicated') isDedicatedQuery = true;
+        return chain;
+      };
       chain.single = async () => ({ data: null, error: null });
-      chain.maybeSingle = async () => ({
-        data: state.hasBotChannel ? { phone_number: state.sharedPhone } : null,
-        error: null,
-      });
+      chain.maybeSingle = async () => {
+        if (!state.hasBotChannel) return { data: null, error: null };
+        // Dedicated query returns null unless business is dedicated with a real channel
+        if (isDedicatedQuery && state.channelType !== 'dedicated') return { data: null, error: null };
+        return {
+          data: { phone_number: state.sharedPhone, channel_type: state.channelType || 'shared' },
+          error: null,
+        };
+      };
       chain.then = (resolve: (v: unknown) => void) => resolve({ data: [], error: null, count: 0 });
       return chain;
     }
@@ -90,6 +103,7 @@ afterEach(() => cleanup());
 beforeEach(() => {
   state.sharedPhone = '+12025550199';
   state.hasBotChannel = true;
+  state.channelType = 'shared';
   state.searchParams = new URLSearchParams();
   state.business = {
     id: 'biz-queue-test',
@@ -175,6 +189,7 @@ describe('QR Code page — queue template pre-selection', () => {
   it('dedicated bot → greeting path with menu guidance', async () => {
     state.searchParams = new URLSearchParams('template=queue');
     state.business = { ...state.business, wa_method: 'dedicated', bot_code: '' };
+    state.channelType = 'dedicated';
 
     render(<QRCodePage />);
 
@@ -298,5 +313,22 @@ describe('QR Code page — queue artifact guards', () => {
     const copyBtn = screen.getByText('Copy');
     copyBtn.click();
     expect(clipboardContent).toBe(qrValue);
+  });
+
+  it('shared-channel fallback: dedicated business gets shared routing for queue', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    // Business says dedicated, but only a shared channel resolves
+    state.business = { ...state.business, wa_method: 'dedicated', bot_code: 'QTEST' };
+    state.channelType = 'shared'; // resolved channel is shared (fallback)
+
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      expect(qrValues.length).toBeGreaterThanOrEqual(1);
+      // Shared fallback: routing code + :queue suffix applied
+      const value = qrValues[0].getAttribute('data-value');
+      expect(value).toBe('https://wa.me/12025550199?text=QTEST%3Aqueue');
+    });
   });
 });

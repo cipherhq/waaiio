@@ -72,10 +72,10 @@ export default function QRCodePage() {
       const supabase = createClient();
       const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
 
-      // Fire all 3 queries in parallel
+      // Fire all 3 queries in parallel — include channel_type for assigned channel
       const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
         channelId
-          ? supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle()
+          ? supabase.from('whatsapp_channels').select('phone_number, channel_type').eq('id', channelId).eq('is_active', true).maybeSingle()
           : Promise.resolve({ data: null }),
         supabase.from('whatsapp_channels').select('phone_number')
           .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
@@ -85,15 +85,18 @@ export default function QRCodePage() {
       if (cancelled) return; // Discard obsolete response from prior business context
 
       // Priority: assigned > dedicated > shared > business.phone fallback
-      // Track which channel type was resolved for routing context
+      // Determine channel type from the actually selected channel
       const assignedPhone = assignedResult.data?.phone_number;
+      const assignedType = assignedResult.data?.channel_type as string | undefined;
       const dedicatedPhone = dedicatedResult.data?.phone_number;
       const sharedPhone = sharedResult.data?.phone_number;
       const botChannelPhone = assignedPhone || dedicatedPhone || sharedPhone;
       const resolved = botChannelPhone || business.phone || '';
-      // The resolved channel is shared if the shared query was the one that provided the phone
-      // (assigned channels inherit their configured type; dedicated is never shared)
-      const isResolvedShared = !assignedPhone && !dedicatedPhone && !!sharedPhone;
+      // Resolved channel is shared if: assigned channel has type 'shared',
+      // or dedicated query failed and shared query provided the phone
+      const isResolvedShared = assignedPhone
+        ? assignedType === 'shared'
+        : (!dedicatedPhone && !!sharedPhone);
 
       setChannelPhone(resolved.replace(/[^0-9]/g, ''));
       setHasBotChannel(!!botChannelPhone);
@@ -117,12 +120,13 @@ export default function QRCodePage() {
   const routingCode = isSharedNumber ? (business.bot_code || '') : '';
   const isWhitelabel = PRICING_TIERS[(business.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
   const [copied, setCopied] = useState(false);
-  // Deep-link suffix auto-set by template; routing code is always prepended separately
-  const [deepLinkSuffix, setDeepLinkSuffix] = useState(() => {
-    const tmpl = TEMPLATES.find(t => t.id === initialTemplate);
+  // Deep-link suffix derived reactively from current template + routing context
+  // (not stored in state — recalculates when routingCode changes after async channel load)
+  const deepLinkSuffix = useMemo(() => {
+    const tmpl = TEMPLATES.find(t => t.id === selectedTemplate);
     const cap = tmpl?.capabilities?.[0];
     return cap && routingCode ? cap : '';
-  });
+  }, [selectedTemplate, routingCode]);
   const posterRef = useRef<HTMLDivElement>(null);
   const qrOnlyRef = useRef<HTMLDivElement>(null);
 
@@ -145,16 +149,12 @@ export default function QRCodePage() {
     ? (deepLinkSuffix ? `${routingCode}:${deepLinkSuffix}` : routingCode)
     : 'Hi';
 
-  // When template changes, auto-update deep-link suffix
+  // When template changes, reset customization (suffix is derived reactively)
   function handleTemplateChange(templateId: TemplateId) {
     setSelectedTemplate(templateId);
     setCustomColor('');
     setCustomSubtitle('');
     setCustomLabel('');
-
-    const tmpl = TEMPLATES.find(t => t.id === templateId);
-    const cap = tmpl?.capabilities?.[0];
-    setDeepLinkSuffix(cap && routingCode ? cap : '');
   }
 
   const isAttendanceTemplate = selectedTemplate === 'attendance';
