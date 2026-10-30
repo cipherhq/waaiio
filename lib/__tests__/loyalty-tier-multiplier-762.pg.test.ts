@@ -268,14 +268,55 @@ describe.skipIf(!dbUrl)('#762 loyalty tier multiplier (disposable PG)', () => {
     expect(result.points_awarded).toBe(10);
   });
 
-  it('replay idempotency: second call returns already_applied', () => {
+  it('replay idempotency: exactly one marker, one ledger entry, correct balance/earned/visits', () => {
     const payId = seedBookingAndPayment();
     const first = callRpc(payId);
     expect(first.applied).toBe(true);
     expect(first.already_applied).toBe(false);
+    expect(first.points_awarded).toBe(10);
+    // Replay
     const second = callRpc(payId);
     expect(second.applied).toBe(true);
     expect(second.already_applied).toBe(true);
+    // Durable state: exactly one marker
+    const markerCount = psql(`SELECT COUNT(*) FROM public.payment_loyalty_applications WHERE payment_id = '${payId}';`);
+    expect(Number(markerCount)).toBe(1);
+    // Exactly one transaction
+    const txCount = psql(`SELECT COUNT(*) FROM public.loyalty_transactions WHERE business_id = '${BIZ}' AND customer_phone = '${PHONE}';`);
+    expect(Number(txCount)).toBe(1);
+    // Correct balance, lifetime earned, visit count (not doubled)
+    const loyalty = psql(`SELECT points_balance, total_earned, visit_count FROM public.loyalty_points WHERE business_id = '${BIZ}' AND customer_phone = '${PHONE}';`);
+    const [balance, earned, visits] = loyalty.split('|');
+    expect(Number(balance)).toBe(10);
+    expect(Number(earned)).toBe(10);
+    expect(Number(visits)).toBe(1);
+  });
+
+  it('concurrent calls: two simultaneous RPC calls produce exactly one award', () => {
+    const payId = seedBookingAndPayment();
+    // Run two concurrent psql calls
+    const { execSync: exec } = require('child_process');
+    const cmd1 = `psql "${dbUrl}" -tAXq -c "SELECT apply_payment_loyalty_once('${payId}'::uuid);"`;
+    const cmd2 = `psql "${dbUrl}" -tAXq -c "SELECT apply_payment_loyalty_once('${payId}'::uuid);"`;
+    // Fire both in parallel using shell background
+    const result = exec(
+      `echo "$(${cmd1} & ${cmd2} & wait)"`,
+      { encoding: 'utf-8', timeout: 15000, shell: '/bin/bash' }
+    ).trim();
+    // Parse both results
+    const lines = result.split('\n').filter(Boolean);
+    const results = lines.map((l: string) => JSON.parse(l));
+    // Exactly one should be first-apply, one should be already_applied
+    const firstApply = results.filter((r: any) => r.applied && !r.already_applied);
+    const replays = results.filter((r: any) => r.applied && r.already_applied);
+    expect(firstApply.length + replays.length).toBe(2);
+    expect(firstApply.length).toBe(1);
+    expect(replays.length).toBe(1);
+    // Durable: exactly one marker, one transaction, correct balance
+    const markerCount = psql(`SELECT COUNT(*) FROM public.payment_loyalty_applications WHERE payment_id = '${payId}';`);
+    expect(Number(markerCount)).toBe(1);
+    const loyalty = psql(`SELECT points_balance FROM public.loyalty_points WHERE business_id = '${BIZ}' AND customer_phone = '${PHONE}';`);
+    expect(Number(loyalty)).toBe(10);
   });
 
   it('records transaction with correct multiplied points_awarded', () => {
@@ -316,15 +357,31 @@ describe.skipIf(!dbUrl)('#762 loyalty tier multiplier (disposable PG)', () => {
     psql(`UPDATE public.businesses SET metadata = '{"loyalty_earning_enabled": true, "loyalty_points_mode": "per_visit", "loyalty_points_per_visit": 10}'::jsonb WHERE id = '${BIZ}';`);
   });
 
-  it('ACL: anon and authenticated cannot execute', () => {
-    const anonCan = psql(`SELECT has_function_privilege('anon', 'apply_payment_loyalty_once(uuid)', 'EXECUTE');`);
-    expect(anonCan).toBe('f');
-    const authCan = psql(`SELECT has_function_privilege('authenticated', 'apply_payment_loyalty_once(uuid)', 'EXECUTE');`);
-    expect(authCan).toBe('f');
+  it('ACL: anon role cannot execute the function', () => {
+    const payId = seedBookingAndPayment();
+    try {
+      psql(`SET ROLE anon; SELECT apply_payment_loyalty_once('${payId}'::uuid); RESET ROLE;`);
+      expect.unreachable('anon should not be able to execute');
+    } catch (err: any) {
+      expect(err.message || String(err)).toContain('permission denied');
+    }
   });
 
-  it('ACL: service_role can execute', () => {
-    const srCan = psql(`SELECT has_function_privilege('service_role', 'apply_payment_loyalty_once(uuid)', 'EXECUTE');`);
-    expect(srCan).toBe('t');
+  it('ACL: authenticated role cannot execute the function', () => {
+    const payId = seedBookingAndPayment();
+    try {
+      psql(`SET ROLE authenticated; SELECT apply_payment_loyalty_once('${payId}'::uuid); RESET ROLE;`);
+      expect.unreachable('authenticated should not be able to execute');
+    } catch (err: any) {
+      expect(err.message || String(err)).toContain('permission denied');
+    }
+  });
+
+  it('ACL: service_role can execute the function', () => {
+    const payId = seedBookingAndPayment();
+    // Should not throw — service_role has EXECUTE privilege
+    const raw = psql(`SET ROLE service_role; SELECT apply_payment_loyalty_once('${payId}'::uuid); RESET ROLE;`);
+    const result = JSON.parse(raw);
+    expect(result.applied).toBe(true);
   });
 });
