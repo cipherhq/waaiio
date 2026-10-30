@@ -16,6 +16,12 @@ interface ChecklistItem {
 
 export function OnboardingChecklist() {
   const business = useBusiness();
+  // A business switch must never render the previous business's checklist state.
+  return <BusinessOnboardingChecklist key={business.id} />;
+}
+
+function BusinessOnboardingChecklist() {
+  const business = useBusiness();
   const capabilities = useCapabilities();
   const [completed, setCompleted] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -129,8 +135,16 @@ export function OnboardingChecklist() {
       href: '/dashboard/whatsapp',
       check: async () => {
         const supabase = createClient();
-        const { count } = await supabase.from('chat_messages').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('direction', 'inbound');
-        return (count || 0) > 0;
+        // Inbound activity is evidence of a test, not proof of response delivery.
+        // Keep legacy chat evidence and include usage from any month.
+        const evidence = await Promise.allSettled([
+          supabase.from('conversation_usage').select('id', { count: 'exact', head: true })
+            .eq('business_id', business.id).gt('inbound_count', 0),
+          supabase.from('chat_messages').select('id', { count: 'exact', head: true })
+            .eq('business_id', business.id).eq('direction', 'inbound'),
+        ]);
+        return evidence.some(result => result.status === 'fulfilled'
+          && !result.value.error && (result.value.count || 0) > 0);
       },
     },
     {
@@ -147,6 +161,7 @@ export function OnboardingChecklist() {
   ];
 
   useEffect(() => {
+    let cancelled = false;
     // Check if dismissed
     const key = `waaiio-checklist-dismissed-${business.id}`;
     if (localStorage.getItem(key) === 'true') {
@@ -162,6 +177,7 @@ export function OnboardingChecklist() {
           try { results[item.key] = await item.check(); } catch { results[item.key] = false; }
         })
       );
+      if (cancelled) return;
       setCompleted(results);
       setLoading(false);
 
@@ -172,6 +188,7 @@ export function OnboardingChecklist() {
       }
     }
     checkAll();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [business.id]);
 

@@ -13,20 +13,23 @@ interface SendEmailOptions {
   html: string;
   from?: string;
   replyTo?: string;
+  /** Disable application retries for durably claimed delivery attempts. */
+  noRetry?: boolean;
 }
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
 
-export async function sendEmail({ to, subject, html, from, replyTo }: SendEmailOptions) {
+export async function sendEmail({ to, subject, html, from, replyTo, noRetry = false }: SendEmailOptions) {
   if (!resend) {
     logger.debug(`[EMAIL-DEV] To: ${to} | Subject: ${subject}`);
     return { success: true, dev: true };
   }
 
   let lastError: unknown = null;
+  const maxAttempts = noRetry ? 1 : MAX_RETRIES;
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const { data, error } = await resend.emails.send({
         from: from || DEFAULT_FROM,
@@ -44,17 +47,17 @@ export async function sendEmail({ to, subject, html, from, replyTo }: SendEmailO
           logger.error('[EMAIL] Client error (no retry):', error);
           return { success: false, error };
         }
-        logger.warn(`[EMAIL] Attempt ${attempt + 1}/${MAX_RETRIES} failed:`, error);
+        logger.warn(`[EMAIL] Attempt ${attempt + 1}/${maxAttempts} failed:`, error);
       } else {
         return { success: true, id: data?.id };
       }
     } catch (err) {
       lastError = err;
-      logger.warn(`[EMAIL] Attempt ${attempt + 1}/${MAX_RETRIES} exception:`, (err as Error).message);
+      logger.warn(`[EMAIL] Attempt ${attempt + 1}/${maxAttempts} exception:`, (err as Error).message);
     }
 
     // Exponential backoff before retry
-    if (attempt < MAX_RETRIES - 1) {
+    if (attempt < maxAttempts - 1) {
       await new Promise(resolve => setTimeout(resolve, BASE_DELAY_MS * Math.pow(2, attempt)));
     }
   }

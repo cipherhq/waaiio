@@ -17,24 +17,29 @@ export async function GET(
   // Use service client — Admin auth is via Bearer token, not Dashboard cookies
   const supabase = createServiceClient();
 
-  const { data: biz } = await supabase
+  const { data: biz, error: businessError } = await supabase
     .from('businesses')
     .select('subscription_tier')
     .eq('id', id)
-    .single();
+    .maybeSingle();
 
+  if (businessError) return NextResponse.json({ error: 'Could not load capabilities. Please retry.' }, { status: 500 });
   if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
-  const { data: capRows } = await supabase
+  const { data: capRows, error: capabilitiesError } = await supabase
     .from('business_capabilities')
     .select('capability')
     .eq('business_id', id)
     .eq('is_enabled', true);
 
-  const { data: overrideRows } = await supabase
+  if (capabilitiesError) return NextResponse.json({ error: 'Could not load capabilities. Please retry.' }, { status: 500 });
+
+  const { data: overrideRows, error: overridesError } = await supabase
     .from('capability_overrides')
     .select('capability')
     .eq('business_id', id);
+
+  if (overridesError) return NextResponse.json({ error: 'Could not load capabilities. Please retry.' }, { status: 500 });
 
   return NextResponse.json({
     tier: biz.subscription_tier,

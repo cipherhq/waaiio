@@ -1,6 +1,7 @@
 'use client';
 import { type CountryCode } from '@/lib/constants';
 
+import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
@@ -110,7 +111,7 @@ export default function InvoicesPage() {
 
   // Send modal state
   const [sendModalInvoice, setSendModalInvoice] = useState<Invoice | null>(null);
-  const [sendChannel, setSendChannel] = useState<'whatsapp' | 'email' | 'both'>('whatsapp');
+  const [sendChannel, setSendChannel] = useState<'whatsapp' | 'email'>('whatsapp');
 
   // Mark paid modal
   const [markPaidInvoice, setMarkPaidInvoice] = useState<Invoice | null>(null);
@@ -291,7 +292,9 @@ export default function InvoicesPage() {
       if (res.ok && data.success) {
         setSendModalInvoice(null);
         await loadInvoices();
-        toast('Invoice sent');
+        toast(data.persistence_warning
+          ? 'Invoice was delivered, but some status details could not be saved. Check it before resending.'
+          : 'Invoice sent');
       } else {
         toast(data.error || 'Failed to send invoice');
       }
@@ -664,10 +667,9 @@ export default function InvoicesPage() {
                 </div>
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700">Address</label>
-                  <input
-                    type="text"
+                  <PlacesAutocomplete
                     value={customerAddress}
-                    onChange={e => setCustomerAddress(e.target.value)}
+                    onChange={value => setCustomerAddress(value)}
                     placeholder="Customer address"
                     className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                   />
@@ -917,7 +919,7 @@ export default function InvoicesPage() {
 
             <div className="mt-4 space-y-2">
               <p className="text-sm font-medium text-gray-700">Send via:</p>
-              {(['whatsapp', 'email', 'both'] as const).map(ch => (
+              {(['whatsapp', 'email'] as const).map(ch => (
                 <label key={ch} className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
@@ -927,7 +929,7 @@ export default function InvoicesPage() {
                     className="h-4 w-4 border-gray-300 text-brand focus:ring-brand"
                   />
                   <span className="text-sm text-gray-700 capitalize">
-                    {ch === 'both' ? 'WhatsApp & Email' : ch}
+                    {ch}
                     {ch === 'whatsapp' && !sendModalInvoice.customer_phone && ' (no phone)'}
                     {ch === 'email' && !sendModalInvoice.customer_email && ' (no email)'}
                   </span>

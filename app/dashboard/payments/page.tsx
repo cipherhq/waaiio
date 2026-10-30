@@ -33,7 +33,7 @@ interface PaymentRecord {
     payment_source: string | null;
     reference_code: string | null;
     notes: string | null;
-  }[] | null;
+  } | null;
 }
 
 const PAGE_SIZES = [25, 50, 100] as const;
@@ -50,7 +50,7 @@ function getPaymentSource(row: PaymentRecord): { label: string; color: string; k
   if (row.reservation_id) return { label: 'Reservation', color: 'bg-cyan-50 text-cyan-700', key: 'booking' };
   if (row.order_id) return { label: 'Order', color: 'bg-orange-50 text-orange-700', key: 'order' };
 
-  const booking = row.bookings?.[0];
+  const booking = row.bookings;
   if (booking) {
     // Use payment_source if available (post-migration)
     if (booking.payment_source === 'subscription') return { label: 'Subscription', color: 'bg-purple-50 text-purple-700', key: 'subscription' };
@@ -77,11 +77,11 @@ function getPaymentSource(row: PaymentRecord): { label: string; color: string; k
 }
 
 function getCustomerName(row: PaymentRecord): string {
-  return row.bookings?.[0]?.guest_name || 'Customer';
+  return row.bookings?.guest_name || 'Customer';
 }
 
 function getCustomerContact(row: PaymentRecord): string | null {
-  return row.bookings?.[0]?.guest_phone || null;
+  return row.bookings?.guest_phone || null;
 }
 
 // ── Page ──
@@ -129,7 +129,10 @@ export default function PaymentsReceivedPage() {
       // we use !inner join which converts to INNER JOIN and allows PostgREST filtering.
       // For 'all' and FK-based filters (invoice, order), we use a regular left join.
       const needsBookingFilter = ['payment_request', 'subscription', 'booking', 'event'].includes(sourceFilter);
-      const bookingJoin = needsBookingFilter ? 'bookings!inner' : 'bookings';
+      // Both tables reference each other; select the payment's outgoing booking link.
+      const bookingJoin = needsBookingFilter
+        ? 'bookings!payments_reservation_id_fkey!inner'
+        : 'bookings!payments_reservation_id_fkey';
       const selectCols = `id, amount, currency, gateway, gateway_reference, payment_method, status, paid_at, created_at, booking_id, invoice_id, campaign_id, reservation_id, order_id, ${bookingJoin}(guest_name, guest_phone, flow_type, channel, payment_source, reference_code, notes)`;
 
       let query = supabase
@@ -337,7 +340,7 @@ export default function PaymentsReceivedPage() {
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${source.color}`}>{source.label}</span>
                       </td>
                       <td className="py-3 pr-4 text-xs text-gray-500 capitalize hidden md:table-cell">{row.gateway || '-'}</td>
-                      <td className="py-3 pr-4 text-xs text-gray-400 font-mono hidden lg:table-cell">{row.bookings?.[0]?.reference_code || '-'}</td>
+                      <td className="py-3 pr-4 text-xs text-gray-400 font-mono hidden lg:table-cell">{row.bookings?.reference_code || '-'}</td>
                     </tr>
                   );
                 })}
@@ -386,10 +389,10 @@ export default function PaymentsReceivedPage() {
               <div className="flex justify-between items-center"><span className="text-gray-500">Source</span>{(() => { const src = getPaymentSource(selectedPayment); return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${src.color}`}>{src.label}</span>; })()}</div>
               <div className="flex justify-between"><span className="text-gray-500">Provider</span><span className="capitalize text-gray-700">{selectedPayment.gateway || '-'}</span></div>
               {selectedPayment.payment_method && <div className="flex justify-between"><span className="text-gray-500">Method</span><span className="capitalize text-gray-700">{selectedPayment.payment_method.replace(/_/g, ' ')}</span></div>}
-              {selectedPayment.bookings?.[0]?.reference_code && <div className="flex justify-between"><span className="text-gray-500">Reference</span><span className="font-mono text-xs text-gray-700">{selectedPayment.bookings[0].reference_code}</span></div>}
+              {selectedPayment.bookings?.reference_code && <div className="flex justify-between"><span className="text-gray-500">Reference</span><span className="font-mono text-xs text-gray-700">{selectedPayment.bookings.reference_code}</span></div>}
               {selectedPayment.gateway_reference && <div className="flex justify-between"><span className="text-gray-500">Gateway Ref</span><span className="font-mono text-xs text-gray-700">{selectedPayment.gateway_reference}</span></div>}
               <div className="flex justify-between"><span className="text-gray-500">Paid</span><span className="text-green-700">{new Date(selectedPayment.paid_at || selectedPayment.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>
-              {selectedPayment.bookings?.[0]?.notes && <div className="flex justify-between"><span className="text-gray-500">Note</span><span className="text-gray-700 text-right max-w-[200px]">{selectedPayment.bookings[0].notes}</span></div>}
+              {selectedPayment.bookings?.notes && <div className="flex justify-between"><span className="text-gray-500">Note</span><span className="text-gray-700 text-right max-w-[200px]">{selectedPayment.bookings.notes}</span></div>}
             </div>
           </div>
         </div>

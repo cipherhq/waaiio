@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { csvEscapeField, buildKeywordResponsesCsv } from '@/app/api/keyword-campaigns/csv-serializer';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -52,13 +53,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Export failed' }, { status: 500 });
     }
 
-    const rows = allResponses || [];
-    const csvHeader = 'phone,customer_name,responded_at';
-    const csvRows = rows.map((r) => {
-      const name = (r.customer_name || '').replace(/"/g, '""');
-      return `${r.phone},"${name}",${r.responded_at}`;
-    });
-    const csv = [csvHeader, ...csvRows].join('\n');
+    const csv = buildKeywordResponsesCsv(allResponses || []);
 
     const filename = `${campaign.name.replace(/[^a-zA-Z0-9]/g, '_')}_responses.csv`;
     return new NextResponse(csv, {

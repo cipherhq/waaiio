@@ -27,8 +27,13 @@ interface CustomerSuggestion {
   name: string | null;
 }
 
-type SendVia = 'whatsapp' | 'email' | 'both';
+type SendVia = 'whatsapp' | 'email';
 type RequestMode = 'single' | 'bulk';
+type UndeliveredPaymentRequest = {
+  recipient: string;
+  reference: string;
+  paymentUrl: string | null;
+};
 
 function parseBulkRecipients(text: string): { phones: string[]; emails: string[] } {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -62,6 +67,8 @@ export default function PaymentRequestPage() {
   const [sendVia, setSendVia] = useState<SendVia>('whatsapp');
   const [sending, setSending] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+  const [statusTone, setStatusTone] = useState<'success' | 'warning' | 'error'>('success');
+  const [undeliveredPaymentRequests, setUndeliveredPaymentRequests] = useState<UndeliveredPaymentRequest[]>([]);
 
   // Bulk form
   const [bulkRecipients, setBulkRecipients] = useState('');
@@ -129,7 +136,6 @@ export default function PaymentRequestPage() {
     if (!amount) return false;
     if (sendVia === 'whatsapp' && !phone.trim()) return false;
     if (sendVia === 'email' && !email.trim()) return false;
-    if (sendVia === 'both' && (!phone.trim() || !email.trim())) return false;
     return true;
   }
 
@@ -145,11 +151,14 @@ export default function PaymentRequestPage() {
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {
       setStatusMessage('Please enter a valid amount');
+      setStatusTone('error');
       return;
     }
 
     setSending(true);
     setStatusMessage('');
+    setStatusTone('success');
+    setUndeliveredPaymentRequests([]);
 
     try {
       const res = await fetch('/api/payment-request/send', {
@@ -166,8 +175,23 @@ export default function PaymentRequestPage() {
         }),
       });
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data.success === true) {
         setStatusMessage('Payment request sent!');
+        setStatusTone('success');
+        setPhone('');
+        setName('');
+        setEmail('');
+        setAmount('');
+        setDescription('');
+        loadRequests();
+      } else if (res.ok && data.reference) {
+        setStatusMessage('Payment request created, but no notification was accepted. Use the saved link below; do not submit this request again.');
+        setStatusTone('warning');
+        setUndeliveredPaymentRequests([{
+          recipient: name.trim() || phone.trim() || email.trim() || 'Customer',
+          reference: String(data.reference),
+          paymentUrl: typeof data.paymentUrl === 'string' ? data.paymentUrl : null,
+        }]);
         setPhone('');
         setName('');
         setEmail('');
@@ -175,10 +199,12 @@ export default function PaymentRequestPage() {
         setDescription('');
         loadRequests();
       } else {
-        setStatusMessage(data.error || 'Failed to send payment request');
+        setStatusMessage(data.error || 'Failed to create payment request');
+        setStatusTone('error');
       }
     } catch {
-      setStatusMessage('Failed to send payment request');
+      setStatusMessage('Payment request could not be confirmed. Check the request list before retrying.');
+      setStatusTone('error');
     }
     setSending(false);
   }
@@ -188,6 +214,7 @@ export default function PaymentRequestPage() {
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {
       setStatusMessage('Please enter a valid amount');
+      setStatusTone('error');
       return;
     }
 
@@ -199,8 +226,12 @@ export default function PaymentRequestPage() {
 
     setSending(true);
     setStatusMessage('');
+    setStatusTone('success');
+    setUndeliveredPaymentRequests([]);
     let sent = 0;
+    let createdButNotDelivered = 0;
     let failed = 0;
+    const undeliveredRequests: UndeliveredPaymentRequest[] = [];
 
     for (let i = 0; i < recipients.length; i++) {
       const r = recipients[i];
@@ -219,8 +250,16 @@ export default function PaymentRequestPage() {
             sendVia: 'auto',
           }),
         });
-        if (res.ok) {
+        const data = await res.json();
+        if (res.ok && data.success === true) {
           sent++;
+        } else if (res.ok && data.reference) {
+          createdButNotDelivered++;
+          undeliveredRequests.push({
+            recipient: r.phone || r.email || 'Customer',
+            reference: String(data.reference),
+            paymentUrl: typeof data.paymentUrl === 'string' ? data.paymentUrl : null,
+          });
         } else {
           failed++;
         }
@@ -235,8 +274,12 @@ export default function PaymentRequestPage() {
     }
 
     setBulkProgress('');
-    setStatusMessage(`${sent} sent, ${failed} failed`);
-    if (sent > 0) {
+    setUndeliveredPaymentRequests(undeliveredRequests);
+    setStatusMessage(`${sent} sent, ${createdButNotDelivered} created but not delivered, ${failed} failed`);
+    setStatusTone(failed === 0 && createdButNotDelivered === 0
+      ? 'success'
+      : sent === 0 && createdButNotDelivered === 0 ? 'error' : 'warning');
+    if (sent > 0 || createdButNotDelivered > 0) {
       setBulkRecipients('');
       setAmount('');
       setDescription('');
@@ -342,18 +385,12 @@ export default function PaymentRequestPage() {
                 >
                   Email
                 </button>
-                <button
-                  onClick={() => setSendVia('both')}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${sendVia === 'both' ? 'border-brand bg-brand/10 text-brand' : 'border-gray-200 text-gray-500'}`}
-                >
-                  Both
-                </button>
               </div>
             </div>
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              {/* Phone field — shown for whatsapp and both */}
-              {(sendVia === 'whatsapp' || sendVia === 'both') && (
+            <div className="mt-4 grid gap-4">
+              {/* Phone field — shown for WhatsApp */}
+              {sendVia === 'whatsapp' && (
                 <div className="relative">
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Customer Phone <span className="text-red-400">*</span>
@@ -414,8 +451,8 @@ export default function PaymentRequestPage() {
                 </div>
               )}
 
-              {/* Email field — shown for email and both */}
-              {(sendVia === 'email' || sendVia === 'both') && (
+              {/* Email field — shown for email */}
+              {sendVia === 'email' && (
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Customer Email <span className="text-red-400">*</span>
@@ -467,7 +504,7 @@ export default function PaymentRequestPage() {
             </div>
 
             {statusMessage && (
-              <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${statusMessage.includes('sent') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+              <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${statusTone === 'success' ? 'bg-green-50 text-green-700' : statusTone === 'warning' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
                 {statusMessage}
               </div>
             )}
@@ -535,7 +572,7 @@ export default function PaymentRequestPage() {
             )}
 
             {statusMessage && (
-              <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${statusMessage.includes('failed') && !statusMessage.includes('0 failed') ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+              <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${statusTone === 'success' ? 'bg-green-50 text-green-700' : statusTone === 'warning' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
                 {statusMessage}
               </div>
             )}
@@ -550,6 +587,25 @@ export default function PaymentRequestPage() {
               </button>
             </div>
           </>
+        )}
+        {undeliveredPaymentRequests.length > 0 && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <p className="font-medium">These payment requests were created, but notification delivery failed. Share the saved links manually; do not create them again.</p>
+            <ul className="mt-2 space-y-2">
+              {undeliveredPaymentRequests.map(item => (
+                <li key={item.reference} className="flex flex-wrap items-center gap-2">
+                  <span>{item.recipient} · {item.reference}</span>
+                  {item.paymentUrl ? (
+                    <a href={item.paymentUrl} target="_blank" rel="noopener noreferrer" className="font-medium underline">
+                      Open payment link
+                    </a>
+                  ) : (
+                    <span>Payment link unavailable; check this reference in the request list.</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
 
