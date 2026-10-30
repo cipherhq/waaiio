@@ -59,7 +59,12 @@ export default function QRCodePage() {
   const [hasBotChannel, setHasBotChannel] = useState(false);
 
   // Load the actual WhatsApp channel phone number (not business.phone which is the owner's contact)
+  // Reset readiness on dependency change so stale results are discarded
   useEffect(() => {
+    let cancelled = false;
+    setChannelLoaded(false);
+    setHasBotChannel(false);
+
     async function loadChannelPhone() {
       const supabase = createClient();
       const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
@@ -74,6 +79,8 @@ export default function QRCodePage() {
         queryChannelsPublic(supabase, 'phone_number', (q) => q.limit(1).maybeSingle()),
       ]);
 
+      if (cancelled) return; // Discard obsolete response from prior business context
+
       // Priority: assigned > dedicated > shared > business.phone fallback
       const botChannelPhone = assignedResult.data?.phone_number
         || dedicatedResult.data?.phone_number
@@ -85,6 +92,7 @@ export default function QRCodePage() {
       setChannelLoaded(true);
     }
     loadChannelPhone();
+    return () => { cancelled = true; };
   }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id, business.phone]);
 
   const phone = channelPhone;
@@ -156,13 +164,15 @@ export default function QRCodePage() {
   );
 
   const copyLink = useCallback(() => {
+    if (isQueueTemplate && !queueReady) return; // Guard: queue requires valid bot channel
     navigator.clipboard.writeText(activeLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [activeLink]);
+  }, [activeLink, isQueueTemplate, queueReady]);
 
   // ── Download QR only as PNG ──
   function downloadQROnly() {
+    if (isQueueTemplate && !queueReady) return; // Guard: queue requires valid bot channel
     const canvas = qrOnlyRef.current?.querySelector('canvas');
     if (!canvas) return;
     const url = canvas.toDataURL('image/png');
@@ -174,6 +184,7 @@ export default function QRCodePage() {
 
   // ── Download poster as high-res PNG ──
   async function downloadPoster(size: PosterSize = 'a4') {
+    if (isQueueTemplate && !queueReady) return; // Guard: queue requires valid bot channel
     const sizeConfig = POSTER_SIZES[size];
     const { width, height } = sizeConfig;
     const canvas = document.createElement('canvas');
@@ -396,6 +407,13 @@ export default function QRCodePage() {
       ctx.fillStyle = '#25D366';
       ctx.font = `bold ${Math.round(48 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
       ctx.fillText('WhatsApp', cx, fallbackY + Math.round(200 * scale));
+
+      // Queue-specific Send/Join instruction on exported material
+      if (isQueueTemplate) {
+        ctx.fillStyle = '#6B7280';
+        ctx.font = `${Math.round(36 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.fillText('Send the message to join the queue', cx, fallbackY + Math.round(280 * scale));
+      }
 
       // Footer (hidden for whitelabel)
       if (!isWhitelabel) {

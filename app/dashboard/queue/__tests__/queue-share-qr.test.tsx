@@ -236,3 +236,73 @@ describe('QR Code page — existing behavior preserved', () => {
     expect(screen.queryByTestId('queue-setup-guidance')).toBeNull();
   });
 });
+
+// ── Handler guards: copy/download blocked when queue not ready ──
+
+describe('QR Code page — queue artifact guards', () => {
+  it('no bot channel → Copy button click does not write to clipboard', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    state.hasBotChannel = false;
+
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('queue-setup-guidance')).toBeTruthy();
+    });
+
+    // Find and click Copy button — should be guarded
+    const copyBtn = screen.getByText('Copy');
+    copyBtn.click();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('valid bot channel → QR content area is NOT dimmed', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    state.hasBotChannel = true;
+
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      expect(qrValues.length).toBeGreaterThanOrEqual(1);
+    });
+
+    // No setup guidance
+    expect(screen.queryByTestId('queue-setup-guidance')).toBeNull();
+    // Join guidance present
+    expect(screen.getByTestId('queue-join-guidance')).toBeTruthy();
+  });
+
+  it('QR and clipboard targets use the same canonical URL', async () => {
+    state.searchParams = new URLSearchParams('template=queue');
+    state.hasBotChannel = true;
+
+    let clipboardContent = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn((text: string) => { clipboardContent = text; return Promise.resolve(); }) },
+      writable: true,
+      configurable: true,
+    });
+
+    render(<QRCodePage />);
+
+    await waitFor(() => {
+      const qrValues = screen.getAllByTestId('qr-value');
+      expect(qrValues.length).toBeGreaterThanOrEqual(1);
+    });
+
+    const qrValue = screen.getAllByTestId('qr-value')[0].getAttribute('data-value');
+
+    // Click copy
+    const copyBtn = screen.getByText('Copy');
+    copyBtn.click();
+    expect(clipboardContent).toBe(qrValue);
+  });
+});
