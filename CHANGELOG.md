@@ -1,3 +1,11 @@
+### #762 W06 — Recorded payout explanations and linked destinations (2026-10-30)
+
+- Payout history now returns a merchant-safe projection, bounded recorded-state explanations and server-masked linked payout destinations using authenticated permitted-column reads. Historical inactive accounts remain linked; missing details and read failures are distinguished.
+- Account and History views consume the same `payouts` response and explanation fields. Recent records are no longer discarded by the Account view; History supports held/review-required filters and shows recorded context separately from proof of settlement.
+- Added actual read-handler and mounted-consumer coverage for authorization, tenant-bound destination reads, safe projection/masking, state/reason variants, history filters and errors. The inherited W05 rendered fixture changes only `records` to `payouts`, retaining all assertions.
+- **Affects**: Merchant payout history presentation/read API only; inherited W05 setup restrictions remain intact. No financial-state writers, currency aggregation, schema, collection confirmations or provider operations changed.
+- **Could break**: Read-response consumers or linked-account lookup/projection; canonical combined-head CI and independent review are required. Displayed context is recorded history, not current eligibility or a settlement guarantee.
+
 ### #762 W05 — Disable new Flutterwave payout setup (2026-10-30)
 
 - Removed Flutterwave from new payout provider choices and normalized stale setup selections locally without rewriting saved destinations.
@@ -5540,11 +5548,3 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
-
-### #762 W06 — Recorded payout explanations and linked destinations (2026-10-30)
-
-- Payout history now returns a merchant-safe projection, bounded recorded-state explanations and server-masked linked payout destinations using authenticated permitted-column reads. Historical inactive accounts remain linked; missing details and read failures are distinguished.
-- Account and History views consume the same `payouts` response and explanation fields. Recent records are no longer discarded by the Account view; History supports held/review-required filters and shows recorded context separately from proof of settlement.
-- Added actual read-handler and mounted-consumer coverage for authorization, tenant-bound destination reads, safe projection/masking, state/reason variants, history filters and errors. The inherited W05 rendered fixture changes only `records` to `payouts`, retaining all assertions.
-- **Affects**: Merchant payout history presentation/read API only; inherited W05 setup restrictions remain intact. No financial-state writers, currency aggregation, schema, collection confirmations or provider operations changed.
-- **Could break**: Read-response consumers or linked-account lookup/projection; canonical combined-head CI and independent review are required. Displayed context is recorded history, not current eligibility or a settlement guarantee.
