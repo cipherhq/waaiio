@@ -5494,3 +5494,11 @@ If something breaks:
 - Preserve selected address details after blur/outside dismissal while keeping the menu closed; edits, new selections, record resets and unmounts still invalidate stale details.
 - **Affects**: Main-app physical-address entry. Admin Vite onboarding/event fields remain an explicit follow-up; no provider configuration or schema changes.
 - **Could break**: Shared browser widget loading/selection affects existing callers; live Google enablement/referrer behavior still needs runtime verification.
+
+### #753 — Bot Text default explanation and readback evidence (2026-10-29)
+
+- `app/dashboard/translations/page.tsx`: explain when the selected language's built-in bot default is unavailable for display, preserving exact-language and English-reference labels.
+- `app/dashboard/translations/__tests__/bot-text-753.test.tsx`: gate post-save GET completion and assert distinct server-returned state for save/clear; retain payload/null-delete checks. Add unavailable-default coverage.
+- Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
+- **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
+- **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
