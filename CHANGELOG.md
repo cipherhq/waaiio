@@ -143,6 +143,15 @@
 - **Affects**: STOP/START message handling, broadcast opt-out filtering, growth eligibility checks. No changes to payment flows, bot flow engine, session lifecycle, or database schema.
 - **Could break**: STOP now requires merchant context resolution on shared channels, which adds 1-2 extra queries. Users who previously received false "unsubscribed" confirmations will now see accurate results. Broadcasts that previously ignored opt-outs (due to missing business_id filter) will now correctly suppress sends.
 
+### #753 — Poll send-result accounting (2026-10-30)
+
+- CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
+
+- `app/api/polls/[id]/send/route.ts`: count the shared sender’s `{ sent: false }` result as failed; retain true-result counting, thrown-error handling and processing of remaining recipients.
+- `app/api/polls/__tests__/polls-api.test.ts`: exercise the actual send handler with active owned polls, valid session boundaries and a controllable helper mock for true, false, thrown and mixed outcomes. Assert helper reach, recipient order and reconciled totals; preserve existing denial tests.
+- **Affects**: Poll send response counts only. Helper acceptance does not prove customer receipt; shared sender, session preparation, guards and poll lifecycle are unchanged.
+- **Could break**: Callers now correctly see failed counts for helper-declined sends that were previously reported sent. Mocked route tests do not certify provider delivery.
+
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
 
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
