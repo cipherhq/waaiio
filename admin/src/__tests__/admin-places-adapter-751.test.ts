@@ -179,4 +179,48 @@ describe('#751 Admin googlePlaces adapter', () => {
     await new Promise<void>(r => svc.predictions.getPlacePredictions({ input: 'After' }, () => r()));
     expect(tokenInstances.length).toBe(2);
   });
+
+  it('obsolete details completion after reset cannot clear a newer search session', async () => {
+    const { createGooglePlacesServices } = await loadAdapter();
+    // Set up a prediction whose fetchFields we control.
+    let resolveFetchFields!: () => void;
+    const slowPlace = {
+      fetchFields: vi.fn(() => new Promise<void>(r => { resolveFetchFields = r; })),
+      formattedAddress: 'Slow Place',
+      addressComponents: [{ types: ['locality'], longText: 'Lagos', shortText: 'Lagos' }],
+    };
+    const pred = makePlacePrediction({ placeId: 'slow', text: 'Slow', place: slowPlace });
+    fetchSuggestionsMock.mockResolvedValue({ suggestions: [pred] });
+    const svc = await createGooglePlacesServices();
+    const results = await new Promise<any[]>(r => svc.predictions.getPlacePredictions({ input: 'Slow' }, (res) => r(res || [])));
+    expect(tokenInstances.length).toBe(1);
+
+    // Start getDetails — fetchFields hangs.
+    let detailsCallback: (place: unknown, status: string) => void;
+    const detailsDone = new Promise<void>(resolve => {
+      svc.details.getDetails({ placeId: 'slow', fields: [], _raw: results[0]._raw }, (place, status) => {
+        detailsCallback = () => {}; // consumed
+        resolve();
+      });
+    });
+
+    // While details are in flight, reset and start a new search.
+    svc.reset();
+    fetchSuggestionsMock.mockResolvedValue({ suggestions: [] });
+    await new Promise<void>(r => svc.predictions.getPlacePredictions({ input: 'Fresh' }, () => r()));
+    const tokenCountAfterNewSearch = tokenInstances.length;
+
+    // Capture the newer token used by the fresh search.
+    const newerToken = fetchSuggestionsMock.mock.calls.at(-1)[0].sessionToken;
+
+    // Resolve the old fetchFields — its callback fires.
+    resolveFetchFields();
+    await detailsDone;
+
+    // A subsequent prediction request should reuse the newer token, NOT create another.
+    fetchSuggestionsMock.mockResolvedValue({ suggestions: [] });
+    await new Promise<void>(r => svc.predictions.getPlacePredictions({ input: 'Still fresh' }, () => r()));
+    expect(tokenInstances.length).toBe(tokenCountAfterNewSearch);
+    expect(fetchSuggestionsMock.mock.calls.at(-1)[0].sessionToken).toBe(newerToken);
+  });
 });
