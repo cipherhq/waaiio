@@ -1,6 +1,7 @@
 'use client';
 import { type CountryCode } from '@/lib/constants';
 
+import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
@@ -666,10 +667,9 @@ export default function InvoicesPage() {
                 </div>
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700">Address</label>
-                  <input
-                    type="text"
+                  <PlacesAutocomplete
                     value={customerAddress}
-                    onChange={e => setCustomerAddress(e.target.value)}
+                    onChange={value => setCustomerAddress(value)}
                     placeholder="Customer address"
                     className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                   />

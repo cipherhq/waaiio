@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { loadGooglePlaces } from '@/lib/google-places-loader';
 
 interface AddressResult {
   address: string;
@@ -33,27 +34,17 @@ export default function AddressAutocomplete({
   const [loaded, setLoaded] = useState(false);
   const [value, setValue] = useState(defaultValue);
 
-  // Load Google Places script
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+
+  useEffect(() => { setValue(defaultValue); }, [defaultValue]);
+
   useEffect(() => {
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY;
-    if (!apiKey) return;
-
-    if (window.google?.maps?.places) {
-      setLoaded(true);
-      return;
-    }
-
-    const existing = document.querySelector('script[src*="maps.googleapis.com/maps/api/js"]');
-    if (existing) {
-      existing.addEventListener('load', () => setLoaded(true));
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
-    script.async = true;
-    script.onload = () => setLoaded(true);
-    document.head.appendChild(script);
+    let active = true;
+    loadGooglePlaces().then(() => {
+      if (active) setLoaded(true);
+    }).catch(() => { /* Manual entry remains available. */ });
+    return () => { active = false; };
   }, []);
 
   // Initialize autocomplete
@@ -65,14 +56,15 @@ export default function AddressAutocomplete({
       fields: ['address_components', 'formatted_address', 'geometry'],
     };
 
-    if (countryCode) {
-      options.componentRestrictions = { country: countryCode.toLowerCase() };
+    let autocomplete: google.maps.places.Autocomplete;
+    try {
+      autocomplete = new google.maps.places.Autocomplete(inputRef.current, options);
+    } catch {
+      return; // Unavailable provider: retain the manual input.
     }
-
-    const autocomplete = new google.maps.places.Autocomplete(inputRef.current, options);
     autocompleteRef.current = autocomplete;
 
-    autocomplete.addListener('place_changed', () => {
+    const listener = autocomplete.addListener('place_changed', () => {
       const place = autocomplete.getPlace();
       if (!place.address_components) return;
 
@@ -83,41 +75,39 @@ export default function AddressAutocomplete({
       let zipCode = '';
       let country = '';
 
-      for (const component of place.address_components) {
-        const type = component.types[0];
-        switch (type) {
-          case 'street_number':
-            streetNumber = component.long_name;
-            break;
-          case 'route':
-            route = component.long_name;
-            break;
-          case 'locality':
-          case 'administrative_area_level_2':
-            if (!city) city = component.long_name;
-            break;
-          case 'administrative_area_level_1':
-            state = component.long_name;
-            break;
-          case 'postal_code':
-            zipCode = component.long_name;
-            break;
-          case 'country':
-            country = component.short_name;
-            break;
-        }
-      }
+      const find = (type: string) => place.address_components!.find(c => c.types.includes(type));
+      streetNumber = find('street_number')?.long_name || '';
+      route = find('route')?.long_name || '';
+      city = find('locality')?.long_name || find('postal_town')?.long_name || find('administrative_area_level_2')?.long_name || '';
+      state = find('administrative_area_level_1')?.long_name || '';
+      zipCode = find('postal_code')?.long_name || '';
+      country = find('country')?.short_name || '';
 
-      const address = streetNumber ? `${streetNumber} ${route}` : route;
+      const address = (streetNumber ? `${streetNumber} ${route}` : route).trim() || place.formatted_address || '';
       const formattedAddress = place.formatted_address || address;
       setValue(formattedAddress);
 
       const latitude = place.geometry?.location?.lat();
       const longitude = place.geometry?.location?.lng();
 
-      onSelect({ address, city, state, zipCode, country, latitude, longitude, formattedAddress });
+      onSelectRef.current({
+        address, city, state, zipCode, country,
+        latitude: Number.isFinite(latitude) && Number.isFinite(longitude) ? latitude : undefined,
+        longitude: Number.isFinite(latitude) && Number.isFinite(longitude) ? longitude : undefined,
+        formattedAddress,
+      });
     });
-  }, [loaded, countryCode, onSelect]);
+    return () => {
+      listener.remove();
+      autocompleteRef.current = null;
+    };
+  }, [loaded]); // The listener reads current callbacks through a ref.
+
+  useEffect(() => {
+    autocompleteRef.current?.setComponentRestrictions(
+      countryCode ? { country: countryCode.toLowerCase() } : { country: [] }
+    );
+  }, [loaded, countryCode]);
 
   return (
     <input

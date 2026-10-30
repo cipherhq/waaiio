@@ -1,11 +1,20 @@
+### #753 item 6 — Bot Text clarity for nontechnical merchants (2026-10-29)
+
+- **`app/dashboard/translations/page.tsx`**: Replaced raw message keys with human-readable labels, context descriptions, and "Your message" field labels. Now uses `editableKeys` from the API (not `allKeys`) so only merchant-editable messages appear. Added inline help explaining save/reset behavior, required placeholder tokens with explanations, and WhatsApp character limits for button/list titles. Search matches readable labels in addition to keys and text. Updated page help title and terminology ("messages" instead of "keys").
+- **R2 — accurate language labels**: Default text is now labeled by its actual source: same-language platform text shows "Default ({langName})", English-only fallback shows "English reference" (not "Current default"), and English tab shows plain "Default". This prevents merchants from mistaking English reference text for their selected language's bot output.
+- **`app/dashboard/translations/message-presentation.ts`** (new): Page-local presentation helper with human-readable names, context descriptions, placeholder explanations, and character limit metadata for all 40 business-editable message keys.
+- **`app/dashboard/translations/__tests__/bot-text-753.test.tsx`** (new): 21 jsdom rendered tests covering readable labels, search by readable name, correct save payload with readback verification, clear-and-save reset with readback, English-only reference labeling, same-language default labeling, validation and network error display, editable-key filtering, character limits, placeholder guidance, save/reset help text, page help title, message count terminology, and narrow/desktop viewport rendering.
+- **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
+- **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
+
 ### #752 — Queue tab: Share Queue QR code and link (2026-10-29)
 
 - **`app/dashboard/queue/page.tsx`**: Added "Share Queue" link in the action buttons group (alongside Pause/Resume, Walk-in, Call Next). Links to `/dashboard/qr-code?template=queue`, opening the QR Code page with "Scan to Join Queue" pre-selected.
-- **`app/dashboard/qr-code/page.tsx`**: Added `?template=` URL parameter support via `useSearchParams()`. Validates the param against known template IDs; defaults to `generic` for invalid/missing values. Initial deep-link suffix computed from the pre-selected template. Channel resolution now tracks whether the resolved phone is a real bot channel (`hasBotChannel`) vs owner contact fallback. Queue template requires active bot channel + routing context; loading/invalid states show setup guidance and dim the QR/link content. Customer join guidance explains scan → send → join flow.
+- **`app/dashboard/qr-code/page.tsx`**: Added `?template=` URL parameter support via `useSearchParams()`. Queue template requires resolved active bot channel; routing uses the channel's actual `channel_type` (not business preference). Artifacts withheld when setup incomplete. Reactive suffix via `useMemo`. Customer join guidance on dashboard and all 4 poster formats.
 - **`lib/__tests__/issue-496-qr-production.test.tsx`**: Added `next/navigation` mock for `useSearchParams` compatibility. Existing 3 routing-safety tests preserved and passing.
-- **`app/dashboard/queue/__tests__/queue-share-qr.test.tsx`** (new): 8 rendered UI tests (React Testing Library) — Queue page Share Queue link, QR pre-selection + join guidance with valid channel, no bot channel → setup guidance, shared without routing code → guidance, dedicated bot → menu path guidance, generic/invalid template defaults, non-queue template ignores channel guard.
+- **`app/dashboard/queue/__tests__/queue-share-qr.test.tsx`** (new): 15 rendered UI tests — Share Queue link, queue pre-selection + guidance, channel guard (no bot, shared w/o code), artifact withholding, canonical QR/clipboard match, shared-fallback routing, assigned dedicated + shared pref, assigned shared + non-shared pref, dedicated/generic/invalid defaults.
 - **Affects**: Queue dashboard page and QR Code dashboard page only. No bot flow, capability, schema, payment, or channel changes.
-- **Could break**: Queue QR sharing now requires a real bot channel — businesses without one see setup guidance instead of a non-functional QR. All other templates retain existing fallback behavior.
+- **Could break**: Queue QR sharing requires a real bot channel — businesses without one see setup guidance. Other templates retain existing fallback behavior.
 
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
@@ -5484,3 +5493,21 @@ If something breaks:
 - Extend existing format-hint regression coverage to verify the diagnostic and silence for ordinary invalid/winner/try-again outcomes.
 - **Affects**: Server-side visibility of promo verification RPC failures.
 - **Could break**: Log volume increases on RPC failures; customer responses, format hints and claim behavior remain unchanged.
+
+### #751 — Reuse Places autocomplete across address forms (2026-10-29)
+
+- Share Google Places loading across the existing address widgets and accept either existing public key name; retain manual entry on unavailable configuration/loading errors.
+- Keep structured address callbacks and restored values current; guard delayed predictions/details against later edits, selections and unmounts, with keyboard/pointer selection and listbox associations.
+- Add autocomplete to location create/edit and invoice customer-address forms. Existing onboarding, events, properties, parties, Settings and Discovery reuse the improved components; existing persistence and manual coordinate invalidation remain intact.
+- Add loader/component and real form-handler regression tests, including #485 coordinate contracts.
+- Preserve selected address details after blur/outside dismissal while keeping the menu closed; edits, new selections, record resets and unmounts still invalidate stale details.
+- **Affects**: Main-app physical-address entry. Admin Vite onboarding/event fields remain an explicit follow-up; no provider configuration or schema changes.
+- **Could break**: Shared browser widget loading/selection affects existing callers; live Google enablement/referrer behavior still needs runtime verification.
+
+### #753 — Bot Text default explanation and readback evidence (2026-10-29)
+
+- `app/dashboard/translations/page.tsx`: explain when the selected language's built-in bot default is unavailable for display, preserving exact-language and English-reference labels.
+- `app/dashboard/translations/__tests__/bot-text-753.test.tsx`: gate post-save GET completion and assert distinct server-returned state for save/clear; retain payload/null-delete checks. Add unavailable-default coverage.
+- Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
+- **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
+- **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
