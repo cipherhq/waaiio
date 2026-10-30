@@ -58,23 +58,26 @@ function fakeSupabase(rows: Row[], error: { message: string } | null = null) {
          onRejected?: (error: unknown) => unknown) {
       const pass = (row: Row, op: Operation): boolean => {
         const [field, arg, extra] = op.args;
+        // Resolve computed field names to their backing row columns
+        const resolveCol = (name: string): string => name === 'category_text' ? 'category' : name;
         switch (op.method) {
           case 'select': case 'limit': return true;
-          case 'eq': return row[String(field)] === arg;
-          case 'gte': return Number(row[String(field)]) >= Number(arg);
-          case 'ilike': return matchesIlike(row[String(field)], String(arg));
+          case 'eq': return row[resolveCol(String(field))] === arg;
+          case 'gte': return Number(row[resolveCol(String(field))]) >= Number(arg);
+          case 'ilike': return matchesIlike(row[resolveCol(String(field))], String(arg));
           case 'not':
-            if (arg === 'is' && extra === null) return row[String(field)] !== null && row[String(field)] !== undefined;
-            if (arg === 'in') return !String(extra).slice(1, -1).split(',').includes(String(row[String(field)]));
+            if (arg === 'is' && extra === null) return row[resolveCol(String(field))] !== null && row[resolveCol(String(field))] !== undefined;
+            if (arg === 'in') return !String(extra).slice(1, -1).split(',').includes(String(row[resolveCol(String(field))]));
             throw new Error('Unknown mocked not filter');
           case 'or':
             return String(field).split(',').some((clause) => {
-              const match = /^([a-z_]+)\.(ilike|eq|is)\.(.*)$/.exec(clause);
+              const match = /^([a-z_:]+)\.(ilike|eq|is)\.(.*)$/.exec(clause);
               if (!match) throw new Error('Malformed PostgREST OR filter: ' + clause);
               const [, col, operator, value] = match;
-              if (operator === 'ilike') return matchesIlike(row[col], value);
-              if (operator === 'is') return value === 'null' && (row[col] === null || row[col] === undefined);
-              return String(row[col]) === value;
+              const resolvedCol = resolveCol(col);
+              if (operator === 'ilike') return matchesIlike(row[resolvedCol], value);
+              if (operator === 'is') return value === 'null' && (row[resolvedCol] === null || row[resolvedCol] === undefined);
+              return String(row[resolvedCol]) === value;
             });
           default: throw new Error('Unknown mocked operation: ' + op.method);
         }
@@ -100,7 +103,7 @@ describe('searchMarketplace — executable filters and containment', () => {
     const result = await searchMarketplace(db, { category: 'restaurant', locationText: 'Lagos' });
     expect(result.ok).toBe(true);
     expect(result.results.map((r) => r.businessId)).toEqual([ID[0]]);
-    expect(calls).toContainEqual({ method: 'ilike', args: ['category', '%restaurant%'] });
+    expect(calls).toContainEqual({ method: 'ilike', args: ['category_text', '%restaurant%'] });
     expect(calls.some((c) => c.method === 'or' && String(c.args[0]).includes('city.ilike.%Lagos%'))).toBe(true);
   });
 
@@ -270,7 +273,7 @@ describe('searchMarketplace — executable filters and containment', () => {
     expect(result).toMatchObject({ ok: true, results: [] });
     expect(urls).toHaveLength(1);
     const params = urls[0].searchParams;
-    expect(params.get('category')).toBe('ilike.%restaurant%');
+    expect(params.get('category_text')).toBe('ilike.%restaurant%');
     expect(params.get('city')).toBe('ilike.%Lagos%');
     expect(params.get('address')).toBe('ilike.%Lekki%');
     expect(params.get('id')).toBe('not.in.(' + ID[1] + ')');

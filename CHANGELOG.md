@@ -1,3 +1,14 @@
+### #762 — Directory search: fix enum category filter via computed text field (2026-10-30)
+
+- **`supabase/migrations/483_directory_category_text_computed.sql`** (new): SECURITY INVOKER computed field `public.category_text(public.businesses)` casts the `business_category` enum to filterable text for PostgREST ILIKE queries. service_role only grants, explicit NOTIFY pgrst cache reload, data-independent self-test via `to_regprocedure` + `jsonb_populate_record` synthetic eval.
+- **`lib/marketplace/search.ts`**: Changed 3 ILIKE filters from `category` (enum — causes PostgreSQL `operator does not exist` error) to `category_text` (computed text field). Fixes 503 errors on all directory searches with category or free-text queries.
+- **`lib/marketplace/__tests__/discovery-search-query.test.ts`**: Updated 2 mock assertions to match `category_text` filter.
+- **`lib/marketplace/__tests__/directory-search-postgrest.test.ts`** (new): Real PostgREST integration tests — category exact/partial/case/synonym/legacy, country+category, all eligibility exclusions, hidden IDs, empty results, negative controls (old enum ilike fails).
+- **`scripts/test-directory-search-postgrest.sh`** (new): Disposable PG + PostgREST test runner with role bootstrap, migration apply, cache verification, and cleanup.
+- **`.github/workflows/directory-search-postgrest.yml`** (new): Dedicated CI workflow for PostgREST integration tests on PRs/pushes affecting directory/marketplace paths.
+- **Affects**: Public directory search (`/api/directory`), bot directory handler, SSR directory page. Category and free-text search queries require M483 migration applied and PostgREST schema cache reloaded before application deployment. Country-only filter was already working and is unaffected.
+- **Deployment dependency**: M483 must be applied and PostgREST must reload its schema cache (NOTIFY pgrst included in migration) before the application code using `category_text` is deployed. Deploying the app before the migration will cause category/text searches to return PostgREST "unknown column" errors instead of the current enum errors. Existing `.eq('category', ...)` calls elsewhere use the native enum and are unaffected.
+
 ### #762 W06 — Recorded payout explanations and linked destinations (2026-10-30)
 
 - Payout history now returns a merchant-safe projection, bounded recorded-state explanations and server-masked linked payout destinations using authenticated permitted-column reads. Historical inactive accounts remain linked; missing details and read failures are distinguished.
