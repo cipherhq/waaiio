@@ -169,7 +169,7 @@ BEGIN
   WHERE id = p_payment_id RETURNING * INTO v_payment;
   IF v_payment.gateway_fee_claim_sealed_at IS NULL
      OR v_payment.gateway_fee_claim_snapshot IS DISTINCT FROM v_payment.gateway_fee
-     OR v_payment.verified_gateway_fee IS DISTINCT FROM CASE WHEN p_fee_supplied THEN p_gateway_fee::integer ELSE NULL END
+     OR v_payment.verified_gateway_fee IS DISTINCT FROM (CASE WHEN p_fee_supplied THEN p_gateway_fee::integer ELSE NULL END)
      OR v_payment.finalization_claim_token IS DISTINCT FROM v_token THEN
     RAISE EXCEPTION 'verified fee claim postcondition failed';
   END IF;
