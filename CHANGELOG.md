@@ -5647,3 +5647,10 @@ If something breaks:
 - `app/(marketing)/HomeClient.tsx`: replace “Up and running in minutes” with “Set up your business on WhatsApp”.
 - **Affects**: Only the homepage setup heading; no timing promise, layout, links, pricing or signup behavior changes.
 - **Could break**: Heading wrapping at narrow widths; existing homepage tests/build and available preview checks supply evidence. The wider #526 audit remains out of scope.
+
+### #762 — Reviewed party seating groups and pinned assignments (2026-10-30)
+
+- **Party dashboard and seating planner**: Add one organizer-set seating group per invitation, explicit allowed tables, persistent manual pins, and randomized previews for unpinned guests. Invitations and plus-ones stay together; ungrouped guests use remaining capacity. Preview shows weighted occupancy and overflow; a partial plan requires explicit acknowledgment.
+- **Seating API and M486**: Recompute the reviewed plan server-side, reject stale/conflicting plans, and commit validated assignments atomically with replay protection. Preserve pinned arrangements and existing M457 capacity guards, including rollback of capacity-conflicting RSVP growth. Existing assignments migrate as pinned.
+- **Tests**: Actual planner, HTTP handler, mounted dashboard and six updated adapter regression cases; disposable PostgreSQL tests load real M457/M486 migrations and exercise scoped authorization, pins, swaps, rollback, partial acknowledgment and concurrency. Exact-head execution evidence is recorded on PR #776; jsdom is not browser layout proof.
+- **Affects / could break**: Party seating configuration, assignment and database write serialization. Application/schema alignment requires separately authorized M486 rollout; new seating controls require the new RPC. Hosted migration, deployed acceptance and browser layout verification remain separate. Custom RSVP questions and reminders are not implemented by this entry.
