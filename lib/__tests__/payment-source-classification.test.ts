@@ -106,7 +106,7 @@ describe('Payments Received page', () => {
   });
 
   it('uses inner join for booking-column source filters', () => {
-    expect(paymentsPageCode).toContain("bookings!inner");
+    expect(paymentsPageCode).toContain("bookings!payments_reservation_id_fkey!inner");
   });
 
   it('uses server-side filtering via PostgREST (no client-side filter after pagination)', () => {
