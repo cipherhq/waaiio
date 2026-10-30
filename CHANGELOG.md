@@ -5511,3 +5511,10 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
+
+### #753 — Poll send-result accounting (2026-10-30)
+
+- `app/api/polls/[id]/send/route.ts`: count the shared sender’s `{ sent: false }` result as failed; retain true-result counting, thrown-error handling and processing of remaining recipients.
+- `app/api/polls/__tests__/polls-api.test.ts`: exercise the actual send handler with active owned polls, valid session boundaries and a controllable helper mock for true, false, thrown and mixed outcomes. Assert helper reach, recipient order and reconciled totals; preserve existing denial tests.
+- **Affects**: Poll send response counts only. Helper acceptance does not prove customer receipt; shared sender, session preparation, guards and poll lifecycle are unchanged.
+- **Could break**: Callers now correctly see failed counts for helper-declined sends that were previously reported sent. Mocked route tests do not certify provider delivery.
