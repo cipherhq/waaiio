@@ -22,6 +22,7 @@ export interface EventMutationResult {
   committed: true;
   event: EventRecord;
   operation_id: string;
+  /** True only for the operation that cancelled the event (including its replay). */
   cancelled: boolean;
   cancelled_tickets: number;
   refunds_pending: number;
@@ -90,6 +91,7 @@ function checkedResult(value: unknown, eventId: string, businessId: string): Per
   }
   return result as PersistedResult & { event: EventRecord; operation_id: string };
 }
+const noCancellationEffects = (): CancellationNotifications => ({ accepted: 0, pending: 0, failed: 0, ambiguous: 0, total: 0 });
 function response(result: PersistedResult & { event: EventRecord; operation_id: string }, notifications: CancellationNotifications): EventMutationResult {
   return { success: true, committed: true, event: result.event, operation_id: result.operation_id,
     cancelled: result.cancelled === true, cancelled_tickets: result.counts?.cancelled_tickets || 0,
@@ -118,7 +120,7 @@ export async function mutateEvent(
   try {
     notifications = result.cancelled
       ? await dispatchEventCancellation(service, result.operation_id, result.event)
-      : await readCancellationNotifications(service, result.operation_id);
+      : noCancellationEffects();
   } catch {
     notifications = { accepted: 0, pending: 0, failed: 0, ambiguous: 0, total: 0, unavailable: true };
   }
@@ -134,7 +136,7 @@ export async function readEventOperation(
   if (!data) throw new EventMutationError('operation_not_found', 404, 'No committed operation was found');
   const result = checkedResult(data.response_payload, eventId, businessId);
   let notifications: CancellationNotifications;
-  try { notifications = await readCancellationNotifications(service, operationId); }
+  try { notifications = result.cancelled === true ? await readCancellationNotifications(service, operationId) : noCancellationEffects(); }
   catch { notifications = { accepted: 0, pending: 0, failed: 0, ambiguous: 0, total: 0, unavailable: true }; }
   return response({ ...result, replayed: true }, notifications);
 }

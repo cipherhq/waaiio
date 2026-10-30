@@ -276,6 +276,14 @@ describe('campaign donation confirmation (#736)', () => {
     const { sendProactiveConfirmation } = await import('../send-confirmation');
     const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
     const sb = buildSb({ claimOverrides: { booking_id: 'bk-ev-1' } });
+    const originalRpc = sb.rpc.getMockImplementation()!;
+    sb.rpc.mockImplementation(async (name: string, params?: Record<string, unknown>) => {
+      if (name === 'terminate_cancelled_event_confirmation') {
+        expect(params).toEqual({ p_payment_id: 'pay-camp-1', p_claim_token: 'tok-c' });
+        return { data: { terminated: false, reason: 'not_cancelled' }, error: null };
+      }
+      return originalRpc(name, params);
+    });
     const origFrom = sb.from;
     sb.from = vi.fn((t: string) => {
       if (t === 'bookings') return chain({

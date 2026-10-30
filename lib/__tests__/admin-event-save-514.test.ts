@@ -5,7 +5,7 @@ const h = vi.hoisted(() => ({
   role: 'admin', aal: 'aal2', subject: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   userId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', session: true, claimsError: false, userError: false,
   cookieToken: undefined as string | undefined, event: {} as Record<string, unknown>,
-  operations: new Map<string, unknown>(), mutationFailure: null as string | null,
+  operations: new Map<string, unknown>(), recipientStates: new Map<string, string[]>(), mutationFailure: null as string | null,
   mutationError: false, readError: false, rpc: vi.fn(), from: vi.fn(),
 }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({
@@ -40,7 +40,7 @@ beforeEach(() => {
   h.role = 'admin'; h.aal = 'aal2'; h.subject = h.userId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   h.session = true; h.claimsError = h.userError = false; h.cookieToken = undefined;
   h.event = { id: EVENT, business_id: BUSINESS, name: 'Original', date: '2026-11-01', time: '10:00:00', venue: 'Original venue', price: 100, status: 'published', updated_at: REV };
-  h.operations.clear(); h.mutationFailure = null; h.mutationError = h.readError = false;
+  h.operations.clear(); h.recipientStates.clear(); h.mutationFailure = null; h.mutationError = h.readError = false;
   h.rpc.mockReset().mockImplementation((name: string, args: Record<string, any>) => {
     if (name === 'check_session_exists') return { maybeSingle: async () => ({ data: { session_exists: h.session }, error: null }) };
     if (name !== 'mutate_event') throw new Error('Unexpected RPC: ' + name);
@@ -48,8 +48,9 @@ beforeEach(() => {
     if (h.mutationFailure) return Promise.resolve({ data: { success: false, reason: h.mutationFailure }, error: null });
     const old = h.operations.get(args.p_operation_id) as Record<string, unknown> | undefined;
     if (old) return Promise.resolve({ data: { ...old, replayed: true }, error: null });
+    const newlyCancelled = h.event.status !== 'cancelled' && args.p_changes.status === 'cancelled';
     h.event = { ...h.event, ...args.p_changes, updated_at: '2026-10-30T00:01:00.000Z' };
-    const result = { success: true, event: { ...h.event }, operation_id: args.p_operation_id, cancelled: h.event.status === 'cancelled', counts: { cancelled_tickets: 0, recipients: 0, refunds_pending: 0 } };
+    const result = { success: true, event: { ...h.event }, operation_id: args.p_operation_id, cancelled: newlyCancelled, counts: { cancelled_tickets: 0, recipients: 0, refunds_pending: 0 } };
     h.operations.set(args.p_operation_id, result);
     return Promise.resolve({ data: result, error: null });
   });
@@ -57,7 +58,7 @@ beforeEach(() => {
     const filters: Record<string, unknown> = {};
     const chain: any = {
       select: vi.fn(() => chain), eq: vi.fn((key, value) => { filters[key] = value; return chain; }),
-      order: vi.fn(() => chain), range: vi.fn(async () => ({ data: [], error: null })),
+      order: vi.fn(() => chain), range: vi.fn(async () => ({ data: (h.recipientStates.get(String(filters.operation_id)) || []).map(state => ({ state })), error: null })),
       insert: vi.fn(async () => ({ error: null })),
       maybeSingle: vi.fn(async () => {
         if (h.readError) return { data: null, error: new Error('read failed') };
@@ -75,6 +76,39 @@ beforeEach(() => {
 function mutations() { return h.rpc.mock.calls.filter(([name]) => name === 'mutate_event'); }
 
 describe('Admin Event actual handler and actual platform authorization', () => {
+  it.each([false, true])('saves a nonstatus edit on a cancelled event without rerunning effects (legacy=%s)', async legacy => {
+    h.event.status = 'cancelled';
+    const originalId = '44444444-4444-4444-8444-444444444444';
+    const original = { success: true, event: { ...h.event }, operation_id: originalId, cancelled: true,
+      counts: { cancelled_tickets: 7, recipients: 1, refunds_pending: 3 } };
+    if (!legacy) {
+      h.operations.set(originalId, original);
+      h.recipientStates.set(originalId, ['pending']);
+    }
+    const input = { ...body(), changes: { ...body().changes, status: 'cancelled' } };
+    const saved = await PUT(request('PUT', input), context);
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ committed: true, cancelled: false,
+      event: { ...input.changes }, notifications: { total: 0 } });
+    expect(h.from.mock.calls.filter(([table]) => table === 'event_cancellation_recipients')).toHaveLength(0);
+    expect(h.rpc.mock.calls.filter(([name]) => name !== 'check_session_exists' && name !== 'mutate_event')).toHaveLength(0);
+    const recovered = await GET(request('GET', undefined, 'Bearer valid', '?operation_id=' + OP), context);
+    expect(await recovered.json()).toMatchObject({ committed: true, cancelled: false, event: { status: 'cancelled', name: input.changes.name } });
+    if (!legacy) {
+      expect(h.operations.get(originalId)).toEqual(original);
+      expect(h.recipientStates.get(originalId)).toEqual(['pending']);
+      const history = await GET(request('GET', undefined, 'Bearer valid', '?operation_id=' + originalId), context);
+      expect(await history.json()).toMatchObject({ cancelled: true, cancelled_tickets: 7, refunds_pending: 3,
+        notifications: { pending: 1, total: 1 } });
+    } else {
+      expect(h.operations.size).toBe(1);
+      expect(h.recipientStates.size).toBe(0);
+      const history = await GET(request('GET', undefined, 'Bearer valid', '?operation_id=' + originalId), context);
+      expect(history.status).toBe(404);
+    }
+    expect(mutations()).toHaveLength(1);
+  });
+
   it('persists all six fields using bearer-only authority and reads the committed operation back', async () => {
     const response = await PUT(request('PUT', body()), context);
     expect(response.status).toBe(200);
