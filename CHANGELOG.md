@@ -1,3 +1,12 @@
+### #753 item 6 — Bot Text clarity for nontechnical merchants (2026-10-29)
+
+- **`app/dashboard/translations/page.tsx`**: Replaced raw message keys with human-readable labels, context descriptions, and "Your message" field labels. Now uses `editableKeys` from the API (not `allKeys`) so only merchant-editable messages appear. Added inline help explaining save/reset behavior, required placeholder tokens with explanations, and WhatsApp character limits for button/list titles. Search matches readable labels in addition to keys and text. Updated page help title and terminology ("messages" instead of "keys").
+- **R2 — accurate language labels**: Default text is now labeled by its actual source: same-language platform text shows "Default ({langName})", English-only fallback shows "English reference" (not "Current default"), and English tab shows plain "Default". This prevents merchants from mistaking English reference text for their selected language's bot output.
+- **`app/dashboard/translations/message-presentation.ts`** (new): Page-local presentation helper with human-readable names, context descriptions, placeholder explanations, and character limit metadata for all 40 business-editable message keys.
+- **`app/dashboard/translations/__tests__/bot-text-753.test.tsx`** (new): 21 jsdom rendered tests covering readable labels, search by readable name, correct save payload with readback verification, clear-and-save reset with readback, English-only reference labeling, same-language default labeling, validation and network error display, editable-key filtering, character limits, placeholder guidance, save/reset help text, page help title, message count terminology, and narrow/desktop viewport rendering.
+- **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
+- **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
+
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
 - **`lib/payments/send-confirmation.ts`**: Added campaign donation recipient/business resolution block (section 2b) between invoice and order fallback. When `payment.campaign_id` is set and no booking/reservation/invoice resolved the customer, queries `campaign_donations` for `donor_phone`, `business_id`, `reference_code`, and joins to `campaigns(title, businesses(name, country_code))`. Previously, standalone campaign donations had no resolution path — `customerPhone` and `businessId` stayed null, causing `retryable_failed` with `no_business_resolved` forever.
@@ -5485,3 +5494,11 @@ If something breaks:
 - Preserve selected address details after blur/outside dismissal while keeping the menu closed; edits, new selections, record resets and unmounts still invalidate stale details.
 - **Affects**: Main-app physical-address entry. Admin Vite onboarding/event fields remain an explicit follow-up; no provider configuration or schema changes.
 - **Could break**: Shared browser widget loading/selection affects existing callers; live Google enablement/referrer behavior still needs runtime verification.
+
+### #753 — Bot Text default explanation and readback evidence (2026-10-29)
+
+- `app/dashboard/translations/page.tsx`: explain when the selected language's built-in bot default is unavailable for display, preserving exact-language and English-reference labels.
+- `app/dashboard/translations/__tests__/bot-text-753.test.tsx`: gate post-save GET completion and assert distinct server-returned state for save/clear; retain payload/null-delete checks. Add unavailable-default coverage.
+- Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
+- **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
+- **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
