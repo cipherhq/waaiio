@@ -67,7 +67,7 @@ BEGIN
   -- receives a strictly increasing revision even inside one transaction.
   NEW.updated_at:=GREATEST(clock_timestamp(),OLD.updated_at+interval '1 microsecond');
   RETURN NEW;
-END $;
+END $$;
 CREATE TRIGGER zz_event_cancellation_is_final BEFORE UPDATE ON public.events
 FOR EACH ROW EXECUTE FUNCTION private.event_finality_guard();
 
