@@ -89,7 +89,7 @@ const FIXTURES = [
   { name: `${TEST_PREFIX}Hidden Barber`,     category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Hidden from directory',    bot_code: 'HIDDEN',  status: 'active', discovery_enabled: false, messaging_suspended: false, address: '8 Test St', phone: '+2340000000008' },
   { name: `${TEST_PREFIX}Suspended Spa`,     category: 'spa',        city: 'Lagos',   country_code: 'NG', description: 'Suspended business',       bot_code: 'SUSPND',  status: 'active', discovery_enabled: true,  messaging_suspended: true,  address: '9 Test St', phone: '+2340000000009' },
   { name: `${TEST_PREFIX}No Bot Code`,       category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'No bot configured',        bot_code: null,      status: 'active', discovery_enabled: true,  messaging_suspended: false, address: '10 Test St', phone: '+2340000000010' },
-  { name: `${TEST_PREFIX}Pending Setup`,     category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Not yet active',           bot_code: 'PENDING', status: 'setup',  discovery_enabled: true,  messaging_suspended: false, address: '11 Test St', phone: '+2340000000011' },
+  { name: `${TEST_PREFIX}Pending Setup`,     category: 'barber',     city: 'Lagos',   country_code: 'NG', description: 'Not yet active',           bot_code: 'PENDING', status: 'pending', discovery_enabled: true,  messaging_suspended: false, address: '11 Test St', phone: '+2340000000011' },
 ];
 
 beforeAll(async () => {
@@ -235,7 +235,7 @@ describe('directory search — real PostgREST (#762)', () => {
     expect(names).not.toContain(`${TEST_PREFIX}No Bot Code`);
   });
 
-  it('non-active status (setup) excluded', async () => {
+  it('non-active status (pending) excluded', async () => {
     const result = await searchMarketplace(supabase, { category: 'barber', limit: 50 });
     expect(result.ok).toBe(true);
     const names = ours(result.results.map(r => r.name));
