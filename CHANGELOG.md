@@ -5502,3 +5502,9 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
+
+### #753 — Bot completion display pending action measurement (2026-10-30)
+
+- `app/dashboard/analytics/page.tsx`: show “Not yet measured” on the Bot Completion Rate card with “Successful customer actions are not measured yet.” Remove only the unused bot completion percentage state and calculation.
+- **Affects**: Bot completion card presentation. Booking-completion figures, other session counters, queries, filters and date behavior are unchanged.
+- **Could break**: The longer card wording may wrap differently at narrow widths; no rendered browser verification is claimed. Action measurement and the end-date correction remain separate work.
