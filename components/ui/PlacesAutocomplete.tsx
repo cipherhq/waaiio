@@ -99,7 +99,8 @@ export default function PlacesAutocomplete({
     dismiss();
     valueRef.current = input;
     onChangeRef.current(input); // No place data: parents invalidate stale coordinates.
-    if (!input.trim() || !ready) return;
+    if (!input.trim()) { sessionRef.current?.reset(); return; }
+    if (!ready) return;
     const request = requestRef.current;
     debounceTimerRef.current = setTimeout(async () => {
       if (!mountedRef.current || request !== requestRef.current) return;

@@ -311,4 +311,54 @@ describe('#751 structured Address input (New API)', () => {
     expect(legacyConstructors.Autocomplete).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
+
+  it('clears input resets the session', async () => {
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    render(<AddressAutocomplete onSelect={vi.fn()} />); await ready();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    sessionMock.reset.mockClear();
+    // Clear the input
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
+    expect(sessionMock.reset).toHaveBeenCalled();
+  });
+
+  it('controlled parent echo does not cancel typing or selection (StepDetails pattern)', async () => {
+    // Simulates StepDetails/Discovery: onManualChange feeds back into defaultValue
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    sessionMock.fetchPlaceDetails.mockResolvedValue(placeResult);
+    function ParentEcho() {
+      const [addr, setAddr] = useState('');
+      const [selected, setSelected] = useState<unknown>(null);
+      return (
+        <AddressAutocomplete
+          defaultValue={addr}
+          onManualChange={setAddr}
+          onSelect={(r) => { setAddr(r.formattedAddress || ''); setSelected(r); }}
+        />
+      );
+    }
+    render(<ParentEcho />); await ready();
+    // Type — parent echoes the text back as defaultValue
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Main St' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    // Predictions should still appear (not cancelled by echo)
+    expect(sessionMock.fetchPredictions).toHaveBeenCalled();
+    expect(screen.getByRole('option')).toBeTruthy();
+    // Select and let details resolve after blur
+    fireEvent.click(screen.getByRole('option'));
+    fireEvent.blur(screen.getByRole('combobox'));
+    await act(async () => { await Promise.resolve(); });
+    // The structured fields should have been delivered via onSelect
+    expect((screen.getByRole('combobox') as HTMLInputElement).value).toBe(placeResult.formattedAddress);
+  });
+
+  it('PlacesAutocomplete clears input resets the session', async () => {
+    sessionMock.fetchPredictions.mockResolvedValue([prediction]);
+    render(<Controlled />); await ready();
+    await type('Main');
+    sessionMock.reset.mockClear();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
+    expect(sessionMock.reset).toHaveBeenCalled();
+  });
 });

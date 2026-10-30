@@ -16,16 +16,23 @@ vi.mock('@/lib/supabase/client', () => ({
       const chain: Record<string, any> = {};
       for (const key of ['select', 'eq', 'order', 'limit']) chain[key] = () => chain;
       chain.update = (payload: unknown) => { state.writes.push({ table, payload }); return chain; };
-      chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: table === 'events' ? state.rows : [], error: null }).then(resolve);
+      chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: (table === 'events' || table === 'parties') ? state.rows : [], error: null }).then(resolve);
       return chain;
     },
   }),
 }));
 vi.mock('@/lib/actions/event-persistence', () => ({ createEvent: state.createEvent }));
+vi.mock('@/lib/actions/party-persistence', () => ({
+  createParty: (_supabase: unknown, payload: unknown) => { state.writes.push({ table: 'parties', payload }); return Promise.resolve({ success: true, partyId: 'new-party' }); },
+  updateParty: (_supabase: unknown, _id: string, payload: unknown) => { state.writes.push({ table: 'parties', payload }); return Promise.resolve({ success: true }); },
+}));
 vi.mock('@/hooks/useCategoryConfig', () => ({ useCategoryConfig: () => ({ labels: { personLabel: 'guest', entityNamePlural: 'bookings' } }) }));
 vi.mock('@/components/dashboard/PageHelp', () => ({ PageHelp: () => null }));
 vi.mock('@/components/dashboard/CsvExportButton', () => ({ CsvExportButton: () => null }));
-vi.mock('@/components/dashboard/EmptyState', () => ({ default: () => null }));
+vi.mock('@/components/dashboard/EmptyState', () => ({
+  default: ({ actionLabel, onAction }: { actionLabel?: string; onAction?: () => void }) =>
+    actionLabel && onAction ? <button onClick={onAction}>{actionLabel}</button> : null,
+}));
 vi.mock('@/components/auth/PhoneInput', () => ({ PhoneInput: () => null }));
 vi.mock('next/link', () => ({ default: ({ children }: any) => <span>{children}</span> }));
 vi.mock('next/image', () => ({ default: () => null }));
@@ -47,6 +54,7 @@ vi.mock('@/components/ui/AddressAutocomplete', () => ({
 import { BusinessTab } from '@/app/dashboard/settings/tabs/BusinessTab';
 import DiscoveryPage from '@/app/dashboard/discovery/page';
 import EventsPage from '@/app/dashboard/events/page';
+import PartiesPage from '@/app/dashboard/parties/page';
 import LocationsPage from '@/app/dashboard/locations/page';
 import InvoicesPage from '@/app/dashboard/invoices/page';
 import { StepDetails } from '@/app/get-started/steps/StepDetails';
@@ -128,6 +136,59 @@ describe('#751 address form contracts', () => {
     await waitFor(() => expect(state.fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true));
     const [, init] = state.fetch.mock.calls.find(([, init]) => init?.method === 'PUT')!;
     expect(JSON.parse(init.body)).toMatchObject({ id: 'loc-1', address: 'Manual street', city: 'Manual city' });
+  });
+
+  it('party creation saves venue_address separately from free-text venue name', async () => {
+    render(<PartiesPage />);
+    // Open the create form
+    const addBtns = await screen.findAllByRole('button', { name: /New Party/ });
+    fireEvent.click(addBtns[0]);
+    fireEvent.change(screen.getByPlaceholderText('e.g. Summer BBQ Party'), { target: { value: 'Test Party' } });
+    // Date is required
+    const dateInputs = screen.getAllByDisplayValue('');
+    const dateInput = dateInputs.find(el => el.getAttribute('type') === 'date');
+    if (dateInput) fireEvent.change(dateInput, { target: { value: '2099-12-01' } });
+    // Venue name is free text — not the address field
+    fireEvent.change(screen.getByPlaceholderText('e.g. Eko Hotel, Victoria Island'), { target: { value: 'Grand Ballroom' } });
+    // venue_address uses PlacesAutocomplete — trigger the mock selection
+    fireEvent.click(screen.getByText('Choose address'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create Party' }));
+    await waitFor(() => expect(state.writes).toHaveLength(1));
+    expect(state.writes[0]).toMatchObject({
+      table: 'parties',
+      payload: expect.objectContaining({
+        venue: 'Grand Ballroom',
+        venue_address: '10 Main Street, Lagos',
+        business_id: 'business-1',
+      }),
+    });
+  });
+
+  it('party editing restores saved venue_address and preserves manual correction', async () => {
+    state.rows = [{
+      id: 'party-1', name: 'Saved Party', date: '2099-12-01', time: null, end_time: null,
+      venue: 'Old Venue', venue_address: 'Old Address, Lagos', dress_code: null,
+      image_url: null, allow_plus_ones: false, max_plus_ones: null, ask_dietary: false,
+      invite_message: null, max_guests: null, party_type: null, description: null,
+      status: 'draft', total_rsvps: 0, attending_count: 0, rsvp_yes_message: null,
+      rsvp_maybe_message: null, rsvp_no_message: null, followup_message: null,
+      followup_days_before: 1,
+    }];
+    render(<PartiesPage />);
+    fireEvent.click(await screen.findByText('Saved Party'));
+    // Detail view opens first — click Edit to open the form
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    // venue_address should be restored
+    const addressInput = screen.getByLabelText('Physical address') as HTMLInputElement;
+    expect(addressInput.value).toBe('Old Address, Lagos');
+    // Manual correction
+    fireEvent.change(addressInput, { target: { value: 'New Address, Abuja' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(state.writes).toHaveLength(1));
+    expect(state.writes[0]).toMatchObject({
+      table: 'parties',
+      payload: expect.objectContaining({ venue_address: 'New Address, Abuja' }),
+    });
   });
 
   it('invoice creation saves selected customer address without changing payment behavior', async () => {

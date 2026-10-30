@@ -101,7 +101,7 @@ export default function AddressAutocomplete({
     dismiss();
     valueRef.current = input;
     onChangeRef.current(input); // Manual entry preserves other independently editable fields.
-    if (!input.trim()) return;
+    if (!input.trim()) { servicesRef.current?.reset(); return; }
     const request = requestRef.current;
     debounceTimerRef.current = setTimeout(() => {
       if (!autocompleteServiceRef.current || request !== requestRef.current) return;

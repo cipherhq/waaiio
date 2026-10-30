@@ -117,7 +117,8 @@ export default function AddressAutocomplete({
     valueRef.current = input;
     setValue(input);
     onManualChange?.(input);
-    if (!input.trim() || !ready) return;
+    if (!input.trim()) { sessionRef.current?.reset(); return; }
+    if (!ready) return;
     const request = requestRef.current;
     debounceTimerRef.current = setTimeout(async () => {
       if (!mountedRef.current || request !== requestRef.current) return;
