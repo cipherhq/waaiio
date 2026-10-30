@@ -233,20 +233,21 @@ describe('shared Businesses authorization preparation lifecycle', () => {
     const pending = deferred<Response>(); f.prepare.mockReturnValueOnce(pending.promise);
     vi.stubGlobal('prompt', vi.fn().mockReturnValue('reviewed messaging'));
     render(<Businesses />); await open(); await ready();
+    const messagingButton = screen.getByRole('button', { name: 'Suspend Messaging' });
     if (first === 'review') {
       await userEvent.click(screen.getByRole('button', { name: 'Standard', exact: true }));
       await userEvent.type(screen.getByRole('textbox', { name: 'Reason for change' }), 'Reviewed');
       await userEvent.click(screen.getByRole('button', { name: 'Confirm and authorize' }));
-    } else await userEvent.click(screen.getByRole('button', { name: 'Suspend Messaging' }));
+    } else await userEvent.click(messagingButton);
     await waitFor(() => expect(f.prepare).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('button', { name: 'Standard', exact: true })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Suspend Messaging' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: first === 'review' ? 'Suspend Messaging' : 'Standard', exact: true }));
+    expect(messagingButton).toBeDisabled();
+    fireEvent.click(first === 'review' ? messagingButton : screen.getByRole('button', { name: 'Standard', exact: true }));
     expect(f.prepare).toHaveBeenCalledTimes(1);
     await act(async () => pending.resolve(prepared())); await screen.findByPlaceholderText('000000');
-    expect(screen.getByRole('button', { name: 'Suspend Messaging' })).toBeDisabled();
+    expect(messagingButton).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Suspend Messaging' })).not.toBeDisabled());
+    await waitFor(() => expect(messagingButton).not.toBeDisabled());
     expect(f.mutation).not.toHaveBeenCalled();
   });
 });
