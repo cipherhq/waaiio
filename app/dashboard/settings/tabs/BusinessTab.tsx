@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { getCategoryByKey } from '@/lib/categoryConfig';
 import { PRICING_TIERS, formatCurrency } from '@/lib/constants';
@@ -25,9 +26,15 @@ const DEFAULT_HOURS: WeekSchedule = Object.fromEntries(
 export function BusinessTab({ business, capabilities, country, curr, saving, setSaving, saved, setSaved, openSections, toggleSection }: SettingsTabProps) {
   const meta = (business.metadata || {}) as Record<string, unknown>;
 
+  const router = useRouter();
+
   // Logo upload state
   const [logoUrl, setLogoUrl] = useState(business.logo_url);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+
+  useEffect(() => {
+    setLogoUrl(business.logo_url);
+  }, [business.id, business.logo_url]);
 
   // Bot code editing
   const [editingBotCode, setEditingBotCode] = useState(false);
@@ -226,6 +233,7 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                               const data = await res.json();
                               if (res.ok && data.url) {
                                 setLogoUrl(data.url);
+                                router.refresh();
                               } else {
                                 alert(data.error || 'Upload failed');
                               }

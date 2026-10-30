@@ -1,8 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDateTime } from '@/lib/formatters';
 import { Activity, Database, CreditCard, MessageSquare, Server, CheckCircle, XCircle, Clock } from 'lucide-react';
+
+// A head-only count has no data rows. Missing counts are unknown, not zero.
+function readableCount(count: number | null | undefined): number {
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) {
+    throw new Error('Count unavailable');
+  }
+  return count;
+}
 
 interface HealthCheck {
   name: string;
@@ -14,30 +22,38 @@ interface HealthCheck {
 export default function SystemHealth() {
   const [checks, setChecks] = useState<HealthCheck[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dbStats, setDbStats] = useState<{ table: string; count: number }[]>([]);
+  const [dbStats, setDbStats] = useState<{ table: string; count: number | null }[]>([]);
   const [lastRefresh, setLastRefresh] = useState<string>('');
 
+  const running = useRef(false);
   async function runChecks() {
+    if (running.current) return;
+    running.current = true;
     setLoading(true);
+    setChecks([]);
+    setDbStats([]);
+    setLastRefresh('');
     const results: HealthCheck[] = [];
 
     // 1. Database connectivity
     const dbStart = Date.now();
     try {
-      const { data, error } = await adminDb.from('businesses').select('id', { count: 'exact', head: true });
+      const { count, error } = await adminDb.from('businesses').select('id', { count: 'exact', head: true });
       if (error) throw error;
-      results.push({ name: 'Database', status: 'ok', latency: Date.now() - dbStart, detail: `${data?.length ?? 0} businesses` });
-    } catch (e) {
-      results.push({ name: 'Database', status: 'error', latency: Date.now() - dbStart, detail: (e as Error).message });
+      results.push({ name: 'Database', status: 'ok', latency: Date.now() - dbStart, detail: `${readableCount(count)} businesses` });
+    } catch {
+      results.push({ name: 'Database', status: 'error', latency: Date.now() - dbStart, detail: 'Unavailable: database read or count failed' });
     }
 
     // 2. Auth service
     const authStart = Date.now();
     try {
-      const { data } = await adminDb.from('profiles').select('id', { count: 'exact', head: true });
-      results.push({ name: 'Auth / Profiles', status: 'ok', latency: Date.now() - authStart });
+      const { count, error } = await adminDb.from('profiles').select('id', { count: 'exact', head: true });
+      if (error) throw error;
+      readableCount(count);
+      results.push({ name: 'Auth / Profiles', detail: 'Profiles readable', status: 'ok', latency: Date.now() - authStart });
     } catch {
-      results.push({ name: 'Auth / Profiles', status: 'error', latency: Date.now() - authStart });
+      results.push({ name: 'Auth / Profiles', status: 'error', detail: 'Unavailable: database read failed', latency: Date.now() - authStart });
     }
 
     // 3. Payment tables
@@ -47,60 +63,71 @@ export default function SystemHealth() {
         adminDb.from('payments').select('id', { count: 'exact', head: true }),
         adminDb.from('business_payouts').select('id', { count: 'exact', head: true }),
       ]);
+      if (paymentsRes.error) throw paymentsRes.error;
+      if (payoutsRes.error) throw payoutsRes.error;
+      readableCount(paymentsRes.count);
+      readableCount(payoutsRes.count);
       results.push({ name: 'Payment System', status: 'ok', latency: Date.now() - payStart, detail: 'Payments + Payouts accessible' });
     } catch {
-      results.push({ name: 'Payment System', status: 'error', latency: Date.now() - payStart });
+      results.push({ name: 'Payment System', status: 'error', detail: 'Unavailable: database read failed', latency: Date.now() - payStart });
     }
 
     // 4. WhatsApp channels
     const waStart = Date.now();
     try {
-      const { data } = await adminDb.from('whatsapp_channels').select('country_code, is_active, provider').eq('is_active', true);
-      const active = (data || []).length;
+      const { data, error } = await adminDb.from('whatsapp_channels').select('country_code, is_active, provider').eq('is_active', true);
+      if (error) throw error;
+      if (!Array.isArray(data)) throw new Error('Channel data unavailable');
+      const active = data.length;
       results.push({ name: 'WhatsApp Channels', status: active > 0 ? 'ok' : 'error', latency: Date.now() - waStart, detail: `${active} active channel${active !== 1 ? 's' : ''}` });
     } catch {
-      results.push({ name: 'WhatsApp Channels', status: 'error', latency: Date.now() - waStart });
+      results.push({ name: 'WhatsApp Channels', status: 'error', detail: 'Unavailable: database read failed', latency: Date.now() - waStart });
     }
 
     // 5. Bot sessions
     const botStart = Date.now();
     try {
-      const { count } = await adminDb.from('bot_sessions').select('id', { count: 'exact', head: true }).eq('is_active', true);
-      results.push({ name: 'Bot Engine', status: 'ok', latency: Date.now() - botStart, detail: `${count || 0} active sessions` });
+      const { count, error } = await adminDb.from('bot_sessions').select('id', { count: 'exact', head: true }).eq('is_active', true);
+      if (error) throw error;
+      results.push({ name: 'Bot Engine', status: 'ok', latency: Date.now() - botStart, detail: `${readableCount(count)} active sessions` });
     } catch {
-      results.push({ name: 'Bot Engine', status: 'error', latency: Date.now() - botStart });
+      results.push({ name: 'Bot Engine', status: 'error', detail: 'Unavailable: database read failed', latency: Date.now() - botStart });
     }
 
     // 6. Storage / platform settings
     const cfgStart = Date.now();
     try {
-      const { data } = await adminDb.from('platform_settings').select('key').limit(1);
-      results.push({ name: 'Platform Config', status: 'ok', latency: Date.now() - cfgStart });
+      const { data, error } = await adminDb.from('platform_settings').select('key').limit(1);
+      if (error) throw error;
+      if (!Array.isArray(data)) throw new Error('Config data unavailable');
+      results.push({ name: 'Platform Config', detail: 'Settings readable', status: 'ok', latency: Date.now() - cfgStart });
     } catch {
-      results.push({ name: 'Platform Config', status: 'error', latency: Date.now() - cfgStart });
+      results.push({ name: 'Platform Config', status: 'error', detail: 'Unavailable: database read failed', latency: Date.now() - cfgStart });
     }
 
     setChecks(results);
 
     // DB table stats
     const tables = ['businesses', 'profiles', 'bookings', 'payments', 'orders', 'bot_sessions', 'services', 'products', 'events', 'customer_subscriptions'];
-    const stats: { table: string; count: number }[] = [];
+    const stats: { table: string; count: number | null }[] = [];
     for (const t of tables) {
       try {
-        const { count } = await adminDb.from(t).select('id', { count: 'exact', head: true });
-        stats.push({ table: t, count: count || 0 });
+        const { count, error } = await adminDb.from(t).select('id', { count: 'exact', head: true });
+        if (error) throw error;
+        stats.push({ table: t, count: readableCount(count) });
       } catch {
-        stats.push({ table: t, count: -1 });
+        stats.push({ table: t, count: null });
       }
     }
     setDbStats(stats);
     setLastRefresh(new Date().toISOString());
+    running.current = false;
     setLoading(false);
   }
 
   useEffect(() => { runChecks(); }, []);
 
-  const allOk = checks.every(c => c.status === 'ok');
+  const allOk = checks.length === 6 && checks.every(c => c.status === 'ok') && dbStats.length === 10 && dbStats.every(s => s.count !== null);
   const avgLatency = checks.length > 0 ? Math.round(checks.reduce((s, c) => s + (c.latency || 0), 0) / checks.length) : 0;
 
   return (
@@ -108,7 +135,7 @@ export default function SystemHealth() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">System Health</h1>
-          <p className="mt-1 text-sm text-gray-500">Platform status and database metrics</p>
+          <p className="mt-1 text-sm text-gray-500">Database readability and metrics. These checks do not certify provider availability or complete payment flows.</p>
         </div>
         <button onClick={runChecks} disabled={loading}
           className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-600 disabled:opacity-50">
@@ -118,7 +145,7 @@ export default function SystemHealth() {
 
       {/* Overall status */}
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        <SummaryCard label="Overall Status" value={loading ? 'Checking...' : allOk ? 'All Systems OK' : 'Issues Detected'} icon={allOk ? CheckCircle : XCircle} color={allOk ? 'green' : 'red'} />
+        <SummaryCard label="Overall Status" value={loading ? 'Checking...' : allOk ? 'Database Reads OK' : 'Issues Detected'} icon={allOk ? CheckCircle : XCircle} color={allOk ? 'green' : 'red'} />
         <SummaryCard label="Avg Latency" value={`${avgLatency}ms`} icon={Clock} color={avgLatency < 500 ? 'green' : avgLatency < 1000 ? 'yellow' : 'red'} />
         <SummaryCard label="Services Checked" value={String(checks.length)} icon={Activity} color="blue" />
       </div>
@@ -131,7 +158,7 @@ export default function SystemHealth() {
         </div>
         <div className="divide-y divide-gray-50">
           {checks.map(check => (
-            <div key={check.name} className="flex items-center justify-between px-5 py-3.5">
+            <div key={check.name} role="group" aria-label={'Check ' + check.name} className="flex items-center justify-between px-5 py-3.5">
               <div className="flex items-center gap-3">
                 <span className={`inline-block h-3 w-3 rounded-full ${
                   check.status === 'ok' ? 'bg-green-400' :
@@ -152,7 +179,7 @@ export default function SystemHealth() {
                   check.status === 'error' ? 'bg-red-100 text-red-700' :
                   'bg-yellow-100 text-yellow-700'
                 }`}>
-                  {check.status === 'ok' ? 'Healthy' : check.status === 'error' ? 'Error' : 'Checking'}
+                  {check.status === 'ok' ? 'Readable' : check.status === 'error' ? 'Unavailable' : 'Checking'}
                 </span>
               </div>
             </div>
@@ -167,9 +194,9 @@ export default function SystemHealth() {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-y divide-gray-50">
           {dbStats.map(s => (
-            <div key={s.table} className="px-4 py-3 text-center">
+            <div key={s.table} role="group" aria-label={'Table ' + s.table} className="px-4 py-3 text-center">
               <p className="text-xs text-gray-500">{s.table.replace(/_/g, ' ')}</p>
-              <p className="mt-1 text-lg font-bold text-gray-900">{s.count >= 0 ? s.count.toLocaleString() : '—'}</p>
+              <p className="mt-1 text-lg font-bold text-gray-900">{s.count !== null ? s.count.toLocaleString() : 'Unavailable'}</p>
             </div>
           ))}
         </div>

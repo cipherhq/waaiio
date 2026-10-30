@@ -41,11 +41,19 @@ export async function GET() {
     }
 
     const serviceClient = createServiceClient();
-    const { data: profile } = await serviceClient
+    const { data: profile, error: profileError } = await serviceClient
       .from('profiles')
       .select('metadata')
       .eq('id', user.id)
       .maybeSingle();
+
+    if (profileError) {
+      logger.error('[CONSENT] Profile read error:', profileError);
+      return NextResponse.json({ error: 'Failed to load consent' }, { status: 500 });
+    }
+    if (!profile) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    }
 
     const metadata = (profile?.metadata || {}) as Record<string, unknown>;
     const consent = (metadata.consent_preferences || DEFAULT_CONSENT) as ConsentPreferences;
@@ -83,13 +91,22 @@ export async function POST(request: NextRequest) {
     const serviceClient = createServiceClient();
 
     // Fetch current profile metadata
-    const { data: profile } = await serviceClient
+    const { data: profile, error: profileError } = await serviceClient
       .from('profiles')
       .select('metadata')
       .eq('id', user.id)
       .maybeSingle();
 
-    const existingMetadata = (profile?.metadata || {}) as Record<string, unknown>;
+    if (profileError) {
+      logger.error('[CONSENT] Profile read error:', profileError);
+      return NextResponse.json({ error: 'Failed to load consent' }, { status: 500 });
+    }
+    if (!profile) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    }
+
+    const existingMetadata = (profile.metadata || {}) as Record<string, unknown>;
+    const existingConsent = (existingMetadata.consent_preferences || {}) as Partial<ConsentPreferences>;
 
     // Fetch current privacy policy version from platform_settings
     let policyVersion = '2026-05-23'; // fallback
@@ -115,6 +132,7 @@ export async function POST(request: NextRequest) {
     }
 
     const consentPreferences: ConsentPreferences = {
+      ...existingConsent,
       marketing_emails,
       analytics,
       ai_processing,
@@ -130,19 +148,30 @@ export async function POST(request: NextRequest) {
       consent_preferences: consentPreferences,
     };
 
-    const { error: updateError } = await serviceClient
+    const { data: updatedProfile, error: updateError } = await serviceClient
       .from('profiles')
       .update({ metadata: updatedMetadata })
-      .eq('id', user.id);
+      .eq('id', user.id)
+      .select('metadata')
+      .maybeSingle();
 
     if (updateError) {
       logger.error('[CONSENT] Update error:', updateError);
       return NextResponse.json({ error: 'Failed to update consent' }, { status: 500 });
     }
 
+    if (!updatedProfile) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    }
+    const persistedMetadata = updatedProfile.metadata as Record<string, unknown> | null;
+    const persistedConsent = persistedMetadata?.consent_preferences;
+    if (!persistedConsent) {
+      return NextResponse.json({ error: 'Failed to confirm consent' }, { status: 500 });
+    }
+
     logger.info(`[CONSENT] User ${user.id} updated consent: marketing=${marketing_emails}, analytics=${analytics}, ai=${ai_processing}`);
 
-    return NextResponse.json({ success: true, consent: consentPreferences });
+    return NextResponse.json({ success: true, consent: persistedConsent });
   } catch (error) {
     logger.error('[CONSENT] POST error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
