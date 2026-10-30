@@ -805,7 +805,7 @@ export default function PayoutsPage() {
                           </span>
                           {p.status_explanation && <p className="mt-2 max-w-xs text-xs text-gray-600">{p.status_explanation}</p>}
                           {p.recorded_context && <p className="mt-1 max-w-xs text-xs text-gray-500">Recorded context: {p.recorded_context.join(' ')}</p>}
-                          {p.linked_destination && <p className="mt-1 max-w-xs text-xs text-gray-500">Linked payout account: {p.linked_destination}</p>
+                          {p.linked_destination && <p className="mt-1 max-w-xs text-xs text-gray-500">Linked payout account: {p.linked_destination}</p>}
                         </td>
                       </tr>
                     ))}
