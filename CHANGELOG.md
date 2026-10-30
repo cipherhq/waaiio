@@ -46,6 +46,12 @@
 - Added actual-handler and rendered-page coverage for refused actions, supported Paystack setup, historical account visibility and password-protected change/disconnect.
 - Preserved country routing, financial dispatch, manual-bank settlement, reconciliation and nonaffected providers.
 
+### #762 / #777 — Admin PATCH and email CORS transport (2026-10-30)
+
+- Added PATCH to both existing admin middleware allow-method lists so allowlisted admin clients can complete PATCH preflight.
+- Applied the existing admin CORS helper to email OPTIONS and every POST outcome, including validation, authorization, rate-limit and failure responses; preserved rate-limit headers and existing authentication/provider behavior.
+- Added 18 actual-middleware and 35 actual-email-handler tests with synthetic auth/provider boundaries covering allowed and unknown origins, preflight, authorized/denied requests and error outcomes. These tests do not certify hosted authentication, RLS or recipient email delivery.
+
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
 - **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
@@ -68,6 +74,12 @@
 - **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
 - **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
 
+### #762 — System Health database readability and counts (2026-10-30)
+
+- **`admin/src/pages/SystemHealth.tsx`**: Use the returned count for head-only reads, preserving genuine zero and showing missing counts as unavailable. Check returned and thrown errors for every service and table statistic, including both payment-table reads; failed reads affect overall status while independent probes continue.
+- **Refresh and scope**: Clear previous results while checking and recover after read failures. Labels describe database readability and do not certify provider availability or complete payment flows; authenticated identity, RLS and probe queries are unchanged.
+- **Mounted verification**: `admin/src/__tests__/system-health-762.test.tsx` passed 56 tests with zero skips in Admin job124334567531, canonical CI41134821502, source020b7a7623496b5b34025f051729574859b483d8 / checkout4a3b0134c478d891a89a355e03b10d68cf0984d6. Admin build and all12 CI jobs passed; deployment/runtime certification remains separate.
+
 ### #752 — Queue tab: Share Queue QR code and link (2026-10-29)
 
 - **`app/dashboard/queue/page.tsx`**: Added "Share Queue" link in the action buttons group (alongside Pause/Resume, Walk-in, Call Next). Links to `/dashboard/qr-code?template=queue`, opening the QR Code page with "Scan to Join Queue" pre-selected.
@@ -76,6 +88,13 @@
 - **`app/dashboard/queue/__tests__/queue-share-qr.test.tsx`** (new): 15 rendered UI tests — Share Queue link, queue pre-selection + guidance, channel guard (no bot, shared w/o code), artifact withholding, canonical QR/clipboard match, shared-fallback routing, assigned dedicated + shared pref, assigned shared + non-shared pref, dedicated/generic/invalid defaults.
 - **Affects**: Queue dashboard page and QR Code dashboard page only. No bot flow, capability, schema, payment, or channel changes.
 - **Could break**: Queue QR sharing requires a real bot channel — businesses without one see setup guidance. Other templates retain existing fallback behavior.
+
+### #762 / #780 — Broadcast submission and history outcomes (2026-10-30)
+
+- Validate the current session and recipient reads, require HTTP success plus an explicit API acknowledgement before recording sent history, and count the recipients actually submitted.
+- Show rejected or unknown submission outcomes and accepted submissions whose history write fails separately; preserve the draft on these outcomes and prevent duplicate submission from the mounted page.
+- Describe history as recorded status rather than confirmed recipient delivery. Preserve disabled WhatsApp/SMS channels and existing audience semantics.
+- Added 26 mounted-page tests with synthetic session, database and request boundaries. Page-local duplicate protection does not provide durable cross-reload idempotency, and API acknowledgement does not certify email delivery.
 
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
@@ -5669,3 +5688,10 @@ If something breaks:
 - `app/(marketing)/HomeClient.tsx`: replace “Up and running in minutes” with “Set up your business on WhatsApp”.
 - **Affects**: Only the homepage setup heading; no timing promise, layout, links, pricing or signup behavior changes.
 - **Could break**: Heading wrapping at narrow widths; existing homepage tests/build and available preview checks supply evidence. The wider #526 audit remains out of scope.
+
+### #762 — Reviewed party seating groups and pinned assignments (2026-10-30)
+
+- **Party dashboard and seating planner**: Add one organizer-set seating group per invitation, explicit allowed tables, persistent manual pins, and randomized previews for unpinned guests. Invitations and plus-ones stay together; ungrouped guests use remaining capacity. Preview shows weighted occupancy and overflow; a partial plan requires explicit acknowledgment.
+- **Seating API and M486**: Recompute the reviewed plan server-side, reject stale/conflicting plans, and commit validated assignments atomically with replay protection. Preserve pinned arrangements and existing M457 capacity guards, including rollback of capacity-conflicting RSVP growth. Existing assignments migrate as pinned.
+- **Tests**: Actual planner, HTTP handler, mounted dashboard and six updated adapter regression cases; disposable PostgreSQL tests load real M457/M486 migrations and exercise scoped authorization, pins, swaps, rollback, partial acknowledgment and concurrency. Exact-head execution evidence is recorded on PR #776; jsdom is not browser layout proof.
+- **Affects / could break**: Party seating configuration, assignment and database write serialization. Application/schema alignment requires separately authorized M486 rollout; new seating controls require the new RPC. Hosted migration, deployed acceptance and browser layout verification remain separate. Custom RSVP questions and reminders are not implemented by this entry.
