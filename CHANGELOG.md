@@ -1,3 +1,9 @@
+### #762 W27 — Confirm account preference persistence (2026-10-30)
+
+- Check account preference reads and returned update rows before acknowledging a save; preserve unrelated metadata and recorded terms acceptance.
+- Show retryable load/save failures in Account settings, use confirmed persisted preferences, disable toggles while saving, and keep optional browser-cache/audit failures separate from server persistence.
+- Add actual-handler stateful tests and rendered save/remount regression coverage. No migration or merchant Broadcast policy change.
+
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
 - **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.

@@ -15,6 +15,20 @@ import {
 import { ReAuthModal } from '@/components/dashboard/ReAuthModal';
 import type { SettingsTabProps } from './types';
 
+interface AccountConsent {
+  marketing_emails: boolean;
+  analytics: boolean;
+  ai_processing: boolean;
+}
+
+function isAccountConsent(value: unknown): value is AccountConsent {
+  if (!value || typeof value !== 'object') return false;
+  const consent = value as Record<string, unknown>;
+  return typeof consent.marketing_emails === 'boolean' &&
+    typeof consent.analytics === 'boolean' &&
+    typeof consent.ai_processing === 'boolean';
+}
+
 export function AccountTab({ business, capabilities, country, curr, saving, setSaving, saved, setSaved, openSections, toggleSection }: SettingsTabProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -32,6 +46,8 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   const [consentLoaded, setConsentLoaded] = useState(false);
   const [consentSaving, setConsentSaving] = useState(false);
   const [consentSaved, setConsentSaved] = useState(false);
+  const [consentError, setConsentError] = useState('');
+  const [consentLoadAttempt, setConsentLoadAttempt] = useState(0);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteGracePeriod, setDeleteGracePeriod] = useState(true);
   const [privacyDeleteConfirm, setPrivacyDeleteConfirm] = useState('');
@@ -164,22 +180,81 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
     })();
   }, []);
 
-  // Load consent on first render
+  // A failed read must not turn unknown preferences into editable defaults.
   useEffect(() => {
-    if (!consentLoaded) {
-      fetch('/api/account/consent')
-        .then(r => r.json())
-        .then(data => {
-          if (data.consent) {
-            setMarketingConsent(data.consent.marketing_emails ?? false);
-            setAnalyticsConsent(data.consent.analytics ?? false);
-            setAiConsent(data.consent.ai_processing ?? true);
-          }
-          setConsentLoaded(true);
-        })
-        .catch(() => setConsentLoaded(true));
+    let active = true;
+    setConsentLoaded(false);
+    setConsentError('');
+    async function loadConsent() {
+      try {
+        const response = await fetch('/api/account/consent');
+        if (!response.ok) throw new Error('Load failed');
+        const data = await response.json();
+        if (!isAccountConsent(data?.consent)) throw new Error('Invalid consent response');
+        if (!active) return;
+        setMarketingConsent(data.consent.marketing_emails);
+        setAnalyticsConsent(data.consent.analytics);
+        setAiConsent(data.consent.ai_processing);
+        setConsentLoaded(true);
+      } catch {
+        if (active) setConsentError('Could not load your preferences. Please retry.');
+      }
     }
-  }, [consentLoaded]);
+    void loadConsent();
+    return () => { active = false; };
+  }, [consentLoadAttempt]);
+
+  async function handleSaveConsent() {
+    setConsentSaving(true);
+    setConsentSaved(false);
+    setConsentError('');
+    try {
+      const response = await fetch('/api/account/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          marketing_emails: marketingConsent,
+          analytics: analyticsConsent,
+          ai_processing: aiConsent,
+        }),
+      });
+      if (!response.ok) throw new Error('Save failed');
+      const data = await response.json();
+      if (data?.success !== true || !isAccountConsent(data?.consent)) {
+        throw new Error('Invalid consent response');
+      }
+      const consent = data.consent;
+      setMarketingConsent(consent.marketing_emails);
+      setAnalyticsConsent(consent.analytics);
+      setAiConsent(consent.ai_processing);
+      setConsentSaved(true);
+
+      // Optional browser synchronization cannot undo confirmed server persistence.
+      try {
+        const existing = localStorage.getItem('waaiio_cookie_consent');
+        if (existing) {
+          const parsed = JSON.parse(existing);
+          parsed.analytics = consent.analytics;
+          parsed.marketing = consent.marketing_emails;
+          parsed.timestamp = new Date().toISOString();
+          localStorage.setItem('waaiio_cookie_consent', JSON.stringify(parsed));
+          window.dispatchEvent(new CustomEvent('waaiio:consent', { detail: parsed }));
+        }
+      } catch { /* Missing/unusable local cache does not change server preferences. */ }
+
+      try {
+        void fetch('/api/account/audit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'consent_updated', details: { marketing_emails: consent.marketing_emails, analytics: consent.analytics, ai_processing: consent.ai_processing } }),
+        }).catch(() => {});
+      } catch { /* Audit is best-effort after confirmed persistence. */ }
+    } catch {
+      setConsentError('Could not save your preferences. Please retry.');
+    } finally {
+      setConsentSaving(false);
+    }
+  }
 
   async function handleMfaEnroll() {
     setMfaEnrolling(true);
@@ -894,8 +969,13 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
               Control how your data is used. Changes take effect immediately.
             </p>
 
+            {consentError && <p role="alert" className="mt-4 text-sm text-red-600">{consentError}</p>}
             {!consentLoaded ? (
-              <p className="mt-4 text-sm text-gray-400">Loading preferences...</p>
+              consentError ? (
+                <button onClick={() => setConsentLoadAttempt(attempt => attempt + 1)} className="mt-3 text-sm font-semibold text-brand">
+                  Retry loading preferences
+                </button>
+              ) : <p className="mt-4 text-sm text-gray-400">Loading preferences...</p>
             ) : (
               <div className="mt-4 space-y-4">
                 {/* Marketing emails */}
@@ -905,7 +985,8 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     <p className="text-xs text-gray-400">Receive product updates, tips, and promotional content</p>
                   </div>
                   <button
-                    onClick={() => setMarketingConsent(!marketingConsent)}
+                    onClick={() => { setMarketingConsent(!marketingConsent); setConsentSaved(false); setConsentError(''); }}
+                    disabled={consentSaving}
                     className={`flex h-6 w-11 items-center rounded-full transition ${marketingConsent ? 'bg-brand' : 'bg-gray-200'}`}
                     role="switch"
                     aria-checked={marketingConsent}
@@ -922,7 +1003,8 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     <p className="text-xs text-gray-400">Help us improve by allowing anonymous usage data collection</p>
                   </div>
                   <button
-                    onClick={() => setAnalyticsConsent(!analyticsConsent)}
+                    onClick={() => { setAnalyticsConsent(!analyticsConsent); setConsentSaved(false); setConsentError(''); }}
+                    disabled={consentSaving}
                     className={`flex h-6 w-11 items-center rounded-full transition ${analyticsConsent ? 'bg-brand' : 'bg-gray-200'}`}
                     role="switch"
                     aria-checked={analyticsConsent}
@@ -939,7 +1021,8 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     <p className="text-xs text-gray-400">Required for WhatsApp bot intent detection and translation</p>
                   </div>
                   <button
-                    onClick={() => setAiConsent(!aiConsent)}
+                    onClick={() => { setAiConsent(!aiConsent); setConsentSaved(false); setConsentError(''); }}
+                    disabled={consentSaving}
                     className={`flex h-6 w-11 items-center rounded-full transition ${aiConsent ? 'bg-brand' : 'bg-gray-200'}`}
                     role="switch"
                     aria-checked={aiConsent}
@@ -963,50 +1046,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                 )}
 
                 <button
-                  onClick={async () => {
-                    setConsentSaving(true);
-                    setConsentSaved(false);
-                    try {
-                      const consentRes = await fetch('/api/account/consent', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          marketing_emails: marketingConsent,
-                          analytics: analyticsConsent,
-                          ai_processing: aiConsent,
-                        }),
-                      });
-                      if (!consentRes.ok) throw new Error('Save failed');
-                      // Also update localStorage cookie consent to match
-                      const existing = localStorage.getItem('waaiio_cookie_consent');
-                      if (existing) {
-                        try {
-                          const parsed = JSON.parse(existing);
-                          parsed.analytics = analyticsConsent;
-                          parsed.marketing = marketingConsent;
-                          parsed.timestamp = new Date().toISOString();
-                          localStorage.setItem('waaiio_cookie_consent', JSON.stringify(parsed));
-                          window.dispatchEvent(new CustomEvent('waaiio:consent', { detail: parsed }));
-                        } catch { /* ignore parse errors */ }
-                      }
-                      setConsentSaved(true);
-                      // Audit log
-                      fetch('/api/account/audit', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          action: 'consent_updated',
-                          details: {
-                            marketing_emails: marketingConsent,
-                            analytics: analyticsConsent,
-                            ai_processing: aiConsent,
-                          },
-                        }),
-                      }).catch(() => {});
-                    } catch { /* silent */ } finally {
-                      setConsentSaving(false);
-                    }
-                  }}
+                  onClick={handleSaveConsent}
                   disabled={consentSaving}
                   className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                 >
