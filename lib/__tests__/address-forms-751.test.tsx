@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   rows: [] as Record<string, unknown>[], writes: [] as Array<{ table: string; payload: unknown }>,
   createEvent: vi.fn(), fetch: vi.fn(),
 }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('@/components/dashboard/DashboardProvider', () => ({
   useBusiness: () => ({ id: 'business-1', name: 'Fixture', category: 'other', country_code: 'NG', currency: 'NGN', capabilities: ['ticketing'], subscription_tier: 'business' }),
 }));
