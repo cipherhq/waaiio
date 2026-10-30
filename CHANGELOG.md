@@ -79,6 +79,12 @@
 - **Affects**: WhatsApp bot capability selection menu. Only businesses with 11+ user-facing capabilities trigger pagination. All existing single-page behavior unchanged. No database, payment, migration, or API route changes.
 - **Could break**: If a business has exactly 10 user-facing capabilities + My Account (returning customer) = 11 items, the 11th item now appears on page 2 instead of being silently dropped. This is the intended fix.
 
+### #753 — Bot completion display pending action measurement (2026-10-30)
+
+- `app/dashboard/analytics/page.tsx`: show “Not yet measured” on the Bot Completion Rate card with “Successful customer actions are not measured yet.” Remove only the unused bot completion percentage state and calculation.
+- **Affects**: Bot completion card presentation. Booking-completion figures, other session counters, queries, filters and date behavior are unchanged.
+- **Could break**: The longer card wording may wrap differently at narrow widths; no rendered browser verification is claimed. Action measurement and the end-date correction remain separate work.
+
 ### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
 
 - **`docs/ops/subscription-messaging-credit-10pct-audit-2026-10-26.md`**: Surgical documentation corrections per CTO review. (1) Updated stale references: PRs #711 and #722 now noted as merged; #712 remains open draft on separate lane. (2) Moved Admin-control configurability from approved decisions to unresolved future implementation gates. (3) Explicitly distinguished four unresolved Owner decisions (discount/tax basis, annual billing, rounding rule, Admin-control design) from the already-approved 10% rate. (4) Clarified section 4 heading applies to the future implementation PR, not this documentation PR. (5) Labeled US/CA Premium 10% credit amounts as illustrative pending rounding approval. (6) Retained explicit "no merge without separate Owner authorization" in governance section.
@@ -5511,9 +5517,3 @@ If something breaks:
 - Correct the earlier viewport evidence characterization: jsdom width checks prove DOM presence only, not browser layout or absence of overflow. Browser acceptance is reported separately in the PR handoff.
 - **Affects**: Bot Text presentation and focused evidence only; no API, dictionary or bot-runtime changes.
 - **Could break**: Default-explanation wording or readback-test sequencing; existing save/validation behavior is unchanged.
-
-### #753 — Bot completion display pending action measurement (2026-10-30)
-
-- `app/dashboard/analytics/page.tsx`: show “Not yet measured” on the Bot Completion Rate card with “Successful customer actions are not measured yet.” Remove only the unused bot completion percentage state and calculation.
-- **Affects**: Bot completion card presentation. Booking-completion figures, other session counters, queries, filters and date behavior are unchanged.
-- **Could break**: The longer card wording may wrap differently at narrow widths; no rendered browser verification is claimed. Action measurement and the end-date correction remain separate work.
