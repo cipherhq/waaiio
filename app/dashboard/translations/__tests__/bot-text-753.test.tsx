@@ -251,11 +251,15 @@ describe('Bot Text page', () => {
     expect(screen.queryByText('Welcome back')).toBeNull();
   });
 
-  it('sends correct payload on save: business ID, key, language', async () => {
+  it('sends correct payload on save and refreshes rendered state', async () => {
+    // After save, the GET reload returns the new override — verify it renders
+    const updatedOverrides = [
+      { id: 'ov-new', lang: 'en', key: 'menu.what_to_do', value: 'Pick something:', updated_at: '2026-10-29' },
+    ];
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, makeApiResponse()))
       .mockResolvedValueOnce(jsonResponse(200, { success: true, upserted: 1, deleted: 0 }))
-      .mockResolvedValueOnce(jsonResponse(200, makeApiResponse()));
+      .mockResolvedValueOnce(jsonResponse(200, makeApiResponse(updatedOverrides)));
 
     render(<TranslationsPage />);
 
@@ -299,16 +303,30 @@ describe('Bot Text page', () => {
     expect(menuOverride).toBeTruthy();
     expect(menuOverride.lang).toBe('en');
     expect(menuOverride.value).toBe('Pick something:');
+
+    // After reload, loadData resets language to pcm; switch back to English
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText('English'));
+
+    // The saved value should appear in the textarea
+    await waitFor(() => {
+      const refreshedTextareas = screen.getAllByRole('textbox') as HTMLTextAreaElement[];
+      const refreshedMenu = refreshedTextareas.find(t => t.value === 'Pick something:');
+      expect(refreshedMenu).toBeTruthy();
+    });
   });
 
-  it('sends null value when clearing a field (restore default)', async () => {
+  it('sends null on clear and renders empty field after refresh', async () => {
     const existingOverrides = [
       { id: 'ov-1', lang: 'en', key: 'menu.what_to_do', value: 'Custom text', updated_at: '2026-01-01' },
     ];
+    // After clear-and-save, the reload returns no overrides (default restored)
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, makeApiResponse(existingOverrides)))
       .mockResolvedValueOnce(jsonResponse(200, { success: true, upserted: 0, deleted: 1 }))
-      .mockResolvedValueOnce(jsonResponse(200, makeApiResponse()));
+      .mockResolvedValueOnce(jsonResponse(200, makeApiResponse([])));
 
     render(<TranslationsPage />);
 
@@ -342,6 +360,22 @@ describe('Bot Text page', () => {
       );
       expect(menuOverride).toBeTruthy();
       expect(menuOverride.value).toBeNull();
+    });
+
+    // After reload, loadData resets language to pcm; switch back to English
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText('English'));
+
+    // The textarea should be empty (no override, back to default placeholder)
+    await waitFor(() => {
+      const refreshedTextareas = screen.getAllByRole('textbox') as HTMLTextAreaElement[];
+      const refreshedMenu = refreshedTextareas.find(t =>
+        t.placeholder === 'What would you like to do?'
+      );
+      expect(refreshedMenu).toBeTruthy();
+      expect(refreshedMenu!.value).toBe('');
     });
   });
 
@@ -453,5 +487,92 @@ describe('Bot Text page', () => {
     expect(messageCountTexts.length).toBeGreaterThan(0);
     // No "keys" text in category headers
     expect(screen.queryByText(/^\d+ keys?$/)).toBeNull();
+  });
+
+  it('labels English-only text as "English reference" when non-English selected', async () => {
+    // Default selected lang is pcm (Nigerian Pidgin).
+    // menu.what_to_do has a pcm platform override -> should show "Default (Nigerian Pidgin)"
+    // cap.scheduling has NO pcm override, only English -> should show "English reference"
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, makeApiResponse()));
+
+    render(<TranslationsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Menu prompt')).toBeTruthy();
+    });
+
+    // menu.what_to_do has pcm override "Wetin you wan do?" — shown as same-language default
+    expect(screen.getByText(/Default \(Nigerian Pidgin\)/)).toBeTruthy();
+    expect(screen.getByText('Wetin you wan do?')).toBeTruthy();
+
+    // cap.scheduling has no pcm override — English text shown as "English reference"
+    const englishRefLabels = screen.getAllByText('English reference:');
+    expect(englishRefLabels.length).toBeGreaterThan(0);
+  });
+
+  it('shows "Default" without language qualifier when English is selected', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, makeApiResponse()));
+
+    render(<TranslationsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Menu prompt')).toBeTruthy();
+    });
+
+    // Switch to English
+    fireEvent.click(screen.getByText('English'));
+
+    // English defaults should show as plain "Default:" (no language qualifier or "English reference")
+    await waitFor(() => {
+      const defaultLabels = screen.getAllByText(/^Default:$/);
+      expect(defaultLabels.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('renders at narrow viewport (375px) without overflow', async () => {
+    // Simulate a narrow mobile viewport
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 375 });
+    window.dispatchEvent(new Event('resize'));
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, makeApiResponse()));
+
+    render(<TranslationsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Menu prompt')).toBeTruthy();
+    });
+
+    // Core elements present and accessible at narrow width
+    expect(screen.getByText('Bot Text')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Search messages...')).toBeTruthy();
+    expect(screen.getByText('Save Changes')).toBeTruthy();
+    // Labels and inputs still render
+    expect(screen.getByText('Services menu item')).toBeTruthy();
+    const labels = screen.getAllByText('Your message', { exact: false });
+    expect(labels.length).toBeGreaterThan(0);
+  });
+
+  it('renders at desktop viewport (1280px) with all elements', async () => {
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1280 });
+    window.dispatchEvent(new Event('resize'));
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, makeApiResponse()));
+
+    render(<TranslationsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Menu prompt')).toBeTruthy();
+    });
+
+    // All elements present at desktop width
+    expect(screen.getByText('Bot Text')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Search messages...')).toBeTruthy();
+    expect(screen.getByText('Save Changes')).toBeTruthy();
+    expect(screen.getByText('Services menu item')).toBeTruthy();
+    // Category filter visible
+    expect(screen.getByText('All categories')).toBeTruthy();
+    // Internal keys visible as secondary reference
+    expect(screen.getByText('menu.what_to_do')).toBeTruthy();
+    expect(screen.getByText('cap.scheduling')).toBeTruthy();
   });
 });

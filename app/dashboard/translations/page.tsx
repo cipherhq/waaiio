@@ -142,19 +142,14 @@ export default function TranslationsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [business.id]);
 
-  // Get the platform default for a key+lang
-  const getPlatformDefault = useCallback((lang: string, key: string): string => {
+  // Get the platform default for a key in the exact language (no English fallback)
+  const getExactLangDefault = useCallback((lang: string, key: string): string => {
     if (!data) return '';
-    // Check platform overrides first
     const po = data.platformOverrides.find(p => p.lang === lang && p.key === key);
-    if (po) return po.value;
-    // Fall back to English platform override
-    const enPo = data.platformOverrides.find(p => p.lang === 'en' && p.key === key);
-    if (enPo) return enPo.value;
-    return '';
+    return po?.value || '';
   }, [data]);
 
-  // Get the English default text for a key (from platform overrides or key name)
+  // Get the English default text for a key (from platform overrides)
   const getEnglishDefault = useCallback((key: string): string => {
     if (!data) return '';
     const po = data.platformOverrides.find(p => p.lang === 'en' && p.key === key);
@@ -467,9 +462,13 @@ export default function TranslationsPage() {
                     {keysInCategory.map(key => {
                       const editKey = `${selectedLang}:${key}`;
                       const currentValue = edits.get(editKey) || '';
-                      const platformDefault = getPlatformDefault(selectedLang, key);
+                      const exactLangDefault = getExactLangDefault(selectedLang, key);
                       const englishDefault = getEnglishDefault(key);
-                      const displayDefault = platformDefault || englishDefault;
+                      const langName = LANGUAGE_NAMES[selectedLang] || selectedLang;
+                      // Determine which reference text to show and how to label it
+                      const hasExactLang = !!exactLangDefault;
+                      const hasEnglishOnly = !hasExactLang && !!englishDefault && selectedLang !== 'en';
+                      const displayDefault = exactLangDefault || englishDefault;
                       const label = getMessageLabel(key);
                       const context = getMessageContext(key);
                       const placeholderHelp = getPlaceholderHelp(key);
@@ -494,10 +493,20 @@ export default function TranslationsPage() {
                             </p>
                           )}
 
-                          {/* Current default text */}
-                          {displayDefault && (
+                          {/* Default / reference text — labelled by actual source */}
+                          {hasExactLang && (
                             <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
-                              Current default: <span className="italic">{displayDefault}</span>
+                              Default ({langName}): <span className="italic">{exactLangDefault}</span>
+                            </p>
+                          )}
+                          {hasEnglishOnly && (
+                            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+                              English reference: <span className="italic">{englishDefault}</span>
+                            </p>
+                          )}
+                          {selectedLang === 'en' && englishDefault && (
+                            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+                              Default: <span className="italic">{englishDefault}</span>
                             </p>
                           )}
 
