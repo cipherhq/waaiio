@@ -104,7 +104,7 @@ describe('W22 Payments Received mounted page', () => {
     expect(within(row).getByText('Invoice')).toBeTruthy();
     fireEvent.click(row);
     const modal = screen.getByRole('dialog');
-    expect(within(modal).getByText('Customer')).toBeTruthy();
+    expect(within(modal).getByText('Customer', { selector: 'span.font-medium' })).toBeTruthy();
     expect(within(modal).queryByText('Contact')).toBeNull();
     expect(within(modal).queryByText('Note')).toBeNull();
   });
