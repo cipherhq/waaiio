@@ -7,6 +7,15 @@
 - **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
 - **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
 
+### #752 — Queue tab: Share Queue QR code and link (2026-10-29)
+
+- **`app/dashboard/queue/page.tsx`**: Added "Share Queue" link in the action buttons group (alongside Pause/Resume, Walk-in, Call Next). Links to `/dashboard/qr-code?template=queue`, opening the QR Code page with "Scan to Join Queue" pre-selected.
+- **`app/dashboard/qr-code/page.tsx`**: Added `?template=` URL parameter support via `useSearchParams()`. Queue template requires resolved active bot channel; routing uses the channel's actual `channel_type` (not business preference). Artifacts withheld when setup incomplete. Reactive suffix via `useMemo`. Customer join guidance on dashboard and all 4 poster formats.
+- **`lib/__tests__/issue-496-qr-production.test.tsx`**: Added `next/navigation` mock for `useSearchParams` compatibility. Existing 3 routing-safety tests preserved and passing.
+- **`app/dashboard/queue/__tests__/queue-share-qr.test.tsx`** (new): 15 rendered UI tests — Share Queue link, queue pre-selection + guidance, channel guard (no bot, shared w/o code), artifact withholding, canonical QR/clipboard match, shared-fallback routing, assigned dedicated + shared pref, assigned shared + non-shared pref, dedicated/generic/invalid defaults.
+- **Affects**: Queue dashboard page and QR Code dashboard page only. No bot flow, capability, schema, payment, or channel changes.
+- **Could break**: Queue QR sharing requires a real bot channel — businesses without one see setup guidance. Other templates retain existing fallback behavior.
+
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
 - **`lib/payments/send-confirmation.ts`**: Added campaign donation recipient/business resolution block (section 2b) between invoice and order fallback. When `payment.campaign_id` is set and no booking/reservation/invoice resolved the customer, queries `campaign_donations` for `donor_phone`, `business_id`, `reference_code`, and joins to `campaigns(title, businesses(name, country_code))`. Previously, standalone campaign donations had no resolution path — `customerPhone` and `businessId` stayed null, causing `retryable_failed` with `no_business_resolved` forever.
