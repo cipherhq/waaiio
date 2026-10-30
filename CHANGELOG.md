@@ -1,3 +1,10 @@
+### #762 W14–W16 — Shared Staff/Services assignment authority (2026-10-30)
+
+- **Staff and Services editors / APIs**: Use service IDs and one per-service customer-choice value with transactional profile/assignment saves, committed snapshots, visible conflicts and stale-business response protection. Existing profile, service, class/package and photo-upload behavior is preserved.
+- **M482 / staff-service-contract**: Add a scoped owner-bound mutation/read RPC over existing tables. Preserve unrelated memberships, required-staff fallback after final removal, inactive assignments, explicit OFF semantics and conservative legacy name labels. Old name-array assignment writes require refresh.
+- **Tests**: Add actual HTTP-handler, rendered two-editor, real scheduling/public consumer and disposable PostgreSQL ACL/rollback/two-connection coverage. Execution evidence is recorded on the PR, not implied by this entry.
+- **Affects / risk**: Staff and service editing plus the stored state consumed by booking flows. M482 must be separately authorized and applied before the new editor contract is used; no hosted migration, booking-authority rewrite or provider operation is included. Existing fallback policies and booking guards remain authoritative.
+
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
 - **`lib/places-provider.ts`** (new): Shared New API adapter with per-instance session tokens via `createPlacesSession()`. Each input mount gets its own token lifecycle — token consumed on selection, fresh for next search. No global token sharing between inputs.
