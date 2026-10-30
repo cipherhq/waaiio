@@ -258,7 +258,7 @@ export interface StripeReadinessInput {
 
 /**
  * Verify Stripe API key is valid and the account can accept charges.
- * Stripe uses inline price_data for subscriptions, so there are no plan refs to verify.
+ * Catalog Price verification is separate; this preserves the existing readiness check.
  */
 export async function verifyStripeReadiness(input: StripeReadinessInput): Promise<PreflightResult> {
   const { stripeKey } = input;
@@ -298,5 +298,60 @@ export async function verifyStripeReadiness(input: StripeReadinessInput): Promis
       ok: false,
       reason: `Stripe readiness preflight error: ${message}`,
     };
+  }
+}
+
+export interface StripePricePreflightInput {
+  priceId: string;
+  expectedCurrency: string;
+  expectedAmountMajor: number;
+  stripeKey: string;
+}
+
+/** Read only: resolve a monthly fixed Price in the platform key's account/mode. */
+export async function verifyStripePrice(input: StripePricePreflightInput): Promise<PreflightResult> {
+  const { priceId, expectedCurrency, expectedAmountMajor, stripeKey } = input;
+  const scaled = expectedAmountMajor * 100;
+  const expectedMinor = Math.round(scaled);
+  if (typeof priceId !== 'string' || !/^price_[A-Za-z0-9]+$/.test(priceId) ||
+      typeof expectedCurrency !== 'string' || !/^[A-Za-z]{3}$/.test(expectedCurrency) ||
+      typeof expectedAmountMajor !== 'number' || !Number.isFinite(expectedAmountMajor) ||
+      expectedAmountMajor <= 0 || !Number.isSafeInteger(expectedMinor) ||
+      Math.abs(scaled - expectedMinor) > Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4 ||
+      typeof stripeKey !== 'string' || !stripeKey) {
+    return { ok: false, reason: 'Invalid Stripe Price reference or authoritative pricing' };
+  }
+  try {
+    const response = await fetch(
+      'https://api.stripe.com/v1/prices/' + encodeURIComponent(priceId) + '?expand%5B%5D=product',
+      { method: 'GET', headers: { Authorization: 'Bearer ' + stripeKey }, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!response.ok) return { ok: false, reason: 'Stripe Price fetch failed: HTTP ' + response.status };
+    const price = await response.json();
+    const product = price?.product;
+    const recurring = price?.recurring;
+    const keyMode = /^(?:sk|rk)_(live|test)_/.exec(stripeKey)?.[1];
+    if (!price || price.object !== 'price' || price.id !== priceId || price.active !== true ||
+        price.type !== 'recurring' || price.billing_scheme !== 'per_unit' ||
+        !recurring || recurring.interval !== 'month' || recurring.interval_count !== 1 || recurring.usage_type !== 'licensed' ||
+        price.custom_unit_amount !== null || price.transform_quantity !== null || price.tiers_mode !== null ||
+        !product || typeof product !== 'object' || Array.isArray(product) || product.object !== 'product' ||
+        typeof product.id !== 'string' || !/^prod_[A-Za-z0-9]+$/.test(product.id) ||
+        product.active !== true || product.deleted === true ||
+        typeof price.livemode !== 'boolean' || product.livemode !== price.livemode ||
+        (keyMode !== undefined && price.livemode !== (keyMode === 'live'))) {
+      return { ok: false, reason: 'Stripe Price or expanded Product is not an active fixed monthly catalog item' };
+    }
+    if (typeof price.currency !== 'string' || price.currency.toUpperCase() !== expectedCurrency.toUpperCase() ||
+        !Number.isSafeInteger(price.unit_amount) || price.unit_amount !== expectedMinor ||
+        (price.unit_amount_decimal != null &&
+          (typeof price.unit_amount_decimal !== 'string' || !/^\d+(?:\.0+)?$/.test(price.unit_amount_decimal) ||
+            Number(price.unit_amount_decimal) !== expectedMinor))) {
+      return { ok: false, reason: 'Stripe Price currency or minor-unit amount does not match authoritative pricing' };
+    }
+    return { ok: true, details: { priceId, productId: product.id, currency: price.currency, amount: price.unit_amount, livemode: price.livemode } };
+  } catch {
+    // Do not surface provider payloads, keys or raw exceptions.
+    return { ok: false, reason: 'Stripe Price verification unavailable' };
   }
 }

@@ -424,13 +424,33 @@ export async function POST(request: NextRequest) {
     }
 
     // Stripe runtime readiness preflight: verify API key valid + reachable (Phase 2)
-    const { verifyStripeReadiness } = await import('@/lib/payments/provider-preflight');
+    const { verifyStripeReadiness, verifyStripePrice } = await import('@/lib/payments/provider-preflight');
     const stripePreflight = await verifyStripeReadiness({ stripeKey });
     if (!stripePreflight.ok) {
       return NextResponse.json(
         { message: 'Payment service temporarily unavailable. Please try again later.', reason: stripePreflight.reason },
         { status: 503 },
       );
+    }
+
+
+    // Only genuine absence retains inline compatibility; configured invalid refs fail closed.
+    const rawRefs = tierPricing.provider_plan_refs;
+    if (Object.prototype.hasOwnProperty.call(tierPricing, 'provider_plan_refs') && !isRecord(rawRefs)) {
+      return NextResponse.json({ message: 'Stripe catalog configuration is invalid.' }, { status: 503 });
+    }
+    const hasStripeRef = isRecord(rawRefs) && Object.prototype.hasOwnProperty.call(rawRefs, 'stripe');
+    const stripePriceRef = hasStripeRef ? rawRefs.stripe : undefined;
+    if (hasStripeRef) {
+      if (typeof stripePriceRef !== 'string') {
+        return NextResponse.json({ message: 'Stripe catalog Price reference is invalid.' }, { status: 503 });
+      }
+      const verifiedPrice = await verifyStripePrice({
+        priceId: stripePriceRef, expectedCurrency: currency, expectedAmountMajor: monthlyPrice, stripeKey,
+      });
+      if (!verifiedPrice.ok) {
+        return NextResponse.json({ message: 'Stripe catalog Price validation failed.', reason: verifiedPrice.reason }, { status: 503 });
+      }
     }
 
     const amountInCents = Math.round(monthlyPrice * 100);
@@ -450,10 +470,14 @@ export async function POST(request: NextRequest) {
       'metadata[user_id]': user.id,
     });
 
-    stripeBody.set('line_items[0][price_data][currency]', currency.toLowerCase());
-    stripeBody.set('line_items[0][price_data][product_data][name]', `Waaiio ${tierName} Plan (Monthly)`);
-    stripeBody.set('line_items[0][price_data][unit_amount]', String(amountInCents));
-    stripeBody.set('line_items[0][price_data][recurring][interval]', 'month');
+    if (hasStripeRef && typeof stripePriceRef === 'string') {
+      stripeBody.set('line_items[0][price]', stripePriceRef);
+    } else {
+      stripeBody.set('line_items[0][price_data][currency]', currency.toLowerCase());
+      stripeBody.set('line_items[0][price_data][product_data][name]', `Waaiio ${tierName} Plan (Monthly)`);
+      stripeBody.set('line_items[0][price_data][unit_amount]', String(amountInCents));
+      stripeBody.set('line_items[0][price_data][recurring][interval]', 'month');
+    }
 
     const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',
