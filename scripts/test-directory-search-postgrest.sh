@@ -62,8 +62,10 @@ for i in $(seq 1 30); do
 done
 
 # ── Bootstrap roles (matching Supabase conventions) ──
+# Small delay to ensure PG is fully accepting connections after pg_isready
+sleep 2
 echo "Bootstrapping roles..."
-docker exec "${CONTAINER_PREFIX}_pg" psql -U postgres -d "${PG_DB}" <<'ROLESQL'
+docker exec -i "${CONTAINER_PREFIX}_pg" psql -U postgres -d "${PG_DB}" <<'ROLESQL'
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
     CREATE ROLE anon NOLOGIN;
@@ -157,6 +159,7 @@ echo "category_text field accessible."
 echo "Running PostgREST integration tests..."
 POSTGREST_URL="http://localhost:${POSTGREST_PORT}" \
 SERVICE_ROLE_KEY="${SERVICE_ROLE_JWT}" \
+REQUIRE_POSTGREST=1 \
 npx vitest run lib/marketplace/__tests__/directory-search-postgrest.test.ts
 
 echo "All tests passed."
