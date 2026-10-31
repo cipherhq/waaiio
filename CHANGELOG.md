@@ -1,3 +1,7 @@
+### 2026-10-31 — Historical replay Storage prerequisites
+
+- Independent replay-fixture scan identified R90 and standalone Stripe recurring bootstraps that also apply M491. Added only their missing service-role Storage CRUD grants. Historical cutover/concurrency logic, payment assertions and migration self-checks are unchanged.
+
 ### 2026-10-31 — Storage delta fixture parity
 
 - Added the same explicit Storage service grants to the isolated release-gate delta SQL bootstrap. Its separate fixture now matches the full replay bootstrap; M491 assertions and runtime behavior remain unchanged.

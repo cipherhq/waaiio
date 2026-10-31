@@ -103,6 +103,8 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
           name TEXT, owner UUID, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
         );
         ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+        -- Match the Storage prerequisites in the pre-applied CI bootstrap.
+        GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO service_role;
         CREATE OR REPLACE FUNCTION storage.foldername(name TEXT) RETURNS TEXT[] AS $$
           SELECT string_to_array(name, '/');
         $$ LANGUAGE SQL IMMUTABLE;
