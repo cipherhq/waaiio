@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CapabilityId } from '@/lib/capabilities/types';
 
@@ -9,9 +9,23 @@ const state = vi.hoisted(() => ({
   capabilities: [] as CapabilityId[],
   category: 'salon',
   tier: 'business',
+  tierRequirements: {} as Partial<Record<CapabilityId, 'growth' | 'business'>>,
 }));
 
 /* ─── mocks ─── */
+vi.mock('@/lib/capabilities/types', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/capabilities/types')>();
+  return {
+    ...actual,
+    CAPABILITY_TIER_REQUIREMENTS: {
+      ...actual.CAPABILITY_TIER_REQUIREMENTS,
+      // Unequal requirements are a test-only fixture for ALL vs ANY eligibility.
+      get loyalty() { return state.tierRequirements.loyalty ?? actual.CAPABILITY_TIER_REQUIREMENTS.loyalty; },
+      get membership() { return state.tierRequirements.membership ?? actual.CAPABILITY_TIER_REQUIREMENTS.membership; },
+    },
+  };
+});
+
 vi.mock('@/components/dashboard/DashboardProvider', () => ({
   useDashboard: () => ({
     business: {
@@ -60,12 +74,13 @@ function setCaps(...caps: CapabilityId[]) { state.capabilities = caps; }
 function setTier(t: string) { state.tier = t; }
 
 function expandAddFeatures() {
-  const btns = screen.queryAllByText('Add Features');
-  // Click all instances to expand (mobile + desktop sidebars)
-  btns.forEach(btn => fireEvent.click(btn));
+  const button = screen.getByRole('button', { name: 'Add Features' });
+  const section = button.parentElement!;
+  fireEvent.click(button);
+  return section;
 }
 
-beforeEach(() => { state.capabilities = []; state.category = 'salon'; state.tier = 'business'; });
+beforeEach(() => { state.capabilities = []; state.category = 'salon'; state.tier = 'business'; state.tierRequirements = {}; });
 afterEach(cleanup);
 
 /* ─── tests ─── */
@@ -109,21 +124,25 @@ describe('Sidebar capability gating (#762)', () => {
       const essentialLinks = screen.getAllByRole('link');
       expect(essentialLinks.find(l => l.textContent?.trim() === 'Loyalty Tiers')).toBeUndefined();
       // Expand Add Features
-      expandAddFeatures();
+      const section = expandAddFeatures();
       // Now Loyalty Tiers should appear inside Add Features
       expect(screen.getByText('Loyalty Tiers')).toBeTruthy();
+      expect(within(section).getByRole('link', { name: 'Loyalty Tiers' }).getAttribute('href'))
+        .toBe('/dashboard/membership');
     });
 
     it('with neither capability: Loyalty Tiers in Add Features (not essential)', () => {
       setCaps('scheduling');
       render(<Sidebar />);
-      expandAddFeatures();
-      // May or may not appear depending on tier — but NOT in essential
-      const essentialLinks = screen.getAllByRole('link').filter(l => {
-        // Check if link is before the Add Features section
-        return !l.closest('[class*="space-y-0.5"]');
-      });
-      expect(essentialLinks.find(l => l.textContent?.trim() === 'Loyalty Tiers')).toBeUndefined();
+      expect(screen.queryByRole('link', { name: /^Loyalty Tiers/ })).toBeNull();
+      const section = expandAddFeatures();
+      const tierLink = within(section).getByRole('link', { name: 'Loyalty Tiers' });
+      expect(tierLink.getAttribute('href')).toBe('/dashboard/membership');
+      // The only rendered Tiers link belongs to the actual Add Features section.
+      expect(screen.getAllByRole('link', { name: /^Loyalty Tiers/ })).toEqual([tierLink]);
+      const essentialLinks = screen.getAllByRole('link').filter(link => !section.contains(link));
+      expect(essentialLinks.length).toBeGreaterThan(0);
+      expect(essentialLinks.find(link => link.textContent?.trim() === 'Loyalty Tiers')).toBeUndefined();
     });
 
     it('with both capabilities: Loyalty Tiers is in essential nav, not Add Features', () => {
@@ -131,7 +150,37 @@ describe('Sidebar capability gating (#762)', () => {
       render(<Sidebar />);
       // Should be in essential (before Add Features)
       expect(screen.getByText('Loyalty Tiers')).toBeTruthy();
+      const tierLink = screen.getByRole('link', { name: 'Loyalty Tiers' });
+      const section = expandAddFeatures();
+      expect(section.contains(tierLink)).toBe(false);
+      expect(within(section).queryByRole('link', { name: /^Loyalty Tiers/ })).toBeNull();
+      expect(screen.getAllByRole('link', { name: /^Loyalty Tiers/ })).toEqual([tierLink]);
     });
+  });
+
+  describe('Add Features placement with unequal test-only tier requirements', () => {
+    it.each([
+      { loyalty: 'growth', membership: 'business', tier: 'growth', upgrade: true },
+      { loyalty: 'business', membership: 'growth', tier: 'growth', upgrade: true },
+      { loyalty: 'growth', membership: 'business', tier: 'business', upgrade: false },
+      { loyalty: 'business', membership: 'growth', tier: 'business', upgrade: false },
+    ] as const)('loyalty=$loyalty membership=$membership tier=$tier requires upgrade=$upgrade',
+      ({ loyalty, membership, tier, upgrade }) => {
+        state.tierRequirements = { loyalty, membership };
+        setTier(tier);
+        setCaps('scheduling');
+        render(<Sidebar />);
+        expect(screen.queryByRole('link', { name: /^Loyalty Tiers/ })).toBeNull();
+        const section = expandAddFeatures();
+        const link = within(section).getByRole('link', { name: /^Loyalty Tiers/ });
+        expect(screen.getAllByRole('link', { name: /^Loyalty Tiers/ })).toEqual([link]);
+        expect(link.getAttribute('href')).toBe(upgrade ? '/dashboard/billing' : '/dashboard/membership');
+        expect(link.getAttribute('title')).toBe(upgrade ? 'Upgrade to unlock Loyalty Tiers' : '');
+        // These headings and links are siblings in the rendered subsection.
+        let heading = link.previousElementSibling;
+        while (heading && heading.tagName !== 'P') heading = heading.previousElementSibling;
+        expect(heading?.textContent).toBe(upgrade ? 'Upgrade to Unlock' : 'Available to Add');
+      });
   });
 
   describe('Loyalty link (ANY semantics preserved)', () => {

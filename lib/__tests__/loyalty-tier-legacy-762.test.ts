@@ -192,14 +192,31 @@ describe('#762 legacy loyalty tier multiplier — actual handler execution', () 
     expect(txInsert).toBeUndefined();
   });
 
-  it('uses phoneWithPlus for customer_profiles.phone lookup', async () => {
+  it.each([
+    { customerPhone: '+2341234567890', businessId: 'biz-phone-prefixed' },
+    { customerPhone: '2341234567890', businessId: 'biz-phone-unprefixed' },
+  ])('uses normalized phone and business predicates for tier lookup: $customerPhone', async ({ customerPhone, businessId }) => {
     state.tierRow = null;
     const supabase = createMockSupabase();
     const fromSpy = supabase.from;
-    await callLegacy({ supabase });
-    // Find the customer_profiles query
+    await callLegacy({ supabase, customerPhone, businessId });
     const profileCalls = fromSpy.mock.calls.filter((c: unknown[]) => c[0] === 'customer_profiles');
     expect(profileCalls.length).toBeGreaterThan(0);
+    // Select the tier query itself, excluding other customer-profile operations.
+    const tierQueries = fromSpy.mock.calls.flatMap((call: unknown[], index: number) => {
+      if (call[0] !== 'customer_profiles') return [];
+      const query = fromSpy.mock.results[index].value;
+      return query.select.mock.calls.some((args: unknown[]) =>
+        args[0] === 'membership_tiers!inner(points_multiplier, is_active, business_id)'
+      ) ? [query] : [];
+    });
+    expect(tierQueries).toHaveLength(1);
+    expect(tierQueries[0].eq.mock.calls).toEqual([
+      ['business_id', businessId],
+      ['phone', '+2341234567890'],
+    ]);
+    expect(tierQueries[0].not).toHaveBeenCalledWith('membership_tier_id', 'is', null);
+    expect(tierQueries[0].maybeSingle).toHaveBeenCalledTimes(1);
   });
 
   it('paid path delegates to RPC, not inline tier logic', async () => {
