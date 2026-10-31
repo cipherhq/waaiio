@@ -317,10 +317,10 @@ BEGIN
 
   -- 11. Order status: conditional on approval
   IF p_approve_fulfillment THEN
-    UPDATE orders SET status = 'confirmed', paid_at = v_now, updated_at = v_now
+    UPDATE orders SET status = 'confirmed', updated_at = v_now
     WHERE id = p_order_id;
   ELSE
-    UPDATE orders SET status = 'paid_pending_approval', paid_at = v_now, updated_at = v_now
+    UPDATE orders SET status = 'paid_pending_approval', updated_at = v_now
     WHERE id = p_order_id;
   END IF;
 

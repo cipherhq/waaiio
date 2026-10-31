@@ -387,7 +387,7 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
   // Two live transaction sessions establish the actual wait graph. A owns the
   // order before B enters proof; A must still finish confirmation/cleanup.
   // Poll pg_blocking_pids instead of assuming a sleep establishes contention.
-  async function proofRace(operation: 'confirm' | 'cleanup') {
+  async function proofRace(operation: 'confirm' | 'cleanup', approve = false) {
     const orderId = 'c4790000-0000-0000-0000-000000000080';
     const transferId = 'c4790000-0000-0000-0000-000000000081';
     const productId = 'c4790000-0000-0000-0000-000000000082';
@@ -449,10 +449,10 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
       let winner: any;
       if (operation === 'confirm') {
         winner = (await a.query(`
-          SELECT confirm_order_transfer_atomic($1,$2,$3,$4,false) AS result
-        `, [transferId, orderId, BIZ, OWNER])).rows[0].result;
+          SELECT confirm_order_transfer_atomic($1,$2,$3,$4,$5) AS result
+        `, [transferId, orderId, BIZ, OWNER, approve])).rows[0].result;
         expect(winner.confirmed).toBe(true);
-        expect(winner.approved).toBe(false);
+        expect(winner.approved).toBe(approve);
       } else {
         // Advance both deadlines together while A owns the order, without a
         // wall-clock race. B must re-read the expired transfer after A commits.
@@ -498,7 +498,7 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
       const state = snapshot();
       expect(state.proof_timestamp).toBeNull();
       expect(state.proof_text).toBeNull();
-      expect(state.order_status).toBe(operation === 'confirm' ? 'paid_pending_approval' : 'cancelled');
+      expect(state.order_status).toBe(operation === 'confirm' ? (approve ? 'confirmed' : 'paid_pending_approval') : 'cancelled');
       expect(state.transfer_status).toBe(operation === 'confirm' ? 'confirmed' : 'expired');
       expect(state.stock).toBe(operation === 'confirm' ? 8 : 10);
       expect(state.marker_count).toBe(operation === 'confirm' ? 1 : 0);
@@ -508,7 +508,7 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
         expect(state.marker_payment_matches).toBe(true);
         expect(state.direct_amount).toBe(5000);
         const repeat = JSON.parse(runSQL(`
-          SELECT confirm_order_transfer_atomic('${transferId}','${orderId}','${BIZ}','${OWNER}',false)
+          SELECT confirm_order_transfer_atomic('${transferId}','${orderId}','${BIZ}','${OWNER}',${approve})
         `));
         expect(repeat.confirmed).toBe(false);
       } else {
@@ -526,8 +526,8 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
     }
   }
 
-  it('T19: proof waiting on order cannot deadlock confirmation or duplicate payment/stock', async () => {
-    await proofRace('confirm');
+  it.each([false, true])('T19: proof waiting on order cannot deadlock confirmation or duplicate payment/stock (approve=%s)', async (approve) => {
+    await proofRace('confirm', approve);
   }, 30000);
 
   it('T20: proof waiting on order cannot deadlock cleanup or restore stock twice', async () => {
