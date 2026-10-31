@@ -235,6 +235,11 @@
 - **Affects**: Poll send response counts only. Helper acceptance does not prove customer receipt; shared sender, session preparation, guards and poll lifecycle are unchanged.
 - **Could break**: Callers now correctly see failed counts for helper-declined sends that were previously reported sent. Mocked route tests do not certify provider delivery.
 
+### #666 — Merchant payment custody and manual-settlement policy (2026-10-30)
+
+- **`AGENTS.md`, `CLAUDE.md`, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`**: Record the standing two-route payment custody model and manual-settlement policy, with repository guidance linked to the authoritative policy.
+- **Affects / could break**: Engineering interpretation of payment custody and settlement responsibilities. Documentation only; no runtime, provider, financial-history or hosted-schema changes, and no live-flow certification.
+
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
 
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
