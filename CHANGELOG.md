@@ -235,6 +235,12 @@
 - **Affects**: Poll send response counts only. Helper acceptance does not prove customer receipt; shared sender, session preparation, guards and poll lifecycle are unchanged.
 - **Could break**: Callers now correctly see failed counts for helper-declined sends that were previously reported sent. Mocked route tests do not certify provider delivery.
 
+### #721 / #737 — Final lifecycle contract correction (2026-10-31)
+
+- Supersedes the earlier summary: all applicable offline fulfillment requires explicit merchant approval separately from funds verification; online policy is unchanged. The inventory reconciles 32 unique capabilities, retains table_reservation as Tier 1, and documents the validator's eight-contract scope.
+- Earlier seven-question, Tier 2 and four-active-defect claims are superseded by two unresolved questions and explicitly historical findings/investigations. The final correction is limited to the four allocated contract documents; the root README is unchanged.
+- No fresh runtime or end-to-end certification is claimed. Existing historical entries and evidence remain preserved.
+
 ### #721 — WhatsApp lifecycle contract alignment (2026-10-28)
 
 - **`docs/contracts/shared-payment-lifecycle.md`** (new): Universal payment-to-fulfillment lifecycle standard. Documents the three-stage authority chain (provider verification → capability fulfillment → notifications), all 6 payment providers (Paystack, Stripe, Flutterwave, Square, PayPal, Direct/Offline), saved card rules, refund model, and known debt (#164, #166, #735).
