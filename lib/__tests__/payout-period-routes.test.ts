@@ -166,6 +166,10 @@ describe('payouts/generate: merchant-local period', () => {
 // Cron auto-payout route
 // ═══════════════════════════════════════════════════════════════
 
+const cronStarted = vi.fn();
+const cronCompleted = vi.fn();
+const cronFailed = vi.fn();
+
 describe('cron/auto-payout: merchant-local period', () => {
   let cronModule: typeof import('@/app/api/cron/auto-payout/route');
 
@@ -175,8 +179,9 @@ describe('cron/auto-payout: merchant-local period', () => {
     vi.useFakeTimers({ now: FIXED_NOW, toFake: ['Date'] });
     process.env.ENABLE_PAYOUTS = 'true';
 
+    cronStarted.mockClear(); cronCompleted.mockClear(); cronFailed.mockClear();
     vi.doMock('@/lib/cron-auth', () => ({ verifyCronAuth: vi.fn().mockReturnValue(null) }));
-    vi.doMock('@/lib/observability/cron', () => ({ createCronLogger: vi.fn(() => ({ started: vi.fn(), completed: vi.fn(), failed: vi.fn() })) }));
+    vi.doMock('@/lib/observability/cron', () => ({ createCronLogger: vi.fn(() => ({ started: cronStarted, completed: cronCompleted, failed: cronFailed })) }));
     vi.doMock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
     vi.doMock('@/lib/countries', () => ({ loadCountries: vi.fn() }));
     vi.doMock('@/lib/constants', () => ({ getCurrencyCode: vi.fn((cc: string) => { const m: Record<string,string> = { NG:'NGN', US:'USD' }; if (m[cc]) return m[cc]; throw new Error('unknown'); }), getPaymentGatewayForCountry: vi.fn(() => 'paystack'), CountryCode: {}, VerificationLevel: {} }));
@@ -206,6 +211,10 @@ describe('cron/auto-payout: merchant-local period', () => {
     const body = await res.json();
     expect(body.generated).toBe(0);
     expect(mockLoggerError.mock.calls.some((a: unknown[]) => typeof a[0] === 'string' && a[0].includes('Invalid timezone'))).toBe(true);
+    // Cron lifecycle: started once, completed once (no-valid-timezones exit), never failed
+    expect(cronStarted).toHaveBeenCalledTimes(1);
+    expect(cronCompleted).toHaveBeenCalledTimes(1);
+    expect(cronFailed).toHaveBeenCalledTimes(0);
   });
 
   it('mixed timezones: exact two periods, no single period field; per-group bounds; held once; dedup', async () => {
