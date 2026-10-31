@@ -1,3 +1,4 @@
+import { isSharedConversation, transactionNextSteps } from './shared/navigation';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, getStaffDaySchedule, isStaffAvailable, type CountryCode } from '@/lib/constants';
@@ -3464,7 +3465,8 @@ export const schedulingFlow: FlowDefinition = {
           durationMinutes: (d.service_duration as number) || 60,
         }) : '';
 
-        return [{ type: 'text', text: message + calendarLinks + helpText }];
+        const navigation = transactionNextSteps('appointment', await isSharedConversation(ctx.supabase, d));
+        return [{ type: 'text', text: message + calendarLinks + helpText + '\n\n' + navigation }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'accept_terms') {
