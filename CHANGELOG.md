@@ -1,3 +1,9 @@
+## 2026-10-31 — Signed waiver list read errors
+
+- `app/dashboard/waivers/page.tsx`: Show a persistent error and Retry when the signed-list request fails, instead of a false empty list or stale results. Keep the current search/template scope on retry and ignore older request completions.
+- Rendered regressions cover HTTP401/500, transport failure, valid empty results, filtered failure/retry, stale success/failure ordering and malformed payloads: 8 passed, zero skipped locally.
+- **Affects / could break**: Signed-list loading, error and retry presentation. Template/count reads, signing, signature storage, routes and authorization are unchanged. Local production build passed; independent source review agrees. Exact-head CI and hosted acceptance remain pending; not deployed.
+
 ## 2026-10-31 — Party questions and reminder review (source only)
 
 - Adds bounded, versioned Party questions, organizer answer readback and atomic web/bot RSVP saves; required answers apply only to Accepted. Preserves answer history and seating/capacity authority. Affects Party detail, RSVP routes and bot entry/flow; M489 must precede app rollout.
