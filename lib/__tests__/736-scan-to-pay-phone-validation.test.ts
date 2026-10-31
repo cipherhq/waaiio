@@ -1,453 +1,284 @@
 /**
- * #736 Lane 2 — Scan-to-pay checkout phone validation.
- *
- * Covers:
- * 1. Missing phone with Paystack gateway → 422 PHONE_REQUIRED, no payment record
- * 2. Invalid phone (non-E.164) with Paystack gateway → 422 PHONE_REQUIRED
- * 3. Valid E.164 phone with Paystack gateway → gateway initializes, returns URL
- * 4. Missing phone with Stripe gateway → allowed (Stripe does not require phone)
- * 5. Gateway init failure → 500 error, no orphaned payment record
- * 6. Empty-string phone (the original bug) → 422 PHONE_REQUIRED
- * 7. Phone with formatting (spaces, dashes) → normalized and accepted
- * 8. Fixed amount link → amount mismatch rejected
- * 9. Variable amount link → custom amount accepted
- * 10. Max uses reached → 410 returned
+ * #736/#747: actual route + unchanged Paystack/Stripe adapters.
+ * Provider transport is synthetic; this stateful PostgREST-shaped fixture
+ * enforces nullable profile identity and unique references. Not PostgreSQL proof.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { NextRequest, NextResponse } from 'next/server';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 
-// ─── Shared mock infrastructure ───
+type Row = Record<string, any>;
+let rows: Row[];
+let link: Row | null;
+let provider: 'paystack' | 'stripe';
+let inserts: Row[];
+let effects: string[];
+let insertFailure: 'error' | 'empty' | 'throw' | null;
+let referenceFailure: 'error' | 'empty' | 'throw' | 'duplicate' | null;
+let cleanupFailure: 'error' | 'throw' | null;
+let transportMode: 'success' | 'reject' | 'throw' | 'no_url' | 'no_reference' | 'blank_url' | 'blank_reference';
+let settleBeforeReturn: boolean;
+let initSpy: ReturnType<typeof vi.spyOn>;
+let transport: ReturnType<typeof vi.fn>;
+let rpc: ReturnType<typeof vi.fn>;
+let route: typeof import('@/app/api/pay-link/pay/route');
+const logError = vi.fn();
+const PHONE = '+2348012345678';
+const BODY = { token: 'synthetic-link', amount: 1000, customer_name: 'Guest', customer_phone: PHONE };
 
-let routeModule: any;
-
-const mockSingle = vi.fn();
-const mockSelect = vi.fn();
-const mockInsert = vi.fn();
-const mockUpdate = vi.fn();
-const mockRpc = vi.fn();
-
-/** Tracks all insert calls to detect orphaned payment records. */
-let insertCalls: Array<{ table: string; data: unknown }> = [];
-
-function buildChainable(overrides?: Record<string, unknown>) {
-  const q: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'not', 'order', 'limit', 'is']) {
-    q[m] = vi.fn().mockReturnValue(q);
-  }
-  q.single = mockSingle;
-  q.maybeSingle = mockSingle;
-  if (overrides) Object.assign(q, overrides);
-  return q;
-}
-
-function makeMockSupabase() {
-  const fromFn = vi.fn().mockImplementation((table: string) => {
-    const chain = buildChainable();
-
-    // Track inserts
-    const wrappedInsert = vi.fn().mockImplementation((data: unknown) => {
-      insertCalls.push({ table, data });
-      return buildChainable();
-    });
-
-    const wrappedUpdate = vi.fn().mockImplementation(() => {
-      return buildChainable();
-    });
-
-    return {
-      select: vi.fn().mockReturnValue(chain),
-      insert: wrappedInsert,
-      update: wrappedUpdate,
-      eq: vi.fn().mockReturnValue(chain),
-    };
-  });
-
+function database() {
   return {
-    from: fromFn,
-    rpc: mockRpc.mockReturnValue(Promise.resolve({ error: null })),
+    from(table: string) {
+      let operation: 'read' | 'insert' | 'update' = 'read';
+      let values: Row = {};
+      const filters: Array<[string, unknown]> = [];
+      let executed: Promise<{ data: any; error: any }> | undefined;
+      const execute = () => {
+        if (executed) return executed;
+        executed = (async () => {
+          if (table === 'payment_links') {
+            if (operation === 'update') { effects.push('use-fallback'); return { data: null, error: null }; }
+            return { data: link, error: null };
+          }
+          if (table !== 'payments') throw new Error('Unexpected table: ' + table);
+          if (operation === 'insert') {
+            inserts.push(structuredClone(values)); effects.push('insert');
+            if (insertFailure === 'throw') throw new Error('synthetic insert transport');
+            if (insertFailure === 'error') return { data: null, error: { code: 'synthetic' } };
+            if (insertFailure === 'empty') return { data: null, error: null };
+            // The anonymous payer has no profiles row. NULL is valid, zero UUID is not.
+            if (values.user_id !== null) return { data: null, error: { code: '23503' } };
+            if (rows.some(row => row.gateway_reference === values.gateway_reference))
+              return { data: null, error: { code: '23505' } };
+            const row = { ...structuredClone(values), id: 'canonical-payment' };
+            rows.push(row);
+            return { data: structuredClone(row), error: null };
+          }
+          const matches = rows.filter(row => filters.every(([key, value]) => row[key] === value));
+          if (operation === 'update') {
+            const isReference = Object.hasOwn(values, 'gateway_reference');
+            effects.push(isReference ? 'reference' : 'cleanup');
+            const failure = isReference ? referenceFailure : cleanupFailure;
+            if (failure === 'throw') throw new Error('synthetic update transport');
+            if (failure === 'error') return { data: null, error: { code: 'synthetic' } };
+            if (failure === 'empty') return { data: null, error: null };
+            if (isReference && (failure === 'duplicate' || rows.some(row =>
+              !matches.includes(row) && row.gateway_reference === values.gateway_reference)))
+              return { data: null, error: { code: '23505' } };
+            for (const row of matches) Object.assign(row, values);
+          }
+          return { data: matches[0] ? structuredClone(matches[0]) : null, error: null };
+        })();
+        return executed;
+      };
+      const chain: any = {
+        select: () => chain,
+        eq: (key: string, value: unknown) => { filters.push([key, value]); return chain; },
+        insert: (value: Row) => { operation = 'insert'; values = value; return chain; },
+        update: (value: Row) => { operation = 'update'; values = value; return chain; },
+        single: execute, maybeSingle: execute,
+        then: (resolve: any, reject: any) => execute().then(resolve, reject),
+      };
+      return chain;
+    },
+    rpc,
   };
 }
-
-// ─── Mock gateway init function for test control ───
-const mockInitializePayment = vi.fn();
-
-// Standard payment link data for a Paystack (NG) business
-const PAYSTACK_LINK = {
-  id: 'link-001',
-  title: 'Test Payment',
-  amount: null, // variable amount
-  currency: 'NGN',
-  uses_count: 0,
-  expires_at: null,
-  max_uses: null,
-  business_id: 'biz-001',
-  is_active: true,
-  businesses: {
-    name: 'Test Shop',
-    country_code: 'NG',
-    payment_gateway: 'paystack',
-    status: 'active',
-  },
-};
-
-// Standard payment link data for a Stripe (US) business
-const STRIPE_LINK = {
-  ...PAYSTACK_LINK,
-  id: 'link-002',
-  currency: 'USD',
-  business_id: 'biz-002',
-  businesses: {
-    name: 'US Shop',
-    country_code: 'US',
-    payment_gateway: 'stripe',
-    status: 'active',
-  },
-};
-
-// Fixed-amount link
-const FIXED_AMOUNT_LINK = {
-  ...PAYSTACK_LINK,
-  id: 'link-003',
-  amount: 5000,
-};
-
-// Max-uses-reached link
-const MAX_USES_LINK = {
-  ...PAYSTACK_LINK,
-  id: 'link-004',
-  max_uses: 1,
-  uses_count: 1,
-};
-
+function request(body: Row = BODY) {
+  return new NextRequest('http://localhost/api/pay-link/pay', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+}
+function stripe() {
+  provider = 'stripe';
+  if (link) {
+    link.currency = 'USD';
+    link.businesses.country_code = 'US';
+  }
+}
 beforeEach(async () => {
   vi.resetModules();
-  insertCalls = [];
-  mockSingle.mockReset();
-  mockInitializePayment.mockReset();
-  mockRpc.mockReset();
-  mockRpc.mockReturnValue(Promise.resolve({ error: null }));
-
-  // Mock rate limiter
+  vi.clearAllMocks();
+  vi.stubEnv('PAYSTACK_SECRET_KEY', 'synthetic-paystack-fixture');
+  vi.stubEnv('STRIPE_SECRET_KEY', 'synthetic-stripe-fixture');
+  provider = 'paystack';
+  rows = []; inserts = []; effects = [];
+  insertFailure = null; referenceFailure = null; cleanupFailure = null;
+  transportMode = 'success'; settleBeforeReturn = false;
+  link = { id: 'link', title: 'Synthetic', amount: null, currency: 'NGN', uses_count: 0,
+    expires_at: null, max_uses: null, business_id: 'business', is_active: true,
+    businesses: { name: 'Shop', country_code: 'NG', payment_gateway: 'paystack', status: 'active' } };
+  rpc = vi.fn(async () => { effects.push('use'); return { data: null, error: null }; });
+  vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: database }));
   vi.doMock('@/lib/rate-limit', () => ({
-    rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
-    getRateLimitKey: vi.fn().mockReturnValue('test-key'),
+    rateLimitResponseAsync: vi.fn(async () => null), getRateLimitKey: () => 'synthetic',
   }));
-
-  // Mock logger
   vi.doMock('@/lib/logger', () => ({
-    logger: {
-      error: vi.fn(),
-      warn: vi.fn(),
-      info: vi.fn(),
-      withContext: vi.fn().mockReturnValue({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }),
+    logger: { error: logError, warn: vi.fn(), info: vi.fn(),
+      withContext: () => ({ error: logError, warn: vi.fn() }) },
+  }));
+  vi.doMock('@/lib/observability', () => ({
+    observeProvider: (_context: unknown, work: () => unknown) => work(),
+  }));
+  vi.doMock('@/lib/payments/gateway-resolver', () => ({
+    resolveBusinessGateway: async () => ({ gateway: provider, currency: provider === 'stripe' ? 'USD' : 'NGN' }),
+  }));
+  // Factory selects REAL adapters; only the network transport is synthetic.
+  const { PaystackGateway } = await import('@/lib/payments/paystack');
+  const { StripeGateway } = await import('@/lib/payments/stripe');
+  const paystack = new PaystackGateway();
+  const stripeGateway = new StripeGateway();
+  vi.doMock('@/lib/payments/factory', () => ({
+    getPaymentGatewayByName: (name: string) => {
+      const gateway = name === 'stripe' ? stripeGateway : paystack;
+      initSpy = vi.spyOn(gateway, 'initializePayment'); // call through unchanged implementation
+      return gateway;
     },
   }));
-
-  // Mock supabase service client
-  vi.doMock('@/lib/supabase/service', () => ({
-    createServiceClient: () => makeMockSupabase(),
-  }));
-
-  // Mock gateway resolver
-  vi.doMock('@/lib/payments/gateway-resolver', () => ({
-    resolveBusinessGateway: vi.fn().mockImplementation((_supabase: unknown, businessId: string) => {
-      if (businessId === 'biz-002') {
-        return Promise.resolve({ gateway: 'stripe', currency: 'USD', source: 'country_default' });
-      }
-      return Promise.resolve({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
-    }),
-  }));
-
-  // Mock payment factory
-  vi.doMock('@/lib/payments/factory', () => ({
-    getPaymentGatewayByName: vi.fn().mockReturnValue({
-      name: 'paystack',
-      initializePayment: mockInitializePayment,
-    }),
-  }));
-
-  routeModule = await import('@/app/api/pay-link/pay/route');
+  transport = vi.fn(async (url: string, _init?: RequestInit) => {
+    effects.push('provider');
+    expect(url).toMatch(/^https:\/\/api\.(paystack\.co\/transaction\/initialize|stripe\.com\/v1\/checkout\/sessions)$/);
+    if (settleBeforeReturn) rows[0].status = 'success';
+    if (transportMode === 'throw') throw new Error('synthetic provider timeout');
+    const checkout = transportMode === 'no_url' ? undefined : transportMode === 'blank_url' ? ' ' : 'https://checkout.example.test/session';
+    const reference = transportMode === 'no_reference' ? undefined : transportMode === 'blank_reference' ? ' ' : 'provider-reference';
+    return {
+      ok: true,
+      json: async () => url.includes('paystack')
+        ? { status: transportMode !== 'reject', data: { authorization_url: checkout, reference, access_code: 'synthetic' } }
+        : transportMode === 'reject' ? { error: { message: 'synthetic rejection' } } : { id: reference, url: checkout },
+    };
+  });
+  vi.stubGlobal('fetch', transport);
+  route = await import('@/app/api/pay-link/pay/route');
 });
-
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
-function makePostRequest(body: Record<string, unknown>): NextRequest {
-  const { NextRequest: NR } = require('next/server');
-  return new NR(new URL('https://www.waaiio.com/api/pay-link/pay'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+describe('scan-to-pay guards before side effects', () => {
+  it.each([undefined, '', '   ', '08012345678', 'invalid', 123])('rejects invalid required phone %s', async phone => {
+    const response = await route.POST(request({ ...BODY, customer_phone: phone }));
+    expect(response.status).toBe(422);
+    expect((await response.json()).code).toBe('PHONE_REQUIRED');
+    expect(inserts).toEqual([]); expect(transport).not.toHaveBeenCalled(); expect(rpc).not.toHaveBeenCalled();
   });
-}
-
-/** Configure the Supabase .single() mock to return a specific payment link. */
-function mockPaymentLink(link: any) {
-  mockSingle.mockResolvedValueOnce({ data: link, error: link ? null : { code: 'PGRST116' } });
-}
-
-// ─── Tests ───
-
-describe('#736 scan-to-pay phone validation — Paystack gateway', () => {
-  it('rejects missing phone with 422 PHONE_REQUIRED and creates no payment record', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      // no customer_phone
-    }));
-
-    expect(res.status).toBe(422);
-    const data = await res.json();
-    expect(data.code).toBe('PHONE_REQUIRED');
-    expect(data.error).toContain('phone number');
-
-    // No payment record should have been created
-    const paymentInserts = insertCalls.filter(c => c.table === 'payments');
-    expect(paymentInserts).toHaveLength(0);
+  it.each([
+    [{ ...BODY, token: undefined }, 400],
+    [{ ...BODY, amount: -100 }, 400],
+    [{ ...BODY, amount: 0 }, 400],
+  ])('rejects invalid token/amount without effects', async (body, status) => {
+    expect((await route.POST(request(body))).status).toBe(status);
+    expect(effects).toEqual([]);
   });
-
-  it('rejects empty-string phone (original bug) with 422 PHONE_REQUIRED', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '',
-    }));
-
-    expect(res.status).toBe(422);
-    const data = await res.json();
-    expect(data.code).toBe('PHONE_REQUIRED');
+  it('retains fixed-amount mismatch rejection', async () => {
+    link!.amount = 5000;
+    expect((await route.POST(request())).status).toBe(400);
+    expect(effects).toEqual([]);
   });
-
-  it('rejects invalid phone (no country code) with 422 PHONE_REQUIRED', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '08012345678', // Nigerian local format, not E.164
-    }));
-
-    expect(res.status).toBe(422);
-    const data = await res.json();
-    expect(data.code).toBe('PHONE_REQUIRED');
-    expect(data.error).toContain('international format');
+  it('retains matching fixed amount', async () => {
+    link!.amount = BODY.amount;
+    expect((await route.POST(request())).status).toBe(200);
+    expect(inserts).toHaveLength(1);
   });
-
-  it('rejects whitespace-only phone with 422 PHONE_REQUIRED', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '   ',
-    }));
-
-    expect(res.status).toBe(422);
-    const data = await res.json();
-    expect(data.code).toBe('PHONE_REQUIRED');
+  it('retains max-use guard', async () => {
+    Object.assign(link!, { max_uses: 1, uses_count: 1 });
+    expect((await route.POST(request())).status).toBe(410);
+    expect(effects).toEqual([]);
   });
-
-  it('accepts valid E.164 phone and initializes payment', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-    mockInitializePayment.mockResolvedValueOnce({
-      url: 'https://checkout.paystack.com/test',
-      reference: 'PL-TEST123',
-    });
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '+2348012345678',
-    }));
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.url).toBe('https://checkout.paystack.com/test');
-
-    // Verify phone was passed to gateway
-    expect(mockInitializePayment).toHaveBeenCalledTimes(1);
-    const initOpts = mockInitializePayment.mock.calls[0][0];
-    expect(initOpts.phone).toBe('+2348012345678');
-  });
-
-  it('normalizes phone with spaces and dashes before passing to gateway', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-    mockInitializePayment.mockResolvedValueOnce({
-      url: 'https://checkout.paystack.com/test',
-      reference: 'PL-TEST456',
-    });
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '+234 801-234-5678',
-    }));
-
-    expect(res.status).toBe(200);
-    const initOpts = mockInitializePayment.mock.calls[0][0];
-    expect(initOpts.phone).toBe('+2348012345678');
-  });
-
-  it('normalizes phone without + prefix', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-    mockInitializePayment.mockResolvedValueOnce({
-      url: 'https://checkout.paystack.com/test',
-      reference: 'PL-TEST789',
-    });
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '2348012345678',
-    }));
-
-    expect(res.status).toBe(200);
-    const initOpts = mockInitializePayment.mock.calls[0][0];
-    expect(initOpts.phone).toBe('+2348012345678');
+  it('retains expiry and inactive-business guards', async () => {
+    link!.expires_at = '2000-01-01';
+    expect((await route.POST(request())).status).toBe(410);
+    link!.expires_at = null; link!.businesses.status = 'pending';
+    expect((await route.POST(request())).status).toBe(503);
+    expect(effects).toEqual([]);
   });
 });
 
-describe('#736 scan-to-pay phone validation — Stripe gateway', () => {
-  it('allows missing phone for Stripe-routed businesses', async () => {
-    mockPaymentLink(STRIPE_LINK);
-    mockInitializePayment.mockResolvedValueOnce({
-      url: 'https://checkout.stripe.com/test',
-      reference: 'PL-STRIPE1',
+describe('canonical row with actual adapters', () => {
+  it.each(['paystack', 'stripe'] as const)('%s reuses one NULL-payer row and persists the actual reference before use', async gateway => {
+    if (gateway === 'stripe') stripe();
+    const response = await route.POST(request(gateway === 'stripe' ? { ...BODY, customer_phone: undefined } : BODY));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ url: 'https://checkout.example.test/session' });
+    expect(inserts).toHaveLength(1); expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 'canonical-payment', user_id: null, gateway, gateway_reference: 'provider-reference',
+      status: 'pending', business_id: 'business', amount: 1000,
+      metadata: { payment_link_id: 'link', customer_name: 'Guest',
+        customer_phone: gateway === 'stripe' ? null : PHONE, source: 'scan_to_pay' },
     });
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      // no customer_phone — should be allowed for Stripe
+    expect(initSpy).toHaveBeenCalledWith(expect.objectContaining({
+      existingPaymentId: rows[0].id, userId: null, businessId: 'business',
     }));
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.url).toBe('https://checkout.stripe.com/test');
+    expect(effects).toEqual(['insert', 'provider', 'reference', 'use']);
+    if (gateway === 'stripe') {
+      const body = new URLSearchParams(transport.mock.calls[0][1].body);
+      expect(body.has('metadata[user_id]')).toBe(false);
+    } else {
+      expect(JSON.parse(transport.mock.calls[0][1].body).metadata.user_id).toBeNull();
+    }
+  });
+  it.each(['+234 801-234-5678', '2348012345678'])('normalizes phone %s in canonical metadata and real adapter input', async phone => {
+    expect((await route.POST(request({ ...BODY, customer_phone: phone }))).status).toBe(200);
+    expect(rows[0].metadata.customer_phone).toBe(PHONE);
+    expect(initSpy).toHaveBeenCalledWith(expect.objectContaining({ phone: PHONE }));
+  });
+  it.each(['error', 'empty', 'throw'] as const)('insert %s prevents provider initialization and use', async failure => {
+    insertFailure = failure;
+    const response = await route.POST(request());
+    expect(response.status).toBe(500); expect((await response.json()).url).toBeUndefined();
+    expect(rows).toEqual([]); expect(transport).not.toHaveBeenCalled(); expect(rpc).not.toHaveBeenCalled();
+  });
+  it('fixture rejects the previous placeholder profile identity', async () => {
+    const result = await database().from('payments').insert({ user_id: '00000000-0000-0000-0000-000000000000' }).single();
+    expect(result.error.code).toBe('23503'); expect(rows).toEqual([]);
+  });
+  it('fixture enforces unique references instead of allowing duplicate canonical records', async () => {
+    const db = database();
+    await db.from('payments').insert({ user_id: null, gateway_reference: 'same' }).single();
+    const second = await db.from('payments').insert({ user_id: null, gateway_reference: 'same' }).single();
+    expect(second.error.code).toBe('23505'); expect(rows).toHaveLength(1);
   });
 });
 
-describe('#736 scan-to-pay — gateway init failure with no orphaned record', () => {
-  it('returns 500 on gateway init failure with no orphaned pending payment', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-    // Gateway returns null (init failure)
-    mockInitializePayment.mockResolvedValueOnce(null);
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '+2348012345678',
-    }));
-
-    expect(res.status).toBe(500);
-    const data = await res.json();
-    expect(data.error).toContain('initialize payment');
-
-    // The route should NOT have created a payment record itself.
-    // The gateway may have created one internally, but the route's
-    // pre-gateway insert (the source of orphans) is removed.
-    const routePaymentInserts = insertCalls.filter(
-      c => c.table === 'payments',
-    );
-    // Zero from the route; gateway internal inserts tracked separately
-    expect(routePaymentInserts).toHaveLength(0);
+describe('checkout failures with conditional local cleanup', () => {
+  it.each(['reject', 'throw', 'no_url', 'no_reference', 'blank_url', 'blank_reference'] as const)('real Paystack adapter outcome %s never returns checkout or consumes use', async mode => {
+    transportMode = mode;
+    const response = await route.POST(request());
+    expect(response.status).toBe(500); expect((await response.json()).url).toBeUndefined();
+    expect(inserts).toHaveLength(1); expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('failed'); expect(rpc).not.toHaveBeenCalled();
   });
-
-  it('returns 500 on gateway init exception', async () => {
-    mockPaymentLink(PAYSTACK_LINK);
-    mockInitializePayment.mockRejectedValueOnce(new Error('Network timeout'));
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '+2348012345678',
-    }));
-
-    expect(res.status).toBe(500);
-    const data = await res.json();
-    expect(data.error).toContain('unavailable');
+  it.each(['reject', 'throw', 'no_url', 'no_reference', 'blank_url', 'blank_reference'] as const)('real Stripe adapter outcome %s fails closed', async mode => {
+    stripe(); transportMode = mode;
+    const response = await route.POST(request({ ...BODY, customer_phone: undefined }));
+    expect(response.status).toBe(500); expect((await response.json()).url).toBeUndefined();
+    expect(rows[0].status).toBe('failed'); expect(inserts).toHaveLength(1); expect(rpc).not.toHaveBeenCalled();
   });
-});
-
-describe('#736 scan-to-pay — amount and usage validation', () => {
-  it('rejects amount mismatch on fixed-amount link', async () => {
-    mockPaymentLink(FIXED_AMOUNT_LINK);
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 9999, // link.amount is 5000
-      customer_name: 'Test User',
-      customer_phone: '+2348012345678',
-    }));
-
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toContain('mismatch');
+  it.each(['error', 'empty', 'throw', 'duplicate'] as const)('reference persistence %s withholds checkout and use', async failure => {
+    referenceFailure = failure;
+    const response = await route.POST(request());
+    expect(response.status).toBe(500); expect((await response.json()).url).toBeUndefined();
+    expect(rows[0].status).toBe('failed'); expect(rows[0].gateway_reference).not.toBe('provider-reference');
+    expect(rpc).not.toHaveBeenCalled();
   });
-
-  it('accepts matching amount on fixed-amount link', async () => {
-    mockPaymentLink(FIXED_AMOUNT_LINK);
-    mockInitializePayment.mockResolvedValueOnce({
-      url: 'https://checkout.paystack.com/test',
-      reference: 'PL-FIXED1',
-    });
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 5000,
-      customer_name: 'Test User',
-      customer_phone: '+2348012345678',
-    }));
-
-    expect(res.status).toBe(200);
+  it('does not demote an already-successful row during failure cleanup', async () => {
+    settleBeforeReturn = true; referenceFailure = 'error';
+    const response = await route.POST(request());
+    expect(response.status).toBe(500);
+    expect(await response.json()).not.toHaveProperty('code', 'PAYMENT_STATUS_UNCONFIRMED');
+    expect(rows[0].status).toBe('success'); expect(rpc).not.toHaveBeenCalled();
   });
-
-  it('rejects payment when max uses reached', async () => {
-    mockPaymentLink(MAX_USES_LINK);
-
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: 1000,
-      customer_name: 'Test User',
-      customer_phone: '+2348012345678',
-    }));
-
-    expect(res.status).toBe(410);
-    const data = await res.json();
-    expect(data.error).toContain('usage limit');
-  });
-
-  it('rejects missing token', async () => {
-    const res = await routeModule.POST(makePostRequest({
-      amount: 1000,
-      customer_name: 'Test User',
-    }));
-
-    expect(res.status).toBe(400);
-  });
-
-  it('rejects invalid amount', async () => {
-    const res = await routeModule.POST(makePostRequest({
-      token: 'abc123',
-      amount: -100,
-      customer_name: 'Test User',
-    }));
-
-    expect(res.status).toBe(400);
+  it.each(['error', 'throw'] as const)('reports cleanup %s honestly without a checkout URL or session-cancellation claim', async failure => {
+    transportMode = 'reject'; cleanupFailure = failure;
+    const response = await route.POST(request());
+    const body = await response.json();
+    expect(response.status).toBe(500); expect(body.url).toBeUndefined();
+    expect(body.code).toBe('PAYMENT_STATUS_UNCONFIRMED');
+    expect(rows[0].status).toBe('pending'); expect(rpc).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith('[PAY-LINK] Payment failure status could not be confirmed', { payment_id: 'canonical-payment' });
+    expect(JSON.stringify(body)).not.toMatch(/cancelled|canceled/i);
   });
 });
