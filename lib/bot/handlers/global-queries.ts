@@ -404,7 +404,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
     // Get order items
     const { data: items } = await supabase
       .from('order_items')
-      .select('product_id, product_name, quantity, unit_price, variant_id, variant_label, addons')
+      .select('product_id, quantity, unit_price, variant_id, variant_label, addons')
       .eq('order_id', lastOrder.id);
 
     if (!items || items.length === 0) {

@@ -19,7 +19,16 @@ function database(rows: Record<string, any>, conflict = false) {
       for (const m of ['select', 'eq', 'neq', 'in', 'is', 'not', 'or', 'order', 'limit', 'lt']) {
         chain[m] = vi.fn((...args: any[]) => { q.filters.push([m, ...args]); return chain; });
       }
-      const result = () => ({ data: writing && conflict ? null : rows[table] ?? null, error: null });
+      const result = () => {
+        // Mirror the real order_items schema: nonexistent projection columns fail the entire query.
+        const projection = q.filters.find(f => f[0] === 'select')?.[1];
+        const itemColumns = ['id', 'order_id', 'product_id', 'quantity', 'unit_price', 'created_at', 'variant_id', 'variant_label', 'addons'];
+        if (table === 'order_items' && typeof projection === 'string'
+            && projection.split(',').some(column => !itemColumns.includes(column.trim()))) {
+          return { data: null, error: { code: '42703' } };
+        }
+        return { data: writing && conflict ? null : rows[table] ?? null, error: null };
+      };
       chain.maybeSingle = vi.fn(async () => result()); chain.single = chain.maybeSingle;
       chain.then = (resolve: any, reject: any) => Promise.resolve(result()).then(resolve, reject);
       return chain;
@@ -32,7 +41,7 @@ function database(rows: Record<string, any>, conflict = false) {
 function reorderFixture(options: { conflict?: boolean; product?: any; item?: any; variant?: any; addons?: any[]; capabilities?: string[] } = {}) {
   const { db, queries } = database({
     orders: { id: 'order-a', reference_code: 'WA-O1' },
-    order_items: [{ product_id: 'product-a', product_name: 'Old name', quantity: 2, unit_price: 10, ...options.item }],
+    order_items: [{ product_id: 'product-a', quantity: 2, unit_price: 10, ...options.item }],
     products: { id: 'product-a', name: 'Current name', price: 15, is_active: true, ...options.product },
     product_variants: options.variant,
     product_addons: options.addons || [],

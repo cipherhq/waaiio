@@ -168,3 +168,15 @@ describe('parseSmartIntent — regex intent detection', () => {
     });
   });
 });
+
+
+describe('completion order shortcut versus explicit history', () => {
+  it('starts a new order for the advertised bare order shortcut', () => {
+    const intent = parseSmartIntent('order');
+    expect(intent.intent).toBe('ordering');
+    expect(intent.requestedAction).toBe('create_new');
+  });
+  it.each(['my order', 'my orders', 'orders', 'view orders', 'show my orders'])('preserves read-only %s', text => {
+    expect(parseSmartIntent(text).requestedAction).toBe('read_history');
+  });
+});
