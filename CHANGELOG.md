@@ -85,6 +85,13 @@
 - **Affects**: Post-payment confirmation delivery for standalone campaign/crowdfunding donations. Booking, reservation, invoice, and order paths unchanged.
 - **Could break**: Nothing — this is a new resolution path for a previously broken case. Existing paths are guarded by `!customerPhone &&` conditions.
 
+### #779 — Preserve refund authorization across refresh and completion (2026-10-30)
+
+- **Payments**: Separate read-refresh sequencing from action invalidation. Bind pending refund and refund-request authorization to the relevant action context; unchanged and unrelated successful refreshes preserve MFA, while failed/pending reads and changed target context deny visibly. Preserve latest-token checks before and after token retrieval.
+- **Dispatch lifecycle**: Retire only the epoch-matched pending context synchronously after the final guard and immediately before POST, so the action's own committed refund/request changes do not produce a false restart warning. Preserve newer actions and errors, server/provider result interpretation, update-error/audit ordering and token/admin/AAL2/action-bound step-up.
+- **Synthetic coverage**: Preserve the original 31 mounted cases; the expanded Payments suite contains 69 cases, including deferred-token, recovery, successful completion and polling during in-flight requests for both actions. Finance reconciliation retains 35 cases. Final-head execution evidence is required separately.
+- **Affects / limits**: Admin refund authorization and read-state presentation. Backend mutation and provider semantics remain unchanged; this entry does not certify hosted behavior, live refunds or settlement.
+
 ### #762 — Refunded gross and truthful payment reads (2026-10-30)
 
 - **`admin/src/pages/Finance.tsx`**: Retain successful and refunded original collections in gross, monthly, gateway, category and country volume. Preserve actual status buckets, existing collection/refund/fee date attribution and payout logic. A same-month full refund contributes original gross and one refund, reaching zero before retained fees.
