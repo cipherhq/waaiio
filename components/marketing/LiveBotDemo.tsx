@@ -25,6 +25,7 @@ interface Scenario {
   icon: string;
   businessName: string;
   businessInitial: string;
+  description: string;
   /** Opening bot greeting — always auto-shown */
   greeting: ScenarioStep;
   /** Conversation steps keyed by trigger text. Every visible option must
@@ -33,180 +34,129 @@ interface Scenario {
     trigger: string;
     userText: string;
     botReplies: ScenarioStep[];
+    selection?: Record<string, string>;
   }[];
 }
 
 // ── Scenario data — every visible option has a modeled next step ──
 
-const SCENARIOS: Scenario[] = [
+export const SCENARIOS: Scenario[] = [
   {
-    id: 'book',
-    label: 'Book',
-    icon: '\u{1F4C5}',
-    businessName: "Bella's Salon",
-    businessInitial: 'B',
-    greeting: {
-      from: 'bot',
-      text: "Hi! Welcome to Bella's Salon \u{1F485}\n\nWhat would you like to book?",
-      options: ['Manicure', 'Pedicure'],
-      delay: 600,
-    },
+    id: 'book', label: 'Book', icon: '📅', businessName: "Bella's Salon", businessInitial: 'B',
+    description: 'Choose a service, pick a date and time, then review your booking.',
+    greeting: { from: 'bot', text: `Welcome to Bella's Salon!
+
+What would you like to book?`, options: ['Manicure', 'Pedicure'], delay: 500 },
     steps: [
-      {
-        trigger: 'Manicure',
-        userText: 'Manicure',
-        botReplies: [{
-          from: 'bot',
-          text: 'Manicure \u{2014} $35 (45 min)\n\nWhen would you like to come in?',
-          options: ['Tomorrow 2pm', 'Tomorrow 4pm'],
-          delay: 1000,
-        }],
-      },
-      {
-        trigger: 'Pedicure',
-        userText: 'Pedicure',
-        botReplies: [{
-          from: 'bot',
-          text: 'Pedicure \u{2014} $50 (60 min)\n\nWhen would you like to come in?',
-          options: ['Tomorrow 2pm', 'Tomorrow 4pm'],
-          delay: 1000,
-        }],
-      },
-      {
-        trigger: 'Tomorrow 2pm',
-        userText: 'Tomorrow 2pm',
-        botReplies: [{
-          from: 'bot',
-          text: "\u{2705} *Appointment Confirmed!*\n\n\u{1F4C5} Tomorrow, 2:00 PM\n\u{1F511} Ref: BK-4291\n\nWe'll send you a reminder!",
-          delay: 1400,
-        }],
-      },
-      {
-        trigger: 'Tomorrow 4pm',
-        userText: 'Tomorrow 4pm',
-        botReplies: [{
-          from: 'bot',
-          text: "\u{2705} *Appointment Confirmed!*\n\n\u{1F4C5} Tomorrow, 4:00 PM\n\u{1F511} Ref: BK-4292\n\nWe'll send you a reminder!",
-          delay: 1400,
-        }],
-      },
+      { trigger: 'Manicure', userText: 'Manicure', selection: { service: 'Manicure', price: '$35', duration: '45 minutes' }, botReplies: [{ from: 'bot', text: `*{{service}}* · {{duration}} · {{price}}
+
+Choose a date for your appointment.`, options: ['Tomorrow', 'This Saturday'], delay: 700 }] },
+      { trigger: 'Pedicure', userText: 'Pedicure', selection: { service: 'Pedicure', price: '$50', duration: '60 minutes' }, botReplies: [{ from: 'bot', text: `*{{service}}* · {{duration}} · {{price}}
+
+Choose a date for your appointment.`, options: ['Tomorrow', 'This Saturday'], delay: 700 }] },
+      { trigger: 'Tomorrow', userText: 'Tomorrow', selection: { date: 'Tomorrow' }, botReplies: [{ from: 'bot', text: `Available times for {{date}}.
+
+Which works for you?`, options: ['2:00 PM', '4:00 PM'], delay: 650 }] },
+      { trigger: 'This Saturday', userText: 'This Saturday', selection: { date: 'This Saturday' }, botReplies: [{ from: 'bot', text: `Available times for {{date}}.
+
+Which works for you?`, options: ['2:00 PM', '4:00 PM'], delay: 650 }] },
+      { trigger: '2:00 PM', userText: '2:00 PM', selection: { time: '2:00 PM' }, botReplies: [{ from: 'bot', text: `*Review your booking*
+
+{{service}} · {{duration}}
+{{date}}, {{time}}
+Total: {{price}}
+
+This example requires payment to confirm.`, options: ['Confirm booking'], delay: 650 }] },
+      { trigger: '4:00 PM', userText: '4:00 PM', selection: { time: '4:00 PM' }, botReplies: [{ from: 'bot', text: `*Review your booking*
+
+{{service}} · {{duration}}
+{{date}}, {{time}}
+Total: {{price}}
+
+This example requires payment to confirm.`, options: ['Confirm booking'], delay: 650 }] },
+      { trigger: 'Confirm booking', userText: 'Confirm booking', botReplies: [{ from: 'bot', text: `*Payment requested*
+
+{{price}} for {{service}}.
+In a real conversation, you receive a secure payment link. Here, simulate a successful payment.`, options: ['Simulate payment'], delay: 650 }] },
+      { trigger: 'Simulate payment', userText: 'Payment completed (demo)', botReplies: [{ from: 'bot', text: `*Payment received — demo*
+
+{{price}} · Ref: DEMO-BK-4291`, delay: 650 }, { from: 'bot', text: `✓ *Appointment confirmed*
+
+{{service}}
+{{date}}, {{time}}
+Bella’s Salon
+
+No real appointment has been created.`, delay: 500 }] },
     ],
   },
   {
-    id: 'order',
-    label: 'Order',
-    icon: '\u{1F6D2}',
-    businessName: 'Fresh Kitchen',
-    businessInitial: 'F',
-    greeting: {
-      from: 'bot',
-      text: "Welcome to Fresh Kitchen! \u{1F373}\n\nWhat would you like to order?",
-      options: ['Jollof Rice', 'Fried Rice'],
-      delay: 600,
-    },
+    id: 'order', label: 'Order', icon: '🛒', businessName: 'Fresh Kitchen', businessInitial: 'F',
+    description: 'Browse the menu, choose pickup, and see payment turn into an order confirmation.',
+    greeting: { from: 'bot', text: `Welcome to Fresh Kitchen!
+
+Choose something from our menu.`, options: ['Jollof Rice', 'Fried Rice'], delay: 500 },
     steps: [
-      {
-        trigger: 'Jollof Rice',
-        userText: 'Jollof Rice',
-        botReplies: [{
-          from: 'bot',
-          text: "Jollof Rice \u{2014} \u{20A6}2,500 \u{2705}\n\nAdd a side?",
-          options: ['Add Plantain \u{20A6}800', 'No thanks, place order'],
-          delay: 1000,
-        }],
-      },
-      {
-        trigger: 'Fried Rice',
-        userText: 'Fried Rice',
-        botReplies: [{
-          from: 'bot',
-          text: "Fried Rice \u{2014} \u{20A6}2,800 \u{2705}\n\nAdd a side?",
-          options: ['Add Plantain \u{20A6}800', 'No thanks, place order'],
-          delay: 1000,
-        }],
-      },
-      {
-        trigger: 'Add Plantain \u{20A6}800',
-        userText: 'Add Plantain',
-        botReplies: [{
-          from: 'bot',
-          text: "Added! \u{1F34C}\n\nReady to place your order?",
-          options: ['Place Order'],
-          delay: 800,
-        }],
-      },
-      {
-        trigger: 'No thanks, place order',
-        userText: 'No thanks, place order',
-        botReplies: [{
-          from: 'bot',
-          text: "\u{2705} *Order Placed!*\n\n\u{1F511} Ref: ORD-8134\n\u{23F0} Ready in ~30 min\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/ord/8134",
-          delay: 1400,
-        }],
-      },
-      {
-        trigger: 'Place Order',
-        userText: 'Place Order',
-        botReplies: [{
-          from: 'bot',
-          text: "\u{2705} *Order Placed!*\n\n\u{1F511} Ref: ORD-8135\n\u{23F0} Ready in ~30 min\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/ord/8135",
-          delay: 1400,
-        }],
-      },
+      { trigger: 'Jollof Rice', userText: 'Jollof Rice', selection: { product: 'Jollof Rice', price: '₦2,500' }, botReplies: [{ from: 'bot', text: `*{{product}}* · {{price}}
+
+How many would you like?`, options: ['1 portion'], delay: 650 }] },
+      { trigger: 'Fried Rice', userText: 'Fried Rice', selection: { product: 'Fried Rice', price: '₦2,800' }, botReplies: [{ from: 'bot', text: `*{{product}}* · {{price}}
+
+How many would you like?`, options: ['1 portion'], delay: 650 }] },
+      { trigger: '1 portion', userText: '1 portion', botReplies: [{ from: 'bot', text: `*Your cart*
+
+1 × {{product}}
+Total: {{price}}`, options: ['Checkout'], delay: 650 }] },
+      { trigger: 'Checkout', userText: 'Checkout', botReplies: [{ from: 'bot', text: `How would you like to receive your order?
+
+This demo offers pickup.`, options: ['Pickup'], delay: 500 }] },
+      { trigger: 'Pickup', userText: 'Pickup', botReplies: [{ from: 'bot', text: `*Review your order*
+
+1 × {{product}}
+Pickup at Fresh Kitchen
+Total: {{price}}`, options: ['Place Order'], delay: 650 }] },
+      { trigger: 'Place Order', userText: 'Place Order', botReplies: [{ from: 'bot', text: `*Awaiting payment*
+
+Your order total is {{price}}. In a real conversation, a secure link opens the payment provider.`, options: ['Simulate payment'], delay: 650 }] },
+      { trigger: 'Simulate payment', userText: 'Payment completed (demo)', botReplies: [{ from: 'bot', text: `✓ *Payment received — demo*
+
+{{price}} · Ref: DEMO-ORD-8134`, delay: 650 }, { from: 'bot', text: `*Order confirmed*
+
+1 × {{product}}
+Pickup at Fresh Kitchen
+
+No real order has been placed.`, delay: 500 }] },
     ],
   },
   {
-    id: 'ticket',
-    label: 'Ticket',
-    icon: '\u{1F3AB}',
-    businessName: 'Naija Tech Fest',
-    businessInitial: 'N',
-    greeting: {
-      from: 'bot',
-      text: "Hey! Welcome to Naija Tech Fest \u{1F680}\n\n\u{1F4C5} Dec 14-15, Lagos\n\nWhat can I help with?",
-      options: ['Buy Tickets'],
-      delay: 600,
-    },
+    id: 'ticket', label: 'Ticket', icon: '🎫', businessName: 'Naija Tech Fest', businessInitial: 'N',
+    description: 'Pick your tickets, review the total, and see the confirmation after a simulated payment.',
+    greeting: { from: 'bot', text: `Welcome to Naija Tech Fest!
+
+Explore our example event in Lagos.`, options: ['Buy Tickets'], delay: 500 },
     steps: [
-      {
-        trigger: 'Buy Tickets',
-        userText: 'Buy Tickets',
-        botReplies: [{
-          from: 'bot',
-          text: "How many tickets?\n\n\u{1F3AB} General Admission \u{2014} \u{20A6}15,000 each",
-          options: ['1 Ticket', '2 Tickets'],
-          delay: 1000,
-        }],
-      },
-      {
-        trigger: '1 Ticket',
-        userText: '1 Ticket',
-        botReplies: [{
-          from: 'bot',
-          text: "1x General Admission\n\u{1F4B0} Total: \u{20A6}15,000\n\nConfirm?",
-          options: ['Confirm'],
-          delay: 1000,
-        }],
-      },
-      {
-        trigger: '2 Tickets',
-        userText: '2 Tickets',
-        botReplies: [{
-          from: 'bot',
-          text: "2x General Admission\n\u{1F4B0} Total: \u{20A6}30,000\n\nConfirm?",
-          options: ['Confirm'],
-          delay: 1000,
-        }],
-      },
-      {
-        trigger: 'Confirm',
-        userText: 'Confirm',
-        botReplies: [{
-          from: 'bot',
-          text: "\u{2705} *Tickets Confirmed!*\n\n\u{1F511} Ref: TK-6720\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/tk/6720\n\nTickets sent after payment \u{2705}",
-          delay: 1400,
-        }],
-      },
+      { trigger: 'Buy Tickets', userText: 'Buy Tickets', botReplies: [{ from: 'bot', text: `*General Admission*
+₦15,000 per ticket
+
+How many tickets?`, options: ['1 Ticket', '2 Tickets'], delay: 650 }] },
+      { trigger: '1 Ticket', userText: '1 Ticket', selection: { quantity: '1', price: '₦15,000' }, botReplies: [{ from: 'bot', text: `*Review your tickets*
+
+{{quantity}} × General Admission
+Total: {{price}}`, options: ['Confirm'], delay: 650 }] },
+      { trigger: '2 Tickets', userText: '2 Tickets', selection: { quantity: '2', price: '₦30,000' }, botReplies: [{ from: 'bot', text: `*Review your tickets*
+
+{{quantity}} × General Admission
+Total: {{price}}`, options: ['Confirm'], delay: 650 }] },
+      { trigger: 'Confirm', userText: 'Confirm', botReplies: [{ from: 'bot', text: `*Awaiting payment*
+
+Total: {{price}}. Your tickets are issued after payment is verified. Try the simulated payment below.`, options: ['Simulate payment'], delay: 650 }] },
+      { trigger: 'Simulate payment', userText: 'Payment completed (demo)', botReplies: [{ from: 'bot', text: `✓ *Payment received — demo*
+
+{{price}} · Ref: DEMO-TK-6720`, delay: 650 }, { from: 'bot', text: `*Your tickets are ready*
+
+{{quantity}} × General Admission
+Naija Tech Fest · Lagos
+
+A real purchase delivers tickets with QR codes. This demo is not a valid ticket.`, delay: 500 }] },
     ],
   },
 ];
@@ -224,6 +174,7 @@ export default function LiveBotDemo() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const selectionRef = useRef<Record<string, string>>({});
   const scenario = SCENARIOS[activeScenario];
 
   useEffect(() => {
@@ -240,13 +191,14 @@ export default function LiveBotDemo() {
     setTyping(true);
     timeoutRef.current = setTimeout(() => {
       setTyping(false);
-      setMessages(prev => [...prev, { from: 'bot', text: step.text, options: step.options }]);
+      setMessages(prev => [...prev, { from: 'bot', text: step.text.replace(/\{\{(\w+)\}\}/g, (_, key) => selectionRef.current[key] || ''), options: step.options }]);
       if (onDone) onDone();
-    }, step.delay);
-  }, []);
+    }, noMotion ? 0 : step.delay);
+  }, [noMotion]);
 
   // Show greeting when scenario changes
   useEffect(() => {
+    selectionRef.current = {};
     setMessages([]);
     setTyping(false);
     setWaitingForInput(false);
@@ -266,16 +218,15 @@ export default function LiveBotDemo() {
     if (!waitingForInput) return;
     setWaitingForInput(false);
 
-    // Find matching step by trigger
-    const step = scenario.steps.find(s => s.trigger === actionText);
-
+    const currentOptions = messages[messages.length - 1]?.options || [];
+    const choice = currentOptions.find(option => option.toLowerCase() === actionText.toLowerCase());
+    const step = choice ? scenario.steps.find(s => s.trigger === choice) : undefined;
     if (!step) {
-      // No match — show the visitor's text and re-show current options
       setMessages(prev => [...prev, { from: 'user', text: actionText }]);
-      // Re-enable input so visitor can try a valid option
-      setWaitingForInput(true);
+      showBotMessage({ from: 'bot', text: 'This interactive demo follows the choices below. Tap one to continue, or type its label.', options: currentOptions, delay: 400 }, () => setWaitingForInput(true));
       return;
     }
+    selectionRef.current = { ...selectionRef.current, ...step.selection };
 
     // Show user's message
     setMessages(prev => [...prev, { from: 'user', text: step.userText }]);
@@ -296,7 +247,7 @@ export default function LiveBotDemo() {
       });
     };
     showNextReply();
-  }, [waitingForInput, scenario, showBotMessage]);
+  }, [waitingForInput, scenario, showBotMessage, messages]);
 
   function handleOptionClick(optionText: string) {
     processAction(optionText);
@@ -311,6 +262,7 @@ export default function LiveBotDemo() {
 
   function handleReset() {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    selectionRef.current = {};
     setMessages([]);
     setTyping(false);
     setWaitingForInput(false);
@@ -338,6 +290,7 @@ export default function LiveBotDemo() {
 
   return (
     <div className="mx-auto max-w-md">
+      <p className="mb-3 text-center text-xs font-semibold uppercase tracking-[0.18em] text-brand">You’re the customer. Try a conversation.</p>
       {/* Scenario tabs */}
       <div className="mb-4 flex justify-center gap-2">
         {SCENARIOS.map((s, i) => (
@@ -345,6 +298,7 @@ export default function LiveBotDemo() {
             key={s.id}
             onClick={() => switchScenario(i)}
             data-testid={`scenario-tab-${s.id}`}
+            aria-pressed={activeScenario === i}
             className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition ${
               activeScenario === i
                 ? 'bg-brand text-white shadow-md'
@@ -357,6 +311,7 @@ export default function LiveBotDemo() {
         ))}
       </div>
 
+      <p className="mb-5 min-h-10 text-center text-sm text-gray-500">{scenario.description}</p>
       {/* Phone frame */}
       <div className="overflow-hidden rounded-[2rem] border-4 border-white/20 bg-white shadow-2xl">
         {/* WhatsApp header */}
@@ -366,7 +321,7 @@ export default function LiveBotDemo() {
           </div>
           <div className="flex-1">
             <p className="text-sm font-semibold text-white">{scenario.businessName}</p>
-            <p className="text-xs text-green-200">online</p>
+            <p className="text-xs text-green-200">{typing ? 'typing…' : 'Demo business'}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -384,8 +339,9 @@ export default function LiveBotDemo() {
         {/* Messages */}
         <div
           ref={scrollRef}
-          className="space-y-2 overflow-y-auto p-3"
-          style={{ backgroundColor: '#ECE5DD', height: '340px' }}
+          role="log" aria-label="Example WhatsApp conversation" aria-live="polite"
+          className="space-y-3 overflow-y-auto overscroll-contain p-4"
+          style={{ backgroundColor: '#ECE5DD', height: '400px', backgroundImage: 'radial-gradient(#d5cec5 0.7px, transparent 0.7px)', backgroundSize: '14px 14px' }}
         >
           <AnimatePresence>
             {messages.map((entry, i) => {
@@ -404,7 +360,8 @@ export default function LiveBotDemo() {
                       }`}
                       style={from === 'user' ? { backgroundColor: '#DCF8C6' } : undefined}
                     >
-                      {text}
+                      {text.split(/(\*[^*]+\*)/g).map((part, index) => part.startsWith('*') && part.endsWith('*') ? <strong key={index}>{part.slice(1, -1)}</strong> : part)}
+                      <div aria-hidden="true" className="mt-1 text-right text-[10px] text-gray-400">12:{String(30 + i).padStart(2, '0')} {from === 'user' && <span className="ml-1 text-sky-600">✓✓</span>}</div>
                     </div>
                     {/* Tappable options — shown only on the last bot message while waiting */}
                     {isLastBotMsg && waitingForInput && opts && (
@@ -413,7 +370,7 @@ export default function LiveBotDemo() {
                           <button
                             key={opt}
                             onClick={() => handleOptionClick(opt)}
-                            className="block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-center text-xs font-medium text-blue-600 transition hover:bg-blue-50"
+                            className="block min-h-11 w-full rounded-lg border border-emerald-100 bg-white px-3 py-2.5 text-center text-sm font-medium text-emerald-700 transition hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 active:scale-[0.98]"
                           >
                             {opt}
                           </button>
@@ -445,7 +402,8 @@ export default function LiveBotDemo() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleFreeText()}
-            placeholder={waitingForInput ? 'Type a message...' : 'Waiting...'}
+            aria-label="Demo message"
+            placeholder={waitingForInput ? 'Tap a choice or type its label' : typing ? 'Waiting for reply…' : 'Replay to try another path'}
             disabled={!waitingForInput}
             data-testid="demo-input"
             className="flex-1 rounded-full bg-white px-4 py-2 text-sm outline-none disabled:opacity-50"
@@ -454,6 +412,7 @@ export default function LiveBotDemo() {
             onClick={handleFreeText}
             disabled={!input.trim() || !waitingForInput}
             data-testid="demo-send"
+            aria-label="Send demo message"
             className="flex h-9 w-9 items-center justify-center rounded-full bg-whatsapp text-white transition hover:bg-whatsapp/85 disabled:opacity-30"
           >
             <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
@@ -463,7 +422,7 @@ export default function LiveBotDemo() {
         </div>
       </div>
       <p className="mt-3 text-center text-xs text-gray-400">
-        This is a simulation showing how Waaiio conversations work.
+        Interactive simulation · Example businesses and prices. No messages, bookings, or payments are sent. Actual steps depend on the merchant’s settings.
       </p>
     </div>
   );

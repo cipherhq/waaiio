@@ -68,6 +68,8 @@ const selectAppointmentStep: FlowStepConfig = {
       return { valid: true, data: { _action: 'cancel' } };
     }
 
+    const exactRepeat = ctx.session.session_data._repeat_selection_id === input;
+    delete ctx.session.session_data._repeat_selection_id;
     // Try exact ID match first
     const { data: appointment } = await ctx.supabase
       .from('appointments')
@@ -100,6 +102,8 @@ const selectAppointmentStep: FlowStepConfig = {
         },
       };
     }
+
+    if (exactRepeat) return { valid: false, errorMessage: 'That previous appointment is no longer available. Choose another appointment from the menu.' };
 
     // Fuzzy match by name
     const { data: all } = await ctx.supabase
@@ -153,6 +157,7 @@ const selectAppointmentStep: FlowStepConfig = {
   },
 
   async skipIf(ctx: FlowContext) {
+    if (ctx.session.session_data._repeat_selection_id) return false;
     const appointments = await loadActiveAppointments(ctx);
     ctx.session.session_data.skip_service = false;
     // Auto-select if only one appointment type

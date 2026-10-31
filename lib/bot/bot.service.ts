@@ -1,3 +1,4 @@
+import { DIRECTORY_PROMPT, isSharedConversation, repeatSessionData, persistDirectoryEntry } from './flows/shared/navigation';
 import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
 import { currentAnswers } from '@/lib/parties/rsvp-questions';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -96,7 +97,7 @@ export class BotService {
     _pickerSelection?: { id?: string; version?: number; conversationVersion: number; businessId: string },
   ): Promise<void> {
     try {
-    const text = messageText.trim();
+    let text = messageText.trim();
     const _bt0 = Date.now();
     const _btimings: Record<string, number> = {};
     const _bmark = (l: string) => { _btimings[l] = Date.now() - _bt0; };
@@ -228,74 +229,44 @@ export class BotService {
       return this.handleMessage(from, 'Hi', messageType, destinationPhone);
     }
 
-    if (text === 'switch_biz') {
-      // S-1 (#256): Explicitly transition to platform discovery before showing picker
-      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-      // Show business picker (platform-scoped: pre-business discovery)
-      const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
-      if (recentBiz.length > 1) {
-        const quickPick = recentBiz.slice(0, 3);
-        const sugSess = await this.createNullBizSuggestionSession(from, null, await this.navigationChannelData(from, destinationPhone, { suggestions: quickPick }));
-        if (sugSess) {
-          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
-          if (persisted.length === 0) {
-            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          } else {
-            await this.sendPlatformButtons(from, 'Which business would you like to visit?',
-              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
-          }
-        } else {
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        }
-      } else {
-        await this.sendPlatformText(from, 'Type the name or code of the business you\'d like to visit.');
-      }
-      return;
+    if (text === 'nav_directory' || text === 'switch_biz' || text === 'acct_switch') {
+      // A stale shared-menu button on a dedicated number must not escape its merchant.
+      text = preResolvedBusinessId ? 'menu' : 'directory';
     }
 
     // ── "home" / "directory" / "search" — return to directory ──
     // "directory" and "search" only act as directory navigation on the shared number.
     // On a dedicated channel (preResolvedBusinessId set), they fall through to the
     // business flow so the business can handle them as keywords or flow input.
-    // "home" always returns to directory regardless of channel type (existing behavior).
+    // Dedicated-channel navigation stays with its owning merchant.
     // Detection: preResolvedBusinessId is set by the webhook from dedicated channel's
     // business_id (route.ts:540). Shared channels have business_id stripped to null
     // by stripSharedChannelBusinessAuthority (channel-resolver.ts:38-44).
     if (HOME_PATTERN.test(text.trim()) && !preResolvedBusinessId) {
-      const activeSession = await this.getActiveSession(from);
-      if (activeSession) await this.deactivateSession(activeSession.id);
+      const navigationData = await this.navigationChannelData(from, destinationPhone, {});
+      // Do not deactivate a session belonging to another inbound number.
+      if (navigationData._inbound_channel_id) {
+        const { data: context, error } = await this.supabase.rpc('get_shared_conversation', {
+          p_phone: from, p_channel_id: navigationData._inbound_channel_id,
+        });
+        if (error) throw error;
+        if (context?.session?.id) await this.deactivateSession(context.session.id);
+      }
       // S-1 (#256): Explicitly transition to platform discovery
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
 
       const dirSend = this.buildDirectorySend();
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
-      if (recentBiz.length > 0) {
-        await sendReturningGreeting(dirSend, from, recentBiz, null);
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'directory_search',
-          session_data: await this.navigationChannelData(from, destinationPhone, { _directory_mode: true, suggestions: recentBiz.slice(0, 2) }),
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-      } else {
-        await sendDirectoryGreeting(dirSend, from);
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'directory_search',
-          session_data: await this.navigationChannelData(from, destinationPhone, { _directory_mode: true }),
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
+      const saved = await persistDirectoryEntry(this.supabase, from, {
+        ...navigationData, _directory_mode: true, suggestions: recentBiz.slice(0, 2),
+      });
+      if (!saved) {
+        await this.sendPlatformText(from, 'I could not open directory search on this number. Please try again shortly, or browse https://www.waaiio.com/directory. Your existing bookings and payments have not been cancelled.');
+        return;
       }
+      if (recentBiz.length > 0) await sendReturningGreeting(dirSend, from, recentBiz, null);
+      else await sendDirectoryGreeting(dirSend, from);
+      await this.sendPlatformText(from, DIRECTORY_PROMPT);
       return;
     }
 
@@ -2090,6 +2061,12 @@ export class BotService {
         }
       }
 
+      // Greetings must expose navigation even for a one-capability merchant.
+      // Explicit product/booking intents still take the fast path above.
+      if (business && !directCanonicalCap && !deepLinkCapability && (sharedConversation || profile?.id)) {
+        firstStep = 'select_capability';
+      }
+
       const sessionData: Record<string, unknown> = businessId && business
         ? {
             business_id: businessId, business_name: business.name, business_category: business.category, capabilities,
@@ -2657,7 +2634,7 @@ export class BotService {
             profileNamePromise,
           ]);
 
-          if (custHistory.isReturning) {
+          if (custHistory.isReturning && !directCanonicalCap) {
             session.session_data._customer_history = {
               totalVisits: custHistory.totalVisits,
               ltvTier: custHistory.ltvTier,
@@ -2671,11 +2648,23 @@ export class BotService {
             // Use pre-fetched profile name for personalized greeting
             const customerName = (fullProfile as { first_name?: string } | null)?.first_name || null;
 
-            // Quick rebook: if we know their last/favorite service, show a contextual "again" button
-            const rebookServiceName = custHistory.lastServiceName || custHistory.favoriteServiceName;
-            const rebookServiceId = custHistory.lastServiceId || custHistory.favoriteServiceId;
+            const latestOrder = custHistory.lastOrder;
+            if (latestOrder && (!custHistory.lastTransactionAt || latestOrder.created_at > custHistory.lastTransactionAt)
+                && capabilities.includes('ordering')) {
+              await this.messageSender.sendButtons({
+                to: from,
+                body: `Welcome back to ${business.name}! Review your last order (${latestOrder.reference_code}, ${latestOrder.created_at.slice(0, 10)}) again? You'll confirm current items and prices before ordering.`,
+                buttons: [{ id: 'repeat_last_order', title: 'Review last order' }, { id: 'browse_menu', title: 'Merchant menu' },
+                  ...(await isSharedConversation(this.supabase, session.session_data) ? [{ id: 'nav_directory', title: 'Search directory' }] : [])],
+              });
+              return;
+            }
 
-            if (rebookServiceName && rebookServiceId) {
+            // Quick rebook: if we know their last/favorite service, show a contextual "again" button
+            const rebookServiceName = custHistory.lastServiceName;
+            const rebookServiceId = custHistory.lastServiceId;
+
+            if (rebookServiceName && rebookServiceId && (!latestOrder || !custHistory.lastTransactionAt || latestOrder.created_at <= custHistory.lastTransactionAt)) {
               const rebookLang = (session.session_data._detected_language as string) || 'en';
               const { getFlowCopy: getFlowCopyRebook, fillFlowCopy: fillFlowCopyRebook } = await import('@/lib/bot/flows/flow-localization');
               const _rebookGreetOv = await getOverrides(business.id);
@@ -2695,7 +2684,7 @@ export class BotService {
               const { data: svcCheck } = await this.supabase
                 .from('services')
                 .select('service_type')
-                .eq('id', rebookServiceId)
+                .eq('id', rebookServiceId).eq('business_id', business.id)
                 .single();
               if (svcCheck?.service_type === 'giving') {
                 isGivingRebook = true;
@@ -2705,7 +2694,7 @@ export class BotService {
               const actionWord = isGivingRebook ? 'Give' : catLabels.actionVerb || 'Book';
               const promptText = isGivingRebook
                 ? `${rebookMsg}\n\nGive again?\n🙏 ${rebookServiceName}`
-                : `${rebookMsg}\n\n${actionWord} your usual?\n📋 ${rebookServiceName}`;
+                : `${rebookMsg}\n\n${actionWord} again at ${business.name}?\n📋 ${rebookServiceName}\nYou will review current availability and details before confirming.`;
               // WhatsApp button max 20 chars — use short label if name is long
               const maxNameLen = 20 - actionWord.length - 1; // "Give " = 5 chars
               const buttonLabel = rebookServiceName.length <= maxNameLen
@@ -2726,14 +2715,15 @@ export class BotService {
                 body: translatedBody,
                 buttons: [
                   { id: 'quick_rebook', title: truncTitle(buttonLabel) },
-                  { id: 'browse_menu', title: 'View Options' },
+                  { id: 'browse_menu', title: 'Merchant menu' },
+                  ...(await isSharedConversation(this.supabase, session.session_data) ? [{ id: 'nav_directory', title: 'Search directory' }] : []),
                 ],
               });
 
               // Store rebook data in session for handling the button tap
               session.session_data._quick_rebook_service_id = rebookServiceId;
               session.session_data._quick_rebook_service_name = rebookServiceName;
-              session.session_data._rebook_flow_type = custHistory.lastFlowType;
+              session.session_data._rebook_flow_type = custHistory.lastEntityType === 'appointment' ? 'appointment' : custHistory.lastFlowType;
               session.session_data._rebook_is_giving = isGivingRebook;
               session.session_data._quick_rebook_sent = true;
               await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
@@ -3244,39 +3234,6 @@ export class BotService {
     // ── Escape hatches (hardcoded, never overridable) ──
     const step = session.current_step;
 
-    // Handle "Switch Business" button — deactivate and show business picker
-    if (text === 'switch_biz') {
-      await this.deactivateSession(session.id);
-      // S-1: Transition to platform discovery — previous business must not block picker
-      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-      // Force business picker by clearing business association and showing suggestions
-      const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
-      if (recentBiz.length > 1) {
-        const quickPick = recentBiz.slice(0, 3);
-        const sugSess = await this.createNullBizSuggestionSession(from, null, await this.navigationChannelData(from, destinationPhone, { suggestions: quickPick }));
-        if (sugSess) {
-          const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
-          if (persisted.length === 0) {
-            await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-          } else {
-            await this.sendPlatformButtons(from, 'Which business would you like to visit?',
-              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
-          }
-        } else {
-          await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        }
-      } else {
-        await this.sendPlatformLocalizedText(from, 'Type the name or code of the business you\'d like to visit.', session);
-      }
-      return;
-    }
-
-    // Handle "Back to Business" button — restart the current business
-    if (text === 'go_back_biz') {
-      // Fall through — the session was deactivated, so the bot will create a new one for the same business
-    }
-
-    // Handle upgrade button tap from post-onboarding upsell
     if (text === 'upgrade_now') {
       await this.sendText(from, 'Upgrade your plan here 👇\nhttps://www.waaiio.com/dashboard/settings?tab=account');
       return;
@@ -3286,7 +3243,8 @@ export class BotService {
     if (text === 'quick_rebook' && session.session_data._quick_rebook_service_id) {
       // CAP-001 Point B: Verify target capability is currently effective before rebook
       const isGivingRebook = session.session_data._rebook_is_giving === true;
-      const rebookCap = isGivingRebook ? 'giving' : 'scheduling';
+      const isAppointmentRebook = session.session_data._rebook_flow_type === 'appointment';
+      const rebookCap = isGivingRebook ? 'giving' : isAppointmentRebook ? 'appointment' : 'scheduling';
       const currentCaps = (session.session_data.capabilities as CapabilityId[]) || [];
       if (!currentCaps.includes(rebookCap as CapabilityId)) {
         // CAS-005: Capability unavailable — use shared recovery
@@ -3315,47 +3273,10 @@ export class BotService {
         return;
       }
 
-      // Clear stale transactional state BEFORE setting new service (shared cleanup)
-      const { clearStaleCapabilityState } = await import('@/lib/bot/flows/shared/capability-transition');
-      clearStaleCapabilityState(
-        session.session_data,
-        session.session_data.active_capability as string | undefined,
-        rebookCap,
-      );
-      session.session_data.active_capability = rebookCap;
-
-      // Now set the rebook service (AFTER cleanup so it's not erased)
+      // Re-enter the normal selector with the saved entity ID: its validator reloads
+      // current merchant-scoped price, availability and approval rules.
       const rebookServiceId = session.session_data._quick_rebook_service_id as string;
-      session.session_data.service_id = rebookServiceId;
-      session.session_data.service_name = session.session_data._quick_rebook_service_name;
-      session.session_data.skip_service = true;
-
-      // Fetch service details to pre-fill duration, price, etc.
-      const { data: svc } = await this.supabase
-        .from('services')
-        .select('price, duration_minutes, deposit_amount, billing_type, recurring_interval, max_capacity, buffer_minutes, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule, auto_approve, service_type')
-        .eq('id', rebookServiceId)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (svc) {
-        session.session_data.service_price = svc.price;
-        session.session_data.service_duration = svc.duration_minutes;
-        session.session_data.service_deposit = svc.deposit_amount || 0;
-        session.session_data.service_billing_type = svc.billing_type || 'one_time';
-        session.session_data.service_recurring_interval = svc.recurring_interval || null;
-        session.session_data._service_max_capacity = svc.max_capacity || 1;
-        session.session_data._service_buffer_minutes = svc.buffer_minutes || 0;
-        session.session_data._service_available_days = svc.available_days || [];
-        session.session_data._service_available_from = svc.available_from || null;
-        session.session_data._service_available_to = svc.available_to || null;
-        session.session_data._service_requires_staff = svc.requires_staff || false;
-        session.session_data._service_staff_ids = svc.staff_ids || [];
-        session.session_data._service_allow_staff_selection = svc.allow_staff_selection || false;
-        session.session_data._service_metadata = svc.metadata || null;
-        session.session_data._service_is_class = svc.is_class || false;
-        session.session_data._service_class_schedule = svc.class_schedule || [];
-        session.session_data._auto_approve = svc.auto_approve ?? true;
-      }
+      session.session_data = { ...repeatSessionData(session.session_data), active_capability: rebookCap, _repeat_selection_id: rebookServiceId };
 
       // Clean up rebook data
       delete session.session_data._quick_rebook_service_id;
@@ -3365,7 +3286,7 @@ export class BotService {
       delete session.session_data._quick_rebook_sent;
 
       // Set the correct first step for the capability (skip capability selection)
-      const firstStep = isGivingRebook ? 'enter_amount' : 'select_date';
+      const firstStep = isGivingRebook ? 'select_category' : isAppointmentRebook ? 'select_appointment' : 'select_service';
       session.current_step = firstStep;
 
       // Initialize step history so "back"/"cancel" works correctly
@@ -3394,7 +3315,7 @@ export class BotService {
       if (business) {
         const _rebookOv = session.business_id ? await getOverrides(session.business_id) : emptyOverrides;
         await runWithTranslationOverrides(_rebookOv, () =>
-          this.flowExecutor.execute(from, '', session as unknown as BotSession, business)
+          this.flowExecutor.execute(from, rebookServiceId, session as unknown as BotSession, business)
         );
       }
       return;
@@ -4209,12 +4130,17 @@ export class BotService {
       // ACC-204 R4: Read provenance from session BEFORE deactivation for all pc_ paths
       const pcProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
       if (pcText === 'pc_options' || pcText === 'pc_done') {
-        // View Options — restart at capability menu for same business
-        await this.deactivateSession(session.id);
-        if (session.business_id) {
-          // ACC-204 R4: Carry forward original provenance — prevents trust laundering via post-completion
-          await this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id, undefined, undefined, pcProvenance);
-        }
+        // Keep shared selection and show the menu directly, not another repeat suggestion.
+        const data = { ...repeatSessionData(session.session_data), _force_capability_menu: true };
+        const { data: saved, error } = await this.supabase.rpc('update_session_cas', {
+          p_session_id: session.id, p_expected_version: session.version ?? 0,
+          p_current_step: 'select_capability', p_session_data: data,
+        });
+        if (error) throw error;
+        if (!saved?.success) return;
+        session.current_step = 'select_capability'; session.session_data = data; session.version = saved.version;
+        const { data: business } = await this.supabase.from('businesses').select('*').eq('id', session.business_id).single();
+        if (business) await this.flowExecutor.execute(from, '', session, business);
         return;
       }
       if (pcText === 'pc_again') {

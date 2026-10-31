@@ -111,7 +111,7 @@ function LaunchStrip({
   onOpenModal: () => void;
   onDismiss: () => void;
 }) {
-  const launchDateDisplay = config.target_date
+  const launchDateDisplay = config.target_date && new Date(config.target_date).getTime() > Date.now()
     ? formatLaunchDate(config.target_date)
     : null;
 
@@ -214,7 +214,7 @@ function LaunchModal({
 
   const selectedRegion = selectedCode ? regions.find((r) => r.code === selectedCode) : null;
   const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone) : '';
-  const launchDateDisplay = config.target_date ? formatLaunchDate(config.target_date) : null;
+  const launchDateDisplay = config.target_date && new Date(config.target_date).getTime() > Date.now() ? formatLaunchDate(config.target_date) : null;
 
   return (
     <div

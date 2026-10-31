@@ -27,7 +27,8 @@ beforeAll(async () => {
     CREATE TABLE whatsapp_channels (id uuid PRIMARY KEY, channel_type text, is_active boolean, connection_status text);
     CREATE TABLE businesses (id uuid PRIMARY KEY, status text, wa_method text, assigned_channel_id uuid);
     CREATE TABLE bot_sessions (id uuid PRIMARY KEY, whatsapp_number text, business_id uuid, is_active boolean,
-      expires_at timestamptz, current_step text, session_data jsonb, version bigint DEFAULT 0);`);
+      expires_at timestamptz, current_step text, session_data jsonb, version bigint DEFAULT 0, conversation_log jsonb, updated_at timestamptz DEFAULT now());`);
+  await db.query(readFileSync(join(process.cwd(), 'supabase/migrations/364_cas_business_id.sql'), 'utf8'));
   await db.query(readFileSync(join(process.cwd(), 'supabase/migrations/493_shared_conversation_binding.sql'), 'utf8'));
 }, 30000);
 afterAll(async () => {
@@ -39,7 +40,7 @@ beforeEach(async () => {
   await query('TRUNCATE bot_conversation_bindings, bot_sessions, businesses, whatsapp_channels CASCADE');
   await query(`INSERT INTO whatsapp_channels VALUES ($1,'shared',true,'active'),($2,'shared',true,'active');`, [ch, otherCh]);
   await query(`INSERT INTO businesses VALUES ($1,'active','shared',$3),($2,'active','shared',$3)`, [a,b,ch]);
-  await query(`INSERT INTO bot_sessions VALUES ($1,'customer',$3,true,now()+interval '1 hour','select_date',$5,0),
+  await query(`INSERT INTO bot_sessions (id,whatsapp_number,business_id,is_active,expires_at,current_step,session_data,version) VALUES ($1,'customer',$3,true,now()+interval '1 hour','select_date',$5,0),
     ($2,'customer',$4,true,now()+interval '1 hour','select_date',$5,0)`, [sa,sb,a,b,JSON.stringify({_inbound_channel_id:ch})]);
 });
 describe('explicit shared conversation selection — real PostgreSQL', () => {
@@ -49,6 +50,21 @@ describe('explicit shared conversation selection — real PostgreSQL', () => {
     await query("UPDATE bot_sessions SET current_step='collect_name' WHERE id=$1",[sa]);
     expect((await read()).session.current_step).toBe('collect_name');
     expect((await query('SELECT is_active FROM bot_sessions WHERE id=$1',[sb]))[0].is_active).toBe(true);
+  });
+  it('reorder CAS retains the bound session for the next shared reply and rejects stale replacement', async () => {
+    expect(await select()).toBe(true);
+    const prior = (await read()).session;
+    const draft = { _inbound_channel_id: ch, active_capability: 'ordering', cart: [{ product_id: 'p', quantity: 1, price: 0 }] };
+    const saved = (await query('SELECT update_session_cas($1,$2,$3,$4) result', [sa, prior.version, 'continue_or_checkout', JSON.stringify(draft)]))[0].result;
+    expect(saved.success).toBe(true);
+    const nextReply = (await read()).session;
+    expect(nextReply.id).toBe(sa);
+    expect(nextReply.business_id).toBe(a);
+    expect(nextReply.current_step).toBe('continue_or_checkout');
+    expect(nextReply.session_data.cart[0].price).toBe(0);
+    const stale = (await query('SELECT update_session_cas($1,$2,$3,$4) result', [sa, prior.version, 'select_date', '{}']))[0].result;
+    expect(stale.success).toBe(false);
+    expect((await read()).session.current_step).toBe('continue_or_checkout');
   });
   it('isolates sender and receiving channel', async () => {
     await select(); expect((await read(otherCh)).session).toBeNull(); expect((await read(ch,'different')).session).toBeNull();
@@ -62,13 +78,13 @@ describe('explicit shared conversation selection — real PostgreSQL', () => {
     expect((await read()).session).toBeNull();
   });
   it.each(['directory_search','directory_results'])('resumes channel-bound %s navigation', async (step) => {
-    await query(`INSERT INTO bot_sessions VALUES ($1,'customer',NULL,true,now()+interval '1 hour',$2,$3,0)`,
+    await query(`INSERT INTO bot_sessions (id,whatsapp_number,business_id,is_active,expires_at,current_step,session_data,version) VALUES ($1,'customer',NULL,true,now()+interval '1 hour',$2,$3,0)`,
       [picker,step,JSON.stringify({_inbound_channel_id:ch,_conversation_version:0})]);
     expect((await read()).session.id).toBe(picker);
     expect((await read(otherCh)).session).toBeNull();
   });
   it('consumes a stored directory result using its businessId field', async () => {
-    await query(`INSERT INTO bot_sessions VALUES ($1,'customer',NULL,true,now()+interval '1 hour','directory_results',$2,0)`,
+    await query(`INSERT INTO bot_sessions (id,whatsapp_number,business_id,is_active,expires_at,current_step,session_data,version) VALUES ($1,'customer',NULL,true,now()+interval '1 hour','directory_results',$2,0)`,
       [picker,JSON.stringify({_inbound_channel_id:ch,_conversation_version:0,_directory_results:[{businessId:a}]})]);
     expect(await select(sa,0,picker,0)).toBe(true);
     expect((await read()).session.id).toBe(sa);
@@ -78,7 +94,7 @@ describe('explicit shared conversation selection — real PostgreSQL', () => {
     expect((await read()).session).toBeNull(); expect(await select(sa,1)).toBe(false);
   });
   it('resumes and atomically consumes a stored picker before merchant sessions', async () => {
-    await query(`INSERT INTO bot_sessions VALUES ($1,'customer',NULL,true,now()+interval '1 hour','select_business_suggestion',$2,2)`,
+    await query(`INSERT INTO bot_sessions (id,whatsapp_number,business_id,is_active,expires_at,current_step,session_data,version) VALUES ($1,'customer',NULL,true,now()+interval '1 hour','select_business_suggestion',$2,2)`,
       [picker,JSON.stringify({_inbound_channel_id:ch,_conversation_version:0,suggestions:[{id:a},{id:b}]})]);
     expect((await read()).session.id).toBe(picker);
     expect(await select(sa,0,picker,1)).toBe(false);
@@ -86,7 +102,7 @@ describe('explicit shared conversation selection — real PostgreSQL', () => {
     expect((await read()).session.id).toBe(sa); expect(await select(sb,1,picker,2)).toBe(false);
   });
   it('rejects a picker choice absent from the stored options', async () => {
-    await query(`INSERT INTO bot_sessions VALUES ($1,'customer',NULL,true,now()+interval '1 hour','select_business_suggestion',$2,0)`,
+    await query(`INSERT INTO bot_sessions (id,whatsapp_number,business_id,is_active,expires_at,current_step,session_data,version) VALUES ($1,'customer',NULL,true,now()+interval '1 hour','select_business_suggestion',$2,0)`,
       [picker,JSON.stringify({_inbound_channel_id:ch,_conversation_version:0,suggestions:[{id:b}]})]);
     expect(await select(sa,0,picker,0)).toBe(false);
   });

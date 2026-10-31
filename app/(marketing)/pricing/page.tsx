@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
-import { formatCurrency, TIER_FEATURES, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { formatCurrency, TIER_FEATURES, TIER_TRANSACTION_LIMITS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS } from '@/lib/capabilities/types';
 
 /** DTO shape returned by /api/public/pricing */
@@ -38,23 +38,26 @@ interface PricingProjection {
 
 export default function PricingPage() {
   const [country, setCountry] = useState<CountryCode>('NG');
-  const [billingVolume, setBillingVolume] = useState(200);
   const [projection, setProjection] = useState<PricingProjection | null>(null);
   const [loadError, setLoadError] = useState(false);
 
+  const requestVersion = useRef(0);
   useEffect(() => {
     fetchProjection(country);
+    return () => { requestVersion.current += 1; };
   }, [country]);
 
   async function fetchProjection(cc: string) {
+    const version = ++requestVersion.current;
     try {
       setLoadError(false);
       const res = await fetch(`/api/public/pricing?country=${cc}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: PricingProjection = await res.json();
       if (!data.trialDays || !data.country?.pricing) throw new Error('Malformed projection');
-      setProjection(data);
+      if (version === requestVersion.current) setProjection(data);
     } catch {
+      if (version !== requestVersion.current) return;
       setLoadError(true);
       setProjection(null);
     }
@@ -75,7 +78,7 @@ export default function PricingPage() {
     );
   }
 
-  if (!projection) {
+  if (!projection || projection.country.code !== country) {
     return (
       <section className="py-32 text-center">
         <div className="mx-auto max-w-md px-4">
@@ -90,15 +93,6 @@ export default function PricingPage() {
   const countryPricing = projection.country.pricing;
   const countryList = projection.countries;
 
-  // Fee estimates use only DB-projected country pricing — no hardcoded fallback
-  const avgTransaction: Record<string, number> = { NG: 5000, US: 40, GB: 35, CA: 45, GH: 50 };
-  const avgTx = avgTransaction[country] || 40;
-  const feeEstimates = {
-    free: Math.round(billingVolume * (countryPricing.free.feePercentage / 100) * avgTx + billingVolume * countryPricing.free.feeFlat),
-    growth: Math.round(billingVolume * (countryPricing.growth.feePercentage / 100) * avgTx + billingVolume * countryPricing.growth.feeFlat),
-    business: Math.round(billingVolume * (countryPricing.business.feePercentage / 100) * avgTx + billingVolume * countryPricing.business.feeFlat),
-  };
-
   return (
     <>
       {/* Hero */}
@@ -109,7 +103,7 @@ export default function PricingPage() {
             Simple, transparent pricing
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-            {trialDays}-day free trial with zero fees, then {tierFees.free.feePercentage}% per transaction. No monthly fees on Starter. Free reservations don&apos;t count.
+            {trialDays}-day free trial with zero fees, then {tierFees.free.feePercentage}% standard platform fee. Category rates and custom agreements may differ. No monthly fees on Starter. Free reservations don&apos;t count.
           </p>
 
           {/* Country picker */}
@@ -154,13 +148,13 @@ export default function PricingPage() {
                   price="Free"
                   priceNote="No monthly fee"
                   description={TIER_FEATURES.free.description}
-                  features={TIER_FEATURES.free.highlights}
+                  features={TIER_FEATURES.free.highlights.filter(feature => !/activities|bookings/i.test(feature))}
                   trialDays={trialDays}
                   cta={{ label: 'Start Free Trial', href: '/get-started' }}
                   country={country}
                 />
                 <p className="mt-3 rounded-lg bg-gray-50 px-4 py-3 text-center text-xs text-gray-500">
-                  After trial: {tierFees.free.feePercentage}% per paid transaction. Free bookings (no deposit) are always free.
+                  After trial: {tierFees.free.feePercentage}% standard platform fee; category rates and custom agreements may differ. Free bookings (no deposit) are always free.
                 </p>
               </div>
               <TierCard
@@ -170,7 +164,7 @@ export default function PricingPage() {
                 priceNote="/month"
                 description={TIER_FEATURES.growth.description}
                 highlight
-                features={TIER_FEATURES.growth.highlights}
+                features={TIER_FEATURES.growth.highlights.filter(feature => !/activities|bookings/i.test(feature))}
                 trialDays={trialDays}
                 cta={{ label: 'Get Started', href: '/get-started?plan=growth', gold: true }}
                 country={country}
@@ -181,7 +175,7 @@ export default function PricingPage() {
                 price={formatCurrency(countryPricing.business.price, country)}
                 priceNote="/month"
                 description={TIER_FEATURES.business.description}
-                features={TIER_FEATURES.business.highlights}
+                features={TIER_FEATURES.business.highlights.filter(feature => !/activities|bookings/i.test(feature))}
                 trialDays={trialDays}
                 cta={{ label: 'Get Started', href: '/get-started?plan=business' }}
                 country={country}
@@ -221,14 +215,14 @@ export default function PricingPage() {
                   </tr>
                   <CompareRow
                     label="Monthly bookings"
-                    values={['Up to 50', 'Up to 500', 'Unlimited']}
+                    values={(['free', 'growth', 'business'] as const).map(tier => TIER_TRANSACTION_LIMITS[tier].bookings < 0 ? 'Unlimited' : `Up to ${TIER_TRANSACTION_LIMITS[tier].bookings}`)}
                   />
                   <CompareRow
-                    label="Transaction fee"
+                    label="Standard platform fee"
                     values={[
-                      `${tierFees.free.feePercentage}% + flat fee`,
-                      `${tierFees.growth.feePercentage}% + flat fee`,
-                      `${tierFees.business.feePercentage}% + flat fee`,
+                      `${tierFees.free.feePercentage}%`,
+                      `${tierFees.growth.feePercentage}%`,
+                      `${tierFees.business.feePercentage}%`,
                     ]}
                   />
                   <CompareRow
@@ -292,74 +286,6 @@ export default function PricingPage() {
         </section>
       )}
 
-      {/* Billing Calculator */}
-      <section className="border-t border-gray-100 bg-gray-50 py-16">
-        <AnimatedSection delay={0.1}>
-        <div className="mx-auto max-w-4xl px-4">
-          <div className="rounded-2xl border border-gray-200 bg-white p-8 lg:p-10">
-            <h2 className="text-xl font-bold text-gray-900">Billing Calculator</h2>
-            <p className="mt-1 text-sm text-gray-600">
-              Estimate your monthly fees based on transaction volume
-            </p>
-
-            <div className="mt-8">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-gray-700">
-                  Monthly transactions
-                </label>
-                <span className="rounded-full bg-brand-50 px-3 py-1 text-sm font-bold text-brand">
-                  {billingVolume}
-                </span>
-              </div>
-              <input
-                type="range"
-                min={10}
-                max={1000}
-                step={10}
-                value={billingVolume}
-                onChange={(e) => setBillingVolume(Number(e.target.value))}
-                className="mt-3 w-full accent-brand"
-              />
-              <div className="flex justify-between text-xs text-gray-400">
-                <span>10</span>
-                <span>500</span>
-                <span>1,000</span>
-              </div>
-            </div>
-
-            <p className="mt-6 text-xs text-gray-500">
-              Assuming average transaction of {formatCurrency(avgTx, country)}
-            </p>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-3">
-              {([
-                { tier: 'free' as SubscriptionTier, name: TIER_FEATURES.free.marketingName, monthly: 0 },
-                { tier: 'growth' as SubscriptionTier, name: TIER_FEATURES.growth.marketingName, monthly: countryPricing.growth.price },
-                { tier: 'business' as SubscriptionTier, name: TIER_FEATURES.business.marketingName, monthly: countryPricing.business.price },
-              ]).map((plan) => {
-                const fee = feeEstimates[plan.tier];
-                const total = plan.monthly + fee;
-                return (
-                  <div
-                    key={plan.tier}
-                    className={`rounded-xl border p-4 ${plan.tier === 'growth' ? 'border-brand bg-brand-50/30' : 'border-gray-200'}`}
-                  >
-                    <p className="text-xs font-semibold text-gray-500">{plan.name}</p>
-                    <p className="mt-2 text-xl font-bold text-gray-900">{formatCurrency(total, country)}</p>
-                    <p className="text-xs text-gray-500">/month platform cost</p>
-                    <div className="mt-3 space-y-1 text-xs text-gray-600">
-                      <p>Subscription: {formatCurrency(plan.monthly, country)}</p>
-                      <p>Transaction fees: ~{formatCurrency(fee, country)}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-        </AnimatedSection>
-      </section>
-
       {/* How Messages Are Billed */}
       <section className="bg-white py-16">
         <AnimatedSection delay={0.1}>
@@ -384,25 +310,10 @@ export default function PricingPage() {
               />
               <BillingStep
                 number="3"
-                title="Get paid instantly"
-                desc="Payments go directly to your Paystack, Stripe, or Square account. Platform fees are deducted automatically — no invoices to worry about."
+                title="How you receive payments"
+                desc="Connected merchants receive payments through their provider with the supported fee split. Payments collected through Waaiio are settled afterward by Waaiio through an admin-controlled process with payment confirmation. Timing depends on the payment route."
               />
             </div>
-          </div>
-        </AnimatedSection>
-      </section>
-
-      {/* ROI Calculator */}
-      <section className="bg-white py-16">
-        <AnimatedSection>
-          <div className="mx-auto max-w-2xl px-4">
-            <h2 className="text-center text-2xl font-bold text-gray-900">
-              Calculate your ROI
-            </h2>
-            <p className="mt-2 text-center text-gray-600">
-              See how much Waaiio can earn for you
-            </p>
-            <RoiCalculator country={country} countryPricing={countryPricing} tierFees={tierFees} />
           </div>
         </AnimatedSection>
       </section>
@@ -436,41 +347,6 @@ export default function PricingPage() {
         </AnimatedSection>
       </section>
 
-      {/* Case Study */}
-      <section className="bg-white py-16">
-        <AnimatedSection>
-          <div className="mx-auto max-w-4xl px-4">
-            <div className="overflow-hidden rounded-2xl border border-gray-100 bg-gradient-to-br from-brand-50/50 to-white lg:flex">
-              <div className="flex-1 p-8 lg:p-10">
-                <p className="text-xs font-bold uppercase tracking-widest text-brand">Case Study</p>
-                <h3 className="mt-3 text-xl font-bold text-gray-900">
-                  King&apos;s Cuts Barbershop, Lagos
-                </h3>
-                <p className="mt-3 text-sm leading-relaxed text-gray-600">
-                  &ldquo;Before Waaiio, we were missing nearly half our booking requests that came in after hours.
-                  Within 3 months of going live, we captured every single one. Revenue went up 30%,
-                  and our barbers love that the schedule is always organized.&rdquo;
-                </p>
-                <p className="mt-3 text-sm font-semibold text-gray-900">&mdash; Adebayo O., Owner</p>
-              </div>
-              <div className="grid grid-cols-2 gap-px border-t border-gray-100 bg-gray-100 lg:w-64 lg:border-l lg:border-t-0">
-                {[
-                  { value: '+30%', label: 'Revenue' },
-                  { value: '0', label: 'Missed Bookings' },
-                  { value: '60%', label: 'Less No-Shows' },
-                  { value: '24/7', label: 'Availability' },
-                ].map((s) => (
-                  <div key={s.label} className="bg-white p-4 text-center">
-                    <p className="text-lg font-bold text-brand">{s.value}</p>
-                    <p className="text-xs text-gray-500">{s.label}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </AnimatedSection>
-      </section>
-
       {/* Pricing FAQ */}
       <section className="bg-gray-50 py-16">
         <AnimatedSection>
@@ -486,7 +362,7 @@ export default function PricingPage() {
               />
               <PricingFaqItem
                 question={`What happens after my ${trialDays}-day trial?`}
-                answer={`After ${trialDays} days, the Starter plan's per-transaction fees kick in (${tierFees.free.feePercentage}% + flat fee). Your bot keeps working — there's no interruption.`}
+                answer={`After ${trialDays} days, the Starter plan's per-transaction fees kick in (${tierFees.free.feePercentage}% standard platform fee; category rates and custom agreements may differ). Your bot keeps working — there's no interruption.`}
               />
               <PricingFaqItem
                 question="Are there any hidden fees?"
@@ -494,7 +370,7 @@ export default function PricingPage() {
               />
               <PricingFaqItem
                 question="Do I need a separate payment gateway account?"
-                answer="Yes. During onboarding, we'll guide you to connect your Paystack (NG/GH), Square (US), or Stripe (UK/CA) account so payments go directly to you."
+                answer="You can connect an eligible payment provider, or use Waaiio collection where available. Connected payments settle through your provider; Waaiio-collected payments are settled afterward by Waaiio."
               />
               <PricingFaqItem
                 question="What counts as a 'transaction'?"
@@ -681,95 +557,6 @@ function PricingFaqItem({ question, answer }: { question: string; answer: string
           <p className="text-sm leading-relaxed text-gray-600">{answer}</p>
         </div>
       </div>
-    </div>
-  );
-}
-
-function RoiCalculator({ country, countryPricing, tierFees }: {
-  country: CountryCode;
-  countryPricing: Record<string, { price: number; feeFlat: number; feePercentage: number }>;
-  tierFees: Record<string, { feePercentage: number }>;
-}) {
-  const [bookingsPerDay, setBookingsPerDay] = useState(10);
-  const [avgPrice, setAvgPrice] = useState(country === 'NG' ? 5000 : country === 'GH' ? 50 : 30);
-  const tier: SubscriptionTier = bookingsPerDay <= 2 ? 'free' : bookingsPerDay <= 15 ? 'growth' : 'business';
-  const tierConfig = countryPricing[tier];
-  // All tiers guaranteed present by projection validation — no hardcoded fallback
-  const feePercent = tierConfig.feePercentage;
-  const feeFlat = tierConfig.feeFlat;
-  const subscriptionPrice = tierConfig.price;
-
-  const monthlyBookings = bookingsPerDay * 26;
-  const monthlyRevenue = monthlyBookings * avgPrice;
-  const platformFees = monthlyBookings * (avgPrice * feePercent / 100 + feeFlat);
-  const netRevenue = monthlyRevenue - platformFees - subscriptionPrice;
-  const roi = subscriptionPrice > 0 ? Math.round((netRevenue / (platformFees + subscriptionPrice)) * 100) : Math.round((netRevenue / Math.max(platformFees, 1)) * 100);
-  const missedRevenue = monthlyRevenue * 0.30;
-
-  return (
-    <div className="mt-8 rounded-2xl border border-gray-200 bg-gray-50 p-6">
-      <div className="space-y-5">
-        <div>
-          <label className="flex items-center justify-between text-sm font-medium text-gray-700">
-            <span>Bookings per day</span>
-            <span className="text-lg font-bold text-brand">{bookingsPerDay}</span>
-          </label>
-          <input
-            type="range"
-            min={1}
-            max={50}
-            value={bookingsPerDay}
-            onChange={(e) => setBookingsPerDay(Number(e.target.value))}
-            className="mt-2 w-full accent-brand"
-          />
-          <div className="mt-1 flex justify-between text-xs text-gray-400">
-            <span>1</span><span>25</span><span>50</span>
-          </div>
-        </div>
-
-        <div>
-          <label className="flex items-center justify-between text-sm font-medium text-gray-700">
-            <span>Average price per booking</span>
-            <span className="text-lg font-bold text-brand">{formatCurrency(avgPrice, country)}</span>
-          </label>
-          <input
-            type="range"
-            min={country === 'NG' ? 1000 : country === 'GH' ? 10 : 10}
-            max={country === 'NG' ? 50000 : country === 'GH' ? 500 : 200}
-            step={country === 'NG' ? 500 : country === 'GH' ? 5 : 5}
-            value={avgPrice}
-            onChange={(e) => setAvgPrice(Number(e.target.value))}
-            className="mt-2 w-full accent-brand"
-          />
-        </div>
-      </div>
-
-      <div className="mt-6 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl bg-white p-4 text-center shadow-sm">
-          <p className="text-xs text-gray-500">Monthly revenue</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(monthlyRevenue, country)}</p>
-          <p className="text-xs text-gray-400">{monthlyBookings} bookings/mo</p>
-        </div>
-        <div className="rounded-xl bg-white p-4 text-center shadow-sm">
-          <p className="text-xs text-gray-500">Waaiio cost</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(platformFees + subscriptionPrice, country)}</p>
-          <p className="text-xs text-gray-400">{feePercent}% fee + {formatCurrency(subscriptionPrice, country)}/mo</p>
-        </div>
-        <div className="rounded-xl bg-green-50 p-4 text-center shadow-sm border border-green-100">
-          <p className="text-xs text-green-600">You keep</p>
-          <p className="mt-1 text-2xl font-bold text-green-700">{formatCurrency(netRevenue, country)}</p>
-          <p className="text-xs text-green-500">{roi}x return on investment</p>
-        </div>
-        <div className="rounded-xl bg-red-50 p-4 text-center shadow-sm border border-red-100">
-          <p className="text-xs text-red-500">Revenue lost without Waaiio</p>
-          <p className="mt-1 text-2xl font-bold text-red-600">{formatCurrency(missedRevenue, country)}</p>
-          <p className="text-xs text-red-400">~30% from no-shows &amp; missed messages</p>
-        </div>
-      </div>
-
-      <p className="mt-4 text-center text-xs text-gray-400">
-        Recommended plan: <span className="font-semibold text-brand">{TIER_FEATURES[tier].marketingName}</span> ({formatCurrency(subscriptionPrice, country)}/mo)
-      </p>
     </div>
   );
 }

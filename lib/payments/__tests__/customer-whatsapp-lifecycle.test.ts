@@ -278,7 +278,7 @@ describe('customer_whatsapp Phase-A lifecycle', () => {
     // Second attempt: channel repaired
     vi.clearAllMocks();
     rpcCalls = [];
-    mockResolveByChannel.mockResolvedValue({ sender: mockSender, channelId: 'ch-repaired', phoneNumberId: 'pn-1' });
+    mockResolveByChannel.mockResolvedValue({ channel: { id: 'ch-repaired', channel_type: 'shared' }, sender: mockSender, channelId: 'ch-repaired', phoneNumberId: 'pn-1' });
     s = buildSupabase({ confirmationOrigin: 'whatsapp', inboundChannelId: 'ch-repaired', channelResolved: true });
     const result = await mod.sendProactiveConfirmation(s as any, payment as any);
 
@@ -309,7 +309,7 @@ describe('customer_whatsapp Phase-A lifecycle', () => {
     const mod = await import('../send-confirmation');
     await mod.sendProactiveConfirmation(s as any, payment as any);
     vi.clearAllMocks(); rpcCalls = [];
-    mockResolveByChannel.mockResolvedValue({ sender: mockSender, channelId: 'ch-ok', phoneNumberId: 'pn-1' });
+    mockResolveByChannel.mockResolvedValue({ channel: { id: 'ch-ok', channel_type: 'shared' }, sender: mockSender, channelId: 'ch-ok', phoneNumberId: 'pn-1' });
     s = buildSupabase({ confirmationOrigin: 'whatsapp', inboundChannelId: 'ch-ok', channelResolved: true });
     await mod.sendProactiveConfirmation(s as any, payment as any);
 
