@@ -8,7 +8,7 @@ vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: vi.fn().mockRes
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 vi.mock('@/lib/bot/translate', () => ({ translateBotResponse: vi.fn(async (t: string) => t), detectLanguage: vi.fn(async () => 'en'), getLanguageName: vi.fn(() => 'English') }));
 vi.mock('@/lib/bot/handlers/global-queries', () => ({ handleGlobalQuery: vi.fn(async (opts: { session: unknown }) => ({ handled: false, session: opts.session })), isOrdersQuery: vi.fn(() => false) }));
-vi.mock('@/lib/bot/handlers/escape-hatches', () => ({ HOME_PATTERN: /^home$/i, handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }) }));
+vi.mock('@/lib/bot/handlers/escape-hatches', () => ({ HOME_PATTERN: /^(home|directory|search)$/i, handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }) }));
 vi.mock('@/lib/bot/keyword-service', () => ({ loadBotCustomConfig: vi.fn().mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null }), matchQuickReply: vi.fn(() => null), loadUnifiedKeywords: vi.fn().mockResolvedValue([]), matchUnifiedKeyword: vi.fn(() => null) }));
 vi.mock('@/lib/circuit-breaker', () => ({ isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(), CircuitBreakerOpenError: class extends Error {} }));
 vi.mock('@/lib/bot/customer-intelligence', () => ({
@@ -211,6 +211,22 @@ describe('shared-channel dispatch continuity', () => {
     expect(supabase.rpc).toHaveBeenCalledWith('select_shared_conversation', {
       p_phone:'+234800',p_channel_id:channelId,p_session_id:'ayo-session',p_expected_version:8,p_picker_id:null,p_picker_version:null,
     });
+  });
+  it.each(['nav_directory', 'switch_biz', 'acct_switch', 'directory', 'home'])('shared %s shows search examples and exits only the bound conversation', async action => {
+    const session = {...pickerSession, id:'ayo-session', business_id:'ayo', current_step:'post_completion'};
+    const {bot,supabase,cloud} = setup(session, null, { id: 'directory-saved' });
+    await bot.handleMessage('+234800', action, 'button', 'provider-id');
+    expect(supabase.rpc).toHaveBeenCalledWith('deactivate_session_atomic', {p_session_id:'ayo-session'});
+    expect(supabase.rpc.mock.calls.filter(([name]) => name === 'get_active_session')).toHaveLength(0);
+    expect(JSON.stringify(cloud.sendText.mock.calls)).toContain('restaurants in Ikoyi');
+    expect(JSON.stringify(cloud.sendText.mock.calls)).toContain('barbers in Lekki');
+  });
+  it('does not show a search prompt when directory state cannot be saved', async () => {
+    const {bot,cloud} = setup(null);
+    await bot.handleMessage('+234800', 'nav_directory', 'button', 'provider-id');
+    const messages = JSON.stringify(cloud.sendText.mock.calls);
+    expect(messages).toContain('could not open directory search');
+    expect(messages).not.toContain('restaurants in Ikoyi');
   });
   it('does not fall back to phone-wide sessions when channel binding storage fails', async () => {
     const {bot,supabase,cloud} = setup(null,{message:'unavailable'});

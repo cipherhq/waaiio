@@ -324,20 +324,25 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const exactRepeat = ctx.session.session_data._repeat_selection_id === input;
+        delete ctx.session.session_data._repeat_selection_id;
         // Try exact ID match first (from list postback)
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
+          .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule, auto_approve')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
+          .eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null)
           .maybeSingle();
+
+        if (exactRepeat && !service) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.service_not_found') };
 
         // Fallback: fuzzy match by name (user typed service name or partial match)
         let matched = service;
         if (!matched) {
           const { data: allServices } = await ctx.supabase
             .from('services')
-            .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
+            .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule, auto_approve')
             .eq('business_id', ctx.business!.id)
             .eq('is_active', true)
             .neq('service_type', 'giving')
@@ -395,6 +400,7 @@ export const schedulingFlow: FlowDefinition = {
         return 'select_date';
       },
       async skipIf(ctx: FlowContext) {
+        if (ctx.session.session_data._repeat_selection_id) return false;
         if (ctx.session.session_data.skip_service) return true;
         if (!ctx.business) return true;
 

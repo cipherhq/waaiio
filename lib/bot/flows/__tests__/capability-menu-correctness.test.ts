@@ -102,8 +102,9 @@ function buildCtx(opts: {
     intelligence: {} as any,
     t: vi.fn(async (text: string) => text),
     from: '+2341234567890',
+    copyLang: 'en',
     session: {
-      id: 'test-session', user_id: 'u1', business_id: 'biz-snapakit',
+      id: 'test-session', user_id: opts.profileId || null, business_id: 'biz-snapakit',
       current_step: 'select_capability', session_data, version: 0,
     },
     business: {

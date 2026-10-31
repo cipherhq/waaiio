@@ -259,7 +259,8 @@ describe('WhatsApp Directory Flow', () => {
     expect(m.length).toBeGreaterThan(0);
     const welcome = m.find(x => textOf(x).includes('I can help you find businesses'));
     expect(welcome).toBeDefined();
-    expect(textOf(welcome!)).toContain('salon in Lagos');
+    expect(textOf(welcome!)).toContain('restaurants in Ikoyi');
+    expect(textOf(welcome!)).toContain('barbers in Lekki');
     expect(textOf(welcome!)).toContain('connect');
 
     const ses = db._inserted.find((s: any) => s.current_step === 'directory_search');
