@@ -245,6 +245,12 @@
 - **Could break**: Direct API or partner API updates that decrease `total_tickets` on saved tiers will now fail with `capacity_decrease_blocked` trigger exception. This matches the dashboard's existing prohibition on saved-tier capacity decreases.
 - **Requires**: Migration must be applied to staging/production after merge.
 
+### #736 / #744 — Final capability contract correction (2026-10-31)
+
+- Supersedes R2's automatic offline-acceptance wording with the settled Owner requirement for explicit merchant approval separately from funds verification. Online policy is unchanged; the capability counts reconcile 15 + 9 + 8.
+- Historical receipts remain dated, missing certification is distinguished from confirmed defects, and the obsolete #731 source-string-only test finding is retired using component-render source evidence. Option B remains approved; deployment and migration holds remain unchanged.
+- Documentation only; no fresh runtime or end-to-end certification is claimed. Existing historical entries and evidence remain preserved.
+
 ### #736 — Phase A R5: Codex P1 findings, Stripe PIN correction, gap reclassification (2026-10-29)
 
 - **`docs/contracts/736-capability-e2e-contract.md`**: (1) **Stripe saved-card PIN corrected**: Stripe saved cards use the same Waaiio 4-digit PIN lifecycle as Paystack — `checkStripeConsentAndOffer` → `establish_saved_card_session(save_card_pin)` → `requiresPin` → `verifyPin`. Traced via Graphify and source read of `saved-card-offer.ts:603-782` and `saved-card-flow.ts:128-178`. Table expanded with PIN Activation and PIN Reuse columns. (2) **GAP-007 reclassified** from P1 to PRODUCT DECISION NEEDED — Owner scope decision, not a confirmed defect; `getUserFacingCapabilities()` already excludes these capabilities from the WhatsApp menu. (3) **GAP-009 reclassified** from P1 to UNVERIFIED / EVIDENCE GAP — missing test coverage for 7 contextual/dashboard-only capabilities is a verification gap, not a confirmed runtime defect. (4) PR #741 HEAD SHA updated to `dba4e7b7`. Section 7 restructured into six subsections.
