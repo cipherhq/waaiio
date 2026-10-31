@@ -1,3 +1,19 @@
+## 2026-10-31 — Merchant-local payout week calculation and staging reconciliation SQL (#785 follow-up)
+
+### B. Merchant-local preceding-completed-week period (source only)
+
+- **`lib/payouts/period.ts`** (new): Shared `getPrecedingCompletedWeek(instant, timezone)` returns local Mon/Sun DATE labels and UTC half-open `[mondayLocal→UTC, nextMondayLocal→UTC)` bounds. Reuses `isValidTimezone` and `naiveToUtc` from `lib/promotions/timezone.ts`. Handles DST, Sunday invocation (preceding completed week), year boundaries, and dateline zones. Invalid timezone returns error (fail-closed).
+- **`app/api/admin/payouts/generate/route.ts`**: Period calculation moved inside per-business loop using shared helper. Business SELECT now includes `timezone`. Fee and velocity queries use UTC half-open bounds (`.gte(queryStart).lt(queryEnd)` replaces `.gte(isoStart).lte(isoEnd)`). Local DATE labels used for dedup/INSERT. Truthful response metadata: single `period` field only when all processed businesses share the same local week; `periods` array otherwise. Invalid timezone → `failed++`, logged, skipped.
+- **`app/api/cron/auto-payout/route.ts`**: Businesses grouped by timezone for period-dependent batch queries (dedup, fees). Period-independent queries (legacy checks, adjustments, accounts) run once. Held-release executes once after all groups with explicit `invalidTimezoneBizIds` guard preventing accidental release from failed-period paths. Response uses truthful per-group metadata. Invalid timezone → logged, excluded from generation AND release.
+- **Tests**: 15 pure period helper tests (Monday/Sunday/year/DST/dateline/two-zone/invalid), 6 route handler tests with mocked boundaries, including successful manual generation and paired held-release controls, and existing admin-bearer-route-handlers.test.ts fixtures updated with `timezone: 'Africa/Lagos'` and adapted to new `.lt`/`.limit` batch query patterns.
+- **Limits**: No migration, deployment, provider transfer, or hosted mutation. Mocked handler tests are NOT RLS/Bearer/real-DB evidence. Revenue semantics and expected-payment-window hours remain unapproved. Connected-provider split routing and manual settlement model are preserved unchanged.
+- **Could break**: Any code that depends on the old period calculation behavior (host-timezone-dependent, `.lte` inclusive end). Existing `periodStart`/`periodEnd` DATE labels in `business_payouts` are now merchant-local rather than server-local. No data migration needed since the change affects only new payout generation.
+
+### A. Staging reconciliation SQL (prepared, NOT executed)
+
+- **`artifacts/qa-785/testbiz-ngn-reconciliation.sql`** (new, private): Guarded transactional SQL for the two TestBiz NULL-currency payout rows. Ends with ROLLBACK by default. Validates exact row IDs/amounts/timestamps/status, snapshots before-state, updates only currency+updated_at, verifies full-row equality excluding those two fields, inserts audit entries with accurate database operator identity (no fabricated actor_id), and asserts zero remaining NULL-currency rows. Execution_authorization_ref is a placeholder requiring Owner authorization before COMMIT.
+- **SQL verified only in disposable local PostgreSQL fixtures with rollback. No hosted execution. Separate staging mutation authorization required.**
+
 ### 2026-10-31 — Historical replay Storage prerequisites
 
 - Independent replay-fixture scan identified R90 and standalone Stripe recurring bootstraps that also apply M491. Added only their missing service-role Storage CRUD grants. Historical cutover/concurrency logic, payment assertions and migration self-checks are unchanged.
