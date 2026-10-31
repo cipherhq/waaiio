@@ -82,18 +82,12 @@ describe('#452 homepage simplification — provider truth', () => {
     expect(homeClientSrc).toContain('Paystack');
   });
 
-  it('homepage does not show Square, Flutterwave, or PayPal', () => {
-    expect(homeClientSrc).not.toContain('Square');
-    expect(homeClientSrc).not.toContain('Flutterwave');
-    expect(homeClientSrc).not.toContain('PayPal');
-  });
-
-  it('FAQ only mentions Stripe and Paystack', () => {
+  it('FAQ mentions all supported gateways', () => {
     expect(pageSrc).toContain('Stripe');
     expect(pageSrc).toContain('Paystack');
-    expect(pageSrc).not.toContain('Square');
-    expect(pageSrc).not.toContain('Flutterwave');
-    expect(pageSrc).not.toContain('PayPal');
+    expect(pageSrc).toContain('Square');
+    expect(pageSrc).toContain('Flutterwave');
+    expect(pageSrc).toContain('PayPal');
   });
 });
 

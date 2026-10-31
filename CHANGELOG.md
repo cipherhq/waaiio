@@ -1,3 +1,14 @@
+### codex/pricing-feature-corrections — Align pricing display with Owner-approved schedule (2026-10-31)
+
+- **`lib/constants.ts`**: Fixed COUNTRY_PRICING fallback for NG (growth 15,000→49,000, business 45,000→99,000) and GH (growth 150→450, business 400→900) to match Owner-approved pricing schedule. Fixed PRICING_TIERS NGN defaults (growth 15,000→49,000, business 45,000→99,000). US/GB/CA unchanged — already correct.
+- **`app/(marketing)/pricing/page.tsx`**: Fixed comparison table "Monthly bookings" → "Monthly activities" with values "Up to 100" / "Up to 1,000" / "Unlimited" to match TIER_FEATURES (single source of truth). Previous values (50/500) contradicted the TierCard highlights on the same page.
+- **`app/(marketing)/page.tsx`**: Updated home page FAQ gateway list to include all 5 supported gateways (Paystack, Stripe, Square, Flutterwave, PayPal). Previously only listed Stripe and Paystack.
+- **`app/(marketing)/features/page.tsx`**: Fixed gateway grid layout from `sm:grid-cols-4` to `sm:grid-cols-3 lg:grid-cols-5` for 5-item grid alignment.
+- **Affects**: Public marketing pages only (pricing, features, home). No API, database, payment logic, subscription, authentication, or provider configuration changes.
+- **Could break**: Nothing — display-only changes to marketing pages. Authoritative pricing source `/api/public/pricing` reads from DB and is unchanged. COUNTRY_PRICING is a display-only fallback used when DB cache is not loaded.
+- **Unresolved discrepancy — DB pricing**: The authoritative `countries.pricing` DB values cannot be verified from this branch. The COUNTRY_PRICING fallback had stale NG/GH prices, suggesting the DB may also need updating. Owner should verify DB pricing matches the approved schedule via `/api/public/pricing?country=NG` and `?country=GH`.
+- **Unresolved discrepancy — booking limits**: TIER_FEATURES.maxBookings (100/1,000) differs from TIER_TRANSACTION_LIMITS.bookings (50/300). The comparison table now uses TIER_FEATURES values (labelled "activities") since TIER_FEATURES is declared as single source of truth. The enforced transaction limits may be more restrictive — Owner should clarify.
+
 ### #762 — Verified Paystack fee and finalization snapshot (2026-10-30)
 
 - **`lib/payments/provider-adapters.ts`, `lib/payments/webhook-handler.ts`**: Share validated Paystack minor-to-integer-major-unit normalization, distinguish absent fees from supplied zero, and pass explicit observations instead of standalone webhook fee updates.

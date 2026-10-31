@@ -81,11 +81,11 @@ describe('White-label off for launch', () => {
 
 describe('Country subscription prices (major units)', () => {
   const EXPECTED: Record<string, { growth: number; business: number }> = {
-    NG: { growth: 15_000, business: 45_000 },
+    NG: { growth: 49_000, business: 99_000 },
     US: { growth: 49, business: 89.99 },
     GB: { growth: 30, business: 80 },
     CA: { growth: 49, business: 89.99 },
-    GH: { growth: 150, business: 400 },
+    GH: { growth: 450, business: 900 },
   };
 
   for (const [code, prices] of Object.entries(EXPECTED)) {
