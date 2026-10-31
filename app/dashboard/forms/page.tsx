@@ -54,7 +54,9 @@ const FIELD_TYPES: Array<{ value: FormField['type']; label: string }> = [
 ];
 
 function generateToken(): string {
-  return crypto.randomUUID().replace(/-/g, '').slice(0, 24);
+  // forms.token is varchar(20): 15 random bytes encode to 20 URL-safe characters.
+  const bytes = crypto.getRandomValues(new Uint8Array(15));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 function generateFieldId(): string {

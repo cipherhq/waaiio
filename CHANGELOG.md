@@ -2,7 +2,7 @@
 
 - Synchronize selected customer phone displays and product gallery previews with current state; use the existing business-first verification storage path.
 - Preserve initialized payment-request URLs, supply chat service categories, resolve broadcast template categories from the connected WABA, and report rejected or email-only delivery without WhatsApp success.
-- Keep form contents after failed saves and show list/save errors with retry. This does not establish the cause of the reported staging insert rejection.
+- Generate 20-character cryptographically random URL-safe form tokens to fit the existing database column; the previous 24-character token caused the reproduced staging insert rejection. Keep form contents after failed saves and show list/save errors with retry.
 - **Affects**: Shared phone input, Products, Verification, Chat, Payment Requests, Broadcasts and Forms. No schema, permission, billing, payout or consent-policy changes. Existing staging migration gaps remain separate release prerequisites.
 - **Validation**: Rendered component and actual route tests with mocked storage/provider boundaries; live delivery, deployed upload acceptance and production build require separate release evidence.
 
