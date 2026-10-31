@@ -1,0 +1,13 @@
+import {beforeEach,it,expect,vi} from 'vitest';
+import {NextRequest} from 'next/server';
+const m=vi.hoisted(()=>({user:true,owner:true,validate:vi.fn(),insert:vi.fn(),update:vi.fn()}));
+vi.mock('@/lib/webhooks/public-destination',()=>({validateWebhookDestination:m.validate}));
+vi.mock('@/lib/supabase/server',()=>({createClient:async()=>({auth:{getUser:async()=>({data:{user:m.user?{id:'owner'}:null}})},from:()=>{const chain={select:()=>chain,eq:()=>chain,maybeSingle:async()=>({data:m.owner?{id:'business'}:null})};return chain}})}));
+vi.mock('@/lib/supabase/service',()=>({createServiceClient:()=>({from:()=>({insert:m.insert,update:m.update})})}));
+import {POST,PUT} from '@/app/api/webhooks/route';
+beforeEach(()=>{vi.clearAllMocks();m.user=true;m.owner=true;m.validate.mockResolvedValue({});m.insert.mockReturnValue({select:()=>({single:async()=>({data:{id:'endpoint'}})})});const chain={eq:()=>chain,then:(resolve:(v:unknown)=>unknown)=>Promise.resolve({error:null}).then(resolve)};m.update.mockReturnValue(chain)});
+const request=(method:string,body:Record<string,unknown>)=>new NextRequest('https://staging.example/api/webhooks',{method,body:JSON.stringify(body)});
+it.each([POST,PUT])('denies invalid URL before endpoint mutation',async handler=>{m.validate.mockRejectedValue(new Error('nonpublic'));expect((await handler(request(handler===POST?'POST':'PUT',{businessId:'business',id:'endpoint',url:'http://127.0.0.1',events:['*']}))).status).toBe(400);expect(m.insert).not.toHaveBeenCalled();expect(m.update).not.toHaveBeenCalled()});
+it('checks owner before DNS resolution',async()=>{m.owner=false;expect((await POST(request('POST',{businessId:'other',url:'https://example.com',events:['*']}))).status).toBe(403);expect(m.validate).not.toHaveBeenCalled()});
+it('preserves legitimate registration fields',async()=>{expect((await POST(request('POST',{businessId:'business',url:'https://example.com',events:['event.created']}))).status).toBe(200);expect(m.insert).toHaveBeenCalledWith(expect.objectContaining({business_id:'business',url:'https://example.com',events:['event.created'],is_active:true,secret:expect.any(String)}))});
+it('allows disable-only edit without requiring URL re-registration',async()=>{expect((await PUT(request('PUT',{businessId:'business',id:'endpoint',isActive:false}))).status).toBe(200);expect(m.validate).not.toHaveBeenCalled();expect(m.update).toHaveBeenCalledWith({is_active:false})});
