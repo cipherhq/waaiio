@@ -59,3 +59,7 @@ Release order: resolve repository validation gates; validate/apply the necessary
 ## Follow-up verification
 
 See [staging validation](2026-10-31-onboarding-staging-validation.md): local M491 fixture and two-session/grant tests now pass. The base-versus-branch typecheck comparison shows all 516 diagnostics predate this change. Hosted deployment, migration and provider acceptance remain separate outstanding steps.
+
+## Staging release completed
+
+After explicit Owner staging-only authorization, M491 was applied and commit `a47e926696d217c4c6be4ad896bf9d6a625c431a` deployed. See [the release record](2026-10-31-onboarding-staging-release.md). Dedicated-number OTP/provider acceptance remains an Owner-driven test; production is unchanged.

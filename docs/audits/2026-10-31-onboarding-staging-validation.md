@@ -46,3 +46,7 @@ That email predates this branch and has no new account-setup callback. It proves
 The code branch and M491 still need the repository's release process before the fixed journey can be tested on staging. AGENTS.md says **“Never approve, merge, or deploy.”** No deployment was performed under this verification request. The release operator must deploy the approved exact SHA with the corrected environment after the necessary staging migration/history checks. Production still requires M462, as documented in the original audit.
 
 After that: owner-driven dedicated-number OTP/register test; shared fallback versus pending connection through HTTP; new and existing email recipient journeys including expired/failed first delivery. These remain **UNVERIFIED / EVIDENCE GAP**, not claims of a broken provider or a completed certification.
+
+## Subsequent Owner-authorized staging release
+
+The Owner subsequently authorized a staging-only deployment override. M491 is now applied and the corrected deployment is live; the previous pending statements above are historical. See [the release record](2026-10-31-onboarding-staging-release.md) for exact SHA, deployment, migration-history version and final HTTP evidence. Production remains unchanged.
