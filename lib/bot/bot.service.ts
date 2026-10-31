@@ -93,6 +93,7 @@ export class BotService {
     /** ACC-204 Blocker 1 R4: Provenance from recursive/internal calls — prevents trust laundering.
      *  Only the webhook entry (no _internalProvenance) should assign 'pre_resolved'. */
     _internalProvenance?: string,
+    _pickerSelection?: { id?: string; version?: number; conversationVersion: number; businessId: string },
   ): Promise<void> {
     try {
     const text = messageText.trim();
@@ -234,7 +235,7 @@ export class BotService {
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 1) {
         const quickPick = recentBiz.slice(0, 3);
-        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
+        const sugSess = await this.createNullBizSuggestionSession(from, null, await this.navigationChannelData(from, destinationPhone, { suggestions: quickPick }));
         if (sugSess) {
           const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
           if (persisted.length === 0) {
@@ -277,7 +278,7 @@ export class BotService {
           user_id: null,
           business_id: null,
           current_step: 'directory_search',
-          session_data: { _directory_mode: true, suggestions: recentBiz.slice(0, 2) },
+          session_data: await this.navigationChannelData(from, destinationPhone, { _directory_mode: true, suggestions: recentBiz.slice(0, 2) }),
           is_active: true,
           expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
@@ -290,7 +291,7 @@ export class BotService {
           user_id: null,
           business_id: null,
           current_step: 'directory_search',
-          session_data: { _directory_mode: true },
+          session_data: await this.navigationChannelData(from, destinationPhone, { _directory_mode: true }),
           is_active: true,
           expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
@@ -892,7 +893,30 @@ export class BotService {
     let _rpcCapabilities: Array<{ capability: string; is_enabled: boolean; sort_order: number }> | null = null;
     let _rpcOverrides: string[] | null = null;
 
-    if (preResolvedBusinessId) {
+    // Shared-channel continuity comes only from a persisted explicit selection.
+    // Keep this after STOP handling and before the phone-wide ambiguity lookup.
+    let sharedConversation: { channelId: string; version: number; businessId: string | null; session: BotSession | null } | null = null;
+    if ((!preResolvedBusinessId || _internalProvenance) && destinationPhone) {
+      const { data: channel } = await this.supabase.from('whatsapp_channels')
+        .select('id, channel_type').eq('phone_number_id', destinationPhone)
+        .eq('is_active', true).maybeSingle();
+      if (channel?.channel_type === 'shared') {
+        const { data: conversation, error } = await this.supabase.rpc('get_shared_conversation', {
+          p_phone: from, p_channel_id: channel.id,
+        });
+        if (error) {
+          await this.sendPlatformText(from, 'Business selection is temporarily unavailable. Please try again shortly.');
+          return;
+        }
+        sharedConversation = { channelId: channel.id, version: conversation?.version ?? 0, businessId: conversation?.business_id || null,
+          session: conversation?.session || null };
+      }
+    }
+
+    if (sharedConversation && !preResolvedBusinessId) {
+      // Internal picker re-entry must validate and consume the original choice atomically.
+      session = _pickerSelection ? null : sharedConversation.session;
+    } else if (preResolvedBusinessId) {
       // BOT-PERF fast path: tenant-scoped single RPC
       const { data: ctx } = await this.supabase.rpc('get_bot_context', {
         p_phone: from,
@@ -1215,7 +1239,13 @@ export class BotService {
       // Look up BEFORE deactivating — preserve the current session until we know
       const detection = await this.detectBotCodeWithSuggestions(keyword, from);
 
-      if (detection.businessId) {
+      if (detection.authority === 'exact' && detection.businessId) {
+        if (sharedConversation) {
+          return this.handleMessage(from, keyword, messageType, destinationPhone,
+            undefined, undefined, undefined, 'fuzzy', {
+              conversationVersion: sharedConversation.version, businessId: detection.businessId,
+            });
+        }
         // Exact/confident match — deactivate current session, then route
         if (session) await this.deactivateSession(session.id);
         if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
@@ -1231,29 +1261,22 @@ export class BotService {
       }
 
       if (detection.suggestions && detection.suggestions.length > 0) {
-        // Suggestions found — deactivate current session, show picker
-        if (session) await this.deactivateSession(session.id);
+        if (session && !sharedConversation) await this.deactivateSession(session.id);
         if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-
-        if (detection.suggestions.length <= 3) {
+        const picker = await this.createNullBizSuggestionSession(from, null,
+          await this.navigationChannelData(from, destinationPhone, { suggestions: detection.suggestions }));
+        if (!picker) {
+          await this.sendPlatformText(from, 'Business selection could not be saved. Please try again.');
+          return;
+        }
+        const choices = picker.session_data.suggestions as { id: string; name: string; bot_code: string }[];
+        if (choices.length <= 3) {
           await this.sendPlatformButtons(from, 'Which business did you mean?',
-            detection.suggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+            choices.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
         } else {
-          const list = detection.suggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+          const list = choices.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
           await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
         }
-
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: null,
-          business_id: null,
-          current_step: 'select_business_suggestion',
-          session_data: { suggestions: detection.suggestions },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
         return;
       }
 
@@ -1276,7 +1299,7 @@ export class BotService {
         const connectProfile = await getProfile();
         const connectDirSess = await this.createDirectorySession(
           from, connectProfile?.id || null, 'directory_results',
-          { ...searchData },
+          await this.navigationChannelData(from, destinationPhone, { ...searchData }),
         );
         if (!connectDirSess) {
           logger.warn('[BOT] createDirectorySession(connect-fallback) failed — session not persisted after search');
@@ -1299,6 +1322,7 @@ export class BotService {
 
     // Also treat bot codes as restarts so users can switch businesses mid-session
     let isBotCodeRestart = false;
+    let explicitRestartBusinessId: string | null = null;
     if (!isFreeTextStep && session && /^[a-z0-9-]{2,30}$/i.test(text.trim())) {
       const potentialCode = text.trim().toLowerCase();
       const { data: codeMatch } = await this.supabase
@@ -1307,7 +1331,7 @@ export class BotService {
         .ilike('bot_code', potentialCode)
         .eq('status', 'active')
         .maybeSingle();
-      if (codeMatch) isBotCodeRestart = true;
+      if (codeMatch) { isBotCodeRestart = true; explicitRestartBusinessId = codeMatch.id; }
     }
 
     // Don't treat booking intent as a restart when user is already mid-flow
@@ -1567,10 +1591,12 @@ export class BotService {
       logger.debug('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
       // Remember the business from the session being restarted — prevents country
       // filter from dropping it (e.g. NG business accessed via US shared number)
-      const restartBusinessId = isRestart && session?.business_id ? session.business_id : null;
-      if (session) {
+      const switchingBusiness = !!sharedConversation && !!explicitRestartBusinessId && explicitRestartBusinessId !== session?.business_id;
+      const restartBusinessId = isRestart && !switchingBusiness && session?.business_id ? session.business_id : null;
+      if (session && !switchingBusiness) {
         await this.deactivateSession(session.id);
       }
+      if (switchingBusiness) session = null;
 
       _bmark('session_resolved');
       // Determine standalone business
@@ -1708,7 +1734,10 @@ export class BotService {
       if (!businessId && pendingSuggestions && pendingSuggestions.length > 0) {
         const sugSession = await this.createNullBizSuggestionSession(
           from, profile?.id || null,
-          { suggestions: pendingSuggestions, isCategory: isCategoryMatch },
+          { suggestions: pendingSuggestions, isCategory: isCategoryMatch,
+            ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
+            ...(sharedConversation ? { _conversation_version: sharedConversation.version } : {}),
+          },
         );
 
         if (sugSession) {
@@ -2381,6 +2410,30 @@ export class BotService {
         }
       }
 
+      // Use the effective session: newSession from insert, or recovered/retried from 23505 path
+      session = (newSession || session) as BotSession;
+      if (!session) {
+        logger.error('[BOT] No session obtained after insert/recovery — cannot continue');
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+        return;
+      }
+
+      if (sharedConversation && businessId && (detection?.authority === 'exact'
+        || (restartBusinessId === businessId && sharedConversation.session?.business_id === businessId)
+        || (!!_internalProvenance && preResolvedBusinessId === businessId && sharedConversation.businessId === businessId))) {
+        if (_pickerSelection && _pickerSelection.businessId !== businessId) return;
+        const { data: selected, error } = await this.supabase.rpc('select_shared_conversation', {
+          p_phone: from, p_channel_id: sharedConversation.channelId, p_session_id: session.id,
+          p_expected_version: _pickerSelection?.conversationVersion ?? sharedConversation.version,
+          p_picker_id: _pickerSelection?.id ?? null, p_picker_version: _pickerSelection?.version ?? null,
+        });
+        if (error || !selected) {
+          await this.sendPlatformText(from, 'Your business selection changed. Please send the business code again.');
+          return;
+        }
+      }
+
       // CAS-004: Language activation uses canonical policy only.
       // If canonical understanding detected + activated a language, it's already
       // stored in sessionData._detected_language. No separate detection needed.
@@ -2433,15 +2486,6 @@ export class BotService {
         } catch (err) {
           logger.error('[BOT] Remembered language offer send error:', err);
         }
-      }
-
-      // Use the effective session: newSession from insert, or recovered/retried from 23505 path
-      session = (newSession || session) as BotSession;
-      if (!session) {
-        logger.error('[BOT] No session obtained after insert/recovery — cannot continue');
-        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
-        await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        return;
       }
 
       // #682: Track inbound for new sessions (session just created → null updated_at → new conversation).
@@ -2947,7 +2991,7 @@ export class BotService {
         // On 23505 retry via CAS-UPDATE. Never silent on collision.
         const dirGreetSess = await this.createDirectorySession(
           from, profile?.id || null, 'directory_search',
-          { _directory_mode: true, _directory_country: sharedNumberCountry },
+          await this.navigationChannelData(from, destinationPhone, { _directory_mode: true, _directory_country: sharedNumberCountry }),
         );
         if (!dirGreetSess) {
           logger.warn('[BOT] createDirectorySession(directory_search) failed — session not persisted after greeting');
@@ -2963,7 +3007,7 @@ export class BotService {
         // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
         const dirSearchSess = await this.createDirectorySession(
           from, profile?.id || null, 'directory_results',
-          { _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}) },
+          await this.navigationChannelData(from, destinationPhone, { _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}) }),
         );
         if (!dirSearchSess) {
           logger.warn('[BOT] createDirectorySession(directory_results) failed — session not persisted after search');
@@ -3209,7 +3253,7 @@ export class BotService {
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 1) {
         const quickPick = recentBiz.slice(0, 3);
-        const sugSess = await this.createNullBizSuggestionSession(from, null, { suggestions: quickPick });
+        const sugSess = await this.createNullBizSuggestionSession(from, null, await this.navigationChannelData(from, destinationPhone, { suggestions: quickPick }));
         if (sugSess) {
           const persisted = (sugSess.session_data?.suggestions as Array<{ id: string; name: string; bot_code: string }>) || [];
           if (persisted.length === 0) {
@@ -3763,6 +3807,13 @@ export class BotService {
       if (step === 'directory_results' || dirData._directory_results || dirData._directory_suggestions) {
         const selection = await handleDirectorySelection(this.supabase, dirSend, from, text, dirData);
         if (selection) {
+          if (sharedConversation) {
+            return this.handleMessage(from, selection.botCode, messageType, destinationPhone,
+              undefined, undefined, undefined, 'fuzzy', {
+                id: session.id, version: session.version ?? 0,
+                conversationVersion: sharedConversation.version, businessId: selection.businessId,
+              });
+          }
           await this.deactivateSession(session.id);
           // Directory handoffs set resolution source to 'fuzzy' — user-initiated search pick
           await this.handleMessage(from, selection.botCode, messageType, destinationPhone, selection.businessId, undefined, undefined, 'fuzzy');
@@ -3778,6 +3829,13 @@ export class BotService {
         const picks = (dirData.suggestions as Array<{ id: string; name: string; bot_code: string }>);
         const pick = picks[idx];
         if (pick) {
+          if (sharedConversation) {
+            return this.handleMessage(from, pick.bot_code, messageType, destinationPhone,
+              undefined, undefined, undefined, 'fuzzy', {
+                id: session.id, version: session.version ?? 0,
+                conversationVersion: sharedConversation.version, businessId: pick.id,
+              });
+          }
           await this.deactivateSession(session.id);
           // Returning-customer pick — resolution source 'returning_customer'
           await this.handleMessage(from, pick.bot_code, messageType, destinationPhone, pick.id, undefined, undefined, 'returning_customer');
@@ -3788,6 +3846,13 @@ export class BotService {
       // Check if text is a bot code (exact match bypasses directory)
       const botCodeDetection = await this.detectBotCode(text);
       if (botCodeDetection) {
+        if (sharedConversation) {
+          await this.deactivateSession(session.id);
+          return this.handleMessage(from, text, messageType, destinationPhone,
+            undefined, undefined, undefined, 'bot_code', {
+              conversationVersion: sharedConversation.version, businessId: botCodeDetection,
+            });
+        }
         await this.deactivateSession(session.id);
         // Typed bot code in directory — resolution source 'bot_code'
         await this.handleMessage(from, text, messageType, destinationPhone, botCodeDetection, undefined, undefined, 'bot_code');
@@ -4114,7 +4179,14 @@ export class BotService {
       }
 
       if (selectedBiz) {
-        // Deactivate the suggestion session, re-process as if they sent the bot code
+        if (sharedConversation) {
+          // The database consumes this stored picker together with the binding CAS.
+          return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone,
+            undefined, undefined, undefined, 'fuzzy', {
+              id: session.id, version: session.version ?? 0,
+              conversationVersion: sharedConversation.version, businessId: selectedBiz.id,
+            });
+        }
         await this.deactivateSession(session.id);
         return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
       } else {
@@ -4801,6 +4873,18 @@ export class BotService {
    * (c) On INSERT 23505 (concurrent insert race): re-read and CAS-UPDATE in place.
    * (d) Any unrecoverable failure: return null (caller logs; reply already sent — no second message).
    */
+  private async navigationChannelData(from: string, destinationPhone: string | undefined, data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!destinationPhone) return data;
+    const { data: channel } = await this.supabase.from('whatsapp_channels').select('id, channel_type')
+      .eq('phone_number_id', destinationPhone).eq('is_active', true).maybeSingle();
+    if (!channel || channel.channel_type !== 'shared') return data;
+    const { data: context, error } = await this.supabase.rpc('get_shared_conversation', {
+      p_phone: from, p_channel_id: channel.id,
+    });
+    if (error) throw new Error('Cannot persist channel-bound business navigation');
+    return { ...data, _inbound_channel_id: channel.id, _conversation_version: context?.version ?? 0 };
+  }
+
   private async createDirectorySession(
     from: string,
     userId: string | null,
