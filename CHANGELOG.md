@@ -301,6 +301,29 @@
 - **M466, M468, M469 and M472; canonical CI and regression files**: Add the reviewed currency/deduplication/settlement authority sequence and executable route, accounting, concurrency and real-PostgreSQL coverage. Current-main integration retains valid admin UUID and action-bound step-up fixtures alongside the currency assertions.
 - **Affects / could break**: Payout eligibility, currency-scoped totals, deduplication and settlement accounting. Hosted migration sequencing and deployment require separate authorization and verification; this source change does not certify live payment or settlement outcomes.
 
+### #731 — Reviewed reservation routing and acceptance corrections (2026-10-31)
+
+- Preserve the dedicated seating-resource authority: a generic service skip cannot bypass table selection, and only one active same-business resource may auto-select with its full snapshot. Table flat-deposit reservations do not offer or redeem unsupported promotions; ordinary scheduling promotion behavior is preserved.
+- Add mounted Bookings page acceptance for table, lodging and legacy scheduling data/actions. Update lifecycle and pagination fixtures to use canonical seating resources while preserving tenant, row-limit, sender and existing lifecycle assertions.
+- Integrate current main without dropping its currency/settlement migration tests; retain the M476 disposable database test step unchanged. This is source and executable test coverage; hosted M476–M478 application and live reservation acceptance remain separate.
+
+### #730 — Booking/Reservation UX: Table Reservation Architecture (2026-10-27)
+
+- **`supabase/migrations/476_seating_resources_table_reservation.sql`** (new): Extends `flow_type` enum with `table_reservation`. Creates `seating_resources` table (tables, booths, sections, VIP areas) with capacity, party-size bounds, duration, deposit, available-days/hours, RLS, and service_role ACL. Adds `seating_resource_id` FK on `bookings`. Creates `book_table_atomic` RPC with advisory-lock concurrency, bot-session idempotency, resource validation, party-size bounds, time-overlap prevention, and self-check block. Additional migrations M477 (book_slot_atomic isolation) and M478 (reschedule isolation) exclude table reservations from service/appointment capacity counts.
+- **`lib/bot/flows/table-reservation.flow.ts`** (new): Dedicated WhatsApp bot flow for table/seating reservations. Queries `seating_resources` instead of `services`. Auto-selects when single resource. Routes into scheduling's shared date/time/confirm steps via cross-flow handoff.
+- **`lib/bot/flows/scheduling.flow.ts`**: Added `_is_table_reservation` branch before `book_slot_atomic` in confirm_booking step — calls `book_table_atomic` RPC instead. Modified `select_quantity` step to enforce seating capacity min/max bounds. Updated `activeCap` resolution to handle table_reservation.
+- **`lib/constants.ts`**: Added `'table_reservation'` to `FlowType` union.
+- **`lib/bot/flows/registry.ts`**: Registered `tableReservationFlow` in both FLOW_REGISTRY and EXTENDED_REGISTRY.
+- **`lib/bot/handlers/flow-routing.ts`**: Mapped `table_reservation` to `select_table` step (was `select_service`).
+- **`lib/bot/flows/capability-selection.flow.ts`**: Changed `table_reservation` backing-data check from `services` to `seating_resources` (fixes F-1 duplicate with scheduling). Added `select_table` to `getFirstStepForCapability`.
+- **`app/dashboard/seating/page.tsx`** (new): Merchant CRUD page for seating resources with type, capacity, section, duration, deposit, available days/hours, active toggle.
+- **`components/dashboard/Sidebar.tsx`**: Added Seating nav item gated on `table_reservation` capability.
+- **`app/dashboard/reservations/page.tsx`**: Added Table Reservations tab, `flow_type`/`seating_resource_id` to booking query and Booking interface.
+- **`app/api/seating-resources/route.ts`** (new): GET/POST/PATCH for seating resources with RLS-enforced ownership.
+- **`lib/__tests__/table-reservation-730.test.ts`** (new): 44 tests covering routing, deposit authority, availability, admin security, migration structure, and non-regression.
+- **Affects**: `table_reservation` capability routing, food/dining category defaults. Businesses without configured seating fail closed (capability hidden from WhatsApp menu).
+- **Does NOT affect**: existing `book_slot_atomic`, scheduling/appointment/stays/ordering/ticketing flows, payment pipeline, existing bookings data.
+
 ### Audit NB-5: SECURITY DEFINER ACL hardening (2026-10-24)
 
 - **`supabase/migrations/463_secdef_acl_audit_hardening.sql`** (new): Hardens 6 exposed SECURITY DEFINER functions. `calculate_volume_discount`: adds missing `SET search_path = public`, REVOKEs anon+authenticated (bot-only via service client). `check_conversation_limit`: REVOKEs anon+authenticated (legacy function, no active TS callers). Dashboard revenue RPCs (`get_business_revenue`, `get_order_revenue`, `get_outstanding_invoices`): REVOKEs anon only (keeps authenticated for dashboard). `check_business_role`: REVOKEs anon only (keeps authenticated for RLS policies). Inline verification assertions validate all grants.

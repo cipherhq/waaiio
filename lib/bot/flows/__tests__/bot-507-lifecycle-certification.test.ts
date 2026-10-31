@@ -282,7 +282,8 @@ describe('§2 Capability Menu Rendering', () => {
     const ctx = buildCtx({
       tableCounts: {
         products: 1,      // ordering backed
-        services: 3,      // scheduling + table_reservation backed
+        services: 3,      // scheduling backed
+        seating_resources: 2, // table_reservation backed
         events: 1,        // ticketing backed
         campaigns: 1,     // crowdfunding backed
         properties: 1,    // reservation backed
@@ -998,30 +999,24 @@ describe('§20 Cancel/Back Navigation', () => {
 });
 
 // ══════════════════════════════════════════════
-// §21 — CONFIRMED DEFECT: F-1 table_reservation DUPLICATION
+// §21 — F-1 REGRESSION: DISTINCT TABLE RESERVATION ROUTING
 // ══════════════════════════════════════════════
 
-describe('§21 F-1: table_reservation duplication (KNOWN ISSUE — #730 owns fix)', () => {
-  // F-1 is a confirmed menu-level defect assigned to Lane #730 / PR #731.
-  // These tests document the CURRENT state on main for regression tracking.
-  // When #730/#731 merges, table_reservation will route to a distinct
-  // select_table step and these tests should be updated to verify separation.
+describe('§21 F-1: table_reservation routing separation (#730 / #731)', () => {
+  // Both capabilities remain user-facing; their resource selection is distinct.
 
-  it('CURRENT STATE: both scheduling and table_reservation are user-facing', () => {
-    // Documents current behavior — will change when #730 lands
+  it('both scheduling and table_reservation remain user-facing', () => {
     const userFacing = getUserFacingCapabilities(TESTBIZ_CAPS);
     expect(userFacing).toContain('scheduling');
     expect(userFacing).toContain('table_reservation');
   });
 
-  it('CURRENT STATE: table_reservation routes through select_service (shared with scheduling)', () => {
-    // Documents the duplication — #730 will introduce distinct select_table route
-    const schedulingStep = capabilityToFirstStep('scheduling');
-    const tableResStep = capabilityToFirstStep('table_reservation');
-    // Currently both share select_service — this IS the known defect
-    // When #730 lands, tableResStep should differ from schedulingStep
-    expect(schedulingStep).toBe('select_service');
-    expect(tableResStep).toBe(schedulingStep); // Will diverge after #730
+  it('both production helpers separate table selection from service selection', () => {
+    for (const firstStep of [capabilityToFirstStep, getFirstStepForCapability]) {
+      expect(firstStep('scheduling')).toBe('select_service');
+      expect(firstStep('table_reservation')).toBe('select_table');
+      expect(firstStep('table_reservation')).not.toBe(firstStep('scheduling'));
+    }
   });
 });
 
@@ -1041,7 +1036,7 @@ describe('§22 Flow Registry Completeness', () => {
     ['appointment', 'select_appointment'],
     ['class_booking', 'select_service'],
     ['giving', 'select_category'],
-    ['table_reservation', 'select_service'],
+    ['table_reservation', 'select_table'],
     ['waitlist', 'waitlist_join'],
   ])('%s first step %s is resolvable in cross-flow registry', (cap, expectedStep) => {
     const firstStep = capabilityToFirstStep(cap as CapabilityId);
@@ -1075,6 +1070,7 @@ describe('§23 Merchant Isolation (tenant-conditioned fixtures)', () => {
   const TENANT_DATA: Record<string, Record<string, number>> = {
     products:         { [BIZ_A]: 3, [BIZ_B]: 0 },
     services:         { [BIZ_A]: 4, [BIZ_B]: 0 },
+    seating_resources: { [BIZ_A]: 2, [BIZ_B]: 0 },
     events:           { [BIZ_A]: 2, [BIZ_B]: 0 },
     campaigns:        { [BIZ_A]: 1, [BIZ_B]: 0 },
     properties:       { [BIZ_A]: 1, [BIZ_B]: 0 },
@@ -1186,7 +1182,7 @@ describe('§23 Merchant Isolation (tenant-conditioned fixtures)', () => {
     const messages = await selectCapStep.prompt(ctx);
 
     // 1. Every backing-data table must have at least one business_id filter
-    const backingTables = ['products', 'services', 'events', 'campaigns', 'properties', 'appointments', 'waiver_templates'];
+    const backingTables = ['products', 'services', 'seating_resources', 'events', 'campaigns', 'properties', 'appointments', 'waiver_templates'];
     for (const table of backingTables) {
       const bizFilters = eqCalls.filter(c => c.table === table && c.field === 'business_id');
       expect(bizFilters.length, `${table} must have ≥1 business_id filter`).toBeGreaterThanOrEqual(1);

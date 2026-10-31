@@ -25,7 +25,7 @@ export async function handleMyBookings(
     // Fetch upcoming bookings
     const { data: upcoming } = await supabase
       .from('bookings')
-      .select('id, date, time, party_size, reference_code, businesses (name, country_code)')
+      .select('id, date, time, party_size, reference_code, flow_type, businesses (name, country_code)')
       .eq('user_id', session.user_id!)
       .in('status', ['confirmed', 'pending'])
       .gte('date', new Date().toISOString().split('T')[0])
@@ -430,7 +430,7 @@ export async function handleModifyBooking(
   if (!input) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('id, date, time, party_size, reference_code, business_id, businesses (name, country_code)')
+      .select('id, date, time, party_size, reference_code, business_id, flow_type, businesses (name, country_code)')
       .eq('id', bookingId)
       .eq('user_id', session.user_id!)
       .single();
@@ -451,14 +451,17 @@ export async function handleModifyBooking(
       `🔑 Ref: *${booking.reference_code}*`,
     ].join('\n'));
 
+    const isTableReservation = booking.flow_type === 'table_reservation';
+    const actionButtons = [
+      // Hide reschedule for table reservations — pending Owner decision on safe atomic reschedule
+      ...(!isTableReservation ? [{ id: 'reschedule_booking', title: 'Reschedule' }] : []),
+      { id: 'cancel_booking', title: 'Cancel Booking' },
+      { id: 'back_bookings', title: 'Back' },
+    ];
     await messageSender.sendButtons({
       to: from,
       body: 'What would you like to do?',
-      buttons: [
-        { id: 'reschedule_booking', title: 'Reschedule' },
-        { id: 'cancel_booking', title: 'Cancel Booking' },
-        { id: 'back_bookings', title: 'Back' },
-      ],
+      buttons: actionButtons,
     });
     return;
   }
@@ -541,13 +544,20 @@ export async function handleModifyBooking(
     // Fetch booking details to populate session for rescheduling
     const { data: booking } = await supabase
       .from('bookings')
-      .select('id, business_id, service_id, party_size, services (id, name, price, deposit_amount)')
+      .select('id, business_id, service_id, party_size, flow_type, services (id, name, price, deposit_amount)')
       .eq('id', bookingId)
       .eq('user_id', session.user_id!)
       .single();
 
     if (!booking || !booking.business_id) {
       await sendText(from, 'Could not load booking details. Send *my bookings* to try again.');
+      await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
+      return;
+    }
+
+    // Block table reservation reschedule — RPC lacks resource overlap check
+    if (booking.flow_type === 'table_reservation') {
+      await sendText(from, 'Table reservations cannot be rescheduled yet. You can cancel and make a new reservation.\n\nSend *my bookings* to manage.');
       await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
