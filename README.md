@@ -4,8 +4,6 @@ WhatsApp-first business automation platform. Businesses connect their WhatsApp n
 
 See [CLAUDE.md](./CLAUDE.md) for golden rules, pre-change checklists, and deep implementation details.
 
-Governance validation explicitly enumerates eight detailed contracts: scheduling, payment, giving, ordering, ticketing, reservation, loyalty and recurring. Passing `scripts/verify-engineering-governance.mjs` does not certify every entry in the 32-capability index or establish E2E acceptance. `table_reservation` remains Tier 1 with its separate detailed-contract/integration requirement. Canonical CI has 12 jobs; specific test execution still requires exact-SHA, job/step, count and zero-skip evidence.
-
 ---
 
 ## Architecture

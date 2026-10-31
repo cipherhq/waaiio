@@ -24,11 +24,13 @@ Contracts follow `waaiio-capability-contract-v1`. See any `.contract.json` for t
 ## Validation
 
 The governance CI script (`scripts/verify-engineering-governance.mjs`) validates:
-- All Tier-1 capabilities have detailed contracts with valid JSON and matching IDs
+- Eight explicitly enumerated capabilities have detailed contracts with valid JSON and matching IDs: scheduling, payment, giving, ordering, ticketing, reservation, loyalty and recurring
 - No duplicate capability IDs in the index
 - Index total matches array length
 - Index IDs match canonical `shared/capabilities.ts` CapabilityId values
-- All `requiredTestsOnChange` paths in contracts reference existing test files
+- `requiredTestsOnChange` paths in those eight detailed contracts reference existing test files
+
+The script does not dynamically enforce a detailed contract for every Tier-1 index entry, execute the referenced tests, or certify all32 capabilities. `table_reservation` remains Tier1 with a separate detailed-contract/integration gate; a green validator does not clear it. Canonical CI has12 jobs; specific test execution requires exact-SHA, job/step, count and zero-skip evidence.
 
 ## Usage
 
