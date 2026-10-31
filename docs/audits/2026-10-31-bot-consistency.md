@@ -55,3 +55,7 @@ M491 is prepared, **not applied to either environment**. Its executable disposab
 Staging's saved WABA configuration was previously corrected to the actual messaging account while retaining separate staging and production credentials. Staging redeploy and live dedicated-number OTP/registration remain unverified. Read-only provider checks do not prove that a new number can register. No production configuration was copied wholesale, and no production deployment or merge was performed.
 
 Release order: resolve repository validation gates; validate/apply the necessary migrations through the approved process; deploy staging; run new/existing/resend email journeys, dedicated OTP and shared recovery, gallery paths and VIP blocking; obtain Owner release decision before production. Old WhatsApp number links/chats cannot be represented as automatically redirecting to a new number.
+
+## Follow-up verification
+
+See [staging validation](2026-10-31-onboarding-staging-validation.md): local M491 fixture and two-session/grant tests now pass. The base-versus-branch typecheck comparison shows all 516 diagnostics predate this change. Hosted deployment, migration and provider acceptance remain separate outstanding steps.

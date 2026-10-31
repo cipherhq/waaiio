@@ -1,0 +1,9 @@
+{
+  "base_sha": "da9020670b856fda73dd05477d82859fdd460cf7",
+  "branch_sha": "d8cfc6fd1736883155911997c04fb88628610544",
+  "base_errors": 516,
+  "branch_errors": 516,
+  "new_diagnostics": [],
+  "removed_diagnostics": [],
+  "normalization": "Repository roots and source line positions normalized; seven truncated absolute import paths normalized."
+}

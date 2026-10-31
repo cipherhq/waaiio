@@ -1,16 +1,27 @@
 -- Run ONLY in an empty disposable PostgreSQL database as its owner:
 -- psql -v ON_ERROR_STOP=1 -f supabase/tests/491_shared_recovery_candidate_fence.sql DATABASE
 -- This fixture exercises real PL/pgSQL; it is not a deployed HTTP/provider test.
-CREATE ROLE anon;
-CREATE ROLE authenticated;
-CREATE ROLE service_role;
-CREATE TABLE public.businesses (id uuid PRIMARY KEY, country_code text, wa_method text, assigned_channel_id uuid, whatsapp_channel_id uuid);
-CREATE TABLE public.whatsapp_channel_candidates (id uuid PRIMARY KEY, business_id uuid, status text, failure_reason text);
-CREATE TABLE public.whatsapp_channels (id uuid PRIMARY KEY, business_id uuid, channel_type text, country_code text, is_active boolean);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF;
+END $$;
+CREATE TABLE public.businesses (id uuid PRIMARY KEY, country_code text, wa_method text, assigned_channel_id uuid, whatsapp_channel_id uuid, updated_at timestamptz);
+CREATE TABLE public.whatsapp_channel_candidates (id uuid PRIMARY KEY, business_id uuid, status text, failure_reason text,
+expected_assigned_channel_id uuid, expected_whatsapp_channel_id uuid, expected_wa_method text,
+replacing_dedicated_channel_id uuid, phone_number_normalized text, connection_source text,
+phone_number text, phone_number_id text, waba_id text, meta_access_token text,
+meta_token_expires_at timestamptz, display_name text, country_code text, provider text,
+business_wa_method text, encrypted_registration_pin text);
+CREATE TABLE public.whatsapp_channels (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), business_id uuid, channel_type text, country_code text, is_active boolean,
+phone_number text, phone_number_id text, waba_id text, meta_access_token text,
+meta_token_expires_at timestamptz, display_name text, provider text, connection_method text,
+connection_status text, metadata jsonb, updated_at timestamptz);
+CREATE TABLE public.whatsapp_channel_secrets (channel_id uuid PRIMARY KEY, encrypted_registration_pin text, updated_at timestamptz);
 CREATE TABLE public.platform_settings (key text, value jsonb);
 \ir ../migrations/491_shared_recovery_candidate_fence.sql
 BEGIN;
-INSERT INTO businesses VALUES ('00000000-0000-0000-0000-000000000001','US','shared','00000000-0000-0000-0000-000000000002',NULL);
+INSERT INTO businesses(id,country_code,wa_method,assigned_channel_id,whatsapp_channel_id) VALUES ('00000000-0000-0000-0000-000000000001','US','shared','00000000-0000-0000-0000-000000000002',NULL);
 DO $$
 DECLARE result jsonb; candidate_status text;
 BEGIN
