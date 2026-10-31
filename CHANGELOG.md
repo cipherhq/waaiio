@@ -5689,6 +5689,11 @@ If something breaks:
 - **Affects**: Only the homepage setup heading; no timing promise, layout, links, pricing or signup behavior changes.
 - **Could break**: Heading wrapping at narrow widths; existing homepage tests/build and available preview checks supply evidence. The wider #526 audit remains out of scope.
 
+### #784 — Party seating dashboard test readiness (2026-10-31)
+
+- **`lib/__tests__/party-seating-dashboard-762.test.tsx`**: Wait for the actual parent guest/table data and enabled editor before interactions; retain all seven existing test bodies and assertions. Add one controlled deferred-parent regression for preview invalidation, loading recovery and one explicit commit.
+- **Affects / could break**: Test fixture readiness only. No production behavior, timeout increases, sleeps or weaker assertions; eight mounted tests pass with zero skips. This is not hosted-schema or live party acceptance.
+
 ### #762 — Reviewed party seating groups and pinned assignments (2026-10-30)
 
 - **Party dashboard and seating planner**: Add one organizer-set seating group per invitation, explicit allowed tables, persistent manual pins, and randomized previews for unpinned guests. Invitations and plus-ones stay together; ungrouped guests use remaining capacity. Preview shows weighted occupancy and overflow; a partial plan requires explicit acknowledgment.
