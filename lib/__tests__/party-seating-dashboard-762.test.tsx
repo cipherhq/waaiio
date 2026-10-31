@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testing-library/react';
 import PartiesPage from '@/app/dashboard/parties/page';
 import { planSeating, type SeatingSnapshot } from '@/lib/parties/seating-planner';
 const mocks = vi.hoisted(() => ({ client: vi.fn(), fetch: vi.fn() }));
@@ -15,23 +15,55 @@ vi.mock('@/components/ui/PlacesAutocomplete', () => ({ default: () => null }));
 let snapshot: SeatingSnapshot;
 let calls: Record<string, unknown>[];
 let rejectCommit: boolean;
+type Gate = { promise: Promise<void>; release: () => void };
+let gates: Gate[];
+let parentCountGate: Gate | null;
+let nextSnapshotGate: Gate | null;
+let parentCountReads: number;
+function deferredGate(): Gate {
+  let release!: () => void;
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  const gate = { promise, release };
+  gates.push(gate);
+  return gate;
+}
 const party = { id:'party', name:'Celebration', date:'2027-01-01', status:'active', allow_plus_ones:true,
   max_plus_ones:3, ask_dietary:false, slug:'celebration', created_at:'2026-10-01' };
 beforeEach(() => {
   vi.clearAllMocks(); calls=[]; rejectCommit=false;
+  gates=[]; parentCountGate=null; nextSnapshotGate=null; parentCountReads=0;
   snapshot = { fingerprint:'initial', tables:[{id:'a',name:'Table A',capacity:1}], groups:[],
     guests:[{id:'one',guest_name:'Alex',status:'accepted',plus_ones:0,table_id:null,seating_pinned:false,seating_group_id:null}] };
   mocks.client.mockReturnValue({ from: (table: string) => {
-    const data = table==='parties' ? [party] : table==='party_tables' ? snapshot.tables.map(t=>({...t,sort_order:0})) :
-      snapshot.guests.map(g=>({...g,guest_phone:'100',tags:[],invite_token:'token',reminder_sent:false,created_at:'2026-10-01',responded_at:null}));
+    let columns = '';
+    const filters: Record<string, unknown> = {};
     const q: Record<string, unknown> = {};
-    for(const method of ['select','eq','order','is','in','update','insert','delete']) q[method]=()=>q;
-    q.then=(resolve: (v: unknown)=>unknown)=>Promise.resolve({data,error:null}).then(resolve);
+    q.select=(value: string)=>{columns=value;return q;};
+    q.eq=(key: string,value: unknown)=>{filters[key]=value;return q;};
+    for(const method of ['order','is','in','update','insert','delete']) q[method]=()=>q;
+    q.then=(resolve: (v: unknown)=>unknown, reject?: (reason: unknown)=>unknown)=>{
+      const read = async () => {
+        if(table==='event_invites' && columns==='plus_ones') {
+          parentCountReads++;
+          if(parentCountGate) await parentCountGate.promise;
+          return {data:snapshot.guests.filter(g=>g.table_id===filters.table_id)
+            .map(g=>({plus_ones:g.plus_ones})),error:null};
+        }
+        const data = table==='parties' ? [party] : table==='party_tables' ? snapshot.tables.map(t=>({...t,sort_order:0})) :
+          snapshot.guests.map(g=>({...g,guest_phone:'100',tags:[],invite_token:'token',reminder_sent:false,created_at:'2026-10-01',responded_at:null}));
+        return {data,error:null};
+      };
+      return read().then(resolve,reject);
+    };
     return q;
   }});
   mocks.fetch.mockImplementation(async (_url: string, init?: RequestInit) => {
     const input = init?.body ? JSON.parse(String(init.body)) : {op:'snapshot'};
     calls.push(input);
+    if(input.op==='snapshot' && nextSnapshotGate) {
+      const gate=nextSnapshotGate;nextSnapshotGate=null;
+      await gate.promise;
+    }
     if(input.op==='preview') return new Response(JSON.stringify({snapshot,plan:planSeating(snapshot,input.seed),seed:input.seed,planHash:'reviewed'}));
     if(input.op==='commit') {
       if(rejectCommit) return new Response(JSON.stringify({error:'Seating changed. Create a new preview.'}),{status:409});
@@ -45,11 +77,42 @@ beforeEach(() => {
   });
   vi.stubGlobal('fetch',mocks.fetch);
 });
-afterEach(()=>{cleanup();vi.unstubAllGlobals();});
-async function open() {
+afterEach(async()=>{
+  cleanup();
+  await act(async()=>{for(const gate of gates) gate.release();});
+  vi.unstubAllGlobals();
+});
+async function navigateToParty() {
   render(<PartiesPage />);
   fireEvent.click(await screen.findByText('Celebration'));
-  await screen.findByRole('button',{name:'Randomize and preview'});
+}
+async function waitForLoadedParty() {
+  // Parent list and table counts must render before waiting for the current editor.
+  await waitFor(()=>{
+    const guests=within(screen.getByRole('table'));
+    for(const guest of snapshot.guests) {
+      expect(guests.getByRole('cell',{name:guest.guest_name!,exact:true})).toBeTruthy();
+    }
+    for(const table of snapshot.tables) {
+      const seated=snapshot.guests.filter(g=>g.table_id===table.id)
+        .reduce((total,g)=>total+1+g.plus_ones,0);
+      expect(screen.getByText(`${seated} / ${table.capacity} seats`,{exact:true})).toBeTruthy();
+    }
+  });
+  await waitFor(()=>{
+    const editor=within(screen.getByRole('region',{name:'Seating plan'}));
+    expect(editor.queryByRole('status')).toBeNull();
+    for(const guest of snapshot.guests) {
+      expect(editor.getByLabelText('Seating group for '+guest.guest_name)).toBeTruthy();
+    }
+    const randomize=editor.getByRole('button',{name:'Randomize and preview'}) as HTMLButtonElement;
+    expect(randomize.disabled).toBe(false);
+    expect(randomize.closest('fieldset')?.disabled).toBe(false);
+  });
+}
+async function open() {
+  await navigateToParty();
+  await waitForLoadedParty();
 }
 describe('rendered Parties dashboard seating #762',()=>{
   it('shows a preview without committing until explicitly confirmed',async()=>{
@@ -131,6 +194,35 @@ describe('rendered Parties dashboard seating #762',()=>{
     expect(screen.getByRole('button',{name:'Pin Alex'})).toBeTruthy();
     expect(screen.getByRole('button',{name:'Unpin Jordan'})).toBeTruthy();
     expect(screen.queryByText('Review seating')).toBeNull();
+  });
+
+  it('invalidates an early preview when deferred parent counts arrive, then previews current data',async()=>{
+    parentCountGate=deferredGate();
+    await navigateToParty();
+    await waitFor(()=>expect(parentCountReads).toBe(1));
+    await screen.findByRole('cell',{name:'Alex',exact:true});
+    const editor=within(screen.getByRole('region',{name:'Seating plan'}));
+    fireEvent.click(await editor.findByRole('button',{name:'Randomize and preview'}));
+    await editor.findByRole('button',{name:'Confirm seating'});
+    expect(screen.queryByText('0 / 1 seats',{exact:true})).toBeNull();
+    expect(calls.some(x=>x.op==='commit')).toBe(false);
+
+    const currentSnapshot=deferredGate();
+    nextSnapshotGate=currentSnapshot;
+    await act(async()=>{parentCountGate!.release();});
+    expect(await editor.findByRole('status')).toHaveProperty('textContent','Loading seating…');
+    expect(editor.queryByRole('button',{name:'Confirm seating'})).toBeNull();
+    expect(calls.some(x=>x.op==='commit')).toBe(false);
+
+    await act(async()=>{currentSnapshot.release();});
+    await waitForLoadedParty();
+    fireEvent.click(editor.getByRole('button',{name:'Randomize and preview'}));
+    await editor.findByRole('button',{name:'Confirm seating'});
+    expect(calls.some(x=>x.op==='commit')).toBe(false);
+    fireEvent.click(editor.getByRole('button',{name:'Confirm seating'}));
+    await waitFor(()=>expect(snapshot.fingerprint).toBe('saved'));
+    expect(snapshot.guests[0].table_id).toBe('a');
+    expect(calls.filter(x=>x.op==='commit')).toHaveLength(1);
   });
 
 });

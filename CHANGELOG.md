@@ -198,6 +198,11 @@
 - **Affects**: Bot completion card presentation. Booking-completion figures, other session counters, queries, filters and date behavior are unchanged.
 - **Could break**: The longer card wording may wrap differently at narrow widths; no rendered browser verification is claimed. Action measurement and the end-date correction remain separate work.
 
+### #782 — Reseller financial and payout read states (2026-10-30)
+
+- **`admin/src/pages/ResellerFinancials.tsx`, `admin/src/pages/ResellerPayouts.tsx` and their two read-state test files**: Distinguish loading, failed reads, empty results and successful data; reject obsolete completions and retain generation checks before and after deferred token resolution.
+- **Affects / could break**: Reseller financial and payout views during failed requests, retries and context changes. Existing arithmetic, monetary units, authentication helpers and financial mutations are unchanged. No live settlement or currency-history reconciliation is claimed.
+
 ### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
 
 - **`docs/ops/subscription-messaging-credit-10pct-audit-2026-10-26.md`**: Surgical documentation corrections per CTO review. (1) Updated stale references: PRs #711 and #722 now noted as merged; #712 remains open draft on separate lane. (2) Moved Admin-control configurability from approved decisions to unresolved future implementation gates. (3) Explicitly distinguished four unresolved Owner decisions (discount/tax basis, annual billing, rounding rule, Admin-control design) from the already-approved 10% rate. (4) Clarified section 4 heading applies to the future implementation PR, not this documentation PR. (5) Labeled US/CA Premium 10% credit amounts as illustrative pending rounding approval. (6) Retained explicit "no merge without separate Owner authorization" in governance section.
@@ -240,6 +245,23 @@
 - **`AGENTS.md`, `CLAUDE.md`, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`**: Record the standing two-route payment custody model and manual-settlement policy, with repository guidance linked to the authoritative policy.
 - **Affects / could break**: Engineering interpretation of payment custody and settlement responsibilities. Documentation only; no runtime, provider, financial-history or hosted-schema changes, and no live-flow certification.
 
+### #721 / #737 — Final lifecycle contract correction (2026-10-31)
+
+- Supersedes the earlier summary: all applicable offline fulfillment requires explicit merchant approval separately from funds verification; online policy is unchanged. The inventory reconciles 32 unique capabilities, retains table_reservation as Tier 1, and documents the validator's eight-contract scope.
+- Earlier seven-question, Tier 2 and four-active-defect claims are superseded by two unresolved questions and explicitly historical findings/investigations. The final correction is limited to the four allocated contract documents; the root README is unchanged.
+- No fresh runtime or end-to-end certification is claimed. Existing historical entries and evidence remain preserved.
+
+### #721 — WhatsApp lifecycle contract alignment (2026-10-28)
+
+- **`docs/contracts/shared-payment-lifecycle.md`** (new): Universal payment-to-fulfillment lifecycle standard. Documents the three-stage authority chain (provider verification → capability fulfillment → notifications), all 6 payment providers (Paystack, Stripe, Flutterwave, Square, PayPal, Direct/Offline), saved card rules, refund model, and known debt (#164, #166, #735).
+- **`docs/contracts/whatsapp-experience-contract.md`** (new): Shared WhatsApp customer experience standards. Documents channel models (shared vs dedicated), returning customer behavior, certified languages (en, pcm), free-text/NLP architecture, STOP/UNSUBSCRIBE behavior (post-PR #727), rate limiting, Meta platform constraints, template inventory, and dashboard↔bot parity requirements.
+- **`docs/contracts/721-capability-journey-matrix.md`** (new): Complete 32-capability × WhatsApp journey matrix. Documents entry point, flow file, payment relationship, fulfillment, tests, and classification for every canonical capability. Includes 21 customer-facing capabilities, contextual sub-capabilities, and 8 system/dashboard-only capabilities. Includes Owner Decision Register with 7 unresolved product questions.
+- **`docs/contracts/721-behavior-vs-contract-report.md`** (new): Current behavior vs contract audit report. Classifies 12 fixed defects (PR #727, #722, #164, #166, #167), 4 confirmed active code defects (T19B, TABLE-DUP, OFFLINE-APPROVE, ORDER-ADAPTER), 4 documentation drift items, 9 evidence gaps, MCP/Graphify verification status, and 4 proposed UX improvements.
+- **`docs/contracts/README.md`**: Added pointers to the 4 new contract documents.
+- **`docs/contracts/capability-index.json`**: Updated `_generated_from_main` SHA to current `164b31b8`. Corrected `table_reservation` riskTier from `tier-3` to `tier-2` with notes about PR #731.
+- **Affects**: Documentation only. No application code, migrations, database configuration, payment providers, messaging paths, or runtime behavior changed.
+- **Could break**: Nothing. No code imports or runtime dependencies on these documents.
+
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
 
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
@@ -249,6 +271,15 @@
 - **Affects**: `purchase_tickets_atomic` RPC (web ticket purchase), `event_ticket_types` table constraints. No changes to `finalize_free_ticket_booking` (preserves already-paid bookings), bot flow logic, payment gateways, or existing ticket/booking data.
 - **Could break**: Direct API or partner API updates that decrease `total_tickets` on saved tiers will now fail with `capacity_decrease_blocked` trigger exception. This matches the dashboard's existing prohibition on saved-tier capacity decreases.
 - **Requires**: Migration must be applied to staging/production after merge.
+
+### #743 — Bounded implementation correction workflow (2026-10-30)
+
+- **`CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, `docs/ENGINEERING_WORKFLOW.md`**: Record the Owner-approved workflow for correcting bounded implementation issues while preserving independent review, security and permission stops, and separate merge/deployment authority.
+- **Affects / could break**: Engineering task execution and review handoffs. Documentation only; this policy does not relax protected checks, authorize production operations or turn incomplete evidence into acceptance.
+
+### #744 — Current-main contract registry reconciliation (2026-10-31)
+
+- Preserved integrated workflow guidance and validator scope, retained table reservation Tier 1 status, and updated its index note to distinguish merged #731 source from outstanding detailed-contract and hosted acceptance evidence.
 
 ### #736 / #744 — Final capability contract correction (2026-10-31)
 
@@ -308,6 +339,29 @@
 - **Payout/admin/cron routes and `lib/payments/payable-fees.ts`**: Preserve canonical currency isolation, unknown-currency review holds, structured payout flags, account linkage and fee-allocation-period accounting across payout generation, balance and settlement paths.
 - **M466, M468, M469 and M472; canonical CI and regression files**: Add the reviewed currency/deduplication/settlement authority sequence and executable route, accounting, concurrency and real-PostgreSQL coverage. Current-main integration retains valid admin UUID and action-bound step-up fixtures alongside the currency assertions.
 - **Affects / could break**: Payout eligibility, currency-scoped totals, deduplication and settlement accounting. Hosted migration sequencing and deployment require separate authorization and verification; this source change does not certify live payment or settlement outcomes.
+
+### #731 — Reviewed reservation routing and acceptance corrections (2026-10-31)
+
+- Preserve the dedicated seating-resource authority: a generic service skip cannot bypass table selection, and only one active same-business resource may auto-select with its full snapshot. Table flat-deposit reservations do not offer or redeem unsupported promotions; ordinary scheduling promotion behavior is preserved.
+- Add mounted Bookings page acceptance for table, lodging and legacy scheduling data/actions. Update lifecycle and pagination fixtures to use canonical seating resources while preserving tenant, row-limit, sender and existing lifecycle assertions.
+- Integrate current main without dropping its currency/settlement migration tests; retain the M476 disposable database test step unchanged. This is source and executable test coverage; hosted M476–M478 application and live reservation acceptance remain separate.
+
+### #730 — Booking/Reservation UX: Table Reservation Architecture (2026-10-27)
+
+- **`supabase/migrations/476_seating_resources_table_reservation.sql`** (new): Extends `flow_type` enum with `table_reservation`. Creates `seating_resources` table (tables, booths, sections, VIP areas) with capacity, party-size bounds, duration, deposit, available-days/hours, RLS, and service_role ACL. Adds `seating_resource_id` FK on `bookings`. Creates `book_table_atomic` RPC with advisory-lock concurrency, bot-session idempotency, resource validation, party-size bounds, time-overlap prevention, and self-check block. Additional migrations M477 (book_slot_atomic isolation) and M478 (reschedule isolation) exclude table reservations from service/appointment capacity counts.
+- **`lib/bot/flows/table-reservation.flow.ts`** (new): Dedicated WhatsApp bot flow for table/seating reservations. Queries `seating_resources` instead of `services`. Auto-selects when single resource. Routes into scheduling's shared date/time/confirm steps via cross-flow handoff.
+- **`lib/bot/flows/scheduling.flow.ts`**: Added `_is_table_reservation` branch before `book_slot_atomic` in confirm_booking step — calls `book_table_atomic` RPC instead. Modified `select_quantity` step to enforce seating capacity min/max bounds. Updated `activeCap` resolution to handle table_reservation.
+- **`lib/constants.ts`**: Added `'table_reservation'` to `FlowType` union.
+- **`lib/bot/flows/registry.ts`**: Registered `tableReservationFlow` in both FLOW_REGISTRY and EXTENDED_REGISTRY.
+- **`lib/bot/handlers/flow-routing.ts`**: Mapped `table_reservation` to `select_table` step (was `select_service`).
+- **`lib/bot/flows/capability-selection.flow.ts`**: Changed `table_reservation` backing-data check from `services` to `seating_resources` (fixes F-1 duplicate with scheduling). Added `select_table` to `getFirstStepForCapability`.
+- **`app/dashboard/seating/page.tsx`** (new): Merchant CRUD page for seating resources with type, capacity, section, duration, deposit, available days/hours, active toggle.
+- **`components/dashboard/Sidebar.tsx`**: Added Seating nav item gated on `table_reservation` capability.
+- **`app/dashboard/reservations/page.tsx`**: Added Table Reservations tab, `flow_type`/`seating_resource_id` to booking query and Booking interface.
+- **`app/api/seating-resources/route.ts`** (new): GET/POST/PATCH for seating resources with RLS-enforced ownership.
+- **`lib/__tests__/table-reservation-730.test.ts`** (new): 44 tests covering routing, deposit authority, availability, admin security, migration structure, and non-regression.
+- **Affects**: `table_reservation` capability routing, food/dining category defaults. Businesses without configured seating fail closed (capability hidden from WhatsApp menu).
+- **Does NOT affect**: existing `book_slot_atomic`, scheduling/appointment/stays/ordering/ticketing flows, payment pipeline, existing bookings data.
 
 ### Audit NB-5: SECURITY DEFINER ACL hardening (2026-10-24)
 
@@ -5740,6 +5794,11 @@ If something breaks:
 - `app/(marketing)/HomeClient.tsx`: replace “Up and running in minutes” with “Set up your business on WhatsApp”.
 - **Affects**: Only the homepage setup heading; no timing promise, layout, links, pricing or signup behavior changes.
 - **Could break**: Heading wrapping at narrow widths; existing homepage tests/build and available preview checks supply evidence. The wider #526 audit remains out of scope.
+
+### #784 — Party seating dashboard test readiness (2026-10-31)
+
+- **`lib/__tests__/party-seating-dashboard-762.test.tsx`**: Wait for the actual parent guest/table data and enabled editor before interactions; retain all seven existing test bodies and assertions. Add one controlled deferred-parent regression for preview invalidation, loading recovery and one explicit commit.
+- **Affects / could break**: Test fixture readiness only. No production behavior, timeout increases, sleeps or weaker assertions; eight mounted tests pass with zero skips. This is not hosted-schema or live party acceptance.
 
 ### #762 — Reviewed party seating groups and pinned assignments (2026-10-30)
 

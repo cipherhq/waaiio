@@ -10,6 +10,15 @@ import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
+import {
+  schedulingActions,
+  tableReservationActions,
+  reservationActions,
+  getActionsForBooking,
+  getColumnHeader,
+  getRowResourceLabel,
+  isTableReservationsTabRow,
+} from '@/components/dashboard/BookingPresentation';
 
 interface ServiceOption {
   id: string;
@@ -57,6 +66,9 @@ interface Booking {
   service_id: string | null;
   refund_amount: number | null;
   guest_list: Array<{ name: string }> | null;
+  flow_type: string | null;
+  seating_resource_id: string | null;
+  seating_resource_name: string | null;
   _isReservation?: boolean;
 }
 
@@ -82,41 +94,8 @@ const reservationStatusLabels: Record<string, string> = {
   checked_out: 'Checked Out',
 };
 
-// Actions for scheduling businesses (appointments, bookings)
-const schedulingActions: Record<string, { label: string; next: string; color: string }[]> = {
-  pending: [
-    { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  confirmed: [
-    { label: 'Start', next: 'in_progress', color: 'text-blue-600 hover:bg-blue-50' },
-    { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  in_progress: [
-    { label: 'Complete', next: 'completed', color: 'text-gray-600 hover:bg-gray-50' },
-  ],
-};
-
-// Actions for reservation businesses (hotel, shortlet, car rental)
-const reservationActions: Record<string, { label: string; next: string; color: string }[]> = {
-  pending: [
-    { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  confirmed: [
-    { label: 'Check In', next: 'checked_in', color: 'text-blue-600 hover:bg-blue-50' },
-    { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
-    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
-  ],
-  checked_in: [
-    { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
-  ],
-  // Legacy status support (in_progress maps to checked_in)
-  in_progress: [
-    { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
-  ],
-};
+// Action maps, getActionsForBooking, getColumnHeader, getRowResourceLabel
+// are imported from @/components/dashboard/BookingPresentation (production-tested module).
 
 export default function BookingsPage() {
   const business = useBusiness();
@@ -129,10 +108,12 @@ export default function BookingsPage() {
   // Determine default booking type based on capabilities
   const hasSchedulingCapability = business.capabilities?.includes('scheduling' as any) || business.capabilities?.includes('appointment' as any);
   const hasReservationCap = business.capabilities?.includes('reservation' as any) || business.flow_type === 'reservation';
-  const defaultBookingType: 'reservations' | 'bookings' = hasReservationCap && !hasSchedulingCapability ? 'reservations' : 'bookings';
-  const hasBothTypes = hasReservationCap && hasSchedulingCapability && business.flow_type !== 'reservation';
+  const hasTableReservationCap = business.capabilities?.includes('table_reservation' as any);
+  const defaultBookingType: 'reservations' | 'bookings' | 'table_reservations' = hasReservationCap && !hasSchedulingCapability && !hasTableReservationCap ? 'reservations' : (hasTableReservationCap && !hasSchedulingCapability ? 'table_reservations' : 'bookings');
+  const hasBothTypes = hasReservationCap && (hasSchedulingCapability || hasTableReservationCap) && business.flow_type !== 'reservation';
+  const hasMultipleTypes = [hasSchedulingCapability, hasReservationCap, hasTableReservationCap].filter(Boolean).length > 1;
 
-  const [bookingType, setBookingType] = useState<'reservations' | 'bookings'>(defaultBookingType);
+  const [bookingType, setBookingType] = useState<'reservations' | 'bookings' | 'table_reservations'>(defaultBookingType);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState('');
@@ -361,9 +342,12 @@ export default function BookingsPage() {
   }, [selected?.id, selected?._isReservation, selected?.total_amount]);
 
   // Filter by booking type tab (no "All" tab — show one type at a time)
-  const filteredByType = !hasBothTypes ? bookings
+  // Tab filtering uses the shared production predicate from BookingPresentation.
+  const filteredByType = !hasMultipleTypes ? bookings
     : bookingType === 'reservations' ? bookings.filter(b => b._isReservation)
-    : bookings.filter(b => !b._isReservation);
+    : bookingType === 'table_reservations'
+      ? bookings.filter(b => isTableReservationsTabRow(b, hasSchedulingCapability))
+    : bookings.filter(b => !b._isReservation && b.flow_type !== 'table_reservation');
 
   const totalPages = Math.max(1, Math.ceil(filteredByType.length / perPage));
   const pageItems = filteredByType.slice((page - 1) * perPage, page * perPage);
@@ -394,7 +378,7 @@ export default function BookingsPage() {
   const isReservationType = business.flow_type === 'reservation';
   const hasReservationCapability = business.capabilities?.includes('reservation' as any);
   const showReservations = isReservationType || hasReservationCapability;
-  const nextActions = showReservations ? reservationActions : schedulingActions;
+  // getActionsForBooking imported from BookingPresentation (production-tested)
 
   const fetchBookings = useCallback(async () => {
     try {
@@ -446,13 +430,16 @@ export default function BookingsPage() {
             original_time: null,
             seated_at: r.checked_in_at,
             completed_at: r.checked_out_at,
+            flow_type: 'reservation',
+            seating_resource_id: null,
+            seating_resource_name: null,
             _isReservation: true,
           };
         }) as Booking[];
         allBookings.push(...mapped);
 
-        // If ONLY reservation type (no scheduling), skip bookings query
-        if (isReservationType) {
+        // If ONLY reservation type with no table or scheduling capability, skip bookings query
+        if (isReservationType && !hasTableReservationCap && !hasSchedulingCapability) {
           setBookings(allBookings);
           setLoading(false);
           return;
@@ -462,7 +449,7 @@ export default function BookingsPage() {
       // Query bookings table (appointments + on-demand services)
       let query = supabase
         .from('bookings')
-        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list')
+        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list, flow_type, seating_resource_id, seating_resources(name)')
         .eq('business_id', business.id)
         .neq('flow_type', 'payment')
         .order('date', { ascending: false })
@@ -489,8 +476,14 @@ export default function BookingsPage() {
         );
       }
 
-      // Merge with reservations (if any) and sort by date descending
-      allBookings.push(...(results as Booking[]));
+      // Map seating resource name from join and merge
+      const mapped = results.map(r => {
+        const raw = r as Record<string, unknown>;
+        const sr = raw.seating_resources as { name: string } | { name: string }[] | null;
+        const srName = Array.isArray(sr) ? sr[0]?.name : sr?.name;
+        return { ...r, seating_resource_name: srName || null } as unknown as Booking;
+      });
+      allBookings.push(...mapped);
       allBookings.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setBookings(allBookings);
     } catch {
@@ -716,12 +709,13 @@ export default function BookingsPage() {
         );
       })()}
 
-      {/* Booking type tabs — only show when business has both types */}
-      {hasBothTypes && (
+      {/* Booking type tabs — only show when business has multiple booking types */}
+      {hasMultipleTypes && (
         <div className="mt-4 flex gap-1 border-b border-gray-200 dark:border-gray-700">
           {([
-            { id: 'bookings' as const, label: 'Appointments' },
-            { id: 'reservations' as const, label: 'Reservations' },
+            ...(hasSchedulingCapability ? [{ id: 'bookings' as const, label: 'Appointments' }] : []),
+            ...(hasTableReservationCap ? [{ id: 'table_reservations' as const, label: 'Table Reservations' }] : []),
+            ...(hasReservationCap ? [{ id: 'reservations' as const, label: 'Stays' }] : []),
           ]).map(tab => (
             <button key={tab.id} onClick={() => { setBookingType(tab.id); setPage(1); }}
               className={`px-4 py-2.5 text-sm font-medium transition border-b-2 -mb-px ${
@@ -729,7 +723,9 @@ export default function BookingsPage() {
               }`}>
               {tab.label}
               <span className="ml-1.5 text-xs text-gray-400">
-                {tab.id === 'reservations' ? bookings.filter(b => b._isReservation).length : bookings.filter(b => !b._isReservation).length}
+                {tab.id === 'reservations' ? bookings.filter(b => b._isReservation).length
+                  : tab.id === 'table_reservations' ? bookings.filter(b => isTableReservationsTabRow(b, hasSchedulingCapability)).length
+                  : bookings.filter(b => !b._isReservation && b.flow_type !== 'table_reservation').length}
               </span>
             </button>
           ))}
@@ -811,7 +807,7 @@ export default function BookingsPage() {
               <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300 dark:border-gray-600" /></th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guest</th>
-                {bookingType === 'reservations' || (!hasBothTypes && showReservations) ? (
+                {bookingType === 'reservations' || (!hasMultipleTypes && showReservations && bookingType !== 'table_reservations') ? (
                   <>
                     <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.propertyName || 'Property'}</th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-in</th>
@@ -822,7 +818,9 @@ export default function BookingsPage() {
                   </>
                 ) : (
                   <>
-                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Staff</th>
+                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
+                      {getColumnHeader(bookingType)}
+                    </th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date & Time</th>
                     <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
                     <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
@@ -863,7 +861,9 @@ export default function BookingsPage() {
                     </>
                   ) : (
                     <>
-                      <td className="hidden sm:table-cell px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.staff_name || '—'}</td>
+                      <td className="hidden sm:table-cell px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                        {getRowResourceLabel(r)}
+                      </td>
                       <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
                         {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}
                         {r.time && !r.time.includes('night') && ` at ${r.time.slice(0, 5)}`}
@@ -878,7 +878,7 @@ export default function BookingsPage() {
                   )}
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
-                      {(showReservations && reservationStatusLabels[r.status]) || r.status.replace('_', ' ')}
+                      {(r._isReservation && reservationStatusLabels[r.status]) || r.status.replace('_', ' ')}
                     </span>
                     {r.rescheduled_at && (
                       <span className="ml-1 inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
@@ -889,7 +889,7 @@ export default function BookingsPage() {
                   <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap min-w-[5rem]">{r.reference_code}</td>
                   <td className="px-4 py-3">
                     {(() => {
-                      const actions = (nextActions[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next));
+                      const actions = (getActionsForBooking(r)[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next));
                       if (actions.length === 0) {
                         return <span className="text-xs text-gray-400 dark:text-gray-500">—</span>;
                       }
@@ -1297,6 +1297,14 @@ export default function BookingsPage() {
                 </div>
               )}
 
+              {/* Seating resource (table reservations) */}
+              {selected.flow_type === 'table_reservation' && selected.seating_resource_name && (
+                <div className="rounded-lg bg-purple-50 dark:bg-purple-900/20 p-4">
+                  <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Table / Seating</h3>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{selected.seating_resource_name}</p>
+                </div>
+              )}
+
               {/* Booking Details */}
               <div>
                 <h3 className="text-xs font-semibold uppercase text-gray-400 mb-3">Details</h3>
@@ -1569,7 +1577,7 @@ export default function BookingsPage() {
               </div>
 
               {/* Reschedule — only for non-reservation pending/confirmed bookings */}
-              {!selected._isReservation && ['pending', 'confirmed'].includes(selected.status) && (
+              {!selected._isReservation && selected.flow_type !== 'table_reservation' && ['pending', 'confirmed'].includes(selected.status) && (
                 <div className="border-t border-gray-100 pt-4">
                   {!showReschedule ? (
                     <button
@@ -1650,10 +1658,10 @@ export default function BookingsPage() {
               )}
 
               {/* Actions */}
-              {nextActions[selected.status] && nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).length > 0 && (
+              {getActionsForBooking(selected)[selected.status] && getActionsForBooking(selected)[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).length > 0 && (
                 <div className="border-t border-gray-100 pt-4">
                   <div className="flex flex-wrap gap-2">
-                    {nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
+                    {getActionsForBooking(selected)[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
                       <button key={action.next}
                         onClick={() => { updateStatus(selected.id, action.next); setSelectedId(null); }}
                         className={`rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium ${action.color}`}>

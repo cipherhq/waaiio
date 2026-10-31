@@ -8,7 +8,7 @@ export const BOOKING_REF_PREFIX = 'BW';
 export const TRIAL_DAYS = 14;
 
 // ── Flow Types ──
-export type FlowType = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'queue';
+export type FlowType = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'queue' | 'table_reservation';
 export type BusinessCategoryKey =
   | 'restaurant' | 'barber' | 'spa' | 'salon' | 'gym' | 'clinic'
   | 'consultant' | 'church' | 'mosque' | 'school' | 'ngo'
