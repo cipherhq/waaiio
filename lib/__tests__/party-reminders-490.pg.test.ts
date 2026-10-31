@@ -15,7 +15,7 @@ suite('M490 real PostgreSQL reminder claims and tenant boundaries',()=>{
    DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
     IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
     IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$;
-   CREATE TABLE IF NOT EXISTS public.businesses(id uuid PRIMARY KEY);
+   CREATE TABLE IF NOT EXISTS public.businesses(id uuid PRIMARY KEY,name text NOT NULL);
    CREATE TABLE IF NOT EXISTS public.parties(id uuid PRIMARY KEY,business_id uuid NOT NULL REFERENCES public.businesses(id));
    CREATE TABLE IF NOT EXISTS public.event_invites(id uuid PRIMARY KEY,party_id uuid REFERENCES public.parties(id),business_id uuid NOT NULL REFERENCES public.businesses(id));
    GRANT USAGE ON SCHEMA public,private TO service_role;
@@ -24,7 +24,7 @@ suite('M490 real PostgreSQL reminder claims and tenant boundaries',()=>{
  });
  beforeEach(async()=>{
   await pool.query('DELETE FROM public.party_reminder_attempts; DELETE FROM public.party_reminder_runs; DELETE FROM public.event_invites; DELETE FROM public.parties; DELETE FROM public.businesses');
-  await pool.query('INSERT INTO public.businesses(id) VALUES($1),($2)',[business,otherBusiness]);
+  await pool.query("INSERT INTO public.businesses(id,name) VALUES($1,'Party owner'),($2,'Other tenant')",[business,otherBusiness]);
   await pool.query('INSERT INTO public.parties(id,business_id) VALUES($1,$2),($3,$4)',[party,business,otherParty,otherBusiness]);
   await pool.query('INSERT INTO public.event_invites(id,party_id,business_id) VALUES($1,$2,$3),($4,$5,$6)',[invite,party,business,otherInvite,otherParty,otherBusiness]);
  });
