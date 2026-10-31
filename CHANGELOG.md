@@ -245,6 +245,23 @@
 - **`AGENTS.md`, `CLAUDE.md`, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`**: Record the standing two-route payment custody model and manual-settlement policy, with repository guidance linked to the authoritative policy.
 - **Affects / could break**: Engineering interpretation of payment custody and settlement responsibilities. Documentation only; no runtime, provider, financial-history or hosted-schema changes, and no live-flow certification.
 
+### #721 / #737 — Final lifecycle contract correction (2026-10-31)
+
+- Supersedes the earlier summary: all applicable offline fulfillment requires explicit merchant approval separately from funds verification; online policy is unchanged. The inventory reconciles 32 unique capabilities, retains table_reservation as Tier 1, and documents the validator's eight-contract scope.
+- Earlier seven-question, Tier 2 and four-active-defect claims are superseded by two unresolved questions and explicitly historical findings/investigations. The final correction is limited to the four allocated contract documents; the root README is unchanged.
+- No fresh runtime or end-to-end certification is claimed. Existing historical entries and evidence remain preserved.
+
+### #721 — WhatsApp lifecycle contract alignment (2026-10-28)
+
+- **`docs/contracts/shared-payment-lifecycle.md`** (new): Universal payment-to-fulfillment lifecycle standard. Documents the three-stage authority chain (provider verification → capability fulfillment → notifications), all 6 payment providers (Paystack, Stripe, Flutterwave, Square, PayPal, Direct/Offline), saved card rules, refund model, and known debt (#164, #166, #735).
+- **`docs/contracts/whatsapp-experience-contract.md`** (new): Shared WhatsApp customer experience standards. Documents channel models (shared vs dedicated), returning customer behavior, certified languages (en, pcm), free-text/NLP architecture, STOP/UNSUBSCRIBE behavior (post-PR #727), rate limiting, Meta platform constraints, template inventory, and dashboard↔bot parity requirements.
+- **`docs/contracts/721-capability-journey-matrix.md`** (new): Complete 32-capability × WhatsApp journey matrix. Documents entry point, flow file, payment relationship, fulfillment, tests, and classification for every canonical capability. Includes 21 customer-facing capabilities, contextual sub-capabilities, and 8 system/dashboard-only capabilities. Includes Owner Decision Register with 7 unresolved product questions.
+- **`docs/contracts/721-behavior-vs-contract-report.md`** (new): Current behavior vs contract audit report. Classifies 12 fixed defects (PR #727, #722, #164, #166, #167), 4 confirmed active code defects (T19B, TABLE-DUP, OFFLINE-APPROVE, ORDER-ADAPTER), 4 documentation drift items, 9 evidence gaps, MCP/Graphify verification status, and 4 proposed UX improvements.
+- **`docs/contracts/README.md`**: Added pointers to the 4 new contract documents.
+- **`docs/contracts/capability-index.json`**: Updated `_generated_from_main` SHA to current `164b31b8`. Corrected `table_reservation` riskTier from `tier-3` to `tier-2` with notes about PR #731.
+- **Affects**: Documentation only. No application code, migrations, database configuration, payment providers, messaging paths, or runtime behavior changed.
+- **Could break**: Nothing. No code imports or runtime dependencies on these documents.
+
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
 
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
