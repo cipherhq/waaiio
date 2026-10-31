@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Image from 'next/image';
+import PartyQuestionsEditor from './components/PartyQuestionsEditor';
+import PartyReminderPreview from './components/PartyReminderPreview';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { QRCodeSVG } from 'qrcode.react';
 import { createClient } from '@/lib/supabase/client';
@@ -78,7 +80,6 @@ export default function PartiesPage() {
   const [showBulk, setShowBulk] = useState(false);
   const [bulkPhones, setBulkPhones] = useState('');
   const [sending, setSending] = useState(false);
-  const [sendingReminder, setSendingReminder] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
 
   // Table management state
@@ -355,28 +356,7 @@ export default function PartiesPage() {
     setSending(false);
   }
 
-  async function handleSendReminders() {
-    if (!selectedParty) return;
-    setSendingReminder(true);
-    setStatusMessage('');
-    try {
-      const res = await fetch('/api/events/invite', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partyId: selectedParty.id, businessId: business.id }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setStatusMessage(`Reminders sent to ${data.sent} guests`);
-        loadInvites(selectedParty.id);
-      } else {
-        setStatusMessage(data.error || 'Failed to send reminders');
-      }
-    } catch {
-      setStatusMessage('Failed to send reminders');
-    }
-    setSendingReminder(false);
-  }
+
 
   // ── Tag management ──
   async function handleAddTag(inviteId: string, tag: string) {
@@ -783,11 +763,7 @@ export default function PartiesPage() {
               Export Guest List
             </button>
           )}
-          {(pending.length > 0 || maybe.length > 0) && (
-            <button onClick={handleSendReminders} disabled={sendingReminder} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">
-              {sendingReminder ? 'Sending...' : `Send Reminders (${pending.length + maybe.length})`}
-            </button>
-          )}
+
         </div>
 
         {/* Tag filter + bulk tag */}
@@ -1099,6 +1075,10 @@ export default function PartiesPage() {
               </button>
             </div>
           </div>
+
+          <PartyReminderPreview key={`reminders:${selectedParty.id}`} partyId={selectedParty.id} onSaved={() => loadInvites(selectedParty.id)} />
+
+          <PartyQuestionsEditor key={`questions:${selectedParty.id}`} partyId={selectedParty.id} />
 
           <PartySeatingEditor
             key={selectedParty.id}

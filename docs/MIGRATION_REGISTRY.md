@@ -16,6 +16,8 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
+| 488 | `party_reminder_delivery` | SOURCE ONLY — NOT APPLIED | #762 / #785 | Party reminder occurrence/channel dispatch records; disposable PG only. |
+| 487 | `party_rsvp_questions` | SOURCE ONLY — NOT APPLIED | #762 / #785 | Versioned Party questions and atomic RSVP completion; requires M457/M486. |
 | 486 | `party_seating_groups_pins_atomic_plans` | RESERVED / PR ONLY — NOT APPLIED | #762 | Ten-path seating slice: group/table scope, manual pins, weighted atomic plans and replay. Real M457/M486 disposable PG acceptance in party-seating-762.pg.test.ts; no hosted migration authorized. |
 | 452 | `cancellation_intent_charge_gate` | PROPOSED / NOT APPLIED (Issue #664 hold) | #605 | Adds durable cancel intent and hardened Paystack/Flutterwave claim/dispatch/finalizer; owner approval and staging rollout required. |
 | 438 | `business_app_coexistence` | PR only (not applied) | #607 | Coexistence schema extensions. Coordinated with M437 (#606) and M436 (#604). |
@@ -173,7 +175,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 **Batch 8 repair summary:** 15 versions (227-241) now tracked in remote schema_migrations. Remote count 209 -> 224 (+15). 101-246 tracked count 113 -> 128 (+15). 120 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-08-production-verification.json` (V3 SHA: `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`). Repair evidence: `docs/migrations/evidence/batch-08-repair.json` (SHA: `fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7`). No migration SQL executed. History-only operation.
 **Batch 9 repair summary:** 4 versions (242, 243, 245, 246) now tracked in remote schema_migrations. Remote count 224 -> 228 (+4). 101-246 tracked count 128 -> 132 (+4). 124 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-09-production-verification.json` (V3 SHA: `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`). Repair evidence: `docs/migrations/evidence/batch-09-repair.json` (SHA: `1bf9ad999576a73f2aa4e1f554f4a1806f5ec1e54270ffd9be4125fc048f1731`). No migration SQL executed. History-only operation.
 
-**Next available version:** 299
+**Next available version:** 489 (recheck main and open PR reservations before use)
 
 ## Reservation Process
 

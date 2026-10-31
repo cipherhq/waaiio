@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { currentAnswers, validateAnswers, type PartyQuestion, type PartyAnswers } from '@/lib/parties/rsvp-questions';
 
 interface EventOrPartyDetails {
   id: string;
@@ -16,6 +17,8 @@ interface EventOrPartyDetails {
   ask_dietary: boolean;
   invite_message: string | null;
   dress_code?: string | null;
+  question_definitions?: PartyQuestion[];
+  question_revision?: number;
   businesses: {
     name: string;
     slug: string;
@@ -30,6 +33,9 @@ interface InviteData {
   status: 'pending' | 'accepted' | 'maybe' | 'declined';
   plus_ones: number;
   dietary_notes: string | null;
+  custom_answers?: PartyAnswers;
+  saved_question_snapshot?: PartyQuestion[];
+  saved_answer_revision?: number;
   events: EventOrPartyDetails | null;
   parties: EventOrPartyDetails | null;
 }
@@ -45,6 +51,8 @@ export default function RSVPPage() {
   const [response, setResponse] = useState<'accepted' | 'maybe' | 'declined' | ''>('');
   const [plusOnes, setPlusOnes] = useState(0);
   const [dietary, setDietary] = useState('');
+  const [answers, setAnswers] = useState<PartyAnswers>({});
+  const [error, setError] = useState('');
 
   useEffect(() => {
     async function load() {
@@ -63,6 +71,10 @@ export default function RSVPPage() {
         }
 
         setInvite(inviteData);
+        setPlusOnes(inviteData.plus_ones || 0);
+        setDietary(inviteData.dietary_notes || '');
+        setResponse(inviteData.status === 'pending' ? '' : inviteData.status);
+        setAnswers(currentAnswers(inviteData.parties?.question_definitions || [], inviteData.custom_answers || {}));
 
         if (inviteData.status !== 'pending') {
           setState('already_responded');
@@ -79,6 +91,9 @@ export default function RSVPPage() {
 
   async function handleSubmit() {
     if (!response || !invite) return;
+    setError('');
+    try { if (invite.parties && response === 'accepted') validateAnswers(invite.parties.question_definitions || [], answers); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Check your answers.'); return; }
     setState('submitting');
 
     try {
@@ -88,19 +103,27 @@ export default function RSVPPage() {
         body: JSON.stringify({
           status: response,
           plus_ones: response === 'accepted' ? plusOnes : 0,
-          dietary_notes: dietary.trim() || undefined,
+          dietary_notes: dietary.trim() || null,
+          ...(invite.parties ? { answers, revision: invite.parties.question_revision } : {}),
         }),
       });
 
+      const result = await res.json();
       if (!res.ok) {
+        setError(result.error || 'Unable to save your response.');
+        if (result.stale) {
+          const fresh = await fetch(`/api/rsvp/${token}`);
+          if (fresh.ok) { const data = await fresh.json(); setInvite(data.invite); setAnswers(currentAnswers(data.invite.parties?.question_definitions || [], answers)); }
+        }
         setState('rsvp_form');
         return;
       }
 
       // Update local state
-      setInvite({ ...invite, status: response, plus_ones: response === 'accepted' ? plusOnes : 0 });
+      setInvite({ ...invite, ...(result.saved || { status: response, plus_ones: response === 'accepted' ? plusOnes : 0 }) });
       setState('done');
     } catch {
+      setError('Unable to save your response. Please retry.');
       setState('rsvp_form');
     }
   }
@@ -246,6 +269,12 @@ export default function RSVPPage() {
   const dateLabel = formatDate(event.date, event.time);
   const dressCode = ('dress_code' in event) ? (event as EventOrPartyDetails).dress_code : null;
 
+  const savedAnswersView = invite.parties && !!invite.saved_question_snapshot?.length && <section aria-label="Your saved answers" className="mt-4 rounded border bg-white p-4 text-sm">
+    <h2 className="font-semibold">Your saved answers</h2>
+    {invite.saved_answer_revision !== invite.parties.question_revision && <p>These answers belong to an earlier version of the questions.</p>}
+    <dl>{invite.saved_question_snapshot.map(q => <div key={q.id} className="mt-2"><dt>{q.label}</dt><dd>{typeof invite.custom_answers?.[q.id] === 'boolean' ? (invite.custom_answers[q.id] ? 'Yes' : 'No') : q.options?.find(o => o.id === invite.custom_answers?.[q.id])?.label || invite.custom_answers?.[q.id] || 'Not answered'}</dd></div>)}</dl>
+  </section>;
+
   // Already responded
   if (state === 'already_responded') {
     const statusMessages: Record<string, { emoji: string; title: string; desc: string }> = {
@@ -256,7 +285,9 @@ export default function RSVPPage() {
     const msg = statusMessages[invite.status] || statusMessages.declined;
 
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4">
+      <div className="flex min-h-screen flex-col gap-4 items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4">
+        {invite.parties && <div><button type="button" onClick={() => setState('rsvp_form')} className="rounded border p-3">Change response</button>{savedAnswersView}</div>}
+
         <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl text-center">
           <div className="text-5xl mb-4">{msg.emoji}</div>
           <h1 className="text-2xl font-bold text-gray-900">{msg.title}</h1>
@@ -327,7 +358,9 @@ export default function RSVPPage() {
     const isMaybe = invite.status === 'maybe';
 
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4">
+      <div className="flex min-h-screen flex-col gap-4 items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4">
+        {savedAnswersView}
+
         <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl text-center">
           <div className="text-5xl mb-4">{isAccepted ? '🎉' : isMaybe ? '🤔' : '🙏'}</div>
           <h1 className="text-2xl font-bold text-gray-900">
@@ -534,6 +567,14 @@ export default function RSVPPage() {
                 </div>
               )}
 
+              {response === 'accepted' && invite.parties?.question_definitions?.map(q => <div className="mt-4" key={q.id}>
+                <label htmlFor={`question-${q.id}`} className="block text-sm font-medium">{q.label}{q.required ? ' *' : ' (optional)'}</label>
+                {q.type === 'short_text' ? <input id={`question-${q.id}`} className="mt-1 w-full rounded border p-2" maxLength={500} value={String(answers[q.id] ?? '')} onChange={e => setAnswers(old => ({ ...old, [q.id]: e.target.value }))} /> :
+                  <select id={`question-${q.id}`} className="mt-1 w-full rounded border p-2" value={String(answers[q.id] ?? '')} onChange={e => setAnswers(old => { const next = { ...old }; if (!e.target.value) delete next[q.id]; else next[q.id] = q.type === 'yes_no' ? e.target.value === 'true' : e.target.value; return next; })}>
+                    <option value="">Choose an answer</option>{q.type === 'yes_no' ? <><option value="true">Yes</option><option value="false">No</option></> : q.options?.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>}
+              </div>)}
+              {error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
               {/* Submit */}
               {response && (
                 <button
