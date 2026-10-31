@@ -263,6 +263,12 @@
 - **Affects**: Dashboard logo preview/context refresh. Upload API, validation, ownership, storage, Places behavior and paid-branding policy are unchanged.
 - **Could break**: Framework refresh timing can temporarily show the prior logo before updated props arrive. Tests mock upload/network boundaries and do not certify live persistence or image availability.
 
+### #712 — Currency-authoritative payout and settlement accounting (2026-10-30)
+
+- **Payout/admin/cron routes and `lib/payments/payable-fees.ts`**: Preserve canonical currency isolation, unknown-currency review holds, structured payout flags, account linkage and fee-allocation-period accounting across payout generation, balance and settlement paths.
+- **M466, M468, M469 and M472; canonical CI and regression files**: Add the reviewed currency/deduplication/settlement authority sequence and executable route, accounting, concurrency and real-PostgreSQL coverage. Current-main integration retains valid admin UUID and action-bound step-up fixtures alongside the currency assertions.
+- **Affects / could break**: Payout eligibility, currency-scoped totals, deduplication and settlement accounting. Hosted migration sequencing and deployment require separate authorization and verification; this source change does not certify live payment or settlement outcomes.
+
 ### Audit NB-5: SECURITY DEFINER ACL hardening (2026-10-24)
 
 - **`supabase/migrations/463_secdef_acl_audit_hardening.sql`** (new): Hardens 6 exposed SECURITY DEFINER functions. `calculate_volume_discount`: adds missing `SET search_path = public`, REVOKEs anon+authenticated (bot-only via service client). `check_conversation_limit`: REVOKEs anon+authenticated (legacy function, no active TS callers). Dashboard revenue RPCs (`get_business_revenue`, `get_order_revenue`, `get_outstanding_invoices`): REVOKEs anon only (keeps authenticated for dashboard). `check_business_role`: REVOKEs anon only (keeps authenticated for RLS policies). Inline verification assertions validate all grants.
