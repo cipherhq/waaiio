@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS storage.objects (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- Supabase Storage supplies these service-role grants independently of app migrations.
+GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO service_role;
 
 -- Supabase storage helper function used in bucket policies (migration 133)
 CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)

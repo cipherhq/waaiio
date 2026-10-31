@@ -1,3 +1,7 @@
+### 2026-10-31 — Storage CI fixture parity
+
+- Full migration replay now supplies Supabase Storage service-role CRUD grants in its disposable bootstrap. The storage policy suite also recognizes the shared GitHub Actions runner's isolated `pg_test_N` databases, with localhost/CI/user guards retained. No runtime policy assertions or tests were removed.
+
 ### 2026-10-31 — Storage UPDATE regression coverage
 
 - Added real PostgreSQL allow/deny checks for public catalog renames and stale verification overwrites following independent review. Test-only follow-up; no rollout performed.

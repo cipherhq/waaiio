@@ -9,7 +9,9 @@ const business='33333333-3333-4333-a333-333333333333';
 suite('private storage final-state tenant boundaries',()=>{
  let pool:pg.Pool;
  beforeAll(async()=>{
-  if(!url||!['localhost','127.0.0.1'].includes(new URL(url).hostname)||!new URL(url).pathname.endsWith('/storage_security_test'))throw new Error('Local disposable database only');
+  const target=url?new URL(url):null;
+  const isolatedCi=process.env.GITHUB_ACTIONS==='true'&&process.env.REQUIRE_PG_TESTS==='true'&&target?.username==='test_runner'&&/^\/pg_test_\d+$/.test(target.pathname);
+  if(!target||!['localhost','127.0.0.1'].includes(target.hostname)||(target.pathname!=='/storage_security_test'&&!isolatedCi))throw new Error('Local disposable database only');
   pool=new pg.Pool({connectionString:url});
   await pool.query(`DROP SCHEMA IF EXISTS storage CASCADE; DROP SCHEMA IF EXISTS auth CASCADE; DROP TABLE IF EXISTS public.businesses CASCADE; CREATE SCHEMA IF NOT EXISTS storage; CREATE SCHEMA IF NOT EXISTS auth;
   DO $$ BEGIN CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
