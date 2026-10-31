@@ -25,7 +25,7 @@ ALTER TABLE public.party_reminder_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.party_reminder_attempts ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.party_reminder_runs,public.party_reminder_attempts FROM PUBLIC,anon,authenticated;
 GRANT SELECT,INSERT,UPDATE ON public.party_reminder_runs,public.party_reminder_attempts TO service_role;
-CREATE FUNCTION private.guard_party_reminders_488() RETURNS trigger
+CREATE FUNCTION private.guard_party_reminders_490() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
  IF TG_TABLE_NAME='party_reminder_runs' THEN
@@ -42,13 +42,13 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION private.guard_party_reminders_488() FROM PUBLIC,anon,authenticated;
-CREATE TRIGGER guard_party_reminder_runs_488 BEFORE INSERT OR UPDATE ON public.party_reminder_runs FOR EACH ROW EXECUTE FUNCTION private.guard_party_reminders_488();
-CREATE TRIGGER guard_party_reminder_attempts_488 BEFORE INSERT OR UPDATE ON public.party_reminder_attempts FOR EACH ROW EXECUTE FUNCTION private.guard_party_reminders_488();
+REVOKE ALL ON FUNCTION private.guard_party_reminders_490() FROM PUBLIC,anon,authenticated;
+CREATE TRIGGER guard_party_reminder_runs_490 BEFORE INSERT OR UPDATE ON public.party_reminder_runs FOR EACH ROW EXECUTE FUNCTION private.guard_party_reminders_490();
+CREATE TRIGGER guard_party_reminder_attempts_490 BEFORE INSERT OR UPDATE ON public.party_reminder_attempts FOR EACH ROW EXECUTE FUNCTION private.guard_party_reminders_490();
 DO $$ BEGIN
  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.party_reminder_runs'::regclass)
  OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.party_reminder_attempts'::regclass)
  OR has_table_privilege('authenticated','public.party_reminder_runs','SELECT')
- OR NOT has_table_privilege('service_role','public.party_reminder_attempts','INSERT') THEN RAISE EXCEPTION 'M488 permission check failed'; END IF;
+ OR NOT has_table_privilege('service_role','public.party_reminder_attempts','INSERT') THEN RAISE EXCEPTION 'M490 permission check failed'; END IF;
 END $$;
 COMMIT;

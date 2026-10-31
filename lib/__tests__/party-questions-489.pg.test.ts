@@ -5,13 +5,13 @@ import { join } from 'node:path';
 const url = process.env.TEST_DATABASE_URL;
 if (process.env.REQUIRE_PG_TESTS === 'true' && !url) throw new Error('Disposable PostgreSQL is required');
 const suite = url ? describe : describe.skip;
-const id = (n: number) => '00000000-0000-4000-a487-' + n.toString(16).padStart(12, '0');
+const id = (n: number) => '00000000-0000-4000-a489-' + n.toString(16).padStart(12, '0');
 const owner=id(1), other=id(2), business=id(3), otherBusiness=id(4), party=id(5), otherParty=id(6), invite=id(7), table=id(8);
 const questions = [{id:'diet',label:'Meal?',type:'short_text',required:true},{id:'access',label:'Step-free access?',type:'yes_no',required:true}];
-suite('M487 Party Questions with real M457/M486 capacity authority', () => {
+suite('M489 Party Questions with real M457/M486 capacity authority', () => {
   let pool: pg.Pool;
-  const defs = (payload: unknown = {revision:0,questions}, actor=owner) => pool.query('SELECT public.party_questions_487($1,$2,$3) value',[party,actor,payload]);
-  const complete = (payload: unknown = {status:'accepted',plus_ones:0,revision:1,answers:{diet:'Vegetarian',access:false}}, sender: string|null=null, biz: string|null=null) => pool.query('SELECT public.complete_party_rsvp_487($1,$2,$3,$4) value',['party-token-487',payload,sender,biz]);
+  const defs = (payload: unknown = {revision:0,questions}, actor=owner) => pool.query('SELECT public.party_questions_489($1,$2,$3) value',[party,actor,payload]);
+  const complete = (payload: unknown = {status:'accepted',plus_ones:0,revision:1,answers:{diet:'Vegetarian',access:false}}, sender: string|null=null, biz: string|null=null) => pool.query('SELECT public.complete_party_rsvp_489($1,$2,$3,$4) value',['party-token-489',payload,sender,biz]);
   const saved = async () => (await pool.query('SELECT * FROM public.event_invites WHERE id=$1',[invite])).rows[0];
   beforeAll(async () => {
     pool = new pg.Pool({connectionString:url,max:6});
@@ -83,7 +83,7 @@ suite('M487 Party Questions with real M457/M486 capacity authority', () => {
 
     `);
 
-    for (const file of ['457_party_tables_seats.sql','486_party_seating_groups_pins_atomic_plans.sql','487_party_rsvp_questions.sql'])
+    for (const file of ['457_party_tables_seats.sql','486_party_seating_groups_pins_atomic_plans.sql','489_party_rsvp_questions.sql'])
       await pool.query(readFileSync(join(process.cwd(),'supabase/migrations',file),'utf8'));
   });
   beforeEach(async () => {
@@ -93,7 +93,7 @@ suite('M487 Party Questions with real M457/M486 capacity authority', () => {
     await pool.query('INSERT INTO auth.users(id) VALUES($1),($2) ON CONFLICT DO NOTHING',[owner,other]);
     await pool.query("INSERT INTO businesses(id,owner_id,name) VALUES($1,$2,'A'),($3,$4,'B')",[business,owner,otherBusiness,other]);
     await pool.query("INSERT INTO parties(id,business_id,name,date,max_guests) VALUES($1,$2,'A','2027-01-01',5),($3,$4,'B','2027-01-01',5)",[party,business,otherParty,otherBusiness]);
-    await pool.query("INSERT INTO event_invites(id,business_id,party_id,guest_phone,invite_token,status) VALUES($1,$2,$3,'+15551234567','party-token-487','maybe')",[invite,business,party]);
+    await pool.query("INSERT INTO event_invites(id,business_id,party_id,guest_phone,invite_token,status) VALUES($1,$2,$3,'+15551234567','party-token-489','maybe')",[invite,business,party]);
     await pool.query("INSERT INTO party_tables(id,business_id,party_id,name,capacity) VALUES($1,$2,$3,'A',1)",[table,business,party]);
     await pool.query('UPDATE event_invites SET table_id=$1 WHERE id=$2',[table,invite]);
   });
@@ -138,8 +138,8 @@ suite('M487 Party Questions with real M457/M486 capacity authority', () => {
     const c=await pool.connect();
     try {
       await c.query('BEGIN'); await c.query('SET LOCAL ROLE service_role');
-      await c.query('SELECT public.party_questions_487($1,$2,$3)',[party,owner,{revision:0,questions}]);
-      const result=await c.query('SELECT public.complete_party_rsvp_487($1,$2,$3,$4) value',['party-token-487',{status:'accepted',revision:1,answers:{diet:'Vegetarian',access:false}},'15551234567',business]);
+      await c.query('SELECT public.party_questions_489($1,$2,$3)',[party,owner,{revision:0,questions}]);
+      const result=await c.query('SELECT public.complete_party_rsvp_489($1,$2,$3,$4) value',['party-token-489',{status:'accepted',revision:1,answers:{diet:'Vegetarian',access:false}},'15551234567',business]);
       expect(result.rows[0].value.status).toBe('accepted'); await c.query('COMMIT');
     } finally {await c.query('ROLLBACK');c.release();}
   });
@@ -165,7 +165,7 @@ suite('M487 Party Questions with real M457/M486 capacity authority', () => {
     try {
       await c.query('BEGIN'); await c.query("SELECT pg_advisory_xact_lock(hashtext('party:'||$1))",[party]);
       const completion=complete().then(()=> 'saved', e=>e.code);
-      await c.query('SELECT public.party_questions_487($1,$2,$3)',[party,owner,{revision:1,questions:[]}]); await c.query('COMMIT');
+      await c.query('SELECT public.party_questions_489($1,$2,$3)',[party,owner,{revision:1,questions:[]}]); await c.query('COMMIT');
       expect(await completion).toBe('40001'); expect((await saved()).status).toBe('maybe');
     } finally {await c.query('ROLLBACK');c.release();}
   });

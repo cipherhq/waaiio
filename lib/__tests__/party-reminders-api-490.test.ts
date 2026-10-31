@@ -5,7 +5,7 @@ vi.mock('@/lib/api-auth',()=>({authenticateRequest:m.auth}));
 vi.mock('@/lib/parties/reminder-preview',()=>({loadReminderPreview:m.load,signPreview:m.sign,verifyPreview:m.verify}));
 vi.mock('@/lib/parties/reminder-delivery',()=>({deliverReminder:m.deliver}));
 import {POST} from '@/app/api/parties/[partyId]/reminders/route';
-const partyId='00000000-0000-4000-a488-000000000002';
+const partyId='00000000-0000-4000-a490-000000000002';
 const req=(body:unknown)=>new NextRequest('http://localhost/reminders',{method:'POST',body:JSON.stringify(body)});
 const context={params:Promise.resolve({partyId})};
 beforeEach(()=>{

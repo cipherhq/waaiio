@@ -22,7 +22,7 @@ async function handle(request: NextRequest, context: Context, save: boolean) {
       payload = { questions: parseQuestions(body.questions), revision: body.revision };
     } catch (error) { return reply({ error: error instanceof Error ? error.message : 'Invalid questions.' }, 400); }
   }
-  const { data, error } = await auth.service.rpc('party_questions_487', { p_party: partyId, p_actor: auth.user.id, p_payload: payload });
+  const { data, error } = await auth.service.rpc('party_questions_489', { p_party: partyId, p_actor: auth.user.id, p_payload: payload });
   if (error) { const result = partyRsvpError(error.code); return reply(result, result.status); }
   return reply(data);
 }

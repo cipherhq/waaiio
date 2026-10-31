@@ -10,7 +10,7 @@ ALTER TABLE public.event_invites
   ADD COLUMN saved_answer_revision integer,
   ADD COLUMN saved_question_snapshot jsonb NOT NULL DEFAULT '[]';
 
-CREATE FUNCTION private.validate_party_questions_487(defs jsonb) RETURNS void
+CREATE FUNCTION private.validate_party_questions_489(defs jsonb) RETURNS void
 LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog AS $$
 DECLARE q jsonb; o jsonb; ids text[] := '{}'; opts text[];
 BEGIN
@@ -43,7 +43,7 @@ BEGIN
   END LOOP;
 END $$;
 
-CREATE FUNCTION private.validate_party_answers_487(defs jsonb, answers jsonb) RETURNS void
+CREATE FUNCTION private.validate_party_answers_489(defs jsonb, answers jsonb) RETURNS void
 LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog AS $$
 DECLARE q jsonb; a jsonb; k text;
 BEGIN
@@ -72,7 +72,7 @@ BEGIN
 END $$;
 
 -- Definition writes go through the serialized authority. Ordinary party edits stay compatible.
-CREATE FUNCTION private.guard_party_questions_487() RETURNS trigger
+CREATE FUNCTION private.guard_party_questions_489() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
 DECLARE removed text[];
 BEGIN
@@ -83,9 +83,9 @@ BEGIN
   END IF;
   IF ROW(NEW.question_definitions,NEW.question_revision,NEW.retired_question_ids)
     IS NOT DISTINCT FROM ROW(OLD.question_definitions,OLD.question_revision,OLD.retired_question_ids) THEN RETURN NEW; END IF;
-  IF current_user <> pg_get_userbyid((SELECT proowner FROM pg_proc WHERE oid='private.party_questions_487(uuid,uuid,jsonb)'::regprocedure)) THEN
+  IF current_user <> pg_get_userbyid((SELECT proowner FROM pg_proc WHERE oid='private.party_questions_489(uuid,uuid,jsonb)'::regprocedure)) THEN
     RAISE EXCEPTION 'Use the questions authority' USING ERRCODE='42501'; END IF;
-  PERFORM private.validate_party_questions_487(NEW.question_definitions);
+  PERFORM private.validate_party_questions_489(NEW.question_definitions);
   IF NEW.question_revision<>OLD.question_revision+1 THEN RAISE EXCEPTION 'Stale questions' USING ERRCODE='40001'; END IF;
   IF EXISTS(SELECT 1 FROM jsonb_array_elements(NEW.question_definitions) q WHERE q->>'id'=ANY(OLD.retired_question_ids)) THEN
     RAISE EXCEPTION 'Retired question ID' USING ERRCODE='22023'; END IF;
@@ -94,11 +94,11 @@ BEGIN
   NEW.retired_question_ids := OLD.retired_question_ids || removed;
   RETURN NEW;
 END $$;
-CREATE TRIGGER guard_party_questions_487 BEFORE INSERT OR UPDATE ON public.parties
-FOR EACH ROW EXECUTE FUNCTION private.guard_party_questions_487();
+CREATE TRIGGER guard_party_questions_489 BEFORE INSERT OR UPDATE ON public.parties
+FOR EACH ROW EXECUTE FUNCTION private.guard_party_questions_489();
 
 -- Direct owner DML cannot accept an invite with unanswered questions or forge its snapshot.
-CREATE FUNCTION private.guard_party_answers_487() RETURNS trigger
+CREATE FUNCTION private.guard_party_answers_489() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
 DECLARE p public.parties%ROWTYPE; changed boolean;
 BEGIN
@@ -115,17 +115,17 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Party unavailable' USING ERRCODE='42501'; END IF;
   -- Legacy accepts with no questions need no new client fields.
   IF p.question_definitions='[]'::jsonb AND NEW.saved_answer_revision IS NULL AND NEW.custom_answers='{}'::jsonb AND NEW.saved_question_snapshot='[]'::jsonb THEN RETURN NEW; END IF;
-  IF current_user <> pg_get_userbyid((SELECT proowner FROM pg_proc WHERE oid='private.complete_party_rsvp_487(text,jsonb,text,uuid)'::regprocedure)) THEN
+  IF current_user <> pg_get_userbyid((SELECT proowner FROM pg_proc WHERE oid='private.complete_party_rsvp_489(text,jsonb,text,uuid)'::regprocedure)) THEN
     RAISE EXCEPTION 'Use the RSVP authority' USING ERRCODE='42501'; END IF;
   IF NEW.saved_answer_revision IS DISTINCT FROM p.question_revision OR NEW.saved_question_snapshot IS DISTINCT FROM p.question_definitions THEN
     RAISE EXCEPTION 'Stale questions' USING ERRCODE='40001'; END IF;
-  PERFORM private.validate_party_answers_487(p.question_definitions,NEW.custom_answers);
+  PERFORM private.validate_party_answers_489(p.question_definitions,NEW.custom_answers);
   RETURN NEW;
 END $$;
-CREATE TRIGGER guard_party_answers_487 BEFORE INSERT OR UPDATE ON public.event_invites
-FOR EACH ROW EXECUTE FUNCTION private.guard_party_answers_487();
+CREATE TRIGGER guard_party_answers_489 BEFORE INSERT OR UPDATE ON public.event_invites
+FOR EACH ROW EXECUTE FUNCTION private.guard_party_answers_489();
 
-CREATE FUNCTION private.party_questions_487(p_party uuid,p_actor uuid,p_payload jsonb DEFAULT NULL) RETURNS jsonb
+CREATE FUNCTION private.party_questions_489(p_party uuid,p_actor uuid,p_payload jsonb DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE p public.parties%ROWTYPE; result jsonb;
 BEGIN
@@ -136,7 +136,7 @@ BEGIN
   IF p_payload IS NOT NULL THEN
     IF octet_length(p_payload::text)>16384 OR (p_payload->>'revision')::integer IS DISTINCT FROM p.question_revision THEN
       RAISE EXCEPTION 'Stale questions' USING ERRCODE='40001'; END IF;
-    PERFORM private.validate_party_questions_487(p_payload->'questions');
+    PERFORM private.validate_party_questions_489(p_payload->'questions');
     UPDATE public.parties SET question_definitions=p_payload->'questions',question_revision=question_revision+1
       WHERE id=p_party RETURNING * INTO p;
   END IF;
@@ -146,10 +146,10 @@ BEGIN
     INTO result FROM public.event_invites i WHERE i.party_id=p.id AND i.business_id=p.business_id;
   RETURN result;
 END $$;
-CREATE FUNCTION public.party_questions_487(p_party uuid,p_actor uuid,p_payload jsonb DEFAULT NULL) RETURNS jsonb
-LANGUAGE sql SECURITY INVOKER SET search_path = pg_catalog AS $$ SELECT private.party_questions_487(p_party,p_actor,p_payload) $$;
+CREATE FUNCTION public.party_questions_489(p_party uuid,p_actor uuid,p_payload jsonb DEFAULT NULL) RETURNS jsonb
+LANGUAGE sql SECURITY INVOKER SET search_path = pg_catalog AS $$ SELECT private.party_questions_489(p_party,p_actor,p_payload) $$;
 
-CREATE FUNCTION private.complete_party_rsvp_487(p_token text,p_payload jsonb,p_sender text DEFAULT NULL,p_business uuid DEFAULT NULL) RETURNS jsonb
+CREATE FUNCTION private.complete_party_rsvp_489(p_token text,p_payload jsonb,p_sender text DEFAULT NULL,p_business uuid DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE i public.event_invites%ROWTYPE; p public.parties%ROWTYPE; party uuid; response text; companions integer;
 BEGIN
@@ -169,7 +169,7 @@ BEGIN
     RAISE EXCEPTION 'Invalid guest count' USING ERRCODE='22023'; END IF;
   IF response='accepted' THEN
     IF (p_payload->>'revision')::integer IS DISTINCT FROM p.question_revision THEN RAISE EXCEPTION 'Stale questions' USING ERRCODE='40001'; END IF;
-    PERFORM private.validate_party_answers_487(p.question_definitions,p_payload->'answers');
+    PERFORM private.validate_party_answers_489(p.question_definitions,p_payload->'answers');
   END IF;
   IF p_payload ? 'dietary_notes' AND (jsonb_typeof(p_payload->'dietary_notes') NOT IN ('null','string') OR length(p_payload->>'dietary_notes')>500) THEN
     RAISE EXCEPTION 'Invalid dietary notes' USING ERRCODE='22023'; END IF;
@@ -182,23 +182,23 @@ BEGIN
   RETURN jsonb_build_object('status',i.status,'plus_ones',i.plus_ones,'dietary_notes',i.dietary_notes,
     'custom_answers',i.custom_answers,'saved_answer_revision',i.saved_answer_revision,'saved_question_snapshot',i.saved_question_snapshot);
 END $$;
-CREATE FUNCTION public.complete_party_rsvp_487(p_token text,p_payload jsonb,p_sender text DEFAULT NULL,p_business uuid DEFAULT NULL) RETURNS jsonb
-LANGUAGE sql SECURITY INVOKER SET search_path = pg_catalog AS $$ SELECT private.complete_party_rsvp_487(p_token,p_payload,p_sender,p_business) $$;
+CREATE FUNCTION public.complete_party_rsvp_489(p_token text,p_payload jsonb,p_sender text DEFAULT NULL,p_business uuid DEFAULT NULL) RETURNS jsonb
+LANGUAGE sql SECURITY INVOKER SET search_path = pg_catalog AS $$ SELECT private.complete_party_rsvp_489(p_token,p_payload,p_sender,p_business) $$;
 
-REVOKE ALL ON FUNCTION private.validate_party_questions_487(jsonb),private.validate_party_answers_487(jsonb,jsonb),
-  private.guard_party_questions_487(),private.guard_party_answers_487(),private.party_questions_487(uuid,uuid,jsonb),
-  private.complete_party_rsvp_487(text,jsonb,text,uuid),public.party_questions_487(uuid,uuid,jsonb),
-  public.complete_party_rsvp_487(text,jsonb,text,uuid) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION private.validate_party_questions_489(jsonb),private.validate_party_answers_489(jsonb,jsonb),
+  private.guard_party_questions_489(),private.guard_party_answers_489(),private.party_questions_489(uuid,uuid,jsonb),
+  private.complete_party_rsvp_489(text,jsonb,text,uuid),public.party_questions_489(uuid,uuid,jsonb),
+  public.complete_party_rsvp_489(text,jsonb,text,uuid) FROM PUBLIC,anon,authenticated;
 GRANT USAGE ON SCHEMA private TO service_role;
-GRANT EXECUTE ON FUNCTION private.party_questions_487(uuid,uuid,jsonb),private.complete_party_rsvp_487(text,jsonb,text,uuid),
-  public.party_questions_487(uuid,uuid,jsonb),public.complete_party_rsvp_487(text,jsonb,text,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION private.party_questions_489(uuid,uuid,jsonb),private.complete_party_rsvp_489(text,jsonb,text,uuid),
+  public.party_questions_489(uuid,uuid,jsonb),public.complete_party_rsvp_489(text,jsonb,text,uuid) TO service_role;
 
 DO $$ BEGIN
  IF has_schema_privilege('anon','public','CREATE') OR has_schema_privilege('authenticated','public','CREATE') THEN RAISE EXCEPTION 'Public schema must not be caller-writable'; END IF;
- IF EXISTS(SELECT 1 FROM pg_proc WHERE oid IN ('private.party_questions_487(uuid,uuid,jsonb)'::regprocedure,'private.complete_party_rsvp_487(text,jsonb,text,uuid)'::regprocedure) AND proowner<>(SELECT relowner FROM pg_class WHERE oid='public.parties'::regclass)) THEN RAISE EXCEPTION 'M487 owner mismatch'; END IF;
- IF (SELECT count(*) FROM pg_trigger WHERE tgname IN ('guard_party_questions_487','guard_party_answers_487') AND NOT tgisinternal)<>2 THEN
-  RAISE EXCEPTION 'M487 triggers missing'; END IF;
- IF has_function_privilege('anon','public.complete_party_rsvp_487(text,jsonb,text,uuid)','EXECUTE')
- OR has_function_privilege('authenticated','public.party_questions_487(uuid,uuid,jsonb)','EXECUTE') THEN RAISE EXCEPTION 'M487 ACL failure'; END IF;
+ IF EXISTS(SELECT 1 FROM pg_proc WHERE oid IN ('private.party_questions_489(uuid,uuid,jsonb)'::regprocedure,'private.complete_party_rsvp_489(text,jsonb,text,uuid)'::regprocedure) AND proowner<>(SELECT relowner FROM pg_class WHERE oid='public.parties'::regclass)) THEN RAISE EXCEPTION 'M489 owner mismatch'; END IF;
+ IF (SELECT count(*) FROM pg_trigger WHERE tgname IN ('guard_party_questions_489','guard_party_answers_489') AND NOT tgisinternal)<>2 THEN
+  RAISE EXCEPTION 'M489 triggers missing'; END IF;
+ IF has_function_privilege('anon','public.complete_party_rsvp_489(text,jsonb,text,uuid)','EXECUTE')
+ OR has_function_privilege('authenticated','public.party_questions_489(uuid,uuid,jsonb)','EXECUTE') THEN RAISE EXCEPTION 'M489 ACL failure'; END IF;
 END $$;
 COMMIT;

@@ -5,9 +5,9 @@ import {join} from 'node:path';
 const url=process.env.TEST_DATABASE_URL;
 if(process.env.REQUIRE_PG_TESTS==='true'&&!url)throw new Error('Disposable PostgreSQL required');
 const suite=url?describe:describe.skip;
-const id=(n:number)=>'00000000-0000-4000-a488-'+n.toString(16).padStart(12,'0');
+const id=(n:number)=>'00000000-0000-4000-a490-'+n.toString(16).padStart(12,'0');
 const business=id(1),party=id(2),invite=id(3),otherBusiness=id(4),otherParty=id(5),otherInvite=id(6),run=id(7);
-suite('M488 real PostgreSQL reminder claims and tenant boundaries',()=>{
+suite('M490 real PostgreSQL reminder claims and tenant boundaries',()=>{
  let pool:pg.Pool;
  beforeAll(async()=>{
   pool=new pg.Pool({connectionString:url,max:5});
@@ -20,7 +20,7 @@ suite('M488 real PostgreSQL reminder claims and tenant boundaries',()=>{
    CREATE TABLE IF NOT EXISTS public.event_invites(id uuid PRIMARY KEY,party_id uuid REFERENCES public.parties(id),business_id uuid NOT NULL REFERENCES public.businesses(id));
    GRANT USAGE ON SCHEMA public,private TO service_role;
    GRANT SELECT ON public.parties,public.event_invites TO service_role;`);
-  await pool.query(readFileSync(join(process.cwd(),'supabase/migrations/488_party_reminder_delivery.sql'),'utf8'));
+  await pool.query(readFileSync(join(process.cwd(),'supabase/migrations/490_party_reminder_delivery.sql'),'utf8'));
  });
  beforeEach(async()=>{
   await pool.query('DELETE FROM public.party_reminder_attempts; DELETE FROM public.party_reminder_runs; DELETE FROM public.event_invites; DELETE FROM public.parties; DELETE FROM public.businesses');
