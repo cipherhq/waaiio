@@ -4942,3 +4942,40 @@ jobs:
             exit 1
           fi
           grep -qE 'Tests.*[1-9][0-9]* passed' /tmp/private-storage-tests.log
+
+  admin-business-save-tests:
+    name: Admin business saves (disposable PG)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: test_runner
+          POSTGRES_PASSWORD: test_only_ephemeral
+          POSTGRES_DB: admin_save_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_runner -d admin_save_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+      - run: npm ci
+      - name: Verify admin save persistence and step-up migration
+        env:
+          TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/admin_save_test
+          REQUIRE_PG_TESTS: 'true'
+        run: |
+          set -o pipefail
+          npx vitest run lib/__tests__/admin-business-saves.pg.test.ts --reporter=verbose 2>&1 | tee /tmp/admin-business-save-tests.log
+          if grep -qE '[1-9][0-9]* skipped' /tmp/admin-business-save-tests.log; then
+            echo 'Admin business save tests must not skip'
+            exit 1
+          fi
+          grep -qE 'Tests.*[1-9][0-9]* passed' /tmp/admin-business-save-tests.log
