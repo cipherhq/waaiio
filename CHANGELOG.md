@@ -1,3 +1,10 @@
+## 2026-10-31 — Private document storage and outbound webhook destination boundary
+
+- Verification uploads use private storage and document-ID access for the owning merchant or MFA-verified full admin; existing public catalog images retain their behavior. Legacy relocation verifies copied bytes and matching references before removing public originals.
+- M491 restricts generated document/report access while preserving service signed links and merchant report ownership; M492 is an app-first guard against stale public verification uploads. These migrations are prepared for staging only and are not yet applied.
+- Outbound webhook registration and dispatch enforce public HTTP(S) destinations, validate every redirect and pin validated DNS addresses without changing event envelopes or POST signatures.
+- Tests cover owner/admin allow, cross-tenant/anonymous deny, storage policy semantics, private upload/viewing, relocation recovery and webhook DNS/redirect behavior. Risks: apply documented rollout order; legacy files need separate verified relocation; no production changes or live sends.
+
 ## 2026-10-31 — Party questions and reminder review (source only)
 
 - Adds bounded, versioned Party questions, organizer answer readback and atomic web/bot RSVP saves; required answers apply only to Accepted. Preserves answer history and seating/capacity authority. Affects Party detail, RSVP routes and bot entry/flow; M489 must precede app rollout.
@@ -638,6 +645,7 @@
 - Risk: provider network calls are non-atomic with Postgres; already-dispatched charges may settle and must reconcile. Owner approval required before migration/deploy.
 
 # Changelog
+
 
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
