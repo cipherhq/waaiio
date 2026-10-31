@@ -639,7 +639,7 @@ export default function Countries() {
 }
 
 // Admin API helpers imported from canonical lib
-import { adminApiFetch } from '@/lib/adminApi';
+import { adminApiFetch, getAdminApiBase } from '@/lib/adminApi';
 
 function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
   const [selectedCode, setSelectedCode] = useState('');
@@ -657,6 +657,15 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   const [flwBusinessRef, setFlwBusinessRef] = useState('');
   const [pskGrowthRef, setPskGrowthRef] = useState('');
   const [pskBusinessRef, setPskBusinessRef] = useState('');
+  const [stripeGrowthRef, setStripeGrowthRef] = useState('');
+  const [stripeBusinessRef, setStripeBusinessRef] = useState('');
+  const [refsCountry, setRefsCountry] = useState('');
+  const [stripeEdited, setStripeEdited] = useState({ growth: false, business: false });
+  const generationRef = useRef(0);
+  const contextRef = useRef('');
+  const mountedRef = useRef(true);
+  const flightRef = useRef(false);
+  const versionRequestRef = useRef(0);
 
   // Paystack tier prices (major units) — required for atomic plan+price cutover
   const [pskGrowthPrice, setPskGrowthPrice] = useState<number | ''>('');
@@ -665,6 +674,17 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   const selectedCountry = countries.find(c => c.code === selectedCode);
   const activeGateway = selectedCountry?.payment_gateway || '';
 
+  const context = JSON.stringify([selectedCode, selectedCountry?.pricing, activeGateway, versionId, canMutate,
+    flwGrowthRef, flwBusinessRef, pskGrowthRef, pskBusinessRef, stripeGrowthRef, stripeBusinessRef, stripeEdited, pskGrowthPrice, pskBusinessPrice]);
+  if (contextRef.current !== context) {
+    contextRef.current = context;
+    generationRef.current += 1;
+  }
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; generationRef.current += 1; stepUpCallbackRef.current = null; };
+  }, []);
+
   // Load CAS version on mount
   useEffect(() => {
     loadVersion();
@@ -672,6 +692,11 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
 
   // Populate refs when country changes
   useEffect(() => {
+    generationRef.current += 1;
+    stepUpCallbackRef.current = null;
+    stepUp.reset();
+    setRefsCountry('');
+    setStripeEdited({ growth: false, business: false });
     if (!selectedCountry) return;
     const pricing = selectedCountry.pricing as Record<string, Record<string, unknown>> || {};
     const growthRefs = (pricing.growth?.provider_plan_refs || {}) as Record<string, string>;
@@ -680,6 +705,9 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
     setFlwBusinessRef(businessRefs.flutterwave || '');
     setPskGrowthRef(growthRefs.paystack || '');
     setPskBusinessRef(businessRefs.paystack || '');
+    setStripeGrowthRef(typeof growthRefs.stripe === 'string' ? growthRefs.stripe : '');
+    setStripeBusinessRef(typeof businessRefs.stripe === 'string' ? businessRefs.stripe : '');
+    setRefsCountry(selectedCode);
     // Initialize tier prices from current country pricing
     const growthPrice = pricing.growth?.price as number | undefined;
     const businessPrice = pricing.business?.price as number | undefined;
@@ -688,15 +716,22 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   }, [selectedCode, countries]);
 
   async function loadVersion() {
+    const request = ++versionRequestRef.current;
+    generationRef.current += 1;
+    stepUpCallbackRef.current = null;
+    stepUp.reset();
+    setVersionId(null);
     setLoadingVersion(true);
     try {
       const res = await adminApiFetch('/api/admin/provider-config', { action: 'get_version' });
       const data = await res.json();
-      if (data.version_id) setVersionId(data.version_id);
+      if (!mountedRef.current || request !== versionRequestRef.current) return;
+      if (!res.ok || typeof data.version_id !== 'string' || !data.version_id) throw new Error('Failed to load config version');
+      setVersionId(data.version_id);
     } catch {
-      setError('Failed to load config version');
+      if (mountedRef.current && request === versionRequestRef.current) setError('Failed to load config version');
     } finally {
-      setLoadingVersion(false);
+      if (mountedRef.current && request === versionRequestRef.current) setLoadingVersion(false);
     }
   }
 
@@ -705,7 +740,10 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   }
 
   async function handleSaveRefs() {
-    if (!canMutate || !selectedCode || !versionId) return;
+    if (!canMutate || !selectedCode || !versionId || refsCountry !== selectedCode || flightRef.current || (stepUp.isActive && stepUp.state.phase !== 'error')) return;
+    flightRef.current = true;
+    const generation = generationRef.current;
+    const current = () => mountedRef.current && generationRef.current === generation;
     setSaving(true);
     setError(null);
     setSuccess(null);
@@ -716,6 +754,18 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       if (flwBusinessRef.trim()) planRefs.business.flutterwave = flwBusinessRef.trim();
       if (pskGrowthRef.trim()) planRefs.growth.paystack = pskGrowthRef.trim();
       if (pskBusinessRef.trim()) planRefs.business.paystack = pskBusinessRef.trim();
+      if (activeGateway === 'stripe') {
+        const pricing = selectedCountry?.pricing as Record<string, Record<string, unknown>> | undefined;
+        for (const [tier, value] of [['growth', stripeGrowthRef], ['business', stripeBusinessRef]] as const) {
+          const existing = pricing?.[tier]?.provider_plan_refs;
+          const configured = existing !== null && typeof existing === 'object' &&
+            Object.prototype.hasOwnProperty.call(existing, 'stripe');
+          if (value.trim()) planRefs[tier].stripe = value.trim();
+          else if (configured || stripeEdited[tier]) {
+            throw new Error('Enter a valid Stripe Price ID; clearing a configured or edited reference is not supported.');
+          }
+        }
+      }
 
       const capturedCode = selectedCode;
       const capturedVersion = versionId;
@@ -740,16 +790,26 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       }
 
       const onAuthorized = async (stepUpId: string) => {
-        const res = await apiCall({
+        if (!current()) return;
+        const base = getAdminApiBase();
+        const { data: session, error: sessionError } = await supabase.auth.getSession();
+        if (!current()) return;
+        const token = session?.session?.access_token;
+        if (sessionError || !token) throw new Error('Not authenticated — please sign in again.');
+        const payload = {
           action: 'save_refs',
           country_code: capturedCode,
           plan_refs: capturedRefs,
           expected_version_id: capturedVersion,
           ...(capturedTierPrices ? { tier_prices: capturedTierPrices } : {}),
           stepUpId,
+        };
+        const res = await fetch(base + '/api/admin/provider-config', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify(payload),
         });
-
         const data = await res.json();
+        if (!current()) return;
         if (!res.ok) {
           if (data.error === 'config_version_conflict') {
             setError('Configuration was modified by another admin. Please reload the page.');
@@ -773,7 +833,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
           country_code: capturedCode,
           plan_refs: capturedRefs,
           expected_version_id: capturedVersion,
-          ...(capturedTierPrices ? { tier_prices: capturedTierPrices } : {}),
+          tier_prices: capturedTierPrices,
         },
         description: capturedTierPrices
           ? `Save plan refs + update prices for ${capturedCode}`
@@ -781,10 +841,11 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
         onAuthorized,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
-      stepUp.reset();
+      if (current()) { setError(err instanceof Error ? err.message : 'Save failed'); stepUp.reset(); }
     } finally {
-      setSaving(false);
+      if (!current()) stepUp.reset();
+      flightRef.current = false;
+      if (mountedRef.current) setSaving(false);
     }
   }
 
@@ -867,10 +928,10 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
         <p className="text-xs text-gray-400 mb-4 font-mono">CAS version: {versionId.slice(0, 8)}...</p>
       )}
 
-      {error && (
+      {(error || (stepUp.state.phase === 'error' && stepUp.state.error)) && (
         <div className="flex items-center gap-2 mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          {error}
+          {error || stepUp.state.error}
         </div>
       )}
       {success && (
@@ -884,8 +945,9 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
         <label className={labelClass}>Country</label>
         <select
           className={inputClass}
+          aria-label="Provider country"
           value={selectedCode}
-          onChange={e => { setSelectedCode(e.target.value); setError(null); setSuccess(null); }}
+          onChange={e => { generationRef.current += 1; stepUpCallbackRef.current = null; stepUp.reset(); setSelectedCode(e.target.value); setError(null); setSuccess(null); }}
         >
           <option value="">Select a country...</option>
           {countries.map(c => (
@@ -894,7 +956,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
         </select>
       </div>
 
-      {selectedCountry && (
+      {selectedCountry && refsCountry === selectedCode && (
         <>
           {/* Active gateway badge */}
           <div className="mb-6">
@@ -969,8 +1031,18 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
             )}
 
             <div>
-              <h4 className="text-sm font-semibold text-gray-700">Stripe</h4>
-              <p className="text-xs text-gray-500 mt-1">Inline price_data (no plan ref needed)</p>
+              <h4 className="text-sm font-semibold text-gray-700">Stripe monthly catalog prices</h4>
+              <div className="grid grid-cols-2 gap-4 mt-2">
+                <label className={labelClass}>Pro Stripe Price ID
+                  <input aria-label="Pro Stripe Price ID" disabled={activeGateway !== 'stripe' || !canMutate} className={inputClass} value={stripeGrowthRef}
+                    onChange={e => { setStripeGrowthRef(e.target.value); setStripeEdited(prev => ({ ...prev, growth: true })); }} placeholder="price_..." />
+                </label>
+                <label className={labelClass}>Premium Stripe Price ID
+                  <input aria-label="Premium Stripe Price ID" disabled={activeGateway !== 'stripe' || !canMutate} className={inputClass} value={stripeBusinessRef}
+                    onChange={e => { setStripeBusinessRef(e.target.value); setStripeEdited(prev => ({ ...prev, business: true })); }} placeholder="price_..." />
+                </label>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Prices are verified against this country's existing monthly pricing. Saving Stripe references does not change prices, fees or trials.</p>
             </div>
           </div>
 
@@ -978,7 +1050,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
           <div className="flex items-center gap-3 mb-6">
             <button
               onClick={handleSaveRefs}
-              disabled={saving || !canMutate || !versionId}
+              disabled={saving || (stepUp.isActive && stepUp.state.phase !== 'error') || !canMutate || !versionId || refsCountry !== selectedCode}
               className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
@@ -992,14 +1064,14 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
             <div className="flex items-center gap-3">
               <button
                 onClick={() => handleSwitchGateway('stripe')}
-                disabled={saving || !canMutate || !versionId || activeGateway === 'stripe'}
+                disabled={saving || (stepUp.isActive && stepUp.state.phase !== 'error') || !canMutate || !versionId || activeGateway === 'stripe'}
                 className="rounded-xl border border-purple-300 bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100 transition disabled:opacity-50"
               >
                 Stripe
               </button>
               <button
                 onClick={() => handleSwitchGateway('flutterwave')}
-                disabled={saving || !canMutate || !versionId || activeGateway === 'flutterwave'}
+                disabled={saving || (stepUp.isActive && stepUp.state.phase !== 'error') || !canMutate || !versionId || activeGateway === 'flutterwave'}
                 className="rounded-xl border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100 transition disabled:opacity-50"
               >
                 Flutterwave
@@ -1023,10 +1095,14 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
         loading={stepUp.state.phase === 'verifying'}
         onSubmit={(code) => {
           if (stepUpCallbackRef.current) {
-            stepUp.submitCode(code, stepUpCallbackRef.current);
+            if (flightRef.current) return;
+            flightRef.current = true;
+            setSaving(true);
+            const callback = stepUpCallbackRef.current;
+            void stepUp.submitCode(code, callback).finally(() => { flightRef.current = false; if (mountedRef.current) setSaving(false); });
           }
         }}
-        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+        onCancel={() => { generationRef.current += 1; stepUp.reset(); stepUpCallbackRef.current = null; }}
       />
     </div>
   );

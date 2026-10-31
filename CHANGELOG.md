@@ -129,6 +129,20 @@
 - **Affects**: Payment-request dashboard feedback when the payment link exists but notification delivery fails.
 - **Could break**: The form now clears after a payment request was created even when its notification failed, avoiding a duplicate request on resubmission.
 
+### #783 — Pin catalog checkout to authoritative currency (2026-10-30)
+
+- **`app/api/onboarding/subscribe/route.ts`**: Configured catalog subscriptions now set the Checkout Session currency from the existing server-resolved country currency; inline fallback and other gateways remain unchanged.
+- **`lib/payments/__tests__/stripe-merchant-catalog-checkout-762.test.ts`**: Retain all 28 existing cases, add currency assertions to the six catalog and three inline cases, and add a synthetic multi-currency/client-conflict regression through the actual route and existing validator.
+- **Affects / could break**: Catalog subscription request construction. Exact-head executable CI is required; existing ownership, metadata, callbacks, price validation and authentication stay intact. No live catalog update, subscription repricing or provider/deployment certification is claimed.
+
+### #783 — Optional merchant Stripe catalog references (2026-10-30)
+
+- Added read-only Stripe Price and expanded Product preflight in `lib/payments/provider-preflight.ts`, validating active fixed monthly pricing against authoritative country currency and amount.
+- `app/api/onboarding/subscribe/route.ts` uses validated catalog references from the authenticated business's country. Genuinely absent references retain inline-price compatibility; invalid configured references reject checkout instead of falling back.
+- `app/api/admin/provider-config/route.ts` supports verified reference-only saves with existing admin, step-up and CAS checks. `admin/src/pages/Countries.tsx` adds Pro/Premium reference inputs, preserves untouched absent references, rejects clearing configured references, and invalidates stale authorization context before and after current-token resolution.
+- Synthetic validation at source head `82c86c827bb06a833a9434c2fa54d007061a2a59`: `lib/payments/__tests__/provider-preflight.test.ts` (57 passed), `lib/payments/__tests__/admin-provider-config.test.ts` (50 passed), `lib/payments/__tests__/stripe-merchant-catalog-checkout-762.test.ts` (28 passed), and `admin/src/__tests__/countries-stripe-plan-refs-762.test.tsx` (26 passed); zero skips in these four files. Canonical CI run 41144295285 passed all 12 jobs.
+- Risk: an invalid configured catalog reference blocks new checkout until corrected. No migration, price/fee/trial change, or existing subscription lifecycle change; these results do not certify production configuration, deployment or live-provider behavior.
+
 ### #736 Lane 1 R6 — Contract fallback and waiver email status corrections (2026-10-29)
 
 - `app/api/contracts/send/route.ts`: Count accepted email fallback as a successful signer notification and increment multi-signer delivery counts independently of WhatsApp message-ID persistence.
