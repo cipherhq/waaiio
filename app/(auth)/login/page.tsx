@@ -14,7 +14,7 @@ type AuthMode = 'phone' | 'email';
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const rawRedirect = searchParams.get('redirect') || '/dashboard';
+  const rawRedirect = searchParams.get('redirect') || searchParams.get('next') || '/dashboard';
   const redirect = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/dashboard';
 
   const [authMode, setAuthMode] = useState<AuthMode>('email');
@@ -60,6 +60,13 @@ function LoginForm() {
 
       // Record session for security tracking (non-blocking)
       fetch('/api/auth/session-bind', { method: 'POST' }).catch(() => {});
+
+      // Team invitees need not own a business. Preserve their acceptance destination.
+      if (/^\/invite\/[a-f0-9]{64}(?:\?setup=1)?$/.test(redirect)) {
+        router.push(redirect);
+        router.refresh();
+        return;
+      }
 
       // If user has no business yet, send them to onboarding
       if (signInData.user) {

@@ -128,6 +128,20 @@ export default function ConnectWhatsAppPage() {
     document.body.appendChild(script);
   }, [showAdvanced, appId]);
 
+  const continueWithShared = async () => {
+    if (!window.confirm('Switch to the shared Waaiio number? Customers will need your business link or code. Update your published WhatsApp links and QR codes. Existing chats on your dedicated number are not forwarded.')) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/settings/whatsapp-channel?business_id=${encodeURIComponent(business.id)}`, { method: 'DELETE' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to use the shared number.');
+      router.push('/dashboard');
+      router.refresh();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Please try again.'); }
+    finally { setLoading(false); }
+  };
+
   // ── Simple flow: Enter phone → Send OTP (R9 §4: store candidate_id) ──
   const handleSendOTP = async () => {
     if (!phone.trim()) { setError('Please enter a phone number'); return; }
@@ -301,6 +315,8 @@ export default function ConnectWhatsAppPage() {
           </div>
         )}
 
+        {error && <p role="alert" className="text-red-600">{error}</p>}
+        <button disabled={loading} onClick={continueWithShared} className="text-brand font-semibold">Use shared Waaiio number</button>
         <div className="flex gap-3">
           <button
             onClick={() => { setExistingChannel(null); setCandidateAttempt(null); setStep('choose'); }}
@@ -365,6 +381,8 @@ export default function ConnectWhatsAppPage() {
             If it takes longer, you can safely close this page and check back later.
           </p>
         </div>
+        {error && <p role="alert" className="text-red-600">{error}</p>}
+        <button disabled={loading} onClick={continueWithShared} className="text-brand font-semibold">Use shared Waaiio number</button>
         <button
           onClick={() => router.push('/dashboard')}
           className="w-full rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
@@ -379,9 +397,14 @@ export default function ConnectWhatsAppPage() {
     <div className="max-w-lg mx-auto mt-8 space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Connect Your WhatsApp Number</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Get your own dedicated WhatsApp number for your bot.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Connect a separate business number dedicated to your bot.</p>
       </div>
 
+      <div className="rounded-lg border p-4 space-y-2">
+        <button disabled={loading} onClick={continueWithShared} className="text-brand font-semibold disabled:opacity-50">Use shared Waaiio number</button>
+        <p className="text-sm text-gray-500">Customers reach your business using your business link or code on our shared number. Your business setup is kept. You can connect a dedicated number later.</p>
+        <button onClick={() => router.push('/dashboard')} className="text-sm underline">Back to Dashboard</button>
+      </div>
       {/* How it works */}
       <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">How it works</h3>
@@ -404,7 +427,7 @@ export default function ConnectWhatsAppPage() {
         <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2">Important</h3>
         <ul className="text-xs text-amber-700 dark:text-amber-400 space-y-1.5">
           <li>&#8226; <strong>Use a separate number</strong> — do NOT use your personal WhatsApp. It will be disconnected from your phone.</li>
-          <li>&#8226; <strong>Get a second SIM</strong> or virtual number (e.g. Google Voice) for your business bot.</li>
+          <li>&#8226; <strong>Get a second SIM</strong> that can receive a verification code for your business bot.</li>
           <li>&#8226; <strong>Landline numbers work too</strong> — we can verify via voice call.</li>
           <li>&#8226; <strong>Display name</strong> must match your business name. Meta reviews it (usually takes minutes).</li>
         </ul>

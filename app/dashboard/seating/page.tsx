@@ -64,6 +64,7 @@ export default function SeatingPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [error, setError] = useState('');
+  const [selected, setSelected] = useState<string[]>([]);
 
   const loadResources = useCallback(async () => {
     setLoading(true);
@@ -136,7 +137,7 @@ export default function SeatingPage() {
     };
 
     if (editId) {
-      const { error: err } = await supabase.from('seating_resources').update(payload).eq('id', editId);
+      const { error: err } = await supabase.from('seating_resources').update(payload).eq('id', editId).eq('business_id', business.id);
       if (err) { setError(err.message); setSaving(false); return; }
     } else {
       const { error: err } = await supabase.from('seating_resources').insert(payload);
@@ -152,20 +153,38 @@ export default function SeatingPage() {
   const handleArchive = async (id: string) => {
     if (!confirm('Deactivate this seating area? It will be hidden from customers but existing reservations are preserved.')) return;
     const supabase = createClient();
-    await supabase.from('seating_resources').update({ is_active: false }).eq('id', id);
+    await supabase.from('seating_resources').update({ is_active: false }).eq('id', id).eq('business_id', business.id);
     loadResources();
   };
 
   const toggleActive = async (id: string, active: boolean) => {
     const supabase = createClient();
-    await supabase.from('seating_resources').update({ is_active: active }).eq('id', id);
+    await supabase.from('seating_resources').update({ is_active: active }).eq('id', id).eq('business_id', business.id);
     loadResources();
+  };
+
+  const setSelectedAvailability = async (active: boolean) => {
+    if (!selected.length || saving) return;
+    if (!window.confirm(`${active ? 'Unblock' : 'Block'} ${selected.length} selected seating areas${active ? '' : ' until you unblock them'}? Existing reservations are preserved.`)) return;
+    setSaving(true);
+    setError('');
+    const supabase = createClient();
+    const { data, error: updateError } = await supabase.from('seating_resources')
+      .update({ is_active: active }).eq('business_id', business.id).in('id', selected).select('id');
+    if (updateError || data?.length !== selected.length) setError('Some seating areas could not be updated. Refresh and try again.');
+    else setSelected([]);
+    setSaving(false);
+    await loadResources();
   };
 
   const getTypeLabel = (type: string) => RESOURCE_TYPES.find(t => t.value === type)?.label || type;
 
   if (loading) {
     return <div className="p-6"><div className="animate-pulse h-8 bg-gray-200 dark:bg-gray-700 rounded w-48 mb-4" /><div className="animate-pulse h-32 bg-gray-200 dark:bg-gray-700 rounded" /></div>;
+  }
+
+  if (!business.capabilities.includes('table_reservation')) {
+    return <div className="p-6"><h1 className="text-2xl font-bold">Seating &amp; Tables</h1><p className="mt-3">Table Reservations is a Pro feature. Enable it in your capabilities to accept new reservations. Existing reservations remain available in your bookings.</p><a href="/dashboard/capabilities" className="mt-4 inline-block underline">Manage capabilities</a></div>;
   }
 
   // ── Add/Edit form ──
@@ -312,6 +331,13 @@ export default function SeatingPage() {
         </button>
       </div>
 
+      {error && <p role="alert" className="mb-3 text-red-600">{error}</p>}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <span className="text-sm">{selected.length} selected</span>
+        <button disabled={!selected.length || saving} onClick={() => setSelectedAvailability(false)} className="rounded border px-3 py-2 disabled:opacity-50">Block selected</button>
+        <button disabled={!selected.length || saving} onClick={() => setSelectedAvailability(true)} className="rounded border px-3 py-2 disabled:opacity-50">Unblock selected</button>
+        <p className="text-xs text-gray-500">Blocking hides tables from new reservations until you unblock them. Existing reservations remain.</p>
+      </div>
       {resources.length === 0 ? (
         <EmptyState
           icon="M3 10h18M3 14h18M12 3v18"
@@ -326,7 +352,7 @@ export default function SeatingPage() {
             <div key={r.id} className={`border rounded-xl p-4 ${r.is_active ? 'bg-white dark:bg-gray-900' : 'bg-gray-50 dark:bg-gray-800 opacity-60'}`}>
               <div className="flex items-start justify-between mb-2">
                 <div>
-                  <h3 className="font-semibold text-lg">{r.name}</h3>
+                  <label className="flex items-center gap-2"><input type="checkbox" aria-label={`Select ${r.name}`} checked={selected.includes(r.id)} onChange={e => setSelected(ids => e.target.checked ? [...ids, r.id] : ids.filter(id => id !== r.id))} /><span className="font-semibold text-lg">{r.name}</span></label>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
                       {getTypeLabel(r.resource_type)}

@@ -127,10 +127,11 @@ describe('variant image independence', () => {
 // ── Bot presentation: primary image only ────────────────────────────────────
 
 describe('WhatsApp bot: uses primary image only', () => {
-  it('ordering flow reads image_url not gallery_urls', () => {
+  it('ordering flow reads primary and gallery images', () => {
     const botSrc = readFileSync('lib/bot/flows/ordering.flow.ts', 'utf8');
     expect(botSrc).toContain('product.image_url');
-    expect(botSrc).not.toContain('gallery_urls');
+    expect(botSrc).toContain('gallery_urls');
+    expect(botSrc).toContain('productImageMessages(');
   });
 
   it('ordering flow stores current_product_image_url from image_url', () => {

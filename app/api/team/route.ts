@@ -1,3 +1,4 @@
+import { findAuthUser } from '@/lib/onboarding/auth-user';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -68,17 +69,18 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { business_id, email, role } = await request.json() as {
+  const { business_id, email: rawEmail, role } = await request.json() as {
     business_id: string;
     email: string;
     role: BusinessRole;
   };
 
-  if (!business_id || !email || !role) {
+  const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
+  if (!business_id || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !role) {
     return NextResponse.json({ error: 'Missing business_id, email, or role' }, { status: 400 });
   }
 
-  if (role === 'owner') {
+  if (!['admin', 'manager', 'staff', 'finance', 'support'].includes(role)) {
     return NextResponse.json({ error: 'Cannot invite as owner' }, { status: 400 });
   }
 
@@ -99,55 +101,53 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Check team limit
+  const { data: existing, error: lookupError } = await service.from('business_members')
+    .select('id, status').eq('business_id', business_id).eq('email', email).maybeSingle();
+  if (lookupError) return NextResponse.json({ error: 'Could not check membership' }, { status: 500 });
+  if (existing?.status === 'active') return NextResponse.json({ error: 'This person is already a team member' }, { status: 400 });
+
   const tier = biz.subscription_tier || 'free';
   const limit = TEAM_LIMITS[tier] || 1;
-  const { count } = await service.from('business_members')
-    .select('id', { count: 'exact', head: true })
-    .eq('business_id', business_id)
-    .in('status', ['invited', 'active']);
-
-  if ((count || 0) + 1 >= limit) { // +1 for owner
+  const { count, error: countError } = await service.from('business_members')
+    .select('id', { count: 'exact', head: true }).eq('business_id', business_id).in('status', ['invited', 'active']);
+  if (countError) return NextResponse.json({ error: 'Could not check team limit' }, { status: 500 });
+  if (existing?.status !== 'invited' && (count || 0) + 1 >= limit) {
     return NextResponse.json({ error: `Team limit reached (${limit} members on ${tier} plan). Upgrade for more.` }, { status: 403 });
   }
-
-  // Check if already invited
-  const { data: existing } = await service.from('business_members')
-    .select('id, status').eq('business_id', business_id).eq('email', email.toLowerCase()).maybeSingle();
-
-  if (existing) {
-    if (existing.status === 'active') {
-      return NextResponse.json({ error: 'This person is already a team member' }, { status: 400 });
-    }
-    if (existing.status === 'invited') {
-      return NextResponse.json({ error: 'Invitation already sent to this email' }, { status: 400 });
-    }
-  }
-
-  // Generate invite token
   const inviteToken = randomBytes(32).toString('hex');
-
-  // Create member record
-  const { error: insertError } = await service.from('business_members').insert({
-    business_id,
-    email: email.toLowerCase(),
-    role,
-    status: 'invited',
-    invite_token: inviteToken,
-    invited_by: user.id,
-  });
-
-  if (insertError) {
-    logger.error('[TEAM] Invite insert error:', insertError.message);
-    return NextResponse.json({ error: 'Failed to create invitation' }, { status: 500 });
-  }
+  const member = { business_id, email, role, status: 'invited', invite_token: inviteToken,
+    invited_by: user.id, invited_at: new Date().toISOString() };
+  const write = existing
+    ? service.from('business_members').update(member).eq('id', existing.id).eq('business_id', business_id).neq('status', 'active')
+    : service.from('business_members').insert(member);
+  const { data: saved, error: insertError } = await write.select('id').maybeSingle();
+  if (insertError || !saved) return NextResponse.json({ error: 'Failed to save invitation. Please retry.' }, { status: 409 });
 
   // Send invite email
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-  const inviteUrl = `${appUrl}/invite/${inviteToken}`;
+  let inviteUrl = `${appUrl}/invite/${inviteToken}`;
+  try {
+    const authUser = await findAuthUser(service, email);
+    if (!authUser || !authUser.email_confirmed_at) {
+      // Recover an unconfirmed invite identity left by a failed/expired email.
+      // Established accounts keep their password and use normal sign-in.
+      const linkType = authUser ? 'recovery' : 'invite';
+      const { data: link, error: linkError } = await service.auth.admin.generateLink({
+        type: linkType, email,
+      });
+      if (linkError || !link?.properties?.hashed_token) throw new Error('Unable to prepare account invitation');
+      const callback = new URL('/auth/callback', appUrl);
+      callback.searchParams.set('token_hash', link.properties.hashed_token);
+      callback.searchParams.set('type', linkType);
+      callback.searchParams.set('next', `/invite/${inviteToken}?setup=1`);
+      inviteUrl = callback.toString();
+    }
+  } catch {
+    return NextResponse.json({ error: 'Invitation saved, but account setup could not be prepared. Please send the invitation again.' }, { status: 502 });
+  }
 
   try {
-    await sendEmail({
+    const delivery = await sendEmail({
       to: email,
       subject: `You're invited to join ${biz.name} on Waaiio`,
       html: `
@@ -156,19 +156,21 @@ export async function POST(request: NextRequest) {
           <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:32px">
             <h1 style="font-size:20px;font-weight:700;margin:0 0 8px">You're invited!</h1>
             <p style="font-size:14px;color:#6b7280;margin:0 0 24px;line-height:1.5">
-              <strong>${biz.name}</strong> has invited you to join their team on Waaiio as <strong>${role}</strong>.
+              <strong>${String(biz.name).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))}</strong> has invited you to join their team on Waaiio as <strong>${role}</strong>.
             </p>
             <div style="text-align:center;margin:24px 0">
               <a href="${inviteUrl}" style="display:inline-block;background:#7c3aed;color:#fff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px">Accept Invitation</a>
             </div>
-            <p style="font-size:12px;color:#9ca3af;margin:24px 0 0;line-height:1.5">This invitation expires in 7 days.</p>
+            <p style="font-size:12px;color:#9ca3af;margin:24px 0 0;line-height:1.5">This team invitation expires in 7 days. The secure account setup link may expire sooner; ask the owner to resend if needed.</p>
           </div>
           <div style="text-align:center;padding:24px 0"><p style="font-size:11px;color:#9ca3af;margin:0">Waaiio — WhatsApp Automation for Every Business</p></div>
         </div>
       `,
     });
+    if (!delivery.success) throw new Error('Email delivery failed');
   } catch (emailErr) {
     logger.error('[TEAM] Invite email error:', emailErr);
+    return NextResponse.json({ error: 'Invitation saved but email delivery failed. Please send the invitation again.' }, { status: 502 });
   }
 
   return NextResponse.json({ success: true, message: `Invitation sent to ${email}` }, { status: 201 });
@@ -209,12 +211,14 @@ export async function PATCH(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { member_id, business_id, role } = await request.json();
+  if (!['admin', 'manager', 'staff', 'finance', 'support'].includes(role)) return NextResponse.json({ error: 'Invalid team role' }, { status: 400 });
   if (!member_id || !business_id || !role) return NextResponse.json({ error: 'Missing params' }, { status: 400 });
 
   const service = createServiceClient();
   const { data: biz } = await service.from('businesses').select('owner_id').eq('id', business_id).single();
   if (!biz || biz.owner_id !== user.id) return NextResponse.json({ error: 'Only owner can change roles' }, { status: 403 });
 
-  await service.from('business_members').update({ role, updated_at: new Date().toISOString() }).eq('id', member_id).eq('business_id', business_id);
+  const { data: updated, error: updateError } = await service.from('business_members').update({ role, updated_at: new Date().toISOString() }).eq('id', member_id).eq('business_id', business_id).select('id').maybeSingle();
+  if (updateError || !updated) return NextResponse.json({ error: 'Role could not be updated' }, { status: 409 });
   return NextResponse.json({ success: true });
 }

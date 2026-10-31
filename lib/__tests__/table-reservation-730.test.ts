@@ -94,9 +94,9 @@ describe('#730: Table Reservation capability definition', () => {
     expect(cap!.label).toBe('Table Reservations');
   });
 
-  it('table_reservation tier is free', async () => {
+  it('table_reservation requires Pro (growth)', async () => {
     const { CAPABILITY_TIER_REQUIREMENTS } = await import('@/shared/capabilities');
-    expect(CAPABILITY_TIER_REQUIREMENTS.table_reservation).toBe('free');
+    expect(CAPABILITY_TIER_REQUIREMENTS.table_reservation).toBe('growth');
   });
 
   it('FOOD_DINING categories default to table_reservation', async () => {

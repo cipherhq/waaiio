@@ -98,7 +98,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
 
   // PRO (Growth)
   reservation: 'growth',
-  table_reservation: 'free',
+  table_reservation: 'growth',
   recurring: 'growth',
   broadcast: 'growth',
   membership: 'growth',

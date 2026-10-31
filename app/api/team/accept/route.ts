@@ -57,14 +57,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invitation has expired' }, { status: 410 });
   }
 
+  if (!user.email_confirmed_at || user.email?.toLowerCase() !== member.email.toLowerCase()) {
+    return NextResponse.json({ error: 'Sign in with the verified email address this invitation was sent to.' }, { status: 403 });
+  }
+
   // Activate membership
-  await service.from('business_members').update({
+  const { data: accepted, error: acceptError } = await service.from('business_members').update({
     user_id: user.id,
     status: 'active',
     joined_at: new Date().toISOString(),
     invite_token: null, // clear token after use
     updated_at: new Date().toISOString(),
-  }).eq('id', member.id);
+  }).eq('id', member.id).eq('invite_token', token).eq('status', 'invited')
+    .gte('invited_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+    .select('id').maybeSingle();
+  if (acceptError || !accepted) return NextResponse.json({ error: 'Invitation could not be accepted. Please reload and try again.' }, { status: 409 });
 
   const { data: biz } = await service.from('businesses').select('name').eq('id', member.business_id).single();
 

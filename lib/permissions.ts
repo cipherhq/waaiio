@@ -28,7 +28,7 @@ export const ROLE_PERMISSIONS: Record<BusinessRole, RolePermissions> = {
       'surveys', 'polls', 'analytics', 'whatsapp', 'whatsapp-usage', 'wa-templates',
       'integrations', 'bot-flows', 'qr-code', 'settings', 'capabilities', 'help', 'support',
       'events', 'tickets', 'events/scan', 'invoices', 'staff', 'queue', 'waitlist',
-      'loyalty', 'referral', 'keywords', 'sequences', 'notifications', 'locations',
+      'loyalty', 'referrals', 'keywords', 'sequences', 'notifications', 'locations',
       'setup-assistant', 'insights', 'recurring', 'promo-codes', 'members', 'team',
     ],
   },
@@ -39,7 +39,7 @@ export const ROLE_PERMISSIONS: Record<BusinessRole, RolePermissions> = {
       'overview', 'reservations', 'calendar', 'services', 'customers', 'products', 'orders',
       'quotes', 'chat', 'contracts', 'feedback', 'broadcasts', 'surveys', 'polls',
       'analytics', 'events', 'tickets', 'events/scan', 'invoices', 'queue', 'waitlist',
-      'loyalty', 'referral', 'notifications', 'insights', 'promo-codes', 'members',
+      'loyalty', 'referrals', 'notifications', 'insights', 'promo-codes', 'members',
     ],
   },
   staff: {

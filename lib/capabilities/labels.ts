@@ -38,6 +38,8 @@ const APPOINTMENT_CATEGORY_KEYS: Record<string, string> = {
 export function getCapabilityLabel(cap: CapabilityId, category: string, customLabel?: string | null, lang?: string): string {
   if (customLabel) return customLabel;
 
+  if (cap === 'table_reservation' && ['bar', 'lounge', 'nightclub'].includes(category) && (!lang || lang === 'en')) return 'Book a Table / VIP';
+
   // Category-specific appointment labels
   if (cap === 'appointment' && APPOINTMENT_CATEGORY_KEYS[category]) {
     return getFlowCopy(lang, APPOINTMENT_CATEGORY_KEYS[category]);

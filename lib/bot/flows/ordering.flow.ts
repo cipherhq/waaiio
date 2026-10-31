@@ -1,3 +1,4 @@
+import { productImageMessages } from './shared/product-images';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
@@ -98,7 +99,7 @@ export const orderingFlow: FlowDefinition = {
 
         let query = ctx.supabase
           .from('products')
-          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, variant_options, min_order_qty')
+          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, gallery_urls, variant_options, min_order_qty')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .is('deleted_at', null)
@@ -226,7 +227,7 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: product } = await ctx.supabase
           .from('products')
-          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
+          .select('id, name, price, stock_quantity, has_variants, image_url, gallery_urls, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
@@ -247,6 +248,7 @@ export const orderingFlow: FlowDefinition = {
             current_product_price: product.price,
             current_product_has_variants: product.has_variants,
             current_product_image_url: product.image_url || null,
+            current_product_gallery_urls: product.gallery_urls || [],
             current_product_variant_options: product.variant_options || [],
             current_stock_quantity: product.has_variants ? null : product.stock_quantity,
             current_min_order_qty: product.min_order_qty || 1,
@@ -258,8 +260,6 @@ export const orderingFlow: FlowDefinition = {
 
         // Smart intent auto-added product to cart → skip to checkout
         if (d._auto_added_to_cart) {
-          delete d._auto_added_to_cart;
-          delete d._skip_browse;
           return 'continue_or_checkout';
         }
 
@@ -387,7 +387,7 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: product } = await ctx.supabase
           .from('products')
-          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
+          .select('id, name, price, stock_quantity, has_variants, image_url, gallery_urls, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
@@ -410,6 +410,7 @@ export const orderingFlow: FlowDefinition = {
             current_product_price: product.price,
             current_product_has_variants: product.has_variants,
             current_product_image_url: product.image_url || null,
+            current_product_gallery_urls: product.gallery_urls || [],
             current_product_variant_options: product.variant_options || [],
             current_stock_quantity: product.has_variants ? null : product.stock_quantity,
             current_min_order_qty: product.min_order_qty || 1,
@@ -513,12 +514,8 @@ export const orderingFlow: FlowDefinition = {
         const messages: PromptMessage[] = [];
 
         // On first axis, send product image
-        if (axisIndex === 0 && d.current_product_image_url) {
-          messages.push({
-            type: 'image',
-            imageUrl: d.current_product_image_url as string,
-            caption: `${d.current_product_name}`,
-          });
+        if (axisIndex === 0) {
+          messages.push(...productImageMessages(d.current_product_image_url, d.current_product_gallery_urls, `${d.current_product_name}`));
         }
 
         messages.push({
@@ -735,13 +732,7 @@ export const orderingFlow: FlowDefinition = {
         const messages: PromptMessage[] = [];
 
         // Send product image if available
-        if (d.current_product_image_url) {
-          messages.push({
-            type: 'image',
-            imageUrl: d.current_product_image_url as string,
-            caption: `${d.current_product_name}`,
-          });
-        }
+        messages.push(...productImageMessages(d.current_product_image_url, d.current_product_gallery_urls, `${d.current_product_name}`));
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         messages.push({
@@ -960,13 +951,7 @@ export const orderingFlow: FlowDefinition = {
 
         // Send variant image or product image
         const imageUrl = (d.current_variant_image_url as string) || (d.current_product_image_url as string);
-        if (imageUrl) {
-          messages.push({
-            type: 'image',
-            imageUrl,
-            caption: `${productName}${variantInfo}`,
-          });
-        }
+        messages.push(...productImageMessages(imageUrl, [d.current_product_image_url, ...(Array.isArray(d.current_product_gallery_urls) ? d.current_product_gallery_urls : [])], `${productName}${variantInfo}`));
 
         const minQty = (d.current_min_order_qty as number) || 1;
         let promptText = `*${productName}*${variantInfo} — ${formatCurrency(d.current_product_price as number, cc)}`;
@@ -1219,6 +1204,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cart = (d.cart as CartItem[]) || [];
+        const selectedImages = productImageMessages(d.current_product_image_url, d.current_product_gallery_urls, d.current_product_name as string);
 
         const cartItem: CartItem = {
           product_id: d.current_product_id as string,
@@ -1246,6 +1232,7 @@ export const orderingFlow: FlowDefinition = {
         delete d.current_variant_label;
         delete d.current_product_has_variants;
         delete d.current_product_image_url;
+        delete d.current_product_gallery_urls;
         delete d.current_variant_image_url;
         delete d.current_product_variant_options;
         delete d.current_option_axis_index;
@@ -1270,7 +1257,7 @@ export const orderingFlow: FlowDefinition = {
           // ACC-008: session_data mutated in-memory; executor persists via CAS
           // Step transition to 'continue_or_checkout' handled by nextAfterPrompt
 
-          return [{
+          return [...selectedImages,{
             type: 'buttons' as const,
             body: addedText + '\n\nWhat would you like to do?',
             buttons: [
@@ -1330,7 +1317,7 @@ export const orderingFlow: FlowDefinition = {
             })),
           ];
 
-          return [
+          return [...selectedImages,
             { type: 'text' as const, text: addedText },
             {
               type: 'list' as const,
@@ -1348,7 +1335,7 @@ export const orderingFlow: FlowDefinition = {
           ...products.slice(0, 9).map(formatProd),
         ];
 
-        return [
+        return [...selectedImages,
           { type: 'text' as const, text: addedText },
           {
             type: 'list' as const,
@@ -1378,13 +1365,24 @@ export const orderingFlow: FlowDefinition = {
         const cart = (d.cart as CartItem[]) || [];
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const total = calculateCartTotal(cart);
+        const smartImages: PromptMessage[] = [];
+        if (d._auto_added_to_cart) {
+          const ids = [...new Set(cart.map(item => item.product_id))];
+          if (ids.length) {
+            const { data: products } = await ctx.supabase.from('products')
+              .select('id, name, image_url, gallery_urls').eq('business_id', ctx.business!.id).in('id', ids);
+            for (const product of products || []) smartImages.push(...productImageMessages(product.image_url, product.gallery_urls, product.name));
+          }
+          delete d._auto_added_to_cart;
+          delete d._skip_browse;
+        }
 
         // Browse-by-category mode: simple buttons
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
 
         if (browseByCategory) {
-          return [{
+          return [...smartImages,{
             type: 'buttons' as const,
             body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — *${formatCurrency(total, cc)}*\n\n${getFlowCopy(ctx.copyLang, 'ordering.add_more_items')}`,
             buttons: [
@@ -1440,7 +1438,7 @@ export const orderingFlow: FlowDefinition = {
             })),
           ];
 
-          return [{
+          return [...smartImages,{
             type: 'list' as const,
             title: getFlowCopy(ctx.copyLang, 'ordering.your_cart'),
             body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\n${getFlowCopy(ctx.copyLang, 'ordering.add_more_items')}`,
@@ -1463,7 +1461,7 @@ export const orderingFlow: FlowDefinition = {
           })),
         ];
 
-        return [{
+        return [...smartImages,{
           type: 'list',
           title: getFlowCopy(ctx.copyLang, 'ordering.your_cart'),
           body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\n${getFlowCopy(ctx.copyLang, 'ordering.add_more_items')}`,
@@ -1482,7 +1480,7 @@ export const orderingFlow: FlowDefinition = {
         // Treat as product selection
         const { data: product } = await ctx.supabase
           .from('products')
-          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
+          .select('id, name, price, stock_quantity, has_variants, image_url, gallery_urls, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
@@ -1504,6 +1502,7 @@ export const orderingFlow: FlowDefinition = {
             current_product_price: product.price,
             current_product_has_variants: product.has_variants,
             current_product_image_url: product.image_url || null,
+            current_product_gallery_urls: product.gallery_urls || [],
             current_product_variant_options: product.variant_options || [],
             current_stock_quantity: product.has_variants ? null : product.stock_quantity,
             current_min_order_qty: product.min_order_qty || 1,

@@ -146,7 +146,7 @@ const WA_OPTIONS: {
     ],
     cons: [
       'WhatsApp app stops working on this number (it becomes bot-only)',
-      'Tip: buy a cheap SIM (as low as ₦200) and use THAT number',
+      'Use a separate business SIM that can receive a verification code',
       'Your personal WhatsApp is safe — just use a different number for the bot',
       'Takes about 15 minutes to set up via Facebook',
     ],
@@ -176,7 +176,7 @@ const OWN_NUMBER_WARNINGS = [
   {
     number: 1,
     title: 'Use a separate SIM for the bot',
-    text: 'The number you connect becomes bot-only — WhatsApp app stops working on it. We recommend buying a cheap SIM (₦200-500) and using that number for the bot. Your personal number stays untouched.',
+    text: 'The number you connect becomes bot-only — WhatsApp app stops working on it. Use a separate business SIM that can receive a verification code. Your personal number stays untouched.',
   },
   {
     number: 2,
