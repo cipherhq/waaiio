@@ -14,6 +14,9 @@ interface PayoutRecord {
   gateway_fee: number;
   net_amount: number;
   status: string;
+  status_explanation: string;
+  recorded_context: string[];
+  linked_destination: string;
   transfer_method: string | null;
   transfer_reference: string | null;
   notes: string | null;
@@ -32,6 +35,8 @@ interface MonthBucket {
 
 const statusStyles: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-700',
+  held: 'bg-yellow-100 text-yellow-700',
+  review_required: 'bg-yellow-100 text-yellow-700',
   approved: 'bg-blue-100 text-blue-700',
   processing: 'bg-blue-100 text-blue-700',
   paid: 'bg-green-100 text-green-700',
@@ -277,12 +282,15 @@ export default function PayoutHistoryPage() {
       <div className="mt-8 flex items-center gap-3">
         <h3 className="text-sm font-semibold text-gray-900">All Records</h3>
         <select
+          aria-label="Payout status"
           value={statusFilter}
           onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
         >
           <option value="all">All Statuses</option>
           <option value="pending">Pending</option>
+          <option value="held">Held</option>
+          <option value="review_required">Review required</option>
           <option value="approved">Approved</option>
           <option value="processing">Processing</option>
           <option value="paid">Paid</option>
@@ -333,6 +341,7 @@ export default function PayoutHistoryPage() {
                       )}
                       {p.status}
                     </span>
+                    <p className="mt-1 max-w-xs text-xs text-gray-500">{p.status_explanation}</p>
                   </td>
                   <td className="px-4 py-3 text-gray-500 font-mono text-xs">{p.transfer_reference || '—'}</td>
                 </tr>
@@ -383,6 +392,10 @@ export default function PayoutHistoryPage() {
               <DetailRow label="Gateway Fee" value={formatCurrency(selected.gateway_fee, country)} />
               <DetailRow label="Net Amount" value={formatCurrency(selected.net_amount, country)} bold />
               <DetailRow label="Status" value={selected.status} />
+              <DetailRow label="Explanation" value={selected.status_explanation} />
+              <DetailRow label="Recorded context" value={selected.recorded_context?.join(' ') || 'No further reason recorded.'} />
+              <DetailRow label="Linked payout account" value={selected.linked_destination} />
+              <p className="text-xs text-gray-500">Recorded context may describe an earlier review. A linked account is not proof that funds arrived.</p>
               {selected.transfer_method && <DetailRow label="Method" value={selected.transfer_method} />}
               {selected.transfer_reference && <DetailRow label="Reference" value={selected.transfer_reference} />}
               {selected.paid_at && <DetailRow label="Paid At" value={new Date(selected.paid_at).toLocaleString()} />}

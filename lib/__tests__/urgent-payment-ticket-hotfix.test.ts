@@ -295,45 +295,45 @@ describe('Ticket state completeness', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('sendTicketsAfterPurchase result contract', () => {
-  it('returns TicketCreationResult (not void)', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain('Promise<TicketCreationResult>');
-    expect(src).toContain('export interface TicketCreationResult');
+  async function converge(data: unknown, error: unknown = null) {
+    const { ensureCanonicalTicketRows } = await import('../bot/flows/shared/send-tickets');
+    const rpc = vi.fn().mockResolvedValue({ data, error });
+    const result = await ensureCanonicalTicketRows({
+      supabase: { rpc } as never, businessId: 'biz', bookingId: 'booking', eventId: 'event',
+      guestName: 'Guest', guestPhone: '+15551234567', quantity: 2,
+    });
+    return { result, rpc };
+  }
+  const tickets = [1, 2].map(n => ({ ticketCode: 'TK-' + n, ticketNumber: n, totalTickets: 2 }));
+  it('returns the exact issued canonical rows', async () => {
+    expect((await converge({ success: true, outcome: 'issued', tickets })).result).toEqual({ success: true, tickets });
   });
-  it('reports success with ticket data', () => {
-    expect(readSrc('../bot/flows/shared/send-tickets.ts')).toContain('return { success: true, tickets }');
+  it('uses one atomic convergence authority', async () => {
+    const { rpc } = await converge({ success: true, outcome: 'issued', tickets });
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith('converge_event_ticket_booking', expect.objectContaining({ p_booking_id: 'booking', p_event_id: 'event', p_quantity: 2 }));
   });
-  it('reports insert failure explicitly', () => {
-    expect(readSrc('../bot/flows/shared/send-tickets.ts')).toContain("return { success: false, tickets: [], error: 'insert_failed' }");
+  it('propagates database failure without successful tickets', async () => {
+    expect((await converge(null, { message: 'insert failed' })).result).toEqual({ success: false, tickets: [], error: 'ticket_convergence_failed' });
   });
-  it('handles UNIQUE conflict (23505) by not returning failure', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain("insertError.code === '23505'");
+  it('replayed canonical result remains successful', async () => {
+    const data = { success: true, outcome: 'issued', tickets, already_finalized: true };
+    expect((await converge(data)).result).toEqual((await converge(data)).result);
   });
-  it('does authoritative final re-read after insert/conflict', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain('Authoritative final re-read');
-    expect(src).toContain('finalTickets');
+  it('fails closed on missing authoritative result', async () => {
+    expect((await converge(null)).result.success).toBe(false);
   });
-  it('validates canonical set: exactly expected ticket_numbers', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain('canonical_set_incomplete');
-    expect(src).toContain('allPresent');
+  it('rejects partial canonical state', async () => {
+    expect((await converge({ success: true, outcome: 'issued', tickets: tickets.slice(0, 1) })).result.success).toBe(false);
   });
-  it('handles partial state: inserts only missing ticket numbers', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain('missingNumbers');
-    expect(src).toContain('expectedNumbers');
-    // Must use persisted ticket_number, not array index
-    expect(src).toContain("select('ticket_code, ticket_number')");
+  it('rejects duplicate ticket positions', async () => {
+    expect((await converge({ success: true, outcome: 'issued', tickets: [tickets[0], tickets[0]] })).result.success).toBe(false);
   });
-  it('existing ticket lookup error → fail closed', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain("error: 'existing_ticket_lookup_failed'");
+  it('retains authority denial reason', async () => {
+    expect((await converge({ success: false, reason: 'identity_mismatch' })).result).toEqual({ success: false, tickets: [], error: 'identity_mismatch' });
   });
-  it('final re-read error → fail closed', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain("error: 'final_reread_failed'");
+  it('does not return issued tickets for cancelled events', async () => {
+    expect((await converge({ success: false, outcome: 'cancelled_followup_recorded' })).result).toEqual({ success: false, tickets: [], error: 'event_cancelled_followup_recorded' });
   });
 });
 
@@ -456,20 +456,18 @@ describe('Paid I\'ve Paid convergence (replaces legacy dedup path)', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('Exact canonical ticket set validation', () => {
-  it('validates exact count (not >=)', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain('exactCount');
-    expect(src).toContain("=== quantity");
-  });
-  it('validates all ticket_numbers in expected range', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    expect(src).toContain('allInRange');
-    expect(src).toContain('expectedNumbers.has(t.ticket_number)');
-  });
-  it('rejects extra/out-of-range rows', () => {
-    const src = readSrc('../bot/flows/shared/send-tickets.ts');
-    // The condition checks !exactCount || !allInRange
-    expect(src).toContain('!exactCount || !allInRange');
+  it.each([
+    [1, 2, 3],
+    [1, 3],
+    [0, 1],
+  ])('rejects extra or out-of-range positions %j', async (...numbers) => {
+    const { ensureCanonicalTicketRows } = await import('../bot/flows/shared/send-tickets');
+    const tickets = numbers.map(n => ({ ticketCode: 'TK-' + n, ticketNumber: n, totalTickets: 2 }));
+    const result = await ensureCanonicalTicketRows({
+      supabase: { rpc: vi.fn().mockResolvedValue({ data: { success: true, outcome: 'issued', tickets }, error: null }) } as never,
+      businessId: 'biz', bookingId: 'booking', eventId: 'event', guestName: 'Guest', guestPhone: '+15551234567', quantity: 2,
+    });
+    expect(result).toEqual({ success: false, tickets: [], error: 'canonical_set_incomplete' });
   });
 });
 
