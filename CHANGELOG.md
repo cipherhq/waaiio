@@ -235,6 +235,11 @@
 - **Affects**: Poll send response counts only. Helper acceptance does not prove customer receipt; shared sender, session preparation, guards and poll lifecycle are unchanged.
 - **Could break**: Callers now correctly see failed counts for helper-declined sends that were previously reported sent. Mocked route tests do not certify provider delivery.
 
+### #666 — Merchant payment custody and manual-settlement policy (2026-10-30)
+
+- **`AGENTS.md`, `CLAUDE.md`, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`**: Record the standing two-route payment custody model and manual-settlement policy, with repository guidance linked to the authoritative policy.
+- **Affects / could break**: Engineering interpretation of payment custody and settlement responsibilities. Documentation only; no runtime, provider, financial-history or hosted-schema changes, and no live-flow certification.
+
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
 
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
@@ -262,6 +267,18 @@
 - `lib/__tests__/address-forms-751.test.tsx`: add only the required router mock for the existing BusinessTab fixture; preserve address assertions.
 - **Affects**: Dashboard logo preview/context refresh. Upload API, validation, ownership, storage, Places behavior and paid-branding policy are unchanged.
 - **Could break**: Framework refresh timing can temporarily show the prior logo before updated props arrive. Tests mock upload/network boundaries and do not certify live persistence or image availability.
+
+### #712 — Currency-authoritative payout and settlement accounting (2026-10-30)
+
+- **Payout/admin/cron routes and `lib/payments/payable-fees.ts`**: Preserve canonical currency isolation, unknown-currency review holds, structured payout flags, account linkage and fee-allocation-period accounting across payout generation, balance and settlement paths.
+- **M466, M468, M469 and M472; canonical CI and regression files**: Add the reviewed currency/deduplication/settlement authority sequence and executable route, accounting, concurrency and real-PostgreSQL coverage. Current-main integration retains valid admin UUID and action-bound step-up fixtures alongside the currency assertions.
+- **Affects / could break**: Payout eligibility, currency-scoped totals, deduplication and settlement accounting. Hosted migration sequencing and deployment require separate authorization and verification; this source change does not certify live payment or settlement outcomes.
+
+### #731 — Reviewed reservation routing and acceptance corrections (2026-10-31)
+
+- Preserve the dedicated seating-resource authority: a generic service skip cannot bypass table selection, and only one active same-business resource may auto-select with its full snapshot. Table flat-deposit reservations do not offer or redeem unsupported promotions; ordinary scheduling promotion behavior is preserved.
+- Add mounted Bookings page acceptance for table, lodging and legacy scheduling data/actions. Update lifecycle and pagination fixtures to use canonical seating resources while preserving tenant, row-limit, sender and existing lifecycle assertions.
+- Integrate current main without dropping its currency/settlement migration tests; retain the M476 disposable database test step unchanged. This is source and executable test coverage; hosted M476–M478 application and live reservation acceptance remain separate.
 
 ### #730 — Booking/Reservation UX: Table Reservation Architecture (2026-10-27)
 
