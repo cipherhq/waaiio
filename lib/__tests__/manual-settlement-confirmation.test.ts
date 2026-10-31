@@ -88,7 +88,7 @@ describe('Manual payout: approve sets approved status', () => {
 
     const payoutData = {
       id: 'p1', business_id: 'b1', status: 'pending',
-      net_amount: 100, payout_account_id: 'pa1',
+      net_amount: 100, currency: 'NGN', payout_account_id: 'pa1',
       period_start: '2024-01-01', period_end: '2024-01-07',
       flags: [],
     };
@@ -231,8 +231,7 @@ describe('Manual payout: confirm-settlement', () => {
       if (table === 'business_payouts') {
         chain.single = vi.fn().mockResolvedValue({
           data: {
-            id: 'p1', business_id: payoutBusinessId, net_amount: 100,
-            status: payoutStatus, transfer_method: payoutMethod, payout_account_id: 'pa1', notes: null,
+            id: 'p1', business_id: payoutBusinessId, net_amount: 100, currency: 'NGN', status: payoutStatus, transfer_method: payoutMethod, payout_account_id: 'pa1', notes: null,
           },
         });
       } else if (table === 'businesses') {

@@ -78,12 +78,19 @@ export async function POST(
   // Block payouts with adjustment linkage flags that require resolution
   const payoutFlags = Array.isArray(payout.flags) ? payout.flags : [];
   const hasLinkageFlag = payoutFlags.some(
-    (f: { type?: string }) => f.type === 'adjustment_link_pending' || f.type === 'adjustment_link_failed',
+    (f: { type?: string }) => f.type === 'adjustment_link_pending' || f.type === 'adjustment_link_failed' || f.type === 'currency_review',
   );
   if (hasLinkageFlag) {
     return NextResponse.json({
       error: 'This payout has an adjustment linkage flag and cannot be approved until the linkage is resolved. See issue #620.',
     }, { status: 409 });
+  }
+
+  // M466: Reject payouts with NULL or missing currency (legacy unapprovable)
+  if (!payout.currency) {
+    return NextResponse.json({
+      error: 'Cannot approve payout: missing authoritative currency. Legacy payouts require manual reconciliation.',
+    }, { status: 400 });
   }
 
   // ── Business verification ──
@@ -94,7 +101,8 @@ export async function POST(
     .single();
 
   const bizCountry = (bizCheck?.country_code || 'NG') as CountryCode;
-  const bizCurrency = getCountry(bizCountry)?.currency_code ?? 'NGN';
+  // M466: Use authoritative payout currency, not country-inferred currency
+  const bizCurrency = payout.currency;
 
   if (bizCheck?.verification_level === 'unverified') {
     return NextResponse.json({
@@ -177,11 +185,16 @@ export async function POST(
   }
 
   // ── Balance verification (includes review_required as reserved) ──
-  const { data: balancePayments, error: balanceError } = await serviceClient
+  // M466: Include currency via payments join for currency-scoped balance
+  const { data: balancePaymentsRaw, error: balanceError } = await serviceClient
     .from('platform_fees')
-    .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
+    .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
     .eq('business_id', payout.business_id)
     .is('refunded_at', null);
+  const balancePayments = (balancePaymentsRaw || []).map(f => ({
+    ...f,
+    currency: (f as unknown as { payments: { currency: string } }).payments?.currency ?? null,
+  }));
 
   if (balanceError) {
     logger.error('[PAYOUT] Balance check failed during approval', {
@@ -190,9 +203,10 @@ export async function POST(
     return NextResponse.json({ error: 'Failed to load balance data' }, { status: 500 });
   }
 
+  // M466: Include currency for currency-scoped prior-payout deduction
   const { data: priorPayouts, error: priorError } = await serviceClient
     .from('business_payouts')
-    .select('net_amount')
+    .select('net_amount, currency')
     .eq('business_id', payout.business_id)
     .in('status', ['paid', 'processing', 'approved', 'review_required'])
     .neq('id', id);
@@ -207,9 +221,10 @@ export async function POST(
   // Fetch ALL adjustments (applied + unapplied) for lifetime balance.
   // Prior payouts' net_amount already includes applied adjustments; including
   // them again in the lifetime sum cancels correctly (P1-2 fix).
+  // M466: Include currency for currency-scoped adjustments
   const { data: balanceAdjustments, error: balAdjError } = await serviceClient
     .from('payout_adjustments')
-    .select('amount')
+    .select('amount, currency')
     .eq('business_id', payout.business_id);
 
   if (balAdjError) {
@@ -219,9 +234,27 @@ export async function POST(
     return NextResponse.json({ error: 'Failed to load adjustment data' }, { status: 500 });
   }
 
-  // Canonical formula — same as generate and auto-payout, plus prior-payout deduction
+  // M468: inspect all historical payout currencies before allowing approval.
+  // This cannot use the status-filtered prior-payout balance query below:
+  // rejected, held or other historical rows still require currency reconciliation.
+  const { data: historicalCurrencies, error: historyError } = await serviceClient
+    .from('business_payouts')
+    .select('currency')
+    .eq('business_id', payout.business_id)
+    .neq('id', id);
+  if (historyError || (historicalCurrencies || []).some(row => !row.currency)) {
+    return NextResponse.json({ error: 'Cannot approve: historical payout currency requires reconciliation' }, { status: 409 });
+  }
+
+  // Unknown-currency adjustments are not deductions in any known currency.
+  if ((balanceAdjustments || []).some(row => !row.currency)) {
+    return NextResponse.json({ error: 'Cannot approve: adjustment currency requires reconciliation' }, { status: 409 });
+  }
+
+  // M466: Canonical formula scoped to payout currency
   const { netAvailable: availableBalance } = computePlatformHeldTotals(
-    balancePayments || [],
+    balancePayments,
+    payout.currency,
     balanceAdjustments || [],
     priorPayouts || [],
   );

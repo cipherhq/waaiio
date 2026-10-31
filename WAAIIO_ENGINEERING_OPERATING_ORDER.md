@@ -125,36 +125,25 @@ If Claude is stuck or evidence is insufficient after reasonable investigation:
 
 Do not repeatedly re-audit/rewrite the same material without new evidence.
 
+## Autonomous Execution, Self-Verification, and Handoff Gate
+
+**Owner directive (2026-10-28):** Once Phase A/architecture approval and implementation authorization have been granted, Claude owns completion of the *entire* approved acceptance contract. Do not pause to ask whether to finish already-authorized SQL, application code, integration, or tests merely because the work is large. This changes execution discipline, not product authority, release permissions, or the mandatory CTO review.
+
+1. **Start with the durable acceptance set.** Read the issue, approved decisions, latest CTO checkpoint, current main and lane worktree. Record each remaining acceptance ID, responsible runtime path, required executable proof, and status in the existing GitHub issue/PR. Mark previously cleared findings and only reopen when the recorded dependency scope or evidence has changed. Do not modify another lane or invent migration reservations.
+2. **Ask early when an answer is genuinely needed.** Escalate a missing Owner product/business rule, an unresolved architectural or migration-order conflict, unavailable required access, or a security/release authorization boundary. Ask one precise question with observed evidence, options and recommended safe path. Do not seek duplicate permission for the same already-approved task. Continue independent safe work when possible; do not implement the disputed part by assumption.
+3. **Finish and verify before handoff.** Trace the complete affected lifecycle (entry point, caller, database authority, downstream state, UI/bot response, and integration) with Graphify plus TypeScript-to-SQL RPC linkage and final-state SQL/RLS/grants where applicable. Exercise actual handlers, rendered UI/Playwright, disposable PostgreSQL, negative, concurrency, tenant, financial and neighboring regression paths as appropriate. Source-string checks, mocks and a successful build are not substitutes for executable acceptance evidence.
+4. **Inspect the exact evidence, not the badge.** For each required test file record its real runner/job/step, pass/fail/skip counts (**zero skipped targeted tests**), and what was truly exercised; disclose wider-suite intentional skips separately. Check all currently required protected-branch CI jobs on the final PR HEAD, not an older SHA, and read failing logs. Never state that a CI job proves tests it did not run.
+5. **Self-review the whole agreed scope.** Confirm every acceptance item, preserve accepted fixes, run Codex/independent review as required, distinguish AGREE/PUSHBACK, and post exact head/base, changed-file inventory, dependencies, test logs, CI jobs, review threads, and residual risks on GitHub. Do not hide incomplete functions, unrun tests, or pending CI behind a 'done' report.
+6. **Return only at a meaningful gate.** Handoff states are `READY FOR CTO REVIEW` (full authorized implementation and exact-head evidence complete), `PRODUCT DECISION NEEDED`, `BLOCKED — CTO HELP REQUESTED`, or a mandatory separate Owner authorization gate. If CI is pending, remain `AWAITING CI`, monitor while the session permits, and do not call the work complete. No claim of merge, migration application, deployment, staging acceptance, or production verification follows from PR/CI readiness alone.
+
 ## Failure Escalation Gate
 
-When Claude encounters a new CI, runtime, PostgreSQL, migration, authorization, concurrency, provider, or executable-test failure during an implementation/correction round, Claude must **stop auto-correcting after identifying the failure** unless the failure is a trivial deterministic typo already covered by an explicitly approved correction plan.
+The goal is to avoid speculative correction loops **without returning every routine engineering failure to the Owner**.
 
-### Required behavior
-
-1. Capture the exact failing SHA, workflow/run/job/step or local command, and the smallest useful error/log excerpt.
-2. Classify the failure: product logic, migration/SQL, CI/test harness, fixture/environment, flaky/unrelated, or unknown.
-3. State the affected acceptance ID/invariant and dependency scope.
-4. Post `FAILED -- CTO HELP REQUESTED` to the active PR with evidence and a concise diagnosis. Do not silently broaden scope.
-5. Stop and wait for ChatGPT/CTO direction before changing product architecture, migrations, security/authorization semantics, test expectations, CI harness behavior, or neighboring dependencies.
-6. ChatGPT performs dependency-aware review of the failure and returns a bounded correction plan or explicitly authorizes Claude to continue diagnosis.
-7. Claude then implements only the approved correction, runs targeted executable evidence first, then the broader required suite/CI, and stops again at the normal CTO review gate.
-
-### Anti-loop rule
-
-Do not push/fail/fix repeatedly by discovering one CI/schema/fixture error at a time. A second materially different failure in the same correction area automatically triggers this escalation gate even if the first correction was locally obvious.
-
-### Evidence/safety rule
-
-Never weaken or replace an acceptance test merely to make CI pass without CTO agreement. If the harness cannot prove the intended invariant (for example RLS under a superuser connection), escalate and fix/provide a faithful proof path rather than lowering the test.
-
-### Exceptions
-
-Claude may continue without escalation only when:
-
-- the failure is an explicitly expected negative-path assertion inside a passing test; or
-- the exact failure mode and correction were already authorized in the current CTO plan (for example, a known formatting/lint fix explicitly included in the agreed correction scope).
-
-This gate complements the dependency-aware delta-review/checkpoint model; it does not reduce the existing evidence, merge, deployment, or owner-authorization requirements.
+- For a deterministic failure within the **already approved scope**, Claude may inspect logs, identify a root cause, make the smallest technically justified correction, and rerun the affected executable test **without requesting renewed permission**. Capture the failing command/SHA, diagnosis and each substantive correction attempt in the existing GitHub record. Do not broaden the scope.
+- After **two unsuccessful substantive correction attempts for the same root cause**, or when the agent cannot obtain faithful executable evidence, stop and post `BLOCKED — CTO HELP REQUESTED` with the exact failing SHA/run/job/step, minimal log excerpt, affected invariant, investigated callers/schema, attempts, and a recommended bounded next step. A materially new failure in the same correction area also warrants root-cause review rather than blind fix/push cycles.
+- **Stop immediately** (without consuming two attempts) for an unknown product decision; a change to accepted architecture, money, security/authorization semantics, test expectations or CI safeguards; unreserved/conflicting migration; unapproved environment/provider operation; missing privilege or a 401/403; destructive action; or an unsafe concurrency/data-loss risk. Request the existing CTO/Owner gate. Never route around permissions, disable tests or change an expected outcome to obtain green CI.
+- Expected negative-path assertions are not failures. A previously CTO-authorized correction may be executed as authorized. The standard Phase A, two-reviewer high-risk, exact-SHA CTO review, protected main, and separate Owner merge/migration/deployment/live-provider approval gates remain in force.
 
 ## Dependency-Aware Delta Review and CTO Checkpoints
 
