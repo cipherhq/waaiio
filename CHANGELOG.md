@@ -288,6 +288,12 @@
 - **Could break**: Any hypothetical browser-side RPC call to `calculate_volume_discount` or `check_conversation_limit` (none exist in codebase). Dashboard RPCs still accessible to authenticated users.
 - **Requires**: Migration must be applied to staging/production after merge.
 
+### #732 — Bot lifecycle and migration-readiness coverage (2026-10-30)
+
+- **`lib/bot/flows/__tests__/bot-507-lifecycle-certification.test.ts`, `lib/__tests__/bot-507-m470-m471-migration-readiness.test.ts`**: Add executable lifecycle and migration-readiness regression coverage without changing production behavior. Current-main integration preserves the accepted test scope.
+- **`scripts/disposable-pg-m470-m471-test.sh`**: Retain the disposable PostgreSQL verification helper. Its local execution history is separate from canonical cloud test evidence.
+- **Affects / could break**: Test coverage and fixture assumptions for existing bot flows and M470/M471 readiness. Future table-routing changes require updating their affected expectations. This entry does not certify live provider delivery or a hosted migration.
+
 ### #682 Launch: Disable Flutterwave merchant setup (2026-10-24)
 
 - **`lib/payments/gateway-resolver.ts`**: Added `SETUP_AVAILABLE_GATEWAYS = ['paystack', 'stripe']`. Shared constant gates new merchant gateway setup. Existing `VALID_GATEWAYS` unchanged (Flutterwave payment processing preserved).
