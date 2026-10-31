@@ -223,12 +223,11 @@ describe('Privacy (R9 §7)', () => {
 });
 
 describe('Dashboard safety', () => {
-  it('main page uses is_active filter on assigned channel', () => {
-    const linkBlock = dashboardPageSource.slice(
-      dashboardPageSource.indexOf('loadWhatsAppLink'),
-      dashboardPageSource.indexOf('loadWhatsAppLink') + 500,
-    );
-    expect(linkBlock).toContain(".eq('is_active', true).maybeSingle()");
+  it('main page uses permanent Waaiio link (no direct channel/credential read)', () => {
+    // Dashboard replaced channel query waterfall with buildMerchantLink (server-side resolver handles readiness)
+    expect(dashboardPageSource).toContain('buildMerchantLink');
+    expect(dashboardPageSource).not.toContain('loadWhatsAppLink');
+    expect(dashboardPageSource).not.toContain('queryChannelsPublic');
   });
 
   it('connect page stores candidate_id from OTP request (R9 §4)', () => {

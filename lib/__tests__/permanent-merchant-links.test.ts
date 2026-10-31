@@ -191,10 +191,20 @@ describe('GET /m/[businessId]', () => {
     expect(res.status).toBe(503);
   });
 
-  it('503 channel inactive', async () => {
+  it('503 channel inactive — no Location, no-store', async () => {
     mockResults = { businesses: { data: mkBusiness(CH_DED), error: null }, whatsapp_channels: { data: { ...dedCh(), is_active: false }, error: null } };
     const res = await baseGET(req(`/m/${BIZ_ID}`), ctx({ businessId: BIZ_ID }));
     expect(res.status).toBe(503);
+    expect(res.headers.get('location')).toBeNull();
+    assertNoStore(res);
+  });
+
+  it('503 channel disconnected (connection_status !== active) — no Location, no-store', async () => {
+    mockResults = { businesses: { data: mkBusiness(CH_DED), error: null }, whatsapp_channels: { data: { ...dedCh(), connection_status: 'disconnected' }, error: null } };
+    const res = await baseGET(req(`/m/${BIZ_ID}`), ctx({ businessId: BIZ_ID }));
+    expect(res.status).toBe(503);
+    expect(res.headers.get('location')).toBeNull();
+    assertNoStore(res);
   });
 
   it('503 shared country mismatch', async () => {
@@ -247,29 +257,18 @@ describe('GET /m/[businessId]', () => {
     expect(res.status).toBe(500); assertNoStore(res);
   });
 
-  it('channel select projection is credential-free', async () => {
+  it('channel select is exact minimal projection', async () => {
     mockResults = { businesses: { data: mkBusiness(CH_DED), error: null }, whatsapp_channels: { data: dedCh(), error: null } };
     await baseGET(req(`/m/${BIZ_ID}`), ctx({ businessId: BIZ_ID }));
     const chSelect = selectCalls.find(s => s.startsWith('whatsapp_channels:'));
-    expect(chSelect).toBeDefined();
-    expect(chSelect).not.toContain('access_token');
-    expect(chSelect).not.toContain('api_key');
-    expect(chSelect).not.toContain('waba_id');
-    // Must include the fields needed for readiness checks
-    expect(chSelect).toContain('channel_type');
-    expect(chSelect).toContain('is_active');
-    expect(chSelect).toContain('connection_status');
-    expect(chSelect).toContain('phone_number');
+    expect(chSelect).toBe('whatsapp_channels:id, channel_type, is_active, connection_status, country_code, business_id, phone_number');
   });
 
-  it('business select projection is credential-free', async () => {
+  it('business select is exact minimal projection', async () => {
     mockResults = { businesses: { data: mkBusiness(CH_DED), error: null }, whatsapp_channels: { data: dedCh(), error: null } };
     await baseGET(req(`/m/${BIZ_ID}`), ctx({ businessId: BIZ_ID }));
     const bizSelect = selectCalls.find(s => s.startsWith('businesses:'));
-    expect(bizSelect).toBeDefined();
-    expect(bizSelect).not.toContain('access_token');
-    expect(bizSelect).not.toContain('stripe_');
-    expect(bizSelect).not.toContain('paystack_');
+    expect(bizSelect).toBe('businesses:id, country_code, status, messaging_suspended, bot_code, assigned_channel_id, whatsapp_channel_id');
   });
 });
 
