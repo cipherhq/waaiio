@@ -1,3 +1,38 @@
+### Surgical dashboard repairs — bank transfer display units (2026-10-31)
+
+- `admin/src/pages/PendingTransfers.tsx`: Convert stored minor units to major units in the pending summary and list/detail formatter, matching the merchant view.
+- `admin/src/__tests__/pending-transfers-display.test.tsx`: Render NGN and fractional USD amounts across summary/list/detail without financial writes.
+- **Affects**: Admin transfer amount presentation only. **Could break**: Currency display; two rendered checks pass with zero skipped, and independent diff review agrees. Raw CSV export and confirmation/ledger paths are unchanged and not certified by this repair. Not deployed.
+
+### Surgical dashboard repairs — calendar date display (2026-10-31)
+
+- `admin/src/lib/formatters.ts`: Add a dedicated SQL DATE formatter that preserves the stored calendar day across viewer timezones and rejects invalid/date-time input. Existing timestamp formatters are unchanged.
+- `admin/src/pages/Events.tsx`, `admin/src/pages/ClassSessions.tsx`: Use it only for five calendar-date displays; no editing or scheduling changes.
+- `admin/src/__tests__/calendar-date.test.ts`: Seven checks pass in both UTC and America/New_York, zero skipped.
+- **Affects**: Admin event/class calendar dates. **Could break**: Date presentation only. Not deployed; final integration validation pending.
+
+### Surgical dashboard repairs — bot history read contract (2026-10-31)
+
+- `admin/src/pages/ChatHistory.tsx`: Query existing session_data, derive the flow label using the established active-capability/category fallback, and report bot-load failures without claiming zero sessions.
+- `admin/src/__tests__/chat-history-bot-read.test.tsx`: Four rendered checks cover flow precedence/fallback, genuine emptiness and failed reads.
+- **Affects**: Admin Bot Sessions history only; live-chat/message loading and session mutations are unchanged.
+- **Could break**: Flow-label rendering and bot-list error display. Focused tests pass4/4 with zero skipped; broader validation pending. Not deployed.
+
+### Surgical dashboard repairs — analytics query contracts (2026-10-31)
+
+- `app/dashboard/analytics/dropoffs/page.tsx`: Read stored step IDs and show query/network failures without false zero-session summaries. Preserve business scoping, date range and row limit.
+- `admin/src/pages/AIMarketplace.tsx`: Replace unsupported input-hash projection/display with the existing Record ID, preserving raw-message privacy.
+- `lib/__tests__/flow-dropoffs-page.test.tsx`, `admin/src/__tests__/ai-review-record-id.test.tsx`: Cover populated/empty/error flow results, tenant query scope and review-row rendering without hash fields.
+- **Affects**: Merchant Flow Analytics and admin Intent Review read paths. No schema or write changes.
+- **Could break**: Step/record identifier presentation. Focused merchant tests pass4/4; combined admin repair tests pass6/6, zero skipped. Broader checks pending; not deployed.
+
+### Surgical dashboard repairs — Messaging Credits render crash (2026-10-31)
+
+- `admin/src/pages/MessagingCredits.tsx`: Correct all six SummaryCard call sites to pass label, component icons and supported color props. Preserves queries, pagination, authorization and credit calculations.
+- `admin/src/__tests__/messaging-credits-render.test.tsx`: Render the real summary cards across Balances and Purchases to catch the observed React invalid-element crash.
+- **Affects**: Admin Messaging Credits page rendering only. Shared SummaryCard is unchanged.
+- **Could break**: Summary labels/icon presentation in these two tabs; targeted rendering and pagination regressions pass (5 tests, zero skipped), and the admin production build passes locally. Not deployed.
+
 ## 2026-10-31 — Party questions and reminder review (source only)
 
 - Adds bounded, versioned Party questions, organizer answer readback and atomic web/bot RSVP saves; required answers apply only to Accepted. Preserves answer history and seating/capacity authority. Affects Party detail, RSVP routes and bot entry/flow; M489 must precede app rollout.
