@@ -1,5 +1,18 @@
 -- Source only. Purpose-separated, at-most-once dispatch records; unknown is never retried automatically.
 BEGIN;
+-- Actual inbound transport evidence only; this never grants business messaging consent.
+CREATE TABLE public.whatsapp_inbound_receipts (
+ channel_id uuid NOT NULL REFERENCES public.whatsapp_channels(id) ON DELETE CASCADE,
+ message_id text NOT NULL CHECK(length(message_id) BETWEEN 1 AND 512),
+ sender_phone text NOT NULL CHECK(sender_phone ~ '^[1-9][0-9]{6,14}$'),
+ provider_timestamp timestamptz NOT NULL,
+ PRIMARY KEY(channel_id,message_id)
+);
+CREATE INDEX whatsapp_inbound_receipts_window_idx ON public.whatsapp_inbound_receipts(channel_id,sender_phone,provider_timestamp DESC);
+ALTER TABLE public.whatsapp_inbound_receipts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.whatsapp_inbound_receipts FROM PUBLIC,anon,authenticated,service_role;
+GRANT SELECT,INSERT ON public.whatsapp_inbound_receipts TO service_role;
+
 CREATE TABLE public.party_reminder_runs (
  id uuid PRIMARY KEY,
  party_id uuid NOT NULL REFERENCES public.parties(id) ON DELETE CASCADE,
@@ -46,7 +59,12 @@ REVOKE ALL ON FUNCTION private.guard_party_reminders_490() FROM PUBLIC,anon,auth
 CREATE TRIGGER guard_party_reminder_runs_490 BEFORE INSERT OR UPDATE ON public.party_reminder_runs FOR EACH ROW EXECUTE FUNCTION private.guard_party_reminders_490();
 CREATE TRIGGER guard_party_reminder_attempts_490 BEFORE INSERT OR UPDATE ON public.party_reminder_attempts FOR EACH ROW EXECUTE FUNCTION private.guard_party_reminders_490();
 DO $$ BEGIN
- IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.party_reminder_runs'::regclass)
+ IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.whatsapp_inbound_receipts'::regclass)
+ OR has_table_privilege('anon','public.whatsapp_inbound_receipts','SELECT')
+ OR has_table_privilege('authenticated','public.whatsapp_inbound_receipts','INSERT')
+ OR has_table_privilege('service_role','public.whatsapp_inbound_receipts','UPDATE')
+ OR NOT has_table_privilege('service_role','public.whatsapp_inbound_receipts','INSERT')
+ OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.party_reminder_runs'::regclass)
  OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.party_reminder_attempts'::regclass)
  OR has_table_privilege('authenticated','public.party_reminder_runs','SELECT')
  OR NOT has_table_privilege('service_role','public.party_reminder_attempts','INSERT') THEN RAISE EXCEPTION 'M490 permission check failed'; END IF;

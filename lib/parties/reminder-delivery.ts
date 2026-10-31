@@ -29,7 +29,7 @@ export async function deliverReminder(db:SupabaseClient,preview:ReminderPreview,
  for(const recipient of preview.recipients.filter(r=>r.eligible)) {
   // Re-read current tenant, status, content, consent, channel, and seating before each recipient.
   let fresh:Awaited<ReturnType<typeof loadReminderPreview>>;
-  try {fresh=await loadReminderPreview(db,preview.partyId,preview.purpose,actorId || undefined);}
+  try {fresh=await loadReminderPreview(db,preview.partyId,preview.purpose,actorId || undefined,recipient.id);}
   catch {results.push({inviteId:recipient.id,channel:'whatsapp_text',state:'unavailable',reason:'Revalidation unavailable'});continue;}
   const current=fresh.preview.recipients.find(r=>r.id===recipient.id);
   if(!current || fingerprint(current)!==fingerprint(recipient) || fresh.preview.scheduledDate!==preview.scheduledDate || fingerprint(fresh.preview.transport ?? null)!==fingerprint(preview.transport ?? null)) {

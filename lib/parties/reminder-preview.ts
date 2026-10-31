@@ -45,10 +45,12 @@ async function smsPermission(db:SupabaseClient,businessId:string,phone:string) {
  const consent=await db.from('customer_consents').select('status,expires_at').eq('business_id',businessId).in('phone',variants).eq('channel','sms').eq('purpose','utility').order('created_at',{ascending:false}).order('id',{ascending:false}).limit(1).maybeSingle();
  return !consent.error && consent.data?.status==='granted' && (!consent.data.expires_at || Date.parse(consent.data.expires_at)>Date.now());
 }
-async function hasWindow(db:SupabaseClient,businessId:string,phone:string) {
+async function hasWindow(db:SupabaseClient,channelId:string|undefined,phone:string) {
+ if (!channelId) return false;
  const digits=phone.replace(/\D/g,'');
- // Only an actual inbound message is evidence; bot session updates and outbound messages are not.
- const {data,error}=await db.from('chat_messages').select('created_at').eq('business_id',businessId).in('customer_phone',[digits,'+'+digits]).eq('direction','inbound').gte('created_at',new Date(Date.now()-24*60*60_000).toISOString()).order('created_at',{ascending:false}).limit(1).maybeSingle();
+ const now=Date.now();
+ // Service-window evidence belongs to the actual sender/transport, never a session update.
+ const {data,error}=await db.from('whatsapp_inbound_receipts').select('provider_timestamp').eq('channel_id',channelId).eq('sender_phone',digits).gte('provider_timestamp',new Date(now-24*60*60_000).toISOString()).lte('provider_timestamp',new Date(now).toISOString()).order('provider_timestamp',{ascending:false}).limit(1).maybeSingle();
  return !error && !!data;
 }
 async function approvedTemplate(resolved:ResolvedChannel|null) {
@@ -71,13 +73,17 @@ async function approvedTemplate(resolved:ResolvedChannel|null) {
  } catch { /* Unknown approval is unavailable, never inferred from source declarations. */ }
  return null;
 }
-export async function loadReminderPreview(db:SupabaseClient,partyId:string,purpose:ReminderPurpose,actorId?:string):Promise<{preview:ReminderPreview;resolved:ResolvedChannel|null}> {
+export async function loadReminderPreview(db:SupabaseClient,partyId:string,purpose:ReminderPurpose,actorId?:string,inviteId?:string):Promise<{preview:ReminderPreview;resolved:ResolvedChannel|null}> {
  const {data:party,error}=await db.from('parties').select('id,business_id,name,date,time,venue,followup_message,followup_days_before,businesses!inner(owner_id,name,country_code)').eq('id',partyId).single();
  if(error || !party) throw new Error('Party unavailable.');
  const business=(Array.isArray(party.businesses)?party.businesses[0]:party.businesses) as unknown as {owner_id:string;name:string;country_code:CountryCode};
  if(actorId && actorId!==business.owner_id) throw new Error('Party unavailable.');
- const invites=await db.from('event_invites').select('id,guest_name,guest_phone,status,invite_token,reminder_sent,table_id,seat_number').eq('party_id',partyId).eq('business_id',party.business_id).order('id');
- const tables=await db.from('party_tables').select('id,name').eq('party_id',partyId).eq('business_id',party.business_id);
+ let inviteQuery=db.from('event_invites').select('id,guest_name,guest_phone,status,invite_token,reminder_sent,table_id,seat_number').eq('party_id',partyId).eq('business_id',party.business_id).order('id');
+ if(inviteId) inviteQuery=inviteQuery.eq('id',inviteId);
+ const invites=await inviteQuery;
+ if(invites.error) throw new Error('Reminder recipients unavailable.');
+ const tableId=invites.data?.[0]?.table_id;
+ const tables=inviteId ? (tableId ? await db.from('party_tables').select('id,name').eq('party_id',partyId).eq('business_id',party.business_id).eq('id',tableId) : {data:[],error:null}) : await db.from('party_tables').select('id,name').eq('party_id',partyId).eq('business_id',party.business_id);
  if(invites.error || tables.error) throw new Error('Reminder recipients unavailable.');
  let resolved:ResolvedChannel|null=null;
  try { resolved=await new ChannelResolver(db).resolveByBusinessId(party.business_id); } catch { /* Explicit unavailable variants. */ }
@@ -95,7 +101,7 @@ export async function loadReminderPreview(db:SupabaseClient,partyId:string,purpo
   const greeting=invite.guest_name?`Hi ${invite.guest_name}! `:'';
   const lead=purpose==='chase'?(invite.status==='maybe'?`You said *maybe* to *${party.name}*. Have you decided?`:`You haven't responded to the invite for *${party.name}* yet.`):party.followup_message;
   const text=['⏰ *Reminder*',`${greeting}${lead}`,purpose==='followup'?`📅 ${party.name}`:'',`📅 ${dateLabel}${purpose==='followup'?timeLabel:''}`,party.venue?`📍 ${party.venue}`:'',seating,...(purpose==='chase'?['RSVP here 👇',link,'Reply: *yes*, *no*, or *maybe*']:[])].filter(Boolean).join('\n');
-  const [utility,marketing,window]=await Promise.all([hasRecipientPermission(db,party.business_id,recipient.phone,'utility'),purpose==='chase'?hasRecipientPermission(db,party.business_id,recipient.phone,'marketing'):false,hasWindow(db,party.business_id,recipient.phone)]);
+  const [utility,marketing,window]=await Promise.all([hasRecipientPermission(db,party.business_id,recipient.phone,'utility'),purpose==='chase'?hasRecipientPermission(db,party.business_id,recipient.phone,'marketing'):false,hasWindow(db,resolved?.channel.id,recipient.phone)]);
   const textAllowed=!!resolved && utility && window;
   recipient.variants.push({channel:'whatsapp_text',available:textAllowed,reason:textAllowed?'Within the customer service window':!utility?'Utility consent unavailable':!window?'No verified open customer service window':'WhatsApp unavailable',text,category:'service'});
   if(purpose==='chase') {

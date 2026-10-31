@@ -16,7 +16,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
-| 490 | `party_reminder_delivery` | SOURCE ONLY — NOT APPLIED | #762 / #785 | Party reminder occurrence/channel dispatch records; disposable PG only. |
+| 490 | `party_reminder_delivery` | SOURCE ONLY — NOT APPLIED | #762 / #785 | Party reminder dispatch records and service-only inbound transport receipts; requires whatsapp_channels; disposable PG only. |
 | 489 | `party_rsvp_questions` | SOURCE ONLY — NOT APPLIED | #762 / #785 | Versioned Party questions and atomic RSVP completion; requires M457/M486. |
 | 486 | `party_seating_groups_pins_atomic_plans` | RESERVED / PR ONLY — NOT APPLIED | #762 | Ten-path seating slice: group/table scope, manual pins, weighted atomic plans and replay. Real M457/M486 disposable PG acceptance in party-seating-762.pg.test.ts; no hosted migration authorized. |
 | 452 | `cancellation_intent_charge_gate` | PROPOSED / NOT APPLIED (Issue #664 hold) | #605 | Adds durable cancel intent and hardened Paystack/Flutterwave claim/dispatch/finalizer; owner approval and staging rollout required. |
