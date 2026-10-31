@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { safeFailureMessage } from '@/lib/whatsapp/connection-errors';
 
 /**
  * GET /api/whatsapp/connection-status?business_id=...
@@ -51,15 +52,6 @@ export async function GET(request: NextRequest) {
   function maskPhone(phone: string | null): string | null {
     if (!phone) return null;
     return phone.replace(/(\+?\d{1,3})\d+(\d{4})/, '$1****$2');
-  }
-
-  // User-safe failure message (R9 §7: no raw provider errors)
-  function safeFailureMessage(reason: string | null): string | null {
-    if (!reason) return null;
-    if (reason.includes('registration')) return 'Phone registration failed. Please try again.';
-    if (reason.includes('subscription') || reason.includes('webhook')) return 'Webhook setup failed. Please try again.';
-    if (reason.includes('Promotion')) return 'Channel activation failed. Please try again.';
-    return 'Connection failed. Please try again.';
   }
 
   return NextResponse.json({

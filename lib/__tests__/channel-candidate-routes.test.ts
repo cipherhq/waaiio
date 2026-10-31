@@ -240,6 +240,26 @@ describe('OTP add-number handler', () => {
     expect(routeSource).not.toMatch(/migrate_phone_number:\s*true/);
   });
 
+  it('explains Meta 2388103 without requesting OTP or changing the active channel', async () => {
+    mockFetch.mockResolvedValue({ ok: false, json: async () => ({ error: {
+      code: 100, error_subcode: 2388103, message: 'Invalid parameter',
+      error_user_msg: 'Untrusted provider detail',
+    } }) });
+    const { POST } = await import('@/app/api/whatsapp/add-number/route');
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+12025579406', display_name: 'Test' }));
+    expect(res.status).toBe(400);
+    const result = await res.json();
+    expect(result.error).toContain('already connected to another WhatsApp account');
+    expect(result.error).toContain('shared number');
+    expect(result.error).not.toContain('Untrusted');
+    expect(candidateUpdates).toContainEqual(expect.objectContaining({ status: 'failed', failure_reason: 'meta_phone_already_registered' }));
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(rpcCalls.map(c => c.fn)).toEqual(['check_phone_conflict']);
+    const { safeFailureMessage } = await import('@/lib/whatsapp/connection-errors');
+    expect(safeFailureMessage('meta_phone_already_registered')).toBe(result.error);
+    expect(safeFailureMessage('Meta add number failed: Invalid parameter')).toBe('Connection failed. Please try again.');
+  });
+
   it('request: provider failure marks candidate failed', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (String(url).includes('/phone_numbers')) return { ok: false, json: async () => ({ error: { message: 'fail' } }) };

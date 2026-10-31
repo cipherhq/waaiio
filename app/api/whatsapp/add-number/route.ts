@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { encryptToken, decryptToken } from '@/lib/encryption';
 import { randomInt } from 'crypto';
 import { logger } from '@/lib/logger';
+import { PHONE_ALREADY_REGISTERED_REASON, PHONE_ALREADY_REGISTERED_MESSAGE } from '@/lib/whatsapp/connection-errors';
 
 const API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -158,13 +159,14 @@ export async function POST(request: NextRequest) {
 
       if (!addRes.ok) {
         logger.error('[ADD-NUMBER] Meta add number failed:', addData);
+        const alreadyRegistered = addData.error?.code === 100 && addData.error?.error_subcode === 2388103;
         await service.from('whatsapp_channel_candidates').update({
           status: 'failed',
-          failure_reason: `Meta add number failed: ${addData.error?.message || addRes.status}`,
+          failure_reason: alreadyRegistered ? PHONE_ALREADY_REGISTERED_REASON : `Meta add number failed: ${addData.error?.message || addRes.status}`,
           provider_state: { phone_added: false },
           updated_at: new Date().toISOString(),
         }).eq('id', candidate.id);
-        return NextResponse.json({ error: addData.error?.message || 'Failed to add phone number' }, { status: 400 });
+        return NextResponse.json({ error: alreadyRegistered ? PHONE_ALREADY_REGISTERED_MESSAGE : (addData.error?.message || 'Failed to add phone number') }, { status: 400 });
       }
 
       const phoneNumberId = addData.id;

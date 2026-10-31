@@ -309,7 +309,8 @@ export default function ConnectWhatsAppPage() {
         {candidateAttempt && candidateAttempt.status === 'failed' && (
           <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-3 flex items-center justify-between">
             <p className="text-xs text-red-700 dark:text-red-400">
-              {candidateAttempt.failure_message || 'Previous connection attempt failed.'}
+              <strong className="block">Previous connection attempt</strong>
+              {candidateAttempt.failure_message || 'The previous attempt failed. You can try again.'}
             </p>
             <button onClick={() => { setCandidateAttempt(null); setStep('choose'); }} className="text-xs font-medium text-red-600 hover:underline ml-3 shrink-0">Try again</button>
           </div>
@@ -437,7 +438,8 @@ export default function ConnectWhatsAppPage() {
       {step === 'choose' && candidateAttempt?.status === 'failed' && (
         <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-3">
           <p className="text-xs text-red-700 dark:text-red-400">
-            {candidateAttempt.failure_message || 'Previous connection attempt failed. You can try again below.'}
+            <strong className="block">Previous connection attempt</strong>
+            {candidateAttempt.failure_message || 'The previous attempt failed. You can try again below.'}
           </p>
         </div>
       )}

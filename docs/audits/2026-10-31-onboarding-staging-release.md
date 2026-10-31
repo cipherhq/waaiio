@@ -58,3 +58,11 @@ Final supplemental CI: https://github.com/cipherhq/waaiio/actions/runs/412094604
 ## Limits
 
 Production is unchanged. New-account email setup and dedicated-number OTP/register journeys still require user/provider end-to-end acceptance. The deployment is intended to enable that staging test; it is not a claim that every number is eligible or that Meta will accept a specific number.
+
+## Follow-up: number already registered (14:23 UTC)
+
+The latest staging deployment returned Meta code 100, subcode 2388103 on two user-initiated add-number attempts. Meta identified an existing WhatsApp account association and refused migration through the fresh-number flow. This is distinct from the earlier WABA account-type rejection (2388339). No successful fresh-number/OTP onboarding is certified by these errors.
+
+Independent evidence verification reproduced the runtime trace and confirmed diagnostic loss: the API returned only “Invalid parameter,” while the page showed an unlabeled historical failure. The bounded correction maps 2388103 to fixed safe guidance, persists a stable reason for subsequent status reads, and labels both historical banners “Previous connection attempt.” Existing stored generic failures cannot be retroactively classified. Provider requests, migration flags, authorization, candidate fencing, and channel assignment remain unchanged. No new database migration, number removal, migration, OTP send, or production mutation is part of this correction.
+
+Preflight: the add-number route is called by the connect page for request/verify/resend; connection-status is called by that page on mount. The shared diagnostic helper has only these two route callers. Risk is limited to response/presentation text and a failed candidate’s existing reason field. Acceptance: exact provider rejection yields actionable text, is persisted, sends no OTP, invokes no promotion, and projects the same safe text on reload.
