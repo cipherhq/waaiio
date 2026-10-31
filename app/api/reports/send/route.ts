@@ -1,3 +1,4 @@
+import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { authenticateRequest } from '@/lib/api-auth';
@@ -45,6 +46,11 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
+        if (!await hasRecipientPermission(supabase, businessId!, report.customer_phone, 'utility')) {
+          results.push({ id: reportId, status: 'consent_required' });
+          continue;
+        }
+
         // Generate unique access token for secure viewing
         const accessToken = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
@@ -81,7 +87,8 @@ export async function POST(request: NextRequest) {
           : report.customer_phone;
 
         // Send secure link via WhatsApp (not the raw PDF URL)
-        await resolved.sender.sendText({
+        const delivered = await resolved.sender.sendText({
+          messageCategory: 'utility',
           to: phone,
           text: [
             `📄 *${report.title}*`,
@@ -93,6 +100,8 @@ export async function POST(request: NextRequest) {
             `You'll need the last 4 digits of your phone number to open it.`,
           ].join('\n'),
         });
+
+        if (delivered?.success === false) throw new Error('Message was not accepted');
 
         // Update report status
         await supabase

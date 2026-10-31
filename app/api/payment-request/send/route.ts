@@ -1,3 +1,4 @@
+import { hasRecipientPermission, RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -65,13 +66,26 @@ export async function POST(request: NextRequest) {
     if (!biz) return NextResponse.json({ error: 'Business data unavailable' }, { status: 500 });
 
     const cc = (biz.country_code || 'NG') as CountryCode;
-    const phone = customerPhone ? customerPhone.replace(/\D/g, '') : '';
+    let phone = customerPhone ? customerPhone.replace(/\D/g, '') : '';
     if (effectiveSendVia === 'whatsapp' && (!phone || phone.length < 7)) {
       return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
     }
     const email = customerEmail?.trim() || '';
     if (effectiveSendVia === 'email' && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
+    }
+
+    if (effectiveSendVia === 'whatsapp' && !await hasRecipientPermission(serviceClient, businessId, phone, 'utility')) {
+      return NextResponse.json({ error: RECIPIENT_POLICY }, { status: 403 });
+    }
+
+    if (effectiveSendVia === 'email') {
+      const { data: recipient, error: recipientError } = await serviceClient.from('customer_profiles')
+        .select('phone').eq('business_id', businessId).eq('email', email).limit(1).maybeSingle();
+      if (recipientError || !recipient?.phone || !await hasRecipientPermission(serviceClient, businessId, recipient.phone, 'utility', 'email')) {
+        return NextResponse.json({ error: RECIPIENT_POLICY }, { status: 403 });
+      }
+      phone = recipient.phone.replace(/\D/g, '');
     }
 
     // Create booking record for payment tracking
@@ -122,31 +136,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create payment link. Check that your payment gateway is configured correctly.' }, { status: 500 });
     }
 
-    // Get direct gateway URL
-    const { data: payment } = await serviceClient
-      .from('payments')
-      .select('gateway, gateway_reference, metadata')
-      .eq('gateway_reference', result.reference)
-      .eq('status', 'pending')
-      .maybeSingle();
-
-    let paymentUrl = result.url;
-    if (payment?.gateway === 'paystack' && payment.gateway_reference) {
-      paymentUrl = `https://checkout.paystack.com/${payment.gateway_reference}`;
-    } else if (payment?.gateway === 'stripe') {
-      const meta = (payment.metadata || {}) as Record<string, unknown>;
-      const sessionId = meta.stripe_session_id as string;
-      if (sessionId) {
-        try {
-          const key = process.env.STRIPE_SECRET_KEY || '';
-          const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${sessionId}`, {
-            headers: { Authorization: `Bearer ${key}` },
-          });
-          const session = await res.json();
-          if (session.url) paymentUrl = session.url;
-        } catch { /* use shortened URL */ }
-      }
-    }
+    // The initializer owns provider checkout URLs and app payment redirects.
+    const paymentUrl = result.url;
 
     // Build email HTML for payment request
     const paymentEmailTemplate = businessNotificationEmail({
@@ -183,8 +174,9 @@ export async function POST(request: NextRequest) {
           paymentUrl,
         ].filter(Boolean).join('\n');
 
-        // Use provided email or look up from customer profile
-        const fallbackEmail = email || await findCustomerEmail(serviceClient, phone, businessId);
+        // Use only the business customer profile email, with separate email consent.
+        const fallbackEmail = await findCustomerEmail(serviceClient, phone, businessId);
+        const emailAllowed = fallbackEmail && await hasRecipientPermission(serviceClient, businessId, phone, 'utility', 'email');
 
         const deliveryResult = await sendOrEmail({
           supabase: serviceClient,
@@ -194,7 +186,7 @@ export async function POST(request: NextRequest) {
           businessName: biz.name,
           alwaysEmail: true,
           messageCategory: 'utility',
-          email: fallbackEmail ? {
+          email: emailAllowed ? {
             address: fallbackEmail,
             subject: emailSubject,
             html: paymentEmailTemplate.html,

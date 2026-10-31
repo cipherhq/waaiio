@@ -27,7 +27,11 @@ export default function SettingsPage() {
     return 'business' as const;
   })();
   const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'integrations' | 'notifications' | 'account'>(initialTab);
-  const [openSections, setOpenSections] = useState<string[]>([initialTab === 'account' ? 'plan' : 'profile']);
+  const [openSections, setOpenSections] = useState<string[]>(() => {
+    const section = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('section') : null;
+    if (initialTab === 'payments') return [section === 'recurring' ? 'recurring' : 'gateway'];
+    return [initialTab === 'account' ? 'plan' : initialTab === 'features' ? 'queue' : 'profile'];
+  });
   const toggleSection = (section: string) => {
     setOpenSections((prev) =>
       prev.includes(section) ? prev.filter((s) => s !== section) : [...prev, section]

@@ -1,11 +1,12 @@
 'use client';
+import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
-import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 interface ChatMessage {
   id: string;
@@ -872,15 +873,10 @@ export default function ChatPage() {
     }
     customerSearchTimeoutRef.current = setTimeout(async () => {
       try {
-        const supabase = createClient();
-        const sanitized = sanitizeFilterValue(query);
-        const { data } = await supabase
-          .from('customer_profiles')
-          .select('name, phone')
-          .eq('business_id', business.id)
-          .or(`name.ilike.%${sanitized}%,phone.ilike.%${sanitized}%`)
-          .limit(5);
-        if (data) setCustomerResults(data.map(d => ({ name: d.name || '', phone: d.phone || '' })));
+        const response = await fetch(`/api/merchant-recipients?businessId=${encodeURIComponent(business.id)}&q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        if (response.ok) setCustomerResults((data.customers || []).map((customer: { name: string | null; phone: string }) => ({ name: customer.name || '', phone: customer.phone })));
+        else setCustomerResults([]);
       } catch { /* silent */ }
     }, 300);
   }
@@ -941,6 +937,7 @@ export default function ChatPage() {
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Manage customer conversations
         </p>
+        <p className="mt-3 text-sm text-amber-700">{RECIPIENT_POLICY}</p>
         <PageHelp
           pageKey="chat"
           title="Live Chat"

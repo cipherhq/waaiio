@@ -1314,7 +1314,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
               )}
             </div>
           )}
-          {capabilities.includes('payment') || capabilities.includes('crowdfunding') && (
+          {(capabilities.includes('payment') || capabilities.includes('crowdfunding')) && (
             <div>
               <button onClick={() => toggleSection('recurring')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
                 <h3 className="text-sm font-bold text-gray-900">Recurring Payments</h3>

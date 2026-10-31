@@ -39,7 +39,15 @@ function buildSeqService(sequence: SeqResult[]) {
 
   return {
     _calls: calls,
-    from: vi.fn().mockImplementation(() => {
+    from: vi.fn().mockImplementation((table: string) => {
+      // Eligible recipient fixture; exercise the real permission helper before token writes.
+      if (table === 'messaging_opt_outs' || table === 'customer_consents') {
+        const permission: Record<string, any> = {};
+        for (const method of ['select', 'eq', 'in', 'or', 'is', 'order', 'limit']) permission[method] = vi.fn(() => permission);
+        permission.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ count: 0, error: null }).then(resolve);
+        permission.maybeSingle = vi.fn().mockResolvedValue({ data: { status: 'granted', expires_at: null }, error: null });
+        return permission;
+      }
       const myIdx = callIdx++;
       const result = sequence[myIdx] ?? { data: null, error: null };
 
