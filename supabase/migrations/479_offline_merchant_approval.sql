@@ -75,37 +75,60 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
 DECLARE
   v_transfer RECORD;
+  v_order RECORD;
+  v_order_id UUID;
   v_marker RECORD;
   v_now TIMESTAMPTZ := NOW();
   v_rows INTEGER;
 BEGIN
-  -- 1. Lock transfer to read linked entity
-  SELECT id, business_id, status, order_id, expires_at, proof_submitted_at
-  INTO v_transfer
-  FROM pending_transfers WHERE id = p_transfer_id FOR UPDATE;
-
+  -- Discover only; never take a transfer lock before its associated order.
+  SELECT order_id INTO v_order_id
+  FROM pending_transfers WHERE id = p_transfer_id;
   IF NOT FOUND THEN
     RETURN '{"submitted":false,"reason":"not_found"}'::jsonb;
   END IF;
-  IF v_transfer.business_id != p_business_id THEN
+
+  -- 1. Lock the discovered order first, matching confirmation and cleanup.
+  IF v_order_id IS NOT NULL THEN
+    SELECT id, business_id, status INTO v_order
+    FROM orders WHERE id = v_order_id FOR UPDATE;
+    IF NOT FOUND THEN
+      RETURN '{"submitted":false,"reason":"order_not_found"}'::jsonb;
+    END IF;
+  END IF;
+
+  -- 2. Lock and re-read the transfer; discovery was not authoritative.
+  SELECT id, business_id, status, order_id, expires_at, proof_submitted_at
+  INTO v_transfer
+  FROM pending_transfers WHERE id = p_transfer_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN '{"submitted":false,"reason":"not_found"}'::jsonb;
+  END IF;
+  IF v_transfer.order_id IS DISTINCT FROM v_order_id THEN
+    RETURN '{"submitted":false,"reason":"transfer_order_changed"}'::jsonb;
+  END IF;
+  IF v_transfer.business_id IS DISTINCT FROM p_business_id THEN
     RETURN '{"submitted":false,"reason":"business_mismatch"}'::jsonb;
   END IF;
   IF v_transfer.status != 'pending' THEN
     RETURN jsonb_build_object('submitted', false, 'reason', 'status_' || v_transfer.status);
   END IF;
 
-  -- 2. Deadline gate: proof must be submitted before original expiry (DB time)
+  -- Deadline and first-proof timestamp retain the existing DB-time semantics.
   IF v_transfer.expires_at <= v_now THEN
     RETURN '{"submitted":false,"reason":"transfer_expired"}'::jsonb;
   END IF;
 
-  -- 3. Lock order if order-linked (order → marker consistent lock order)
-  IF v_transfer.order_id IS NOT NULL THEN
-    PERFORM id FROM orders WHERE id = v_transfer.order_id FOR UPDATE;
-
-    -- Lock marker; reject if online payment already won
+  -- 3. Validate the locked order and then lock its stock marker.
+  IF v_order_id IS NOT NULL THEN
+    IF v_order.business_id IS DISTINCT FROM p_business_id THEN
+      RETURN '{"submitted":false,"reason":"business_mismatch"}'::jsonb;
+    END IF;
+    IF v_order.status != 'pending' THEN
+      RETURN jsonb_build_object('submitted', false, 'reason', 'order_' || v_order.status);
+    END IF;
     SELECT reservation_class INTO v_marker
-    FROM order_stock_applications WHERE order_id = v_transfer.order_id FOR UPDATE;
+    FROM order_stock_applications WHERE order_id = v_order_id FOR UPDATE;
     IF FOUND AND v_marker.reservation_class = 'committed' THEN
       RETURN '{"submitted":false,"reason":"online_payment_won"}'::jsonb;
     END IF;

@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
+import { Client } from 'pg';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 
@@ -383,6 +384,156 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
       DELETE FROM orders WHERE id = '${orderId}';
     `);
   });
+  // Two live transaction sessions establish the actual wait graph. A owns the
+  // order before B enters proof; A must still finish confirmation/cleanup.
+  // Poll pg_blocking_pids instead of assuming a sleep establishes contention.
+  async function proofRace(operation: 'confirm' | 'cleanup') {
+    const orderId = 'c4790000-0000-0000-0000-000000000080';
+    const transferId = 'c4790000-0000-0000-0000-000000000081';
+    const productId = 'c4790000-0000-0000-0000-000000000082';
+    const clean = () => runSQL(`
+      DELETE FROM order_stock_applications WHERE order_id = '${orderId}';
+      DELETE FROM order_items WHERE order_id = '${orderId}';
+      DELETE FROM pending_transfers WHERE id = '${transferId}';
+      DELETE FROM payments WHERE order_id = '${orderId}';
+      DELETE FROM orders WHERE id = '${orderId}';
+      DELETE FROM products WHERE id = '${productId}';
+    `);
+    clean();
+    runSQL(`
+      INSERT INTO products (id, business_id, name, price, stock_quantity, track_inventory, is_active)
+      VALUES ('${productId}', '${BIZ}', 'M479 race stock', 2500, 8, true, true);
+      INSERT INTO orders (id, business_id, user_id, reference_code, status, total_amount, channel)
+      VALUES ('${orderId}', '${BIZ}', '${OWNER}', 'M479RACE', 'pending', 5000, 'whatsapp');
+      INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+      VALUES ('${orderId}', '${productId}', 2, 2500);
+      -- Eight remaining units represents the two already reserved by the marker.
+      INSERT INTO order_stock_applications (order_id, reservation_class, expires_at, item_count)
+      VALUES ('${orderId}', 'bank_transfer', NOW() + INTERVAL '1 hour', 1);
+      INSERT INTO pending_transfers
+        (id, business_id, order_id, customer_phone, customer_name, expected_amount,
+         currency, reference_code, status, expires_at)
+      SELECT '${transferId}', '${BIZ}', '${orderId}', '+2340000479', 'Synthetic race',
+             500000, 'NGN', 'M479RACE', 'pending', expires_at
+      FROM order_stock_applications WHERE order_id = '${orderId}';
+    `);
+
+    const a = new Client({ connectionString: dbUrl, application_name: 'm479-race-a' });
+    const b = new Client({ connectionString: dbUrl, application_name: 'm479-race-b' });
+    let proof: Promise<{ result: any; error: any }> | undefined;
+    try {
+      await a.connect();
+      await b.connect();
+      await a.query("SET statement_timeout = '10s'; SET deadlock_timeout = '100ms'");
+      await b.query("SET statement_timeout = '10s'; SET deadlock_timeout = '100ms'");
+      const aPid = (await a.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      const bPid = (await b.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      await a.query('BEGIN');
+      await a.query('SELECT id FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
+      await b.query('BEGIN');
+      proof = b.query(`
+        SELECT submit_transfer_proof($1, $2, 'reference', NULL,
+          'synthetic-proof', NULL, false) AS result
+      `, [transferId, BIZ]).then(result => ({ result, error: null }), error => ({ result: null, error }));
+
+      let blocked = false;
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const waiting = await a.query(`
+          SELECT $1::int = ANY(pg_blocking_pids($2::int)) AS blocked
+        `, [aPid, bPid]);
+        if (waiting.rows[0].blocked) { blocked = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      expect(blocked).toBe(true);
+
+      let winner: any;
+      if (operation === 'confirm') {
+        winner = (await a.query(`
+          SELECT confirm_order_transfer_atomic($1,$2,$3,$4,false) AS result
+        `, [transferId, orderId, BIZ, OWNER])).rows[0].result;
+        expect(winner.confirmed).toBe(true);
+        expect(winner.approved).toBe(false);
+      } else {
+        // Advance both deadlines together while A owns the order, without a
+        // wall-clock race. B must re-read the expired transfer after A commits.
+        await a.query(`
+          UPDATE pending_transfers SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1
+        `, [transferId]);
+        await a.query(`
+          UPDATE order_stock_applications SET expires_at =
+            (SELECT expires_at FROM pending_transfers WHERE id = $1)
+          WHERE order_id = $2
+        `, [transferId, orderId]);
+        winner = (await a.query('SELECT cancel_stale_order_atomic($1) AS result', [orderId])).rows[0].result;
+        expect(winner.cancelled).toBe(true);
+        expect(winner.stock_restored).toBe(true);
+        expect(winner.items_restored).toBe(1);
+      }
+      await a.query('COMMIT');
+      const submitted = await proof;
+      expect(submitted.error).toBeNull();
+      expect(submitted.result.rows[0].result.submitted).toBe(false);
+      expect(submitted.result.rows[0].result.reason).toBe(operation === 'confirm' ? 'status_confirmed' : 'status_expired');
+      await b.query('COMMIT');
+
+      const snapshot = () => JSON.parse(runSQL(`
+        SELECT jsonb_build_object(
+          'order_status', o.status,
+          'transfer_status', t.status,
+          'proof_timestamp', t.proof_submitted_at,
+          'proof_text', t.proof_text,
+          'stock', p.stock_quantity,
+          'marker_count', (SELECT count(*) FROM order_stock_applications WHERE order_id = o.id),
+          'marker_class', (SELECT reservation_class FROM order_stock_applications WHERE order_id = o.id),
+          'success_count', (SELECT count(*) FROM payments WHERE order_id = o.id AND status = 'success'),
+          'direct_amount', (SELECT amount FROM payments WHERE order_id = o.id AND status = 'success'),
+          'marker_payment_matches', (SELECT s.payment_id = pay.id
+             FROM order_stock_applications s JOIN payments pay ON pay.order_id = s.order_id
+             WHERE s.order_id = o.id AND pay.status = 'success')
+        )
+        FROM orders o JOIN pending_transfers t ON t.order_id = o.id
+        JOIN products p ON p.id = '${productId}'
+        WHERE o.id = '${orderId}' AND t.id = '${transferId}';
+      `));
+      const state = snapshot();
+      expect(state.proof_timestamp).toBeNull();
+      expect(state.proof_text).toBeNull();
+      expect(state.order_status).toBe(operation === 'confirm' ? 'paid_pending_approval' : 'cancelled');
+      expect(state.transfer_status).toBe(operation === 'confirm' ? 'confirmed' : 'expired');
+      expect(state.stock).toBe(operation === 'confirm' ? 8 : 10);
+      expect(state.marker_count).toBe(operation === 'confirm' ? 1 : 0);
+      expect(state.success_count).toBe(operation === 'confirm' ? 1 : 0);
+      if (operation === 'confirm') {
+        expect(state.marker_class).toBe('committed');
+        expect(state.marker_payment_matches).toBe(true);
+        expect(state.direct_amount).toBe(5000);
+        const repeat = JSON.parse(runSQL(`
+          SELECT confirm_order_transfer_atomic('${transferId}','${orderId}','${BIZ}','${OWNER}',false)
+        `));
+        expect(repeat.confirmed).toBe(false);
+      } else {
+        const repeat = JSON.parse(runSQL(`SELECT cancel_stale_order_atomic('${orderId}')`));
+        expect(repeat.cancelled).toBe(false);
+      }
+      expect(snapshot()).toEqual(state);
+    } finally {
+      // Rollback releases A even when the unfixed implementation deadlocks.
+      await a.query('ROLLBACK').catch(() => {});
+      if (proof) await proof;
+      await b.query('ROLLBACK').catch(() => {});
+      await Promise.all([a.end(), b.end()]);
+      clean();
+    }
+  }
+
+  it('T19: proof waiting on order cannot deadlock confirmation or duplicate payment/stock', async () => {
+    await proofRace('confirm');
+  }, 30000);
+
+  it('T20: proof waiting on order cannot deadlock cleanup or restore stock twice', async () => {
+    await proofRace('cleanup');
+  }, 30000);
+
 });
 
 } // end dbUrl guard
