@@ -255,6 +255,11 @@
 - **Could break**: Direct API or partner API updates that decrease `total_tickets` on saved tiers will now fail with `capacity_decrease_blocked` trigger exception. This matches the dashboard's existing prohibition on saved-tier capacity decreases.
 - **Requires**: Migration must be applied to staging/production after merge.
 
+### #743 — Bounded implementation correction workflow (2026-10-30)
+
+- **`CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, `docs/ENGINEERING_WORKFLOW.md`**: Record the Owner-approved workflow for correcting bounded implementation issues while preserving independent review, security and permission stops, and separate merge/deployment authority.
+- **Affects / could break**: Engineering task execution and review handoffs. Documentation only; this policy does not relax protected checks, authorize production operations or turn incomplete evidence into acceptance.
+
 ### #650 Image conversion resource hardening (2026-10-25)
 
 - **`app/api/images/convert/route.ts`**: Hardened with bounded resource controls. (1) Replaced unbounded `response.arrayBuffer()` with incremental streaming download enforcing a 10 MB byte ceiling. (2) Added 15 s upstream timeout via AbortController — returns 504 whether timeout fires during connect or body download (TimeoutError class distinguishes from stream errors). (3) Sharp `limitInputPixels: 36 MP`, 8 000 px per-axis dimension check. (4) `resize(4096, 4096)` output cap with mozjpeg. (5) JPEG output bounded to 4.5 MB (WhatsApp 5 MB limit with margin) — tries reduced quality 65 once, rejects if still over. (6) Diagnostic logging uses only safe event categories and numeric status — no URLs, paths, or sensitive tokens. (7) Non-OK upstream responses explicitly discarded via `body.cancel()`. Content-Length advisory-only; actual bytes enforced.
