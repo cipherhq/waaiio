@@ -192,7 +192,7 @@ describe('R33-2: pending-transfers PATCH — exact channel A', () => {
     const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
     const req = new Request('http://x', {
       method: 'PATCH',
-      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1' }),
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
       headers: { 'Content-Type': 'application/json' },
     });
     const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-c1' }) });
@@ -238,7 +238,7 @@ describe('R33-2: pending-transfers PATCH — exact channel A', () => {
     expect(mockResolveByBusinessId).not.toHaveBeenCalled();
   });
 
-  it('non-order confirm: uses resolveByBusinessId (control)', async () => {
+  it('non-order confirm: uses atomic RPC and resolveByBusinessId for notification', async () => {
     vi.resetModules();
     const transfer = {
       id: 'xf-no', order_id: null, booking_id: 'book-1', invoice_id: null,
@@ -248,36 +248,252 @@ describe('R33-2: pending-transfers PATCH — exact channel A', () => {
     };
 
     mockFromHandler = (table: string) => {
-      if (table === 'pending_transfers') {
-        const c = chain(transfer);
-        c.update = vi.fn(() => ({
-          eq: vi.fn(() => ({ eq: vi.fn(() => ({ select: vi.fn().mockResolvedValue({ data: [{ id: 'xf-no' }], error: null }) })) })),
-        }));
-        return c;
-      }
+      if (table === 'pending_transfers') return chain(transfer);
       if (table === 'businesses') {
         const c = chain({ name: 'Biz', country_code: 'NG' });
         c.single = vi.fn().mockResolvedValue({ data: { name: 'Biz', country_code: 'NG' }, error: null });
         return c;
       }
-      if (table === 'bookings') return { update: vi.fn(() => ({ eq: vi.fn().mockResolvedValue({ error: null }) })) };
-      if (table === 'platform_fees') return { insert: vi.fn(() => ({ then: (r: any) => r({ error: null }) })) };
-      if (table === 'payments') return { insert: vi.fn().mockResolvedValue({ error: null }) };
       return chain();
     };
+    // M475: non-order confirm now uses confirm_nonorder_transfer_atomic RPC
+    mockRpc.mockResolvedValue({
+      data: { confirmed: true, payment_id: 'pay-no1', entity_type: 'booking', approved: true, amount_major: 1000 },
+      error: null,
+    });
     mockResolveByBusinessId.mockResolvedValue({ sender: { sendText: mockSendText } });
 
     const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
     const req = new Request('http://x', {
       method: 'PATCH',
-      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1' }),
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
       headers: { 'Content-Type': 'application/json' },
     });
     const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-no' }) });
     const body = await res.json();
 
     expect(body.status).toBe('confirmed');
+    expect(body.approved).toBe(true);
     expect(mockResolveByBusinessId).toHaveBeenCalled();
     expect(mockResolveByChannelIdForBusiness).not.toHaveBeenCalled();
+  });
+});
+
+// ═══ 3. Retry guard regression tests ═══
+
+describe('R33-3: confirmed-transfer retry order-status guard', () => {
+  const confirmedTransfer = {
+    id: 'xf-retry', order_id: 'ord-retry', booking_id: null, invoice_id: null,
+    business_id: 'biz-1', customer_phone: '+234900', status: 'confirmed',
+    metadata: {}, reference_code: 'WA-RT', expected_amount: 500000, currency: 'NGN',
+  };
+  const directPayment = {
+    id: 'pay-retry', metadata: { _direct_transfer: true, pending_transfer_id: 'xf-retry' },
+    payment_authority_version: 1,
+  };
+
+  function setupRetryMocks(
+    orderStatus: string | null,
+    opts: { orderError?: boolean; orderMissing?: boolean } = {},
+  ) {
+    vi.resetModules();
+    mockFromHandler = (table: string) => {
+      if (table === 'pending_transfers') return chain(confirmedTransfer);
+      if (table === 'businesses') {
+        const c = chain({ name: 'Biz', country_code: 'NG', subscription_tier: 'growth' });
+        c.single = vi.fn().mockResolvedValue({ data: { name: 'Biz', country_code: 'NG', subscription_tier: 'growth' }, error: null });
+        return c;
+      }
+      if (table === 'payments') {
+        const c = chain();
+        c.not = vi.fn(() => c);
+        c.then = (resolve: any) => resolve({ data: [directPayment], error: null });
+        return c;
+      }
+      if (table === 'orders') {
+        const c = chain();
+        c.single = vi.fn().mockResolvedValue(
+          opts.orderError
+            ? { data: null, error: { message: 'db error', code: '42P01' } }
+            : opts.orderMissing
+              // Supabase .single() returns PGRST116 error when no rows match
+              ? { data: null, error: { message: 'JSON object requested, multiple (or no) rows returned', code: 'PGRST116' } }
+              : { data: orderStatus ? { status: orderStatus, business_id: 'biz-1' } : null, error: null }
+        );
+        return c;
+      }
+      return chain();
+    };
+  }
+
+  it('paid_pending_approval → deferred, no finalization', async () => {
+    setupRetryMocks('paid_pending_approval');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    const body = await res.json();
+    expect(body.finalization_status).toBe('deferred');
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('cancelled order → 409, no finalization', async () => {
+    setupRetryMocks('cancelled');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(409);
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('order lookup error → 500, no finalization', async () => {
+    setupRetryMocks(null, { orderError: true });
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(500);
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('confirmed order → allows retry finalization', async () => {
+    setupRetryMocks('confirmed');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn().mockResolvedValue({ status: 'completed' }),
+    }));
+    vi.doMock('@/lib/payments/process-success', () => ({
+      processSuccessfulPayment: vi.fn().mockResolvedValue({ criticalSuccess: true }),
+    }));
+    vi.doMock('@/lib/payments/send-confirmation', () => ({
+      sendProactiveConfirmation: vi.fn().mockResolvedValue({ status: 'completed' }),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    const body = await res.json();
+    expect(body.finalization_status).toBe('completed');
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).toHaveBeenCalled();
+  });
+
+  it('missing order (null data, no error) → 500, no finalization', async () => {
+    setupRetryMocks(null, { orderMissing: true });
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(500);
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('processing order → allows retry (post-approval state)', async () => {
+    setupRetryMocks('processing');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn().mockResolvedValue({ status: 'completed' }),
+    }));
+    vi.doMock('@/lib/payments/process-success', () => ({
+      processSuccessfulPayment: vi.fn().mockResolvedValue({ criticalSuccess: true }),
+    }));
+    vi.doMock('@/lib/payments/send-confirmation', () => ({
+      sendProactiveConfirmation: vi.fn().mockResolvedValue({ status: 'completed' }),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    const body = await res.json();
+    expect(body.finalization_status).toBe('completed');
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).toHaveBeenCalled();
+  });
+
+  it('pending order → 409, no finalization (pre-payment state)', async () => {
+    setupRetryMocks('pending');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(409);
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('cross-business order (missing due to business_id filter) → 500, no finalization', async () => {
+    // .single() with business_id mismatch returns PGRST116 (no rows) — same as missing
+    setupRetryMocks(null, { orderMissing: true });
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toContain('Order not found');
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
+  });
+
+  it('unknown/future status → 409, fail closed (allowlist enforced)', async () => {
+    setupRetryMocks('some_unknown_future_status');
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn(),
+    }));
+    const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
+    const req = new Request('http://x', {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'confirm', business_id: 'biz-1', approve_fulfillment: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: 'xf-retry' }) });
+    expect(res.status).toBe(409);
+    const authority = await import('@/lib/payments/authority');
+    expect(authority.resumeSuccessfulPaymentFinalization).not.toHaveBeenCalled();
   });
 });

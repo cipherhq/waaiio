@@ -94,7 +94,17 @@ vi.mock('@/lib/logger', () => ({
 }));
 vi.mock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
 vi.mock('@/lib/email/templates', () => ({ payoutRejectedEmail: vi.fn(() => ({ subject: '', html: '' })) }));
-vi.mock('@/lib/constants', () => ({ formatCurrency: vi.fn(() => '$100'), CountryCode: {} }));
+vi.mock('@/lib/constants', () => ({
+  formatCurrency: vi.fn(() => '$100'),
+  getCurrencyCode: vi.fn((cc: string) => {
+    const map: Record<string, string> = { NG: 'NGN', US: 'USD', GB: 'GBP', CA: 'CAD', GH: 'GHS' };
+    if (map[cc]) return map[cc];
+    throw new Error(`unknown country: ${cc}`);
+  }),
+  registerCountryResolver: vi.fn(),
+  CountryCode: {},
+}));
+vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn() }));
 
 // Import route handlers
 const payoutsListModule = await import('@/app/api/admin/payouts/route');

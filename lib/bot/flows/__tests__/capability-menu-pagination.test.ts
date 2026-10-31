@@ -145,6 +145,7 @@ const ELEVEN_CAPS = [
 const ELEVEN_CAPS_BACKING: Record<string, number> = {
   products: 5,          // ordering
   services: 3,          // giving, scheduling, class_booking
+  seating_resources: 1, // table_reservation in twelve-capability scenarios
   appointments: 2,      // appointment
   events: 1,            // ticketing
   campaigns: 1,         // crowdfunding
@@ -234,7 +235,7 @@ describe('capability menu pagination (#736)', () => {
     const NINE_CAPS = ELEVEN_CAPS.slice(0, 9);
     // 10 caps: ELEVEN_CAPS minus 1
     const TEN_CAPS = ELEVEN_CAPS.slice(0, 10);
-    // 12 caps: ELEVEN_CAPS + table_reservation (needs services backing, already provided)
+    // 12 caps: ELEVEN_CAPS + table_reservation (seating_resources backing provided)
     const TWELVE_CAPS = [...ELEVEN_CAPS, 'table_reservation'];
 
     const boundaries: Array<{ label: string; caps: string[]; expectPages: number }> = [
@@ -666,7 +667,7 @@ describe('re-entry and reachability', () => {
     // Use 12 capabilities to ensure both 11th and 12th are on page 2
     const TWELVE_CAPS = [
       ...ELEVEN_CAPS,
-      'table_reservation', // 12th cap — needs services backing data (already in ELEVEN_CAPS_BACKING)
+      'table_reservation', // 12th cap — seating_resources backing is in ELEVEN_CAPS_BACKING
     ];
 
     const allCapPostbacks = new Set<string>();

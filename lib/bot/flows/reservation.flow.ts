@@ -2,7 +2,7 @@ import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } fro
 import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -963,6 +963,7 @@ export const reservationFlow: FlowDefinition = {
                 countryCode: cc,
                 transferExpiryHours: ps.transfer_expiry_hours,
               });
+              if (!transferRef) return [{ type: 'text' as const, text: await ctx.t('Unable to create bank transfer. Please try again or use the online payment link.') }];
               d.bank_transfer_reference = transferRef;
               d.bank_transfer_offered = true;
               d.bank_transfer_amount = payableAmount;
@@ -1061,6 +1062,7 @@ export const reservationFlow: FlowDefinition = {
               countryCode: cc,
               transferExpiryHours: ps.transfer_expiry_hours,
             });
+            if (!transferRef) return [{ type: 'text' as const, text: await ctx.t('Unable to create bank transfer. Please try again or use the online payment link.') }];
             d.bank_transfer_reference = transferRef;
             d.bank_transfer_offered = true;
             d.bank_transfer_amount = payableAmount;
@@ -1425,16 +1427,19 @@ export const reservationFlow: FlowDefinition = {
           const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
           const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
 
-          await ctx.supabase
-            .from('pending_transfers')
-            .update({
-              proof_type: 'screenshot',
-              proof_image_url: ctx.mediaUrl,
-              verified_by_ocr: ocrMatches,
-              ocr_result: ocrMatches ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, confidence: ocr.confidence } : null,
-            })
-            .eq('reference_code', transferRef)
-            .eq('status', 'pending');
+          // #736 Finding 2: Route through atomic submit_transfer_proof RPC
+          const proofResult = await submitTransferProof(ctx.supabase, {
+            referenceCode: transferRef, businessId: ctx.business!.id,
+            proofType: 'screenshot', proofImageUrl: ctx.mediaUrl, proofText: null,
+            ocrResult: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference,
+              sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date,
+              confidence: ocr.confidence, fields_match: ocrMatches } : null,
+            verifiedByOcr: ocrMatches,
+          });
+          if (!proofResult.submitted) {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This transfer has expired. Please start a new reservation.') });
+            return { valid: true, data: { _action: 'transfer_expired' } };
+          }
 
           if (ctx.business) {
             const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
@@ -1462,7 +1467,7 @@ export const reservationFlow: FlowDefinition = {
             }).catch(err => logger.withContext({ op: 'reservation.transfer-notification', ...safeLogErrorContext(err) }).error('[RESERVATION] Transfer notification error'));
           }
 
-          const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
+          const ocrHint = ocrMatches ? `\n\n🤖 _Receipt details match your payment reference._` : '';
           await ctx.sender.sendText({
             to: ctx.from,
             text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm your reservation shortly.\n\nRef: *${d.bank_transfer_reference}*${ocrHint}\n\nSend *Hi* to continue.`),
@@ -1485,13 +1490,17 @@ export const reservationFlow: FlowDefinition = {
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
+        // #736 Finding 2: Route typed proof through atomic RPC
         if (d._awaiting_transfer_proof && text && !isIvePaidInput(text)) {
-          await ctx.supabase
-            .from('pending_transfers')
-            .update({ proof_type: 'text', proof_text: input.trim() })
-            .eq('reference_code', d.bank_transfer_reference as string)
-            .eq('status', 'pending');
-
+          const textProofResult = await submitTransferProof(ctx.supabase, {
+            referenceCode: d.bank_transfer_reference as string, businessId: ctx.business!.id,
+            proofType: 'text', proofImageUrl: null, proofText: input.trim(),
+            ocrResult: null, verifiedByOcr: false,
+          });
+          if (!textProofResult.submitted) {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This transfer has expired. Please start a new reservation.') });
+            return { valid: true, data: { _action: 'transfer_expired' } };
+          }
           await ctx.sender.sendText({
             to: ctx.from,
             text: await ctx.t(`✅ Transfer reference received. *${ctx.business?.name || 'The business'}* will review and confirm your reservation shortly.\n\nRef: *${d.bank_transfer_reference}*\n\nSend *Hi* to continue.`),

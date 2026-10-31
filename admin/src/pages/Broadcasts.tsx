@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -40,6 +40,10 @@ export default function Broadcasts() {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
 
+  const submissionLock = useRef(false);
+  const [submissionHeld, setSubmissionHeld] = useState(false);
+  const [result, setResult] = useState('');
+
   // History
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,132 +68,107 @@ export default function Broadcasts() {
 
   useEffect(() => { loadData(); }, []);
 
-  // Get recipient count based on audience
-  async function getRecipientCount(): Promise<number> {
-    if (audience === 'all_users') {
-      const { count } = await adminDb
-        .from('profiles')
-        .select('*', { count: 'exact', head: true });
-      return count ?? 0;
-    }
-
-    if (audience === 'all_businesses') {
-      const { count } = await adminDb
-        .from('businesses')
-        .select('*', { count: 'exact', head: true });
-      return count ?? 0;
-    }
-
-    // specific: count comma-separated entries
-    const entries = specificRecipients
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-    return entries.length;
-  }
-
   async function handleSend() {
-    if (!message || !canMutate) return;
-    if (channel === 'email' && !subject) {
-      alert('Subject is required for email broadcasts');
-      return;
-    }
-    if (audience === 'specific' && !specificRecipients.trim()) {
-      alert('Please enter at least one recipient');
-      return;
-    }
+    if (submissionLock.current || !message || !subject || !canMutate || channel !== 'email') return;
+    if (audience === 'specific' && !specificRecipients.trim()) return;
+    if (!confirm(`Send this email broadcast to ${audience === 'specific' ? 'specific recipients' : audience.replace(/_/g, ' ')}?`)) return;
 
-    if (!confirm(`Send this ${channel} broadcast to ${audience === 'specific' ? 'specific recipients' : audience.replace(/_/g, ' ')}?`)) {
-      return;
-    }
-
+    submissionLock.current = true;
     setSending(true);
+    setResult('');
+    let dispatched = false;
+    let accepted = false;
+    let recorded = false;
+    let recipientCount = 0;
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const senderId = session?.session?.user?.id;
-      if (!senderId) throw new Error('No active session');
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const senderId = sessionData?.session?.user?.id;
+      const accessToken = sessionData?.session?.access_token;
+      if (sessionError || !senderId || !accessToken) throw new Error('No active session');
 
-      const recipientCount = await getRecipientCount();
+      let recipientEmails: string[] = [];
+      if (audience === 'specific') {
+        recipientEmails = specificRecipients.split(',').map(s => s.trim()).filter(Boolean);
+      } else if (audience === 'all_users') {
+        const { data: profiles, error } = await adminDb.from('profiles').select('email').not('email', 'is', null);
+        if (error) throw error;
+        recipientEmails = (profiles || []).map(p => p.email).filter(Boolean);
+      } else if (audience === 'all_businesses') {
+        const { data: businesses, error } = await adminDb.from('businesses').select('owner_id');
+        if (error) throw error;
+        const ownerIds = [...new Set((businesses || []).map(b => b.owner_id).filter(Boolean))];
+        if (ownerIds.length > 0) {
+          const { data: profiles, error: profileError } = await adminDb.from('profiles').select('email').in('id', ownerIds).not('email', 'is', null);
+          if (profileError) throw profileError;
+          recipientEmails = (profiles || []).map(p => p.email).filter(Boolean);
+        }
+      }
+      if (!recipientEmails.length) {
+        setResult('No recipients found. Nothing was submitted.');
+        return;
+      }
 
+      recipientCount = recipientEmails.length;
+      dispatched = true;
+      setSubmissionHeld(true);
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiUrl}/api/email/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ to: recipientEmails, subject, html: message }),
+      });
+      if (!response.ok) {
+        setResult('The API did not acknowledge this submission. No history record was saved. Check its outcome before sending again; resubmission is blocked on this page.');
+        return;
+      }
+      const acknowledgement = await response.json();
+      if (acknowledgement?.success !== true) {
+        setResult('The API did not acknowledge this submission. No history record was saved. Check its outcome before sending again; resubmission is blocked on this page.');
+        return;
+      }
+      accepted = true;
       const { error } = await adminDb.from('admin_broadcasts').insert({
         sender_id: senderId,
         channel,
         audience,
-        subject: channel === 'email' ? subject : null,
+        subject,
         message,
         status: 'sent',
         recipient_count: recipientCount,
         sent_at: new Date().toISOString(),
       });
-
       if (error) throw error;
-
-      // Actually deliver the broadcast for email channel
-      if (channel === 'email') {
-        try {
-          const { data: sessionData } = await supabase.auth.getSession();
-          const accessToken = sessionData?.session?.access_token;
-          const apiUrl = import.meta.env.VITE_API_URL || '';
-
-          let recipientEmails: string[] = [];
-
-          if (audience === 'specific') {
-            recipientEmails = specificRecipients.split(',').map(s => s.trim()).filter(Boolean);
-          } else if (audience === 'all_users') {
-            const { data: profiles } = await adminDb.from('profiles').select('email').not('email', 'is', null);
-            recipientEmails = (profiles || []).map(p => p.email).filter(Boolean);
-          } else if (audience === 'all_businesses') {
-            const { data: businesses } = await adminDb.from('businesses').select('owner_id');
-            const ownerIds = [...new Set((businesses || []).map(b => b.owner_id).filter(Boolean))];
-            if (ownerIds.length > 0) {
-              const { data: profiles } = await adminDb.from('profiles').select('email').in('id', ownerIds).not('email', 'is', null);
-              recipientEmails = (profiles || []).map(p => p.email).filter(Boolean);
-            }
-          }
-
-          if (recipientEmails.length > 0 && accessToken) {
-            await fetch(`${apiUrl}/api/email/send`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${accessToken}`,
-              },
-              body: JSON.stringify({
-                to: recipientEmails,
-                subject,
-                html: message,
-              }),
-            });
-          }
-        } catch (emailError) {
-          console.error('Failed to deliver email broadcast:', emailError);
-          // The broadcast record was saved — don't block the UI for delivery failure
-        }
-      }
-
+      recorded = true;
+      setResult(`API acknowledged submission for ${recipientCount} recipient(s); history recorded. This is not confirmation of recipient delivery.`);
       await logAudit({
         action: 'send_broadcast',
         entity_type: 'admin_broadcast',
         entity_id: 'new',
-        details: {
-          channel,
-          audience,
-          subject: channel === 'email' ? subject : undefined,
-          recipient_count: recipientCount,
-        },
+        details: { channel, audience, subject, recipient_count: recipientCount },
       });
-
-      // Reset form
       setSubject('');
       setMessage('');
       setSpecificRecipients('');
       setAudience('all_users');
       setChannel('email');
       await loadData();
-    } catch (error) {
-      console.error('Send broadcast error:', error);
-      alert('Failed to send broadcast');
+    } catch {
+      if (accepted && !recorded) {
+        setResult(`API accepted submission for ${recipientCount} recipient(s), but history could not be saved. Recipient delivery is unconfirmed. Do not resend; resubmission is blocked on this page.`);
+      } else if (recorded) {
+        setResult('API acknowledged submission and history was recorded, but the page could not finish updating. Do not resend.');
+      } else if (dispatched) {
+        setResult('Submission outcome is unknown. No history record was saved. Check its outcome before sending again; resubmission is blocked on this page.');
+      } else {
+        setResult('Could not validate the session or resolve recipients. Nothing was submitted. Your draft is preserved.');
+      }
     } finally {
+      // An unacknowledged request may still have been accepted remotely. Never
+      // unlock that draft automatically, including after a history-write failure.
+      if (!dispatched || recorded) {
+        submissionLock.current = false;
+        setSubmissionHeld(false);
+      }
       setSending(false);
     }
   }
@@ -201,7 +180,7 @@ export default function Broadcasts() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Broadcasts</h1>
-      <p className="mt-1 text-sm text-gray-500">Send mass communications via Email, WhatsApp, or SMS</p>
+      <p className="mt-1 text-sm text-gray-500">Submit email broadcasts and review recorded history</p>
 
       {/* Compose Form */}
       <div className="mt-6 rounded-xl border border-gray-200 bg-white p-6">
@@ -310,10 +289,12 @@ export default function Broadcasts() {
             </div>
           )}
 
+          {result && <p role="status" className="text-sm text-gray-700">{result}</p>}
+
           {/* Send Button */}
           <button
             onClick={handleSend}
-            disabled={sending || !message || (channel === 'email' && !subject) || (audience === 'specific' && !specificRecipients.trim())}
+            disabled={!canMutate || submissionHeld || sending || !message || (channel === 'email' && !subject) || (audience === 'specific' && !specificRecipients.trim())}
             className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
           >
             {sending ? 'Sending...' : 'Send Broadcast'}
@@ -324,6 +305,7 @@ export default function Broadcasts() {
       {/* History */}
       <div className="mt-8">
         <h2 className="text-lg font-semibold text-gray-900">Broadcast History</h2>
+        <p className="mt-1 text-sm text-gray-500">Recorded status, including historical sent records, does not confirm recipient delivery.</p>
 
         {loading ? (
           <div className="flex min-h-[20vh] items-center justify-center">
@@ -333,7 +315,7 @@ export default function Broadcasts() {
           <>
             <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
               {pageItems.length === 0 ? (
-                <div className="py-16 text-center text-sm text-gray-500">No broadcasts sent yet</div>
+                <div className="py-16 text-center text-sm text-gray-500">No broadcasts recorded yet</div>
               ) : (
                 <table className="w-full text-sm">
                   <thead className="border-b border-gray-100 bg-gray-50">
@@ -342,8 +324,8 @@ export default function Broadcasts() {
                       <th className="px-4 py-3 text-left font-medium text-gray-500">Audience</th>
                       <th className="px-4 py-3 text-left font-medium text-gray-500">Subject</th>
                       <th className="px-4 py-3 text-left font-medium text-gray-500">Recipients</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Sent Date</th>
+                      <th className="px-4 py-3 text-left font-medium text-gray-500">Recorded Status</th>
+                      <th className="px-4 py-3 text-left font-medium text-gray-500">Recorded Date</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
@@ -365,7 +347,7 @@ export default function Broadcasts() {
                         <td className="px-4 py-3 text-gray-900">{b.subject || '—'}</td>
                         <td className="px-4 py-3 text-gray-600">{b.recipient_count}</td>
                         <td className="px-4 py-3">
-                          <StatusBadge status={b.status} />
+                          <StatusBadge status={b.status === 'sent' ? 'Recorded as sent' : b.status} />
                         </td>
                         <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                           {b.sent_at ? fmtDateTime(b.sent_at) : fmtDate(b.created_at)}

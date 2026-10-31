@@ -58,6 +58,29 @@ export async function POST(
     });
     if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
+    // Block table reservation reschedule until reschedule_booking_atomic supports
+    // seating_resource_id overlap checks (CTO R2 finding: unsafe integration path)
+    const { data: bookingCheck, error: lookupError } = await service
+      .from('bookings')
+      .select('flow_type')
+      .eq('id', id)
+      .eq('business_id', businessId)
+      .maybeSingle();
+    // Fail closed: DB error or missing row must not proceed to unguarded RPC
+    if (lookupError) {
+      logger.error('[RESCHEDULE] Booking lookup failed', { id, businessId, error: lookupError.message });
+      return NextResponse.json({ error: 'Failed to verify booking type' }, { status: 500 });
+    }
+    if (!bookingCheck) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+    if (bookingCheck.flow_type === 'table_reservation') {
+      return NextResponse.json(
+        { error: 'Table reservations cannot be rescheduled yet. Cancel and create a new reservation instead.' },
+        { status: 422 },
+      );
+    }
+
     // Atomic reschedule via RPC — validates ownership, capacity, buffer, and moves booking in one transaction
     const { data: result, error: rpcError } = await service.rpc('reschedule_booking_atomic', {
       p_booking_id: id,

@@ -1704,6 +1704,39 @@ jobs:
           echo "✅ M471 navigation cancellation tests complete — zero skips, zero failures."
           dropdb --maintenance-db=waaiio_test --if-exists waaiio_m471_test
 
+      - name: "M479 offline merchant approval (disposable PG)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m479_test
+          createdb --maintenance-db=waaiio_test waaiio_m479_test
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m479_test
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+          echo "Running M479 offline merchant approval tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/m479-offline-approval-db.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then echo "❌ M479 tests failed."; exit $TEST_EXIT; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M479 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M479 tests passed."
+            exit 1
+          fi
+          echo "✅ M479 offline merchant approval tests complete — zero skips, zero failures."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m479_test
+
       - name: "DB delta analysis (advisory)"
         env:
           PGHOST: localhost
@@ -4233,6 +4266,157 @@ jobs:
             exit 1
           fi
           echo "✅ M464 atomic subscription failure DB tests complete — zero skips, zero failures."
+
+      # M468: Exercise original M159 -> M466 -> M468 SQL on isolated PostgreSQL.
+      # Fail on skipped tests. Never reuse staging, production or the shared CI fixture.
+      - name: M468 payout currency uniqueness (disposable PG)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m468_test
+          createdb --maintenance-db=waaiio_test waaiio_m468_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m468_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m468_test
+          export REQUIRE_PG_TESTS=true
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/m468-payout-dedup.pg.test.ts 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$CODE" -ne 0 ]; then exit "$CODE"; fi
+          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* skipped'; then
+            echo "M468 required PostgreSQL test was skipped"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q 'passed'; then
+            echo "M468 produced no passing tests"
+            exit 1
+          fi
+          echo "M468 index tests passed — zero skips."
+
+
+      # M469: real executable settlement/refund SQL, isolated database, no skips.
+      - name: M469 settlement/refund currency (disposable PG)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m469_test
+          createdb --maintenance-db=waaiio_test waaiio_m469_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m469_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m469_test
+          export REQUIRE_PG_TESTS=true
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/m469-settlement-currency.pg.test.ts 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$CODE" -ne 0 ]; then exit "$CODE"; fi
+          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* skipped'; then
+            echo "M469 required PostgreSQL test skipped — failing CI"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q '16 passed'; then
+            echo "M469 expected sixteen passing tests"
+            exit 1
+          fi
+          echo "M469 settlement and refund PostgreSQL tests passed — zero skips."
+
+      # M712: Production-shaped migration sequence regression (M425→M439→M472).
+      - name: M712 production migration sequence (disposable PG)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m712_test
+          createdb --maintenance-db=waaiio_test waaiio_m712_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m712_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m712_test
+          export REQUIRE_PG_TESTS=true
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/m712-production-migration-sequence.pg.test.ts 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$CODE" -ne 0 ]; then exit "$CODE"; fi
+          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* skipped'; then
+            echo "M712 production sequence test skipped — failing CI"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q '16 passed'; then
+            echo "M712 expected sixteen passing tests"
+            exit 1
+          fi
+          echo "M712 production migration sequence tests passed — zero skips."
+
+      # ── M472: Table reservation book_table_atomic (#730) ──
+      # Disposable PG: migration apply, RPC behavior, concurrency, deposits,
+      # availability, security mode, role ACL, capacity, idempotency
+      - name: M476 table reservation behavioral + security DB tests
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m476_test
+          createdb --maintenance-db=waaiio_test waaiio_m476_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m476_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m476_test
+
+          echo "Running M476 table reservation behavioral + security DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/table-reservation-730-db.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+
+          # Fail on test runner error
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M476 table reservation DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+
+          # Fail on any skipped tests
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M472 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+
+          # Fail if no tests passed
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M476 table reservation DB tests passed. Something is wrong."
+            exit 1
+          fi
+
+          # Verify minimum expected test count (match "Tests" line, not "Test Files")
+          # Strip ANSI color codes before matching
+          CLEAN_OUTPUT=$(echo "$OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')
+          PASS_COUNT=$(echo "$CLEAN_OUTPUT" | grep -P '^\s*Tests\s' | grep -oP '(\d+) passed' | grep -oP '\d+')
+          if [ -z "$PASS_COUNT" ] || [ "$PASS_COUNT" -lt 29 ]; then
+            echo "❌ Expected at least 29 M476 DB tests, got ${PASS_COUNT:-0}."
+            exit 1
+          fi
+
+          echo "✅ M476 table reservation DB tests complete — $PASS_COUNT passed, zero skips, zero failures."
 
   migrations:
     name: Migration validation

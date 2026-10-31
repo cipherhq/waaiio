@@ -9,6 +9,8 @@ import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
+import { seatingRequest } from '@/lib/parties/table-assignment';
+import type { SeatingSnapshot, SeatingPreview, SeatingGroup } from '@/lib/parties/seating-planner';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 
 interface PartyItem {
@@ -46,6 +48,8 @@ interface InviteRow {
   tags: string[];
   table_id: string | null;
   seat_number: number | null;
+  seating_group_id: string | null;
+  seating_pinned: boolean;
   created_at: string;
 }
 
@@ -142,7 +146,7 @@ export default function PartiesPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('event_invites')
-      .select('id, guest_phone, guest_name, status, plus_ones, dietary_notes, invite_token, responded_at, reminder_sent, tags, table_id, seat_number, created_at')
+      .select('id, guest_phone, guest_name, status, plus_ones, dietary_notes, invite_token, responded_at, reminder_sent, tags, table_id, seat_number, seating_group_id, seating_pinned, created_at')
       .eq('party_id', partyId)
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
@@ -460,46 +464,19 @@ export default function PartiesPage() {
   }
 
   async function handleDeleteTable(tableId: string) {
-    if (!confirm('Delete this table? Guests will be unassigned.')) return;
+    if (!confirm('Delete this table? Assigned guests must be explicitly unassigned first.')) return;
     const supabase = createClient();
-    await supabase.from('party_tables').delete().eq('id', tableId);
+    const { error: deleteError } = await supabase.from('party_tables').delete().eq('id', tableId);
+    if (deleteError) { setStatusMessage(deleteError.message); return; }
     if (selectedParty) loadTables(selectedParty.id);
   }
 
   async function handleAssignGuest(inviteId: string, tableId: string | null) {
-    const supabase = createClient();
-    if (tableId) {
-      const { assignGuest: assign } = await import('@/lib/parties/table-assignment');
-      const result = await assign(supabase, inviteId, tableId);
-      if (!result.success) {
-        setStatusMessage(result.error || 'Assignment failed');
-        return;
-      }
-    } else {
-      const { unassignGuest } = await import('@/lib/parties/table-assignment');
-      await unassignGuest(supabase, inviteId);
-    }
-    if (selectedParty) {
-      loadInvites(selectedParty.id);
-      loadTables(selectedParty.id);
-    }
-  }
-
-  async function handleAutoAssign() {
     if (!selectedParty) return;
-    const supabase = createClient();
-    const { autoAssign } = await import('@/lib/parties/table-assignment');
-    const result = await autoAssign(supabase, selectedParty.id, business.id);
-    if (result.success) {
-      const msg = result.assigned
-        ? `Auto-assigned ${result.assigned} guest${result.assigned !== 1 ? 's' : ''}${result.skipped ? ` (${result.skipped} could not be placed)` : ''}`
-        : 'No guests could be placed — all tables may be full';
-      setStatusMessage(msg);
-      loadInvites(selectedParty.id);
-      loadTables(selectedParty.id);
-    } else {
-      setStatusMessage(result.error || 'Auto-assign failed — please try again');
-    }
+    try {
+      await seatingRequest(selectedParty.id, { op: 'manual', invite_id: inviteId, table_id: tableId });
+      await Promise.all([loadInvites(selectedParty.id), loadTables(selectedParty.id)]);
+    } catch (err) { setStatusMessage(err instanceof Error ? err.message : 'Assignment failed'); }
   }
 
   async function handleBulkAssignByTag(tag: string, tableId: string) {
@@ -1117,16 +1094,18 @@ export default function PartiesPage() {
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Tables &amp; Seating</h3>
             <div className="flex items-center gap-2">
-              {partyTables.length > 0 && invites.some(i => !i.table_id && ['accepted', 'maybe', 'pending'].includes(i.status)) && (
-                <button onClick={handleAutoAssign} className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10">
-                  Auto-Assign
-                </button>
-              )}
               <button onClick={() => { setShowTableForm(!showTableForm); setEditingTableId(null); setTableForm({ name: '', capacity: 10 }); }} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600">
                 + Add Table
               </button>
             </div>
           </div>
+
+          <PartySeatingEditor
+            key={selectedParty.id}
+            partyId={selectedParty.id}
+            revision={JSON.stringify(invites) + JSON.stringify(partyTables)}
+            onSaved={() => { loadInvites(selectedParty.id); loadTables(selectedParty.id); }}
+          />
 
           {showTableForm && (
             <div className="mt-3 flex items-end gap-3">
@@ -1463,5 +1442,128 @@ export default function PartiesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Kept page-local so the party slice does not claim shared dashboard components. */
+function PartySeatingEditor({ partyId, revision, onSaved }: {
+  partyId: string; revision: string; onSaved: () => void;
+}) {
+  const [snapshot, setSnapshot] = useState<SeatingSnapshot | null>(null);
+  const [preview, setPreview] = useState<SeatingPreview | null>(null);
+  const [partial, setPartial] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [groupName, setGroupName] = useState('');
+  const [allowed, setAllowed] = useState<string[]>([]);
+  const generation = useRef(0);
+  const invalidate = () => { setPreview(null); setPartial(false); };
+  useEffect(() => {
+    const current = ++generation.current;
+    setSnapshot(null); setPreview(null); setPartial(false); setMessage('');
+    seatingRequest<{ snapshot: SeatingSnapshot }>(partyId).then(result => {
+      if (generation.current === current) setSnapshot(result.snapshot);
+    }).catch(error => {
+      if (generation.current === current) setMessage(error.message);
+    });
+    return () => { generation.current++; };
+  }, [partyId, revision]);
+  async function run(payload: Record<string, unknown>) {
+    invalidate(); setBusy(true); setMessage('');
+    const current = generation.current;
+    try {
+      const result = await seatingRequest<{ snapshot: SeatingSnapshot }>(partyId, payload);
+      if (current !== generation.current) return;
+      setSnapshot(result.snapshot); onSaved();
+    } catch (error) {
+      if (current === generation.current) setMessage(error instanceof Error ? error.message : 'Unable to save seating');
+    } finally { setBusy(false); }
+  }
+  function editGroup(group?: SeatingGroup) {
+    invalidate(); setGroupId(group?.id || null);
+    setGroupName(group?.name || ''); setAllowed(group?.table_ids || []);
+  }
+  async function makePreview() {
+    invalidate(); setBusy(true); setMessage('');
+    const current = generation.current;
+    try {
+      const result = await seatingRequest<SeatingPreview>(partyId, { op: 'preview', seed: Date.now() >>> 0 });
+      if (current === generation.current) { setSnapshot(result.snapshot); setPreview(result); }
+    } catch (error) {
+      if (current === generation.current) setMessage(error instanceof Error ? error.message : 'Unable to preview seating');
+    } finally { setBusy(false); }
+  }
+  async function commit() {
+    if (!preview) return;
+    const reviewed = preview;
+    await run({ op: 'commit', seed: reviewed.seed, fingerprint: reviewed.snapshot.fingerprint,
+      planHash: reviewed.planHash, acknowledgePartial: partial });
+  }
+  const name = (id: string) => snapshot?.guests.find(g => g.id === id)?.guest_name || 'Unnamed guest';
+  const tableName = (id: string | null) => snapshot?.tables.find(t => t.id === id)?.name || 'Unassigned';
+  return (
+    <section aria-label="Seating plan" className="mt-4 space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
+      <p className="text-sm text-gray-600 dark:text-gray-300">Manual assignments are pinned. A guest and their plus-ones always stay together. Groups use only their selected tables; ungrouped guests use the remaining seats.</p>
+      {message && <p role="alert" className="text-sm text-red-600">{message}</p>}
+      {!snapshot && !message && <p role="status">Loading seating…</p>}
+      {snapshot && <>
+        <fieldset disabled={busy} className="space-y-2">
+          <legend className="text-sm font-semibold">Seating groups</legend>
+          <div className="flex flex-wrap gap-2">
+            {snapshot.groups.map(g => <span key={g.id}>
+              <button type="button" className="rounded border px-2 py-1 text-sm" onClick={() => editGroup(g)}>Edit {g.name}</button>
+              <button type="button" className="px-2 py-1 text-sm text-red-600" onClick={() => run({ op: 'delete_group', id: g.id })}>Delete {g.name}</button>
+            </span>)}
+            <button type="button" className="rounded border px-2 py-1 text-sm" onClick={() => editGroup()}>New group</button>
+          </div>
+          <label className="block text-sm">Group name
+            <input aria-label="Group name" value={groupName} maxLength={100}
+              className="ml-2 rounded border px-2 py-1 dark:bg-gray-800"
+              onChange={e => { invalidate(); setGroupName(e.target.value); }} />
+          </label>
+          <p className="text-xs">Select every table this group may use. With no tables selected, the group stays unassigned.</p>
+          <div className="flex flex-wrap gap-3">
+            {snapshot.tables.map(t => <label key={t.id} className="text-sm">
+              <input type="checkbox" checked={allowed.includes(t.id)}
+                onChange={e => { invalidate(); setAllowed(ids => e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id)); }} /> {t.name}
+            </label>)}
+          </div>
+          <button type="button" disabled={!groupName.trim()} className="rounded bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
+            onClick={() => run({ op: 'save_group', id: groupId, name: groupName, table_ids: allowed })}>Save group</button>
+          <div className="space-y-2">
+            {snapshot.guests.map(g => <div key={g.id} className="flex flex-wrap items-center gap-2 rounded border p-2 text-sm">
+              <span>{g.guest_name || 'Unnamed guest'} · {1 + g.plus_ones} seat{g.plus_ones ? 's' : ''} · {tableName(g.table_id)}{g.seating_pinned ? ' · Pinned' : ''}</span>
+              <select aria-label={'Seating group for ' + (g.guest_name || g.id)} value={g.seating_group_id || ''}
+                className="rounded border p-1 dark:bg-gray-800"
+                onChange={e => run({ op: 'membership', invite_id: g.id, group_id: e.target.value || null })}>
+                <option value="">Ungrouped</option>
+                {snapshot.groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </select>
+              {g.table_id && <button type="button" className="rounded border px-2 py-1"
+                onClick={() => run({ op: 'pin', invite_id: g.id, pinned: !g.seating_pinned })}>{g.seating_pinned ? 'Unpin' : 'Pin'} {g.guest_name || 'guest'}</button>}
+            </div>)}
+          </div>
+          <button type="button" className="rounded border border-brand px-3 py-2 text-sm text-brand"
+            onClick={makePreview}>Randomize and preview</button>
+        </fieldset>
+        {preview && <div className="space-y-2 rounded border border-brand p-3">
+          <h4 className="font-semibold">Review seating</h4>
+          {preview.plan.occupancy.map(t => <p key={t.table_id} className="text-sm">{tableName(t.table_id)}: {t.used} / {t.capacity} seats</p>)}
+          <ul className="text-sm">{preview.plan.assignments.map(a => <li key={a.invite_id}>
+            {name(a.invite_id)}: {tableName(snapshot.guests.find(g => g.id === a.invite_id)?.table_id || null)} → {tableName(a.table_id)}
+            {snapshot.guests.find(g => g.id === a.invite_id)?.seating_pinned ? ' (pinned, unchanged)' : ''}
+          </li>)}</ul>
+          {!!preview.plan.conflicts.length && <p role="alert">Resolve existing seating conflicts before committing.</p>}
+          {!!preview.plan.overflow.length && <>
+            <p className="text-sm">Not placed by this plan: {preview.plan.overflow.map(name).join(', ')}.</p>
+            <label className="block text-sm"><input type="checkbox" checked={partial} onChange={e => setPartial(e.target.checked)} /> I acknowledge these guests will remain unassigned.</label>
+          </>}
+          <button type="button" disabled={busy || !!preview.plan.conflicts.length || !!preview.plan.overflow.length && !partial}
+            className="rounded bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
+            onClick={commit}>Confirm seating</button>
+        </div>}
+      </>}
+    </section>
   );
 }

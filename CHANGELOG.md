@@ -1,10 +1,35 @@
-### #762 W17 — Fix loyalty tier multiplier and sidebar gating (2026-10-30)
+### #762 — Verified Paystack fee and finalization snapshot (2026-10-30)
 
-- **`supabase/migrations/484_fix_loyalty_tier_multiplier.sql`** (new): Replaces M387 `apply_payment_loyalty_once` RPC with corrected tier lookup. The original read from `customer_memberships` (a table that was never created), silently falling back to multiplier 1. The fix joins `customer_profiles.membership_tier_id` → `membership_tiers` with tenant-bound `mt.business_id = cp.business_id`, `is_active` guard, explicit default 1 via `IF NOT FOUND`, and qualified `public.` relation references. All other M387 behavior preserved: payment resolution, idempotency, balance/earned/visit mutations, transaction insert, replay, ACL.
-- **`lib/bot/flows/shared/post-completion.ts`**: Legacy (no-paymentId) path now applies the tier multiplier using `phoneWithPlus` identity to match `customer_profiles.phone`. Base points calculated first, then `floor(base * multiplier)` when multiplier > 1. Inactive/missing/cross-business tiers default to 1x. Lookup errors caught and logged, not thrown.
-- **`components/dashboard/Sidebar.tsx`**: Added `requireAllCapabilities?: boolean` to NavItem interface. Loyalty Tiers entry now uses ALL (both `loyalty` AND `membership` required). Gating logic at line 639 uses `.every()` when flag is true, `.some()` otherwise. All other sidebar entries unchanged (ANY semantics preserved).
-- **Affects**: Loyalty point earning (paid and legacy paths), Sidebar navigation for Loyalty Tiers. No discount behavior, reward balances/rules, booking, giving/payment notification, or bot routing changes.
-- **Could break**: Customers with active tiers will now earn multiplied points (previously always 1x). This is the intended behavior, not a regression. Sidebar "Loyalty Tiers" now hidden for businesses with only `loyalty` capability (previously shown but redirected on click).
+- **`lib/payments/provider-adapters.ts`, `lib/payments/webhook-handler.ts`**: Share validated Paystack minor-to-integer-major-unit normalization, distinguish absent fees from supplied zero, and pass explicit observations instead of standalone webhook fee updates.
+- **`lib/payments/authority.ts`, `supabase/migrations/485_verified_gateway_fee_claim.sql`**: Accept eligible verified fees and seal their finalization snapshot atomically through a distinct service-role RPC. Preserve the legacy claim signature, lease/token recovery, pinned fee policy and direct-transfer behavior; keep historical classification and sealed snapshots immutable.
+- **Tests**: Actual reconciliation/fee-insertion coverage in `lib/payments/__tests__/verified-fee-persistence-762.test.ts`, adapter normalization coverage in `lib/payments/__tests__/provider-adapters.test.ts`, and real two-session migration/RPC/rollback/ACL coverage in `lib/__tests__/verified-gateway-fee-claim-762.pg.test.ts`.
+- **Affects / could break**: Paystack fee observation and shared finalization claim/retry paths. Application/schema alignment requires separately authorized M485 rollout; deploying the caller before its RPC exists can prevent finalization. Other providers retain their existing scalar behavior. No historical repair, hosted rollout or settlement certification is claimed.
+
+### #762 — Directory search: fix enum category filter via computed text field (2026-10-30)
+
+- **`supabase/migrations/483_directory_category_text_computed.sql`** (new): SECURITY INVOKER computed field `public.category_text(public.businesses)` casts the `business_category` enum to filterable text for PostgREST ILIKE queries. service_role only grants, explicit NOTIFY pgrst cache reload, data-independent self-test via `to_regprocedure` + `jsonb_populate_record` synthetic eval.
+- **`lib/marketplace/search.ts`**: Changed 3 ILIKE filters from `category` (enum — causes PostgreSQL `operator does not exist` error) to `category_text` (computed text field). Fixes 503 errors on all directory searches with category or free-text queries.
+- **`lib/marketplace/__tests__/discovery-search-query.test.ts`**: Updated 2 mock assertions to match `category_text` filter.
+- **`lib/marketplace/__tests__/directory-search-postgrest.test.ts`** (new): Real PostgREST integration tests — category exact/partial/case/synonym/legacy, country+category, all eligibility exclusions, hidden IDs, empty results, negative controls (old enum ilike fails).
+- **`scripts/test-directory-search-postgrest.sh`** (new): Disposable PG + PostgREST test runner with role bootstrap, migration apply, cache verification, and cleanup.
+- **`.github/workflows/directory-search-postgrest.yml`** (new): Dedicated CI workflow for PostgREST integration tests on PRs/pushes affecting directory/marketplace paths.
+- **Affects**: Public directory search (`/api/directory`), bot directory handler, SSR directory page. Category and free-text search queries require M483 migration applied and PostgREST schema cache reloaded before application deployment. Country-only filter was already working and is unaffected.
+- **Deployment dependency**: M483 must be applied and PostgREST must reload its schema cache (NOTIFY pgrst included in migration) before the application code using `category_text` is deployed. Deploying the app before the migration will cause category/text searches to return PostgREST "unknown column" errors instead of the current enum errors. Existing `.eq('category', ...)` calls elsewhere use the native enum and are unaffected.
+
+### #762 — Admin verification confirmation and operation-bound MFA (#775) (2026-10-30)
+
+- Businesses uses visible reason/confirmation UI for verification-level changes and custom-fee save/clear. Verification confirms approval/rejection with optional approval notes and required rejection reasons; saved results and failures are shown in-page.
+- Both callers use the existing MFA flow and retrieve the current Bearer token after session rotation. Authorization binds the business, action and normalized fields, including sorted document IDs. The review route validates inputs and document ownership before single-use consumption, preserving admin/AAL2 checks, service writes, payout-limit policy, fee units and null-versus-zero semantics.
+- Shared authorization transitions are serialized across selection changes and messaging suspension. Mounted, route and disposable-PostgreSQL tests cover authorization, cancellation, duplicate/stale responses, ownership, CORS and competing consumption. Six existing review fixtures were updated without weakening their assertions.
+- **Affects**: Admin Businesses and Verification, plus the four verification-review actions. No new schema or provider operation.
+- **Could break**: Client/server authorization contracts and asynchronous confirmation state; deploy compatible callers and route together. Consumption and subsequent writes are not one transaction, so partial-write failures remain possible and are reported without automatic replay. Source/CI evidence does not establish deployed acceptance.
+
+### #762 — Admin financial summary and authenticated capability reads (#773, inherited by #775) (2026-10-30)
+
+- Businesses counts successful/refunded collections, subtracts refunds once and retained platform/gateway fees, and shows paid payouts separately from processing reservations. The accounting remainder is explicitly distinguished from an available-to-withdraw balance; failed reads are shown as errors.
+- Capability reads use the authenticated admin API and distinguish missing businesses from read failures. Editing waits for authoritative capability/override readback, with duplicate and stale-response guards and visible retry states; existing mutation authority is retained.
+- **Affects**: Admin financial presentation and selected-capability loading/readback. No payment, payout or refund writer, fee-refund allocation policy, or schema change.
+- **Could break**: Read-response consumers, financial-query handling or selection/readback state. Mounted and actual-handler tests cover these boundaries; displayed accounting and selected capabilities are not settlement or effective-entitlement guarantees.
 
 ### #762 W06 — Recorded payout explanations and linked destinations (2026-10-30)
 
@@ -20,6 +45,12 @@
 - Banks, account resolution and payout setup now return an unavailable response for new Flutterwave actions, preserving authentication, ownership and password checks.
 - Added actual-handler and rendered-page coverage for refused actions, supported Paystack setup, historical account visibility and password-protected change/disconnect.
 - Preserved country routing, financial dispatch, manual-bank settlement, reconciliation and nonaffected providers.
+
+### #762 / #777 — Admin PATCH and email CORS transport (2026-10-30)
+
+- Added PATCH to both existing admin middleware allow-method lists so allowlisted admin clients can complete PATCH preflight.
+- Applied the existing admin CORS helper to email OPTIONS and every POST outcome, including validation, authorization, rate-limit and failure responses; preserved rate-limit headers and existing authentication/provider behavior.
+- Added 18 actual-middleware and 35 actual-email-handler tests with synthetic auth/provider boundaries covering allowed and unknown origins, preflight, authorized/denied requests and error outcomes. These tests do not certify hosted authentication, RLS or recipient email delivery.
 
 ### #751 — Migrate address autocomplete to Places API (New) (2026-10-29)
 
@@ -43,6 +74,12 @@
 - **Affects**: Bot Text dashboard page presentation only. No API, localization engine, bot flow, or migration changes.
 - **Could break**: Nothing — presentation-only changes. All existing save/reset/validation behavior preserved. Internal keys remain visible as secondary reference.
 
+### #762 — System Health database readability and counts (2026-10-30)
+
+- **`admin/src/pages/SystemHealth.tsx`**: Use the returned count for head-only reads, preserving genuine zero and showing missing counts as unavailable. Check returned and thrown errors for every service and table statistic, including both payment-table reads; failed reads affect overall status while independent probes continue.
+- **Refresh and scope**: Clear previous results while checking and recover after read failures. Labels describe database readability and do not certify provider availability or complete payment flows; authenticated identity, RLS and probe queries are unchanged.
+- **Mounted verification**: `admin/src/__tests__/system-health-762.test.tsx` passed 56 tests with zero skips in Admin job124334567531, canonical CI41134821502, source020b7a7623496b5b34025f051729574859b483d8 / checkout4a3b0134c478d891a89a355e03b10d68cf0984d6. Admin build and all12 CI jobs passed; deployment/runtime certification remains separate.
+
 ### #752 — Queue tab: Share Queue QR code and link (2026-10-29)
 
 - **`app/dashboard/queue/page.tsx`**: Added "Share Queue" link in the action buttons group (alongside Pause/Resume, Walk-in, Call Next). Links to `/dashboard/qr-code?template=queue`, opening the QR Code page with "Scan to Join Queue" pre-selected.
@@ -51,6 +88,13 @@
 - **`app/dashboard/queue/__tests__/queue-share-qr.test.tsx`** (new): 15 rendered UI tests — Share Queue link, queue pre-selection + guidance, channel guard (no bot, shared w/o code), artifact withholding, canonical QR/clipboard match, shared-fallback routing, assigned dedicated + shared pref, assigned shared + non-shared pref, dedicated/generic/invalid defaults.
 - **Affects**: Queue dashboard page and QR Code dashboard page only. No bot flow, capability, schema, payment, or channel changes.
 - **Could break**: Queue QR sharing requires a real bot channel — businesses without one see setup guidance. Other templates retain existing fallback behavior.
+
+### #762 / #780 — Broadcast submission and history outcomes (2026-10-30)
+
+- Validate the current session and recipient reads, require HTTP success plus an explicit API acknowledgement before recording sent history, and count the recipients actually submitted.
+- Show rejected or unknown submission outcomes and accepted submissions whose history write fails separately; preserve the draft on these outcomes and prevent duplicate submission from the mounted page.
+- Describe history as recorded status rather than confirmed recipient delivery. Preserve disabled WhatsApp/SMS channels and existing audience semantics.
+- Added 26 mounted-page tests with synthetic session, database and request boundaries. Page-local duplicate protection does not provide durable cross-reload idempotency, and API acknowledgement does not certify email delivery.
 
 ### #736 — Campaign donation confirmation recipient resolution (2026-10-29)
 
@@ -137,6 +181,21 @@
 - **Affects**: Public invoice payment initiation and initialization input compatibility. No schema, webhook, finalization or payment-provider configuration changes.
 - **Could break**: Checkout destination selection or nullable payer serialization; canonical cloud CI and independent review are required. Synthetic coverage does not establish live-provider or deployment acceptance.
 
+### #747 — Checked scan-to-pay payment persistence (2026-10-30)
+
+- **`app/api/pay-link/pay/route.ts`**: Create one checked nullable-payer payment after validation, reuse its ID through existing adapters, and persist the actual provider reference before returning checkout or consuming a use. Initialization/persistence failures return no checkout success; pending-only cleanup preserves successful rows.
+- **`lib/__tests__/736-scan-to-pay-phone-validation.test.ts`, `lib/__tests__/issue-493-staging-readiness.test.ts`**: Exercise actual route/adapters through synthetic provider transport and stateful persistence fixtures, including metadata, references and failure cleanup.
+- **Affects / could break**: Scan-to-pay initialization and persistence failure handling. Existing adapters, provider routing and schema remain unchanged. Simulated tests do not certify a live provider transaction or a hosted database.
+
+### #736 Lane 2 — Scan-to-pay checkout phone validation fix (2026-10-28)
+
+- **`app/api/pay-link/pay/route.ts`**: Fixed two bugs in the scan-to-pay checkout initialization. (1) An empty-string payer phone flowed into the Paystack initializer, which requires valid E.164 — `canonicalSavedCardPhone('')` returned null, causing gateway init to fail closed while an orphaned pending payment record already existed. Now validates phone against the resolved gateway's requirements BEFORE any payment record creation; returns 422 with `PHONE_REQUIRED` code and actionable message. (2) Removed premature payment record INSERT that preceded gateway initialization — the gateway adapters (paystack.ts, stripe.ts) create their own payment rows on success, so the route's pre-insert caused duplicate/orphaned records on every attempt.
+- **`app/api/pay-link/[token]/route.ts`**: Added `requires_phone` boolean to the GET response, derived from the business's country code (NG/GH → true for Paystack-routed businesses). Allows the client to enforce phone collection before attempting checkout.
+- **`app/pay/[token]/page.tsx`**: Phone field is now required (with validation) when the business requires it. Shows inline E.164 format guidance, red border on invalid input, and handles the `PHONE_REQUIRED` error code from the API. Phone is normalized (strips spaces/dashes, prepends +) before submission.
+- **`lib/__tests__/736-scan-to-pay-phone-validation.test.ts`** (new): 15 tests covering: missing/empty/invalid/whitespace phone → 422, valid E.164 → success, phone normalization (spaces, dashes, no-plus prefix), Stripe allows missing phone, gateway init failure → no orphaned record, gateway exception → 500, fixed amount mismatch → 400, matching fixed amount → success, max uses → 410, missing token → 400, invalid amount → 400.
+- **Affects**: Scan-to-pay public checkout flow only (`/pay/[token]` page and `/api/pay-link/pay` route). No changes to WhatsApp bot payment flows, webhook handlers, dashboard, admin panel, or other payment paths.
+- **Could break**: Scan-to-pay payers for Paystack businesses (NG/GH) who previously left phone blank will now see a required field. This is intentional — the previous behavior silently failed after creating an orphaned payment record.
+
 ### #736 Lane 3 — WhatsApp capability menu pagination for 11+ items (2026-10-28, R2 2026-10-29)
 
 - **`lib/bot/flows/capability-selection.flow.ts`**: Added pagination to the capability selection menu. When a business has more than 10 user-facing capabilities (the Meta Cloud API max rows per list section), the menu is split across pages with "More Options" and "Previous" navigation items. Each page never exceeds 10 rows. Pagination state (`_cap_menu_page`, `_cap_menu_total_pages`) is stored in session_data and cleaned up on capability selection or when returning from inline handlers (waiver, promo). The `validate()` method handles `cap_nav_more` and `cap_nav_prev` inputs to change pages; `next()` routes back to `select_capability` for re-render. My Account remains accessible on the last page. No changes to the single-page path (10 or fewer items).
@@ -146,6 +205,14 @@
 - **Affects**: WhatsApp bot capability selection menu. Only businesses with 11+ user-facing capabilities trigger pagination. All existing single-page behavior unchanged. No database, payment, migration, or API route changes.
 - **Could break**: If a business has exactly 10 user-facing capabilities + My Account (returning customer) = 11 items, the 11th item now appears on page 2 instead of being silently dropped. This is the intended fix.
 
+### #762 W17 — Fix loyalty tier multiplier and sidebar gating (2026-10-30)
+
+- **`supabase/migrations/484_fix_loyalty_tier_multiplier.sql`** (new): Replaces M387 `apply_payment_loyalty_once` RPC with corrected tier lookup. The original read from `customer_memberships` (a table that was never created), silently falling back to multiplier 1. The fix joins `customer_profiles.membership_tier_id` → `membership_tiers` with tenant-bound `mt.business_id = cp.business_id`, `is_active` guard, explicit default 1 via `IF NOT FOUND`, and qualified `public.` relation references. All other M387 behavior preserved: payment resolution, idempotency, balance/earned/visit mutations, transaction insert, replay, ACL.
+- **`lib/bot/flows/shared/post-completion.ts`**: Legacy (no-paymentId) path now applies the tier multiplier using `phoneWithPlus` identity to match `customer_profiles.phone`. Base points calculated first, then `floor(base * multiplier)` when multiplier > 1. Inactive/missing/cross-business tiers default to 1x. Lookup errors caught and logged, not thrown.
+- **`components/dashboard/Sidebar.tsx`**: Added `requireAllCapabilities?: boolean` to NavItem interface. Loyalty Tiers entry now uses ALL (both `loyalty` AND `membership` required). Gating logic at line 639 uses `.every()` when flag is true, `.some()` otherwise. All other sidebar entries unchanged (ANY semantics preserved).
+- **Affects**: Loyalty point earning (paid and legacy paths), Sidebar navigation for Loyalty Tiers. No discount behavior, reward balances/rules, booking, giving/payment notification, or bot routing changes.
+- **Could break**: Customers with active tiers will now earn multiplied points (previously always 1x). This is the intended behavior, not a regression. Sidebar "Loyalty Tiers" now hidden for businesses with only `loyalty` capability (previously shown but redirected on click).
+
 ### #753 — Bot completion display pending action measurement (2026-10-30)
 
 - CI maintenance: freeze and restore Date in `issue-512-site-announcement-concurrency.test.ts` so its fixed countdown fixture remains valid; all assertions and production validation remain unchanged.
@@ -153,6 +220,35 @@
 - `app/dashboard/analytics/page.tsx`: show “Not yet measured” on the Bot Completion Rate card with “Successful customer actions are not measured yet.” Remove only the unused bot completion percentage state and calculation.
 - **Affects**: Bot completion card presentation. Booking-completion figures, other session counters, queries, filters and date behavior are unchanged.
 - **Could break**: The longer card wording may wrap differently at narrow widths; no rendered browser verification is claimed. Action measurement and the end-date correction remain separate work.
+
+### #782 — Reseller financial and payout read states (2026-10-30)
+
+- **`admin/src/pages/ResellerFinancials.tsx`, `admin/src/pages/ResellerPayouts.tsx` and their two read-state test files**: Distinguish loading, failed reads, empty results and successful data; reject obsolete completions and retain generation checks before and after deferred token resolution.
+- **Affects / could break**: Reseller financial and payout views during failed requests, retries and context changes. Existing arithmetic, monetary units, authentication helpers and financial mutations are unchanged. No live settlement or currency-history reconciliation is claimed.
+
+### #741 — Offline proof lock-order correction (2026-10-30)
+
+- **`supabase/migrations/479_offline_merchant_approval.sql`**: Discover the linked order without holding the transfer lock, then lock order, transfer and marker consistently; revalidate association, tenant, status and deadline under locks. Preserve non-order proof, timestamp and permission behavior.
+- **`lib/__tests__/m479-offline-approval-db.test.ts`**: Preserve all 18 existing cases and add two real two-session proof/confirmation and proof/cleanup tests with database-observed blocking and final-state/idempotency assertions.
+- **Affects / could break**: Concurrent offline-proof recording and merchant approval/cleanup. Source/isolated-test correction only; no hosted migration application or production incident is claimed.
+
+### #741 — Canonical offline confirmation timestamp compatibility (2026-10-31)
+
+- **M479 and its disposable PostgreSQL test**: Stop assigning an absent orders.paid_at column while retaining order updated_at, payment paid_at and transfer confirmation timestamps. Preserve stock, proof protection, payment linkage, idempotency and shared lock-order behavior.
+- Exercise both confirm-payment and confirm-and-approve outcomes in the existing concurrent-confirmation coverage. The reviewed correction passes 21 database cases with zero skips; hosted application and live flow acceptance remain separate.
+
+### #736 — Offline merchant approval: payment vs fulfillment separation (2026-10-28)
+
+- **`supabase/migrations/479_offline_merchant_approval.sql`** (new): M479 migration with 11 SQL objects. Adds `paid_pending_approval` to `order_status` enum. Adds `proof_submitted_at` and `proof_protected` columns to `pending_transfers`. Extends `refunds` CHECK for `merchant_obligation/merchant_settled/admin_resolved` (Owner Option X). Creates `submit_transfer_proof` (atomic proof with DB timestamps, deadline gate, lock order→transfer→marker), `confirm_order_transfer_atomic` 5-arg (proof-protected expiry, conditional approval), `confirm_nonorder_transfer_atomic` (atomic non-order with entity validation, fail-closed fractional amounts), `approve_paid_order`, `reject_paid_order` (stock/promo restore + refund obligation). Modifies `cancel_stale_order_atomic` (proof protection preserving original deadlines, legacy proof held), `finalize_promo_reservation` (`paid_pending_approval` awareness). All functions SECURITY DEFINER, service_role only.
+- **`lib/bot/flows/shared/bank-transfer.ts`**: Explicit opt-in (`metadata.bank_transfer_enabled === true`, Owner Option B). Fractional amount guard before displaying bank instructions. `createPendingTransfer` returns null on DB insert failure.
+- **`app/dashboard/settings/tabs/PaymentsTab.tsx`**: Default OFF (`=== true` instead of `!== false`).
+- **`app/api/dashboard/pending-transfers/[id]/route.ts`**: Rewritten — order confirms use 5-arg RPC with explicit `approve_fulfillment`; non-order confirms use `confirm_nonorder_transfer_atomic`. Accurate status-dependent customer notifications. Fixes 100x payment amount bug (minor units into major-unit column).
+- **`app/api/dashboard/pending-transfers/[id]/approve/route.ts`** (new): Second-step approval for bookings/reservations/orders after "Confirm Payment Only". Uses `approve_paid_order` RPC for orders. CAS booking approval with tenant verification.
+- **`app/api/dashboard/pending-transfers/route.ts`**: Adds `ocr_result`, `verified_by_ocr`, `proof_submitted_at`, `proof_protected` to listing API.
+- **`lib/payments/refund-handler.ts`**: Blocks provider refund dispatch for `gateway='direct'` (platform never held funds).
+- **7 flow files** (scheduling, ordering, ticketing, reservation, invoice, payment, crowdfunding): Null-guard all 12 `createPendingTransfer` callers. OCR data always stored (not conditional on match) with `date` and `fields_match`. "AI verified" → "Receipt fields match" in merchant/customer notifications.
+- **Affects**: Offline bank transfer payment confirmation, merchant approval workflow, OCR data handling, customer notifications, refund obligations. Online payments unchanged. Existing saved-card, Stripe, Paystack paths unaffected.
+- **Could break**: (1) Merchants who relied on implicit bank-transfer-enabled default now need explicit opt-in. (2) Dashboard must send `approve_fulfillment: boolean` with confirm actions. (3) Old 4-arg `confirm_order_transfer_atomic` callers get 400 if `approve_fulfillment` is missing.
 
 ### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
 
@@ -191,6 +287,28 @@
 - **Affects**: Poll send response counts only. Helper acceptance does not prove customer receipt; shared sender, session preparation, guards and poll lifecycle are unchanged.
 - **Could break**: Callers now correctly see failed counts for helper-declined sends that were previously reported sent. Mocked route tests do not certify provider delivery.
 
+### #666 — Merchant payment custody and manual-settlement policy (2026-10-30)
+
+- **`AGENTS.md`, `CLAUDE.md`, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`**: Record the standing two-route payment custody model and manual-settlement policy, with repository guidance linked to the authoritative policy.
+- **Affects / could break**: Engineering interpretation of payment custody and settlement responsibilities. Documentation only; no runtime, provider, financial-history or hosted-schema changes, and no live-flow certification.
+
+### #721 / #737 — Final lifecycle contract correction (2026-10-31)
+
+- Supersedes the earlier summary: all applicable offline fulfillment requires explicit merchant approval separately from funds verification; online policy is unchanged. The inventory reconciles 32 unique capabilities, retains table_reservation as Tier 1, and documents the validator's eight-contract scope.
+- Earlier seven-question, Tier 2 and four-active-defect claims are superseded by two unresolved questions and explicitly historical findings/investigations. The final correction is limited to the four allocated contract documents; the root README is unchanged.
+- No fresh runtime or end-to-end certification is claimed. Existing historical entries and evidence remain preserved.
+
+### #721 — WhatsApp lifecycle contract alignment (2026-10-28)
+
+- **`docs/contracts/shared-payment-lifecycle.md`** (new): Universal payment-to-fulfillment lifecycle standard. Documents the three-stage authority chain (provider verification → capability fulfillment → notifications), all 6 payment providers (Paystack, Stripe, Flutterwave, Square, PayPal, Direct/Offline), saved card rules, refund model, and known debt (#164, #166, #735).
+- **`docs/contracts/whatsapp-experience-contract.md`** (new): Shared WhatsApp customer experience standards. Documents channel models (shared vs dedicated), returning customer behavior, certified languages (en, pcm), free-text/NLP architecture, STOP/UNSUBSCRIBE behavior (post-PR #727), rate limiting, Meta platform constraints, template inventory, and dashboard↔bot parity requirements.
+- **`docs/contracts/721-capability-journey-matrix.md`** (new): Complete 32-capability × WhatsApp journey matrix. Documents entry point, flow file, payment relationship, fulfillment, tests, and classification for every canonical capability. Includes 21 customer-facing capabilities, contextual sub-capabilities, and 8 system/dashboard-only capabilities. Includes Owner Decision Register with 7 unresolved product questions.
+- **`docs/contracts/721-behavior-vs-contract-report.md`** (new): Current behavior vs contract audit report. Classifies 12 fixed defects (PR #727, #722, #164, #166, #167), 4 confirmed active code defects (T19B, TABLE-DUP, OFFLINE-APPROVE, ORDER-ADAPTER), 4 documentation drift items, 9 evidence gaps, MCP/Graphify verification status, and 4 proposed UX improvements.
+- **`docs/contracts/README.md`**: Added pointers to the 4 new contract documents.
+- **`docs/contracts/capability-index.json`**: Updated `_generated_from_main` SHA to current `164b31b8`. Corrected `table_reservation` riskTier from `tier-3` to `tier-2` with notes about PR #731.
+- **Affects**: Documentation only. No application code, migrations, database configuration, payment providers, messaging paths, or runtime behavior changed.
+- **Could break**: Nothing. No code imports or runtime dependencies on these documents.
+
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
 
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
@@ -200,6 +318,50 @@
 - **Affects**: `purchase_tickets_atomic` RPC (web ticket purchase), `event_ticket_types` table constraints. No changes to `finalize_free_ticket_booking` (preserves already-paid bookings), bot flow logic, payment gateways, or existing ticket/booking data.
 - **Could break**: Direct API or partner API updates that decrease `total_tickets` on saved tiers will now fail with `capacity_decrease_blocked` trigger exception. This matches the dashboard's existing prohibition on saved-tier capacity decreases.
 - **Requires**: Migration must be applied to staging/production after merge.
+
+### #743 — Bounded implementation correction workflow (2026-10-30)
+
+- **`CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, `docs/ENGINEERING_WORKFLOW.md`**: Record the Owner-approved workflow for correcting bounded implementation issues while preserving independent review, security and permission stops, and separate merge/deployment authority.
+- **Affects / could break**: Engineering task execution and review handoffs. Documentation only; this policy does not relax protected checks, authorize production operations or turn incomplete evidence into acceptance.
+
+### #744 — Current-main contract registry reconciliation (2026-10-31)
+
+- Preserved integrated workflow guidance and validator scope, retained table reservation Tier 1 status, and updated its index note to distinguish merged #731 source from outstanding detailed-contract and hosted acceptance evidence.
+
+### #736 / #744 — Final capability contract correction (2026-10-31)
+
+- Supersedes R2's automatic offline-acceptance wording with the settled Owner requirement for explicit merchant approval separately from funds verification. Online policy is unchanged; the capability counts reconcile 15 + 9 + 8.
+- Historical receipts remain dated, missing certification is distinguished from confirmed defects, and the obsolete #731 source-string-only test finding is retired using component-render source evidence. Option B remains approved; deployment and migration holds remain unchanged.
+- Documentation only; no fresh runtime or end-to-end certification is claimed. Existing historical entries and evidence remain preserved.
+
+### #736 — Phase A R5: Codex P1 findings, Stripe PIN correction, gap reclassification (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: (1) **Stripe saved-card PIN corrected**: Stripe saved cards use the same Waaiio 4-digit PIN lifecycle as Paystack — `checkStripeConsentAndOffer` → `establish_saved_card_session(save_card_pin)` → `requiresPin` → `verifyPin`. Traced via Graphify and source read of `saved-card-offer.ts:603-782` and `saved-card-flow.ts:128-178`. Table expanded with PIN Activation and PIN Reuse columns. (2) **GAP-007 reclassified** from P1 to PRODUCT DECISION NEEDED — Owner scope decision, not a confirmed defect; `getUserFacingCapabilities()` already excludes these capabilities from the WhatsApp menu. (3) **GAP-009 reclassified** from P1 to UNVERIFIED / EVIDENCE GAP — missing test coverage for 7 contextual/dashboard-only capabilities is a verification gap, not a confirmed runtime defect. (4) PR #741 HEAD SHA updated to `dba4e7b7`. Section 7 restructured into six subsections.
+- **Affects**: Documentation only.
+- **Could break**: Nothing.
+
+### #736 — Phase A R4: severity reclassification per Codex P1 and CTO R3 (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: Reclassified gap inventory per Evidence Verification Agent severity gate (AGENTS.md §Evidence Verification Agent). (1) GAP-005 (no staging E2E) moved from P0 to UNVERIFIED / EVIDENCE GAP — missing authorization is not a runtime defect. (2) GAP-001, GAP-002, GAP-004 reclassified from generic "P0" to CONFIRMED CODE DEFECT — DEPLOYMENT UNVERIFIED with explicit scope note that all are offline-only, online unaffected. (3) GAP-003 reclassified to OWNER TARGET CONTRACT — implementation gap vs approved target, not a runtime defect. (4) Section 7 restructured into five subsections by finding status (confirmed code defect, owner target, evidence gap, P1, P2). (5) PR #741 and #745 SHA references verified current.
+- **Affects**: Documentation only. No code, migrations, or runtime changes.
+- **Could break**: Nothing.
+
+### #736 — Phase A R3: migration reconciliation after PR #740 merge (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: Reconciled cross-lane dependency map against current GitHub state after PR #740 merged to main as `c3b33307`. (1) PR #740 moved from "active unmerged" to "merged" section — M474 applied to staging. (2) Added PR #745 (M480, DML lockdown follow-up). (3) Removed obsolete M479 collision claim — resolved by PR #740 renumbering before merge. (4) Updated all PR HEAD SHAs to current GitHub values. (5) Removed GAP-007 (collision) and GAP-013 (PR #740 DB test skip — PR merged with CI green). (6) Updated evidence summary with merge SHA and R3 verification dates.
+- **Affects**: Documentation only. No code, migrations, or runtime changes.
+- **Could break**: Nothing.
+
+### #736 — Full 32-capability WhatsApp E2E certification contract — Phase A R2 (2026-10-28)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: R2 correction per CTO review. (1) Normalized 32-capability matrix with five orthogonal dimensions (entry type, bot implementation, test coverage, certification level, dependency status) — exactly 32 rows, no double-counting. (2) Corrected migration numbers: PR #740 uses M474+M479, PR #741 uses M479. Documented M479 namespace collision between #740 and #741. (3) Removed unauthorized launch conclusions — all launch timing decisions presented as Owner recommendations, not assertions. (4) Corrected offline payment vs booking approval language: auto-accept merchants keep auto-accept behavior after fund verification; manual-approval merchants get split Confirm Payment / Confirm & Approve actions. (5) Added Section 9 (Verification Transparency) documenting exactly what was independently verified vs unverified, including acknowledgment that 3 delegated agents failed due to context limits. (6) All claims now cite actual test file names and verification method.
+- **`docs/contracts/capability-index.json`**: Added `_lifecycle_audit` SHA and `_lifecycle_ref` pointer.
+- **`docs/contracts/README.md`**: Added cross-capability lifecycle contract section.
+- **`CLAUDE.md`**: Added read-first reference to `736-capability-e2e-contract.md` for capability flows, payment-to-fulfillment chains, or WhatsApp bot changes.
+- **`AGENTS.md`**: Added read-first reference to `736-capability-e2e-contract.md`.
+- **`RELEASE_GATE_V2.md`**: Added cross-capability lifecycle contract reference in §3 (Golden Journeys).
+- **Affects**: Documentation and governance references only. No application code, migrations, database changes, payment flows, bot logic, or runtime behavior changed.
+- **Could break**: Nothing. No code imports or runtime dependencies.
 
 ### #650 Image conversion resource hardening (2026-10-25)
 
@@ -219,6 +381,35 @@
 - **Affects**: Dashboard logo preview/context refresh. Upload API, validation, ownership, storage, Places behavior and paid-branding policy are unchanged.
 - **Could break**: Framework refresh timing can temporarily show the prior logo before updated props arrive. Tests mock upload/network boundaries and do not certify live persistence or image availability.
 
+### #712 — Currency-authoritative payout and settlement accounting (2026-10-30)
+
+- **Payout/admin/cron routes and `lib/payments/payable-fees.ts`**: Preserve canonical currency isolation, unknown-currency review holds, structured payout flags, account linkage and fee-allocation-period accounting across payout generation, balance and settlement paths.
+- **M466, M468, M469 and M472; canonical CI and regression files**: Add the reviewed currency/deduplication/settlement authority sequence and executable route, accounting, concurrency and real-PostgreSQL coverage. Current-main integration retains valid admin UUID and action-bound step-up fixtures alongside the currency assertions.
+- **Affects / could break**: Payout eligibility, currency-scoped totals, deduplication and settlement accounting. Hosted migration sequencing and deployment require separate authorization and verification; this source change does not certify live payment or settlement outcomes.
+
+### #731 — Reviewed reservation routing and acceptance corrections (2026-10-31)
+
+- Preserve the dedicated seating-resource authority: a generic service skip cannot bypass table selection, and only one active same-business resource may auto-select with its full snapshot. Table flat-deposit reservations do not offer or redeem unsupported promotions; ordinary scheduling promotion behavior is preserved.
+- Add mounted Bookings page acceptance for table, lodging and legacy scheduling data/actions. Update lifecycle and pagination fixtures to use canonical seating resources while preserving tenant, row-limit, sender and existing lifecycle assertions.
+- Integrate current main without dropping its currency/settlement migration tests; retain the M476 disposable database test step unchanged. This is source and executable test coverage; hosted M476–M478 application and live reservation acceptance remain separate.
+
+### #730 — Booking/Reservation UX: Table Reservation Architecture (2026-10-27)
+
+- **`supabase/migrations/476_seating_resources_table_reservation.sql`** (new): Extends `flow_type` enum with `table_reservation`. Creates `seating_resources` table (tables, booths, sections, VIP areas) with capacity, party-size bounds, duration, deposit, available-days/hours, RLS, and service_role ACL. Adds `seating_resource_id` FK on `bookings`. Creates `book_table_atomic` RPC with advisory-lock concurrency, bot-session idempotency, resource validation, party-size bounds, time-overlap prevention, and self-check block. Additional migrations M477 (book_slot_atomic isolation) and M478 (reschedule isolation) exclude table reservations from service/appointment capacity counts.
+- **`lib/bot/flows/table-reservation.flow.ts`** (new): Dedicated WhatsApp bot flow for table/seating reservations. Queries `seating_resources` instead of `services`. Auto-selects when single resource. Routes into scheduling's shared date/time/confirm steps via cross-flow handoff.
+- **`lib/bot/flows/scheduling.flow.ts`**: Added `_is_table_reservation` branch before `book_slot_atomic` in confirm_booking step — calls `book_table_atomic` RPC instead. Modified `select_quantity` step to enforce seating capacity min/max bounds. Updated `activeCap` resolution to handle table_reservation.
+- **`lib/constants.ts`**: Added `'table_reservation'` to `FlowType` union.
+- **`lib/bot/flows/registry.ts`**: Registered `tableReservationFlow` in both FLOW_REGISTRY and EXTENDED_REGISTRY.
+- **`lib/bot/handlers/flow-routing.ts`**: Mapped `table_reservation` to `select_table` step (was `select_service`).
+- **`lib/bot/flows/capability-selection.flow.ts`**: Changed `table_reservation` backing-data check from `services` to `seating_resources` (fixes F-1 duplicate with scheduling). Added `select_table` to `getFirstStepForCapability`.
+- **`app/dashboard/seating/page.tsx`** (new): Merchant CRUD page for seating resources with type, capacity, section, duration, deposit, available days/hours, active toggle.
+- **`components/dashboard/Sidebar.tsx`**: Added Seating nav item gated on `table_reservation` capability.
+- **`app/dashboard/reservations/page.tsx`**: Added Table Reservations tab, `flow_type`/`seating_resource_id` to booking query and Booking interface.
+- **`app/api/seating-resources/route.ts`** (new): GET/POST/PATCH for seating resources with RLS-enforced ownership.
+- **`lib/__tests__/table-reservation-730.test.ts`** (new): 44 tests covering routing, deposit authority, availability, admin security, migration structure, and non-regression.
+- **Affects**: `table_reservation` capability routing, food/dining category defaults. Businesses without configured seating fail closed (capability hidden from WhatsApp menu).
+- **Does NOT affect**: existing `book_slot_atomic`, scheduling/appointment/stays/ordering/ticketing flows, payment pipeline, existing bookings data.
+
 ### Audit NB-5: SECURITY DEFINER ACL hardening (2026-10-24)
 
 - **`supabase/migrations/463_secdef_acl_audit_hardening.sql`** (new): Hardens 6 exposed SECURITY DEFINER functions. `calculate_volume_discount`: adds missing `SET search_path = public`, REVOKEs anon+authenticated (bot-only via service client). `check_conversation_limit`: REVOKEs anon+authenticated (legacy function, no active TS callers). Dashboard revenue RPCs (`get_business_revenue`, `get_order_revenue`, `get_outstanding_invoices`): REVOKEs anon only (keeps authenticated for dashboard). `check_business_role`: REVOKEs anon only (keeps authenticated for RLS policies). Inline verification assertions validate all grants.
@@ -226,6 +417,12 @@
 - **Affects**: Database function execution grants only. No schema changes. No application code changes. Backward compatible — all callers use service client.
 - **Could break**: Any hypothetical browser-side RPC call to `calculate_volume_discount` or `check_conversation_limit` (none exist in codebase). Dashboard RPCs still accessible to authenticated users.
 - **Requires**: Migration must be applied to staging/production after merge.
+
+### #732 — Bot lifecycle and migration-readiness coverage (2026-10-30)
+
+- **`lib/bot/flows/__tests__/bot-507-lifecycle-certification.test.ts`, `lib/__tests__/bot-507-m470-m471-migration-readiness.test.ts`**: Add executable lifecycle and migration-readiness regression coverage without changing production behavior. Current-main integration preserves the accepted test scope.
+- **`scripts/disposable-pg-m470-m471-test.sh`**: Retain the disposable PostgreSQL verification helper. Its local execution history is separate from canonical cloud test evidence.
+- **Affects / could break**: Test coverage and fixture assumptions for existing bot flows and M470/M471 readiness. Future table-routing changes require updating their affected expectations. This entry does not certify live provider delivery or a hosted migration.
 
 ### #682 Launch: Disable Flutterwave merchant setup (2026-10-24)
 
@@ -5644,3 +5841,15 @@ If something breaks:
 - `app/(marketing)/HomeClient.tsx`: replace “Up and running in minutes” with “Set up your business on WhatsApp”.
 - **Affects**: Only the homepage setup heading; no timing promise, layout, links, pricing or signup behavior changes.
 - **Could break**: Heading wrapping at narrow widths; existing homepage tests/build and available preview checks supply evidence. The wider #526 audit remains out of scope.
+
+### #784 — Party seating dashboard test readiness (2026-10-31)
+
+- **`lib/__tests__/party-seating-dashboard-762.test.tsx`**: Wait for the actual parent guest/table data and enabled editor before interactions; retain all seven existing test bodies and assertions. Add one controlled deferred-parent regression for preview invalidation, loading recovery and one explicit commit.
+- **Affects / could break**: Test fixture readiness only. No production behavior, timeout increases, sleeps or weaker assertions; eight mounted tests pass with zero skips. This is not hosted-schema or live party acceptance.
+
+### #762 — Reviewed party seating groups and pinned assignments (2026-10-30)
+
+- **Party dashboard and seating planner**: Add one organizer-set seating group per invitation, explicit allowed tables, persistent manual pins, and randomized previews for unpinned guests. Invitations and plus-ones stay together; ungrouped guests use remaining capacity. Preview shows weighted occupancy and overflow; a partial plan requires explicit acknowledgment.
+- **Seating API and M486**: Recompute the reviewed plan server-side, reject stale/conflicting plans, and commit validated assignments atomically with replay protection. Preserve pinned arrangements and existing M457 capacity guards, including rollback of capacity-conflicting RSVP growth. Existing assignments migrate as pinned.
+- **Tests**: Actual planner, HTTP handler, mounted dashboard and six updated adapter regression cases; disposable PostgreSQL tests load real M457/M486 migrations and exercise scoped authorization, pins, swaps, rollback, partial acknowledgment and concurrency. Exact-head execution evidence is recorded on PR #776; jsdom is not browser layout proof.
+- **Affects / could break**: Party seating configuration, assignment and database write serialization. Application/schema alignment requires separately authorized M486 rollout; new seating controls require the new RPC. Hosted migration, deployed acceptance and browser layout verification remain separate. Custom RSVP questions and reminders are not implemented by this entry.

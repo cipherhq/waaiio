@@ -7,6 +7,8 @@ Instructions for Codex and other AI agents reviewing or changing this repository
 - `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: governance, roles, approval gates
 - `RELEASE_GATE_V2.md`: invariant registry and migration checks
 - `CLAUDE.md`: implementation conventions
+- `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`: Owner-approved, non-negotiable two-route merchant payments and manual settlement model
+- `docs/contracts/736-capability-e2e-contract.md`: cross-capability lifecycle matrix, payment-to-fulfillment chain, channel architecture, and dependency status (Issue #736). Check before modifying shared bot routing, payment authority, or channel handling.
 
 If these conflict, the Operating Order wins.
 
@@ -17,6 +19,10 @@ You are the independent reviewer. Claude implements. Only the Owner approves mer
 When a finding depends on how the product should behave (a business rule, user experience, or money handling) and the intended behavior is not documented, label it **PRODUCT DECISION NEEDED** with options, instead of assuming the answer.
 
 Flag any implementation that deviates from a stated Owner, CTO, or reviewer decision without explicit Owner sign-off on the deviation.
+
+## Standing Owner payment decision — MUST NOT CHANGE
+
+The canonical business rule is in `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`. Connected Stripe/Paystack merchants are paid through their provider and Waaiio takes its fee via the supported split arrangement; merchants collecting through Waaiio's own Stripe/Paystack are paid afterward by Waaiio using an admin-controlled manual settlement with actual payment confirmation and audit. Preserve **both**. Never confuse removing a `manual_cash` method with removing merchant manual settlements, or disabling Stripe automated platform payouts with disabling Stripe Connect splits. Any change requires a fresh explicit Owner decision. Trace and verify both payment routes in payment PR reviews.
 
 ## Review priorities (highest first)
 

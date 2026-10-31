@@ -82,8 +82,8 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
           return [cap, (count || 0) > 0];
         }
         case 'table_reservation': {
-          const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
-            .eq('business_id', businessId).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null);
+          const { count } = await ctx.supabase.from('seating_resources').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true);
           return [cap, (count || 0) > 0];
         }
         case 'waiver': {
@@ -134,6 +134,7 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'loyalty': return 'loyalty_menu';
     case 'invoice': return 'invoice_list';
     case 'class_booking': return 'select_service';
+    case 'table_reservation': return 'select_table';
     case 'promo_verification': return 'promo_entry'; // Dedicated entry step — prevents select_capability recursion
     default: return 'select_service';
   }
@@ -533,6 +534,16 @@ const selectCapabilityStep: FlowStepConfig = {
 
       return { valid: false, errorMessage: recoveryMsg, persistSessionDataOnFailure: true };
     }
+
+    // Clear stale transactional state BEFORE entity extraction (P2-3).
+    // Must run first so cleanup removes the PREVIOUS capability's data,
+    // not the newly extracted service/date/time from the current request.
+    const { clearStaleCapabilityState } = await import('./shared/capability-transition');
+    clearStaleCapabilityState(
+      ctx.session.session_data,
+      ctx.session.session_data.active_capability as string | undefined,
+      capId,
+    );
 
     // Entity extraction: use ctx.currentCanonical if available, otherwise ONE fresh parse
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {

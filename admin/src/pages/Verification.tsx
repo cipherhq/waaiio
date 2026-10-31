@@ -1,4 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -51,6 +53,27 @@ export default function Verification() {
   const [rejectionReason, setRejectionReason] = useState('');
   const [processing, setProcessing] = useState(false);
   const loadRef = useRef(false);
+  const stepUp = useStepUp();
+  const callbackRef = useRef<((id: string) => Promise<void>) | null>(null);
+  const operationRef = useRef<object | null>(null);
+  const submitRef = useRef(false);
+  const flightRef = useRef(false);
+  const [flight, setFlight] = useState(false);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected?.id || null;
+  const [message, setMessage] = useState('');
+  const [reviewConfirmation, setReviewConfirmation] = useState<'approve' | 'reject' | null>(null);
+  useEffect(() => {
+    setReviewNotes(''); setRejectionReason(''); setReviewConfirmation(null); setMessage(''); setProcessing(false);
+    return () => { operationRef.current = null; callbackRef.current = null; if (!flightRef.current) stepUp.reset(); };
+  }, [selected?.id]);
+  useEffect(() => {
+    if (stepUp.state.phase === 'error' && operationRef.current) {
+      operationRef.current = null;
+      setProcessing(false);
+      setMessage(stepUp.state.error || 'Authorization failed');
+    }
+  }, [stepUp.state.phase, stepUp.state.error]);
   const perPage = 20;
 
   // Stats
@@ -105,13 +128,15 @@ export default function Verification() {
   // Load documents for selected request
   useEffect(() => {
     if (!selected) { setDocs([]); return; }
+    let active = true;
     adminDb
       .from('business_documents')
       .select('*')
       .eq('business_id', selected.business_id)
       .order('uploaded_at', { ascending: false })
-      .then(({ data }) => setDocs(data || []));
-  }, [selected]);
+      .then(({ data }) => { if (active) setDocs(data || []); });
+    return () => { active = false; };
+  }, [selected?.id]);
 
   const filteredRequests = tab === 'pending'
     ? requests.filter(r => r.status === 'pending')
@@ -120,125 +145,95 @@ export default function Verification() {
   const totalPages = Math.max(1, Math.ceil(filteredRequests.length / perPage));
   const pageItems = filteredRequests.slice((page - 1) * perPage, page * perPage);
 
-  async function approveVerification() {
-    if (!selected || processing) return;
-    setProcessing(true);
 
-    // Idempotency check — verify the request is still pending
-    const { data: current } = await adminDb
-      .from('verification_requests')
-      .select('status')
-      .eq('id', selected.id)
-      .single();
-
-    if (current?.status !== 'pending') {
-      alert('This request has already been processed');
-      setProcessing(false);
-      return;
-    }
-
-    const level = selected.requested_level as VerificationLevel;
-
-    // Collect pending document IDs for this business
-    const { data: pendingDocs } = await adminDb
-      .from('business_documents')
-      .select('id')
-      .eq('business_id', selected.business_id)
-      .eq('status', 'pending');
-    const docIds = (pendingDocs || []).map(d => d.id);
-
-    // Route through server API — handles business update, docs, requests, email, audit
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData?.session?.access_token;
-    if (!token) {
-      alert('Session expired');
-      setProcessing(false);
-      return;
-    }
-    const apiUrl = import.meta.env.VITE_API_URL || '';
-    const res = await fetch(`${apiUrl}/api/verification/review`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        business_id: selected.business_id,
-        action: 'approve',
-        level,
-        notes: reviewNotes || null,
-        document_ids: docIds,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      alert('Failed to approve: ' + (data.error || 'Unknown error'));
-      setProcessing(false);
-      return;
-    }
-
-    setSelected(null);
-    setReviewNotes('');
+  function cancelReview() {
+    operationRef.current = null;
+    callbackRef.current = null;
+    stepUp.reset();
+    setReviewConfirmation(null);
     setProcessing(false);
-    loadRef.current = false;
-    load();
   }
 
-  async function rejectVerification() {
-    if (!selected || !rejectionReason.trim() || processing) return;
+  async function confirmReview() {
+    if (!selected || !reviewConfirmation || operationRef.current || flightRef.current) return;
+    const requestId = selected.id;
+    const businessId = selected.business_id;
+    const action = reviewConfirmation;
+    const level = selected.requested_level;
+    const notes = reviewNotes.trim() || null;
+    const reason = rejectionReason.trim();
+    if (action === 'reject' && !reason) return;
+    flightRef.current = true;
+    setFlight(true);
+    const operation = {};
+    operationRef.current = operation;
+    const current = () => operationRef.current === operation && selectedRef.current === requestId;
     setProcessing(true);
-
-    // Idempotency check — verify the request is still pending
-    const { data: current } = await adminDb
-      .from('verification_requests')
-      .select('status')
-      .eq('id', selected.id)
-      .single();
-
-    if (current?.status !== 'pending') {
-      alert('This request has already been processed');
-      setProcessing(false);
-      return;
+    setMessage('');
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session.session?.access_token) throw new Error('Session expired');
+      const { data: pending, error: pendingError } = await adminDb.from('verification_requests')
+        .select('status').eq('id', requestId).single();
+      if (!current()) return;
+      if (pendingError) throw new Error('Unable to check request status');
+      if (pending?.status !== 'pending') throw new Error('This request has already been processed');
+      const { data: documents, error: documentError } = await adminDb.from('business_documents')
+        .select('id').eq('business_id', businessId).eq('status', 'pending');
+      if (!current()) return;
+      if (documentError) throw new Error('Unable to load pending documents');
+      const document_ids = (documents || []).map(d => d.id).sort();
+      const params = { scope: 'business_verification_review', action, document_ids,
+        ...(action === 'approve' ? { level, notes } : { reason }) };
+      const onAuthorized = async (stepUpId: string) => {
+        if (!current()) return;
+        try {
+          const { data: refreshed } = await supabase.auth.getSession();
+          if (!current()) return;
+          const token = refreshed.session?.access_token;
+          if (!token) throw new Error('Session expired');
+          const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/verification/review`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ business_id: businessId, ...params, stepUpId }),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Review failed; reload before another attempt.');
+          if (!current()) return;
+          // Read persisted state after a successful write; do not invent an approved row.
+          const { data: saved, error: readError } = await adminDb.from('verification_requests')
+            .select('*, businesses(name, owner_id, country_code, verification_level, verification_status)')
+            .eq('id', requestId).single();
+          if (!current()) return;
+          if (readError || !saved) {
+            setReviewConfirmation(null);
+            throw new Error('Review saved, but readback failed. Close and reload before another attempt.');
+          }
+          setRequests(rows => rows.map(row => row.id === requestId ? saved as VerificationRequest : row));
+          setSelected(row => row?.id === requestId ? saved as VerificationRequest : row);
+          setReviewConfirmation(null);
+          setMessage('Review saved. The displayed status is the server result.');
+        } catch (error) {
+          if (current()) setMessage(error instanceof Error ? error.message : 'Review failed. Reload before trying again.');
+          throw error;
+        } finally {
+          if (current()) { operationRef.current = null; setProcessing(false); }
+        }
+      };
+      callbackRef.current = onAuthorized;
+      await stepUp.execute({ actionType: 'commercial_config', targetId: businessId, params,
+        description: `${action === 'approve' ? 'Approve as ' + level : 'Reject verification'} — ${action === 'approve' ? notes || 'No notes' : reason}. Documents: ${document_ids.length}`,
+        onAuthorized });
+    } catch (error) {
+      if (current()) {
+        operationRef.current = null;
+        setProcessing(false);
+        setMessage(error instanceof Error ? error.message : 'Authorization failed');
+      }
+    } finally {
+      if (!current()) stepUp.reset();
+      flightRef.current = false;
+      setFlight(false);
     }
-
-    // Collect pending document IDs for this business
-    const { data: pendingDocs } = await adminDb
-      .from('business_documents')
-      .select('id')
-      .eq('business_id', selected.business_id)
-      .eq('status', 'pending');
-    const docIds = (pendingDocs || []).map(d => d.id);
-
-    // Route through server API — handles business update, docs, requests, email, audit
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData?.session?.access_token;
-    if (!token) {
-      alert('Session expired');
-      setProcessing(false);
-      return;
-    }
-    const apiUrl = import.meta.env.VITE_API_URL || '';
-    const res = await fetch(`${apiUrl}/api/verification/review`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        business_id: selected.business_id,
-        action: 'reject',
-        reason: rejectionReason,
-        document_ids: docIds,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      alert('Failed to reject: ' + (data.error || 'Unknown error'));
-      setProcessing(false);
-      return;
-    }
-
-    // Server route handles email and audit logging.
-
-    setSelected(null);
-    setRejectionReason('');
-    setProcessing(false);
-    loadRef.current = false;
-    load();
   }
 
   if (loading) {
@@ -347,6 +342,14 @@ export default function Verification() {
       >
         {selected && (
           <div className="space-y-5">
+            {message && <p role="status">{message}</p>}
+            {reviewConfirmation && (
+              <section aria-label="Confirm verification review" className="space-y-3 rounded border p-4">
+                <p>{reviewConfirmation === 'approve' ? `Approve as ${selected.requested_level}: ${reviewNotes.trim() || 'No notes'}` : `Reject: ${rejectionReason.trim()}`}</p>
+                <button onClick={confirmReview} disabled={flight || processing} className="rounded bg-brand px-3 py-2 text-white">Confirm and authorize</button>
+                <button onClick={cancelReview} disabled={flight || processing} className="ml-3">Cancel review</button>
+              </section>
+            )}
             {/* Current Status */}
             <div className="space-y-2 text-sm">
               <DetailRow label="Current Level" value={LEVEL_LABELS[selected.businesses?.verification_level || 'unverified']} />
@@ -411,6 +414,7 @@ export default function Verification() {
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Notes (optional)</label>
                   <textarea
+                    aria-label="Review notes" disabled={flight || processing || !!reviewConfirmation}
                     value={reviewNotes}
                     onChange={e => setReviewNotes(e.target.value)}
                     rows={2}
@@ -418,8 +422,8 @@ export default function Verification() {
                     placeholder="Optional review notes..."
                   />
                   <button
-                    onClick={approveVerification}
-                    disabled={processing}
+                    onClick={() => setReviewConfirmation('approve')}
+                    disabled={flight || processing || !!reviewConfirmation}
                     className="mt-2 w-full rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
                   >
                     {processing ? 'Processing...' : `Approve — Set to ${LEVEL_LABELS[selected.requested_level]}`}
@@ -430,6 +434,7 @@ export default function Verification() {
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Rejection Reason</label>
                   <textarea
+                    aria-label="Rejection reason" disabled={flight || processing || !!reviewConfirmation}
                     value={rejectionReason}
                     onChange={e => setRejectionReason(e.target.value)}
                     rows={2}
@@ -437,8 +442,8 @@ export default function Verification() {
                     placeholder="Reason for rejection..."
                   />
                   <button
-                    onClick={rejectVerification}
-                    disabled={processing || !rejectionReason.trim()}
+                    onClick={() => setReviewConfirmation('reject')}
+                    disabled={flight || processing || !!reviewConfirmation || !rejectionReason.trim()}
                     className="mt-2 w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
                   >
                     {processing ? 'Processing...' : 'Reject Verification'}
@@ -449,6 +454,20 @@ export default function Verification() {
           </div>
         )}
       </DetailModal>
+      <StepUpDialog
+        open={!!callbackRef.current && (stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying')}
+        description={stepUp.state.description} error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={async code => {
+          if (submitRef.current || flightRef.current || !callbackRef.current) return;
+          submitRef.current = true;
+          flightRef.current = true;
+          setFlight(true);
+          try { await stepUp.submitCode(code, callbackRef.current); }
+          finally { if (!callbackRef.current) stepUp.reset(); flightRef.current = false; setFlight(false); submitRef.current = false; }
+        }}
+        onCancel={cancelReview}
+      />
     </div>
   );
 }

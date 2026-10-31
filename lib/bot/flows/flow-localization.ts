@@ -266,7 +266,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'payment.already_paid_hint': "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new booking.",
     'payment.still_verifying': "We're still verifying your previous payment. Tap *I've Paid* to check again.",
     'payment.no_bank_ref': 'No bank transfer reference found. Please use the online payment link instead.',
-    'payment.proof_ocr_hint': '🤖 _Our AI verified your receipt — amount and reference match. The business will confirm shortly._',
+    'payment.proof_ocr_hint': '🤖 _Receipt details match your payment reference. The business will confirm shortly._',
     'payment.complete_payment': 'Complete your payment using the link or bank transfer above.\n\nTap below after paying:',
     'payment.confirm_payment_link': "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
     'payment.enter_pin': "🔒 Enter your *4-digit Waaiio PIN* (not your bank/ATM PIN) to confirm payment.\n\nFor privacy, you can delete your PIN message from this chat after sending it.",

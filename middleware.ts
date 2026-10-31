@@ -135,7 +135,7 @@ export async function middleware(request: NextRequest) {
       status: 204,
       headers: {
         'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Max-Age': '86400',
       },
@@ -358,7 +358,7 @@ export async function middleware(request: NextRequest) {
     ];
     if (allowedOrigins.includes(origin)) {
       supabaseResponse.headers.set('Access-Control-Allow-Origin', origin);
-      supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
       supabaseResponse.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       supabaseResponse.headers.set('Access-Control-Allow-Credentials', 'true');
     }
