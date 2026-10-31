@@ -204,6 +204,11 @@
 - **`lib/__tests__/m479-offline-approval-db.test.ts`**: Preserve all 18 existing cases and add two real two-session proof/confirmation and proof/cleanup tests with database-observed blocking and final-state/idempotency assertions.
 - **Affects / could break**: Concurrent offline-proof recording and merchant approval/cleanup. Source/isolated-test correction only; no hosted migration application or production incident is claimed.
 
+### #741 — Canonical offline confirmation timestamp compatibility (2026-10-31)
+
+- **M479 and its disposable PostgreSQL test**: Stop assigning an absent orders.paid_at column while retaining order updated_at, payment paid_at and transfer confirmation timestamps. Preserve stock, proof protection, payment linkage, idempotency and shared lock-order behavior.
+- Exercise both confirm-payment and confirm-and-approve outcomes in the existing concurrent-confirmation coverage. The reviewed correction passes 21 database cases with zero skips; hosted application and live flow acceptance remain separate.
+
 ### #736 — Offline merchant approval: payment vs fulfillment separation (2026-10-28)
 
 - **`supabase/migrations/479_offline_merchant_approval.sql`** (new): M479 migration with 11 SQL objects. Adds `paid_pending_approval` to `order_status` enum. Adds `proof_submitted_at` and `proof_protected` columns to `pending_transfers`. Extends `refunds` CHECK for `merchant_obligation/merchant_settled/admin_resolved` (Owner Option X). Creates `submit_transfer_proof` (atomic proof with DB timestamps, deadline gate, lock order→transfer→marker), `confirm_order_transfer_atomic` 5-arg (proof-protected expiry, conditional approval), `confirm_nonorder_transfer_atomic` (atomic non-order with entity validation, fail-closed fractional amounts), `approve_paid_order`, `reject_paid_order` (stock/promo restore + refund obligation). Modifies `cancel_stale_order_atomic` (proof protection preserving original deadlines, legacy proof held), `finalize_promo_reservation` (`paid_pending_approval` awareness). All functions SECURITY DEFINER, service_role only.
