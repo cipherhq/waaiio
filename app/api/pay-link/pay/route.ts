@@ -171,6 +171,7 @@ export async function POST(request: NextRequest) {
   }
 
   const paymentId = payment.id;
+  const paymentBusinessId = link.business_id;
 
   // This records local failure only; it does not cancel a provider session.
   async function failInitialization(message: string) {
@@ -180,7 +181,7 @@ export async function POST(request: NextRequest) {
         .from('payments')
         .update({ status: 'failed' })
         .eq('id', paymentId)
-        .eq('business_id', link.business_id)
+        .eq('business_id', paymentBusinessId)
         .eq('status', 'pending')
         .select('id')
         .maybeSingle();
@@ -193,7 +194,7 @@ export async function POST(request: NextRequest) {
             .from('payments')
             .select('status')
             .eq('id', paymentId)
-            .eq('business_id', link.business_id)
+            .eq('business_id', paymentBusinessId)
             .maybeSingle();
           cleanupConfirmed = !readError && !!current && current.status !== 'pending';
         }
