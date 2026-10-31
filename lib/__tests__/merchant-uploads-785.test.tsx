@@ -44,7 +44,7 @@ it('renders an additional product image immediately before saving and removes it
 });
 it('uploads verification files under the existing business-first storage prefix', async () => {
   const { container } = render(<VerificationPage />);
-  fireEvent.click((await screen.findAllByRole('button', { name: 'Upload', exact: true }))[0]);
+  fireEvent.click((await screen.findAllByRole('button', { name: 'Upload' }))[0]);
   const file = new File(['document'], 'proof.pdf', { type: 'application/pdf' });
   fireEvent.change(container.querySelector('input[type=file]')!, { target: { files: [file] } });
   await waitFor(() => expect(state.upload).toHaveBeenCalled());

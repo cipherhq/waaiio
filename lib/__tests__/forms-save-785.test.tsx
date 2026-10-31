@@ -15,7 +15,7 @@ async function fillForm() {
   fireEvent.click((await screen.findAllByRole('button', { name: '+ New Form' }))[0]);
   fireEvent.change(screen.getByPlaceholderText('e.g. Guest Registration, Patient Intake'), { target: { value: 'QA form' } });
   fireEvent.change(screen.getByPlaceholderText('Field label (e.g. Full Name)'), { target: { value: 'Response' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Add', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 }
 describe('forms save and load failures', () => {
   it('keeps editor and entered content on rejected save, then supports retry', async () => {
@@ -27,7 +27,7 @@ describe('forms save and load failures', () => {
     expect(screen.queryByText('No forms yet')).toBeNull();
     state.saveError = null;
     fireEvent.click(screen.getByRole('button', { name: 'Create Form' }));
-    await screen.findByRole('heading', { name: 'Forms', exact: true });
+    await screen.findByRole('heading', { name: 'Forms' });
     await screen.findByText('QA form');
     expect(state.insert).toHaveBeenCalledTimes(2);
   });
