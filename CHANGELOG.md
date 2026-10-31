@@ -1,3 +1,10 @@
+## 2026-10-31 — Nigeria-only pricing page
+- Limited footer country badges to Nigeria on `/pricing` only; other pages unchanged.
+- Fixed the pricing page to Nigeria and replaced the five-country promotion with Nigeria-specific copy.
+- Preserved canonical API pricing, unavailable/retry handling, and both connected-provider and admin-controlled settlement explanations.
+- Files: `app/(marketing)/pricing/page.tsx`, `lib/__tests__/marketing-country-pricing.test.tsx`.
+- Impact: pricing-page country selection only; shared country configuration and payment processing unchanged.
+
 ### 2026-10-31 — Website corrections and interactive WhatsApp demo
 
 - Public pricing uses the current country projection and standard fee snapshot; country switches hide stale prices. Booking comparisons follow enforced limits (50/300/unlimited), superseding the activities wording below.
