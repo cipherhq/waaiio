@@ -198,6 +198,11 @@
 - **Affects**: Bot completion card presentation. Booking-completion figures, other session counters, queries, filters and date behavior are unchanged.
 - **Could break**: The longer card wording may wrap differently at narrow widths; no rendered browser verification is claimed. Action measurement and the end-date correction remain separate work.
 
+### #782 — Reseller financial and payout read states (2026-10-30)
+
+- **`admin/src/pages/ResellerFinancials.tsx`, `admin/src/pages/ResellerPayouts.tsx` and their two read-state test files**: Distinguish loading, failed reads, empty results and successful data; reject obsolete completions and retain generation checks before and after deferred token resolution.
+- **Affects / could break**: Reseller financial and payout views during failed requests, retries and context changes. Existing arithmetic, monetary units, authentication helpers and financial mutations are unchanged. No live settlement or currency-history reconciliation is claimed.
+
 ### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
 
 - **`docs/ops/subscription-messaging-credit-10pct-audit-2026-10-26.md`**: Surgical documentation corrections per CTO review. (1) Updated stale references: PRs #711 and #722 now noted as merged; #712 remains open draft on separate lane. (2) Moved Admin-control configurability from approved decisions to unresolved future implementation gates. (3) Explicitly distinguished four unresolved Owner decisions (discount/tax basis, annual billing, rounding rule, Admin-control design) from the already-approved 10% rate. (4) Clarified section 4 heading applies to the future implementation PR, not this documentation PR. (5) Labeled US/CA Premium 10% credit amounts as illustrative pending rounding approval. (6) Retained explicit "no merge without separate Owner authorization" in governance section.
