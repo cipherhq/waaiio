@@ -181,6 +181,12 @@
 - **Affects**: Public invoice payment initiation and initialization input compatibility. No schema, webhook, finalization or payment-provider configuration changes.
 - **Could break**: Checkout destination selection or nullable payer serialization; canonical cloud CI and independent review are required. Synthetic coverage does not establish live-provider or deployment acceptance.
 
+### #747 — Checked scan-to-pay payment persistence (2026-10-30)
+
+- **`app/api/pay-link/pay/route.ts`**: Create one checked nullable-payer payment after validation, reuse its ID through existing adapters, and persist the actual provider reference before returning checkout or consuming a use. Initialization/persistence failures return no checkout success; pending-only cleanup preserves successful rows.
+- **`lib/__tests__/736-scan-to-pay-phone-validation.test.ts`, `lib/__tests__/issue-493-staging-readiness.test.ts`**: Exercise actual route/adapters through synthetic provider transport and stateful persistence fixtures, including metadata, references and failure cleanup.
+- **Affects / could break**: Scan-to-pay initialization and persistence failure handling. Existing adapters, provider routing and schema remain unchanged. Simulated tests do not certify a live provider transaction or a hosted database.
+
 ### #736 Lane 2 — Scan-to-pay checkout phone validation fix (2026-10-28)
 
 - **`app/api/pay-link/pay/route.ts`**: Fixed two bugs in the scan-to-pay checkout initialization. (1) An empty-string payer phone flowed into the Paystack initializer, which requires valid E.164 — `canonicalSavedCardPhone('')` returned null, causing gateway init to fail closed while an orphaned pending payment record already existed. Now validates phone against the resolved gateway's requirements BEFORE any payment record creation; returns 422 with `PHONE_REQUIRED` code and actionable message. (2) Removed premature payment record INSERT that preceded gateway initialization — the gateway adapters (paystack.ts, stripe.ts) create their own payment rows on success, so the route's pre-insert caused duplicate/orphaned records on every attempt.
