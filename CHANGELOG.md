@@ -205,6 +205,14 @@
 - **Affects**: WhatsApp bot capability selection menu. Only businesses with 11+ user-facing capabilities trigger pagination. All existing single-page behavior unchanged. No database, payment, migration, or API route changes.
 - **Could break**: If a business has exactly 10 user-facing capabilities + My Account (returning customer) = 11 items, the 11th item now appears on page 2 instead of being silently dropped. This is the intended fix.
 
+### #772 — Loyalty acceptance tests and current-main integration (2026-10-30)
+
+- **`lib/__tests__/sidebar-membership-gating-762.test.tsx`**: Assert the actual Add Features link, destination, section and absence of duplicates; reversed unequal capability-tier fixtures guard ALL eligibility in both directions.
+- **`lib/__tests__/loyalty-tier-legacy-762.test.ts`**: Assert the actual legacy tier query's normalized phone, business scope, non-null tier predicate and terminal read. Existing scenarios remain intact; the target suites now contain 15 Sidebar and 11 legacy cases.
+- **`components/dashboard/Sidebar.tsx` / integration**: Preserve current main's Seating entry alongside reviewed Loyalty Tiers ALL behavior and all current-main workflow/migration changes.
+- **Clarification of the historical W17 entry below**: Tier lookup errors skip the legacy award through its outer error boundary; they do not silently award at the default multiplier. Add Features tier eligibility also uses ALL for Loyalty Tiers.
+- **Affects / could break**: Loyalty navigation and legacy query regression coverage; production loyalty calculations and the 12-case PostgreSQL suite are unchanged. Final exact-head CI is required. No hosted M484 application, live award, backfill or discount-consumption certification is claimed.
+
 ### #762 W17 — Fix loyalty tier multiplier and sidebar gating (2026-10-30)
 
 - **`supabase/migrations/484_fix_loyalty_tier_multiplier.sql`** (new): Replaces M387 `apply_payment_loyalty_once` RPC with corrected tier lookup. The original read from `customer_memberships` (a table that was never created), silently falling back to multiplier 1. The fix joins `customer_profiles.membership_tier_id` → `membership_tiers` with tenant-bound `mt.business_id = cp.business_id`, `is_active` guard, explicit default 1 via `IF NOT FOUND`, and qualified `public.` relation references. All other M387 behavior preserved: payment resolution, idempotency, balance/earned/visit mutations, transaction insert, replay, ACL.
