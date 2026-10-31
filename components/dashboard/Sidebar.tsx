@@ -19,8 +19,10 @@ interface NavItem {
   href: string;
   label: string;
   icon: string;
-  /** Show only if ANY of these capabilities is enabled */
+  /** Show only if ANY of these capabilities is enabled (default), or ALL when requireAllCapabilities is true */
   capabilities?: CapabilityId[];
+  /** When true, ALL listed capabilities must be enabled (not just any). Used for pages that require multiple capabilities. */
+  requireAllCapabilities?: boolean;
   section?: 'main' | 'manage' | 'money' | 'engage' | 'reseller' | 'settings';
   /** Hide for these business categories */
   hideForCategories?: string[];
@@ -340,6 +342,7 @@ const navItems: NavItem[] = [
     label: 'Loyalty Tiers',
     icon: 'M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z',
     capabilities: ['loyalty', 'membership'],
+    requireAllCapabilities: true,
     section: 'engage',
   },
   {
@@ -640,7 +643,9 @@ export function Sidebar() {
 
     // Items with capabilities: essential if capability is enabled, otherwise "more"
     if (item.capabilities) {
-      const hasCapability = item.capabilities.some(cap => capabilities.includes(cap));
+      const hasCapability = item.requireAllCapabilities
+        ? item.capabilities.every(cap => capabilities.includes(cap))
+        : item.capabilities.some(cap => capabilities.includes(cap));
       if (hasCapability) {
         essentialItems.push(item);
       } else {
@@ -665,11 +670,15 @@ export function Sidebar() {
       availableToAdd.push(item);
       continue;
     }
-    // Check if ANY of the item's capabilities are available on the current tier
-    const canActivate = item.capabilities.some(cap => {
+    // For ALL-required items, every capability must be on the current tier.
+    // For ANY items, at least one suffices.
+    const tierCheck = (cap: CapabilityId) => {
       const requiredTier = CAPABILITY_TIER_REQUIREMENTS[cap];
       return requiredTier ? tierRank[requiredTier] <= currentTierRank : true;
-    });
+    };
+    const canActivate = item.requireAllCapabilities
+      ? item.capabilities.every(tierCheck)
+      : item.capabilities.some(tierCheck);
     if (canActivate) {
       availableToAdd.push(item);
     } else {
