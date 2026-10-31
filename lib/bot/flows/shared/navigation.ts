@@ -50,12 +50,31 @@ export async function persistDirectoryEntry(supabase: SupabaseClient, phone: str
   const current = await readCurrent();
   if (current.error) return false;
   if (current.data) return saveExisting(current.data);
-  const inserted = await supabase.from('bot_sessions').insert({
+  const insertFresh = () => supabase.from('bot_sessions').insert({
     whatsapp_number: phone, user_id: null, business_id: null, current_step: 'directory_search',
     session_data: data, is_active: true, expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
   }).select('id').single();
+  let inserted = await insertFresh();
   if (!inserted.error && inserted.data) return true;
   if (inserted.error?.code !== '23505') return false;
+  // Pre-channel pickers can outlive their TTL while occupying the phone-only unique index.
+  // Retire only expired, unbound navigation state; never adopt its business suggestions.
+  const cutoff = new Date().toISOString();
+  const legacyFilter = (query: any) => query.eq('whatsapp_number', phone)
+    .is('business_id', null).eq('is_active', true)
+    .is('session_data->>_inbound_channel_id', null).lt('expires_at', cutoff)
+    .in('current_step', ['select_business_suggestion', 'directory_search', 'directory_results']);
+  const legacy = await legacyFilter(supabase.from('bot_sessions').select('id, version')).maybeSingle();
+  if (legacy.error) return false;
+  if (legacy.data) {
+    const retired = await legacyFilter(supabase.from('bot_sessions').update({
+      is_active: false, version: (legacy.data.version ?? 0) + 1,
+    })).eq('id', legacy.data.id).eq('version', legacy.data.version ?? 0).select('id').maybeSingle();
+    if (retired.error || !retired.data) return false; // Concurrent renewal wins.
+    inserted = await insertFresh();
+    if (!inserted.error && inserted.data) return true;
+    if (inserted.error?.code !== '23505') return false;
+  }
   // A concurrent click may have won. Re-read only this channel and use CAS.
   const winner = await readCurrent();
   return !winner.error && winner.data ? saveExisting(winner.data) : false;

@@ -16,7 +16,7 @@ function database(rows: Record<string, any>, conflict = false) {
       const chain: any = {};
       let writing = false;
       chain.update = vi.fn((data: any) => { writing = true; q.filters.push(['update', data]); return chain; });
-      for (const m of ['select', 'eq', 'neq', 'in', 'is', 'not', 'or', 'order', 'limit']) {
+      for (const m of ['select', 'eq', 'neq', 'in', 'is', 'not', 'or', 'order', 'limit', 'lt']) {
         chain[m] = vi.fn((...args: any[]) => { q.filters.push([m, ...args]); return chain; });
       }
       const result = () => ({ data: writing && conflict ? null : rows[table] ?? null, error: null });
@@ -210,8 +210,38 @@ describe('directory persistence before prompting', () => {
     expect(await persistDirectoryEntry(db as any, '+2341', { _inbound_channel_id: 'this-channel' })).toBe(false);
     expect(db.rpc).not.toHaveBeenCalled();
     const reads = queries.filter(q => q.filters.some(f => f[0] === 'is' && f[1] === 'business_id'));
-    expect(reads).toHaveLength(2);
-    for (const read of reads) expect(read.filters).toContainEqual(['eq', 'session_data->>_inbound_channel_id', 'this-channel']);
+    expect(reads).toHaveLength(3);
+    const channelReads = reads.filter(q => q.filters.some(f => f[0] === 'eq' && f[1] === 'session_data->>_inbound_channel_id'));
+    expect(channelReads).toHaveLength(2);
+    for (const read of channelReads) expect(read.filters).toContainEqual(['eq', 'session_data->>_inbound_channel_id', 'this-channel']);
+    expect(queries.some(q => q.filters.some(f => f[0] === 'update'))).toBe(false);
+  });
+  it.each([false, true])('retires expired legacy navigation with guarded CAS (concurrent renewal: %s)', async renewed => {
+    const { db, queries } = database({ bot_sessions: null });
+    const original = db.from.getMockImplementation()!;
+    let inserts = 0;
+    db.from.mockImplementation((table: string) => {
+      const chain = original(table);
+      const q = queries[queries.length - 1];
+      chain.insert = vi.fn(() => ({ select: () => ({ single: async () => ++inserts === 1
+        ? { data: null, error: { code: '23505' } } : { data: { id: 'fresh' }, error: null } }) }));
+      chain.maybeSingle = vi.fn(async () => {
+        const isLegacy = q.filters.some(f => f[0] === 'lt' && f[1] === 'expires_at');
+        const writing = q.filters.some(f => f[0] === 'update');
+        return { data: isLegacy && !(writing && renewed) ? { id: 'legacy', version: 7 } : null, error: null };
+      });
+      return chain;
+    });
+    expect(await persistDirectoryEntry(db as any, '+2341', { _inbound_channel_id: 'this-channel' })).toBe(!renewed);
+    expect(inserts).toBe(renewed ? 1 : 2);
+    const write = queries.find(q => q.filters.some(f => f[0] === 'update'))!;
+    for (const filter of [['eq', 'id', 'legacy'], ['eq', 'version', 7], ['eq', 'whatsapp_number', '+2341'],
+      ['is', 'business_id', null], ['eq', 'is_active', true], ['is', 'session_data->>_inbound_channel_id', null]]) {
+      expect(write.filters).toContainEqual(filter);
+    }
+    expect(write.filters).toContainEqual(['update', { is_active: false, version: 8 }]);
+    expect(write.filters.some(f => f[0] === 'lt' && f[1] === 'expires_at')).toBe(true);
+    expect(write.filters).toContainEqual(['in', 'current_step', ['select_business_suggestion', 'directory_search', 'directory_results']]);
   });
   it('reuses a same-channel navigation session by CAS, and stops on conflict', async () => {
     const row = { id: 'picker', version: 4, expires_at: '2000-01-01T00:00:00Z', session_data: { _inbound_channel_id: 'this-channel' } };

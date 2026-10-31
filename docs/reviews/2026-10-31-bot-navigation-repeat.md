@@ -74,3 +74,15 @@ Full CI run [41235368468](https://github.com/cipherhq/waaiio/actions/runs/412353
 - Repeat-state cleanup is checked by behavior; the three remaining capability-transition callers retain their shared-helper checks.
 
 Only test fixtures/assertions and this evidence note changed during reconciliation. No production code or schema was changed. Exact-head CI must be rerun after this follow-up commit; the failed run is not release clearance. PR #800 holds the latest CI status. A read-only provider recheck did not substantiate the reported billing concern for the connected dedicated number; it referenced a separate account. Provider details are kept out of this public document.
+
+## Authorized staging verification follow-up
+
+Commit `39bf82a74d12413e1dd369ed9deb9ff815db102a` passed all 13 CI jobs in [run 41236001799](https://github.com/cipherhq/waaiio/actions/runs/41236001799) and was deployed to staging with explicit Owner authorization. Health returned OK; the existing conversation-binding migration was verified applied. Production was not changed.
+
+The first live shared-directory test returned the persistence fallback. An independent evidence reviewer traced this to an expired legacy null-business navigation row without channel metadata occupying the phone-only active-session unique index. The bounded follow-up retires only an expired, unbound legacy navigation row with repeated sender, identity, version, expiry, active and null-business guards before retrying insertion. It neither adopts old suggestions nor retires an unexpired or other-channel row.
+
+| Preflight change | Affected dependencies | Risk / boundary |
+|---|---|---|
+| `persistDirectoryEntry` collision recovery | `BotService.handleMessage` home/directory command; `bot_sessions` index from migration 136 | Session lifecycle; guarded expired legacy navigation only, no payment, booking, merchant binding, schema or cancellation mutation |
+
+Local targeted result: 44 tests passed, zero skips across navigation-repeat and shared-conversation-routing. Added regressions cover successful legacy retirement and concurrent renewal preventing retirement. Independent source review found no remaining concrete blocker in this correction. Live verification remains pending redeployment of the follow-up; the initial deployment is not claimed to have passed acceptance.
