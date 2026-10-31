@@ -1,8 +1,10 @@
-# Current Behavior vs Contract Report
+# Historical Behavior vs Contract Report
 
 > **Issue:** #721 — Shared payment parity across capabilities
 > **Audit SHA:** `164b31b87fc8013dec65a55201ecaee30859a1b8`
 > **Date:** 2026-10-28
+>
+> **2026-10-30 reconciliation:** original audit/Graphify/runtime receipts below retain their original revisions and dates. They do not certify current main `66b7d96688dd398bfd156a6570cf4305d9b97cc8`. This docs-only correction applies the settled offline Owner decision and separates investigations from proven defects; no fresh runtime/provider query or test execution occurred.
 
 ---
 
@@ -21,7 +23,7 @@ Each finding is classified using the Operating Order's mandatory finding states:
 
 ---
 
-## Fixed Defects (on current main)
+## Historical Fixed Defects (at the audit SHA)
 
 | ID | Description | Fix | PR |
 |---|---|---|---|
@@ -37,7 +39,7 @@ Each finding is classified using the Operating Order's mandatory finding states:
 
 ---
 
-## Previously Reported Defects Now FIXED on Current Main
+## Previously Reported Defects FIXED at the Audit SHA
 
 | ID | Severity | Description | Resolution |
 |---|---|---|---|
@@ -45,15 +47,16 @@ Each finding is classified using the Operating Order's mandatory finding states:
 | NOTIF-TYPE | was P1 | Stage 3 notification type wrong for payment/giving | FIXED — `send-confirmation.ts` uses capability-aware classification. Issue #166 CLOSED. |
 | GIVING-LOYALTY | was P1 | Giving does not skip loyalty | FIXED — `send-confirmation.ts:538,890` sets `skipLoyalty` for giving. Test: `giving-loyalty-gap.test.ts`. Issue #167 CLOSED. |
 
-## Confirmed Code Defects (active on current main)
+## Historical Findings and Current Evidence Boundaries
 
-| ID | Severity | Description | Evidence | Existing Issue |
-|---|---|---|---|---|
-| T19B | P1 | Provider-paid payment after booking cancellation — constructed-interleaving code gap where booking stays `cancelled` while payment becomes `success` | `process-success.ts` returns `criticalSuccess:false`; no provider incident established; staging query returned 0 affected rows. Issue #735 classifies as P1 investigation. | #735 (OPEN) |
-| TABLE-DUP | P1 | `table_reservation` duplicates scheduling — same backing data, same flow, no dedicated entity | `capability-selection.flow.ts:84-88` identical to scheduling | #507, #730 (OPEN), PR #731 (DRAFT) |
-| OFFLINE-APPROVE | P1 | Offline transfer auto-confirms bookings — bypasses manual booking approval when merchant has approval configured | `pending-transfers/[id]/route.ts` marks `status='confirmed'` directly. Owner-approved target: separate payment verification and booking acceptance (#721 body §8). | #721 (OPEN) — approved target behavior, implementation gap |
-| ORDER-ADAPTER | P2 | Ordering "I've Paid" uses `reconcilePayment` directly instead of `verifyAndReconcilePayment` | Inconsistent verification path | — |
+| ID | Disposition | Evidence boundary | Follow-up |
+|---|---|---|---|
+| T19B | UNVERIFIED / EVIDENCE GAP — investigation | Historical constructed interleaving and zero-row staging receipt are not a reproduced provider incident or a new confirmed P1. | #735; no automatic refund/reinstatement policy inferred |
+| TABLE-DUP | Historical code finding; current integration dependency | Original audit traced shared scheduling backing. #731 provides dedicated architecture but remains independently gated; being unmerged is not itself a P1. | #507/#730/#731 |
+| OFFLINE-APPROVE | Owner target implementation dependency | [Owner6465557298](https://github.com/cipherhq/waaiio/issues/721#issuecomment-6465557298) requires explicit approval for ALL applicable offline-paid order/booking/reservation fulfillment, separately from verified funds, regardless of configuration. Preserve both confirm choices, online policy and payment-only/invoice/giving semantics. | #721/#741; no fresh deployment claim |
+| ORDER-ADAPTER | UNVERIFIED / EVIDENCE GAP | Different direct reconcilePayment versus adapter entry alone does not establish a behavior defect or justify P2 severity. | Bounded parity investigation only |
 
+Counts for this correction: 0 newly confirmed active defects, 0 newly independently confirmed code defects, 12 historical fixed findings retained, and 2 investigation concerns (T19B/ORDER-ADAPTER). Table/offline integration dependencies are listed separately, not counted as current verified incidents.
 ---
 
 ## Documentation Drift (stale contract text)
@@ -62,7 +65,7 @@ Each finding is classified using the Operating Order's mandatory finding states:
 |---|---|---|---|
 | Giving loyalty exclusion | `giving.contract.json` knownDebt #167 claims loyalty not excluded | FIXED — `skipLoyalty` implemented in `send-confirmation.ts`. Contract JSON text is stale. | Update `giving.contract.json` knownDebt section (separate PR) |
 | Payment provider count | Earlier audit listed 4 providers | PayPal is a 5th supported gateway (`lib/payments/paypal.ts`) | Updated in `shared-payment-lifecycle.md` (this PR) |
-| CI job count | Earlier references said "7 jobs" | CI has 11 jobs | Noted in this PR's audit documents |
+| CI job count | Earlier references said "7 jobs" or "11 jobs" | Canonical CI has 12 jobs | Count correction; green CI alone does not prove a specific file ran |
 | `table_reservation` tier | `capability-index.json` showed `tier-3` | Changed to `tier-1` — bookings, deposits, and state-machine behavior meet Tier-1 criteria. RISK GAP: detailed contract required before PR #731 merge. | Updated in `capability-index.json` (this PR) |
 
 ---
@@ -83,7 +86,7 @@ Each finding is classified using the Operating Order's mandatory finding states:
 
 ---
 
-## MCP Verification Status
+## Historical MCP Verification Status (original audit only)
 
 | MCP Tool | Used in This Audit | Key Evidence |
 |---|---|---|
@@ -95,9 +98,9 @@ Each finding is classified using the Operating Order's mandatory finding states:
 | **Stripe MCP** | NOT PERFORMED this session | Stripe payment paths verified via code trace only |
 | **Paystack MCP** | NOT PERFORMED this session | Paystack payment paths verified via code trace only |
 
-## Graphify Evidence
+## Historical Graphify Evidence
 
-**Fresh AST-only Graphify extraction performed at exact head SHA `7642f88d`** (branch `docs/721-whatsapp-lifecycle-contract`, based on main `164b31b8`):
+**Historical AST-only Graphify extraction reported at then-head SHA `7642f88d`** (branch `docs/721-whatsapp-lifecycle-contract`, based on main `164b31b8`):
 - **16,293 nodes, 34,360 edges** (AST extraction, no clustering/LLM)
 - 2,705 source files processed, 75 empty-node files (JSON configs, not code)
 - `graphify update . --no-cluster` — code-only, no semantic LLM extraction
@@ -124,7 +127,7 @@ Each finding is classified using the Operating Order's mandatory finding states:
 
 ---
 
-## Reconciliation with Open Issues/PRs
+## Historical Reconciliation with Issues/PRs (original audit snapshot)
 
 | Issue/PR | Title | Relation | Status |
 |---|---|---|---|

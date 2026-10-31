@@ -1,7 +1,7 @@
 # Shared Payment-to-Fulfillment Lifecycle Standard
 
 > **Authority:** Issue #721, Owner-approved cross-capability payment lifecycle.
-> **Audit SHA:** `164b31b87fc8013dec65a55201ecaee30859a1b8`
+> **Historical audit SHA (not current execution evidence):** `164b31b87fc8013dec65a55201ecaee30859a1b8`
 > **Status:** Contract standard — not yet E2E certified.
 
 ---
@@ -26,7 +26,7 @@ This standard does NOT replace capability-specific contracts. It defines the sha
 **Authority:** `lib/payments/authority.ts` → `authorizeAndFinalize`
 
 **Rules:**
-- Only provider webhook or verified provider API query establishes payment success
+- For online payments, only provider webhook or verified provider API query establishes payment success; offline funds require authorized merchant verification under §4
 - "I've Paid" button is NOT payment verification — it triggers provider query
 - Browser redirect return is NOT payment verification
 - Bank transfer proof is NOT confirmation that funds arrived
@@ -90,7 +90,7 @@ This standard does NOT replace capability-specific contracts. It defines the sha
 |---|---|---|---|---|---|
 | Paystack | NG, GH | `charge.success` | Yes (PIN-protected) | Yes (auto-charge) | N/A |
 | Stripe | US, UK, CA | `checkout.session.completed`, `invoice.paid` | Yes (Stripe Customer) | Yes (Subscriptions) | N/A |
-| Direct/Offline | All | N/A (merchant verification) | N/A | N/A | Yes (bank transfer) |
+| Direct/Offline | NG/GH, eligible opted-in Growth/Business merchants only | N/A (merchant verification) | N/A | N/A | Strict default OFF; see §4 |
 
 ### Code Exists, Not Automatically Launch-Enabled
 
@@ -110,39 +110,36 @@ This standard does NOT replace capability-specific contracts. It defines the sha
 
 ## 4. Offline Bank Transfer Path
 
-**Payment verification and booking/reservation acceptance are separate decisions** (Owner-approved A7, Issue #721 body §8).
+**Binding Owner target:** [decision6465557298](https://github.com/cipherhq/waaiio/issues/721#issuecomment-6465557298) and [follow-up6465573985](https://github.com/cipherhq/waaiio/pull/737#issuecomment-6465573985) supersede automatic offline acceptance. This target is not a claim of deployed/E2E-certified behavior.
+
+Eligibility remains NG/GH, Growth=Pro or Business=Premium, configured country minimum, eligible active merchant bank details and explicit merchant opt-in; strict default OFF.
 
 ```
-Customer selects bank transfer
-  → bank-transfer.ts shows merchant bank details
-  → Customer sends proof/reference
-  → pending_transfers row created (status: pending)
-  → Merchant reviews in dashboard (pending-transfers/[id]/route.ts)
+Customer selects eligible offline bank transfer
+  → Merchant bank instructions
+  → Screenshot proof or typed transaction/reference fallback
+  → Proof linked to the exact transfer and payable entity
+  → OCR extraction assists merchant review; it never verifies funds
+  → Merchant verifies actual receipt of funds
 
-  Payment verification (Step 1):
-  → Merchant confirms funds received → payment marked verified
+For orders/bookings/reservations or other applicable fulfillment:
+  → "Confirm Payment Only": funds verified, fulfillment awaiting approval
+  → "Confirm Payment & Approve": explicitly authorizes both decisions
+  → Fulfillment and its confirmation only after verification AND approval
 
-  Booking/reservation acceptance (Step 2 — separate decision):
-  → If merchant has manual approval configured:
-      Merchant sees "Confirm Payment & Approve Booking" vs "Confirm Payment Only"
-      Payment verification alone does NOT auto-confirm the booking
-      Customer notified of payment receipt; booking status remains pending approval
-  → If merchant does NOT have manual approval:
-      Payment verification triggers Stage 2 fulfillment + Stage 3 notifications
-
-  → Stage 2 + Stage 3 execute only after BOTH payment verification AND
-    applicable booking acceptance are complete
+For payment-only/invoice/giving without a separate acceptance entity:
+  → Merchant verification remains mandatory
+  → Apply the capability-specific terminal behavior; invent no extra approval entity
 ```
 
 **Rules:**
-- Proof of bank transfer is NOT confirmation that funds arrived
-- Merchant must manually verify payment receipt
-- Payment verification and booking acceptance are independently controllable
-- "I've Paid" for offline triggers merchant notification, not auto-confirmation
-- Customer receives accurate status: "payment received, pending approval" vs "booking confirmed"
+- All applicable offline fulfillment requires explicit merchant approval, irrespective of a manual-approval configuration. Online auto-acceptance policy is unchanged.
+- Screenshot, typed proof, OCR and "I've Paid" never establish receipt of funds or trigger automatic approval. Show a private authorized screenshot and extracted review summary where supported; OCR failure retains human-review/typed fallback.
+- Preserve the 24-hour proof-submission deadline and protection against automatic cancellation once timely proof is submitted; continue appropriate reminders.
+- Distinguish proof received, review pending, funds verified/awaiting approval, approved, rejected and merchant refund due.
+- Offline transfers incur zero Waaiio processing/transaction fees and no Waaiio-held funds. Merchant-direct refunds use the approved existing refunds ledger; do not create a new custody/refund model.
 
-**Implementation gap (A7):** Current `pending-transfers/[id]/route.ts` marks `status='confirmed'` directly on payment verification, bypassing the manual approval setting. This is a known gap against the approved target behavior; fix tracked under #721.
-
+**Implementation dependency:** #741 tracks reconciliation with this target. The original audit observation about automatic confirmation is historical, not a new current-runtime finding. Unmerged implementation, hosted rollout and certification must be verified separately.
 ---
 
 ## 5. Saved Card Flow
@@ -170,7 +167,7 @@ pending → provider_pending | provider_ambiguous → provider_success_unfinaliz
 
 ## 7. Known Debt and Resolved Items
 
-### Resolved (previously reported as debt, now fixed on current main)
+### Historical resolved findings (at the audit SHA)
 
 | ID | Description | Resolution |
 |---|---|---|
@@ -178,12 +175,12 @@ pending → provider_pending | provider_ambiguous → provider_success_unfinaliz
 | #166 | Stage 3 notification type wrong for payment/giving | FIXED — `send-confirmation.ts` uses capability-aware notification classification. Issue CLOSED. |
 | #167 | Giving does not skip loyalty | FIXED — `send-confirmation.ts:538,890` sets `skipLoyalty` for giving/ambiguous payments. Test: `giving-loyalty-gap.test.ts`. Issue CLOSED. |
 
-### Active Known Debt
+### Historical investigation and evidence inventory
 
 | ID | Description | Evidence | Status |
 |---|---|---|---|
-| #735 | T19b: Constructed-interleaving code gap — booking cancellation then provider payment success leaves booking `cancelled` | `process-success.ts` returns `criticalSuccess:false`; no provider incident established; staging query 0 affected rows | P1 INVESTIGATION — no automatic refund/reinstatement policy approved |
-| — | Ordering "I've Paid" uses `reconcilePayment` directly instead of `verifyAndReconcilePayment` adapter | Inconsistent verification path | KNOWN DEBT |
+| #735 | T19b: Constructed-interleaving code gap — booking cancellation then provider payment success leaves booking `cancelled` | `process-success.ts` returns `criticalSuccess:false`; no provider incident established; staging query 0 affected rows | INVESTIGATION — historical P1 issue label is not a currently verified defect severity; no automatic refund/reinstatement policy approved |
+| — | Ordering "I've Paid" uses `reconcilePayment` directly instead of `verifyAndReconcilePayment` adapter | A different adapter path alone does not prove incorrect behavior | UNVERIFIED / EVIDENCE GAP; no current defect severity |
 | — | Square has zero test files | No test coverage for a supported provider | GAP |
 | — | No E2E payment journey test exists (create-link → webhook → confirmation) | All payment tests are unit/DB level | GAP |
 

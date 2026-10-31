@@ -1,8 +1,10 @@
 # Complete Capability × WhatsApp Journey Matrix
 
 > **Authority:** Issue #721 audit deliverable.
-> **Audit SHA:** `164b31b87fc8013dec65a55201ecaee30859a1b8`
-> **Methodology:** Read-only code-level trace. No E2E execution performed.
+> **Historical audit SHA:** `164b31b87fc8013dec65a55201ecaee30859a1b8`
+> **Methodology:** Historical read-only code-level trace, not current certification. No E2E execution performed.
+>
+> **2026-10-30 correction:** capability inventory and dedicated feedback-test filename search checked against main `66b7d96688dd398bfd156a6570cf4305d9b97cc8`; test existence is not execution evidence. All applicable offline-paid fulfillment requires explicit merchant approval separately from funds verification, per [Owner decision6465557298](https://github.com/cipherhq/waaiio/issues/721#issuecomment-6465557298). Online policy is unchanged; payment-only/invoice/giving do not acquire invented approval entities.
 
 ---
 
@@ -78,8 +80,8 @@
 | **Fulfillment** | `apply_order_stock_once` RPC (atomic stock decrement + order confirmation) |
 | **Contract** | `ordering.contract.json` (detailed) |
 | **Tests** | `ordering.flow.test.ts`, logistics tests, checkout bypass test |
-| **Known debt** | "I've Paid" adapter inconsistency |
-| **Classification** | IMPLEMENTED — detailed contract, minor adapter inconsistency |
+| **Evidence gap** | Different "I've Paid" adapter path alone does not establish a defect |
+| **Classification** | IMPLEMENTED — detailed contract; adapter parity remains an investigation |
 
 ### 5. Ticketing (`ticketing`) — IMPLEMENTED
 
@@ -221,8 +223,8 @@
 | **Entry** | Post-completion trigger (not in main menu) |
 | **Flow file** | `feedback.flow.ts` |
 | **Payment** | None |
-| **Tests** | No dedicated test |
-| **Classification** | IMPLEMENTED — no dedicated tests |
+| **Tests** | No dedicated feedback test file found in the current-main tree; shared coverage/execution not established by this inventory |
+| **Classification** | IMPLEMENTED — dedicated-test evidence gap, not E2E-certified |
 
 ### 17. Survey (`survey`) — IMPLEMENTED
 
@@ -326,10 +328,13 @@
 | Status | Count | Capabilities |
 |---|---|---|
 | Detailed contract + tests | 8 | scheduling, payment, ordering, ticketing, reservation, loyalty, giving, recurring |
-| Some tests, no contract | 7 | appointment, crowdfunding, invoice, class_booking, promo_verification, referral, feedback |
-| No dedicated tests | 6 | chat, queue, waitlist, survey, poll, waiver |
-| Not applicable | 8 | broadcast, auto_reply, reminders, staff, reports, estimates, packages, multi_location |
-| Confirmed bug | 1 | table_reservation |
+| Some tests, no detailed contract in this inventory | 6 | appointment, crowdfunding, invoice, class_booking, promo_verification, referral |
+| No dedicated flow-test evidence in this inventory | 7 | chat, queue, waitlist, survey, poll, waiver, feedback |
+| Dashboard/system scope; separate acceptance required | 10 | broadcast, auto_reply, reminders, staff, reports, estimates, packages, multi_location, membership, whatsapp_sign |
+| Historical table-reservation gap; #731 dependency | 1 | table_reservation |
+| **Total, each canonical ID once** | **32** | **8 + 6 + 7 + 10 + 1 = 32** |
+
+This reconciles inventory labels, not fresh execution results. API/schema/shared tests may exist where dedicated flow tests are absent. The earlier feedback “some tests” count had no named evidence and is not retained as proof.
 
 ---
 
@@ -345,7 +350,7 @@
 | A4 | Dual-context STOP (merchant + platform): Option C disambiguation | APPROVED | Issue #721 comment #6436042909 |
 | A5 | Throttle notice wording: "You're sending messages too quickly..." | APPROVED | Issue #721 comment #6435005793 |
 | A6 | Payment-page card disclosure: Option B (clear and reassuring) | APPROVED | Issue #721 comment #6435005793 |
-| A7 | Offline transfer: payment verification and booking acceptance are separate decisions. When manual acceptance is configured, merchant sees "Confirm Payment & Approve" vs "Confirm Payment Only" | APPROVED target behavior (implementation gap) | Issue #721 body §8 |
+| A7 | Offline: merchant funds verification AND explicit approval of every applicable order/booking/reservation fulfillment, regardless of manual-approval setting. Preserve "Confirm Payment & Approve" vs "Confirm Payment Only"; no invented acceptance entity for payment-only/invoice/giving. | APPROVED target; supersedes automatic offline acceptance only, online unchanged | [Owner6465557298](https://github.com/cipherhq/waaiio/issues/721#issuecomment-6465557298), follow-up6465573985 |
 | A8 | Cross-country: same shared WhatsApp conversation for international merchant switches when technically supported by Meta's number architecture | APPROVED | Program §5 rules |
 | A9 | Cross-country: separate checkout, payment, receipt, and settlement per merchant — never combined multi-merchant checkouts | APPROVED | Program §5 rules |
 | A10 | Cross-country: preserve merchant-isolated unfinished carts; revalidate price and availability before checkout | APPROVED | Program §5 rules |
