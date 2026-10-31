@@ -1,3 +1,10 @@
+## 2026-10-31 — Payout reporting clarity
+
+- `admin/src/pages/Payouts.tsx`: Display returned partial-failure/skipped counts, server explanations and attention payout IDs alongside created/held counts. HTTP207 no longer hides failed results, and empty successful runs retain the server's no-eligible explanation.
+- `admin/src/__tests__/payout-generation-feedback.test.tsx`: Rendered checks invoke the existing step-up callback for207, ordinary200, no-eligible200 and500, retaining the Bearer header and step-up payload assertions.
+- `lib/utils/calendar-date.ts`, merchant payout Account/History pages and date/rendered regressions: Preserve SQL calendar dates for payout periods without shifting days across viewer timezones; leave creation/settlement timestamp formatting unchanged.
+- **Affects**: Payout result and period-date display only. **Could break**: Summary wording and period presentation. Focused admin tests: 23 passed, zero skipped; merchant/date tests: 26 passed, zero skipped in UTC and America/New_York. Both application builds passed. No backend, eligibility, financial writer, MFA or currency-record changes. Exact-head CI and hosted acceptance remain pending; actual generation/settlement is not certified; not deployed.
+
 ## 2026-10-31 — Party questions and reminder review (source only)
 
 - Adds bounded, versioned Party questions, organizer answer readback and atomic web/bot RSVP saves; required answers apply only to Accepted. Preserves answer history and seating/capacity authority. Affects Party detail, RSVP routes and bot entry/flow; M489 must precede app rollout.
