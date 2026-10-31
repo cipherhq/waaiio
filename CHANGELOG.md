@@ -1,3 +1,10 @@
+### M487 — Revoke excess inherited ACL on party_tables and seating_resources (2026-10-31)
+
+- **`supabase/migrations/487_revoke_inherited_acl_party_seating.sql`** (new): REVOKE ALL FROM PUBLIC, anon on party_tables and seating_resources. Re-states intended grants: authenticated gets SELECT/INSERT/UPDATE/DELETE on party_tables (dashboard CRUD) and SELECT/INSERT/UPDATE on seating_resources; service_role gets ALL on party_tables and SELECT/INSERT/UPDATE on seating_resources. RLS policies untouched. Self-check validates grant inventory and RLS status.
+- **`lib/__tests__/m487-revoke-inherited-acl.pg.test.ts`** (new): Disposable PG test — applies M487 after M457/M476-style grants, verifies anon is denied SELECT/INSERT on both tables, authenticated owner access preserved via RLS, service_role access preserved, and no PUBLIC/anon grants remain.
+- **Affects**: ACL on party_tables and seating_resources only. No schema, column, trigger, RPC, RLS policy, or application code changes.
+- **Could break**: Nothing — revokes permissions that should never have been accessible. If any code path was (incorrectly) using anon role to access these tables, it will now correctly fail.
+
 ### #785 — Surgical merchant dashboard fixes (2026-10-30)
 
 - Synchronize selected customer phone displays and product gallery previews with current state; use the existing business-first verification storage path.
