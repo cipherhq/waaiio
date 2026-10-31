@@ -188,12 +188,35 @@ describe('OTP add-number handler', () => {
 
   it('request: candidate INSERT before Meta fetch', async () => {
     const { POST } = await import('@/app/api/whatsapp/add-number/route');
-    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+234900', display_name: 'T' }));
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+2348031234567', display_name: 'T' }));
     expect(res.status).toBe(200);
     expect(candidateInserts.length).toBe(1);
     expect(candidateInserts[0].connection_source).toBe('waaiio_hosted');
     expect(candidateInserts[0].status).toBe('pending');
     expect(rpcCalls.find(c => c.fn === 'check_phone_conflict')).toBeDefined();
+  });
+
+  it.each([
+    ['+12025579406', '1', '2025579406'],
+    ['+442079460123', '44', '2079460123'],
+    ['+2348031234567', '234', '8031234567'],
+    ['+6591234567', '65', '91234567'],
+  ])('sends national-only phone_number to Meta for %s', async (phone, cc, national) => {
+    const { POST } = await import('@/app/api/whatsapp/add-number/route');
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: phone, display_name: 'Test' }));
+    expect(res.status).toBe(200);
+    const call = mockFetch.mock.calls.find(c => String(c[0]).includes('/phone_numbers'));
+    expect(JSON.parse(call![1].body)).toEqual({ cc, phone_number: national, verified_name: 'Test', migrate_phone_number: false });
+    expect(candidateInserts[0].phone_number).toBe(phone);
+    expect(candidateInserts[0].phone_number_normalized).toBe(phone.slice(1));
+  });
+
+  it.each(['not-a-number', '+123', '', 12345])('rejects malformed phone %s before creating a candidate or calling Meta', async phone => {
+    const { POST } = await import('@/app/api/whatsapp/add-number/route');
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: phone }));
+    expect(res.status).toBe(400);
+    expect(candidateInserts).toHaveLength(0);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('#349: fresh add sends migrate_phone_number=false to Meta', async () => {
@@ -266,7 +289,7 @@ describe('OTP add-number handler', () => {
       return { ok: true, json: async () => ({}) };
     });
     const { POST } = await import('@/app/api/whatsapp/add-number/route');
-    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+234900' }));
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+2348031234567' }));
     expect(res.status).toBe(400);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
   });
@@ -331,7 +354,7 @@ describe('K2/M4: encrypted PIN fail-closed', () => {
     const eqChain = (): Record<string, unknown> => ({
       eq: eqChain,
       single: () => Promise.resolve({
-        data: { id: 'cand-nopin', phone_number_id: 'pn-1', phone_number: '+234900', display_name: 'T', waba_id: 'w1', encrypted_registration_pin: null, provider_state: {}, connection_source: 'waaiio_hosted', status: 'validating' },
+        data: { id: 'cand-nopin', phone_number_id: 'pn-1', phone_number: '+2348031234567', display_name: 'T', waba_id: 'w1', encrypted_registration_pin: null, provider_state: {}, connection_source: 'waaiio_hosted', status: 'validating' },
         error: null,
       }),
       maybeSingle: () => Promise.resolve({ data: null, error: null }),
@@ -356,7 +379,7 @@ describe('K2/M4: encrypted PIN fail-closed', () => {
     const eqChain = (): Record<string, unknown> => ({
       eq: eqChain,
       single: () => Promise.resolve({
-        data: { id: 'cand-corrupt', phone_number_id: 'pn-1', phone_number: '+234900', display_name: 'T', waba_id: 'w1', encrypted_registration_pin: 'CORRUPT', provider_state: {}, connection_source: 'waaiio_hosted', status: 'validating' },
+        data: { id: 'cand-corrupt', phone_number_id: 'pn-1', phone_number: '+2348031234567', display_name: 'T', waba_id: 'w1', encrypted_registration_pin: 'CORRUPT', provider_state: {}, connection_source: 'waaiio_hosted', status: 'validating' },
         error: null,
       }),
       maybeSingle: () => Promise.resolve({ data: null, error: null }),
