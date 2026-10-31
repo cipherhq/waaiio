@@ -1,3 +1,9 @@
+### 2026-10-31 — Admin profile and account-status saves
+
+- Route existing profile/status controls through authenticated server writes and render confirmed persisted values. Preserve drafts on failures and report audit-write failures separately from successful saves.
+- Require operation-bound MFA for account status with stale-status protection. M494 adds only the new authorization action; source only, not applied.
+- Add handler authorization, rendered UI, real local PostgreSQL persistence/concurrency and migration regression tests. No payment or messaging behavior changes.
+
 ### 2026-10-31 — Historical replay Storage prerequisites
 
 - Independent replay-fixture scan identified R90 and standalone Stripe recurring bootstraps that also apply M491. Added only their missing service-role Storage CRUD grants. Historical cutover/concurrency logic, payment assertions and migration self-checks are unchanged.
