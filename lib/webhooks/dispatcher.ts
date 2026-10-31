@@ -1,3 +1,4 @@
+import { sendPublicWebhook } from './public-destination';
 import { createHmac } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -70,15 +71,10 @@ export async function dispatchWebhook(
     let responseBody = '';
 
     try {
-      const res = await fetch(endpoint.url, {
-        method: 'POST',
-        headers,
-        body,
-        signal: AbortSignal.timeout(10000),
-      });
+      const res = await sendPublicWebhook(endpoint.url, headers, body);
       responseStatus = res.status;
-      responseBody = await res.text().catch(() => '');
-      success = res.ok;
+      responseBody = res.text;
+      success = res.status >= 200 && res.status < 300;
     } catch (err) {
       responseBody = err instanceof Error ? err.message : 'Unknown error';
     }

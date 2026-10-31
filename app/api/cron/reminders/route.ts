@@ -1,10 +1,12 @@
+import { loadReminderPreview, followupDate } from '@/lib/parties/reminder-preview';
+import { deliverScheduledReminders } from '@/lib/parties/reminder-delivery';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
-import { bookingReminderEmail, businessNotificationEmail } from '@/lib/email/templates';
+import { bookingReminderEmail } from '@/lib/email/templates';
 import { resolveEmailLocalization, translateLabels, DEFAULT_REMINDER_LABELS, DEFAULT_WRAPPER_LABELS, type BookingReminderEmailLabels, type EmailWrapperLabels } from '@/lib/email/localize-email';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { logger } from '@/lib/logger';
@@ -278,84 +280,14 @@ export async function GET(request: NextRequest) {
 
   for (const party of parties || []) {
     if (!party.followup_message) continue;
-    const daysBefore = party.followup_days_before ?? 1;
-    const partyDate = new Date(party.date + 'T00:00');
-    const reminderDate = new Date(partyDate);
-    reminderDate.setDate(reminderDate.getDate() - daysBefore);
-    const today = new Date().toISOString().split('T')[0];
-
-    if (reminderDate.toISOString().split('T')[0] !== today) continue;
-
-    // Get confirmed guests
-    const { data: guests } = await supabase
-      .from('event_invites')
-      .select('guest_phone, guest_name')
-      .eq('party_id', party.id)
-      .eq('business_id', party.business_id)
-      .in('status', ['accepted', 'maybe'])
-      .eq('reminder_sent', false);
-
-    for (const guest of guests || []) {
-      if (!guest.guest_phone) continue;
-
-      const partyCc = (party as any).businesses?.country_code || 'NG';
-      const dateLabel = formatDisplayDate(partyDate, 'long', 'en', partyCc);
-      let timeLabel = '';
-      if (party.time) {
-        timeLabel = ` at ${formatDisplayTime(party.time, 'en', partyCc)}`;
-      }
-
-      const message = [
-        `⏰ *Reminder*`,
-        '',
-        `${guest.guest_name ? `Hi ${guest.guest_name}! ` : ''}${party.followup_message}`,
-        '',
-        `📅 ${party.name}`,
-        `${dateLabel}${timeLabel}`,
-        party.venue ? `📍 ${party.venue}` : '',
-      ].filter(Boolean).join('\n');
-
-      const resolved = await resolver.resolveByBusinessId(party.business_id);
-      if (resolved) {
-        // Look up guest email for dual delivery
-        const guestEmail = await findCustomerEmail(supabase, guest.guest_phone, party.business_id);
-        const emailPayload = guestEmail
-          ? (() => {
-              const { subject, html } = businessNotificationEmail({
-                businessName: party.name,
-                title: 'Event Reminder',
-                message: party.followup_message,
-                details: {
-                  'Date': dateLabel,
-                  ...(party.venue ? { 'Venue': party.venue } : {}),
-                },
-              });
-              return { address: guestEmail, subject, html };
-            })()
-          : null;
-
-        const result = await sendOrEmail({
-          supabase,
-          sender: resolved.sender,
-          to: guest.guest_phone.replace(/^\+/, ''),
-          text: message,
-          email: emailPayload,
-          businessName: party.name,
-          alwaysEmail: true,
-          smsFallback: true,
-        });
-
-        if (result.whatsapp === 'sent' || result.email === 'sent') {
-          whatsappSent++;
-          // Mark reminder sent
-          await supabase
-            .from('event_invites')
-            .update({ reminder_sent: true })
-            .eq('party_id', party.id)
-            .eq('guest_phone', guest.guest_phone);
-        }
-      }
-    }
+    const date = followupDate(party.date,party.followup_days_before ?? 1);
+    if(date !== new Date().toISOString().slice(0,10)) continue;
+    try {
+      const {preview} = await loadReminderPreview(supabase,party.id,'followup');
+      const result = await deliverScheduledReminders(supabase,preview);
+      whatsappSent += result.whatsappAccepted;
+      remindersSent += result.emailAccepted;
+    } catch { logger.warn('[PARTY REMINDER] Dispatch unavailable; no automatic retry of ambiguous submissions.'); }
   }
 
   // ── Overdue invoice reminders ──

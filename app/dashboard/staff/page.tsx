@@ -317,7 +317,6 @@ export default function StaffPage() {
       is_active: form.is_active,
       services: form.services,
       schedule: form.schedule,
-      commission_rate: form.commission_rate != null ? Math.max(0, Math.min(100, Number(form.commission_rate) || 0)) : null,
       notes: form.notes || null,
       start_date: form.start_date || null,
       color: form.color || null,
@@ -672,12 +671,14 @@ export default function StaffPage() {
                   max={100}
                   step={0.5}
                   value={form.commission_rate ?? ''}
-                  onChange={e => setForm({ ...form, commission_rate: e.target.value ? Number(e.target.value) : null })}
-                  placeholder="Enter amount"
+                  disabled
+                  aria-label="Commission rate — coming in Phase 2"
+                  placeholder="e.g. 10"
                   className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
                 />
                 <span className="text-sm text-gray-500">%</span>
               </div>
+              <p className="mt-2 text-xs text-gray-500">Coming in Phase 2. Commission settings are currently disabled. Existing saved rates are preserved; no commission earnings or staff payments are calculated.</p>
             </div>
 
             {/* Start Date */}

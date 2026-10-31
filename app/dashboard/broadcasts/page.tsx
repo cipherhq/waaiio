@@ -1,4 +1,6 @@
 'use client';
+import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+
 
 import { useEffect, useState } from 'react';
 import { getLocale, type CountryCode } from '@/lib/constants';
@@ -50,6 +52,7 @@ export default function BroadcastsPage() {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [sendSummary, setSendSummary] = useState('');
   const [activeTab, setActiveTab] = useState<'compose' | 'scheduled' | 'history'>('compose');
   const [usage, setUsage] = useState<BroadcastUsage | null>(null);
   const [useTemplate, setUseTemplate] = useState(false);
@@ -361,6 +364,8 @@ export default function BroadcastsPage() {
     if (!message.trim() || contacts.length === 0) return;
     setSending(true);
     setSendError(null);
+    setSent(false);
+    setSendSummary('');
 
     try {
       const res = await fetch('/api/broadcasts/send', {
@@ -377,8 +382,16 @@ export default function BroadcastsPage() {
       const data = await res.json();
 
       if (res.ok) {
-        setSent(true);
-        setMessage('');
+        const accepted = Number(data.sent) || 0;
+        const total = Number(data.total) || contacts.length;
+        const summary = `${accepted} of ${total} WhatsApp messages accepted.${data.email_only ? ` ${data.email_only} accepted by email only.` : ''}`;
+        if (accepted === total) {
+          setSent(true);
+          setSendSummary(summary);
+          setMessage('');
+        } else {
+          setSendError(`${summary} Check History before retrying to avoid duplicate messages.`);
+        }
         // Update usage from response
         if (data.usage) {
           setUsage(prev => prev ? {
@@ -527,7 +540,8 @@ export default function BroadcastsPage() {
         Send messages to all your WhatsApp customers at once
       </p>
 
-      <PageHelp
+      <p className="mt-3 text-sm text-amber-700">{RECIPIENT_POLICY}</p>
+        <PageHelp
         pageKey="broadcasts"
         title="Broadcast Messages"
         description="Send promotions, updates, or announcements to all your customers at once. Messages go directly to their WhatsApp — no app downloads or email opens needed."
@@ -1028,7 +1042,7 @@ export default function BroadcastsPage() {
               {sent && (
                 <div className="mt-3 rounded-lg bg-green-50 dark:bg-green-900/20 p-3 text-center">
                   <p className="text-sm font-medium text-green-700 dark:text-green-400">
-                    {sendMode === 'now' ? 'Broadcast sent successfully!' : 'Broadcast scheduled successfully!'}
+                    {sendMode === 'now' ? sendSummary : 'Broadcast scheduled successfully!'}
                   </p>
                 </div>
               )}

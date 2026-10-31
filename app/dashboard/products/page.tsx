@@ -735,7 +735,7 @@ export default function ProductsPage() {
     return (
       <ProductForm
         view={view}
-        form={form}
+        form={{ ...form, image_url: gallery.imageUrl, gallery_urls: gallery.galleryUrls }}
         setForm={setForm}
         saving={saving}
         uploadingImage={gallery.uploadingImage}

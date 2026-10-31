@@ -321,7 +321,13 @@ export default function BillingPage() {
   if (tier === 'free') {
     statusLabel = 'Free';
     statusColor = 'bg-gray-100 text-gray-700';
-  } else if (isCancelled || isExpired) {
+  } else if (subscription?.status === 'past_due') {
+    statusLabel = 'Payment overdue';
+    statusColor = 'bg-red-100 text-red-700';
+  } else if (isCancelled) {
+    statusLabel = 'Cancelled';
+    statusColor = 'bg-red-100 text-red-700';
+  } else if (isExpired) {
     statusLabel = 'Expired';
     statusColor = 'bg-red-100 text-red-700';
   } else if (isActive) {
@@ -341,7 +347,7 @@ export default function BillingPage() {
           <p className="mt-1 text-sm text-gray-500">Manage your plan and view payment history</p>
         </div>
         <Link
-          href="/dashboard/settings"
+          href="/dashboard/settings?tab=account"
           className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 transition"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -485,16 +491,22 @@ export default function BillingPage() {
             <p className="mt-1 text-lg font-bold text-gray-900">{tierConfig.feePercentage}%</p>
           </div>
           <div>
-            <p className="text-xs text-gray-500">Next Billing Date</p>
+            <p className="text-xs text-gray-500">{isExpired ? 'Billing Period Ended' : isCancelled ? 'Billing Period Ends' : 'Next Billing Date'}</p>
             <p className="mt-1 text-lg font-bold text-gray-900">
               {tier === 'free'
                 ? 'N/A'
                 : periodEnd
-                  ? periodEnd.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+                  ? periodEnd.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: business.timezone || 'UTC' })
                   : 'N/A'}
             </p>
           </div>
         </div>
+        {tier !== 'free' && (isExpired || isCancelled || subscription?.status === 'past_due') && (
+          <p role="status" className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+            {isCancelled ? 'Your subscription is cancelled.' : subscription?.status === 'past_due' ? 'Your subscription payment is overdue. Review your payment method and renewal options.' : 'Your billing period has ended and a renewed period has not been confirmed. Check your payment history and plan settings.'}
+            {' '}<Link href="/dashboard/settings?tab=account" className="font-medium underline">Manage renewal</Link>
+          </p>
+        )}
         {tier !== 'free' && subscription?.gateway && (
           <p className="mt-4 text-xs text-gray-400">
             Payment via <span className="capitalize">{subscription.gateway}</span>

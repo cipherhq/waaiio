@@ -1,3 +1,10 @@
+### 2026-10-31 — Website corrections and interactive WhatsApp demo
+
+- Public pricing uses the current country projection and standard fee snapshot; country switches hide stale prices. Booking comparisons follow enforced limits (50/300/unlimited), superseding the activities wording below.
+- Clarifies connected-provider versus platform-collected settlement and backend-supported refund fee reversals. Removes unsupported marketing claims and expired launch dates.
+- Adds interactive booking, order and ticket examples with retained choices, simulated payment before confirmation, replay and reduced-motion support.
+- Local focused verification: 86 tests passed, zero skipped. Staging browser verification remains pending because automatic non-main website builds are ignored. No production deployment or database change.
+
 ### codex/pricing-feature-corrections — Align pricing display with Owner-approved schedule (2026-10-31)
 
 - **`lib/constants.ts`**: Fixed COUNTRY_PRICING fallback for NG (growth 15,000→49,000, business 45,000→99,000) and GH (growth 150→450, business 400→900) to match Owner-approved pricing schedule. Fixed PRICING_TIERS NGN defaults (growth 15,000→49,000, business 45,000→99,000). US/GB/CA unchanged — already correct.
@@ -8,6 +15,44 @@
 - **Could break**: Nothing — display-only changes to marketing pages. Authoritative pricing source `/api/public/pricing` reads from DB and is unchanged. COUNTRY_PRICING is a display-only fallback used when DB cache is not loaded.
 - **Unresolved discrepancy — DB pricing**: The authoritative `countries.pricing` DB values cannot be verified from this branch. The COUNTRY_PRICING fallback had stale NG/GH prices, suggesting the DB may also need updating. Owner should verify DB pricing matches the approved schedule via `/api/public/pricing?country=NG` and `?country=GH`.
 - **Unresolved discrepancy — booking limits**: TIER_FEATURES.maxBookings (100/1,000) differs from TIER_TRANSACTION_LIMITS.bookings (50/300). The comparison table now uses TIER_FEATURES values (labelled "activities") since TIER_FEATURES is declared as single source of truth. The enforced transaction limits may be more restrictive — Owner should clarify.
+### 2026-10-31 — Historical replay Storage prerequisites
+
+- Independent replay-fixture scan identified R90 and standalone Stripe recurring bootstraps that also apply M491. Added only their missing service-role Storage CRUD grants. Historical cutover/concurrency logic, payment assertions and migration self-checks are unchanged.
+
+### 2026-10-31 — Storage delta fixture parity
+
+- Added the same explicit Storage service grants to the isolated release-gate delta SQL bootstrap. Its separate fixture now matches the full replay bootstrap; M491 assertions and runtime behavior remain unchanged.
+
+### 2026-10-31 — Storage CI fixture parity
+
+- Full migration replay now supplies Supabase Storage service-role CRUD grants in its disposable bootstrap. The storage policy suite also recognizes the shared GitHub Actions runner's isolated `pg_test_N` databases, with localhost/CI/user guards retained. No runtime policy assertions or tests were removed.
+
+### 2026-10-31 — Storage UPDATE regression coverage
+
+- Added real PostgreSQL allow/deny checks for public catalog renames and stale verification overwrites following independent review. Test-only follow-up; no rollout performed.
+
+## 2026-10-31 — Private document storage and outbound webhook destination boundary
+
+- Verification uploads use private storage and document-ID access for the owning merchant or MFA-verified full admin; existing public catalog images retain their behavior. Legacy relocation verifies copied bytes and matching references before removing public originals.
+- M491 restricts generated document/report access while preserving service signed links and merchant report ownership; M492 is an app-first guard against stale public verification uploads. These migrations are prepared for staging only and are not yet applied.
+- Outbound webhook registration and dispatch enforce public HTTP(S) destinations, validate every redirect and pin validated DNS addresses without changing event envelopes or POST signatures.
+- Tests cover owner/admin allow, cross-tenant/anonymous deny, storage policy semantics, private upload/viewing, relocation recovery and webhook DNS/redirect behavior. Risks: apply documented rollout order; legacy files need separate verified relocation; no production changes or live sends.
+
+## 2026-10-31 — Party questions and reminder review (source only)
+
+- Adds bounded, versioned Party questions, organizer answer readback and atomic web/bot RSVP saves; required answers apply only to Accepted. Preserves answer history and seating/capacity authority. Affects Party detail, RSVP routes and bot entry/flow; M489 must precede app rollout.
+- Adds explicit reminder preview/confirmation, saved-table content, purpose/channel consent checks and durable single-attempt outcomes. Manual chase remains pending/maybe; scheduled follow-up remains accepted/maybe with existing reminder flag/date suppression. M490 must precede app rollout. Verified webhook receipts supply channel/sender service-window evidence; dispatch revalidation reads one guest at a time. Ambiguous or interrupted dispatches are not automatically resumed.
+- Changes are confined to Party paths in invite/reminder handlers; ordinary Events retain their path. No hosted migration, deployment, provider sends or template provisioning performed. Local tests do not establish hosted readiness.
+
+### #785 — Surgical merchant dashboard fixes (2026-10-30)
+
+- Synchronize selected customer phone displays and product gallery previews with current state; use the existing business-first verification storage path.
+- Preserve initialized payment-request URLs, supply chat service categories, resolve broadcast template categories from the connected WABA, and report rejected or email-only delivery without WhatsApp success.
+- Generate 20-character cryptographically random URL-safe form tokens to fit the existing database column; the previous 24-character token caused the reproduced staging insert rejection. Keep form contents after failed saves and show list/save errors with retry.
+- Add purpose/channel consent checks to merchant-initiated chat, payment requests, document sharing and broadcasts; provide an eligible customer picker that fills name and phone together.
+- Clarify billing expiry/overdue/cancellation, link giving directly to the applicable recurring settings, and explain seating, waitlist and attendance classifications. Disable staff commission changes until Phase 2 while preserving stored rates.
+- **Affects**: The named dashboard pages and their merchant send routes. No schema migration, payout or renewal-charge processing changes.
+- **Validation**: Rendered component and actual route tests with mocked storage/provider boundaries; live delivery, deployed upload acceptance and production build require separate release evidence.
 
 ### #762 — Verified Paystack fee and finalization snapshot (2026-10-30)
 
@@ -633,6 +678,7 @@
 - Risk: provider network calls are non-atomic with Postgres; already-dispatched charges may settle and must reconcile. Owner approval required before migration/deploy.
 
 # Changelog
+
 
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
