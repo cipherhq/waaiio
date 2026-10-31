@@ -203,3 +203,129 @@ it('keeps unknown currency explicit in ordinary detail and MFA cues', async () =
   expect(document.body).not.toHaveTextContent('₦');
   expect(calls('/payments/refund')).toHaveLength(0);
 });
+
+describe('#779 pending refund authorization across refreshes', () => {
+  async function begin(kind: 'detail' | 'request') {
+    render(<Payments />); await ready();
+    if (kind === 'detail') {
+      fireEvent.click(screen.getByText('Synthetic Store').closest('tr')!);
+      fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '25' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm Refund' }));
+    } else fireEvent.click(screen.getByRole('button', { name: 'Approve & Refund' }));
+    await screen.findByText('Confirm operation');
+  }
+  function authorize() {
+    fireEvent.change(screen.getByPlaceholderText('000000'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize' }));
+  }
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(r => { resolve = r; });
+    return { promise, resolve };
+  }
+  const verified = () => response({ session: { access_token: 'synthetic-after-mfa', refresh_token: 'synthetic-refresh' } });
+  for (const kind of ['detail', 'request'] as const) {
+    it(kind + ': unchanged successful poll preserves exact bound authorization and latest token', async () => {
+      await begin(kind);
+      const prepared = JSON.parse(calls('/step-up/prepare')[0][1].body);
+      await refresh(); await screen.findByText('Confirm operation'); authorize();
+      await waitFor(() => expect(calls('/payments/refund')).toHaveLength(1));
+      const sent = calls('/payments/refund')[0][1];
+      expect(sent.headers.Authorization).toBe('Bearer synthetic-after-mfa');
+      expect(JSON.parse(sent.body)).toEqual({ paymentId: original.id, businessId: 'ordinary', amount: 25,
+        ...(kind === 'request' ? { reason: 'Synthetic reason' } : {}), stepUpId: 'synthetic-step-up' });
+      expect(prepared).toEqual({ actionType: 'refund', targetId: original.id,
+        params: { businessId: 'ordinary', amount: 25, reason: kind === 'request' ? 'Synthetic reason' : null } });
+      expect(h.setSession).toHaveBeenCalledTimes(1);
+    });
+    it(kind + ': unrelated rows and presentation-only changes preserve target authorization', async () => {
+      await begin(kind);
+      rows('payments', [{ ...original, metadata: { note: 'presentation' }, updated_at: 'later' },
+        { ...original, id: 'unrelated-payment', amount: 999, status: 'pending' }]);
+      rows('businesses', [{ id: 'ordinary', name: 'Renamed presentation', category: 'retail' }]);
+      rows('refund_requests', [request, { ...request, id: 'unrelated-request', amount: 99 }]);
+      await refresh(); authorize();
+      await waitFor(() => expect(calls('/payments/refund')).toHaveLength(1));
+    });
+    it.each(['missing', 'business', 'currency', 'status', 'amount', 'refund_amount'])(
+      kind + ': changed payment %s denies with visible reason', async field => {
+        await begin(kind);
+        const changed = { ...original, ...(field === 'business' ? { business_id: 'different-business' }
+          : field === 'currency' ? { currency: 'GBP' }
+          : field === 'status' ? { status: 'refunded' }
+          : field === 'amount' ? { amount: 101 } : { refund_amount: 10 }) };
+        rows('payments', field === 'missing' ? [] : [changed]);
+        await refresh();
+        expect(screen.getByRole('alert')).toHaveTextContent('Refund details changed');
+        authorize();
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Restart the refund authorization'));
+        expect(calls('/payments/refund')).toHaveLength(0); expect(updates).toEqual([]);
+      });
+    it(kind + ': failure then recovery cannot revive an already-verifying callback', async () => {
+      await begin(kind);
+      const pending = deferred<Response>(); const normal = h.fetch.getMockImplementation()!;
+      h.fetch.mockImplementation((url: string, init: RequestInit) => url.endsWith('/step-up/verify') ? pending.promise : normal(url, init));
+      authorize(); await waitFor(() => expect(calls('/step-up/verify')).toHaveLength(1));
+      failed('payments', 'returned'); await refresh();
+      rows('payments', [original]); await refresh();
+      await act(async () => { pending.resolve(verified()); await pending.promise; });
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Restart the refund authorization'));
+      expect(calls('/payments/refund')).toHaveLength(0); expect(updates).toEqual([]);
+    });
+    it(kind + ': relevant change then recovery cannot revive an already-verifying callback', async () => {
+      await begin(kind);
+      const pending = deferred<Response>(); const normal = h.fetch.getMockImplementation()!;
+      h.fetch.mockImplementation((url: string, init: RequestInit) => url.endsWith('/step-up/verify') ? pending.promise : normal(url, init));
+      authorize(); await waitFor(() => expect(calls('/step-up/verify')).toHaveLength(1));
+      rows('payments', [{ ...original, refund_amount: 10 }]); await refresh();
+      rows('payments', [original]); await refresh();
+      await act(async () => { pending.resolve(verified()); await pending.promise; });
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Restart the refund authorization'));
+      expect(calls('/payments/refund')).toHaveLength(0); expect(updates).toEqual([]);
+    });
+    it(kind + ': unresolved reads deny dispatch and expose a restart outcome after loading', async () => {
+      await begin(kind);
+      const verification = deferred<Response>(); const read = deferred<Result>(); const normal = h.fetch.getMockImplementation()!;
+      h.fetch.mockImplementation((url: string, init: RequestInit) => url.endsWith('/step-up/verify') ? verification.promise : normal(url, init));
+      authorize(); await waitFor(() => expect(calls('/step-up/verify')).toHaveLength(1));
+      plans.refund_requests = () => read.promise;
+      let polling!: Promise<void>;
+      await act(async () => { polling = h.refresh!(); });
+      await act(async () => { verification.resolve(verified()); await verification.promise; });
+      expect(calls('/payments/refund')).toHaveLength(0);
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Retry the refund after reads complete'));
+      await act(async () => { read.resolve({ data: [request], error: null }); await polling; });
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Retry the refund after reads complete'));
+      expect(calls('/payments/refund')).toHaveLength(0); expect(updates).toEqual([]);
+    });
+    it.each(['unchanged', 'changed', 'failed'])(
+      kind + ': rechecks %s poll after deferred current-token retrieval', async mode => {
+        await begin(kind);
+        const pending = deferred<any>(); let waiting = false;
+        h.getSession.mockImplementation(async () => {
+          if (h.token === 'synthetic-after-mfa' && !waiting) { waiting = true; return pending.promise; }
+          return { data: { session: { access_token: h.token, user: { id: 'synthetic-admin' } } } };
+        });
+        authorize(); await waitFor(() => expect(waiting).toBe(true));
+        if (mode === 'changed') rows('payments', [{ ...original, refund_amount: 10 }]);
+        if (mode === 'failed') failed('payments', 'returned');
+        await refresh();
+        if (mode === 'failed') { rows('payments', [original]); await refresh(); }
+        await act(async () => { pending.resolve({ data: { session: { access_token: 'synthetic-latest-token', user: { id: 'synthetic-admin' } } } }); await pending.promise; });
+        if (mode === 'unchanged') {
+          await waitFor(() => expect(calls('/payments/refund')).toHaveLength(1));
+          expect(calls('/payments/refund')[0][1].headers.Authorization).toBe('Bearer synthetic-latest-token');
+        } else {
+          await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Restart the refund authorization'));
+          expect(calls('/payments/refund')).toHaveLength(0); expect(updates).toEqual([]);
+        }
+      });
+  }
+  it.each(['missing', 'payment_id', 'business_id', 'status', 'amount', 'reason'])('request context %s change denies approval', async field => {
+    await begin('request');
+    rows('refund_requests', field === 'missing' ? [] : [{ ...request, [field]: field === 'amount' ? 26 : 'changed' }]);
+    await refresh(); expect(screen.getByRole('alert')).toHaveTextContent('Refund details changed');
+    authorize(); await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Restart the refund authorization'));
+    expect(calls('/payments/refund')).toHaveLength(0); expect(updates).toEqual([]);
+  });
+});

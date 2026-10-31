@@ -55,6 +55,7 @@ export default function Payments() {
   const [refundLoading, setRefundLoading] = useState(false);
   const [refundError, setRefundError] = useState('');
   const [refundSuccess, setRefundSuccess] = useState('');
+  const [actionError, setActionError] = useState('');
   const perPage = 20;
 
   const stepUp = useStepUp();
@@ -62,14 +63,37 @@ export default function Payments() {
 
   const loadingRef = useRef(false);
   const readableRef = useRef(false);
-  const readVersionRef = useRef(0);
+  const authorizationEpochRef = useRef(0);
+  const paymentSnapshotRef = useRef<PaymentRecord[]>([]);
+  const requestSnapshotRef = useRef<typeof refundRequests>([]);
+  const pendingActionRef = useRef<{ paymentId: string; requestId?: string; signature: string } | null>(null);
+
+  function contextSignature(paymentId: string, requestId: string | undefined, paymentRows = paymentSnapshotRef.current, requestRows = requestSnapshotRef.current) {
+    const payment = paymentRows.find(row => row.id === paymentId);
+    const request = requestId ? requestRows.find(row => row.id === requestId) : undefined;
+    return JSON.stringify([
+      payment ? [payment.id, payment.business_id, payment.currency || 'UNKNOWN', payment.status, Number(payment.amount), Number(payment.refund_amount || 0)] : null,
+      requestId ? (request ? [request.id, request.payment_id, request.business_id, request.status, Number(request.amount), request.reason] : null) : null,
+    ]);
+  }
+
+  function captureAuthorization(paymentId: string, requestId?: string) {
+    const epoch = ++authorizationEpochRef.current;
+    pendingActionRef.current = { paymentId, requestId, signature: contextSignature(paymentId, requestId) };
+    setActionError('');
+    return epoch;
+  }
+
+  function assertAuthorization(epoch: number) {
+    if (!readableRef.current || loadingRef.current) throw new Error('Payment data is refreshing or unavailable. Retry the refund after reads complete.');
+    if (epoch !== authorizationEpochRef.current) throw new Error('Refund details changed or a read failed. Restart the refund authorization.');
+  }
 
   async function loadData() {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
     readableRef.current = false;
-    readVersionRef.current += 1;
 
     try {
       const { data: paymentData, error: paymentsError } = await adminDb
@@ -118,7 +142,7 @@ export default function Payments() {
       const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));
 
       // Enrich payments with business name + booking reference
-      const enriched: PaymentRecord[] = (paymentData || [])
+      const resolvedPayments: PaymentRecord[] = (paymentData || [])
         .map(p => {
           const booking = p.booking_id ? bookingMap.get(p.booking_id) : null;
           const order = p.order_id ? orderMap.get(p.order_id) : null;
@@ -129,8 +153,8 @@ export default function Payments() {
             business_name: resolvedBizId ? bizMap.get(resolvedBizId) || 'Unknown' : 'Unknown',
             gateway_ref: booking?.reference_code || order?.reference_code || p.gateway_reference?.slice(-12) || p.id.slice(0, 8),
           };
-        })
-        .filter(p => !givingBizIds.has(p.business_id));
+        });
+      const enriched = resolvedPayments.filter(p => !givingBizIds.has(p.business_id));
 
       // Load refund requests and resolve currency from payments
       const { data: reqData, error: requestsError } = await adminDb.from('refund_requests').select('*').order('created_at', { ascending: false });
@@ -141,12 +165,24 @@ export default function Payments() {
         ...r,
         currency: paymentCurrencyMap.get(r.payment_id) || 'UNKNOWN',
       }));
+      const pending = pendingActionRef.current;
+      if (pending && pending.signature !== contextSignature(pending.paymentId, pending.requestId, resolvedPayments, enrichedRequests)) {
+        authorizationEpochRef.current += 1;
+        pendingActionRef.current = null;
+        setActionError('Refund details changed. Restart the refund authorization.');
+      }
+      paymentSnapshotRef.current = resolvedPayments;
+      requestSnapshotRef.current = enrichedRequests;
       setPayments(enriched);
       setRefundRequests(enrichedRequests);
       setSelected(previous => previous ? enriched.find(payment => payment.id === previous.id) || null : null);
       setReadError('');
       readableRef.current = true;
     } catch {
+      authorizationEpochRef.current += 1;
+      pendingActionRef.current = null;
+      paymentSnapshotRef.current = [];
+      requestSnapshotRef.current = [];
       setPayments([]);
       setRefundRequests([]);
       setSelected(null);
@@ -215,15 +251,15 @@ export default function Payments() {
       const businessId = selected.business_id;
       const reason = refundReason.trim();
 
-      const readVersion = readVersionRef.current;
+      const authorizationEpoch = captureAuthorization(paymentId);
       const onAuthorized = async (stepUpId: string) => {
-        if (!readableRef.current || readVersion !== readVersionRef.current) throw new Error('Payment data unavailable; retry before refunding');
+        assertAuthorization(authorizationEpoch);
         const apiUrl = import.meta.env.VITE_API_URL || '';
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData?.session?.access_token;
         if (!token) { setRefundError('Not authenticated'); return; }
 
-        if (!readableRef.current || readVersion !== readVersionRef.current) throw new Error('Payment data unavailable; retry before refunding');
+        assertAuthorization(authorizationEpoch);
         const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
           method: 'POST',
           headers: {
@@ -281,6 +317,7 @@ export default function Payments() {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+        {stepUp.state.phase === 'error' && <p role="alert" className="ml-3 text-red-800">{stepUp.state.error}</p>}
       </div>
     );
   }
@@ -324,6 +361,10 @@ export default function Payments() {
         </button>
       </div>
 
+      {(actionError || stepUp.state.phase === 'error') && (
+        <p role="alert" className="mt-4 rounded-lg bg-red-50 p-4 text-red-800">{stepUp.state.phase === 'error' ? stepUp.state.error : actionError}</p>
+      )}
+
       {/* Pending Refund Requests */}
       {refundRequests.filter(r => r.status === 'pending').length > 0 && (
         <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
@@ -349,13 +390,13 @@ export default function Payments() {
                         const amount = req.amount;
                         const reason = req.reason || 'Approved refund request';
 
-                        const readVersion = readVersionRef.current;
+                        const authorizationEpoch = captureAuthorization(paymentId, reqId);
                         const onAuthorized = async (stepUpId: string) => {
-                          if (!readableRef.current || readVersion !== readVersionRef.current) throw new Error('Payment data unavailable; retry before refunding');
+                          assertAuthorization(authorizationEpoch);
                           const apiUrl = import.meta.env.VITE_API_URL || '';
                           const { data: session } = await supabase.auth.getSession();
                           const token = session?.session?.access_token;
-                          if (!readableRef.current || readVersion !== readVersionRef.current) throw new Error('Payment data unavailable; retry before refunding');
+                          assertAuthorization(authorizationEpoch);
                           const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
