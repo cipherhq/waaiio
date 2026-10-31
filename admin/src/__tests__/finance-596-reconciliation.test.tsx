@@ -325,3 +325,63 @@ describe('#682 Finance: subscriptions query selects plan column', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('source queries failed');
   });
 });
+
+describe('#762 Finance: refunded collections retain original gross', () => {
+  function seed(status: string, refundAmount: number, refundDate = '2026-09-21T10:00:00Z', fee = 0) {
+    setSource('businesses', { data: [businesses[0]], error: null });
+    setSource('payments', { data: [{ ...payments[0], status }], error: null });
+    setSource('refunds', { data: refundAmount ? [{ business_id: NG, amount: refundAmount, status: 'success', created_at: refundDate }] : [], error: null });
+    setSource('platform_fees', { data: fee ? [{ business_id: NG, fee_total: fee, waived: false, refunded_at: null, is_direct_transfer: false, created_at: '2026-09-20T10:00:00Z' }] : [], error: null });
+  }
+  function monthCells(month: string) {
+    return within(screen.getByText(month).closest('tr')!).getAllByRole('cell').map(c => c.textContent);
+  }
+  it.each([0, 3])('fully refunded collection contributes gross once and refund once with retained fee %s', async fee => {
+    seed('refunded', 100, undefined, fee);
+    render(<Finance />); await screen.findByText('Volume (NGN)');
+    expect(screen.getByText('Volume (NGN)').parentElement).toHaveTextContent('₦100');
+    expect(screen.getByText('Refunds (NGN)').parentElement).toHaveTextContent('₦100');
+    expect(monthCells('Sep 2026')).toEqual(['Sep 2026', 'NGN', '1', '₦100', '₦100', '₦' + fee, fee ? '-₦3' : '₦0']);
+    expect(screen.getByText('Payment Gateway Breakdown').parentElement).toHaveTextContent('1 payments');
+    expect(screen.getByText('Payment Gateway Breakdown').parentElement).toHaveTextContent('₦100');
+    expect(screen.getByText('Payment Volume by Business Category').parentElement).toHaveTextContent('1 tx');
+    expect(screen.getByText('Payment Volume by Business Category').parentElement).toHaveTextContent('₦100');
+    expect(screen.getByText('Businesses and Payment Volume by Country').parentElement).toHaveTextContent('₦100');
+    expect(screen.getByText('Payment Status Breakdown').parentElement).toHaveTextContent('refunded');
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
+    expect(screen.getByText(/not complete or reconciled/)).toBeInTheDocument();
+  });
+  it.each(['success', 'refunded'])('partial refund preserves full collection volume for %s status', async status => {
+    seed(status, 25);
+    render(<Finance />); await screen.findByText('Volume (NGN)');
+    expect(monthCells('Sep 2026')).toEqual(['Sep 2026', 'NGN', '1', '₦100', '₦25', '₦0', '₦75']);
+    expect(screen.getByText('Payment Status Breakdown').parentElement).toHaveTextContent(status);
+  });
+  it('excludes failed and pending amounts from every collection-volume view while preserving status buckets', async () => {
+    seed('success', 0);
+    setSource('payments', { data: [
+      { ...payments[0], status: 'refunded' },
+      { ...payments[0], id: 'failed', status: 'failed', amount: 900 },
+      { ...payments[0], id: 'pending', status: 'pending', amount: 800 },
+    ], error: null });
+    render(<Finance />); await screen.findByText('Volume (NGN)');
+    expect(screen.getByText('Volume (NGN)').parentElement).toHaveTextContent('₦100');
+    expect(monthCells('Sep 2026')).toEqual(['Sep 2026', 'NGN', '1', '₦100', '—', '₦0', '₦100']);
+    for (const title of ['Payment Gateway Breakdown', 'Payment Volume by Business Category', 'Businesses and Payment Volume by Country']) {
+      expect(screen.getByText(title).parentElement).toHaveTextContent('₦100');
+      expect(screen.getByText(title).parentElement).not.toHaveTextContent('₦900');
+      expect(screen.getByText(title).parentElement).not.toHaveTextContent('₦800');
+    }
+    const buckets = screen.getByText('Payment Status Breakdown').parentElement!;
+    expect(buckets).toHaveTextContent('refunded'); expect(buckets).toHaveTextContent('failed'); expect(buckets).toHaveTextContent('pending');
+  });
+  it('attributes original collection and later refund to their own months and respects date filtering', async () => {
+    seed('refunded', 100, '2026-10-02T10:00:00Z');
+    render(<Finance />); await screen.findByText('Volume (NGN)');
+    expect(monthCells('Sep 2026')).toEqual(['Sep 2026', 'NGN', '1', '₦100', '—', '₦0', '₦100']);
+    expect(monthCells('Oct 2026')).toEqual(['Oct 2026', 'NGN', '0', '₦0', '₦100', '₦0', '-₦100']);
+    fireEvent.change(document.querySelectorAll('input[type="date"]')[0], { target: { value: '2026-10-01' } });
+    expect(screen.queryByText('Sep 2026')).not.toBeInTheDocument();
+    expect(monthCells('Oct 2026')).toEqual(['Oct 2026', 'NGN', '0', '₦0', '₦100', '₦0', '-₦100']);
+  });
+});
