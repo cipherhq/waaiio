@@ -3,10 +3,12 @@
 > **Phase A: Contract, Dependency Audit, Traceability Matrix, and Certification Plan**
 >
 > Base SHA: `1c6ed9757d26ee849b9293c6c8ada67684e81ef3` (branch base)
-> Protected main: `c3b333079` (includes merged PR #740 / M474)
+> Historical protected main: `c3b333079` (includes merged PR #740 / M474)
 > Lane: `audit/736-capability-e2e-contract`
 > Worktree: `~/Desktop/waaiio-agent-lanes/capability-e2e-736`
 > Date: 2026-10-28 (R2: 2026-10-28, R3 migration reconciliation: 2026-10-29)
+>
+> **2026-10-30 dependency correction:** main `66b7d96688dd398bfd156a6570cf4305d9b97cc8`; #731 open at `02e5edb88fef79919ee7e0258322d267952f264c`, #741 open at `c968ad8d8b6ba3650ed00e30ec9a21c4b0580541`, #745 open at `0efd6503617c981dc598f5b466a7c7aa6cab6e35`. Historical receipt SHAs/counts below remain historical, not renewed certification. This correction performed GitHub source/state reads only, no runtime/provider/CI execution. #745/M480 rollout holds remain unchanged.
 
 ---
 
@@ -70,7 +72,7 @@ Each capability has **five independent dimensions**:
 | Dimension | Value | Count | IDs |
 |-----------|-------|-------|-----|
 | **Entry: top-level-menu** | Shown in WhatsApp capability list | 15 | scheduling, appointment, payment, ordering, ticketing, giving, chat, reservation, table_reservation, invoice, queue, crowdfunding, class_booking, waiver, loyalty (via My Account) |
-| **Entry: contextual** | Triggered by events, post-completion, automation, merchant action | 10 | feedback, poll, recurring, survey, auto_reply, referral, reminders, waitlist, promo_verification, table_reservation is contextual only until #731 merges — **CORRECTION: table_reservation has menu entry but blocked** |
+| **Entry: contextual** | Triggered by events, post-completion, automation, merchant action | 9 | feedback, poll, recurring, survey, auto_reply, referral, reminders, waitlist, promo_verification |
 | **Entry: dashboard-only** | No customer-facing WhatsApp interaction | 8 | broadcast, membership, staff, whatsapp_sign, reports, estimates, packages, multi_location |
 | **Total** | | **32** | *Validated: 15 + 9 contextual + 8 dashboard = 32 (table_reservation counted once as top-level-menu)* |
 
@@ -268,6 +270,8 @@ Stage 3: MANIFEST + EFFECTS — Terminal effects (WhatsApp confirmation, email, 
 
 ### 5.3 Capability x Payment x Fulfillment Matrix
 
+The automatic/configurable acceptance entries below describe the online policy only. For any eligible offline-paid order, booking, reservation or other applicable fulfillment, [Owner decision6465557298](https://github.com/cipherhq/waaiio/issues/721#issuecomment-6465557298) supersedes those entries: merchant funds verification AND explicit merchant approval are required, regardless of manual-approval configuration. Preserve both confirmation choices. Payment-only/invoice/giving without a separate acceptance concept require merchant verification and their existing terminal behavior, not invented approval entities. See §5.4.
+
 | Capability | Payment Required | Amount Source | Post-Payment Authority | Merchant Booking Approval |
 |-----------|-----------------|-------------|----------------------|--------------------------|
 | **scheduling** | Optional | Service price + deposit config | `processSuccessfulPayment` → `bookings.status` pending→confirmed | Auto-accept (default) OR manual per merchant config |
@@ -286,7 +290,7 @@ Stage 3: MANIFEST + EFFECTS — Terminal effects (WhatsApp confirmation, email, 
 
 Source: `lib/bot/flows/shared/bank-transfer.ts`, `app/api/dashboard/pending-transfers/`
 
-**Current main behavior (`1c6ed975`):**
+**Historical source behavior at `1c6ed975` (not current deployed evidence):**
 1. Merchant bank transfer eligibility determined by `bank_transfer_enabled` in `payment_channels` metadata
 2. Customer selects bank transfer → sees merchant bank details
 3. Customer sends typed reference or screenshot proof
@@ -299,14 +303,17 @@ Source: `lib/bot/flows/shared/bank-transfer.ts`, `app/api/dashboard/pending-tran
 - NG/GH + Pro/Premium + above country minimum only
 - OCR is informational review assistance, never proof of receipt
 - Merchant verification of offline funds and merchant booking approval are **separate decisions**
-- For **auto-accept merchants**: verified funds → booking automatically confirmed (no change to existing auto-accept behavior)
-- For **manual-approval merchants**: offer "Confirm Payment Only" and "Confirm Payment & Approve" actions
+- **All eligible offline-paid orders/bookings/reservations and other applicable fulfillment require explicit merchant approval**, separately from verifying funds; automatic offline acceptance is superseded regardless of manual-approval configuration.
+- Preserve "Confirm Payment Only" (funds verified, applicable fulfillment still pending approval) and "Confirm Payment & Approve" (explicitly authorizes both). For payment-only/invoice/giving with no separate acceptance entity, verify funds and map existing terminal behavior; do not invent an approval entity.
+- Online auto-acceptance policy remains unchanged.
+- Collect screenshot proof or typed transaction/reference fallback; OCR assists human review only, preferably with a privately authorized screenshot and extracted summary. Low-confidence/error paths retain human review.
+- Preserve the 24-hour proof-submission deadline and timely-proof non-auto-cancellation protections/reminders. Proof/OCR never verifies funds or approves fulfillment.
 - Zero Waaiio fees, zero Waaiio custody for offline transfers
 - Merchant-direct refund obligations via existing refunds ledger (Option X approved)
 
-**Dependency**: PR #741 (draft, `0e7270fa`, M479) addresses core separation. CTO R2-R8 technical blockers remain in #721.
+**Historical dependency receipt:** PR #741 at `0e7270fa`/M479 addressed separation; CTO R2-R8 blockers were recorded in #721. The dated current dependency context above supersedes this old head reference without asserting current acceptance or rollout.
 
-**Test evidence**: `lib/bot/flows/shared/__tests__/bank-transfer.test.ts` (11 tests on main)
+**Historical test inventory**: `lib/bot/flows/shared/__tests__/bank-transfer.test.ts` (11 tests reported at the audit revision); not fresh exact-head execution evidence.
 
 ### 5.5 Saved Card Support
 
@@ -333,7 +340,9 @@ Source: `lib/bot/flows/shared/bank-transfer.ts`, `app/api/dashboard/pending-tran
 
 ---
 
-## 6. Cross-Lane Dependency Map
+## 6. Historical Cross-Lane Dependency Map
+
+These tables preserve the 2026-10-29 receipts. Current heads are recorded separately above; unmerged dependencies are certification prerequisites, not inherently P1 defects. No historical migration/application receipt is promoted to current rollout evidence.
 
 ### 6.1 Merged PRs
 
@@ -375,14 +384,14 @@ The prior M479 collision (reported in R2) is **resolved** — PR #740 was renumb
 
 ## 7. Implementation Gap Inventory
 
-### 7.1 Confirmed Code Defects — Deployment Unverified
+### 7.1 Historical Code Findings — Deployment Unverified
 
-These are confirmed source-code defects traced at SHA `1c6ed975` / `c3b33307`. Their impact on deployed staging/production behavior is unverified — the actual metadata state of existing merchants and the runtime reachability of each path have not been tested against a live environment. All are scoped to **offline bank transfer paths only**; online payment flows are unaffected.
+These are historical source-code findings traced at SHA `1c6ed975` / `c3b33307`, not newly verified defects at the current revision. Their impact on deployed staging/production behavior is unverified — the actual metadata state of existing merchants and the runtime reachability of each path have not been tested against a live environment. All are scoped to **offline bank transfer paths only**; online payment flows are unaffected.
 
 | ID | Gap | Severity | Evidence | Affected Capabilities | Dependency |
 |----|-----|----------|---------|----------------------|------------|
 | GAP-001 | Offline bank transfer defaults ON when `payment_channels` metadata absent | CONFIRMED CODE DEFECT | `PaymentsTab.tsx` defaults to true when metadata absent; bot helper checks `!== false` | All offline-eligible | PR #741 (Owner Option B strict OFF already approved) |
-| GAP-002 | Non-order offline confirm auto-approves booking regardless of merchant manual-approval setting | CONFIRMED CODE DEFECT | `pending-transfers/[id]/route.ts` confirm path sets `bookings.status='confirmed'` | scheduling, appointment, reservation (offline) | PR #741 |
+| GAP-002 | Non-order offline confirm auto-approves booking instead of requiring explicit merchant approval for every applicable offline fulfillment | CONFIRMED CODE DEFECT | `pending-transfers/[id]/route.ts` confirm path sets `bookings.status='confirmed'` | scheduling, appointment, reservation (offline) | PR #741 |
 | GAP-004 | `confirm_order_transfer_atomic` RPC sets `orders.status='confirmed'` inside SQL — cannot defer fulfillment approval | CONFIRMED CODE DEFECT | M394 RPC SQL | ordering (offline) | PR #741 CTO blockers |
 
 ### 7.2 Owner Target Contract Gaps
@@ -391,7 +400,7 @@ Implementation gaps between current code and Owner-approved target behavior. Not
 
 | ID | Gap | Status | Evidence | Affected Capabilities | Dependency |
 |----|-----|--------|---------|----------------------|------------|
-| GAP-003 | No separate "Confirm Payment Only" vs "Confirm Payment & Approve" merchant actions | OWNER TARGET CONTRACT | Absent from current `pending-transfers/[id]/route.ts`; Owner approved in #721 | Manual-approval merchants using offline | PR #741 |
+| GAP-003 | No separate "Confirm Payment Only" vs "Confirm Payment & Approve" merchant actions | OWNER TARGET CONTRACT | Absent from current `pending-transfers/[id]/route.ts`; Owner approved in #721 | All eligible offline-paid applicable fulfillment | PR #741 |
 
 ### 7.3 Unverified / Evidence Gaps
 
@@ -410,25 +419,25 @@ Gaps that depend on Owner product decisions, not confirmed defects. Included her
 |----|-----|--------|---------|----------|
 | GAP-007 | `estimates`, `packages`, `multi_location` have no bot flow — customer interaction undefined | PRODUCT DECISION NEEDED | `getUserFacingCapabilities()` already excludes them from WhatsApp menu; no customer-facing gap on current main | estimates, packages, multi_location |
 
-### 7.5 P1 Gaps — Implementation Required
+### 7.5 Table-Reservation Dependencies and Historical Findings
 
 | ID | Gap | Evidence | Affected | Dependency |
 |----|-----|---------|----------|------------|
-| GAP-006 | `table_reservation` requires unmerged PR #731 | PR #731 DRAFT with M476-M478 | table_reservation | PR #731 merge + migration |
-| GAP-008 | `table_reservation` backing check uses same query as `scheduling` | `capability-selection.flow.ts` line 84-88 | table_reservation | PR #731 should add specific seating check |
+| GAP-006 | `table_reservation` certification depends on #731 | Unmerged implementation is a dependency, not itself a P1 defect | table_reservation | Reviewed integration, migration and runtime acceptance |
+| GAP-008 | Historical table backing check shared scheduling query | Original audit trace at `1c6ed975`; no new current severity assigned | table_reservation | #731 dedicated seating implementation and acceptance |
 
-### 7.6 P2 Gaps
+### 7.6 Approved Deferral and Superseded Test Finding
 
 | ID | Gap | Evidence |
 |----|-----|---------|
-| GAP-010 | Flutterwave deferred for new merchant setup | `SETUP_AVAILABLE_GATEWAYS` excludes it; Owner decision 2026-10-24 |
-| GAP-011 | PR #731 dashboard tests use `fs.readFileSync` not actual React render | CTO R1 comment on #736 |
+| GAP-010 | Approved setup deferral, not a bug | Flutterwave new-merchant setup deferred by Owner on 2026-10-24; existing merchant processing remains outside that deferral |
+| GAP-011 | Stale source-string-only finding retired | At #731 head `02e5edb88fef79919ee7e0258322d267952f264c`, `lib/__tests__/table-reservation-730-dashboard.test.tsx` uses jsdom/Testing Library to render production BookingPresentation components. This is component-render source evidence, not actual reservations-page, browser-layout or exact-head CI acceptance. |
 
 ---
 
 ## 8. Phase B-E Certification Plan
 
-### 8.1 Existing Test Infrastructure
+### 8.1 Historical Test Infrastructure Inventory
 
 | Category | Count | Location | Verification |
 |----------|-------|----------|-------------|
@@ -521,13 +530,12 @@ The following areas were audited through targeted file reads but **not** through
 
 ## 10. Owner Product Decisions Required
 
-These are presented as **recommendations requiring Owner decision**, not assertions of policy.
+The remaining recommendations below are distinct from settled policy. **Option B strict default OFF is already approved**, as are explicit opt-in/eligibility, separate verification and mandatory applicable offline fulfillment approval under decision6465557298. Implementing and certifying those decisions is #741 dependency work, not a new Owner vote.
 
 | # | Decision | Context | Recommendation | Impact |
 |---|----------|---------|---------------|--------|
 | 1 | Launch classification: `estimates`, `packages`, `multi_location` | No bot flow exists; `getUserFacingCapabilities()` excludes them from menu; dashboard-only | **Recommend**: Classify as dashboard-only for launch. No customer-facing gap since they're already excluded from WhatsApp menu. | Capability documentation |
 | 2 | `table_reservation` launch status | PR #731 unmerged, has M476-M478 | **Recommend**: Track independently on its own merge timeline. Present evidence for Owner decision. | Capability availability |
-| 3 | Offline bank transfer: enforce approved Option B (strict OFF) | Option B already approved in #721. Current code defaults ON when metadata absent. | **Recommend**: PR #741 implements this but has CTO blockers. Online payments unaffected regardless. | Payment method availability |
 | 4 | Additional certified languages | Only en + pcm certified. 6 more populated but untested at runtime. | **Recommend**: Present evidence for Owner decision on whether to certify additional languages. | Multilingual UX |
 
 ---
