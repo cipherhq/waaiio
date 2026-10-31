@@ -63,6 +63,20 @@ suite('private storage final-state tenant boundaries',()=>{
  it('public catalog uploads preserved',async()=>{
   await as('authenticated',owner,async c=>{await c.query("INSERT INTO storage.objects(bucket_id,name) VALUES('business-documents',$1)",[`${business}/products/image.png`])});
  });
+ it.each([`${business}/verification/renamed.pdf`,`verification/${business}/renamed.pdf`])('catalog rename to verification denied %s',async name=>{
+  await as('authenticated',owner,async c=>{await expect(c.query("UPDATE storage.objects SET name=$1 WHERE bucket_id='business-documents' AND name=$2",[name,`${business}/image.png`])).rejects.toMatchObject({code:'42501'})});
+ });
+ it('existing verification overwrite denied while catalog updates remain allowed',async()=>{
+  const c=await pool.connect();
+  try {
+   await c.query('BEGIN');
+   await c.query("INSERT INTO storage.objects(bucket_id,name) VALUES('business-documents',$1)",[`${business}/verification/existing.pdf`]);
+   await c.query('SET LOCAL ROLE authenticated');
+   await c.query("SELECT set_config('request.jwt.claim.sub',$1,true)",[owner]);
+   expect((await c.query("UPDATE storage.objects SET name=name WHERE bucket_id='business-documents' AND name=$1 RETURNING id",[`${business}/verification/existing.pdf`])).rowCount).toBe(0);
+   expect((await c.query("UPDATE storage.objects SET name=$1 WHERE bucket_id='business-documents' AND name=$2 RETURNING id",[`${business}/products/new.png`,`${business}/image.png`])).rowCount).toBe(1);
+  } finally {await c.query('ROLLBACK');c.release()}
+ });
  it('service retains all generated upload/sign/read/delete paths',async()=>{
   await as('service_role','',async c=>{expect((await c.query('SELECT * FROM storage.objects')).rowCount).toBe(7);await c.query("INSERT INTO storage.objects(bucket_id,name) VALUES('verification-documents',$1)",[`${business}/new.pdf`]);expect((await c.query("DELETE FROM storage.objects WHERE bucket_id='verification-documents' RETURNING id")).rowCount).toBe(2)});
  });

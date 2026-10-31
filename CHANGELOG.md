@@ -1,3 +1,7 @@
+### 2026-10-31 — Storage UPDATE regression coverage
+
+- Added real PostgreSQL allow/deny checks for public catalog renames and stale verification overwrites following independent review. Test-only follow-up; no rollout performed.
+
 ## 2026-10-31 — Private document storage and outbound webhook destination boundary
 
 - Verification uploads use private storage and document-ID access for the owning merchant or MFA-verified full admin; existing public catalog images retain their behavior. Legacy relocation verifies copied bytes and matching references before removing public originals.

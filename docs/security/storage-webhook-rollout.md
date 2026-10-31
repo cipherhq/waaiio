@@ -27,7 +27,7 @@ SQL role tests prove database policy boundaries, not Storage HTTP signed-link be
 
 ## Local verification (before commit)
 
-- Focused security/regression suite: 9 files, 91 passed, zero failed/skipped. Includes 14 real PostgreSQL policy tests in a disposable local database.
+- Focused security/regression suite: 9 files, 94 passed, zero failed/skipped. Includes 17 real PostgreSQL policy tests in a disposable local database.
 - Mounted admin verification suite: 13 passed, zero skipped. Main and admin builds succeeded.
 - Full local suite: 16,505 passed, 5 timeout failures, 2,859 skipped. The three affected unchanged suites passed serially: 43 passed, zero skipped. This is not a claim that the initial full run passed.
 - Explicit local ESLint checks had no errors (existing merchant hook warning); Next build reported a nested-worktree ancestor ESLint config conflict. Standalone TypeScript exposed existing unrelated test typing errors; application build type checking passed.
