@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 
+/** Country codes whose canonical gateway requires a valid payer phone. */
+const PHONE_REQUIRED_COUNTRIES = new Set(['NG', 'GH']);
+
 /**
  * GET /api/pay-link/[token] — Public endpoint, no auth.
  * Returns payment link details + business info for the public pay page.
+ *
+ * #736: includes `requires_phone` flag so the client can enforce phone
+ * collection before attempting checkout for Paystack-routed businesses.
  */
 export async function GET(
   _request: NextRequest,
@@ -59,5 +65,6 @@ export async function GET(
     business_name: biz.name,
     logo_url: biz.logo_url,
     country_code: biz.country_code,
+    requires_phone: PHONE_REQUIRED_COUNTRIES.has(biz.country_code),
   });
 }

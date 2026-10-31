@@ -3,10 +3,25 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
+/** Gateways that require a valid E.164 phone to initialize payment. */
+const PHONE_REQUIRED_GATEWAYS = new Set(['paystack', 'flutterwave']);
+
+const E164_REGEX = /^\+[1-9]\d{7,14}$/;
+
+/** Normalize a raw phone string to +E.164 or return null if invalid. */
+function normalizePhone(raw: string | undefined | null): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  const trimmed = raw.trim().replace(/[\s\-()]/g, '');
+  const withPlus = trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
+  return E164_REGEX.test(withPlus) ? withPlus : null;
+}
 
 /**
  * POST /api/pay-link/pay — Public endpoint (CSRF-exempt).
  * Initializes payment for a scan-to-pay link.
+ *
+ * #736 fix: validate payer phone before creating any payment record so
+ * Paystack-routed businesses never leave orphaned pending rows.
  */
 export async function POST(request: NextRequest) {
   // Rate limit: 20 requests per minute per IP
@@ -103,45 +118,103 @@ export async function POST(request: NextRequest) {
   const currency = link.currency || gatewayResult.currency;
   const gatewayName = gatewayResult.gateway;
 
-  const refCode = `PL-${Date.now().toString(36).toUpperCase()}`;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-
-  // Create payment record
-  const { data: payment, error: payErr } = await supabase
-    .from('payments')
-    .insert({
-      business_id: link.business_id,
-      amount,
-      currency,
-      gateway: gatewayName,
-      gateway_reference: refCode,
-      status: 'pending',
-      metadata: {
-        payment_link_id: link.id,
-        customer_name: customer_name || null,
-        customer_phone: customer_phone || null,
-        source: 'scan_to_pay',
-      },
-    })
-    .select('id')
-    .single();
-
-  if (payErr) {
-    logger.error('[PAY-LINK] Failed to create payment record:', payErr);
+  // #736: Validate payer phone BEFORE creating any payment record.
+  // Paystack/Flutterwave require a valid E.164 phone for initialization;
+  // passing an empty string causes canonicalSavedCardPhone to return null,
+  // which makes the gateway return null and leaves an orphaned pending row.
+  const normalizedPhone = normalizePhone(customer_phone);
+  if (PHONE_REQUIRED_GATEWAYS.has(gatewayName) && !normalizedPhone) {
     return NextResponse.json(
-      { error: 'Failed to create payment' },
-      { status: 500 },
+      {
+        error: 'A valid phone number is required to pay. Please enter your phone number in international format (e.g. +234XXXXXXXXXX).',
+        code: 'PHONE_REQUIRED',
+      },
+      { status: 422 },
     );
   }
 
-  // Initialize gateway payment
+  const refCode = `PL-${Date.now().toString(36).toUpperCase()}`;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+
+  // One canonical row owns the anonymous checkout and scan-to-pay metadata.
+  let payment: { id: string } | null = null;
+  try {
+    const { data, error: paymentError } = await supabase
+      .from('payments')
+      .insert({
+        business_id: link.business_id,
+        user_id: null,
+        amount,
+        currency,
+        gateway: gatewayName,
+        gateway_reference: refCode,
+        status: 'pending',
+        metadata: {
+          payment_link_id: link.id,
+          customer_name: customer_name || null,
+          customer_phone: normalizedPhone,
+          source: 'scan_to_pay',
+        },
+      })
+      .select('id')
+      .single();
+
+    if (paymentError || !data?.id) throw new Error('Canonical payment unavailable');
+    payment = data;
+  } catch {
+    logger.error('[PAY-LINK] Canonical payment creation failed');
+    return NextResponse.json({ error: 'Failed to create payment' }, { status: 500 });
+  }
+  if (!payment?.id) {
+    logger.error('[PAY-LINK] Canonical payment creation failed');
+    return NextResponse.json({ error: 'Failed to create payment' }, { status: 500 });
+  }
+
+  const paymentId = payment.id;
+  const paymentBusinessId = link.business_id;
+
+  // This records local failure only; it does not cancel a provider session.
+  async function failInitialization(message: string) {
+    let cleanupConfirmed = false;
+    try {
+      const { data: changed, error } = await supabase
+        .from('payments')
+        .update({ status: 'failed' })
+        .eq('id', paymentId)
+        .eq('business_id', paymentBusinessId)
+        .eq('status', 'pending')
+        .select('id')
+        .maybeSingle();
+      if (!error) {
+        if (changed?.id) {
+          cleanupConfirmed = true;
+        } else {
+          // A webhook may have completed the row. Never demote terminal state.
+          const { data: current, error: readError } = await supabase
+            .from('payments')
+            .select('status')
+            .eq('id', paymentId)
+            .eq('business_id', paymentBusinessId)
+            .maybeSingle();
+          cleanupConfirmed = !readError && !!current && current.status !== 'pending';
+        }
+      }
+    } catch {
+      // Keep checkout failure visible even when local cleanup cannot be confirmed.
+    }
+    if (!cleanupConfirmed) {
+      logger.error('[PAY-LINK] Payment failure status could not be confirmed', { payment_id: paymentId });
+    }
+    return NextResponse.json({
+      error: message,
+      ...(!cleanupConfirmed && { code: 'PAYMENT_STATUS_UNCONFIRMED' }),
+    }, { status: 500 });
+  }
+
   try {
     const { getPaymentGatewayByName } = await import('@/lib/payments/factory');
     const gateway = getPaymentGatewayByName(gatewayName);
-
-    const email =
-      customer_email ||
-      `${refCode.toLowerCase()}@pay.waaiio.com`;
+    const email = customer_email || `${refCode.toLowerCase()}@pay.waaiio.com`;
 
     const result = await gateway.initializePayment({
       supabase,
@@ -149,40 +222,46 @@ export async function POST(request: NextRequest) {
       currency,
       referenceCode: refCode,
       businessName: biz.name,
-      phone: customer_phone || '',
+      phone: normalizedPhone || '',
       userEmail: email,
-      userId: '00000000-0000-0000-0000-000000000000', // anonymous payer
+      userId: null,
+      existingPaymentId: paymentId,
       callbackUrl: `${appUrl}/payment-success?ref=${refCode}`,
       businessId: link.business_id,
     });
 
-    if (result?.url) {
-      // Increment uses count atomically
-      await supabase.rpc('increment_payment_link_uses', {
-        link_id: link.id,
-      }).then(({ error: rpcErr }) => {
-        // Fallback to simple update if RPC doesn't exist yet
-        if (rpcErr) {
-          supabase
-            .from('payment_links')
-            .update({ uses_count: (link.uses_count ?? 0) + 1 })
-            .eq('id', link.id)
-            .then(() => {});
-        }
-      });
-
-      return NextResponse.json({ url: result.url });
+    if (typeof result?.url !== 'string' || !result.url.trim()
+      || typeof result.reference !== 'string' || !result.reference.trim()) {
+      return failInitialization('Failed to initialize payment. Please check your details and try again.');
     }
 
-    return NextResponse.json(
-      { error: 'Failed to initialize payment' },
-      { status: 500 },
-    );
-  } catch (err) {
-    logger.error('[PAY-LINK] Payment init error:', err);
-    return NextResponse.json(
-      { error: 'Payment service unavailable' },
-      { status: 500 },
-    );
+    const { data: persisted, error: referenceError } = await supabase
+      .from('payments')
+      .update({ gateway_reference: result.reference })
+      .eq('id', paymentId)
+      .eq('business_id', link.business_id)
+      .select('id, gateway_reference')
+      .single();
+    if (referenceError || persisted?.id !== paymentId || persisted.gateway_reference !== result.reference) {
+      return failInitialization('Failed to confirm payment checkout. Please try again.');
+    }
+
+    // Only a checkout with a confirmed canonical reference consumes a use.
+    await supabase.rpc('increment_payment_link_uses', {
+      link_id: link.id,
+    }).then(({ error: rpcErr }) => {
+      // Preserve the existing compatibility fallback for this counter.
+      if (rpcErr) {
+        supabase
+          .from('payment_links')
+          .update({ uses_count: (link.uses_count ?? 0) + 1 })
+          .eq('id', link.id)
+          .then(() => {});
+      }
+    });
+    return NextResponse.json({ url: result.url });
+  } catch {
+    logger.error('[PAY-LINK] Payment initialization failed');
+    return failInitialization('Payment service unavailable');
   }
 }
