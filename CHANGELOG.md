@@ -316,6 +316,45 @@
 - **`CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, `docs/ENGINEERING_WORKFLOW.md`**: Record the Owner-approved workflow for correcting bounded implementation issues while preserving independent review, security and permission stops, and separate merge/deployment authority.
 - **Affects / could break**: Engineering task execution and review handoffs. Documentation only; this policy does not relax protected checks, authorize production operations or turn incomplete evidence into acceptance.
 
+### #744 — Current-main contract registry reconciliation (2026-10-31)
+
+- Preserved integrated workflow guidance and validator scope, retained table reservation Tier 1 status, and updated its index note to distinguish merged #731 source from outstanding detailed-contract and hosted acceptance evidence.
+
+### #736 / #744 — Final capability contract correction (2026-10-31)
+
+- Supersedes R2's automatic offline-acceptance wording with the settled Owner requirement for explicit merchant approval separately from funds verification. Online policy is unchanged; the capability counts reconcile 15 + 9 + 8.
+- Historical receipts remain dated, missing certification is distinguished from confirmed defects, and the obsolete #731 source-string-only test finding is retired using component-render source evidence. Option B remains approved; deployment and migration holds remain unchanged.
+- Documentation only; no fresh runtime or end-to-end certification is claimed. Existing historical entries and evidence remain preserved.
+
+### #736 — Phase A R5: Codex P1 findings, Stripe PIN correction, gap reclassification (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: (1) **Stripe saved-card PIN corrected**: Stripe saved cards use the same Waaiio 4-digit PIN lifecycle as Paystack — `checkStripeConsentAndOffer` → `establish_saved_card_session(save_card_pin)` → `requiresPin` → `verifyPin`. Traced via Graphify and source read of `saved-card-offer.ts:603-782` and `saved-card-flow.ts:128-178`. Table expanded with PIN Activation and PIN Reuse columns. (2) **GAP-007 reclassified** from P1 to PRODUCT DECISION NEEDED — Owner scope decision, not a confirmed defect; `getUserFacingCapabilities()` already excludes these capabilities from the WhatsApp menu. (3) **GAP-009 reclassified** from P1 to UNVERIFIED / EVIDENCE GAP — missing test coverage for 7 contextual/dashboard-only capabilities is a verification gap, not a confirmed runtime defect. (4) PR #741 HEAD SHA updated to `dba4e7b7`. Section 7 restructured into six subsections.
+- **Affects**: Documentation only.
+- **Could break**: Nothing.
+
+### #736 — Phase A R4: severity reclassification per Codex P1 and CTO R3 (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: Reclassified gap inventory per Evidence Verification Agent severity gate (AGENTS.md §Evidence Verification Agent). (1) GAP-005 (no staging E2E) moved from P0 to UNVERIFIED / EVIDENCE GAP — missing authorization is not a runtime defect. (2) GAP-001, GAP-002, GAP-004 reclassified from generic "P0" to CONFIRMED CODE DEFECT — DEPLOYMENT UNVERIFIED with explicit scope note that all are offline-only, online unaffected. (3) GAP-003 reclassified to OWNER TARGET CONTRACT — implementation gap vs approved target, not a runtime defect. (4) Section 7 restructured into five subsections by finding status (confirmed code defect, owner target, evidence gap, P1, P2). (5) PR #741 and #745 SHA references verified current.
+- **Affects**: Documentation only. No code, migrations, or runtime changes.
+- **Could break**: Nothing.
+
+### #736 — Phase A R3: migration reconciliation after PR #740 merge (2026-10-29)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: Reconciled cross-lane dependency map against current GitHub state after PR #740 merged to main as `c3b33307`. (1) PR #740 moved from "active unmerged" to "merged" section — M474 applied to staging. (2) Added PR #745 (M480, DML lockdown follow-up). (3) Removed obsolete M479 collision claim — resolved by PR #740 renumbering before merge. (4) Updated all PR HEAD SHAs to current GitHub values. (5) Removed GAP-007 (collision) and GAP-013 (PR #740 DB test skip — PR merged with CI green). (6) Updated evidence summary with merge SHA and R3 verification dates.
+- **Affects**: Documentation only. No code, migrations, or runtime changes.
+- **Could break**: Nothing.
+
+### #736 — Full 32-capability WhatsApp E2E certification contract — Phase A R2 (2026-10-28)
+
+- **`docs/contracts/736-capability-e2e-contract.md`**: R2 correction per CTO review. (1) Normalized 32-capability matrix with five orthogonal dimensions (entry type, bot implementation, test coverage, certification level, dependency status) — exactly 32 rows, no double-counting. (2) Corrected migration numbers: PR #740 uses M474+M479, PR #741 uses M479. Documented M479 namespace collision between #740 and #741. (3) Removed unauthorized launch conclusions — all launch timing decisions presented as Owner recommendations, not assertions. (4) Corrected offline payment vs booking approval language: auto-accept merchants keep auto-accept behavior after fund verification; manual-approval merchants get split Confirm Payment / Confirm & Approve actions. (5) Added Section 9 (Verification Transparency) documenting exactly what was independently verified vs unverified, including acknowledgment that 3 delegated agents failed due to context limits. (6) All claims now cite actual test file names and verification method.
+- **`docs/contracts/capability-index.json`**: Added `_lifecycle_audit` SHA and `_lifecycle_ref` pointer.
+- **`docs/contracts/README.md`**: Added cross-capability lifecycle contract section.
+- **`CLAUDE.md`**: Added read-first reference to `736-capability-e2e-contract.md` for capability flows, payment-to-fulfillment chains, or WhatsApp bot changes.
+- **`AGENTS.md`**: Added read-first reference to `736-capability-e2e-contract.md`.
+- **`RELEASE_GATE_V2.md`**: Added cross-capability lifecycle contract reference in §3 (Golden Journeys).
+- **Affects**: Documentation and governance references only. No application code, migrations, database changes, payment flows, bot logic, or runtime behavior changed.
+- **Could break**: Nothing. No code imports or runtime dependencies.
+
 ### #650 Image conversion resource hardening (2026-10-25)
 
 - **`app/api/images/convert/route.ts`**: Hardened with bounded resource controls. (1) Replaced unbounded `response.arrayBuffer()` with incremental streaming download enforcing a 10 MB byte ceiling. (2) Added 15 s upstream timeout via AbortController — returns 504 whether timeout fires during connect or body download (TimeoutError class distinguishes from stream errors). (3) Sharp `limitInputPixels: 36 MP`, 8 000 px per-axis dimension check. (4) `resize(4096, 4096)` output cap with mozjpeg. (5) JPEG output bounded to 4.5 MB (WhatsApp 5 MB limit with margin) — tries reduced quality 65 once, rejects if still over. (6) Diagnostic logging uses only safe event categories and numeric status — no URLs, paths, or sensitive tokens. (7) Non-OK upstream responses explicitly discarded via `body.cancel()`. Content-Length advisory-only; actual bytes enforced.

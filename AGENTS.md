@@ -8,6 +8,7 @@ Instructions for Codex and other AI agents reviewing or changing this repository
 - `RELEASE_GATE_V2.md`: invariant registry and migration checks
 - `CLAUDE.md`: implementation conventions
 - `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`: Owner-approved, non-negotiable two-route merchant payments and manual settlement model
+- `docs/contracts/736-capability-e2e-contract.md`: cross-capability lifecycle matrix, payment-to-fulfillment chain, channel architecture, and dependency status (Issue #736). Check before modifying shared bot routing, payment authority, or channel handling.
 
 If these conflict, the Operating Order wins.
 

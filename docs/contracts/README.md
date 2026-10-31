@@ -21,6 +21,12 @@ Machine-readable contracts for Waaiio's high-risk capability domains. Each contr
 
 Contracts follow `waaiio-capability-contract-v1`. See any `.contract.json` for the full schema.
 
+## Cross-Capability Lifecycle Contract
+
+`736-capability-e2e-contract.md` — Full 32-capability WhatsApp E2E certification contract (Issue #736). Documents the lifecycle matrix, entry types, payment-to-fulfillment chain, channel architecture, multilingual support, navigation, messaging optimization, cross-lane dependencies, implementation gaps, and Phase B–E certification plan. Read before modifying any capability flow, payment authority, or channel routing.
+
+Binding Owner product contracts: Issues #721 (shared payment parity) and #507 (all-capabilities bot menu).
+
 ## Validation
 
 The governance CI script (`scripts/verify-engineering-governance.mjs`) validates:

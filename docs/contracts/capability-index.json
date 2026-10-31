@@ -2,6 +2,8 @@
   "_schema": "waaiio-capability-index-v1",
   "_source": "shared/capabilities.ts",
   "_generated_from_main": "164b31b87fc8013dec65a55201ecaee30859a1b8",
+  "_lifecycle_audit": "1c6ed9757d26ee849b9293c6c8ada67684e81ef3",
+  "_lifecycle_ref": "docs/contracts/736-capability-e2e-contract.md",
   "total": 32,
   "capabilities": [
     {
@@ -45,7 +47,7 @@
       "subscriptionTier": "free",
       "riskTier": "tier-1",
       "contractStatus": "index-only",
-      "notes": "RISK GAP: Tier-1 (bookings, deposits, state-machine) but lacks required detailed contract. Currently duplicates scheduling flow. Dedicated seating/deposit/booking architecture in PR #731 (DRAFT). Detailed contract required before #731 merge."
+      "notes": "Tier-1 bookings, deposits and state-machine behavior. Dedicated reservation source was merged in PR #731; the separate detailed contract and hosted migration/live acceptance evidence remain outstanding. Source integration is not deployed-flow certification."
     },
     {
       "id": "whatsapp_sign",
