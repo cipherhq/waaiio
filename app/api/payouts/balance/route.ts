@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
-import { computePlatformHeldTotals } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getEligibleCurrencies, getUnknownCurrencyFeeRows, hasUnreconciledCurrencyRecords } from '@/lib/payments/payable-fees';
+import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -19,7 +21,7 @@ export async function GET(request: NextRequest) {
   // Verify the user owns this business
   const { data: biz } = await supabase
     .from('businesses')
-    .select('id, payout_mode')
+    .select('id, payout_mode, country_code')
     .eq('id', businessId)
     .eq('owner_id', user.id)
     .single();
@@ -29,6 +31,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    await loadCountries();
     // Total business revenue from completed bookings/orders/invoices (display metric — all modes)
     const [{ data: bookingPayments }, { data: orderPayments }, { data: invoicePayments }] = await Promise.all([
       supabase
@@ -66,32 +69,36 @@ export async function GET(request: NextRequest) {
     // Adjustments: fetch ALL for the lifetime balance, unapplied-only for display.
     // Prior payouts' net_amount already includes applied adjustments; including them
     // again in the lifetime sum cancels correctly (P1-2 fix).
-    const [{ data: payouts }, { data: pendingPayouts }, { data: allAdjustments }, { data: pendingAdjustmentRows }] = await Promise.all([
+    const [{ data: payouts, error: paidError }, { data: pendingPayouts, error: pendingError }, { data: allAdjustments, error: adjustmentsError }, { data: pendingAdjustmentRows, error: pendingAdjustmentsError }] = await Promise.all([
       supabase
         .from('business_payouts')
-        .select('net_amount, status')
+        .select('net_amount, status, currency')
         .eq('business_id', businessId)
         .in('status', ['paid', 'processing']),
       supabase
         .from('business_payouts')
-        .select('net_amount')
+        .select('net_amount, currency')
         .eq('business_id', businessId)
         .in('status', ['pending', 'approved']),
       supabase
         .from('payout_adjustments')
-        .select('amount')
+        .select('amount, currency')
         .eq('business_id', businessId),
       supabase
         .from('payout_adjustments')
-        .select('amount')
+        .select('amount, currency')
         .eq('business_id', businessId)
         .is('applied_to_payout_id', null),
     ]);
 
-    const paidOut = (payouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
-    const pending = (pendingPayouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
-    const allAdjustmentSum = (allAdjustments || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
-    const pendingAdjustments = (pendingAdjustmentRows || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
+    if (paidError || pendingError || adjustmentsError || pendingAdjustmentsError) {
+      return NextResponse.json({ error: 'Unable to verify payout and adjustment balances' }, { status: 503 });
+    }
+
+    let paidOut = (payouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
+    let pending = (pendingPayouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
+    let allAdjustmentSum = (allAdjustments || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
+    let pendingAdjustments = (pendingAdjustmentRows || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
 
     // Payout-basis gross, fees, and net — derived from platform_fees custody classification
     let gross: number;
@@ -116,14 +123,39 @@ export async function GET(request: NextRequest) {
     } else {
       // platform_managed: derive gross and net from custody-classified platform_fees rows.
       // This is the authoritative payout basis — matches generate and auto-payout exactly.
-      const { data: platformFees } = await supabase
+      // M466: Include currency via payments join
+      const { data: platformFeesRaw, error: platformFeesError } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .eq('business_id', businessId)
         .is('refunded_at', null);
+      const platformFees = (platformFeesRaw || []).map(f => ({
+        ...f,
+        currency: (f as unknown as { payments: { currency: string } }).payments?.currency ?? null,
+      }));
 
-      const allPriorPayouts = [...(payouts || []), ...(pendingPayouts || [])];
-      const totals = computePlatformHeldTotals(platformFees || [], allAdjustments || [], allPriorPayouts);
+      const allPriorPayouts = [...(payouts || []), ...(pendingPayouts || [])].map(p => ({
+        ...p, currency: (p as unknown as { currency?: string }).currency ?? null,
+      }));
+      const adjRows = (allAdjustments || []).map(a => ({
+        ...a, currency: (a as unknown as { currency?: string }).currency ?? null,
+      }));
+
+      // M468: A scalar balance must never silently mix or omit monetary currencies.
+      // Mixed-currency merchants require a dedicated per-currency dashboard contract.
+      const currencies = getEligibleCurrencies(platformFees);
+      let homeCurrency: string | undefined;
+      try { homeCurrency = getCurrencyCode((biz.country_code || '') as CountryCode); } catch { /* unknown country */ }
+      if (platformFeesError || !homeCurrency || getUnknownCurrencyFeeRows(platformFees).length > 0 ||
+          currencies.length > 1 || (currencies.length === 1 && currencies[0] !== homeCurrency) ||
+          hasUnreconciledCurrencyRecords(allPriorPayouts, adjRows)) {
+        return NextResponse.json({ error: 'Currency reconciliation required. Available balance cannot safely be represented as one currency.' }, { status: 409 });
+      }
+      paidOut = (payouts || []).filter(p => p.currency === homeCurrency).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
+      pending = (pendingPayouts || []).filter(p => p.currency === homeCurrency).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
+      allAdjustmentSum = adjRows.filter(a => a.currency === homeCurrency).reduce((sum, a) => sum + Number(a.amount || 0), 0);
+      pendingAdjustments = (pendingAdjustmentRows || []).filter(a => a.currency === homeCurrency).reduce((sum, a) => sum + Number(a.amount || 0), 0);
+      const totals = computePlatformHeldTotals(platformFees, homeCurrency, adjRows, allPriorPayouts);
       gross = totals.gross;
       totalFees = totals.totalFees + totals.gatewayFees;
       netAvailable = totals.netAvailable;

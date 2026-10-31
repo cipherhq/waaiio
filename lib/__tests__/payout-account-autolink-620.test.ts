@@ -73,7 +73,7 @@ function setupMocks(config: AutoLinkTestConfig = {}) {
           return Promise.resolve({
             data: {
               id: 'p1', business_id: 'b1', status: 'held',
-              net_amount: 100, payout_account_id: null,
+              net_amount: 100, currency: 'NGN', payout_account_id: null,
               period_start: '2024-01-01', period_end: '2024-01-07',
               flags: [],
             },
@@ -127,7 +127,7 @@ function setupMocks(config: AutoLinkTestConfig = {}) {
         data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', gateway: 'paystack' },
       });
     } else if (table === 'platform_fees') {
-      chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
+      chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false, payments: { currency: "NGN" }}] });
     } else if (table === 'profiles') {
       chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
     } else {
