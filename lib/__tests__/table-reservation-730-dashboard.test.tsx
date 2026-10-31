@@ -314,9 +314,9 @@ describe('#731: actual BookingsPage', () => {
 
   it('loads real scheduling, table and stay rows with matching tabs, headers, resources and badges', async () => {
     await mount();
-    expect(tab('Appointments').textContent).toMatch(/Appointments\\s*1/);
-    expect(tab('Table Reservations').textContent).toMatch(/Table Reservations\\s*1/);
-    expect(tab('Stays').textContent).toMatch(/Stays\\s*1/);
+    expect(tab('Appointments').textContent).toMatch(/Appointments\s*1/);
+    expect(tab('Table Reservations').textContent).toMatch(/Table Reservations\s*1/);
+    expect(tab('Stays').textContent).toMatch(/Stays\s*1/);
     expect(screen.getByRole('columnheader', { name: 'Staff' })).toBeTruthy();
     expect(within(row('appointment-one')).getByText('Staff One')).toBeTruthy();
     expect(within(row('appointment-one')).getByRole('button', { name: 'Start' })).toBeTruthy();
