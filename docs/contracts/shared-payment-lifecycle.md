@@ -140,6 +140,7 @@ For payment-only/invoice/giving without a separate acceptance entity:
 - Offline transfers incur zero Waaiio processing/transaction fees and no Waaiio-held funds. Merchant-direct refunds use the approved existing refunds ledger; do not create a new custody/refund model.
 
 **Implementation dependency:** #741 tracks reconciliation with this target. The original audit observation about automatic confirmation is historical, not a new current-runtime finding. Unmerged implementation, hosted rollout and certification must be verified separately.
+
 ---
 
 ## 5. Saved Card Flow

@@ -57,6 +57,7 @@ Each finding is classified using the Operating Order's mandatory finding states:
 | ORDER-ADAPTER | UNVERIFIED / EVIDENCE GAP | Different direct reconcilePayment versus adapter entry alone does not establish a behavior defect or justify P2 severity. | Bounded parity investigation only |
 
 Counts for this correction: 0 newly confirmed active defects, 0 newly independently confirmed code defects, 12 historical fixed findings retained, and 2 investigation concerns (T19B/ORDER-ADAPTER). Table/offline integration dependencies are listed separately, not counted as current verified incidents.
+
 ---
 
 ## Documentation Drift (stale contract text)
