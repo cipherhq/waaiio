@@ -9,6 +9,7 @@ import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
 import { ensurePlus } from '@/lib/utils/phone';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { resolveTemplateCategory } from '@/lib/bot/automation/sealed-rule-actions';
 import { businessNotificationEmail } from '@/lib/email/templates';
 export const maxDuration = 60;
 
@@ -130,7 +131,17 @@ export async function POST(request: NextRequest) {
     const sender = resolved.sender;
 
     let sentCount = 0;
-    const usedTemplate = !!(template_name && sender.sendTemplate);
+    let emailOnlyCount = 0;
+    let usedTemplate = false;
+    // Resolve once from the actual sending WABA; UI labels are not categories.
+    let templateCategory: Awaited<ReturnType<typeof resolveTemplateCategory>> = null;
+    if (template_name && sender.sendTemplate) {
+      try {
+        templateCategory = await resolveTemplateCategory(resolved.cloud, template_name);
+      } catch {
+        logger.warn('[BROADCAST] Template category lookup unavailable; using guarded text fallback.');
+      }
+    }
 
     // Build the formatted fallback text (used when template isn't available)
     const TEMPLATE_WRAPPERS: Record<string, (biz: string, msg: string) => string> = {
@@ -163,16 +174,19 @@ export async function POST(request: NextRequest) {
         }
 
         let sent = false;
+        let emailAccepted = false;
 
         // Try template first (works outside 24h window)
-        if (template_name && sender.sendTemplate) {
+        if (template_name && sender.sendTemplate && templateCategory) {
           try {
-            await sender.sendTemplate({
+            const templateResult = await sender.sendTemplate({
               to: phone,
               templateName: template_name,
               templateParams: [business.name, message],
+              messageCategory: templateCategory,
             });
-            sent = true;
+            sent = templateResult.success !== false;
+            if (sent) usedTemplate = true;
           } catch (templateErr) {
             // Template failed (not approved, not provisioned, etc.) — fall back to text
             logger.warn(`[BROADCAST] Template "${template_name}" failed for ...${phone.slice(-4)}, falling back to text:`, (templateErr as Error).message);
@@ -192,7 +206,7 @@ export async function POST(request: NextRequest) {
             emailOpt = { address: customerEmail, subject: tmpl.subject, html: tmpl.html };
           }
 
-          await sendOrEmail({
+          const delivery = await sendOrEmail({
             supabase: service,
             sender,
             to: phone,
@@ -200,7 +214,20 @@ export async function POST(request: NextRequest) {
             email: emailOpt,
             businessName: business.name,
             alwaysEmail: true,
+            messageCategory: 'service',
           });
+          sent = delivery.whatsapp === 'sent';
+          emailAccepted = delivery.email === 'sent';
+        }
+
+        if (!sent) {
+          if (emailAccepted) emailOnlyCount++;
+          await service.from('notifications').insert({
+            business_id, recipient_phone: phone, type: 'system',
+            channel: 'whatsapp', status: 'failed', body: message,
+            failed_reason: emailAccepted ? 'WhatsApp not accepted; email fallback accepted' : 'WhatsApp message not accepted',
+          });
+          continue;
         }
 
         await service.from('notifications').insert({
@@ -235,7 +262,10 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({
+      success: sentCount === phones.length,
       sent: sentCount,
+      not_sent: phones.length - sentCount,
+      email_only: emailOnlyCount,
       total: phones.length,
       used_template: usedTemplate,
       usage: {

@@ -72,10 +72,11 @@ export async function POST(request: NextRequest) {
       ? customerPhone.slice(1)
       : customerPhone;
 
-    if (audioUrl) {
-      await sender.sendAudio({ to: phone, audioUrl });
-    } else {
-      await sender.sendText({ to: phone, text: messageText });
+    const delivery = audioUrl
+      ? await sender.sendAudio({ to: phone, audioUrl, messageCategory: 'service' })
+      : await sender.sendText({ to: phone, text: messageText, messageCategory: 'service' });
+    if (delivery.success === false) {
+      return NextResponse.json({ error: 'Message was not accepted. Please try again.' }, { status: 502 });
     }
 
     // Upsert conversation and get conversation_id

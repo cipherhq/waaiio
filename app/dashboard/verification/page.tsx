@@ -84,7 +84,7 @@ export default function VerificationPage() {
     setUploading(docType);
 
     const ext = file.name.split('.').pop() || 'pdf';
-    const path = `verification/${business.id}/${docType}-${Date.now()}.${ext}`;
+    const path = `${business.id}/verification/${docType}-${Date.now()}.${ext}`;
 
     const { error: uploadError } = await supabase.storage
       .from('business-documents')

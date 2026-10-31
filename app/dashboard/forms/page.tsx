@@ -68,6 +68,8 @@ export default function FormsPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedForm, setSelectedForm] = useState<Form | null>(null);
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [copied, setCopied] = useState(false);
@@ -98,13 +100,20 @@ export default function FormsPage() {
 
   const loadForms = useCallback(async () => {
     const supabase = createClient();
-    const { data } = await supabase
-      .from('forms')
-      .select('id, title, description, fields, token, is_active, response_count, created_at')
-      .eq('business_id', business.id)
-      .order('created_at', { ascending: false });
-    setForms((data || []) as Form[]);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const { data, error } = await supabase
+        .from('forms')
+        .select('id, title, description, fields, token, is_active, response_count, created_at')
+        .eq('business_id', business.id)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setForms((data || []) as Form[]);
+    } catch {
+      setLoadError('Could not load forms. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   }, [business.id]);
 
   useEffect(() => { loadForms(); }, [loadForms]);
@@ -121,6 +130,7 @@ export default function FormsPage() {
   }, [business.id]);
 
   function openAdd() {
+    setSaveError(null);
     setEditId('');
     setTitle('');
     setDescription('');
@@ -195,18 +205,24 @@ export default function FormsPage() {
       is_active: true,
     };
 
-    if (view === 'add') {
-      await supabase.from('forms').insert({ ...payload, token: generateToken() });
-    } else {
-      // business_id is immutable after INSERT — omit from UPDATE payload.
-      // Column-level UPDATE grants (M437) exclude business_id to prevent
-      // ownership transfer; including it would cause a permission error.
-      const { business_id: _omit, ...updatePayload } = payload;
-      await supabase.from('forms').update(updatePayload).eq('id', editId);
+    setSaveError(null);
+    try {
+      if (view === 'add') {
+        const { error } = await supabase.from('forms').insert({ ...payload, token: generateToken() });
+        if (error) throw error;
+      } else {
+        // Ownership is immutable; preserve M437 column-level UPDATE grants.
+        const { business_id: _omit, ...updatePayload } = payload;
+        const { error } = await supabase.from('forms').update(updatePayload).eq('id', editId);
+        if (error) throw error;
+      }
+      setView('list');
+      await loadForms();
+    } catch {
+      setSaveError('Could not save this form. Your changes are still here. Please try again.');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    setView('list');
-    loadForms();
   }
 
   async function handleDelete(formId: string) {
@@ -408,6 +424,7 @@ export default function FormsPage() {
           <h1 className="text-xl font-bold text-gray-900">{view === 'add' ? 'Create Form' : 'Edit Form'}</h1>
         </div>
 
+        {saveError && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{saveError}</p>}
         <div className="mt-5 space-y-4 max-w-2xl">
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">Form Title <span className="text-red-400">*</span></label>
@@ -569,7 +586,8 @@ export default function FormsPage() {
         </section>
       )}
 
-      {forms.length === 0 ? (
+      {loadError && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{loadError} <button onClick={loadForms} className="underline">Try again</button></p>}
+      {loadError ? null : forms.length === 0 ? (
         <div className="mt-12 text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
             <svg aria-hidden="true" className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">

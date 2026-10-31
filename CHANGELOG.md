@@ -1,3 +1,11 @@
+### #785 — Surgical merchant dashboard fixes (2026-10-30)
+
+- Synchronize selected customer phone displays and product gallery previews with current state; use the existing business-first verification storage path.
+- Preserve initialized payment-request URLs, supply chat service categories, resolve broadcast template categories from the connected WABA, and report rejected or email-only delivery without WhatsApp success.
+- Keep form contents after failed saves and show list/save errors with retry. This does not establish the cause of the reported staging insert rejection.
+- **Affects**: Shared phone input, Products, Verification, Chat, Payment Requests, Broadcasts and Forms. No schema, permission, billing, payout or consent-policy changes. Existing staging migration gaps remain separate release prerequisites.
+- **Validation**: Rendered component and actual route tests with mocked storage/provider boundaries; live delivery, deployed upload acceptance and production build require separate release evidence.
+
 ### #762 — Verified Paystack fee and finalization snapshot (2026-10-30)
 
 - **`lib/payments/provider-adapters.ts`, `lib/payments/webhook-handler.ts`**: Share validated Paystack minor-to-integer-major-unit normalization, distinguish absent fees from supplied zero, and pass explicit observations instead of standalone webhook fee updates.

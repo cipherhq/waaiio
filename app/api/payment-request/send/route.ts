@@ -122,31 +122,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create payment link. Check that your payment gateway is configured correctly.' }, { status: 500 });
     }
 
-    // Get direct gateway URL
-    const { data: payment } = await serviceClient
-      .from('payments')
-      .select('gateway, gateway_reference, metadata')
-      .eq('gateway_reference', result.reference)
-      .eq('status', 'pending')
-      .maybeSingle();
-
-    let paymentUrl = result.url;
-    if (payment?.gateway === 'paystack' && payment.gateway_reference) {
-      paymentUrl = `https://checkout.paystack.com/${payment.gateway_reference}`;
-    } else if (payment?.gateway === 'stripe') {
-      const meta = (payment.metadata || {}) as Record<string, unknown>;
-      const sessionId = meta.stripe_session_id as string;
-      if (sessionId) {
-        try {
-          const key = process.env.STRIPE_SECRET_KEY || '';
-          const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${sessionId}`, {
-            headers: { Authorization: `Bearer ${key}` },
-          });
-          const session = await res.json();
-          if (session.url) paymentUrl = session.url;
-        } catch { /* use shortened URL */ }
-      }
-    }
+    // The initializer owns provider checkout URLs and app payment redirects.
+    const paymentUrl = result.url;
 
     // Build email HTML for payment request
     const paymentEmailTemplate = businessNotificationEmail({
