@@ -472,6 +472,7 @@ export async function POST(request: NextRequest) {
 
     if (hasStripeRef && typeof stripePriceRef === 'string') {
       stripeBody.set('line_items[0][price]', stripePriceRef);
+      stripeBody.set('currency', currency.toLowerCase());
     } else {
       stripeBody.set('line_items[0][price_data][currency]', currency.toLowerCase());
       stripeBody.set('line_items[0][price_data][product_data][name]', `Waaiio ${tierName} Plan (Monthly)`);

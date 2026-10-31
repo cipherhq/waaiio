@@ -75,6 +75,7 @@ describe('#762 actual merchant Stripe catalog checkout', () => {
       expect(res.status).toBe(200); expect(checkouts()).toHaveLength(1);
       const body = new URLSearchParams(checkouts()[0][1].body);
       expect(body.get('line_items[0][price]')).toBe(priceId(country, tier));
+      expect(body.get('currency')).toBe(currency.toLowerCase());
       expect([...body.keys()].some(k => k.includes('price_data'))).toBe(false);
       expect(body.get('line_items[0][quantity]')).toBe('1'); expect(body.get('mode')).toBe('subscription');
       expect(body.get('success_url')).toBe('https://synthetic.example.test/dashboard/subscription');
@@ -94,6 +95,7 @@ describe('#762 actual merchant Stripe catalog checkout', () => {
     expect((await POST(request())).status).toBe(200);
     const body = new URLSearchParams(checkouts()[0][1].body);
     expect(body.get('line_items[0][price]')).toBeNull();
+    expect(body.get('currency')).toBeNull();
     expect(body.get('line_items[0][price_data][currency]')).toBe('usd');
     expect(body.get('line_items[0][price_data][unit_amount]')).toBe('2999');
     expect(body.get('line_items[0][price_data][product_data][name]')).toBe('Waaiio Pro Plan (Monthly)');
@@ -130,4 +132,20 @@ describe('#762 actual merchant Stripe catalog checkout', () => {
     h.owner = 'synthetic-owner'; expect((await POST(request({ billing_interval: 'year' }))).status).toBe(400);
     expect(h.fetch).not.toHaveBeenCalled(); expect(h.writes).not.toHaveBeenCalled();
   });
+});
+
+it('pins authoritative currency for a multi-currency catalog Price despite conflicting client input', async () => {
+  const normal = h.fetch.getMockImplementation()!;
+  h.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.includes('/prices/')) return json({ ...price(priceId('US', 'growth'), 'growth'),
+      currency_options: { usd: { unit_amount: 2999 }, eur: { unit_amount: 9999 } } });
+    return normal(url, init);
+  });
+  const res = await POST(request({ currency: 'EUR', country_code: 'DE', amount: 9999 }));
+  expect(res.status).toBe(200); expect(checkouts()).toHaveLength(1);
+  const body = new URLSearchParams(checkouts()[0][1].body);
+  expect(body.get('currency')).toBe('usd');
+  expect(body.get('line_items[0][price]')).toBe(priceId('US', 'growth'));
+  expect([...body.keys()].some(key => key.includes('price_data'))).toBe(false);
+  expect(h.filters).toContainEqual(['code', 'US']); expect(h.writes).not.toHaveBeenCalled();
 });
