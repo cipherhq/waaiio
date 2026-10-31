@@ -3831,7 +3831,7 @@ export class BotService {
         if (pick) {
           if (sharedConversation) {
             return this.handleMessage(from, pick.bot_code, messageType, destinationPhone,
-              undefined, undefined, undefined, 'fuzzy', {
+              undefined, undefined, undefined, 'returning_customer', {
                 id: session.id, version: session.version ?? 0,
                 conversationVersion: sharedConversation.version, businessId: pick.id,
               });

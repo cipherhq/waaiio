@@ -47,7 +47,7 @@ END $$;
 
 CREATE FUNCTION public.select_shared_conversation(
   p_phone text, p_channel_id uuid, p_session_id uuid, p_expected_version bigint,
-  p_picker_id uuid DEFAULT NULL, p_picker_version integer DEFAULT NULL
+  p_picker_id uuid DEFAULT NULL, p_picker_version bigint DEFAULT NULL
 ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_business_id uuid;
@@ -94,16 +94,16 @@ BEGIN
   RETURN true;
 END $$;
 REVOKE ALL ON FUNCTION public.get_shared_conversation(text, uuid) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.select_shared_conversation(text, uuid, uuid, bigint, uuid, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.select_shared_conversation(text, uuid, uuid, bigint, uuid, bigint) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_shared_conversation(text, uuid) TO service_role;
-GRANT EXECUTE ON FUNCTION public.select_shared_conversation(text, uuid, uuid, bigint, uuid, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.select_shared_conversation(text, uuid, uuid, bigint, uuid, bigint) TO service_role;
 DO $$ BEGIN
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.bot_conversation_bindings'::regclass)
     OR has_table_privilege('authenticated', 'public.bot_conversation_bindings', 'SELECT')
     OR has_table_privilege('anon', 'public.bot_conversation_bindings', 'SELECT')
-    OR has_function_privilege('authenticated', 'public.select_shared_conversation(text,uuid,uuid,bigint,uuid,integer)', 'EXECUTE')
+    OR has_function_privilege('authenticated', 'public.select_shared_conversation(text,uuid,uuid,bigint,uuid,bigint)', 'EXECUTE')
     OR has_function_privilege('anon', 'public.get_shared_conversation(text,uuid)', 'EXECUTE')
-    OR NOT has_function_privilege('service_role', 'public.select_shared_conversation(text,uuid,uuid,bigint,uuid,integer)', 'EXECUTE') THEN
+    OR NOT has_function_privilege('service_role', 'public.select_shared_conversation(text,uuid,uuid,bigint,uuid,bigint)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Shared conversation final-state privilege verification failed';
   END IF;
 END $$;

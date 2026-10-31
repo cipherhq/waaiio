@@ -6,6 +6,7 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
 
 // Disposable PostgreSQL only. This suite never accepts a staging/production URL.
+const pgBin = execFileSync('pg_config', ['--bindir'], {encoding:'utf8'}).trim();
 const dir = mkdtempSync(join(tmpdir(), 'waaiio-binding-'));
 let db: Client;
 let started = false;
@@ -18,20 +19,20 @@ const select = async (session = sa, version = 0, pickerId: string | null = null,
   (await query('select select_shared_conversation($1,$2,$3,$4,$5,$6) ok', ['customer', ch, session, version, pickerId, pickerVersion]))[0].ok;
 
 beforeAll(async () => {
-  execFileSync('initdb', ['-D', join(dir, 'data'), '-A', 'trust', '--no-locale'], { stdio: 'pipe' });
-  execFileSync('pg_ctl', ['-D', join(dir, 'data'), '-l', join(dir, 'server.log'), '-o', `-k ${dir} -c listen_addresses=''`, '-w', 'start'], { stdio: 'pipe' });
+  execFileSync(join(pgBin,'initdb'), ['-D', join(dir, 'data'), '-A', 'trust', '--no-locale'], { stdio: 'pipe' });
+  execFileSync(join(pgBin,'pg_ctl'), ['-D', join(dir, 'data'), '-l', join(dir, 'server.log'), '-o', `-k ${dir} -c listen_addresses=''`, '-w', 'start'], { stdio: 'pipe' });
   started = true;
   db = new Client(config); await db.connect();
   await query(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
     CREATE TABLE whatsapp_channels (id uuid PRIMARY KEY, channel_type text, is_active boolean, connection_status text);
     CREATE TABLE businesses (id uuid PRIMARY KEY, status text, wa_method text, assigned_channel_id uuid);
     CREATE TABLE bot_sessions (id uuid PRIMARY KEY, whatsapp_number text, business_id uuid, is_active boolean,
-      expires_at timestamptz, current_step text, session_data jsonb, version integer DEFAULT 0);`);
+      expires_at timestamptz, current_step text, session_data jsonb, version bigint DEFAULT 0);`);
   await db.query(readFileSync(join(process.cwd(), 'supabase/migrations/493_shared_conversation_binding.sql'), 'utf8'));
 }, 30000);
 afterAll(async () => {
   await db?.end();
-  if (started) execFileSync('pg_ctl', ['-D', join(dir, 'data'), '-m', 'immediate', '-w', 'stop'], { stdio: 'pipe' });
+  if (started) execFileSync(join(pgBin,'pg_ctl'), ['-D', join(dir, 'data'), '-m', 'immediate', '-w', 'stop'], { stdio: 'pipe' });
   rmSync(dir, { recursive: true, force: true });
 });
 beforeEach(async () => {
@@ -104,7 +105,7 @@ describe('explicit shared conversation selection — real PostgreSQL', () => {
     for (const role of ['anon','authenticated']) {
       const [row] = await query(`SELECT has_table_privilege($1,'bot_conversation_bindings','SELECT') tbl,
         has_function_privilege($1,'get_shared_conversation(text,uuid)','EXECUTE') rd,
-        has_function_privilege($1,'select_shared_conversation(text,uuid,uuid,bigint,uuid,integer)','EXECUTE') wr`,[role]);
+        has_function_privilege($1,'select_shared_conversation(text,uuid,uuid,bigint,uuid,bigint)','EXECUTE') wr`,[role]);
       expect(row).toEqual({tbl:false,rd:false,wr:false});
     }
     expect((await query("select relrowsecurity from pg_class where oid='bot_conversation_bindings'::regclass"))[0].relrowsecurity).toBe(true);

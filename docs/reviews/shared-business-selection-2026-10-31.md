@@ -45,3 +45,7 @@ Migration 493 was checked against current main, all ten open PR file lists, regi
 Before live acceptance: integrate on current main, run the migration against the full staging schema and verify grants/history, deploy the reviewed application, then test the public directory link → business selection → appointment → date/time → customer details → booking confirmation. Repeat with multiple merchant sessions and a single configured appointment after its separate fix is integrated. Inspect webhook/runtime and persisted booking evidence.
 
 Status: two observed staging defects have proposed code fixes with focused executable evidence; live fixes and end-to-end booking completion remain unverified. Do not treat the separate single-appointment fix, this routing fix, or a successful welcome message as end-to-end booking certification.
+
+## Authorized staging rollout addendum
+
+Owner authorized staging migration/deployment and booking verification. Included the independently reviewed appointment-only singleton fix: hydration now occurs in skipIf before the executor advances to the date prompt. Its real-executor tests passed 26/26 without skips. Staging preflight verified bot_sessions.version is bigint; picker RPC parameter and disposable schema fixture now match that type. No generic executor changes.
