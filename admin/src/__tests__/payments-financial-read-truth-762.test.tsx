@@ -329,3 +329,59 @@ describe('#779 pending refund authorization across refreshes', () => {
     expect(calls('/payments/refund')).toHaveLength(0); expect(updates).toEqual([]);
   });
 });
+
+describe('#779 retire authorization when its financial request dispatches', () => {
+  for (const kind of ['detail', 'request'] as const) {
+    it.each([false, true])(kind + ': stateful success/readback with in-flight poll=%s does not report stale MFA', async pollDuringRequest => {
+      let release!: (r: Response) => void;
+      const completion = new Promise<Response>(resolve => { release = resolve; });
+      const normalFetch = h.fetch.getMockImplementation()!;
+      h.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+        if (url.endsWith('/payments/refund')) {
+          rows('payments', [{ ...original, status: 'refunded', refund_amount: 25 }]);
+          return pollDuringRequest ? completion : response({ refundId: 'synthetic-refund' });
+        }
+        return normalFetch(url, init);
+      });
+      const normalFrom = h.from.getMockImplementation()!;
+      h.from.mockImplementation((table: string) => {
+        const q = normalFrom(table);
+        if (table === 'refund_requests') {
+          const update = q.update;
+          q.update = (payload: { status?: string }) => {
+            if (payload.status === 'approved') rows('refund_requests', [{ ...request, status: 'approved' }]);
+            return update(payload);
+          };
+        }
+        return q;
+      });
+      render(<Payments />); await ready();
+      if (kind === 'detail') {
+        fireEvent.click(screen.getByText('Synthetic Store').closest('tr')!);
+        fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '25' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm Refund' }));
+      } else fireEvent.click(screen.getByRole('button', { name: 'Approve & Refund' }));
+      await screen.findByText('Confirm operation');
+      fireEvent.change(screen.getByPlaceholderText('000000'), { target: { value: '123456' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Authorize' }));
+      await waitFor(() => expect(calls('/payments/refund')).toHaveLength(1));
+      if (pollDuringRequest) {
+        await refresh();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        expect(document.body).not.toHaveTextContent('Restart the refund authorization');
+        await act(async () => { release(response({ refundId: 'synthetic-refund' })); await completion; });
+      }
+      if (kind === 'request') await waitFor(() => expect(updates).toEqual(['refund_requests']));
+      else await screen.findByText('Refund processed successfully');
+      await waitFor(() => expect(screen.queryByText('Confirm operation')).not.toBeInTheDocument());
+      await refresh();
+      await ready();
+      expect(calls('/payments/refund')).toHaveLength(1);
+      expect(document.body).not.toHaveTextContent('Restart the refund authorization');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      if (kind === 'request') expect(screen.queryByRole('button', { name: 'Approve & Refund' })).not.toBeInTheDocument();
+      else expect(screen.getByText('Refund processed successfully')).toBeInTheDocument();
+      expect(calls('/payments/refund')[0][1].headers.Authorization).toBe('Bearer synthetic-after-mfa');
+    });
+  }
+});

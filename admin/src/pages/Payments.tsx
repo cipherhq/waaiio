@@ -260,6 +260,7 @@ export default function Payments() {
         if (!token) { setRefundError('Not authenticated'); return; }
 
         assertAuthorization(authorizationEpoch);
+        pendingActionRef.current = null; // This epoch is dispatching; its own committed changes are no longer pending MFA.
         const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
           method: 'POST',
           headers: {
@@ -397,6 +398,7 @@ export default function Payments() {
                           const { data: session } = await supabase.auth.getSession();
                           const token = session?.session?.access_token;
                           assertAuthorization(authorizationEpoch);
+                          pendingActionRef.current = null; // Retire only the context matched by the assertion, without yielding.
                           const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
