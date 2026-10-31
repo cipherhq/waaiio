@@ -23,6 +23,7 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/lib/countries';
 import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { useOnboardingPersistence, clearOnboardingDraft, type OnboardingDraft } from '@/hooks/useOnboardingPersistence';
+import { buildMerchantLink } from '@/lib/url';
 import type { User } from '@supabase/supabase-js';
 import {
   StepAuth,
@@ -1154,14 +1155,11 @@ function OnboardingWizard() {
   const indicatorKey = intermediateSteps.includes(step) ? 'category' : step;
   const stepIndex = steps.findIndex(s => s.key === indicatorKey);
 
-  // For shared numbers: wa.me/{waaiioNumber}?text={botCode}
-  // For dedicated numbers (transfer/coexist): wa.me/{theirOwnNumber} (no bot code needed)
-  const sharedNumber = sharedWhatsAppNumber || FALLBACK_WHATSAPP_NUMBERS[selectedCountry] || '12029226251';
-  const dedicatedNumber = fbConnectionData?.phone_number?.replace(/[^0-9]/g, '') || ownPhone.replace(/[^0-9]/g, '');
-  const waNumber = waMethod !== 'shared' && dedicatedNumber ? dedicatedNumber : sharedNumber;
-  const waLink = waMethod !== 'shared' && dedicatedNumber
-    ? `https://wa.me/${dedicatedNumber}`
-    : `https://wa.me/${sharedNumber}?text=${encodeURIComponent(successData?.bot_code || botCode)}`;
+  // Permanent Waaiio link — use confirmed business identity from successData or
+  // the URL-resumed successBusinessId. Never fall back to raw wa.me for StepSuccess;
+  // StepSuccess shows pending/error when the link isn't ready yet.
+  const confirmedBusinessId = successData?.business_id || successBusinessId;
+  const waLink = confirmedBusinessId ? buildMerchantLink(confirmedBusinessId) : '';
   // Build localTiers from authoritative DB projection — no hardcoded commercial fallback.
   // When projection is absent, commercial fields (price, feePercentage, feeFlat) are zeroed
   // and the UI is gated by pricingReady below. Non-commercial metadata (name, features) from constants only.

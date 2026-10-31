@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { buildMerchantLink } from '@/lib/url';
 
 interface Service {
   id: string;
@@ -59,8 +60,6 @@ const CAPABILITY_LABELS: Record<string, string> = {
   whatsapp_sign: 'E-Sign', invoice: 'Invoices', referral: 'Referrals',
   reminders: 'Reminders', reports: 'Reports', staff: 'Staff',
 };
-
-const SHARED_WHATSAPP_NUMBER = '12029226251';
 
 export default function DirectoryClient() {
   const [businesses, setBusinesses] = useState<Business[]>([]);
@@ -195,15 +194,8 @@ export default function DirectoryClient() {
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {bizList.map((biz) => {
-                    const isShared = biz.wa_method === 'shared';
-                    const sharedNumber = SHARED_WHATSAPP_NUMBER;
-                    const dedicatedNumber = biz.wa_phone?.replace(/\D/g, '') || null;
-                    const waLink = isShared
-                      ? `https://wa.me/${sharedNumber}?text=${encodeURIComponent(biz.bot_code || 'Hi')}`
-                      : dedicatedNumber
-                        ? `https://wa.me/${dedicatedNumber}?text=${encodeURIComponent('Hi')}`
-                        : `https://wa.me/${sharedNumber}?text=${encodeURIComponent(biz.bot_code || 'Hi')}`;
-                    const displayNumber = isShared ? sharedNumber : (dedicatedNumber || sharedNumber);
+                    // Permanent Waaiio link — no hardcoded phone display
+                    const waLink = buildMerchantLink(biz.id);
                     const isExpanded = expanded === biz.id;
 
                     return (
@@ -258,23 +250,12 @@ export default function DirectoryClient() {
                           </div>
                         )}
 
-                        {/* WhatsApp CTA */}
+                        {/* WhatsApp CTA — permanent Waaiio link, no hardcoded phone */}
                         <div className="mt-4 rounded-xl bg-gray-50 p-3">
-                          {isShared ? (
-                            <div>
-                              <p className="text-[10px] text-gray-400 uppercase font-semibold">Shared WhatsApp Number</p>
-                              <p className="mt-1 text-xs text-gray-600">
-                                Text <span className="font-mono font-bold text-brand">{biz.bot_code}</span> to <span className="font-medium text-gray-900">+{sharedNumber.replace(/(\d{1})(\d{3})(\d{3})(\d{4})/, '$1-$2-$3-$4')}</span>
-                              </p>
-                            </div>
-                          ) : (
-                            <div>
-                              <p className="text-[10px] text-gray-400 uppercase font-semibold">Dedicated WhatsApp Number</p>
-                              <p className="mt-1 text-xs text-gray-600">
-                                {dedicatedNumber ? <>Text to <span className="font-medium text-gray-900">+{displayNumber.replace(/(\d{1})(\d{3})(\d{3})(\d{4})/, '$1-$2-$3-$4')}</span></> : 'Message them directly on their own number'}
-                              </p>
-                            </div>
-                          )}
+                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Message on WhatsApp</p>
+                          <p className="mt-1 text-xs text-gray-600">
+                            Opens a WhatsApp conversation with this business
+                          </p>
                           <div className="mt-2 flex gap-2">
                           <a
                             href={waLink}
