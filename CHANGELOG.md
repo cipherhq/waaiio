@@ -96,6 +96,13 @@
 - Ticket email opts into one application-level provider attempt through an optional shared helper flag; other email callers retain their existing retries.
 - Added mounted UI, route/domain, actual delivery-helper and disposable PostgreSQL coverage. Validation is pending remote CI; no local tests, hosted migrations, live sends, merge or deployment performed.
 
+### #762 — Businesses resource read parity (2026-10-30)
+
+- **`admin/src/pages/Businesses.tsx`**: Select and display canonical `stock_quantity`, retaining genuine zero and unknown stock as distinct values. Bind ancillary resource results to the selected business and current request generation so obsolete selection, close/reopen and retry completions are ignored.
+- **Read states**: Payout account, service statistics, services, products and business bank account show independent loading/unavailable states and Retry. Successful empty lists and absent single records remain distinct from failed reads. Existing projections, filters and masked account output are retained except for the corrected stock column.
+- **Mounted evidence**: `businesses-resource-parity-762.test.tsx`31 passed/0 skipped; preserved financial/capability24/0, Businesses verification11/0, Verification review11/0 and tier-change6/0. Admin build and all12 canonical CI41137193074 jobs passed at source0963ab7980831976bb4df1506beba878ad009355, Admin job124342449610, checkout257f19e192d7c3119a6f12da553f98dc86c787db.
+- **Limits**: This read-presentation correction does not certify provider destinations, entitlements, financial settlement or hosted acceptance. Existing service-stat definitions and financial/authorization behavior remain unchanged.
+
 ### #736 Lane 1 R7 — Surface failed payment-request notifications (2026-10-29)
 
 - `app/dashboard/payment-request/page.tsx`: Inspect the API's delivery result instead of treating HTTP 200 alone as notification success. When the payment request was created but no channel accepted delivery, show its saved link/reference and prevent accidental resubmission; bulk results now distinguish sent, created-but-undelivered, and failed requests.
