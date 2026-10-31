@@ -60,3 +60,17 @@ The disposable PostgreSQL test initially could not initialize shared memory insi
 8. Test free-text ordering from entry and an existing merchant session; preserve names/addresses/notes as literal inputs. Automatic repeat suggestions must not intercept an explicit purchase request.
 
 Remaining verification: independent Claude testing, exact-head CI after publishing a review branch, and authorized staging WhatsApp end-to-end testing. These are not represented as completed. Automatic repeat suggestions currently cover order/service/appointment/giving records the bot can resolve; other transaction types retain their normal menu/history flows. No broad bot rewrite or all-capability certification is claimed.
+
+## Post-Claude review reconciliation
+
+Claude independently reviewed implementation head `993343b2c2085bf49c87db4dbc3d9ce0417e1427` and found no remaining code blockers in the bounded scope. Its affected-suite run had one parallel timeout; the post-completion file passed all 72 tests in isolation.
+
+Full CI run [41235368468](https://github.com/cipherhq/waaiio/actions/runs/41235368468) exposed 48 failures across ten older fixture files beyond that affected slice (16,570 passed; 2,862 skipped). All 233 tests in those ten files pass on untouched base `2da156b8`; after reconciliation they pass locally on this branch, with zero skips. An independent evidence reviewer reproduced and verified the fixture causes and corrections.
+
+- Confirmation resolver mocks now include channel metadata required by the real resolver contract; completion, amount, loyalty and recipient assertions remain intact.
+- Profile fixtures support both-format phone lookup.
+- Greeting tests inspect outbound customer copy rather than transient session data consumed by menu rendering, retaining exact custom text and branding assertions.
+- Directory tests use the real command matcher and verify channel-scoped persistence and exact merchant-session deactivation. Existing suggestion/CAS tests exercise the still-supported business-search caller, retaining persisted-choice and retry assertions.
+- Repeat-state cleanup is checked by behavior; the three remaining capability-transition callers retain their shared-helper checks.
+
+Only test fixtures/assertions and this evidence note changed during reconciliation. No production code or schema was changed. Exact-head CI must be rerun after this follow-up commit; the failed run is not release clearance. PR #800 holds the latest CI status. A read-only provider recheck did not substantiate the reported billing concern for the connected dedicated number; it referenced a separate account. Provider details are kept out of this public document.

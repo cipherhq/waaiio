@@ -337,6 +337,7 @@ describe('ACC-184 Real Flow: select_capability discoverability', () => {
         return c;
       });
       c.eq = vi.fn().mockReturnValue(c);
+      c.in = vi.fn().mockReturnValue(c);
       c.neq = vi.fn().mockReturnValue(c);
       c.or = vi.fn().mockReturnValue(c);
       c.is = vi.fn().mockReturnValue(c);
