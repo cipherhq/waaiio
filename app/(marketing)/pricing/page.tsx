@@ -220,8 +220,8 @@ export default function PricingPage() {
                     </td>
                   </tr>
                   <CompareRow
-                    label="Monthly bookings"
-                    values={['Up to 50', 'Up to 500', 'Unlimited']}
+                    label="Monthly activities"
+                    values={['Up to 100', 'Up to 1,000', 'Unlimited']}
                   />
                   <CompareRow
                     label="Transaction fee"
