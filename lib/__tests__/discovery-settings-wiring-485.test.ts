@@ -159,17 +159,17 @@ describe('Fix A — Settings address captures Google coordinates', () => {
     expect(source).toContain('city?: string');
   });
 
-  it('PlacesAutocomplete requests address_components from Google', () => {
+  it('places-provider requests addressComponents from Google (New API)', () => {
     const source = readFileSync(
-      resolve(__dirname, '../../components/ui/PlacesAutocomplete.tsx'),
+      resolve(__dirname, '../../lib/places-provider.ts'),
       'utf-8'
     );
-    expect(source).toContain("'address_components'");
+    expect(source).toContain("'addressComponents'");
   });
 
-  it('PlacesAutocomplete derives city with locality → postal_town → admin area fallback', () => {
+  it('places-provider derives city with locality → postal_town → admin area fallback', () => {
     const source = readFileSync(
-      resolve(__dirname, '../../components/ui/PlacesAutocomplete.tsx'),
+      resolve(__dirname, '../../lib/places-provider.ts'),
       'utf-8'
     );
     expect(source).toContain("'locality'");

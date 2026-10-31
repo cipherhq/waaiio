@@ -97,7 +97,7 @@ export class StripeGateway implements PaymentGateway {
         cancel_url: `${callbackUrl}`,
         'metadata[booking_id]': opts.bookingId || '',
         'metadata[order_id]': opts.orderId || '',
-        'metadata[user_id]': opts.userId,
+        ...(opts.userId !== null ? { 'metadata[user_id]': opts.userId } : {}),
         'metadata[reference_code]': opts.referenceCode,
         'metadata[channel]': 'whatsapp',
         client_reference_id: opts.referenceCode,

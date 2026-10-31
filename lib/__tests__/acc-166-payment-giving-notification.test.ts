@@ -99,6 +99,9 @@ function buildMock(
   };
 
   mockRpc.mockImplementation((name: string) => {
+    if (flowType === 'ticketing' && name === 'terminate_cancelled_event_confirmation') {
+      return Promise.resolve({ data: { terminated: false, reason: 'not_cancelled' }, error: null });
+    }
     const r = rpcs[name];
     return Promise.resolve({ data: r?.data ?? null, error: r?.error ?? null });
   });

@@ -191,6 +191,8 @@ export interface MessageSender {
     imageUrl: string;
     caption?: string;
     messageCategory?: string;
+    /** Single application attempt for durably authorized ticket delivery. */
+    noRetry?: boolean;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendDocument(msg: {
     to: string;
@@ -198,6 +200,8 @@ export interface MessageSender {
     filename: string;
     caption?: string;
     messageCategory?: string;
+    /** Single application attempt for durably authorized ticket delivery. */
+    noRetry?: boolean;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendAudio(msg: {
     to: string;
@@ -608,13 +612,21 @@ export class MetaCloudSender implements MessageSender {
     return { success: true, messageId: result.messageId };
   }
 
-  async sendImage(msg: { to: string; imageUrl: string; caption?: string; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendImage({ to: msg.to, imageUrl: msg.imageUrl, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
+  async sendImage(msg: { to: string; imageUrl: string; caption?: string; messageCategory?: string; noRetry?: boolean }) {
+    const imageCall = async () => this.withAttemptAndGuard(
+      () => this.cloud.sendImage({ to: msg.to, imageUrl: msg.imageUrl, caption: msg.caption }),
+      { recipientPhone: msg.to, messageCategory: msg.messageCategory },
+    );
+    const result = msg.noRetry ? await imageCall() : await withRetry(imageCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendDocument(msg: { to: string; documentUrl: string; filename: string; caption?: string; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendDocument({ to: msg.to, documentUrl: msg.documentUrl, filename: msg.filename, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
+  async sendDocument(msg: { to: string; documentUrl: string; filename: string; caption?: string; messageCategory?: string; noRetry?: boolean }) {
+    const documentCall = async () => this.withAttemptAndGuard(
+      () => this.cloud.sendDocument({ to: msg.to, documentUrl: msg.documentUrl, filename: msg.filename, caption: msg.caption }),
+      { recipientPhone: msg.to, messageCategory: msg.messageCategory },
+    );
+    const result = msg.noRetry ? await documentCall() : await withRetry(documentCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
