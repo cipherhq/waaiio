@@ -218,6 +218,30 @@
 - **`admin/src/pages/ResellerFinancials.tsx`, `admin/src/pages/ResellerPayouts.tsx` and their two read-state test files**: Distinguish loading, failed reads, empty results and successful data; reject obsolete completions and retain generation checks before and after deferred token resolution.
 - **Affects / could break**: Reseller financial and payout views during failed requests, retries and context changes. Existing arithmetic, monetary units, authentication helpers and financial mutations are unchanged. No live settlement or currency-history reconciliation is claimed.
 
+### #741 — Offline proof lock-order correction (2026-10-30)
+
+- **`supabase/migrations/479_offline_merchant_approval.sql`**: Discover the linked order without holding the transfer lock, then lock order, transfer and marker consistently; revalidate association, tenant, status and deadline under locks. Preserve non-order proof, timestamp and permission behavior.
+- **`lib/__tests__/m479-offline-approval-db.test.ts`**: Preserve all 18 existing cases and add two real two-session proof/confirmation and proof/cleanup tests with database-observed blocking and final-state/idempotency assertions.
+- **Affects / could break**: Concurrent offline-proof recording and merchant approval/cleanup. Source/isolated-test correction only; no hosted migration application or production incident is claimed.
+
+### #741 — Canonical offline confirmation timestamp compatibility (2026-10-31)
+
+- **M479 and its disposable PostgreSQL test**: Stop assigning an absent orders.paid_at column while retaining order updated_at, payment paid_at and transfer confirmation timestamps. Preserve stock, proof protection, payment linkage, idempotency and shared lock-order behavior.
+- Exercise both confirm-payment and confirm-and-approve outcomes in the existing concurrent-confirmation coverage. The reviewed correction passes 21 database cases with zero skips; hosted application and live flow acceptance remain separate.
+
+### #736 — Offline merchant approval: payment vs fulfillment separation (2026-10-28)
+
+- **`supabase/migrations/479_offline_merchant_approval.sql`** (new): M479 migration with 11 SQL objects. Adds `paid_pending_approval` to `order_status` enum. Adds `proof_submitted_at` and `proof_protected` columns to `pending_transfers`. Extends `refunds` CHECK for `merchant_obligation/merchant_settled/admin_resolved` (Owner Option X). Creates `submit_transfer_proof` (atomic proof with DB timestamps, deadline gate, lock order→transfer→marker), `confirm_order_transfer_atomic` 5-arg (proof-protected expiry, conditional approval), `confirm_nonorder_transfer_atomic` (atomic non-order with entity validation, fail-closed fractional amounts), `approve_paid_order`, `reject_paid_order` (stock/promo restore + refund obligation). Modifies `cancel_stale_order_atomic` (proof protection preserving original deadlines, legacy proof held), `finalize_promo_reservation` (`paid_pending_approval` awareness). All functions SECURITY DEFINER, service_role only.
+- **`lib/bot/flows/shared/bank-transfer.ts`**: Explicit opt-in (`metadata.bank_transfer_enabled === true`, Owner Option B). Fractional amount guard before displaying bank instructions. `createPendingTransfer` returns null on DB insert failure.
+- **`app/dashboard/settings/tabs/PaymentsTab.tsx`**: Default OFF (`=== true` instead of `!== false`).
+- **`app/api/dashboard/pending-transfers/[id]/route.ts`**: Rewritten — order confirms use 5-arg RPC with explicit `approve_fulfillment`; non-order confirms use `confirm_nonorder_transfer_atomic`. Accurate status-dependent customer notifications. Fixes 100x payment amount bug (minor units into major-unit column).
+- **`app/api/dashboard/pending-transfers/[id]/approve/route.ts`** (new): Second-step approval for bookings/reservations/orders after "Confirm Payment Only". Uses `approve_paid_order` RPC for orders. CAS booking approval with tenant verification.
+- **`app/api/dashboard/pending-transfers/route.ts`**: Adds `ocr_result`, `verified_by_ocr`, `proof_submitted_at`, `proof_protected` to listing API.
+- **`lib/payments/refund-handler.ts`**: Blocks provider refund dispatch for `gateway='direct'` (platform never held funds).
+- **7 flow files** (scheduling, ordering, ticketing, reservation, invoice, payment, crowdfunding): Null-guard all 12 `createPendingTransfer` callers. OCR data always stored (not conditional on match) with `date` and `fields_match`. "AI verified" → "Receipt fields match" in merchant/customer notifications.
+- **Affects**: Offline bank transfer payment confirmation, merchant approval workflow, OCR data handling, customer notifications, refund obligations. Online payments unchanged. Existing saved-card, Stripe, Paystack paths unaffected.
+- **Could break**: (1) Merchants who relied on implicit bank-transfer-enabled default now need explicit opt-in. (2) Dashboard must send `approve_fulfillment: boolean` with confirm actions. (3) Old 4-arg `confirm_order_transfer_atomic` callers get 400 if `approve_fulfillment` is missing.
+
 ### #723 — Subscription messaging credit 10% audit document corrections (2026-10-27)
 
 - **`docs/ops/subscription-messaging-credit-10pct-audit-2026-10-26.md`**: Surgical documentation corrections per CTO review. (1) Updated stale references: PRs #711 and #722 now noted as merged; #712 remains open draft on separate lane. (2) Moved Admin-control configurability from approved decisions to unresolved future implementation gates. (3) Explicitly distinguished four unresolved Owner decisions (discount/tax basis, annual billing, rounding rule, Admin-control design) from the already-approved 10% rate. (4) Clarified section 4 heading applies to the future implementation PR, not this documentation PR. (5) Labeled US/CA Premium 10% credit amounts as illustrative pending rounding approval. (6) Retained explicit "no merge without separate Owner authorization" in governance section.

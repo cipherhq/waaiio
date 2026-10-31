@@ -3,7 +3,7 @@ import { getFlowCopy } from './flow-localization';
 import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
@@ -525,6 +525,7 @@ const donationPaymentStep: FlowStepConfig = {
           countryCode: country,
           transferExpiryHours: ps.transfer_expiry_hours,
         });
+        if (!transferRef) return [{ type: 'text' as const, text: await ctx.t('Unable to create bank transfer. Please try again or use the online payment link.') }];
         sd.bank_transfer_reference = transferRef;
         sd.bank_transfer_offered = true;
         sd.bank_transfer_amount = amount;
@@ -573,6 +574,7 @@ const donationPaymentStep: FlowStepConfig = {
         countryCode: country,
         transferExpiryHours: ps.transfer_expiry_hours,
       });
+      if (!transferRef) return [{ type: 'text' as const, text: await ctx.t('Unable to create bank transfer. Please try again or use the online payment link.') }];
       sd.bank_transfer_reference = transferRef;
       sd.bank_transfer_offered = true;
       sd.bank_transfer_amount = amount;
@@ -799,16 +801,18 @@ const awaitDonationPaymentStep: FlowStepConfig = {
       const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
       const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
 
-      await ctx.supabase
-        .from('pending_transfers')
-        .update({
-          proof_type: 'screenshot',
-          proof_image_url: ctx.mediaUrl,
-          verified_by_ocr: ocrMatches,
-          ocr_result: ocrMatches ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, confidence: ocr.confidence } : null,
-        })
-        .eq('reference_code', transferRef)
-        .eq('status', 'pending');
+      // #736 Finding 2: Route through atomic submit_transfer_proof RPC
+      const proofResult = await submitTransferProof(ctx.supabase, {
+        referenceCode: transferRef, businessId: ctx.business!.id,
+        proofType: 'screenshot', proofImageUrl: ctx.mediaUrl, proofText: null,
+        ocrResult: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference,
+          sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date,
+          confidence: ocr.confidence, fields_match: ocrMatches } : null,
+        verifiedByOcr: ocrMatches,
+      });
+      if (!proofResult.submitted) {
+        return { valid: false, errorMessage: 'This transfer has expired. Please start a new donation.' };
+      }
 
       if (ctx.business) {
         const donorName = (sd.donor_display_name as string) || 'Anonymous';
@@ -832,7 +836,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
         }).catch(err => logger.withContext({ op: 'crowdfunding.transfer-notification', ...safeLogErrorContext(err) }).error('[CROWDFUNDING] Transfer notification error'));
       }
 
-      const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
+      const ocrHint = ocrMatches ? `\n\n🤖 _Receipt details match your payment reference._` : '';
       await ctx.sender.sendText({
         to: ctx.from,
         text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The organization'}* will review and confirm your donation shortly.\n\nRef: *${transferRef}*${ocrHint}\n\nSend *Hi* to continue.`),
@@ -855,13 +859,16 @@ const awaitDonationPaymentStep: FlowStepConfig = {
     }
 
     // ── Text proof after tapping "I've Sent Transfer" ──
+    // #736 Finding 2: Route typed proof through atomic RPC
     if (sd._awaiting_transfer_proof && text && !isIvePaidInput(text)) {
-      await ctx.supabase
-        .from('pending_transfers')
-        .update({ proof_type: 'text', proof_text: input.trim() })
-        .eq('reference_code', sd.bank_transfer_reference as string)
-        .eq('status', 'pending');
-
+      const textProofResult = await submitTransferProof(ctx.supabase, {
+        referenceCode: sd.bank_transfer_reference as string, businessId: ctx.business!.id,
+        proofType: 'text', proofImageUrl: null, proofText: input.trim(),
+        ocrResult: null, verifiedByOcr: false,
+      });
+      if (!textProofResult.submitted) {
+        return { valid: false, errorMessage: 'This transfer has expired. Please start a new donation.' };
+      }
       await ctx.sender.sendText({
         to: ctx.from,
         text: await ctx.t(`✅ Transfer reference received. *${ctx.business?.name || 'The organization'}* will review and confirm your donation shortly.\n\nRef: *${sd.bank_transfer_reference}*\n\nSend *Hi* to continue.`),
