@@ -52,6 +52,9 @@ interface PayoutRecord {
   gateway_fee: number;
   net_amount: number;
   status: string;
+  status_explanation?: string;
+  recorded_context?: string[];
+  linked_destination?: string;
   paid_at: string | null;
   created_at: string;
 }
@@ -70,11 +73,9 @@ export default function PayoutsPage() {
   const gatewayOptions: Record<string, Array<{ id: string; name: string; desc: string; icon: string }>> = {
     NG: [
       { id: 'paystack', name: 'Paystack', desc: 'Most popular in Nigeria. Fast settlement.', icon: '🟢' },
-      { id: 'flutterwave', name: 'Flutterwave', desc: 'Supports multiple African countries.', icon: '🟡' },
     ],
     GH: [
       { id: 'paystack', name: 'Paystack', desc: 'Available in Ghana. Fast settlement.', icon: '🟢' },
-      { id: 'flutterwave', name: 'Flutterwave', desc: 'Supports mobile money.', icon: '🟡' },
     ],
     US: [
       { id: 'stripe', name: 'Stripe', desc: 'Industry standard. Cards, Apple Pay, Google Pay.', icon: '🟣' },
@@ -92,10 +93,13 @@ export default function PayoutsPage() {
   };
 
   const availableGateways = gatewayOptions[country] || gatewayOptions['NG'];
-  const [selectedGateway, setSelectedGateway] = useState<string>(
-    (business as any).payment_gateway || defaultGateway,
-  );
-  const gateway = selectedGateway;
+  // Normalize only the local setup choice; keep saved destinations/history unchanged.
+  const setupDefaultGateway = defaultGateway === 'flutterwave' ? availableGateways[0].id : defaultGateway;
+  const [selectedGateway, setSelectedGateway] = useState<string>(() => {
+    const savedGateway = (business as any).payment_gateway;
+    return savedGateway === 'flutterwave' ? setupDefaultGateway : savedGateway || setupDefaultGateway;
+  });
+  const gateway = selectedGateway === 'flutterwave' ? setupDefaultGateway : selectedGateway;
   const isStripe = gateway === 'stripe';
 
   const [pageView, setPageView] = useState<PageView>('loading');
@@ -155,7 +159,7 @@ export default function PayoutsPage() {
           const res = await fetch(`/api/payouts/history?business_id=${business.id}&page=1`);
           if (res.ok) {
             const data = await res.json();
-            setRecentPayouts((data.records || []).slice(0, 5));
+            setRecentPayouts((data.payouts || []).slice(0, 5));
           }
         } catch { /* ignore */ }
       } else if (!terms) {
@@ -167,7 +171,7 @@ export default function PayoutsPage() {
     load();
   }, [business.id]);
 
-  // Fetch banks for Paystack/Flutterwave
+  // Fetch banks for the selected setup provider
   useEffect(() => {
     if (isStripe || pageView !== 'setup') return;
     async function fetchBanks() {
@@ -689,6 +693,12 @@ export default function PayoutsPage() {
             </div>
           )}
 
+          {error && (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
           {/* Disconnect confirmation */}
           {showDisconnectConfirm && (
             <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
@@ -793,6 +803,9 @@ export default function PayoutsPage() {
                           }`}>
                             {p.status}
                           </span>
+                          {p.status_explanation && <p className="mt-2 max-w-xs text-xs text-gray-600">{p.status_explanation}</p>}
+                          {p.recorded_context && <p className="mt-1 max-w-xs text-xs text-gray-500">Recorded context: {p.recorded_context.join(' ')}</p>}
+                          {p.linked_destination && <p className="mt-1 max-w-xs text-xs text-gray-500">Linked payout account: {p.linked_destination}</p>}
                         </td>
                       </tr>
                     ))}
@@ -970,7 +983,7 @@ export default function PayoutsPage() {
             <p className="mt-2 text-center text-xs text-gray-400">Accept CashApp, Apple Pay &amp; Google Pay via Square</p>
           </div>
         ) : (
-          /* Paystack/Flutterwave Bank Flow */
+          /* Bank setup flow */
           <div className="rounded-xl border border-gray-200 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Add your bank account</h2>
             <p className="mt-1 text-xs text-gray-500">

@@ -1567,20 +1567,44 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     });
 
     it('53. finalize_free_ticket_booking on tickets_finalized=true → no double count', () => {
-      // Create a booking with tickets_finalized=true (as purchase_tickets_atomic would)
+      // Purchase already finalized the counters; supply its actual tier identity.
       psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price)
         VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test', CURRENT_DATE + 30, 'published', 100, 5, 1000)
-        ON CONFLICT (id) DO UPDATE SET tickets_sold = 5;`);
+        ON CONFLICT (id) DO UPDATE SET tickets_sold = 5;
+        INSERT INTO event_ticket_types (id, event_id, name, price, total_tickets, tickets_sold)
+          VALUES ('${TT_ID}', '${EVENT_ID}', 'VIP', 5000, 20, 18)
+          ON CONFLICT (id) DO UPDATE SET event_id = EXCLUDED.event_id, tickets_sold = 18;`);
       const bookId = '00000000-0000-0000-0383-00000000b053';
       psql(`INSERT INTO bookings (id, business_id, user_id, event_id, date, time, party_size, quantity, flow_type, channel, deposit_amount, deposit_status, status, total_amount, tickets_finalized)
         VALUES ('${bookId}', '${BIZ_ID}', '${USER_ID}', '${EVENT_ID}', CURRENT_DATE + 30, '10:00', 2, 2, 'ticketing', 'whatsapp', 2000, 'pending', 'pending', 2000, true)
         ON CONFLICT DO NOTHING;`);
-      const r = psqlJson(`SET ROLE service_role; SELECT finalize_free_ticket_booking('${bookId}', '${EVENT_ID}', NULL, 2);`);
-      expect(r.success).toBe(true);
-      expect(r.already_finalized).toBe(true);
-      // tickets_sold should NOT have increased
-      const sold = psql(`SELECT tickets_sold FROM events WHERE id = '${EVENT_ID}';`);
-      expect(parseInt(sold)).toBe(5); // unchanged
+      try {
+        const r = psqlJson(`SET ROLE service_role; SELECT finalize_free_ticket_booking('${bookId}', '${EVENT_ID}', '${TT_ID}', 2);`);
+        expect(r.success).toBe(true);
+        expect(r.already_finalized).toBe(true);
+        expect(r.tickets).toHaveLength(2);
+        expect(parseInt(psql(`SELECT tickets_sold FROM events WHERE id = '${EVENT_ID}';`))).toBe(5);
+        expect(parseInt(psql(`SELECT tickets_sold FROM event_ticket_types WHERE id = '${TT_ID}';`))).toBe(18);
+        expect(psql(`SELECT ticket_type_id FROM event_ticket_issuance_state WHERE booking_id = '${bookId}';`)).toBe(TT_ID);
+        const rows = psql(`SELECT id, ticket_code, ticket_number, ticket_type_id FROM event_tickets WHERE booking_id = '${bookId}' ORDER BY ticket_number;`);
+        expect(psql(`SELECT count(*) FROM event_tickets WHERE booking_id = '${bookId}' AND ticket_type_id = '${TT_ID}';`)).toBe('2');
+
+        // The legacy NULL-tier repeat resolves the newly durable issuance identity.
+        const replay = psqlJson(`SET ROLE service_role; SELECT finalize_free_ticket_booking('${bookId}', '${EVENT_ID}', NULL, 2);`);
+        expect(replay.success).toBe(true);
+        expect(replay.already_finalized).toBe(true);
+        expect(replay.tickets).toEqual(r.tickets);
+        expect(psql(`SELECT id, ticket_code, ticket_number, ticket_type_id FROM event_tickets WHERE booking_id = '${bookId}' ORDER BY ticket_number;`)).toBe(rows);
+        expect(parseInt(psql(`SELECT tickets_sold FROM events WHERE id = '${EVENT_ID}';`))).toBe(5);
+        expect(parseInt(psql(`SELECT tickets_sold FROM event_ticket_types WHERE id = '${TT_ID}';`))).toBe(18);
+      } finally {
+        // Only case 53's durable issuance/rows are removed before its booking.
+        psql(`
+          DELETE FROM event_ticket_issuance_state WHERE booking_id = '${bookId}';
+          DELETE FROM event_tickets WHERE booking_id = '${bookId}';
+          DELETE FROM bookings WHERE id = '${bookId}';
+        `);
+      }
     });
   });
 

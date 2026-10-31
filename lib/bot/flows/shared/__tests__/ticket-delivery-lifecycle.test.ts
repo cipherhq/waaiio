@@ -13,6 +13,11 @@ import { driveExternalEffect } from '@/lib/payments/terminal-effects';
 
 function ticketSupabase() {
   return {
+    rpc: vi.fn(async (name: string) => {
+      if (name === 'authorize_event_ticket_emission') return { data: { authorized: true, emission_id: 'emission' }, error: null };
+      if (name === 'finalize_event_ticket_emission') return { data: { finalized: true }, error: null };
+      throw new Error('unexpected rpc ' + name);
+    }),
     from: vi.fn((table: string) => {
       if (table !== 'businesses') throw new Error(`unexpected table ${table}`);
       const chain = {
@@ -29,8 +34,8 @@ describe('ticket WhatsApp lifecycle', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('delivers every canonical ticket as a QR image over WhatsApp', async () => {
-    const sendImage = vi.fn().mockResolvedValue(undefined);
-    const sendText = vi.fn().mockResolvedValue(undefined);
+    const sendImage = vi.fn().mockResolvedValue({ messageId: 'wamid-ticket' });
+    const sendText = vi.fn().mockResolvedValue({ messageId: 'wamid-ticket' });
     await deliverTicketsWhatsApp({
       supabase: ticketSupabase(),
       sender: { sendImage, sendText } as never,
@@ -71,7 +76,7 @@ describe('ticket WhatsApp lifecycle', () => {
         throw new Error(`unexpected rpc ${name}`);
       }),
     } as unknown as SupabaseClient;
-    const sendImage = vi.fn().mockResolvedValue(undefined);
+    const sendImage = vi.fn().mockResolvedValue({ messageId: 'wamid-ticket' });
     const delivery = () => deliverTicketsWhatsApp({
       supabase: ticketSupabase(),
       sender: { sendImage, sendText: vi.fn() } as never,

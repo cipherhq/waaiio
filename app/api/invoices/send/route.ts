@@ -47,6 +47,7 @@ async function sendWhatsAppMessage(
         to: cleanPhone,
         templateName: 'invoice_payment_request',
         templateParams: [templateParams.businessName, templateParams.invoiceNumber, templateParams.amount],
+        messageCategory: 'utility',
       });
       if (result.success !== false && result.messageId) {
         return result.messageId;
@@ -58,7 +59,7 @@ async function sendWhatsAppMessage(
 
   // Fallback to plain text (within 24h window only)
   try {
-    const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
+    const result = await resolved.sender.sendText({ to: cleanPhone, text: message, messageCategory: 'utility' });
     if (result.success !== false && result.messageId) return result.messageId;
   } catch (waErr) {
     logger.warn('[INVOICE] sendText failed:', waErr);
@@ -85,10 +86,15 @@ export async function POST(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { invoice_id, channel } = body; // channel: 'whatsapp' | 'email' | 'both'
+    const { invoice_id, channel } = body;
 
     if (!invoice_id) {
       return NextResponse.json({ error: 'invoice_id is required' }, { status: 400 });
+    }
+
+    const sendVia = channel ?? 'whatsapp';
+    if (sendVia !== 'whatsapp' && sendVia !== 'email') {
+      return NextResponse.json({ error: 'channel must be whatsapp or email' }, { status: 400 });
     }
 
     // Fetch invoice with items
@@ -127,21 +133,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Monthly conversation limit reached (${convLimit.used}/${convLimit.limit}). Upgrade for more.` }, { status: 403 });
     }
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-    const token = generateToken();
+    const sendStartedAt = Date.now();
+    const existingTokenIsUsable = typeof invoice.token === 'string'
+      && invoice.token.length > 0
+      && (!invoice.token_expires_at || new Date(invoice.token_expires_at).getTime() > sendStartedAt);
+    // Reuse a live token on resend so previously sent invoice links remain valid.
+    const token = existingTokenIsUsable ? invoice.token : generateToken();
     const settings = await loadPlatformSettings({ useServiceClient: true });
-    const expiresAt = new Date(Date.now() + settings.invoice_expiry_days * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(sendStartedAt + settings.invoice_expiry_days * 24 * 60 * 60 * 1000).toISOString();
 
-    // Update invoice with token and status
-    await service
+    // Persist the token before sending so every link sent to the customer resolves.
+    // Status remains current (e.g. 'draft') until delivery is attempted.
+    const { data: tokenRow, error: tokenPersistError } = await service
       .from('invoices')
       .update({
         token,
         token_expires_at: expiresAt,
-        status: 'sent',
-        sent_at: new Date().toISOString(),
-        sent_via: channel || 'whatsapp',
+        sent_via: sendVia,
       })
-      .eq('id', invoice_id);
+      .eq('id', invoice_id)
+      .select('id')
+      .maybeSingle();
+
+    if (tokenPersistError || !tokenRow) {
+      logger.error('[INVOICE] Failed to persist invoice link before send:', tokenPersistError ?? 'Invoice row was not updated');
+      return NextResponse.json({ error: 'Could not prepare invoice link. No message was sent.' }, { status: 500 });
+    }
 
     const invoiceUrl = `${appUrl}/invoice/${token}`;
     const formattedAmount = formatAmount(invoice.total_amount, invoice.currency);
@@ -149,11 +166,12 @@ export async function POST(request: NextRequest) {
       ? formatDisplayDate(invoice.due_date, 'brief-year', 'en', biz.country_code || 'NG')
       : 'On receipt';
 
-    const sendVia = channel || 'whatsapp';
     let waMessageId: string | null = null;
+    let waDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+    let waTrackingUpdateFailed = false;
 
     // Send via WhatsApp
-    if ((sendVia === 'whatsapp' || sendVia === 'both') && invoice.customer_phone) {
+    if (sendVia === 'whatsapp' && invoice.customer_phone) {
       const message = [
         `\ud83e\uddf3 *Invoice from ${biz.name}*`,
         '',
@@ -171,11 +189,23 @@ export async function POST(request: NextRequest) {
         amount: formattedAmount,
       });
 
-      if (waMessageId) {
-        await service
+      waDeliveryStatus = waMessageId ? 'accepted' : 'failed';
+
+      // Record the latest attempt status while retaining the last acknowledged WAMID
+      // when a resend fails and therefore has no new message ID.
+      try {
+        const { error: waUpdateErr } = await service
           .from('invoices')
-          .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent' })
+          .update({
+            ...(waMessageId ? { wa_message_id: waMessageId } : {}),
+            wa_delivery_status: waDeliveryStatus,
+          })
           .eq('id', invoice_id);
+
+        if (waUpdateErr) throw waUpdateErr;
+      } catch (waUpdateErr) {
+        waTrackingUpdateFailed = true;
+        logger.error('[INVOICE] Failed to record WA delivery status:', waUpdateErr);
       }
 
       // Send PDF attachment (non-blocking — don't fail the whole send if PDF fails)
@@ -245,6 +275,7 @@ export async function POST(request: NextRequest) {
               documentUrl: signedUrl.signedUrl,
               filename: `${invoice.reference_code}.pdf`,
               caption: `Invoice ${invoice.reference_code} from ${biz.name}`,
+              messageCategory: 'utility',
             });
           }
         }
@@ -254,7 +285,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Send via email
-    if ((sendVia === 'email' || sendVia === 'both') && invoice.customer_email) {
+    let emailDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+    if (sendVia === 'email' && invoice.customer_email) {
       // Slice 5B: Resolve customer language for invoice email
       let invLabels: undefined | import('@/lib/email/localize-email').InvoiceEmailLabels;
       let invWrapperLabels: undefined | import('@/lib/email/localize-email').EmailWrapperLabels;
@@ -287,29 +319,74 @@ export async function POST(request: NextRequest) {
         wrapperLabels: invWrapperLabels,
       });
 
-      await sendEmail({
-        to: invoice.customer_email,
-        ...emailContent,
-      });
+      try {
+        const emailResult = await sendEmail({
+          to: invoice.customer_email,
+          ...emailContent,
+        });
+        // sendEmail returns { success: false } on provider error instead of throwing
+        emailDeliveryStatus = emailResult.success ? 'accepted' : 'failed';
+        if (!emailResult.success) {
+          logger.error('[INVOICE] Email send failed:', emailResult);
+        }
+      } catch (emailErr) {
+        emailDeliveryStatus = 'failed';
+        logger.error('[INVOICE] Email send exception:', emailErr);
+      }
     }
 
-    // Create in-app notification record
+    // Mark invoice as sent ONLY after at least one delivery channel succeeded.
+    // "accepted" means provider acknowledged the send — not proof of delivery.
+    // Guard: only transition draft → sent. If the invoice advanced to viewed,
+    // paid, overdue, or cancelled while delivery was in progress, preserve that
+    // status rather than regressing it.
+    const anyChannelAccepted = waDeliveryStatus === 'accepted' || emailDeliveryStatus === 'accepted';
+    let invoiceStatusUpdateFailed = false;
+    if (anyChannelAccepted) {
+      try {
+        const { error: statusUpdateErr } = await service
+          .from('invoices')
+          .update({
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+          })
+          .eq('id', invoice_id)
+          .eq('status', 'draft');
+
+        if (statusUpdateErr) throw statusUpdateErr;
+      } catch (statusUpdateErr) {
+        // The provider already accepted the send; surface a warning rather than a
+        // failure response that could prompt the user to send the invoice again.
+        invoiceStatusUpdateFailed = true;
+        logger.error('[INVOICE] Delivery accepted but failed to persist invoice status:', statusUpdateErr);
+      }
+    }
+
+    // Create in-app notification with truthful status
     try {
+      const notifStatus = anyChannelAccepted ? 'sent' : 'failed';
       await service.from('notifications').insert({
         business_id: invoice.business_id,
         type: 'system',
-        channel: sendVia === 'both' ? 'whatsapp' : sendVia,
-        status: 'sent',
-        subject: `Invoice sent — ${invoice.reference_code}`,
-        body: `Invoice ${invoice.reference_code} for ${formattedAmount} was sent to ${invoice.customer_name} via ${sendVia}.`,
+        channel: sendVia,
+        status: notifStatus,
+        subject: anyChannelAccepted
+          ? `Invoice sent — ${invoice.reference_code}`
+          : `Invoice delivery failed — ${invoice.reference_code}`,
+        body: anyChannelAccepted
+          ? `Invoice ${invoice.reference_code} for ${formattedAmount} was sent to ${invoice.customer_name} via ${sendVia}.`
+          : `Invoice ${invoice.reference_code} could not be delivered. WhatsApp: ${waDeliveryStatus}, Email: ${emailDeliveryStatus}.`,
         sent_at: new Date().toISOString(),
       });
     } catch { /* non-critical */ }
 
     return NextResponse.json({
-      success: true,
+      success: anyChannelAccepted,
       invoice_url: invoiceUrl,
       wa_message_id: waMessageId,
+      wa_delivery_status: waDeliveryStatus,
+      email_delivery_status: emailDeliveryStatus,
+      persistence_warning: waTrackingUpdateFailed || invoiceStatusUpdateFailed,
       expires_at: expiresAt,
     });
   } catch (err) {

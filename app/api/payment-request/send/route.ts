@@ -27,14 +27,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'businessId and amount are required' }, { status: 400 });
     }
 
+    if (sendVia !== 'whatsapp' && sendVia !== 'email' && sendVia !== 'auto') {
+      return NextResponse.json({ error: 'sendVia must be whatsapp, email, or auto' }, { status: 400 });
+    }
+
     const effectiveSendVia: string = sendVia === 'auto'
       ? (customerEmail && customerEmail.includes('@') ? 'email' : 'whatsapp')
       : sendVia;
 
-    if ((effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') && !customerPhone) {
+    if (effectiveSendVia === 'whatsapp' && !customerPhone) {
       return NextResponse.json({ error: 'Phone number is required for WhatsApp delivery' }, { status: 400 });
     }
-    if ((effectiveSendVia === 'email' || effectiveSendVia === 'both') && !customerEmail) {
+    if (effectiveSendVia === 'email' && !customerEmail) {
       return NextResponse.json({ error: 'Email is required for email delivery' }, { status: 400 });
     }
 
@@ -62,11 +66,11 @@ export async function POST(request: NextRequest) {
 
     const cc = (biz.country_code || 'NG') as CountryCode;
     const phone = customerPhone ? customerPhone.replace(/\D/g, '') : '';
-    if ((effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') && (!phone || phone.length < 7)) {
+    if (effectiveSendVia === 'whatsapp' && (!phone || phone.length < 7)) {
       return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
     }
     const email = customerEmail?.trim() || '';
-    if ((effectiveSendVia === 'email' || effectiveSendVia === 'both') && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (effectiveSendVia === 'email' && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
     }
 
@@ -159,7 +163,10 @@ export async function POST(request: NextRequest) {
     const emailSubject = `Payment Request from ${biz.name} — ${formatCurrency(amount, cc)}`;
 
     // Send WhatsApp message (with email fallback for cold numbers)
-    if (effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') {
+    let waDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+    let emailDeliveryStatus: 'accepted' | 'failed' | 'skipped' = 'skipped';
+
+    if (effectiveSendVia === 'whatsapp') {
       const resolver = new ChannelResolver(serviceClient);
       const resolved = await resolver.resolveByBusinessId(businessId);
 
@@ -179,35 +186,57 @@ export async function POST(request: NextRequest) {
         // Use provided email or look up from customer profile
         const fallbackEmail = email || await findCustomerEmail(serviceClient, phone, businessId);
 
-        await sendOrEmail({
+        const deliveryResult = await sendOrEmail({
           supabase: serviceClient,
           sender: resolved.sender,
           to: toPhone,
           text: messageText,
           businessName: biz.name,
           alwaysEmail: true,
+          messageCategory: 'utility',
           email: fallbackEmail ? {
             address: fallbackEmail,
             subject: emailSubject,
             html: paymentEmailTemplate.html,
           } : null,
         });
+
+        waDeliveryStatus = deliveryResult.whatsapp === 'sent' ? 'accepted' : 'failed';
+        emailDeliveryStatus = deliveryResult.email === 'sent' ? 'accepted'
+          : deliveryResult.email === 'failed' ? 'failed' : 'skipped';
+      } else {
+        waDeliveryStatus = 'failed';
+        logger.warn(`[PAYMENT-REQUEST] No WhatsApp channel for business ${businessId}`);
       }
     }
 
     // Send email-only (when sendVia is 'email' and no WhatsApp was attempted)
     if (effectiveSendVia === 'email' && email) {
-      await sendEmail({
-        to: email,
-        subject: emailSubject,
-        html: paymentEmailTemplate.html,
-      }).catch(err => logger.error('[PAYMENT-REQUEST] Email error:', err));
+      try {
+        const emailResult = await sendEmail({
+          to: email,
+          subject: emailSubject,
+          html: paymentEmailTemplate.html,
+        });
+        // sendEmail returns { success: false } on provider error instead of throwing
+        emailDeliveryStatus = emailResult.success ? 'accepted' : 'failed';
+        if (!emailResult.success) {
+          logger.error('[PAYMENT-REQUEST] Email send failed:', emailResult);
+        }
+      } catch (err) {
+        emailDeliveryStatus = 'failed';
+        logger.error('[PAYMENT-REQUEST] Email exception:', err);
+      }
     }
 
+    const anyChannelAccepted = waDeliveryStatus === 'accepted' || emailDeliveryStatus === 'accepted';
+
     return NextResponse.json({
-      success: true,
+      success: anyChannelAccepted,
       paymentUrl,
       reference: refCode,
+      wa_delivery_status: waDeliveryStatus,
+      email_delivery_status: emailDeliveryStatus,
     });
   } catch (error) {
     logger.error('[PAYMENT-REQUEST] Error:', error);

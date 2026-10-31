@@ -16,6 +16,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
+| 486 | `party_seating_groups_pins_atomic_plans` | RESERVED / PR ONLY — NOT APPLIED | #762 | Ten-path seating slice: group/table scope, manual pins, weighted atomic plans and replay. Real M457/M486 disposable PG acceptance in party-seating-762.pg.test.ts; no hosted migration authorized. |
 | 452 | `cancellation_intent_charge_gate` | PROPOSED / NOT APPLIED (Issue #664 hold) | #605 | Adds durable cancel intent and hardened Paystack/Flutterwave claim/dispatch/finalizer; owner approval and staging rollout required. |
 | 438 | `business_app_coexistence` | PR only (not applied) | #607 | Coexistence schema extensions. Coordinated with M437 (#606) and M436 (#604). |
 | 437 | `native_whatsapp_forms` | PR only (not applied) | #606 | Native Flow columns on forms/form_responses. Coordinated with M438 (#607) and M436 (#604). |

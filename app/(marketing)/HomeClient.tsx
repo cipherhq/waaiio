@@ -355,7 +355,7 @@ export default function HomeClient({
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand">Simple setup</p>
             <h2 className="mt-3 text-2xl font-bold text-gray-900 sm:text-3xl">
-              Up and running in minutes
+              Set up your business on WhatsApp
             </h2>
           </AnimatedSection>
 

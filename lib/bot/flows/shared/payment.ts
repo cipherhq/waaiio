@@ -25,7 +25,7 @@ export async function initializePayment(
     orderId?: string;
     invoiceId?: string;
     reservationId?: string;
-    userId: string;
+    userId: string | null;
     amount: number;
     referenceCode: string;
     businessName: string;

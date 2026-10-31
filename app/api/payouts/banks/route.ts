@@ -18,6 +18,10 @@ export async function GET(request: NextRequest) {
   const gateway = searchParams.get('gateway') || 'paystack';
   const country = (searchParams.get('country') || 'NG').toUpperCase();
 
+  if (gateway === 'flutterwave') {
+    return NextResponse.json({ error: 'Flutterwave is unavailable for new payout setup' }, { status: 400 });
+  }
+
   const cacheKey = `${gateway}:${country}`;
   const cached = bankCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {

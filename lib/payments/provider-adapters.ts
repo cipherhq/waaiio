@@ -10,8 +10,21 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-import type { VerifiedPaymentResult, PaymentProviderName } from './authority';
+import type { VerifiedPaymentResult, VerifiedGatewayFee, PaymentProviderName } from './authority';
 import { normalizePaystackCardAuthorization } from './paystack-card-authorization';
+
+/** Paystack reports minor units; storage retains the existing INTEGER major-unit policy. */
+export function normalizePaystackGatewayFee(raw: unknown): VerifiedGatewayFee {
+  if (raw === undefined) return { version: 1, supplied: false };
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) {
+    throw new Error('invalid_paystack_gateway_fee');
+  }
+  const value = Math.round(raw / 100);
+  if (!Number.isSafeInteger(value) || value > 2147483647) {
+    throw new Error('invalid_paystack_gateway_fee');
+  }
+  return { version: 1, supplied: true, value };
+}
 
 /** Outcome from attempting provider verification. */
 export type ProviderVerificationOutcome =
@@ -312,7 +325,7 @@ async function verifyPaystack(
           cardLast4: typeof authorization?.last4 === 'string' ? authorization.last4 : undefined,
           cardBrand: typeof authorization?.brand === 'string' ? authorization.brand : undefined,
           cardAuthorization,
-          gatewayFee: data.data.fees ? (data.data.fees as number) / 100 : undefined,
+          verifiedGatewayFee: normalizePaystackGatewayFee(data.data.fees),
           providerStatus: 'success',
           verifiedAt: new Date().toISOString(),
         },

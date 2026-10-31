@@ -14,16 +14,47 @@ vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+
+function ticketEmissionRpc() {
+  const emissions = new Map<string, { id: string; state: string }>();
+  return vi.fn(async (name: string, params: Record<string, any>) => {
+    if (name === 'authorize_event_ticket_emission') {
+      if (!params.p_booking_id || !['whatsapp', 'email', 'webhook'].includes(params.p_channel) ||
+          !/^(document|image:.+|text:.+|ticket|ticket\.purchased|event\.sold_out)$/.test(params.p_emission_key)) {
+        throw new Error('Unexpected ticket emission identity');
+      }
+      const key = [params.p_booking_id, params.p_channel, params.p_emission_key].join(':');
+      const existing = emissions.get(key);
+      if (existing) return { data: { authorized: false, state: existing.state }, error: null };
+      const row = { id: 'emission-' + emissions.size, state: 'attempted' };
+      emissions.set(key, row);
+      return { data: { authorized: true, emission_id: row.id }, error: null };
+    }
+    if (name === 'finalize_event_ticket_emission') {
+      const row = [...emissions.values()].find(value => value.id === params.p_emission_id);
+      if (!row || row.state !== 'attempted' ||
+          !['accepted', 'failed', 'ambiguous'].includes(params.p_state) ||
+          (params.p_state === 'accepted' && !params.p_provider_message_id)) {
+        throw new Error('Unexpected ticket emission finalization');
+      }
+      row.state = params.p_state;
+      return { data: { finalized: true }, error: null };
+    }
+    throw new Error('Unexpected RPC: ' + name);
+  });
+}
+
 describe('Real deliverTicketsWhatsApp wiring', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('passes flyer/type/price/country/currency to generateTicketsPdf', async () => {
     const mockSender = {
-      sendDocument: vi.fn().mockResolvedValue(undefined),
-      sendImage: vi.fn().mockResolvedValue(undefined),
-      sendText: vi.fn().mockResolvedValue(undefined),
+      sendDocument: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-document' }),
+      sendImage: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-image' }),
+      sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-text' }),
     };
     const mockSupabase = {
+      rpc: ticketEmissionRpc(),
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -76,11 +107,12 @@ describe('Real deliverTicketsWhatsApp wiring', () => {
 
   it('omitted presentation fields pass through as undefined', async () => {
     const mockSender = {
-      sendDocument: vi.fn().mockResolvedValue(undefined),
-      sendImage: vi.fn().mockResolvedValue(undefined),
-      sendText: vi.fn().mockResolvedValue(undefined),
+      sendDocument: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-document' }),
+      sendImage: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-image' }),
+      sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-text' }),
     };
     const mockSupabase = {
+      rpc: ticketEmissionRpc(),
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
