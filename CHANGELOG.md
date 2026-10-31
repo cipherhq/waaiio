@@ -1,3 +1,7 @@
+### 2026-10-31 — Storage delta fixture parity
+
+- Added the same explicit Storage service grants to the isolated release-gate delta SQL bootstrap. Its separate fixture now matches the full replay bootstrap; M491 assertions and runtime behavior remain unchanged.
+
 ### 2026-10-31 — Storage CI fixture parity
 
 - Full migration replay now supplies Supabase Storage service-role CRUD grants in its disposable bootstrap. The storage policy suite also recognizes the shared GitHub Actions runner's isolated `pg_test_N` databases, with localhost/CI/user guards retained. No runtime policy assertions or tests were removed.
