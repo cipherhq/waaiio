@@ -32,6 +32,14 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       __WAAIIO_ADMIN_BUILD_IDENTITY__: JSON.stringify(buildIdentity),
+      'process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY': JSON.stringify(
+        process.env.VITE_GOOGLE_MAPS_API_KEY || env.VITE_GOOGLE_MAPS_API_KEY
+          || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '',
+      ),
+      'process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY': JSON.stringify(
+        process.env.VITE_GOOGLE_PLACES_API_KEY || env.VITE_GOOGLE_PLACES_API_KEY
+          || process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY || env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY || '',
+      ),
     },
     server: {
       port: 8083,

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { getMessageLabel, getMessageContext, getPlaceholderHelp, getCharLimit } from './message-presentation';
 
 interface TranslationOverride {
   id?: string;
@@ -24,6 +25,7 @@ interface TranslationsData {
   platformOverrides: PlatformOverride[];
   allowedLanguages: string[];
   allKeys: string[];
+  editableKeys?: string[];
 }
 
 /** Extract category prefix from a key like "booking.confirm_btn" -> "booking" */
@@ -34,7 +36,7 @@ function getCategory(key: string): string {
 
 /** Human-readable category labels */
 const CATEGORY_LABELS: Record<string, string> = {
-  greeting: 'Greeting',
+  greeting: 'Greetings',
   nav: 'Navigation',
   error: 'Errors & Recovery',
   menu: 'Menu',
@@ -59,6 +61,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   waiver: 'Waivers',
   contract: 'Contracts & E-Sign',
   promo: 'Promotions',
+  cap: 'Menu Options',
+  lang: 'Language',
   general: 'General',
 };
 
@@ -91,6 +95,14 @@ export default function TranslationsPage() {
   // Local edits: Map<"lang:key", value>
   const [edits, setEdits] = useState<Map<string, string>>(new Map());
   const [dirty, setDirty] = useState(false);
+
+  // Use editableKeys from the API when available, fall back to allKeys
+  const displayKeys = useMemo(() => {
+    if (!data) return [];
+    return data.editableKeys && data.editableKeys.length > 0
+      ? data.editableKeys
+      : data.allKeys;
+  }, [data]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -130,30 +142,25 @@ export default function TranslationsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [business.id]);
 
-  // Get the platform default for a key+lang
-  const getPlatformDefault = useCallback((lang: string, key: string): string => {
+  // Get the platform default for a key in the exact language (no English fallback)
+  const getExactLangDefault = useCallback((lang: string, key: string): string => {
     if (!data) return '';
-    // Check platform overrides first
     const po = data.platformOverrides.find(p => p.lang === lang && p.key === key);
-    if (po) return po.value;
-    // Fall back to English platform override
-    const enPo = data.platformOverrides.find(p => p.lang === 'en' && p.key === key);
-    if (enPo) return enPo.value;
-    return '';
+    return po?.value || '';
   }, [data]);
 
-  // Get the English default text for a key (from platform overrides or key name)
+  // Get the English default text for a key (from platform overrides)
   const getEnglishDefault = useCallback((key: string): string => {
     if (!data) return '';
     const po = data.platformOverrides.find(p => p.lang === 'en' && p.key === key);
     return po?.value || '';
   }, [data]);
 
-  // Group keys by category
+  // Group keys by category — uses editable keys only
   const categories = useMemo(() => {
     if (!data) return [];
     const cats = new Map<string, string[]>();
-    for (const key of data.allKeys) {
+    for (const key of displayKeys) {
       const cat = getCategory(key);
       if (!cats.has(cat)) cats.set(cat, []);
       cats.get(cat)!.push(key);
@@ -161,21 +168,30 @@ export default function TranslationsPage() {
     return Array.from(cats.entries())
       .map(([cat, keys]) => ({ id: cat, label: CATEGORY_LABELS[cat] || cat, keys }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [data]);
+  }, [data, displayKeys]);
 
   // Filter keys by search + selected category
   const filteredKeys = useMemo(() => {
     if (!data) return [];
-    let keys = data.allKeys;
+    let keys = displayKeys;
     if (selectedCategory) {
       keys = keys.filter(k => getCategory(k) === selectedCategory);
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       keys = keys.filter(k => {
+        // Match against raw key
         if (k.toLowerCase().includes(q)) return true;
+        // Match against readable label
+        const label = getMessageLabel(k);
+        if (label.toLowerCase().includes(q)) return true;
+        // Match against context description
+        const context = getMessageContext(k);
+        if (context.toLowerCase().includes(q)) return true;
+        // Match against default text
         const defaultText = getEnglishDefault(k);
         if (defaultText.toLowerCase().includes(q)) return true;
+        // Match against current edit value
         const editKey = `${selectedLang}:${k}`;
         const editVal = edits.get(editKey);
         if (editVal && editVal.toLowerCase().includes(q)) return true;
@@ -183,7 +199,7 @@ export default function TranslationsPage() {
       });
     }
     return keys;
-  }, [data, selectedCategory, search, selectedLang, edits, getEnglishDefault]);
+  }, [data, displayKeys, selectedCategory, search, selectedLang, edits, getEnglishDefault]);
 
   function handleEdit(key: string, value: string) {
     const editKey = `${selectedLang}:${key}`;
@@ -320,8 +336,8 @@ export default function TranslationsPage() {
         </p>
         <PageHelp
           pageKey="translations"
-          title="Translation Overrides"
-          description="Customize the text your customers see in WhatsApp. Override any message for each language you offer. Leave blank to use the platform default."
+          title="Customize Your Bot Messages"
+          description="Each message below is something your bot says to customers. Type your own wording to replace it for the selected language. Clear your text and save to restore the original message."
         />
       </div>
 
@@ -364,7 +380,7 @@ export default function TranslationsPage() {
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search keys or text..."
+            placeholder="Search messages..."
             className={`${inputClass} pl-9`}
           />
         </div>
@@ -380,6 +396,17 @@ export default function TranslationsPage() {
             </option>
           ))}
         </select>
+      </div>
+
+      {/* How it works hint */}
+      <div className="mb-4 rounded-lg border border-blue-100 dark:border-blue-900/40 bg-blue-50/50 dark:bg-blue-900/10 px-4 py-2.5">
+        <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+          Each field below shows a message your bot sends to customers.
+          Type your own wording to replace it for <strong>{LANGUAGE_NAMES[selectedLang] || selectedLang}</strong>.
+          Clear the field and save to restore the original.
+          {' '}Items in <code className="rounded bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 text-[10px]">{'{braces}'}</code> are
+          filled in automatically and must be kept.
+        </p>
       </div>
 
       {/* Validation errors */}
@@ -405,7 +432,7 @@ export default function TranslationsPage() {
         </div>
       )}
 
-      {/* Translation keys grouped by category */}
+      {/* Message entries grouped by category */}
       {data && (
         <div className="space-y-6">
           {categories
@@ -423,7 +450,7 @@ export default function TranslationsPage() {
                       {cat.label}
                     </h2>
                     <p className="text-xs text-gray-400 dark:text-gray-500">
-                      {keysInCategory.length} key{keysInCategory.length !== 1 ? 's' : ''}
+                      {keysInCategory.length} message{keysInCategory.length !== 1 ? 's' : ''}
                     </p>
                     {cat.id === 'greeting' && (
                       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -435,29 +462,103 @@ export default function TranslationsPage() {
                     {keysInCategory.map(key => {
                       const editKey = `${selectedLang}:${key}`;
                       const currentValue = edits.get(editKey) || '';
-                      const platformDefault = getPlatformDefault(selectedLang, key);
+                      const exactLangDefault = getExactLangDefault(selectedLang, key);
                       const englishDefault = getEnglishDefault(key);
-                      const displayDefault = platformDefault || englishDefault;
+                      const langName = LANGUAGE_NAMES[selectedLang] || selectedLang;
+                      // Determine which reference text to show and how to label it
+                      const hasExactLang = !!exactLangDefault;
+                      const hasEnglishOnly = !hasExactLang && !!englishDefault && selectedLang !== 'en';
+                      const displayDefault = exactLangDefault || englishDefault;
+                      const label = getMessageLabel(key);
+                      const context = getMessageContext(key);
+                      const placeholderHelp = getPlaceholderHelp(key);
+                      const charLimit = getCharLimit(key);
 
                       return (
                         <div key={key} className="px-4 py-3">
-                          <div className="mb-1.5 flex items-baseline gap-2">
-                            <span className="text-xs font-mono font-medium text-gray-500 dark:text-gray-400">
+                          {/* Readable label + technical key */}
+                          <div className="mb-1">
+                            <span className="text-sm font-medium text-gray-900 dark:text-white">
+                              {label}
+                            </span>
+                            <span className="ml-2 text-[10px] font-mono text-gray-400 dark:text-gray-500">
                               {key}
                             </span>
                           </div>
-                          {displayDefault && (
-                            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
-                              Default: {displayDefault}
+
+                          {/* Context description */}
+                          {context && (
+                            <p className="mb-1.5 text-xs text-gray-500 dark:text-gray-400">
+                              {context}
                             </p>
                           )}
-                          <textarea
-                            value={currentValue}
-                            onChange={e => handleEdit(key, e.target.value)}
-                            placeholder={displayDefault || 'Enter override text...'}
-                            rows={Math.max(1, Math.ceil((displayDefault?.length || 40) / 60))}
-                            className={`${inputClass} resize-y text-sm`}
-                          />
+
+                          {/* Default / reference text — labelled by actual source */}
+                          {hasExactLang && (
+                            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+                              Default ({langName}): <span className="italic">{exactLangDefault}</span>
+                            </p>
+                          )}
+                          {hasEnglishOnly && (
+                            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+                              English reference: <span className="italic">{englishDefault}</span>
+                            </p>
+                          )}
+                          {selectedLang === 'en' && englishDefault && (
+                            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+                              Default: <span className="italic">{englishDefault}</span>
+                            </p>
+                          )}
+
+                          {!hasExactLang && (
+                            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+                              The built-in bot default for {langName} is not shown here.
+                            </p>
+                          )}
+
+                          {/* Placeholder guidance */}
+                          {placeholderHelp && (
+                            <div className="mb-2 flex flex-wrap gap-1.5">
+                              {Object.entries(placeholderHelp).map(([token, desc]) => (
+                                <span
+                                  key={token}
+                                  className="inline-flex items-center gap-1 rounded bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
+                                >
+                                  <code>{`{${token}}`}</code>
+                                  <span className="text-amber-600 dark:text-amber-400">= {desc}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Your message input */}
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+                              Your message
+                              {charLimit && (
+                                <span className="ml-1.5 font-normal text-gray-400 dark:text-gray-500">
+                                  (max {charLimit.limit} characters — WhatsApp {charLimit.type === 'button' ? 'button' : 'list'} title)
+                                </span>
+                              )}
+                            </span>
+                            <textarea
+                              value={currentValue}
+                              onChange={e => handleEdit(key, e.target.value)}
+                              placeholder={displayDefault || 'Type your replacement text...'}
+                              rows={Math.max(1, Math.ceil((displayDefault?.length || 40) / 60))}
+                              className={`${inputClass} resize-y text-sm`}
+                              maxLength={charLimit?.limit}
+                            />
+                          </label>
+                          {charLimit && currentValue.length > 0 && (
+                            <p className={`mt-0.5 text-[10px] ${
+                              currentValue.length > charLimit.limit
+                                ? 'text-red-500'
+                                : 'text-gray-400 dark:text-gray-500'
+                            }`}>
+                              {currentValue.length}/{charLimit.limit} characters
+                            </p>
+                          )}
                         </div>
                       );
                     })}
@@ -469,7 +570,7 @@ export default function TranslationsPage() {
           {filteredKeys.length === 0 && (
             <div className="py-12 text-center">
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                No keys match your search.
+                No messages match your search.
               </p>
             </div>
           )}
@@ -493,7 +594,7 @@ export default function TranslationsPage() {
             <span className="text-xs text-gray-400">Unsaved changes</span>
           )}
           <div className="ml-auto text-xs text-gray-400">
-            {filteredKeys.length} of {data.allKeys.length} keys shown
+            {filteredKeys.length} of {displayKeys.length} messages shown
           </div>
         </div>
       )}

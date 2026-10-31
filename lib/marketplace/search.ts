@@ -284,9 +284,9 @@ export async function searchMarketplace(
         ),
     );
 
-    // Category filter
+    // Category filter — uses computed text field (businesses.category is an enum)
     if (criteria.category) {
-      query = query.ilike('category', `%${criteria.category}%`);
+      query = query.ilike('category_text', `%${criteria.category}%`);
     }
 
     if (effectiveCountry) {
@@ -324,11 +324,11 @@ export async function searchMarketplace(
     // Also expand synonyms: "massage" → search for category=spa.
     if (safeQuery) {
       const synonymCategories = detectCategoryIntent(safeQuery);
-      const categoryOrClauses = synonymCategories.map(c => `category.ilike.%${c}%`);
+      const categoryOrClauses = synonymCategories.map(c => `category_text.ilike.%${c}%`);
       const textClauses = [
         `name.ilike.%${safeQuery}%`,
         `description.ilike.%${safeQuery}%`,
-        `category.ilike.%${safeQuery}%`,
+        `category_text.ilike.%${safeQuery}%`,
         ...categoryOrClauses,
       ];
       query = query.or(textClauses.join(','));

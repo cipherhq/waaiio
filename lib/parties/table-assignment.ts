@@ -126,96 +126,22 @@ export async function bulkAssignByTag(
   return { success: true, assigned: result.assigned ?? inviteIds.length, skipped: 0 };
 }
 
-/**
- * Auto-assign: distribute unassigned guests across tables with available capacity.
- * Each table assignment is a separate bulk RPC call.
- * Fills tables in sort_order.
- */
+/** All new seating operations use a server-owned snapshot and atomic commit. */
+export async function seatingRequest<T>(partyId: string, payload?: Record<string, unknown>): Promise<T> {
+  const response = await fetch('/api/parties/' + encodeURIComponent(partyId) + '/seating', {
+    method: payload ? 'POST' : 'GET',
+    headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+    cache: 'no-store',
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Unable to update seating');
+  return data as T;
+}
+
+/** Produce a preview only. Committing always requires a separate organizer action. */
 export async function autoAssign(
-  supabase: SupabaseClient,
-  partyId: string,
-  businessId: string,
-): Promise<AssignmentResult> {
-  // Fetch all tables for this party, ordered by sort_order
-  const { data: tables } = await supabase
-    .from('party_tables')
-    .select('id, capacity, sort_order')
-    .eq('party_id', partyId)
-    .eq('business_id', businessId)
-    .order('sort_order', { ascending: true });
-
-  if (!tables || tables.length === 0) {
-    return { success: false, error: 'No tables defined for this party' };
-  }
-
-  // Fetch unassigned guests with plus_ones (needed for attendee-weighted batching)
-  const { data: unassigned } = await supabase
-    .from('event_invites')
-    .select('id, plus_ones')
-    .eq('party_id', partyId)
-    .eq('business_id', businessId)
-    .is('table_id', null)
-    .in('status', ['accepted', 'maybe', 'pending']);
-
-  if (!unassigned || unassigned.length === 0) {
-    return { success: true, assigned: 0, skipped: 0 };
-  }
-
-  // Build attendee-weighted guest list: each guest occupies 1 + plus_ones seats
-  const guests = unassigned.map(g => ({
-    id: g.id,
-    weight: 1 + (g.plus_ones || 0),
-  }));
-
-  let totalAssigned = 0;
-  let rpcFailures = 0;
-  const placed = new Set<string>();
-
-  for (const table of tables) {
-    // Count current table occupancy (attendee-weighted)
-    const { data: tableInvites } = await supabase
-      .from('event_invites')
-      .select('plus_ones')
-      .eq('table_id', table.id);
-    const seated = (tableInvites || []).reduce(
-      (sum: number, inv: { plus_ones: number }) => sum + 1 + (inv.plus_ones || 0), 0
-    );
-
-    let available = table.capacity - seated;
-    if (available <= 0) continue;
-
-    // Greedily select guests that fit within remaining capacity
-    const batch: string[] = [];
-    for (const guest of guests) {
-      if (placed.has(guest.id)) continue;
-      if (guest.weight <= available) {
-        batch.push(guest.id);
-        available -= guest.weight;
-      }
-    }
-
-    if (batch.length === 0) continue;
-
-    // Use bulk RPC for atomic assignment (DB triggers are final authority)
-    const { data, error } = await supabase.rpc('bulk_assign_guests_to_table', {
-      p_invite_ids: batch,
-      p_table_id: table.id,
-    });
-
-    if (!error && data?.success) {
-      for (const id of batch) placed.add(id);
-      totalAssigned += data.assigned ?? batch.length;
-    } else {
-      rpcFailures++;
-    }
-  }
-
-  const skipped = guests.length - totalAssigned;
-
-  // Distinguish outcomes: all RPCs failed vs genuine capacity non-fit vs partial success
-  if (totalAssigned === 0 && rpcFailures > 0) {
-    return { success: false, error: 'All table assignments were rejected', assigned: 0, skipped };
-  }
-
-  return { success: true, assigned: totalAssigned, skipped };
+  _supabase: SupabaseClient, partyId: string, _businessId: string, seed = Date.now() >>> 0,
+): Promise<import('./seating-planner').SeatingPreview> {
+  return seatingRequest(partyId, { op: 'preview', seed });
 }
