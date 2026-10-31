@@ -1,3 +1,9 @@
+### Surgical dashboard repairs — bank transfer display units (2026-10-31)
+
+- `admin/src/pages/PendingTransfers.tsx`: Convert stored minor units to major units in the pending summary and list/detail formatter, matching the merchant view.
+- `admin/src/__tests__/pending-transfers-display.test.tsx`: Render NGN and fractional USD amounts across summary/list/detail without financial writes.
+- **Affects**: Admin transfer amount presentation only. **Could break**: Currency display; two rendered checks pass with zero skipped, and independent diff review agrees. Raw CSV export and confirmation/ledger paths are unchanged and not certified by this repair. Not deployed.
+
 ### Surgical dashboard repairs — calendar date display (2026-10-31)
 
 - `admin/src/lib/formatters.ts`: Add a dedicated SQL DATE formatter that preserves the stored calendar day across viewer timezones and rejects invalid/date-time input. Existing timestamp formatters are unchanged.
