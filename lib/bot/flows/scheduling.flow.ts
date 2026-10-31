@@ -28,6 +28,17 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 
+/** Table deposits are flat; discard transient promo state even on resumed steps. */
+function clearTablePromoState(ctx: FlowContext): boolean {
+  const d = ctx.session.session_data;
+  if (d._is_table_reservation !== true) return false;
+  delete d._promo_entering;
+  delete d._promo_code;
+  delete d._promo_id;
+  delete d._promo_discount;
+  return true;
+}
+
 function timeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number);
   return (h || 0) * 60 + (m || 0);
@@ -1494,6 +1505,7 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'apply_promo',
       async skipIf(ctx: FlowContext) {
+        if (clearTablePromoState(ctx)) return true;
         if (!ctx.business) return true;
         // Skip if service is free
         const price = ctx.session.session_data.service_price as number || 0;
@@ -1519,7 +1531,14 @@ export const schedulingFlow: FlowDefinition = {
         });
         return !hasApplicablePromo;
       },
+      nextAfterPrompt(ctx: FlowContext) {
+        return ctx.session.session_data._is_table_reservation === true ? 'select_quantity' : undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        // Direct/resumed entry uses the existing party-size prompt, never a promo offer.
+        if (clearTablePromoState(ctx)) {
+          return schedulingFlow.steps.find(step => step.id === 'select_quantity')!.prompt(ctx);
+        }
         return [{
           type: 'buttons',
           body: getFlowCopy(ctx.copyLang, 'booking.promo_ask'),
@@ -1530,6 +1549,7 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (clearTablePromoState(ctx)) return { valid: true };
         if (input === 'promo_no' || input.toLowerCase() === 'no' || input.toLowerCase() === 'skip') {
           return { valid: true };
         }
@@ -1581,6 +1601,7 @@ export const schedulingFlow: FlowDefinition = {
         return { valid: true, data: { _promo_code: code, _promo_id: promo.id, _promo_discount: discount } };
       },
       async next(ctx: FlowContext) {
+        if (clearTablePromoState(ctx)) return 'select_quantity';
         if (ctx.session.session_data._promo_entering) return 'enter_promo_code';
         // Confirm promo applied
         if (ctx.session.session_data._promo_code) {
@@ -1595,10 +1616,18 @@ export const schedulingFlow: FlowDefinition = {
     // ── Enter Promo Code (text input) ──
     {
       id: 'enter_promo_code',
+      nextAfterPrompt(ctx: FlowContext) {
+        return ctx.session.session_data._is_table_reservation === true ? 'select_quantity' : undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        // Direct/resumed entry uses the existing party-size prompt, never a promo offer.
+        if (clearTablePromoState(ctx)) {
+          return schedulingFlow.steps.find(step => step.id === 'select_quantity')!.prompt(ctx);
+        }
         return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.promo_enter') }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (clearTablePromoState(ctx)) return { valid: true };
         const code = input.toUpperCase().trim();
         if (code.length < 3) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_short') };
 
@@ -1643,6 +1672,7 @@ export const schedulingFlow: FlowDefinition = {
         return { valid: true, data: { _promo_code: code, _promo_id: promo.id, _promo_discount: discount } };
       },
       async next(ctx: FlowContext) {
+        if (clearTablePromoState(ctx)) return 'select_quantity';
         // Confirm promo applied
         if (ctx.session.session_data._promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
@@ -1652,6 +1682,7 @@ export const schedulingFlow: FlowDefinition = {
         return 'select_quantity';
       },
       async skipIf(ctx: FlowContext) {
+        if (clearTablePromoState(ctx)) return true;
         return !!ctx.session.session_data._promo_code;
       },
     },
@@ -2197,6 +2228,7 @@ export const schedulingFlow: FlowDefinition = {
       id: 'confirmation',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        clearTablePromoState(ctx);
         const labels = getCategoryLabels(ctx.business?.category || 'restaurant');
         const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
           weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -2273,7 +2305,7 @@ export const schedulingFlow: FlowDefinition = {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           lines.push(`➕ Add-ons: ${selectedAddons.map(a => `${a.name} (${formatCurrency(a.price, cc)})`).join(', ')}`);
         }
-        if (d._promo_discount && d._promo_code) {
+        if (!d._is_table_reservation && d._promo_discount && d._promo_code) {
           const cc2 = (ctx.business?.country_code || 'NG') as CountryCode;
           lines.push(`🎟️ Promo (${d._promo_code}): -${formatCurrency(d._promo_discount as number, cc2)}`);
         }
@@ -2484,6 +2516,7 @@ export const schedulingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        clearTablePromoState(ctx);
 
         // ── Reschedule existing booking via atomic RPC ──
         if (d._reschedule_booking_id) {
@@ -2550,7 +2583,7 @@ export const schedulingFlow: FlowDefinition = {
         const partySize = (d.party_size as number) || 1;
 
         // Apply promo discount to the service price before calculating deposit
-        const promoDiscount = (d._promo_discount as number) || 0;
+        const promoDiscount = d._is_table_reservation ? 0 : ((d._promo_discount as number) || 0);
         const finalServicePrice = Math.max(0, servicePrice - promoDiscount);
 
         // ── Package session check: cover base service price if eligible ──
@@ -2724,7 +2757,7 @@ export const schedulingFlow: FlowDefinition = {
           venue_address: (d.venue_address as string) || null,
           end_date: (d.end_date as string) || null,
           addons_snapshot: d._selected_addons || null,
-          promo_code_id: (d._promo_id as string) || null,
+          promo_code_id: d._is_table_reservation ? null : ((d._promo_id as string) || null),
           guest_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim(),
           guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           guest_email: (d.email as string) || null,
@@ -2975,7 +3008,7 @@ export const schedulingFlow: FlowDefinition = {
 
         if (isNewBooking) {
           // Increment promo code usage atomically
-          if (d._promo_id) {
+          if (!d._is_table_reservation && d._promo_id) {
             await ctx.supabase.rpc('increment_promo_usage', { p_code_id: d._promo_id as string });
           }
 

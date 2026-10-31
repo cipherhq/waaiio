@@ -187,7 +187,6 @@ const selectTableStep: FlowStepConfig = {
   },
 
   async skipIf(ctx: FlowContext) {
-    if (ctx.session.session_data.skip_service) return true;
     if (!ctx.business) return false;
 
     // Auto-select if only one active resource (runs BEFORE prompt)

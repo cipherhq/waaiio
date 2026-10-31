@@ -11,7 +11,9 @@
  * 7. F-1 duplicate fix: table_reservation and scheduling have different first steps
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createMockContext, getStep } from '@/lib/bot/flows/__tests__/helpers';
+import type { FlowContext } from '@/lib/bot/flows/types';
 
 describe('#730: Table Reservation type and routing', () => {
   it('FlowType union includes table_reservation', async () => {
@@ -1221,5 +1223,223 @@ describe('#730: Admin API and security', () => {
     expect(code).not.toContain('createServiceClient');
     expect(code).not.toContain('requirePlatformAdmin');
     expect(code).toContain('@/lib/supabase/server');
+  });
+});
+
+
+// Execute production steps with synthetic fixtures; no provider or notification calls.
+describe('#731: table selection and flat-deposit promo boundaries', () => {
+  const resource = {
+    id: 'table-a', name: 'Patio A', resource_type: 'table', capacity: 6,
+    min_party_size: 2, section: 'Patio', deposit_amount: 5000,
+    reservation_duration_minutes: 90, description: null,
+    available_days: ['monday'], available_from: '12:00', available_to: '22:00',
+  };
+  const stalePromo = () => ({
+    _promo_entering: true, _promo_code: 'SAVE20', _promo_id: 'promo-a', _promo_discount: 1000,
+  });
+  function query(data: unknown = [], count = 0): any {
+    const q: any = {};
+    for (const method of ['select', 'eq', 'neq', 'is', 'not', 'in', 'or', 'gte', 'lte', 'order', 'limit', 'update', 'insert']) {
+      q[method] = vi.fn(() => q);
+    }
+    q.single = vi.fn(async () => ({ data, error: null }));
+    q.maybeSingle = vi.fn(async () => ({ data, error: null }));
+    q.then = (resolve: any, reject: any) => Promise.resolve({ data, count, error: null }).then(resolve, reject);
+    return q;
+  }
+  function context(data: Record<string, unknown> = {}): FlowContext {
+    const ctx = createMockContext();
+    ctx.copyLang = 'en';
+    ctx.business!.category = 'restaurant';
+    ctx.business!.metadata = { require_terms_before_payment: false };
+    ctx.session.business_id = null; // shared-bot confirmation path
+    ctx.session.session_data = {
+      first_name: 'Test', last_name: 'Guest', date: '2030-01-07', time: '18:00',
+      party_size: 4, ...data,
+    };
+    vi.mocked(ctx.supabase.from).mockImplementation((() => query()) as any);
+    return ctx;
+  }
+  function expectNoPromo(ctx: FlowContext) {
+    for (const key of Object.keys(stalePromo())) expect(ctx.session.session_data).not.toHaveProperty(key);
+  }
+  async function flows() {
+    const [{ tableReservationFlow }, { schedulingFlow }] = await Promise.all([
+      import('@/lib/bot/flows/table-reservation.flow'),
+      import('@/lib/bot/flows/scheduling.flow'),
+    ]);
+    return { tableReservationFlow, schedulingFlow };
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([0, 1, 2])('legacy skip_service with %i active resources cannot bypass hydration', async count => {
+    const { tableReservationFlow } = await flows();
+    const ctx = context({ skip_service: true, service_id: 'legacy-service' });
+    const rows = [resource, { ...resource, id: 'table-b' }].slice(0, count);
+    const q = query(rows);
+    vi.mocked(ctx.supabase.from).mockReturnValue(q);
+    const step = getStep(tableReservationFlow, 'select_table');
+    expect(await step.skipIf!(ctx)).toBe(count === 1);
+    expect(ctx.supabase.from).toHaveBeenCalledWith('seating_resources');
+    expect(q.eq).toHaveBeenCalledWith('business_id', ctx.business!.id);
+    expect(q.eq).toHaveBeenCalledWith('is_active', true);
+    expect(ctx.session.session_data).toMatchObject({ first_name: 'Test', date: '2030-01-07', time: '18:00' });
+    if (count === 1) {
+      expect(ctx.session.session_data).toMatchObject({
+        seating_resource_id: resource.id, seating_resource_name: resource.name,
+        _seating_capacity: 6, _seating_min_party: 2, _seating_deposit: 5000,
+        _seating_duration: 90, _seating_available_days: ['monday'],
+        _seating_available_from: '12:00', _seating_available_to: '22:00',
+        _service_available_days: ['monday'], _service_available_from: '12:00',
+        _service_available_to: '22:00', service_deposit: 5000, service_price: 5000,
+        service_duration: 90, _service_price_is_variable: true,
+        _service_max_capacity: 1, _is_table_reservation: true,
+      });
+    } else {
+      expect(ctx.session.session_data.seating_resource_id).toBeUndefined();
+      const prompt = await step.prompt(ctx);
+      expect(prompt[0].type).toBe(count === 0 ? 'buttons' : 'list');
+    }
+  });
+
+  it('missing business does not skip table selection even with legacy prefill', async () => {
+    const { tableReservationFlow } = await flows();
+    const ctx = context({ skip_service: true });
+    ctx.business = null;
+    expect(await getStep(tableReservationFlow, 'select_table').skipIf!(ctx)).toBe(false);
+    expect(ctx.supabase.from).not.toHaveBeenCalled();
+  });
+
+  for (const stepId of ['apply_promo', 'enter_promo_code']) {
+    it(`${stepId}: ordinary table traversal skips without querying promos or promising discounts`, async () => {
+      const { schedulingFlow } = await flows();
+      const ctx = context({ _is_table_reservation: true, ...stalePromo() });
+      const step = getStep(schedulingFlow, stepId);
+      expect(await step.skipIf!(ctx)).toBe(true);
+      expect(await step.next(ctx)).toBe('select_quantity');
+      expectNoPromo(ctx);
+      expect(ctx.supabase.from).not.toHaveBeenCalled();
+      expect(ctx.sender.sendText).not.toHaveBeenCalled();
+    });
+
+    it(`${stepId}: direct/resumed prompt and validation continue with party size`, async () => {
+      const { schedulingFlow } = await flows();
+      const ctx = context({ _is_table_reservation: true, _seating_min_party: 2, _seating_capacity: 6, ...stalePromo() });
+      const step = getStep(schedulingFlow, stepId);
+      expect(await step.prompt(ctx)).toEqual(await getStep(schedulingFlow, 'select_quantity').prompt(ctx));
+      expect(typeof step.nextAfterPrompt).toBe('function');
+      expect((step.nextAfterPrompt as (ctx: FlowContext) => string)(ctx)).toBe('select_quantity');
+      Object.assign(ctx.session.session_data, stalePromo());
+      expect(await step.validate('SAVE20', ctx)).toEqual({ valid: true });
+      Object.assign(ctx.session.session_data, stalePromo());
+      expect(await step.next(ctx)).toBe('select_quantity');
+      expectNoPromo(ctx);
+      expect(ctx.supabase.from).not.toHaveBeenCalled();
+      expect(ctx.sender.sendText).not.toHaveBeenCalled();
+    });
+
+    it(`${stepId}: normal scheduling retains promo validation and acknowledgement`, async () => {
+      const { schedulingFlow } = await flows();
+      const ctx = context({ service_id: 'service-a', service_price: 5000 });
+      const promo = {
+        id: 'promo-a', business_id: ctx.business!.id, code: 'SAVE20', is_active: true,
+        discount_type: 'percentage', discount_value: 20, min_order_amount: 0,
+        max_uses: 10, current_uses: 0, valid_from: null, valid_until: null,
+        applicable_services: ['service-a'], applicable_flow_types: ['scheduling'],
+      };
+      vi.mocked(ctx.supabase.from).mockImplementation(((table: string) => table === 'promo_codes' ? query(promo) : query([], 0)) as any);
+      const step = getStep(schedulingFlow, stepId);
+      const result = await step.validate('SAVE20', ctx);
+      expect(result).toMatchObject({ valid: true, data: { _promo_code: 'SAVE20', _promo_id: 'promo-a', _promo_discount: 1000 } });
+      Object.assign(ctx.session.session_data, result.data);
+      expect(await step.next(ctx)).toBe('select_quantity');
+      expect(ctx.sender.sendText).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('discount will be applied') }));
+      expect((step.nextAfterPrompt as (ctx: FlowContext) => string | undefined)(ctx)).toBeUndefined();
+    });
+  }
+
+  it.each([0, 5000])('resumed table confirmation excludes stale discount with deposit %i', async deposit => {
+    const { schedulingFlow } = await flows();
+    const ctx = context({ _is_table_reservation: true, service_price: deposit, service_deposit: deposit, ...stalePromo() });
+    const messages = await getStep(schedulingFlow, 'confirmation').prompt(ctx);
+    expect(JSON.stringify(messages)).not.toMatch(/SAVE20|Promo|discount/);
+    expectNoPromo(ctx);
+  });
+
+  describe('creation with explicit selection and stale promo state', () => {
+    beforeEach(async () => {
+      vi.spyOn(await import('@/lib/integrations/google-calendar'), 'syncBookingToCalendar').mockResolvedValue(undefined as any);
+      vi.spyOn(await import('@/lib/capabilities/service'), 'getEnabledCapabilities').mockResolvedValue([]);
+      vi.spyOn(await import('@/lib/tier-limits'), 'checkTierLimit').mockResolvedValue({ allowed: true } as any);
+      vi.spyOn(await import('@/lib/bot/flows/shared/capability-guard'), 'requireCurrentCapability').mockResolvedValue({ allowed: true });
+      vi.spyOn(await import('@/lib/bot/automation/rules-engine'), 'evaluateRules').mockResolvedValue(undefined as any);
+      vi.spyOn(await import('@/lib/bot/automation/sequence-service'), 'triggerSequences').mockResolvedValue(undefined as any);
+      vi.spyOn(await import('@/lib/bot/flows/shared/notifications'), 'createNotification').mockResolvedValue(undefined as any);
+      vi.spyOn(await import('@/lib/bot/flows/shared/notify-owner'), 'notifyOwnerNewBooking').mockResolvedValue(undefined as any);
+      vi.spyOn(await import('@/lib/bot/flows/shared/post-completion'), 'handlePostCompletion').mockResolvedValue(undefined as any);
+      const { savedPaymentAdapter } = await import('@/lib/payments/saved-payment-adapter');
+      vi.spyOn(savedPaymentAdapter, 'getSavedMethods').mockResolvedValue([]);
+      vi.spyOn(await import('@/lib/bot/flows/shared/payment'), 'initializePayment').mockResolvedValue({ reference: 'test-payment', url: 'https://example.test/pay' } as any);
+      vi.spyOn(await import('@/lib/bot/flows/shared/bank-transfer'), 'checkBankTransferEligibility').mockResolvedValue({ qualifies: false, bankAccount: null, platformSettings: {} } as any);
+    });
+
+    it.each([0, 5000])('commits the selected table with flat deposit %i and no promo consumption', async deposit => {
+      const { tableReservationFlow, schedulingFlow } = await flows();
+      const ctx = context({ skip_service: true, ...stalePromo() });
+      const selected = { ...resource, deposit_amount: deposit };
+      const selectionQuery = query(selected);
+      vi.mocked(ctx.supabase.from).mockImplementation(((table: string) => table === 'seating_resources' ? selectionQuery : query()) as any);
+      const result = await getStep(tableReservationFlow, 'select_table').validate(resource.id, ctx);
+      expect(result.valid).toBe(true);
+      expect(selectionQuery.eq).toHaveBeenCalledWith('id', resource.id);
+      expect(selectionQuery.eq).toHaveBeenCalledWith('business_id', ctx.business!.id);
+      expect(selectionQuery.eq).toHaveBeenCalledWith('is_active', true);
+      Object.assign(ctx.session.session_data, result.data);
+      expect(await getStep(tableReservationFlow, 'select_table').next(ctx)).toBe('select_date');
+      vi.mocked(ctx.supabase.rpc).mockImplementation(((name: string) => {
+        if (name === 'book_table_atomic') return query({ booking_id: 'booking-table', reference_code: 'TABLE1', slot_available: true });
+        return Promise.resolve({ data: null, error: null });
+      }) as any);
+      const messages = await getStep(schedulingFlow, 'create_booking').prompt(ctx);
+      expect(ctx.supabase.rpc).toHaveBeenCalledWith('book_table_atomic', expect.objectContaining({
+        p_business_id: ctx.business!.id, p_seating_resource_id: resource.id,
+        p_date: '2030-01-07', p_time: '18:00', p_party_size: 4,
+        p_duration_minutes: 90, p_expected_duration: 90, p_expected_deposit: deposit,
+        p_deposit_amount: deposit, p_total_amount: deposit,
+        p_deposit_status: deposit > 0 ? 'pending' : 'none',
+        p_status: deposit > 0 ? 'pending' : 'confirmed',
+      }));
+      expect(vi.mocked(ctx.supabase.rpc).mock.calls.some(([name]) => name === 'book_slot_atomic' || name === 'increment_promo_usage')).toBe(false);
+      expect(ctx.session.session_data).toMatchObject({ booking_id: 'booking-table', deposit_amount: deposit, total_amount: deposit });
+      expectNoPromo(ctx);
+      expect(JSON.stringify(messages)).not.toMatch(/SAVE20|discount/);
+      const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
+      if (deposit > 0) expect(initializePayment).toHaveBeenCalledWith(ctx.supabase, expect.objectContaining({ amount: deposit, bookingId: 'booking-table' }));
+      else expect(initializePayment).not.toHaveBeenCalled();
+    });
+
+    it('normal scheduling creation retains the discount, promo linkage and usage increment', async () => {
+      const { schedulingFlow } = await flows();
+      const ctx = context({
+        service_id: 'service-a', service_price: 5000, service_deposit: 0,
+        party_size: 1, _promo_id: 'promo-a', _promo_code: 'SAVE20', _promo_discount: 1000,
+      });
+      ctx.business!.metadata = { prepay_mode: 'full', require_terms_before_payment: false };
+      vi.mocked(ctx.supabase.rpc).mockImplementation(((name: string) => {
+        if (name === 'book_slot_atomic') return query({ booking_id: 'booking-service', reference_code: 'SERVICE1', slot_available: true });
+        return Promise.resolve({ data: null, error: null });
+      }) as any);
+      await getStep(schedulingFlow, 'create_booking').prompt(ctx);
+      expect(ctx.supabase.rpc).toHaveBeenCalledWith('book_slot_atomic', expect.objectContaining({
+        p_service_id: 'service-a', p_promo_code_id: 'promo-a',
+        p_deposit_amount: 4000, p_total_amount: 4000,
+      }));
+      expect(ctx.supabase.rpc).toHaveBeenCalledWith('increment_promo_usage', { p_code_id: 'promo-a' });
+      const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
+      expect(initializePayment).toHaveBeenCalledWith(ctx.supabase, expect.objectContaining({ amount: 4000 }));
+    });
+
   });
 });
