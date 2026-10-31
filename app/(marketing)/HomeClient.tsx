@@ -5,17 +5,9 @@ import { useState, lazy, Suspense } from 'react';
 import { motion, useScroll, useTransform, useReducedMotion } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 import HeroAutomationFlow from '@/components/marketing/HeroAutomationFlow';
-import { formatCurrency, getPricingTiers } from '@/lib/constants';
+
 
 const LiveBotDemo = lazy(() => import('@/components/marketing/LiveBotDemo'));
-
-const PRICE_COUNTRIES = [
-  { code: 'NG' as const, flag: '\u{1F1F3}\u{1F1EC}', label: 'Nigeria' },
-  { code: 'US' as const, flag: '\u{1F1FA}\u{1F1F8}', label: 'US' },
-  { code: 'GB' as const, flag: '\u{1F1EC}\u{1F1E7}', label: 'UK' },
-  { code: 'CA' as const, flag: '\u{1F1E8}\u{1F1E6}', label: 'Canada' },
-  { code: 'GH' as const, flag: '\u{1F1EC}\u{1F1ED}', label: 'Ghana' },
-];
 
 interface FaqEntry {
   question: string;
@@ -32,8 +24,7 @@ export default function HomeClient({
   const { scrollYProgress } = useScroll();
   const heroY = useTransform(scrollYProgress, [0, 0.3], [0, noMotion ? 0 : 80]);
   const heroOpacity = useTransform(scrollYProgress, [0, 0.25], [1, noMotion ? 1 : 0]);
-  const [priceCountry, setPriceCountry] = useState<'NG' | 'US' | 'GB' | 'CA' | 'GH'>('NG');
-  const tiers = getPricingTiers(priceCountry);
+
 
   // When reduced motion is preferred, entrance animations resolve immediately
   const entrance = (delay = 0) =>
@@ -195,7 +186,7 @@ export default function HomeClient({
               Try the WhatsApp experience
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-gray-500">
-              Watch how customers book, order, and buy tickets &mdash; all through a WhatsApp conversation.
+              Tap through a booking, food order, or ticket purchase. You choose what happens next in this interactive WhatsApp demo.
             </p>
           </AnimatedSection>
           <AnimatedSection className="mt-12">
@@ -427,53 +418,10 @@ export default function HomeClient({
             <p className="mt-2 text-gray-500">
               Start free. Upgrade when you&apos;re ready.
             </p>
-            <div className="mt-5 flex flex-wrap justify-center gap-2">
-              {PRICE_COUNTRIES.map((c) => (
-                <button
-                  key={c.code}
-                  onClick={() => setPriceCountry(c.code)}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    priceCountry === c.code
-                      ? 'bg-brand text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {c.flag} {c.label}
-                </button>
-              ))}
-            </div>
           </AnimatedSection>
-
-          <div className="mt-12 grid gap-6 sm:grid-cols-3">
-            <AnimatedSection delay={0}>
-              <PlanCard
-                name={tiers.free.name}
-                price={formatCurrency(0, priceCountry)}
-                period=""
-                features={tiers.free.features}
-                cta={{ label: 'Learn More', href: '/pricing' }}
-              />
-            </AnimatedSection>
-            <AnimatedSection delay={0.1}>
-              <PlanCard
-                name={tiers.growth.name}
-                price={formatCurrency(tiers.growth.price as number, priceCountry)}
-                period="/month"
-                highlight
-                features={tiers.growth.features}
-                cta={{ label: 'Learn More', href: '/pricing', gold: true }}
-              />
-            </AnimatedSection>
-            <AnimatedSection delay={0.2}>
-              <PlanCard
-                name={tiers.business.name}
-                price={formatCurrency(tiers.business.price as number, priceCountry)}
-                period="/month"
-                features={tiers.business.features}
-                cta={{ label: 'Learn More', href: '/pricing' }}
-              />
-            </AnimatedSection>
-          </div>
+          <p className="mx-auto mt-6 max-w-xl text-center text-gray-600">
+            View current subscription prices, transaction fees, and available plans for your country.
+          </p>
 
           <AnimatedSection delay={0.3} className="mt-8 text-center">
             <Link

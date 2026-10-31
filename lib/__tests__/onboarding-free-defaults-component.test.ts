@@ -251,16 +251,16 @@ const PRICING_FIXTURE = {
     currencyLocale: 'en-NG', flag: '🇳🇬', gateway: 'paystack',
     pricing: {
       free: { price: 0, feeFlat: 0, feePercentage: 3.0 },
-      growth: { price: 15000, feeFlat: 0, feePercentage: 1.5 },
-      business: { price: 45000, feeFlat: 0, feePercentage: 1.0 },
+      growth: { price: 49000, feeFlat: 0, feePercentage: 1.5 },
+      business: { price: 99000, feeFlat: 0, feePercentage: 1.0 },
     },
   },
   countries: [{ code: 'NG', name: 'Nigeria', currencyCode: 'NGN', currencySymbol: '₦',
     currencyLocale: 'en-NG', flag: '🇳🇬', gateway: 'paystack',
     pricing: {
       free: { price: 0, feeFlat: 0, feePercentage: 3.0 },
-      growth: { price: 15000, feeFlat: 0, feePercentage: 1.5 },
-      business: { price: 45000, feeFlat: 0, feePercentage: 1.0 },
+      growth: { price: 49000, feeFlat: 0, feePercentage: 1.5 },
+      business: { price: 99000, feeFlat: 0, feePercentage: 1.0 },
     },
   }],
 };

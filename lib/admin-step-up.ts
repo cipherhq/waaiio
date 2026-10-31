@@ -39,6 +39,7 @@ export type StepUpAction =
   | 'commercial_config'
   | 'messaging_config'
   | 'messaging_suspension'
+  | 'business_status'
   | 'payout_confirm_settlement'
   | 'payout_force_settle';
 

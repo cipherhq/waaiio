@@ -195,6 +195,8 @@ Before creating a migration:
 
 ### Active Reservations
 
+M494 `business_status_step_up` reserved by Codex on `codex/admin-merchant-save-truth` (2026-10-31), source only, not applied. M493 belongs to PR #797.
+
 | Version | Description | Branch | Reserved by | Date |
 |---------|-------------|--------|-------------|------|
 | 292 | atomic_payout_execution | fix/fin-002-atomic-payout | claude | 2026-07-26 |

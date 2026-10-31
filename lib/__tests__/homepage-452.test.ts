@@ -82,25 +82,20 @@ describe('#452 homepage simplification — provider truth', () => {
     expect(homeClientSrc).toContain('Paystack');
   });
 
-  it('homepage does not show Square, Flutterwave, or PayPal', () => {
-    expect(homeClientSrc).not.toContain('Square');
-    expect(homeClientSrc).not.toContain('Flutterwave');
-    expect(homeClientSrc).not.toContain('PayPal');
-  });
-
-  it('FAQ only mentions Stripe and Paystack', () => {
+  it('FAQ mentions all supported gateways', () => {
     expect(pageSrc).toContain('Stripe');
     expect(pageSrc).toContain('Paystack');
-    expect(pageSrc).not.toContain('Square');
-    expect(pageSrc).not.toContain('Flutterwave');
-    expect(pageSrc).not.toContain('PayPal');
+    expect(pageSrc).toContain('Square');
+    expect(pageSrc).toContain('Flutterwave');
+    expect(pageSrc).toContain('PayPal');
   });
 });
 
 describe('#452 homepage simplification — pricing and trial', () => {
-  it('pricing uses getPricingTiers (not hardcoded values)', () => {
-    expect(homeClientSrc).toContain('getPricingTiers');
-    expect(homeClientSrc).toContain('formatCurrency');
+  it('homepage directs visitors to authoritative pricing', () => {
+    expect(homeClientSrc).not.toContain('getPricingTiers');
+    expect(homeClientSrc).toContain('href="/pricing"');
+    expect(homeClientSrc).not.toContain('formatCurrency');
   });
 
   it('does not introduce hardcoded specific trial duration claim', () => {
@@ -170,9 +165,9 @@ describe('#452 homepage simplification — structural integrity', () => {
     expect(homeClientSrc).toContain('See all features');
   });
 
-  it('homepage has pricing section with country selector', () => {
-    expect(homeClientSrc).toContain('PRICE_COUNTRIES');
-    expect(homeClientSrc).toContain('setPriceCountry');
+  it('homepage retains pricing section and country pricing link', () => {
+    expect(homeClientSrc).toContain('id="pricing"');
+    expect(homeClientSrc).toContain('View current subscription prices');
   });
 
   it('FAQ count is reduced (4-5 questions)', () => {
