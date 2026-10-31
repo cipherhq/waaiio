@@ -198,6 +198,12 @@
 - **Affects**: Bot completion card presentation. Booking-completion figures, other session counters, queries, filters and date behavior are unchanged.
 - **Could break**: The longer card wording may wrap differently at narrow widths; no rendered browser verification is claimed. Action measurement and the end-date correction remain separate work.
 
+### #741 — Offline proof lock-order correction (2026-10-30)
+
+- **`supabase/migrations/479_offline_merchant_approval.sql`**: Discover the linked order without holding the transfer lock, then lock order, transfer and marker consistently; revalidate association, tenant, status and deadline under locks. Preserve non-order proof, timestamp and permission behavior.
+- **`lib/__tests__/m479-offline-approval-db.test.ts`**: Preserve all 18 existing cases and add two real two-session proof/confirmation and proof/cleanup tests with database-observed blocking and final-state/idempotency assertions.
+- **Affects / could break**: Concurrent offline-proof recording and merchant approval/cleanup. Source/isolated-test correction only; no hosted migration application or production incident is claimed.
+
 ### #736 — Offline merchant approval: payment vs fulfillment separation (2026-10-28)
 
 - **`supabase/migrations/479_offline_merchant_approval.sql`** (new): M479 migration with 11 SQL objects. Adds `paid_pending_approval` to `order_status` enum. Adds `proof_submitted_at` and `proof_protected` columns to `pending_transfers`. Extends `refunds` CHECK for `merchant_obligation/merchant_settled/admin_resolved` (Owner Option X). Creates `submit_transfer_proof` (atomic proof with DB timestamps, deadline gate, lock order→transfer→marker), `confirm_order_transfer_atomic` 5-arg (proof-protected expiry, conditional approval), `confirm_nonorder_transfer_atomic` (atomic non-order with entity validation, fail-closed fractional amounts), `approve_paid_order`, `reject_paid_order` (stock/promo restore + refund obligation). Modifies `cancel_stale_order_atomic` (proof protection preserving original deadlines, legacy proof held), `finalize_promo_reservation` (`paid_pending_approval` awareness). All functions SECURITY DEFINER, service_role only.
