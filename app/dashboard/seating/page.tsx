@@ -301,7 +301,7 @@ export default function SeatingPage() {
       <PageHelp
         pageKey="seating"
         title="Seating & Tables"
-        description="Configure the tables, booths, and seating areas that customers can reserve via WhatsApp. Each resource has its own capacity, timing, and availability."
+        description="Part of Table Reservations for restaurants and lounges. Configure tables, booths, and seating areas customers can reserve via WhatsApp, with capacity, timing, and availability for each."
       />
 
       <div className="flex items-center justify-between mb-6">

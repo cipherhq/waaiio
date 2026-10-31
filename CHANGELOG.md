@@ -3,7 +3,9 @@
 - Synchronize selected customer phone displays and product gallery previews with current state; use the existing business-first verification storage path.
 - Preserve initialized payment-request URLs, supply chat service categories, resolve broadcast template categories from the connected WABA, and report rejected or email-only delivery without WhatsApp success.
 - Generate 20-character cryptographically random URL-safe form tokens to fit the existing database column; the previous 24-character token caused the reproduced staging insert rejection. Keep form contents after failed saves and show list/save errors with retry.
-- **Affects**: Shared phone input, Products, Verification, Chat, Payment Requests, Broadcasts and Forms. No schema, permission, billing, payout or consent-policy changes. Existing staging migration gaps remain separate release prerequisites.
+- Add purpose/channel consent checks to merchant-initiated chat, payment requests, document sharing and broadcasts; provide an eligible customer picker that fills name and phone together.
+- Clarify billing expiry/overdue/cancellation, link giving directly to the applicable recurring settings, and explain seating, waitlist and attendance classifications. Disable staff commission changes until Phase 2 while preserving stored rates.
+- **Affects**: The named dashboard pages and their merchant send routes. No schema migration, payout or renewal-charge processing changes.
 - **Validation**: Rendered component and actual route tests with mocked storage/provider boundaries; live delivery, deployed upload acceptance and production build require separate release evidence.
 
 ### #762 — Verified Paystack fee and finalization snapshot (2026-10-30)

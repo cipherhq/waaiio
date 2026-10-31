@@ -1,4 +1,6 @@
 'use client';
+import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+
 
 import { useEffect, useState } from 'react';
 import { getLocale, type CountryCode } from '@/lib/constants';
@@ -538,7 +540,8 @@ export default function BroadcastsPage() {
         Send messages to all your WhatsApp customers at once
       </p>
 
-      <PageHelp
+      <p className="mt-3 text-sm text-amber-700">{RECIPIENT_POLICY}</p>
+        <PageHelp
         pageKey="broadcasts"
         title="Broadcast Messages"
         description="Send promotions, updates, or announcements to all your customers at once. Messages go directly to their WhatsApp — no app downloads or email opens needed."

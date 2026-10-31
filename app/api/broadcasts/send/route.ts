@@ -1,3 +1,4 @@
+import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -155,6 +156,7 @@ export async function POST(request: NextRequest) {
 
     for (const phone of phones) {
       try {
+        if (!await hasRecipientPermission(service, business_id, phone, 'marketing')) continue;
         // Check opt-out before sending promotional message (scoped to this business)
         // Normalize phone to +E.164 — STOP records are stored with ensurePlus (#721)
         const { count: optOutCount, error: optOutErr } = await service
@@ -197,7 +199,7 @@ export async function POST(request: NextRequest) {
         if (!sent) {
           const customerEmail = await findCustomerEmail(service, phone, business_id);
           let emailOpt: { address: string; subject: string; html: string } | null = null;
-          if (customerEmail) {
+          if (customerEmail && await hasRecipientPermission(service, business_id, phone, 'marketing', 'email')) {
             const tmpl = businessNotificationEmail({
               businessName: business.name,
               title: 'Broadcast Message',

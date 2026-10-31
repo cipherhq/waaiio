@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
-import { PhoneInput } from '@/components/auth/PhoneInput';
+import { ConsentedCustomerPicker } from '@/components/dashboard/ConsentedCustomerPicker';
+import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+
 
 interface PaymentRequestRow {
   id: string;
@@ -20,11 +22,6 @@ interface PaymentRequestRow {
   channel: string | null;
   payment_source: string | null;
   payments: { status: string; gateway: string | null }[] | null;
-}
-
-interface CustomerSuggestion {
-  phone: string;
-  name: string | null;
 }
 
 type SendVia = 'whatsapp' | 'email';
@@ -73,27 +70,6 @@ export default function PaymentRequestPage() {
   // Bulk form
   const [bulkRecipients, setBulkRecipients] = useState('');
   const [bulkProgress, setBulkProgress] = useState('');
-
-  // Customer autocomplete
-  const [customers, setCustomers] = useState<CustomerSuggestion[]>([]);
-  const [suggestions, setSuggestions] = useState<CustomerSuggestion[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const phoneInputRef = useRef<HTMLInputElement>(null);
-
-  // Load existing customers for autocomplete
-  useEffect(() => {
-    async function loadCustomers() {
-      const supabase = createClient();
-      const { data } = await supabase
-        .from('customer_profiles')
-        .select('phone, name')
-        .eq('business_id', business.id)
-        .order('last_seen_at', { ascending: false })
-        .limit(100);
-      setCustomers((data || []) as CustomerSuggestion[]);
-    }
-    loadCustomers();
-  }, [business.id]);
 
   const loadRequests = useCallback(async () => {
     const supabase = createClient();
@@ -339,6 +315,7 @@ export default function PaymentRequestPage() {
         </div>
       </div>
 
+      <p className="mt-3 text-sm text-amber-700">{RECIPIENT_POLICY}</p>
       <PageHelp
         pageKey="payment-request"
         title="Payment Requests"
@@ -395,59 +372,9 @@ export default function PaymentRequestPage() {
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Customer Phone <span className="text-red-400">*</span>
                   </label>
-                  {/* Customer search */}
-                  <div className="relative mb-2">
-                    <input
-                      ref={phoneInputRef}
-                      type="text"
-                      onFocus={() => {
-                        setSuggestions(customers.slice(0, 5));
-                        setShowSuggestions(true);
-                      }}
-                      onChange={e => {
-                        const q = e.target.value.toLowerCase();
-                        if (q.length > 0) {
-                          setSuggestions(
-                            customers.filter(c =>
-                              c.phone.includes(q) || c.name?.toLowerCase().includes(q)
-                            ).slice(0, 5)
-                          );
-                        } else {
-                          setSuggestions(customers.slice(0, 5));
-                        }
-                        setShowSuggestions(true);
-                      }}
-                      onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                      placeholder="Search existing customers..."
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                    />
-                    {showSuggestions && suggestions.length > 0 && (
-                      <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
-                        {suggestions.map(c => (
-                          <button
-                            key={c.phone}
-                            type="button"
-                            onMouseDown={e => e.preventDefault()}
-                            onClick={() => {
-                              setPhone(c.phone);
-                              setName(c.name || '');
-                              setShowSuggestions(false);
-                              setSuggestions([]);
-                            }}
-                            className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
-                          >
-                            <span className="font-medium text-gray-900">{c.name || 'Unknown'}</span>
-                            <span className="font-mono text-xs text-gray-400">{c.phone}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <PhoneInput
-                    value={phone}
-                    onChange={setPhone}
-                    countryCode={country}
-                  />
+                  <ConsentedCustomerPicker businessId={business.id} onSelect={customer => { setPhone(customer.phone); setName(customer.name || ''); }} />
+                  {phone && <p className="mt-2 text-sm">Selected: {name || 'Customer'} · {phone}</p>}
+
                 </div>
               )}
 

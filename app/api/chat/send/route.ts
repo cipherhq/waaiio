@@ -1,3 +1,4 @@
+import { hasRecipientPermission, RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
@@ -58,6 +59,10 @@ export async function POST(request: NextRequest) {
         .eq('status', 'active')
         .maybeSingle();
       staffMemberId = ownerMembership?.id || null;
+    }
+
+    if (!await hasRecipientPermission(supabase, businessId, customerPhone, 'utility')) {
+      return NextResponse.json({ error: RECIPIENT_POLICY }, { status: 403 });
     }
 
     // Send WhatsApp message via channel resolver (dedicated first, fallback to shared)

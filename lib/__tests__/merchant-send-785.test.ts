@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 const m = vi.hoisted(() => ({
-  from: vi.fn(), rpc: vi.fn(), auth: vi.fn(), capability: vi.fn(), text: vi.fn(), audio: vi.fn(), template: vi.fn(), resolveCategory: vi.fn(), fallback: vi.fn(), initialize: vi.fn(), email: vi.fn(), writes: [] as Array<{table: string; row: Record<string, unknown>}>,
+  consent: true, from: vi.fn(), rpc: vi.fn(), auth: vi.fn(), capability: vi.fn(), text: vi.fn(), audio: vi.fn(), template: vi.fn(), resolveCategory: vi.fn(), fallback: vi.fn(), initialize: vi.fn(), email: vi.fn(), writes: [] as Array<{table: string; row: Record<string, unknown>}>,
 }));
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ auth: { getUser: async () => ({ data: { user: { id: 'owner' } } }) } }) }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({ from: m.from, rpc: m.rpc }) }));
@@ -17,26 +17,30 @@ vi.mock('@/lib/email/client', () => ({ sendEmail: m.email }));
 vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: async () => ({ broadcast_limits: { growth: { maxBroadcasts: 100, maxRecipients: 1000 } } }) }));
 vi.mock('@/lib/bot/conversation-guard', () => ({ checkConversationLimit: async () => ({ allowed: true }) }));
 vi.mock('@/lib/bot/flows/shared/payment', () => ({ initializePayment: m.initialize }));
+import { POST as reportSend } from '@/app/api/reports/send/route';
 import { POST as chat } from '@/app/api/chat/send/route';
 import { POST as broadcast } from '@/app/api/broadcasts/send/route';
 import { POST as payment } from '@/app/api/payment-request/send/route';
 function req(body: unknown) { return new NextRequest('https://example.test/api', { method: 'POST', body: JSON.stringify(body) }); }
 beforeEach(() => {
-  vi.clearAllMocks(); m.writes = [];
-  m.auth.mockResolvedValue({ user: { id: 'owner' } }); m.capability.mockResolvedValue({ allowed: true });
+  vi.clearAllMocks(); m.writes = []; m.consent = true;
+  m.auth.mockResolvedValue({ user: { id: 'owner' }, businessId: 'biz', service: { from: m.from } }); m.capability.mockResolvedValue({ allowed: true });
   m.text.mockResolvedValue({ success: true }); m.audio.mockResolvedValue({ success: true }); m.template.mockResolvedValue({ success: true });
   m.resolveCategory.mockResolvedValue('marketing'); m.fallback.mockResolvedValue({ whatsapp: 'sent', email: 'no_address' });
   m.initialize.mockResolvedValue({ url: 'https://staging.waaiio.com/api/pay?ref=short', reference: 'transaction-reference' });
   m.email.mockResolvedValue({ success: true }); m.rpc.mockResolvedValue({ error: null });
   m.from.mockImplementation((table: string) => {
     const data = table === 'businesses' ? { id: 'biz', owner_id: 'owner', name: 'Test', country_code: 'NG', subscription_tier: 'growth', payment_gateway: 'paystack' }
+      : table === 'customer_consents' ? { status: m.consent ? 'granted' : 'revoked', expires_at: null }
+      : table === 'customer_profiles' ? { phone: '+12025550123' }
+      : table === 'customer_reports' ? { id: 'report', business_id: 'biz', customer_phone: '+12025550123', title: 'Document', businesses: { name: 'Test' } }
       : table === 'bookings' ? { id: 'booking', reference_code: 'WA-PY-1234' }
       : table === 'payments' ? { gateway: 'paystack', gateway_reference: 'transaction-reference' }
       : table === 'chat_conversations' ? { id: 'conversation', assigned_to: 'owner' }
       : null;
     const result = { data, count: 0, error: null };
     const chain: Record<string, unknown> = {};
-    for (const method of ['select', 'eq', 'is', 'upsert', 'update', 'order', 'limit']) chain[method] = () => chain;
+    for (const method of ['select', 'eq', 'is', 'in', 'or', 'upsert', 'update', 'order', 'limit']) chain[method] = (row: Record<string, unknown>) => { if (method === 'update') m.writes.push({ table, row }); return chain; };
     chain.insert = (row: Record<string, unknown>) => { m.writes.push({ table, row }); return chain; };
     chain.single = chain.maybeSingle = async () => result;
     chain.then = (resolve: (x: unknown) => unknown) => Promise.resolve(result).then(resolve);
@@ -101,5 +105,41 @@ describe('payment request checkout URL', () => {
     expect(response.status).toBe(200); expect((await response.json()).paymentUrl).toBe(url);
     expect(m.fallback.mock.calls[0][0].text).toContain(url);
     expect(m.from).not.toHaveBeenCalledWith('payments');
+  });
+});
+
+
+describe('merchant consent enforcement before side effects', () => {
+  it('rejects chat without utility consent before sending or persisting', async () => {
+    m.consent = false;
+    expect((await chat(req({ businessId: 'biz', customerPhone: '+12025550123', messageText: 'Hello' }))).status).toBe(403);
+    expect(m.text).not.toHaveBeenCalled(); expect(m.writes).toHaveLength(0);
+  });
+  it.each(['whatsapp', 'email'])('rejects payment request via %s before booking or initialization', async sendVia => {
+    m.consent = false;
+    expect((await payment(req({ businessId: 'biz', customerPhone: '+12025550123', customerEmail: 'customer@example.test', amount: 100, sendVia }))).status).toBe(403);
+    expect(m.initialize).not.toHaveBeenCalled(); expect(m.email).not.toHaveBeenCalled(); expect(m.writes).toHaveLength(0);
+  });
+  it('suppresses broadcast without marketing consent, including fallback', async () => {
+    m.consent = false;
+    await broadcast(req({ business_id: 'biz', message: 'News', phones: ['12025550123'] }));
+    expect(m.template).not.toHaveBeenCalled(); expect(m.fallback).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('document sending consent and acceptance', () => {
+  it('does not rotate access token or send when consent is revoked', async () => {
+    m.consent = false;
+    const response = await reportSend(req({ businessId: 'biz', reportIds: ['report'] }));
+    expect((await response.json()).results[0].status).toBe('consent_required');
+    expect(m.text).not.toHaveBeenCalled(); expect(m.writes).toHaveLength(0);
+  });
+  it.each([true, false])('records sender acceptance=%s truthfully', async success => {
+    m.text.mockResolvedValue({ success });
+    const response = await reportSend(req({ businessId: 'biz', reportIds: ['report'] }));
+    expect((await response.json()).results[0].status).toBe(success ? 'sent' : 'failed');
+    expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'utility' }));
+    if (!success) expect(m.writes.some(write => write.row.status === 'sent')).toBe(false);
   });
 });

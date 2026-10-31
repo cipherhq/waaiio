@@ -1,10 +1,11 @@
 'use client';
-import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { PhoneInput } from '@/components/auth/PhoneInput';
+import { ConsentedCustomerPicker } from '@/components/dashboard/ConsentedCustomerPicker';
+import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+
 
 interface Document {
   id: string;
@@ -121,12 +122,17 @@ export default function DocumentSharePage() {
   async function handleSend(reportId: string) {
     setSending(reportId);
     try {
-      await fetch('/api/reports/send', {
+      setUploadError('');
+      const response = await fetch('/api/reports/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reportIds: [reportId], businessId: business.id }),
       });
+      const result = await response.json();
+      if (!response.ok || result.results?.some((item: { status: string }) => item.status !== 'sent')) setUploadError(result.error || 'Document not sent. Check recipient consent and try again.');
       fetchDocuments();
+    } catch {
+      setUploadError('Unable to confirm delivery. Refresh before retrying.');
     } finally {
       setSending(null);
     }
@@ -152,13 +158,18 @@ export default function DocumentSharePage() {
     if (selectedIds.size === 0) return;
     setBulkSending(true);
     try {
-      await fetch('/api/reports/send', {
+      setUploadError('');
+      const response = await fetch('/api/reports/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reportIds: Array.from(selectedIds), businessId: business.id }),
       });
+      const result = await response.json();
+      if (!response.ok || result.results?.some((item: { status: string }) => item.status !== 'sent')) setUploadError(result.error || 'Some documents were not sent. Check recipient consent and try again.');
       setSelectedIds(new Set());
       fetchDocuments();
+    } catch {
+      setUploadError('Unable to confirm delivery. Refresh before retrying.');
     } finally {
       setBulkSending(false);
     }
@@ -179,6 +190,7 @@ export default function DocumentSharePage() {
         Upload documents and share them with customers via WhatsApp.
       </p>
 
+      <p className="mt-3 text-sm text-amber-700">{RECIPIENT_POLICY}</p>
       {/* Storage Usage */}
       <div className="mt-4 flex items-center gap-3">
         <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
@@ -204,11 +216,8 @@ export default function DocumentSharePage() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600">Customer Phone (WhatsApp) *</label>
-            <PhoneInput
-              value={customerPhone}
-              onChange={setCustomerPhone}
-              countryCode={(business.country_code || 'NG') as CountryCode}
-            />
+            <ConsentedCustomerPicker businessId={business.id} onSelect={customer => { setCustomerPhone(customer.phone); setCustomerName(customer.name || ''); }} />
+            {customerPhone && <p className="mt-2 text-sm">Selected: {customerName || 'Customer'} · {customerPhone}</p>}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600">Customer Name</label>
