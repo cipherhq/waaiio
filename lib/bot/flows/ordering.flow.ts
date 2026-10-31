@@ -2000,10 +2000,12 @@ export const orderingFlow: FlowDefinition = {
       },
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
-        // Skip if business doesn't have referral capability
-        const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
-        const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
-        if (!caps.includes('referral')) return true;
+        // Match current dashboard entitlement, including tier/trial restrictions.
+        const { requireCurrentCapability } = await import('./shared/capability-guard');
+        const referralAccess = await requireCurrentCapability(ctx.supabase, {
+          businessId: ctx.business.id, capability: 'referral', action: 'create_new',
+        });
+        if (!referralAccess.allowed) return true;
         // Skip if user already has a converted referral for this business
         const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
         const { data: existing } = await ctx.supabase

@@ -448,3 +448,29 @@ describe('skipIf → prompt integration', () => {
     expect(ctx.session.session_data.active_capability).toBeUndefined();
   });
 });
+
+
+describe('account navigation with a single business action', () => {
+  it('keeps the menu for a returning customer', async () => {
+    const ctx = buildCtx({ capabilities: ['chat'], profileId: 'customer', hasHistory: true });
+    expect(await step.skipIf!(ctx)).toBe(false);
+    const messages = await step.prompt(ctx);
+    expect(getPostbacks(messages[0])).toContain('cap_my_account');
+  });
+
+  it('still auto-selects for a customer without history', async () => {
+    const ctx = buildCtx({ capabilities: ['chat'] });
+    expect(await step.skipIf!(ctx)).toBe(true);
+    expect(ctx.session.session_data.active_capability).toBe('chat');
+  });
+
+  it('falls back to the legacy phone representation when canonical lookup is empty', async () => {
+    const ctx = buildCtx({ capabilities: ['chat'] });
+    await step.prompt(ctx);
+    const queries = (ctx.supabase.from as any).mock.results.filter((_: any, i: number) =>
+      (ctx.supabase.from as any).mock.calls[i][0] === 'profiles').map((r: any) => r.value);
+    expect(queries).toHaveLength(2);
+    expect(queries[0].eq).toHaveBeenCalledWith('phone', '+2341234567890');
+    expect(queries[1].eq).toHaveBeenCalledWith('phone', '2341234567890');
+  });
+});

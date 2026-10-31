@@ -140,69 +140,22 @@ function getFirstStepForCapability(cap: CapabilityId): string {
   }
 }
 
-const selectCapabilityStep: FlowStepConfig = {
-  id: 'select_capability',
-
-  async skipIf(ctx: FlowContext) {
-    if (!ctx.business) return false;
-    // CAS-004: If semantic mismatch forced the menu, do NOT auto-skip
-    if (ctx.session.session_data._force_capability_menu) {
-      delete ctx.session.session_data._force_capability_menu;
-      // Still prepare capabilities so prompt() has data
-      await prepareCapabilityMenu(ctx);
-      return false;
-    }
-
-    const { userFacing } = await prepareCapabilityMenu(ctx);
-    const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
-
-    // Exactly one renderable capability → auto-select and skip the menu
-    if (userFacing.length === 1) {
-      ctx.session.session_data.active_capability = userFacing[0];
-      // Send greeting as standalone text since capability menu is skipped
-      const greeting = ctx.session.session_data._greeting as string | undefined;
-      if (greeting) {
-        await ctx.sender.sendText({ to: ctx.from, text: greeting });
-        delete ctx.session.session_data._greeting;
-      }
-      return true;
-    }
-
-    // Zero user-facing capabilities but contextual-only (e.g. promo-only business):
-    // Auto-select the sole contextual capability so the flow reaches its entry step.
-    // CAS-004 safety: only auto-select when ALL capabilities are contextual and
-    // have a known safe entry point (promo_verification → promo_entry).
-    if (userFacing.length === 0 && capabilities.length > 0 &&
-        capabilities.every(c => c === 'promo_verification')) {
-      ctx.session.session_data.active_capability = capabilities[0];
-      const greeting = ctx.session.session_data._greeting as string | undefined;
-      if (greeting) {
-        await ctx.sender.sendText({ to: ctx.from, text: greeting });
-        delete ctx.session.session_data._greeting;
-      }
-      return true;
-    }
-
-    // Zero renderable capabilities with mixed/unknown types → let prompt() decide
-    // between My Account (returning customer) or safe fallback text (new customer).
-    // Do NOT fall back to capabilities[0] — that cap may lack backing data.
-    return false;
-  },
-
-  async prompt(ctx: FlowContext) {
-    // Always prepare capabilities authoritatively — never depend on skipIf() cache
-    const { userFacing, customLabels } = await prepareCapabilityMenu(ctx);
-    const category = ctx.business?.category || 'other';
-
-    // Check if returning customer has past bookings/orders — show "My Account" option
+async function hasAccountHistory(ctx: FlowContext): Promise<boolean> {
+    // Account navigation uses the same predicate for menu rendering and auto-selection.
     let hasHistory = false;
     if (ctx.business) {
       const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-      const { data: profile } = await ctx.supabase
+      let { data: profile } = await ctx.supabase
         .from('profiles')
         .select('id')
         .eq('phone', phone)
         .maybeSingle();
+      // Prefer the canonical profile if both legacy and canonical rows exist.
+      if (!profile) {
+        const { data: legacyProfile } = await ctx.supabase.from('profiles')
+          .select('id').eq('phone', phone.slice(1)).maybeSingle();
+        profile = legacyProfile;
+      }
       if (profile?.id) {
         const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
         const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
@@ -240,6 +193,65 @@ const selectCapabilityStep: FlowStepConfig = {
         hasHistory = await hasPromoHistory(ctx.business.id, ctx.from);
       } catch { /* service client unavailable in test — fail open for discoverability */ }
     }
+
+    return hasHistory;
+}
+
+const selectCapabilityStep: FlowStepConfig = {
+  id: 'select_capability',
+
+  async skipIf(ctx: FlowContext) {
+    if (!ctx.business) return false;
+    // CAS-004: If semantic mismatch forced the menu, do NOT auto-skip
+    if (ctx.session.session_data._force_capability_menu) {
+      delete ctx.session.session_data._force_capability_menu;
+      // Still prepare capabilities so prompt() has data
+      await prepareCapabilityMenu(ctx);
+      return false;
+    }
+
+    const { userFacing } = await prepareCapabilityMenu(ctx);
+    const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+
+    // Exactly one renderable capability → auto-select and skip the menu
+    if (userFacing.length === 1 && !(await hasAccountHistory(ctx))) {
+      ctx.session.session_data.active_capability = userFacing[0];
+      // Send greeting as standalone text since capability menu is skipped
+      const greeting = ctx.session.session_data._greeting as string | undefined;
+      if (greeting) {
+        await ctx.sender.sendText({ to: ctx.from, text: greeting });
+        delete ctx.session.session_data._greeting;
+      }
+      return true;
+    }
+
+    // Zero user-facing capabilities but contextual-only (e.g. promo-only business):
+    // Auto-select the sole contextual capability so the flow reaches its entry step.
+    // CAS-004 safety: only auto-select when ALL capabilities are contextual and
+    // have a known safe entry point (promo_verification → promo_entry).
+    if (userFacing.length === 0 && capabilities.length > 0 &&
+        capabilities.every(c => c === 'promo_verification')) {
+      ctx.session.session_data.active_capability = capabilities[0];
+      const greeting = ctx.session.session_data._greeting as string | undefined;
+      if (greeting) {
+        await ctx.sender.sendText({ to: ctx.from, text: greeting });
+        delete ctx.session.session_data._greeting;
+      }
+      return true;
+    }
+
+    // Zero renderable capabilities with mixed/unknown types → let prompt() decide
+    // between My Account (returning customer) or safe fallback text (new customer).
+    // Do NOT fall back to capabilities[0] — that cap may lack backing data.
+    return false;
+  },
+
+  async prompt(ctx: FlowContext) {
+    // Always prepare capabilities authoritatively — never depend on skipIf() cache
+    const { userFacing, customLabels } = await prepareCapabilityMenu(ctx);
+    const category = ctx.business?.category || 'other';
+
+    const hasHistory = await hasAccountHistory(ctx);
 
     // Build capability items
     const capItems = userFacing.map(cap => ({

@@ -769,7 +769,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.appointment.car_wash': 'Book a Wash',
     'cap.giving': 'Give',
     'cap.payment': 'Make Payment',
-    'cap.ordering': 'Place an Order',
+    'cap.ordering': 'Browse Products',
     'cap.ticketing': 'Buy Tickets',
     'cap.reservation': 'Book a Stay',
     'cap.table_reservation': 'Make a Reservation',

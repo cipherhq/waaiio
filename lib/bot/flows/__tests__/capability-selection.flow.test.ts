@@ -52,7 +52,7 @@ describe('Capability Selection Flow', () => {
 
   it('getCapabilityLabel returns correct labels', () => {
     expect(getCapabilityLabel('scheduling' as any, 'other')).toBe('Our Services');
-    expect(getCapabilityLabel('ordering' as any, 'other')).toContain('Order');
+    expect(getCapabilityLabel('ordering' as any, 'other')).toBe('Browse Products');
     expect(getCapabilityLabel('ticketing' as any, 'other')).toContain('Ticket');
     expect(getCapabilityLabel('giving' as any, 'other')).toContain('Give');
     expect(getCapabilityLabel('chat' as any, 'other')).toContain('Chat');
