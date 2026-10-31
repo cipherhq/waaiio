@@ -1,3 +1,10 @@
+### Surgical dashboard repairs — Messaging Credits render crash (2026-10-31)
+
+- `admin/src/pages/MessagingCredits.tsx`: Correct all six SummaryCard call sites to pass label, component icons and supported color props. Preserves queries, pagination, authorization and credit calculations.
+- `admin/src/__tests__/messaging-credits-render.test.tsx`: Render the real summary cards across Balances and Purchases to catch the observed React invalid-element crash.
+- **Affects**: Admin Messaging Credits page rendering only. Shared SummaryCard is unchanged.
+- **Could break**: Summary labels/icon presentation in these two tabs; targeted rendering and pagination regressions pass (5 tests, zero skipped), and the admin production build passes locally. Not deployed.
+
 ## 2026-10-31 — Party questions and reminder review (source only)
 
 - Adds bounded, versioned Party questions, organizer answer readback and atomic web/bot RSVP saves; required answers apply only to Accepted. Preserves answer history and seating/capacity authority. Affects Party detail, RSVP routes and bot entry/flow; M489 must precede app rollout.

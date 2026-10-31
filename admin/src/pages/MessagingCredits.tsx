@@ -222,13 +222,13 @@ export default function MessagingCredits() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {view === 'balances' ? (<>
-          <SummaryCard title="Active Businesses" value={balanceTotalCount} icon={<CreditCard className="h-5 w-5" />} />
-          <SummaryCard title="Suspended" value={suspendedCount} icon={<AlertTriangle className="h-5 w-5" />} variant={suspendedCount > 0 ? 'danger' : 'default'} />
+          <SummaryCard label="Active Businesses" value={balanceTotalCount} icon={CreditCard} />
+          <SummaryCard label="Suspended" value={suspendedCount} icon={AlertTriangle} color={suspendedCount > 0 ? 'red' : 'blue'} />
         </>) : (<>
-          <SummaryCard title="Total Purchases" value={purchaseTotalCount} icon={<CreditCard className="h-5 w-5" />} />
-          <SummaryCard title="Pending (this page)" value={pageStatusCounts.pending} icon={<Clock className="h-5 w-5" />} variant={pageStatusCounts.pending > 0 ? 'warning' : 'default'} />
-          <SummaryCard title="Needs Review (this page)" value={pageStatusCounts.review} icon={<AlertTriangle className="h-5 w-5" />} variant={pageStatusCounts.review > 0 ? 'danger' : 'default'} />
-          <SummaryCard title="Completed (this page)" value={pageStatusCounts.completed} icon={<CheckCircle className="h-5 w-5" />} />
+          <SummaryCard label="Total Purchases" value={purchaseTotalCount} icon={CreditCard} />
+          <SummaryCard label="Pending (this page)" value={pageStatusCounts.pending} icon={Clock} color={pageStatusCounts.pending > 0 ? 'yellow' : 'blue'} />
+          <SummaryCard label="Needs Review (this page)" value={pageStatusCounts.review} icon={AlertTriangle} color={pageStatusCounts.review > 0 ? 'red' : 'blue'} />
+          <SummaryCard label="Completed (this page)" value={pageStatusCounts.completed} icon={CheckCircle} color="green" />
         </>)}
       </div>
 
