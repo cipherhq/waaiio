@@ -122,6 +122,12 @@
 - **Affects**: Payment-request dashboard feedback when the payment link exists but notification delivery fails.
 - **Could break**: The form now clears after a payment request was created even when its notification failed, avoiding a duplicate request on resubmission.
 
+### #783 — Pin catalog checkout to authoritative currency (2026-10-30)
+
+- **`app/api/onboarding/subscribe/route.ts`**: Configured catalog subscriptions now set the Checkout Session currency from the existing server-resolved country currency; inline fallback and other gateways remain unchanged.
+- **`lib/payments/__tests__/stripe-merchant-catalog-checkout-762.test.ts`**: Retain all 28 existing cases, add currency assertions to the six catalog and three inline cases, and add a synthetic multi-currency/client-conflict regression through the actual route and existing validator.
+- **Affects / could break**: Catalog subscription request construction. Exact-head executable CI is required; existing ownership, metadata, callbacks, price validation and authentication stay intact. No live catalog update, subscription repricing or provider/deployment certification is claimed.
+
 ### #783 — Optional merchant Stripe catalog references (2026-10-30)
 
 - Added read-only Stripe Price and expanded Product preflight in `lib/payments/provider-preflight.ts`, validating active fixed monthly pricing against authoritative country currency and amount.
