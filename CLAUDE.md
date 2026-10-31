@@ -26,6 +26,15 @@ These habits **supplement**, not replace, the Evidence Verification Agent gate, 
 2. **Keep the diff surgical.** Make the smallest change that fulfills the approved contract and necessary security/correctness invariants. Explain why every changed file is needed; preserve working behavior and existing APIs. Do not silently refactor adjacent code, introduce speculative abstractions, or implement optional enhancements. Record unrelated findings separately; flag opportunities for reuse without performing unrelated DRY refactors.
 3. **Stop when done.** Check the agreed acceptance tests, affected regression tests, and required exact-SHA CI/review evidence. Report satisfied criteria and any actual residual risks, then stop for the existing CTO/Owner gates. Do not broaden scope, repeat audits with no new evidence, or invent follow-on work after the agreed definition of done. Escalate newly verified critical findings through the normal governance process rather than ignoring them.
 
+## Owner-approved payment custody and settlement model — MUST NOT CHANGE
+
+Read [`docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`](./docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md) before any payment, payout, fee, provider integration, admin finance, refund, migration, bot checkout or settlement change. This is a **standing Owner product decision**, not an implementation suggestion:
+
+- **Merchant-connected Stripe/Paystack:** Customer payment is routed through the merchant's connected provider, with Waaiio's supported fee/split routing. The provider pays the merchant; Waaiio must not manually settle that same payment.
+- **Waaiio-owned Stripe/Paystack:** Customer pays Waaiio, Waaiio owes the merchant their net balance, and an authorized admin must be able to pay the merchant externally and then mark the payout paid with transfer reference and auditable confirmation. Approval alone never means paid.
+- These two routes must keep working independently. Removing `manual_cash` does **not** remove the manual settlement workflow. Disabling Stripe *automatic platform-managed payouts* must **not** disable Stripe Connect splits or admin settlement of Stripe-held funds.
+- For all payment-related work, show regression evidence for both routes and duplicate-payment, fee, refund and cross-business safety. Do not change these business rules, silently reroute money, or remove a route without a **new explicit Owner decision**. CI green is not a substitute.
+
 ## Complete authorized work before reporting back
 
 - **Do not reopen an approved implementation choice.** Once Phase A and Owner/CTO gates authorize work, finish all approved SQL, TypeScript, UI and executable tests. Size or session complexity alone is not a PRODUCT DECISION NEEDED. Checkpoint in the same lane's GitHub issue/PR without representing partial implementations as complete.

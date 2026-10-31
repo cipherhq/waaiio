@@ -12,7 +12,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
-import { computePlatformHeldTotals, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
 
@@ -254,23 +254,27 @@ export async function GET(request: NextRequest) {
 
     // Batch-fetch all data needed for the main loop in parallel — one query each instead of N per business.
     const [
-      { data: existingPayoutsForPeriod },
-      { data: allFeeRows },
-      { data: allAdjustmentRows },
+      { data: existingPayoutsForPeriod, error: existingPayoutError },
+      { data: legacyPayouts, error: legacyPayoutError },
+      { data: legacyAdjustments, error: legacyAdjustmentError },
+      { data: allFeeRows, error: allFeeError },
+      { data: allAdjustmentRows, error: allAdjustmentError },
       { data: allPayoutAccountRows },
     ] = await Promise.all([
       // Existing payouts for this period
       supabase
         .from('business_payouts')
-        .select('business_id')
+        .select('business_id, currency')
         .in('business_id', bizIds)
         .eq('period_start', periodStartStr)
         .eq('period_end', periodEndStr)
         .limit(5000),
+      supabase.from('business_payouts').select('business_id').in('business_id', bizIds).is('currency', null).limit(5000),
+      supabase.from('payout_adjustments').select('business_id').in('business_id', bizIds).is('currency', null).limit(5000),
       // Platform fees for the period across all businesses
       supabase
         .from('platform_fees')
-        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
+        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .in('business_id', bizIds)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -279,7 +283,7 @@ export async function GET(request: NextRequest) {
       // Unapplied payout adjustments across all businesses
       supabase
         .from('payout_adjustments')
-        .select('id, business_id, amount')
+        .select('id, business_id, amount, currency')
         .in('business_id', bizIds)
         .is('applied_to_payout_id', null)
         .limit(10_000),
@@ -293,21 +297,28 @@ export async function GET(request: NextRequest) {
     ]);
 
     // Build lookup structures from batch results
-    const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
+    if (existingPayoutError || legacyPayoutError || legacyAdjustmentError || allFeeError || allAdjustmentError ||
+        (existingPayoutsForPeriod || []).length >= 5000 || (legacyPayouts || []).length >= 5000 ||
+        (legacyAdjustments || []).length >= 5000 || (allFeeRows || []).length >= 100_000 || (allAdjustmentRows || []).length >= 10_000) {
+      throw new Error('[AUTO-PAYOUT] Payout history not reliably enumerable; stopping safely');
+    }
+    const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(row => `${row.business_id}:${row.currency ?? '__legacy__'}`));
+    const reconciliationRequired = new Set([...(legacyPayouts || []), ...(legacyAdjustments || [])].map(row => row.business_id));
 
-    // Group fees by business_id
-    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean | null | undefined }[]>();
+    // M466: Group fees by business_id with flattened currency
+    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean | null | undefined; currency: string | null }[]>();
     for (const row of (allFeeRows || [])) {
+      const currency = (row as unknown as { payments: { currency: string } }).payments?.currency ?? null;
       const list = feesByBiz.get(row.business_id) ?? [];
-      list.push(row);
+      list.push({ ...row, currency });
       feesByBiz.set(row.business_id, list);
     }
 
-    // Group adjustments by business_id
-    const adjustmentsByBiz = new Map<string, { id: string; amount: number }[]>();
+    // Group adjustments by business_id (M466: includes currency)
+    const adjustmentsByBiz = new Map<string, { id: string; amount: number; currency: string | null }[]>();
     for (const row of (allAdjustmentRows || [])) {
       const list = adjustmentsByBiz.get(row.business_id) ?? [];
-      list.push(row);
+      list.push(row as { id: string; amount: number; currency: string | null });
       adjustmentsByBiz.set(row.business_id, list);
     }
 
@@ -323,7 +334,10 @@ export async function GET(request: NextRequest) {
 
     for (const biz of businesses) {
       // Skip if payout already exists for this period (checked via batch query above)
-      if (alreadyHasPayout.has(biz.id)) continue;
+      if (reconciliationRequired.has(biz.id)) {
+        logger.warn('[AUTO-PAYOUT] Historical currency requires reconciliation', { business_id: biz.id });
+        continue;
+      }
 
       // Calculate gross and fee totals from pre-fetched batch data
       // Exclude direct transfers — Waaiio never holds those funds
@@ -340,14 +354,31 @@ export async function GET(request: NextRequest) {
         });
       }
       const adjustments = adjustmentsByBiz.get(biz.id) ?? [];
+
+      // M466: Skip businesses with unknown-currency fee rows
+      const unknownCurrRows = getUnknownCurrencyFeeRows(fees);
+      if (unknownCurrRows.length > 0) {
+        Sentry.captureMessage('[AUTO-PAYOUT] Fee rows with unknown currency — business skipped', {
+          level: 'warning',
+          extra: { business_id: biz.id, count: unknownCurrRows.length },
+        });
+        continue;
+      }
+
+      // M466: Generate one payout per currency
+      const currencies = getEligibleCurrencies(fees);
+      for (const currency of currencies) {
+      if (alreadyHasPayout.has(`${biz.id}:${currency}`)) continue;
+      const currencyAdjustments = adjustments.filter(row => row.currency === currency);
       const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable } =
-        computePlatformHeldTotals(fees, adjustments);
+        computePlatformHeldTotals(fees, currency, currencyAdjustments);
       let netAmount = netAvailable;
 
       if (netAmount <= 0) continue;
 
       // Minimum payout threshold — skip if amount too small, will accumulate for next period
-      const minPayout = MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000;
+      const minPayout = currency === getCurrencyCode(biz.country_code as CountryCode)
+        ? (MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000) : 0;
       if (netAmount < minPayout) continue;
 
       const net = netAmount;
@@ -383,7 +414,7 @@ export async function GET(request: NextRequest) {
       // auto-payout rules. All other markets get pending for manual review.
       const AUTO_APPROVE_COUNTRIES = new Set(['NG']);
       const hasEligibleProvider =
-        AUTO_APPROVE_COUNTRIES.has(biz.country_code)
+        currency === bizCurrency && AUTO_APPROVE_COUNTRIES.has(biz.country_code)
         && hasEligiblePaystackAccount && paystackSecretKey !== '';
 
       // FIN-002: Auto-approval requires ALL conditions — eligible provider
@@ -405,15 +436,25 @@ export async function GET(request: NextRequest) {
       if ((biz.verification_level || 'unverified') === 'unverified') holdReasons.push('Business not verified');
 
       const decision = decideAutoPayoutOutcome({ canAutoApprove, limitCheck, holdReasons });
-      const { status, overLimit } = decision;
+      let { status } = decision;
+      const { overLimit } = decision;
+
+      // Non-home-currency payouts require manual provider/limit verification
+      // (mirrors the currency_review flag from manual generate route).
+      if (currency !== bizCurrency) {
+        const currencyFlag = { type: 'currency_review', message: 'Payout currency requires manual provider/limit verification', severity: 'critical' };
+        decision.structuredFlags.push(currencyFlag);
+        decision.flags.push(currencyFlag);
+        status = 'held';
+      }
 
       // ── Create payout record ──
       // Two paths: with adjustments (three-phase INSERT→link→promote) and
       // without adjustments (direct INSERT with computed status).
 
-      if (adjustments && adjustments.length > 0) {
+      if (currencyAdjustments.length > 0) {
         // --- Adjustment-linked payout: INSERT held → link → promote ---
-        const adjIds = [...new Set(adjustments.map(a => a.id))];
+        const adjIds = [...new Set(currencyAdjustments.map(a => a.id))];
         const intendedStatus = status;
 
         // Use decision's structured flags for the adjustment path
@@ -434,6 +475,7 @@ export async function GET(request: NextRequest) {
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
           net_amount: net,
+          currency,
           status: 'held',
           payout_account_id: payoutAccount?.id || null,
           flags: insertFlags,
@@ -548,6 +590,7 @@ export async function GET(request: NextRequest) {
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
           net_amount: net,
+          currency,
           status,
           payout_account_id: payoutAccount?.id || null,
           flags: insertFlags.length > 0 ? insertFlags : [],
@@ -571,13 +614,14 @@ export async function GET(request: NextRequest) {
           held++;
         }
       }
+      } // end per-currency loop (M466)
     }
 
     // ── Auto-release held payouts where blocking condition has expired ──
     let released = 0;
     const { data: heldPayouts } = await supabase
       .from('business_payouts')
-      .select('id, business_id, flags')
+      .select('id, business_id, currency, flags')
       .eq('status', 'held');
 
     if (heldPayouts && heldPayouts.length > 0) {
@@ -604,7 +648,7 @@ export async function GET(request: NextRequest) {
 
       for (const hp of heldPayouts) {
         const heldBiz = heldBizMap.get(hp.business_id);
-        if (!heldBiz) continue;
+        if (!heldBiz || !hp.currency || reconciliationRequired.has(hp.business_id)) continue;
 
         const age = (Date.now() - new Date(heldBiz.created_at).getTime()) / (1000 * 60 * 60 * 24);
         const isVerified = heldBiz.verification_level && heldBiz.verification_level !== 'unverified';
@@ -624,6 +668,8 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
+        const homeBusiness = businesses.find(b => b.id === hp.business_id);
+        if (!homeBusiness || hp.currency !== getCurrencyCode(homeBusiness.country_code as CountryCode)) continue;
         if (coolingDone && isVerified && hasAccount) {
           await supabase
             .from('business_payouts')

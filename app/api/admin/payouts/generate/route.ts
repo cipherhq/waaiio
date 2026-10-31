@@ -7,7 +7,9 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logAdminAudit } from '@/lib/admin-audit';
-import { computePlatformHeldTotals, getUnclassifiedFeeRows } from '@/lib/payments/payable-fees';
+import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
+import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
 
 interface Flag {
   type: string;
@@ -35,6 +37,7 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
+    await loadCountries();
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const COOLING_PERIOD_DAYS = settings.payout_cooling_period_days;
     const VELOCITY_THRESHOLD = settings.fraud_velocity_threshold;
@@ -77,11 +80,10 @@ export async function POST(request: NextRequest) {
       // Check if payout already exists for this period
       const { data: existing, error: existingError } = await supabase
         .from('business_payouts')
-        .select('id')
+        .select('id, currency')
         .eq('business_id', biz.id)
         .eq('period_start', periodStartStr)
-        .eq('period_end', periodEndStr)
-        .maybeSingle();
+        .eq('period_end', periodEndStr);
 
       // Fail closed: if we can't check for duplicates, count as failed
       if (existingError) {
@@ -89,17 +91,32 @@ export async function POST(request: NextRequest) {
         failed++;
         continue;
       }
-      if (existing) continue;
+      // Never generate for a merchant with unresolved historical currency.
+      const { data: legacyPayouts, error: legacyPayoutError } = await supabase
+        .from('business_payouts').select('id')
+        .eq('business_id', biz.id).is('currency', null).maybeSingle();
+      if (legacyPayoutError || legacyPayouts) {
+        logger.warn('[PAYOUT] Historical currency requires reconciliation', { business_id: biz.id });
+        failed++;
+        continue;
+      }
 
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
       // Exclude direct transfers — Waaiio never holds those funds (money goes straight to business bank account)
+      // M466: Join platform_fees → payments to get authoritative currency
       const { data: fees, error: feesError } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
+
+      // Flatten the joined currency into the fee row for payable-fees.ts
+      const feesWithCurrency = (fees || []).map(f => ({
+        ...f,
+        currency: (f as unknown as { payments: { currency: string } }).payments?.currency ?? null,
+      }));
 
       // Fail closed: if fee data is unavailable, count as failed (never generate with partial data)
       if (feesError) {
@@ -109,9 +126,10 @@ export async function POST(request: NextRequest) {
       }
 
       // Fetch adjustments before gross check — needed for shared formula
+      // M466: Include currency for currency-scoped calculations
       const { data: adjustments, error: adjQueryError } = await supabase
         .from('payout_adjustments')
-        .select('id, amount')
+        .select('id, amount, currency')
         .eq('business_id', biz.id)
         .is('applied_to_payout_id', null);
 
@@ -120,10 +138,16 @@ export async function POST(request: NextRequest) {
         failed++;
         continue;
       }
+      // An unapplied adjustment with unknown currency cannot be attributed to a payout.
+      if ((adjustments || []).some(row => !row.currency)) {
+        logger.warn('[PAYOUT] Unclassified adjustment requires reconciliation', { business_id: biz.id });
+        failed++;
+        continue;
+      }
 
       // Canonical formula: only gateway payments (Waaiio holds these funds).
       // Direct transfers excluded — business already received those funds.
-      const unclassifiedFees = getUnclassifiedFeeRows(fees || []);
+      const unclassifiedFees = getUnclassifiedFeeRows(feesWithCurrency);
       if (unclassifiedFees.length > 0) {
         const amt = unclassifiedFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
         custodyUnclassifiedCount += unclassifiedFees.length;
@@ -134,8 +158,26 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // M466: Fail closed if any eligible fee row has unknown currency
+      const unknownCurrencyRows = getUnknownCurrencyFeeRows(feesWithCurrency);
+      if (unknownCurrencyRows.length > 0) {
+        Sentry.captureMessage('[PAYOUT-GENERATE] Fee rows with unknown currency — business skipped', {
+          level: 'warning',
+          extra: { business_id: biz.id, count: unknownCurrencyRows.length },
+        });
+        failed++;
+        continue;
+      }
+
+      // M466: Generate one payout per currency
+      const currencies = getEligibleCurrencies(feesWithCurrency);
+      if (currencies.length === 0) continue;
+
+      for (const currency of currencies) {
+      if (existing?.some(row => row.currency === currency)) continue;
+      const currencyAdjustments = (adjustments || []).filter(row => row.currency === currency);
       const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable: net } =
-        computePlatformHeldTotals(fees || [], adjustments || []);
+        computePlatformHeldTotals(feesWithCurrency, currency, currencyAdjustments);
 
       if (gross <= 0) continue;
 
@@ -155,7 +197,9 @@ export async function POST(request: NextRequest) {
       }
 
       // Minimum payout threshold — skip if amount too small
-      const minPayout = MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000;
+      let expectedCurrency: string | undefined;
+      try { expectedCurrency = getCurrencyCode((biz.country_code || '') as CountryCode); } catch { /* unknown country */ }
+      const minPayout = currency === expectedCurrency ? (MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000) : 0;
       if (net < minPayout) {
         skipped++;
         continue;
@@ -188,15 +232,24 @@ export async function POST(request: NextRequest) {
         status = 'held';
       }
 
+      // Hold non-home currencies for separate provider/limit verification.
+      let homeCurrency: string | undefined;
+      try { homeCurrency = getCurrencyCode((biz.country_code || '') as CountryCode); } catch { /* unknown country */ }
+      if (!homeCurrency || currency !== homeCurrency) {
+        flags.push({ type: 'currency_review', message: 'Payout currency requires manual provider/limit verification', severity: 'critical' });
+        status = 'held';
+      }
+
       // --- PAYOUT LIMIT CHECK ---
       const monthlyLimit = Number(biz.payout_limit_monthly || 0);
-      if (monthlyLimit > 0 && monthlyLimit < 999999999) {
+      if (currency === homeCurrency && monthlyLimit > 0 && monthlyLimit < 999999999) {
         // Check total payouts this month
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
         const { data: monthPayouts } = await supabase
           .from('business_payouts')
           .select('net_amount')
           .eq('business_id', biz.id)
+          .eq('currency', currency)
           .in('status', ['pending', 'approved', 'processing', 'paid'])
           .gte('created_at', monthStart);
 
@@ -248,9 +301,9 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
-      if (adjustments && adjustments.length > 0) {
+      if (currencyAdjustments.length > 0) {
         // --- Adjustment-linked payout: INSERT held → link → promote ---
-        const adjIds = [...new Set(adjustments.map(a => a.id))];
+        const adjIds = [...new Set(currencyAdjustments.map(a => a.id))];
         const intendedStatus = status; // remember the computed status
 
         const insertFlags: Flag[] = [...flags, {
@@ -270,6 +323,7 @@ export async function POST(request: NextRequest) {
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
           net_amount: net,
+          currency,
           status: 'held',
           flags: insertFlags,
         }).select('id').single();
@@ -378,6 +432,7 @@ export async function POST(request: NextRequest) {
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
           net_amount: net,
+          currency,
           status,
           flags,
         }).select('id').single();
@@ -396,6 +451,7 @@ export async function POST(request: NextRequest) {
           created++;
         }
       }
+      } // end per-currency loop (M466)
     }
 
     // Audit log — uses service client (INSERT revoked from authenticated)
