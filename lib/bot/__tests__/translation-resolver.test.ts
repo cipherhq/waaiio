@@ -657,6 +657,6 @@ describe('ALS scope isolation', () => {
 
     expect(resultA).toBe('Pase Oda');
     expect(resultB).not.toBe('Pase Oda'); // Should be the code default
-    expect(resultB).toBe('Place an Order'); // English code default
+    expect(resultB).toBe('Browse Products'); // English code default
   });
 });

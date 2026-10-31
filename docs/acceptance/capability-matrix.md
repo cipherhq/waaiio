@@ -16,7 +16,7 @@ Generated from `shared/capabilities.ts` canonical registry + `CAPABILITY_TIER_RE
 | 8 | `feedback` | Reviews | Free | /dashboard/feedback | Customer rates service | `feedback` rows | N/A | No feedback | Feedback list |
 | 9 | `poll` | Polls | Free | /dashboard/polls | Customer votes | `poll_votes` | N/A | Poll closed | Poll results |
 | 10 | `reservation` | Reservations | Pro | /dashboard/properties | Customer picks dates | `reservations` | Deposit/full | Date conflict | Property list |
-| 11 | `table_reservation` | Table Reservations | Free | /dashboard/reservations | Customer reserves table | `reservations` | Optional deposit | Full capacity | Reservation list |
+| 11 | `table_reservation` | Table Reservations | Pro | /dashboard/reservations | Customer reserves table | `reservations` | Optional deposit | Full capacity | Reservation list |
 | 12 | `recurring` | Subscriptions | Pro | /dashboard/recurring | Customer subscribes | `subscriptions` | Recurring charge | Failed renewal, cancel | Subscription list |
 | 13 | `broadcast` | Broadcasts | Pro | /dashboard/broadcasts | All customers receive | `broadcast_messages` | N/A | Failed delivery, rate limit | Broadcast editor |
 | 14 | `membership` | Loyalty Tiers | Pro | /dashboard/membership | Auto-upgrade | `membership_tiers` | Tier discounts | Downgrade | Tier display |

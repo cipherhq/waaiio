@@ -259,7 +259,7 @@ describe('561-G: PCM order confirmation', () => {
 
 describe('561-G: capability menu labels', () => {
   it('EN capability labels match expected text', () => {
-    expect(getCapabilityLabel('ordering', 'shop', null, 'en')).toBe('Place an Order');
+    expect(getCapabilityLabel('ordering', 'shop', null, 'en')).toBe('Browse Products');
     expect(getCapabilityLabel('scheduling', 'barber', null, 'en')).toBe('Our Services');
     expect(getCapabilityLabel('chat', 'shop', null, 'en')).toBe('Chat with Us');
     expect(getCapabilityLabel('ticketing', 'event_services', null, 'en')).toBe('Buy Tickets');
@@ -354,12 +354,12 @@ describe('561-G: capability menu labels', () => {
   });
 
   it('uncertified language falls back to English', () => {
-    expect(getCapabilityLabel('ordering', 'shop', null, 'fr')).toBe('Place an Order');
+    expect(getCapabilityLabel('ordering', 'shop', null, 'fr')).toBe('Browse Products');
     expect(getCapabilityLabel('chat', 'shop', null, 'yo')).toBe('Chat with Us');
   });
 
   it('no lang argument defaults to English (backward compat)', () => {
-    expect(getCapabilityLabel('ordering', 'shop')).toBe('Place an Order');
+    expect(getCapabilityLabel('ordering', 'shop')).toBe('Browse Products');
     expect(getCapabilityLabel('chat', 'shop')).toBe('Chat with Us');
   });
 
