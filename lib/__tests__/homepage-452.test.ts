@@ -92,9 +92,10 @@ describe('#452 homepage simplification — provider truth', () => {
 });
 
 describe('#452 homepage simplification — pricing and trial', () => {
-  it('pricing uses getPricingTiers (not hardcoded values)', () => {
-    expect(homeClientSrc).toContain('getPricingTiers');
-    expect(homeClientSrc).toContain('formatCurrency');
+  it('homepage directs visitors to authoritative pricing', () => {
+    expect(homeClientSrc).not.toContain('getPricingTiers');
+    expect(homeClientSrc).toContain('href="/pricing"');
+    expect(homeClientSrc).not.toContain('formatCurrency');
   });
 
   it('does not introduce hardcoded specific trial duration claim', () => {
@@ -164,9 +165,9 @@ describe('#452 homepage simplification — structural integrity', () => {
     expect(homeClientSrc).toContain('See all features');
   });
 
-  it('homepage has pricing section with country selector', () => {
-    expect(homeClientSrc).toContain('PRICE_COUNTRIES');
-    expect(homeClientSrc).toContain('setPriceCountry');
+  it('homepage retains pricing section and country pricing link', () => {
+    expect(homeClientSrc).toContain('id="pricing"');
+    expect(homeClientSrc).toContain('View current subscription prices');
   });
 
   it('FAQ count is reduced (4-5 questions)', () => {

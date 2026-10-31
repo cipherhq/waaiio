@@ -110,7 +110,7 @@ export default function FeaturesPage() {
               <FeatureCard
                 icon="&#x23F0;"
                 title="Smart Reminders"
-                desc="Automatic WhatsApp reminders before appointments and events, reducing no-shows by up to 60%."
+                desc="Automatic WhatsApp reminders before appointments and events, helping customers remember their bookings."
               />
               <FeatureCard
                 icon="&#x1F3AD;"

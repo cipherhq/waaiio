@@ -36,7 +36,7 @@ const FAQ_DATA = [
   },
   {
     question: 'How do payments work?',
-    answer: 'When a customer needs to pay, they receive a secure payment link in the chat. We support Paystack (Nigeria, Ghana), Stripe (US, UK, Canada), Square (US), Flutterwave, and PayPal. Funds go directly to your account.',
+    answer: 'When a customer needs to pay, they receive a secure payment link in the chat. We support Paystack (Nigeria, Ghana), Stripe (US, UK, Canada), Square (US), Flutterwave, and PayPal. Connected merchants receive payments through their provider with the supported fee split. Payments collected through Waaiio are settled afterward by Waaiio, with payment confirmation and an audit record.',
   },
   {
     question: 'Do I need a developer?',

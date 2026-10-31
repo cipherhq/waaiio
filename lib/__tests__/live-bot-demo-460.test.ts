@@ -123,8 +123,8 @@ describe('#460 LiveBotDemo — no dead/looping branches', () => {
   });
 
   it('Book scenario: time options all have triggers', () => {
-    expect(demoSrc).toContain("trigger: 'Tomorrow 2pm'");
-    expect(demoSrc).toContain("trigger: 'Tomorrow 4pm'");
+    expect(demoSrc).toContain("trigger: '2:00 PM'");
+    expect(demoSrc).toContain("trigger: '4:00 PM'");
   });
 
   it('Order scenario: greeting options all have triggers', () => {
@@ -132,10 +132,10 @@ describe('#460 LiveBotDemo — no dead/looping branches', () => {
     expect(demoSrc).toContain("trigger: 'Fried Rice'");
   });
 
-  it('Order scenario: add/skip options all have triggers', () => {
-    // Both "Add Plantain" and "No thanks" must have triggers
-    expect(demoSrc).toMatch(/trigger: 'Add Plantain/);
-    expect(demoSrc).toContain("trigger: 'No thanks, place order'");
+  it('Order scenario: checkout options all have triggers', () => {
+    // Pickup checkout requires an explicit order and payment step.
+    expect(demoSrc).toContain("trigger: 'Checkout'");
+    expect(demoSrc).toContain("trigger: 'Pickup'");
     expect(demoSrc).toContain("trigger: 'Place Order'");
   });
 
