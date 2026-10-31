@@ -58,6 +58,7 @@ beforeEach(() => {
     return q;
   }});
   mocks.fetch.mockImplementation(async (_url: string, init?: RequestInit) => {
+    if (_url.endsWith('/questions')) return new Response(JSON.stringify({questions:[],revision:0,responses:[]}));
     const input = init?.body ? JSON.parse(String(init.body)) : {op:'snapshot'};
     calls.push(input);
     if(input.op==='snapshot' && nextSnapshotGate) {

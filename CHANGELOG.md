@@ -1,3 +1,9 @@
+## 2026-10-31 — Party questions and reminder review (source only)
+
+- Adds bounded, versioned Party questions, organizer answer readback and atomic web/bot RSVP saves; required answers apply only to Accepted. Preserves answer history and seating/capacity authority. Affects Party detail, RSVP routes and bot entry/flow; M489 must precede app rollout.
+- Adds explicit reminder preview/confirmation, saved-table content, purpose/channel consent checks and durable single-attempt outcomes. Manual chase remains pending/maybe; scheduled follow-up remains accepted/maybe with existing reminder flag/date suppression. M490 must precede app rollout. Verified webhook receipts supply channel/sender service-window evidence; dispatch revalidation reads one guest at a time. Ambiguous or interrupted dispatches are not automatically resumed.
+- Changes are confined to Party paths in invite/reminder handlers; ordinary Events retain their path. No hosted migration, deployment, provider sends or template provisioning performed. Local tests do not establish hosted readiness.
+
 ### #785 — Surgical merchant dashboard fixes (2026-10-30)
 
 - Synchronize selected customer phone displays and product gallery previews with current state; use the existing business-first verification storage path.

@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Image from 'next/image';
+import PartyQuestionsEditor from './components/PartyQuestionsEditor';
+import PartyReminderPreview from './components/PartyReminderPreview';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { QRCodeSVG } from 'qrcode.react';
 import { createClient } from '@/lib/supabase/client';
@@ -78,7 +80,6 @@ export default function PartiesPage() {
   const [showBulk, setShowBulk] = useState(false);
   const [bulkPhones, setBulkPhones] = useState('');
   const [sending, setSending] = useState(false);
-  const [sendingReminder, setSendingReminder] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
 
   // Table management state
@@ -355,28 +356,7 @@ export default function PartiesPage() {
     setSending(false);
   }
 
-  async function handleSendReminders() {
-    if (!selectedParty) return;
-    setSendingReminder(true);
-    setStatusMessage('');
-    try {
-      const res = await fetch('/api/events/invite', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partyId: selectedParty.id, businessId: business.id }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setStatusMessage(`Reminders sent to ${data.sent} guests`);
-        loadInvites(selectedParty.id);
-      } else {
-        setStatusMessage(data.error || 'Failed to send reminders');
-      }
-    } catch {
-      setStatusMessage('Failed to send reminders');
-    }
-    setSendingReminder(false);
-  }
+
 
   // ── Tag management ──
   async function handleAddTag(inviteId: string, tag: string) {
@@ -783,11 +763,7 @@ export default function PartiesPage() {
               Export Guest List
             </button>
           )}
-          {(pending.length > 0 || maybe.length > 0) && (
-            <button onClick={handleSendReminders} disabled={sendingReminder} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">
-              {sendingReminder ? 'Sending...' : `Send Reminders (${pending.length + maybe.length})`}
-            </button>
-          )}
+
         </div>
 
         {/* Tag filter + bulk tag */}
@@ -862,7 +838,7 @@ export default function PartiesPage() {
                     target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-medium text-white hover:opacity-85"
                   >
-                    <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
+                    <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.489-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.489.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
                     WhatsApp
                   </a>
                   <a
@@ -1099,6 +1075,10 @@ export default function PartiesPage() {
               </button>
             </div>
           </div>
+
+          <PartyReminderPreview key={`reminders:${selectedParty.id}`} partyId={selectedParty.id} onSaved={() => loadInvites(selectedParty.id)} />
+
+          <PartyQuestionsEditor key={`questions:${selectedParty.id}`} partyId={selectedParty.id} />
 
           <PartySeatingEditor
             key={selectedParty.id}

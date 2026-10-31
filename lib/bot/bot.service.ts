@@ -1,3 +1,5 @@
+import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
+import { currentAnswers } from '@/lib/parties/rsvp-questions';
 import { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/lib/logger';
@@ -332,11 +334,32 @@ export class BotService {
     }
 
     // Handle RSVP button taps from invite messages
+    let partyButtonToken: string | undefined;
+    let partyButtonSaved = false;
     const rsvpButtonMatch = text.match(/^rsvp_(yes|maybe|no)_([a-f0-9-]+)$/i);
     if (rsvpButtonMatch) {
       const rsvpChoice = rsvpButtonMatch[1] as 'yes' | 'maybe' | 'no';
       const rsvpStatus = rsvpChoice === 'yes' ? 'accepted' : rsvpChoice === 'maybe' ? 'maybe' : 'declined';
       const inviteId = rsvpButtonMatch[2];
+      const { data: boundInvite, error: boundError } = await this.supabase.from('event_invites')
+        .select('party_id, business_id, invite_token, guest_phone, plus_ones, parties(question_definitions, question_revision)')
+        .eq('id', inviteId).single();
+      if (boundError || !boundInvite) { await this.sendText(from, 'Invitation unavailable.'); return; }
+      if (boundInvite.party_id) {
+        if (!from.replace(/\D/g, '') || from.replace(/\D/g, '') !== String(boundInvite.guest_phone || '').replace(/\D/g, '')) {
+          await this.sendText(from, 'Invitation unavailable.'); return;
+        }
+        const details = (Array.isArray(boundInvite.parties) ? boundInvite.parties[0] : boundInvite.parties) as unknown as { question_definitions: unknown[]; question_revision: number };
+        if (rsvpStatus === 'accepted' && details?.question_definitions?.length) partyButtonToken = boundInvite.invite_token;
+        else {
+          const saved = await completePartyRsvp(this.supabase, boundInvite.invite_token,
+            { status: rsvpStatus, plus_ones: boundInvite.plus_ones, answers: {}, revision: details?.question_revision },
+            { sender: from, businessId: boundInvite.business_id });
+          if (!saved.ok) { await this.sendText(from, saved.error); return; }
+          partyButtonSaved = true;
+        }
+      }
+      if (!partyButtonToken) {
       const defaultEmoji: Record<string, string> = { accepted: '🎉', maybe: '🤔', declined: '🙏' };
       const defaultLabel: Record<string, string> = {
         accepted: "You're in! Can't wait to see you there! 🥳🔥",
@@ -344,7 +367,7 @@ export class BotService {
         declined: "We'll miss you! Maybe next time 💛",
       };
 
-      await this.supabase
+      if (!partyButtonSaved) await this.supabase
         .from('event_invites')
         .update({ status: rsvpStatus, responded_at: new Date().toISOString() })
         .eq('id', inviteId);
@@ -409,11 +432,12 @@ export class BotService {
       } catch (err) { logger.warn('[BOT] RSVP handling failed (non-critical):', err); }
 
       return;
+      }
     }
 
     // Handle RSVP keyword or token — check for pending invites
     const isRsvpKeyword = /^(rsvp|invite|yes\s*i'?m?\s*coming|i'?ll?\s*be\s*there)$/i.test(text);
-    const rsvpTokenMatch = text.match(/^rsvp\s+([a-f0-9]{24})$/i);
+    const rsvpTokenMatch = partyButtonToken ? ['', partyButtonToken] : text.match(/^rsvp\s+([a-f0-9]{24})$/i);
     if (isRsvpKeyword || rsvpTokenMatch) {
       const phoneP2 = from.startsWith('+') ? from : `+${from}`;
       const phoneN2 = from.startsWith('+') ? from.slice(1) : from;
@@ -446,10 +470,10 @@ export class BotService {
         // Try party-linked invites
         let partyInviteQuery = this.supabase
           .from('event_invites')
-          .select('id, event_id, party_id, guest_name, invite_token, status, parties!inner(id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, business_id, businesses!inner(id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code))')
+          .select('id, event_id, party_id, guest_name, invite_token, status, custom_answers, plus_ones, dietary_notes, parties!inner(id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, question_definitions, question_revision, business_id, businesses!inner(id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code))')
           .or(`guest_phone.eq.${sanitizeFilterValue(phoneP2)},guest_phone.eq.${sanitizeFilterValue(phoneN2)}`)
-          .not('party_id', 'is', null)
-          .in('status', ['pending', 'maybe']);
+          .not('party_id', 'is', null);
+        if (!rsvpTokenMatch) partyInviteQuery = partyInviteQuery.in('status', ['pending', 'maybe']);
 
         if (rsvpTokenMatch) {
           partyInviteQuery = partyInviteQuery.eq('invite_token', rsvpTokenMatch[1]);
@@ -486,6 +510,12 @@ export class BotService {
 
         if (inviteSource === 'party') {
           sessionData.rsvp_party_id = pendingInvite.party_id;
+          sessionData.rsvp_token = pendingInvite.invite_token;
+          sessionData.rsvp_questions = ev.question_definitions || [];
+          sessionData.rsvp_revision = ev.question_revision;
+          sessionData.rsvp_answers = currentAnswers(ev.question_definitions as never || [], pendingInvite.custom_answers as never || {});
+          sessionData.rsvp_question_index = 0;
+          if (partyButtonToken) sessionData.rsvp_response = 'accepted';
           sessionData.rsvp_party_name = ev.name;
           sessionData.rsvp_party_date = ev.date;
           sessionData.rsvp_party_time = ev.time;
@@ -504,7 +534,7 @@ export class BotService {
           whatsapp_number: from,
           user_id: null,
           business_id: biz.id as string,
-          current_step: 'rsvp_welcome',
+          current_step: partyButtonToken ? 'rsvp_plus_ones' : 'rsvp_welcome',
           session_data: sessionData,
           is_active: true,
           expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -521,7 +551,7 @@ export class BotService {
                 id: newSession.id,
                 user_id: null,
                 business_id: biz.id as string,
-                current_step: 'rsvp_welcome',
+                current_step: partyButtonToken ? 'rsvp_plus_ones' : 'rsvp_welcome',
                 session_data: newSession.session_data as Record<string, unknown>,
                 version: (newSession as Record<string, unknown>).version as number ?? 0,
               },
