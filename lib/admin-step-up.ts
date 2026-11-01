@@ -6,8 +6,8 @@
  *
  * Flow:
  *  1. PREPARE — Server records admin, session, action, target, params; creates
- *     an MFA challenge via Supabase GoTrue API; returns stepUpId + challengeId.
- *  2. VERIFY — Admin submits TOTP code; server verifies via GoTrue; marks
+ *     a pending grant and verified factor; returns stepUpId (challengeId empty).
+ *  2. VERIFY — Admin submits TOTP code; server challenges and verifies on one TLS connection; marks
  *     step-up as verified. The step-up is now consumable for exactly 5 minutes.
  *  3. CONSUME — At the mutation boundary, the route handler atomically consumes
  *     the step-up. If already consumed, expired, or mismatched, the mutation
@@ -22,6 +22,7 @@
 import { createHash } from 'crypto';
 import type { PlatformAdmin } from './admin-auth';
 import { logAdminAudit } from '@/lib/admin-audit';
+import { verifyTotpOnSingleConnection } from '@/lib/admin-mfa-transport';
 
 export type StepUpAction =
   | 'payout_approve'
@@ -85,8 +86,8 @@ export interface StepUpPrepareResult {
 /**
  * Prepare a step-up authorization for a sensitive operation.
  *
- * Creates a challenge via the Supabase GoTrue API using the admin's bearer
- * token, and records the pending step-up in admin_step_up_authorizations.
+ * Selects the verified factor using the admin bearer token and records the
+ * pending operation. The challenge is created only when the code is submitted.
  */
 export async function prepareStepUp(
   admin: PlatformAdmin,
@@ -125,19 +126,6 @@ export async function prepareStepUp(
     throw new StepUpError('No verified TOTP factor enrolled');
   }
 
-  // Create MFA challenge via GoTrue API
-  const challengeRes = await fetch(`${supabaseUrl}/auth/v1/factors/${totpFactor.id}/challenge`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${admin.bearerToken}`,
-      'apikey': anonKey,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!challengeRes.ok) throw new StepUpError('Failed to create MFA challenge');
-  const challenge = await challengeRes.json();
-
   const paramsHash = hashOperationParams(params);
 
   // Insert the pending step-up authorization
@@ -149,7 +137,7 @@ export async function prepareStepUp(
       action_type: actionType,
       target_id: targetId,
       params_hash: paramsHash,
-      challenge_id: challenge.id,
+      challenge_id: null,
       factor_id: totpFactor.id,
       expires_at: new Date(Date.now() + STEP_UP_MAX_AGE_SECONDS * 1000).toISOString(),
     })
@@ -163,7 +151,7 @@ export async function prepareStepUp(
   return {
     stepUpId: stepUp.id,
     factorId: totpFactor.id,
-    challengeId: challenge.id,
+    challengeId: '',
   };
 }
 
@@ -206,30 +194,36 @@ export async function verifyStepUp(
   if (!supabaseUrl || !anonKey) throw new StepUpError('Missing Supabase configuration');
   if (!stepUp.factor_id) throw new StepUpError('Step-up challenge has no factor identity');
 
-  const verifyRes = await fetch(`${supabaseUrl}/auth/v1/factors/${stepUp.factor_id}/verify`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${admin.bearerToken}`,
-      'apikey': anonKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      challenge_id: stepUp.challenge_id,
-      code,
-    }),
-  });
+  if (stepUp.challenge_id) throw new StepUpError('Cancel and restart this operation with a fresh code.', true);
 
-  if (!verifyRes.ok) {
-    const errBody = await verifyRes.json().catch(() => ({}));
-    throw new StepUpError(errBody?.msg || errBody?.error || 'TOTP verification failed');
-  }
-
-  // GoTrue rotates the session tokens during MFA verification. The browser
-  // must persist them before executing the authorized operation.
-  const verifiedSession = await verifyRes.json();
-  if (typeof verifiedSession?.access_token !== 'string' ||
-      typeof verifiedSession?.refresh_token !== 'string') {
-    throw new StepUpError('MFA verification returned no refreshed session');
+  let challengeId: string;
+  let verifiedSession: { access_token: string; refresh_token: string };
+  try {
+    verifiedSession = await verifyTotpOnSingleConnection({
+      supabaseUrl, anonKey, bearerToken: admin.bearerToken,
+      factorId: stepUp.factor_id, code,
+      bindChallenge: async id => {
+        // One attempt per prepared grant. Concurrent callers cannot rotate or
+        // replace an already bound challenge, including after an MFA failure.
+        const { data: bound, error: bindError } = await supabase
+          .from('admin_step_up_authorizations')
+          .update({ challenge_id: id })
+          .eq('id', stepUpId)
+          .eq('admin_user_id', admin.userId)
+          .eq('session_id', sessionId)
+          .eq('factor_id', stepUp.factor_id)
+          .is('challenge_id', null)
+          .is('verified_at', null)
+          .is('consumed_at', null)
+          .gt('expires_at', new Date().toISOString())
+          .select('id')
+          .maybeSingle();
+        if (bindError || !bound) throw new Error('Step-up is no longer pending');
+        challengeId = id;
+      },
+    });
+  } catch {
+    throw new StepUpError('MFA verification failed. Cancel and restart this operation with a fresh code.', true);
   }
 
   // The verification transition is conditional on *all* pending-state
@@ -241,7 +235,7 @@ export async function verifyStepUp(
     .eq('id', stepUpId)
     .eq('admin_user_id', admin.userId)
     .eq('session_id', sessionId)
-    .eq('challenge_id', stepUp.challenge_id)
+    .eq('challenge_id', challengeId!)
     .eq('factor_id', stepUp.factor_id)
     .is('verified_at', null)
     .is('consumed_at', null)
@@ -249,7 +243,7 @@ export async function verifyStepUp(
     .select('id')
     .maybeSingle();
 
-  if (updateError || !marked) throw new StepUpError('Step-up verification is no longer pending');
+  if (updateError || !marked) throw new StepUpError('Step-up verification is no longer pending. Cancel and restart this operation.', true);
 
   return { access_token: verifiedSession.access_token, refresh_token: verifiedSession.refresh_token };
 }
@@ -327,7 +321,7 @@ export async function consumeStepUp(
 }
 
 export class StepUpError extends Error {
-  constructor(message: string) {
+  constructor(message: string, public readonly restartRequired = false) {
     super(message);
     this.name = 'StepUpError';
   }
