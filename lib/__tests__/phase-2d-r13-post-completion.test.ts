@@ -17,14 +17,14 @@ vi.mock('@/lib/logger', () => ({
 }));
 vi.mock('@/lib/errors', () => ({ safeLogErrorContext: () => ({}) }));
 vi.mock('@/lib/capabilities/service', () => ({ getEnabledCapabilities: vi.fn().mockResolvedValue([]) }));
-vi.mock('@/lib/pdf/receipt-generator', () => ({ generateReceiptPdf: (...args: any[]) => mockGenerateReceiptPdf(...args) }));
+vi.mock('@/lib/pdf/receipt-generator', () => ({ generateReceiptPdf: (...args: Parameters<typeof mockGenerateReceiptPdf>) => mockGenerateReceiptPdf(...args) }));
 vi.mock('@/lib/bot/automation/sequence-service', () => ({ triggerSequences: vi.fn() }));
 vi.mock('@/lib/bot/automation/rules-engine', () => ({ evaluateRules: vi.fn() }));
 vi.mock('@/lib/bot/customer-intelligence', () => ({ calculateLtvTier: vi.fn(() => 'new') }));
 vi.mock('@/lib/payments/terminal-effects', () => ({
-  driveInternalEffect: (...args: any[]) => mockDriveInternalEffect(...args),
-  driveExternalEffect: (...args: any[]) => mockDriveExternalEffect(...args),
-  skipOptionalEffect: (...args: any[]) => mockSkipOptionalEffect(...args),
+  driveInternalEffect: (...args: Parameters<typeof mockDriveInternalEffect>) => mockDriveInternalEffect(...args),
+  driveExternalEffect: (...args: Parameters<typeof mockDriveExternalEffect>) => mockDriveExternalEffect(...args),
+  skipOptionalEffect: (...args: Parameters<typeof mockSkipOptionalEffect>) => mockSkipOptionalEffect(...args),
 }));
 vi.mock('@/lib/constants', () => ({
   PRICING_TIERS: { free: { whitelabel: false }, growth: { whitelabel: false } },

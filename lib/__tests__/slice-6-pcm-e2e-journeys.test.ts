@@ -121,7 +121,7 @@ describe('J28 — Invoice PDF (Pidgin)', () => {
     const pcmBundle = getPdfLocalizationBundle('pcm');
 
     const buffer = await generateInvoicePdf({
-      businessName: 'TestBiz Salon',
+      businessName: 'TestBiz Salon', customerEmail: null, customerAddress: null, currency: 'NGN', notes: null, terms: null,
       referenceCode: 'INV-PCM-001',
       issueDate: '2026-12-01',
       dueDate: '2026-12-31',

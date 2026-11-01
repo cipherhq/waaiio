@@ -14,7 +14,7 @@
  * The details step shows the pay CTA with the plan price.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach , beforeEach} from 'vitest';
 import React from 'react';
 import { render, act, waitFor, cleanup, fireEvent } from '@testing-library/react';
 
@@ -104,10 +104,10 @@ const PRICING_FIXTURE = {
 // ─── Helpers ───
 
 const originalFetch = global.fetch;
-let fetchMock: ReturnType<typeof vi.fn>;
+let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
 
 function setupFetch(mode: 'success' | 'fail-503' | 'malformed-200') {
-  fetchMock = vi.fn(async (url: string) => {
+  fetchMock = vi.fn<typeof fetch>(async (url) => {
     if (typeof url === 'string' && url.includes('/api/public/pricing')) {
       if (mode === 'fail-503') {
         return new Response(JSON.stringify({ error: 'pricing_unavailable' }), { status: 503 });

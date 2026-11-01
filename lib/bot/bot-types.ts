@@ -25,7 +25,7 @@ export interface BusinessRecord {
   category: BusinessCategoryKey;
   flow_type: FlowType;
   subscription_tier: string;
-  trial_ends_at: string;
+  trial_ends_at: string | null;
   metadata: Record<string, unknown>;
   country_code?: CountryCode;
   is_whitelabel?: boolean;

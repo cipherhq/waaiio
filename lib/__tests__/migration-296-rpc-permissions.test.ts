@@ -137,7 +137,7 @@ describe('Migration 296 idempotency', () => {
   });
 
   it('has at least 7 REVOKE EXECUTE FROM PUBLIC (one per function)', () => {
-    const count = (migrationCode.match(/REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.\w+\([^)]*\)\s+FROM\s+PUBLIC/gis) || []).length;
+    const count = (migrationCode.match(new RegExp("REVOKE\\s+EXECUTE\\s+ON\\s+FUNCTION\\s+public\\.\\w+\\([^)]*\\)\\s+FROM\\s+PUBLIC", "gis")) || []).length;
     expect(count).toBeGreaterThanOrEqual(7);
   });
 });

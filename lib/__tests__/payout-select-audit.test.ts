@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 /**
  * SELECT-side audit: every route that computes payout or held totals from
  * platform_fees must include all fields required by computePlatformHeldTotals.

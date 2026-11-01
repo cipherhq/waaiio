@@ -59,7 +59,6 @@ function createMockSupabase(overrides: Record<string, unknown> = {}) {
 describe('stale-payment-recovery', () => {
   describe('authorizeIdentity', () => {
     // Import the function for direct testing
-    let authorizeIdentity: typeof import('../stale-payment-recovery').authorizeIdentity;
 
     beforeEach(async () => {
       // Dynamic import to get the private function through module

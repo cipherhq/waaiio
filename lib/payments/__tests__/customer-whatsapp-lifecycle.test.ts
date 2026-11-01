@@ -228,6 +228,7 @@ describe('customer_whatsapp Phase-A lifecycle', () => {
 
     // Must be retryable
     expect(result.status).toBe('retryable_failed');
+    if (result.status !== 'retryable_failed') throw new Error('Expected retryable failure');
     expect(result.retryable).toBe(true);
 
     // Manifest was initialized (Phase-A payment)

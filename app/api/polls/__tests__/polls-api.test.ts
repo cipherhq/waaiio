@@ -75,7 +75,7 @@ const POLL_ACTIVE = { ...POLL_DRAFT, id: 'poll-2', status: 'active' };
 const POLL_CLOSED = { ...POLL_DRAFT, id: 'poll-3', status: 'closed' };
 
 function makeRequest(method: string, url: string, body?: Record<string, unknown>) {
-  const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts: NonNullable<ConstructorParameters<typeof NextRequest>[1]> = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   return new NextRequest(new URL(url, 'http://localhost:3000'), opts);
 }

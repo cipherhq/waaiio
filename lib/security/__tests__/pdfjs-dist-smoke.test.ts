@@ -31,7 +31,7 @@ describe('pdfjs-dist v6 smoke', () => {
     expect(viewport.height).toBeGreaterThan(0);
 
     const textContent = await p1.getTextContent();
-    const text = textContent.items.map((i: { str?: string }) => i.str ?? '').join('');
+    const text = textContent.items.map(i => 'str' in i ? i.str : '').join('');
     expect(text).toContain('Hello smoke test');
   });
 });

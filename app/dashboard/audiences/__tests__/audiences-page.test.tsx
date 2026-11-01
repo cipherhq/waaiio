@@ -51,20 +51,16 @@ import AudiencesPage from '../page';
 
 /* ── Fetch mock helpers ── */
 
-type FetchMock = ReturnType<typeof vi.fn>;
+type FetchMock = ReturnType<typeof vi.fn<typeof fetch>>;
 
 function jsonResponse(status: number, body: unknown) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  };
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
 let fetchMock: FetchMock;
 
 beforeEach(() => {
-  fetchMock = vi.fn();
+  fetchMock = vi.fn<typeof fetch>();
   global.fetch = fetchMock;
   state.capReady = true;
   state.business = {
@@ -148,7 +144,7 @@ describe('Create and save', () => {
 
     await waitFor(() => {
       const postCall = fetchMock.mock.calls.find(
-        (c: [string, RequestInit?]) => c[1]?.method === 'POST' && c[0] === '/api/engage/segments',
+        (c) => c[1]?.method === 'POST' && c[0] === '/api/engage/segments',
       );
       expect(postCall).toBeTruthy();
       const body = JSON.parse(postCall![1]!.body as string);
@@ -197,7 +193,7 @@ describe('Delete', () => {
 
     await waitFor(() => {
       const deleteCall = fetchMock.mock.calls.find(
-        (c: [string, RequestInit?]) => c[1]?.method === 'DELETE',
+        (c) => c[1]?.method === 'DELETE',
       );
       expect(deleteCall).toBeTruthy();
       // businessId must be in URL query params, NOT in body
@@ -342,7 +338,7 @@ describe('Edit existing segment', () => {
 
     await waitFor(() => {
       const putCall = fetchMock.mock.calls.find(
-        (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+        (c) => c[1]?.method === 'PUT',
       );
       expect(putCall).toBeTruthy();
       const body = JSON.parse(putCall![1]!.body as string);
@@ -391,7 +387,7 @@ describe('Nested NONE expression', () => {
     fireEvent.click(screen.getByText('Update Audience'));
 
     await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const putCall = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT');
       const body = JSON.parse(putCall![1]!.body as string);
       expect(body.expression.children[1].type).toBe('none');
       expect(body.expression.children[1].children[0].value).toBe('inactive');
@@ -429,7 +425,7 @@ describe('Unsupported expression handling', () => {
     fireEvent.click(screen.getByText('Update Audience'));
 
     await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const putCall = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT');
       const body = JSON.parse(putCall![1]!.body as string);
       // Wrapped in an 'all' group, original predicate preserved
       expect(body.expression.type).toBe('all');
@@ -476,7 +472,7 @@ describe('Array operator (in/not_in) handling', () => {
     fireEvent.click(screen.getByText('Update Audience'));
 
     await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const putCall = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT');
       const body = JSON.parse(putCall![1]!.body as string);
       expect(body.expression.children[0].operator).toBe('in');
       expect(body.expression.children[0].value).toEqual(['completed', 'delivered', 'shipped']);
@@ -519,7 +515,7 @@ describe('Array operator (in/not_in) handling', () => {
     fireEvent.click(screen.getByText('Update Audience'));
 
     await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const putCall = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT');
       const body = JSON.parse(putCall![1]!.body as string);
       expect(body.expression.children[0].value).toEqual([100, 300, 700]);
       // Verify they are actual numbers, not strings
@@ -552,7 +548,7 @@ describe('Array operator (in/not_in) handling', () => {
     fireEvent.click(screen.getByText('Update Audience'));
 
     await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const putCall = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT');
       const body = JSON.parse(putCall![1]!.body as string);
       expect(body.expression.children[0].operator).toBe('in');
       expect(Array.isArray(body.expression.children[0].value)).toBe(true);
@@ -585,7 +581,7 @@ describe('Array operator (in/not_in) handling', () => {
     fireEvent.click(screen.getByText('Update Audience'));
 
     await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const putCall = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT');
       const body = JSON.parse(putCall![1]!.body as string);
       expect(body.expression.children[0].operator).toBe('eq');
       // All values preserved as joined string — user can see and edit
@@ -640,7 +636,7 @@ describe('Array draft input behavior', () => {
 
     await waitFor(() => {
       const postCall = fetchMock.mock.calls.find(
-        (c: [string, RequestInit?]) => c[1]?.method === 'POST',
+        (c) => c[1]?.method === 'POST',
       );
       const body = JSON.parse(postCall![1]!.body as string);
       expect(body.expression.children[0].value).toEqual(['alpha', 'beta', 'gamma']);
@@ -698,7 +694,7 @@ describe('Array draft input behavior', () => {
 
     await waitFor(() => {
       const postCall = fetchMock.mock.calls.find(
-        (c: [string, RequestInit?]) => c[1]?.method === 'POST',
+        (c) => c[1]?.method === 'POST',
       );
       const body = JSON.parse(postCall![1]!.body as string);
       expect(body.expression.children[0].value).toEqual(['one', 'two', 'three']);
@@ -739,7 +735,7 @@ describe('Invalid draft blocks save and preview', () => {
     // Wait a tick and verify NO PUT was made
     await act(async () => { await new Promise(r => setTimeout(r, 50)); });
     const putCall = fetchMock.mock.calls.find(
-      (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+      (c) => c[1]?.method === 'PUT',
     );
     expect(putCall).toBeUndefined();
 
@@ -775,7 +771,7 @@ describe('Invalid draft blocks save and preview', () => {
     await act(async () => { await new Promise(r => setTimeout(r, 50)); });
     // No preview API call should have been made
     const previewCall = fetchMock.mock.calls.find(
-      (c: [string, RequestInit?]) => c[0] === '/api/engage/audience/preview',
+      (c) => c[0] === '/api/engage/audience/preview',
     );
     expect(previewCall).toBeUndefined();
 
@@ -865,7 +861,7 @@ describe('Numeric array-to-scalar operator conversion', () => {
     fireEvent.click(screen.getByText('Update Audience'));
 
     await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((c: [string, RequestInit?]) => c[1]?.method === 'PUT');
+      const putCall = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT');
       const body = JSON.parse(putCall![1]!.body as string);
       expect(body.expression.children[0].operator).toBe('eq');
       expect(body.expression.children[0].value).toBe(500);
@@ -921,7 +917,7 @@ describe('Multi-condition validation independence', () => {
 
     await act(async () => { await new Promise(r => setTimeout(r, 50)); });
     const putCall = fetchMock.mock.calls.find(
-      (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+      (c) => c[1]?.method === 'PUT',
     );
     expect(putCall).toBeUndefined();
 
@@ -969,7 +965,7 @@ describe('Multi-condition validation independence', () => {
 
     await waitFor(() => {
       const putCall = fetchMock.mock.calls.find(
-        (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+        (c) => c[1]?.method === 'PUT',
       );
       expect(putCall).toBeTruthy();
       const body = JSON.parse(putCall![1]!.body as string);
@@ -1016,7 +1012,7 @@ describe('Stable validation identity', () => {
     fireEvent.click(screen.getByText('Update Audience'));
     await act(async () => { await new Promise(r => setTimeout(r, 50)); });
     const putCall = fetchMock.mock.calls.find(
-      (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+      (c) => c[1]?.method === 'PUT',
     );
     expect(putCall).toBeUndefined();
   });
@@ -1057,7 +1053,7 @@ describe('Stable validation identity', () => {
 
     await waitFor(() => {
       const putCall = fetchMock.mock.calls.find(
-        (c: [string, RequestInit?]) => c[1]?.method === 'PUT',
+        (c) => c[1]?.method === 'PUT',
       );
       expect(putCall).toBeTruthy();
     });
@@ -1096,7 +1092,7 @@ describe('Stable validation identity', () => {
 
     await waitFor(() => {
       const postCall = fetchMock.mock.calls.find(
-        (c: [string, RequestInit?]) => c[1]?.method === 'POST',
+        (c) => c[1]?.method === 'POST',
       );
       expect(postCall).toBeTruthy();
     });

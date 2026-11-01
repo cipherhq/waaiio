@@ -80,7 +80,7 @@ describe('Logger JSON output', () => {
   it('produces valid JSON when LOG_FORMAT=json', async () => {
     vi.resetModules();
     process.env.LOG_FORMAT = 'json';
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
 
     const captured: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
@@ -102,7 +102,7 @@ describe('Logger JSON output', () => {
   it('produces key=value when LOG_FORMAT=keyval', async () => {
     vi.resetModules();
     process.env.LOG_FORMAT = 'keyval';
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
 
     const captured: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
@@ -122,7 +122,7 @@ describe('Logger JSON output', () => {
   it('includes error stack in JSON output', async () => {
     vi.resetModules();
     process.env.LOG_FORMAT = 'json';
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
 
     const captured: string[] = [];
     vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
@@ -141,7 +141,7 @@ describe('Logger JSON output', () => {
 
   afterEach(() => {
     delete process.env.LOG_FORMAT;
-    delete process.env.NODE_ENV;
+    vi.unstubAllEnvs();
   });
 });
 

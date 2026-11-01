@@ -58,6 +58,7 @@ function mockSupabase() {
 function buildCtx(overrides?: Partial<{ currentStep: string; sessionData: Record<string, unknown> }>): FlowContext {
   const sb = mockSupabase();
   return {
+    copyLang: 'en',
     supabase: sb as any,
     sender: { sendText: vi.fn().mockResolvedValue({}), sendButtons: vi.fn().mockResolvedValue({}), sendList: vi.fn().mockResolvedValue({}), sendDocument: vi.fn().mockResolvedValue({}) } as any,
     standalone: {} as any, intelligence: {} as any,

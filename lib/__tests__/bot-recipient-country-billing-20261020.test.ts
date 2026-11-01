@@ -138,7 +138,7 @@ describe('Attempt INSERT persists billing metadata before financial authorizatio
 describe('Inbound reply message category classification', () => {
   /** Spy-based mock sender that records the messageCategory it receives. */
   function buildSpySender() {
-    const calls: Record<string, unknown[]> = {};
+    const calls: Record<string, { messageCategory?: string }[]> = {};
     const capture = (method: string) => vi.fn().mockImplementation(async (msg: any) => {
       calls[method] = calls[method] || [];
       calls[method].push(msg);

@@ -452,7 +452,7 @@ describe('SEC-005: step-up parameter authority matrix', () => {
       require('path').resolve(process.cwd(), 'app/api/admin/team/route.ts'),
       'utf-8',
     );
-    expect(source).toMatch(/team_grant.*identifier.*role/s);
+    expect(source).toMatch(/team_grant[\s\S]*identifier[\s\S]*role/);
   });
 
   it('impersonate binds business_id', () => {

@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { load as parseYaml } from 'js-yaml';
+const { load: parseYaml } = require('js-yaml') as { load: (source: string) => unknown };
 
 let workflow: Record<string, unknown>;
 let raw: string;

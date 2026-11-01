@@ -11,6 +11,8 @@ import { vi } from 'vitest';
 function buildCtx(overrides: Record<string, unknown> = {}) {
   const db = createMockDb();
   return {
+    copyLang: 'en',
+    t: async (text: string) => text,
     supabase: db as any,
     sender: {
       sendText: vi.fn().mockResolvedValue({}),

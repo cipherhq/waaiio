@@ -101,7 +101,7 @@ describe('normalizeError', () => {
     const err = new Error('test');
     const norm = normalizeError(err);
     expect(JSON.stringify(norm)).not.toContain('at ');
-    expect((norm as Record<string, unknown>).stack).toBeUndefined();
+    expect(norm).not.toHaveProperty('stack');
   });
 });
 

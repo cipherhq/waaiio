@@ -1260,8 +1260,8 @@ describe('Meta Flow Asset Service', () => {
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
-      expect((e as MetaFlowApiError).message).toContain('not authorized');
-      expect((e as MetaFlowApiError).statusCode).toBe(403);
+      expect((e as InstanceType<typeof MetaFlowApiError>).message).toContain('not authorized');
+      expect((e as InstanceType<typeof MetaFlowApiError>).statusCode).toBe(403);
     }
   });
 
@@ -1272,7 +1272,7 @@ describe('Meta Flow Asset Service', () => {
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
-      expect((e as MetaFlowApiError).message).toContain('not authorized');
+      expect((e as InstanceType<typeof MetaFlowApiError>).message).toContain('not authorized');
     }
   });
 
@@ -1283,7 +1283,7 @@ describe('Meta Flow Asset Service', () => {
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
-      expect((e as MetaFlowApiError).message).toContain('not authorized');
+      expect((e as InstanceType<typeof MetaFlowApiError>).message).toContain('not authorized');
     }
   });
 
@@ -1294,7 +1294,7 @@ describe('Meta Flow Asset Service', () => {
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
-      expect((e as MetaFlowApiError).message).toContain('not authorized');
+      expect((e as InstanceType<typeof MetaFlowApiError>).message).toContain('not authorized');
     }
   });
 
@@ -1305,7 +1305,7 @@ describe('Meta Flow Asset Service', () => {
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
-      expect((e as MetaFlowApiError).message).toContain('not authorized');
+      expect((e as InstanceType<typeof MetaFlowApiError>).message).toContain('not authorized');
     }
   });
 

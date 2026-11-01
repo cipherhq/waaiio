@@ -24,11 +24,11 @@ describe('Migration 299 — capability write restriction', () => {
   });
 
   it('creates service-role-only UPDATE policy', () => {
-    expect(sql).toMatch(/CREATE\s+POLICY\s+business_capabilities_server_only_update.*FOR\s+UPDATE\s+TO\s+service_role/is);
+    expect(sql).toMatch(/CREATE\s+POLICY\s+business_capabilities_server_only_update[\s\S]*FOR\s+UPDATE\s+TO\s+service_role/i);
   });
 
   it('creates service-role-only DELETE policy', () => {
-    expect(sql).toMatch(/CREATE\s+POLICY\s+business_capabilities_server_only_delete.*FOR\s+DELETE\s+TO\s+service_role/is);
+    expect(sql).toMatch(/CREATE\s+POLICY\s+business_capabilities_server_only_delete[\s\S]*FOR\s+DELETE\s+TO\s+service_role/i);
   });
 
   it('does not modify SELECT policies', () => {
@@ -156,7 +156,7 @@ describe('Migration 301 — atomic admin capability RPCs', () => {
 
   it('revoke loyalty cascades to disable membership', () => {
     // The revoke function should check if membership is enabled when revoking loyalty
-    expect(sql).toMatch(/loyalty.*membership|IF.*p_capability\s*=\s*'loyalty'/is);
+    expect(sql).toMatch(/loyalty[\s\S]*membership|IF[\s\S]*p_capability\s*=\s*'loyalty'/i);
   });
 
   it('verifies selected-capability set snapshot', () => {

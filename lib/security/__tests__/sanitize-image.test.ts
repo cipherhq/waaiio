@@ -208,7 +208,7 @@ describe('images/convert route handler', () => {
 
   it('converts a valid Supabase storage PNG to JPEG (200, magic bytes)', async () => {
     const png = await makeImage('png', { width: 30, height: 30 });
-    fetchSpy.mockResolvedValue(new Response(png, { status: 200 }));
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(png), { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
 
@@ -323,12 +323,12 @@ describe('images/convert resource hardening', () => {
   const VALID_STORAGE_URL = `${SUPABASE_URL}/storage/v1/object/public/images/test.webp`;
 
   let fetchSpy: ReturnType<typeof vi.spyOn>;
-  let loggerMod: { logger: { warn: ReturnType<typeof vi.fn> } };
+  let loggerMod: typeof import('@/lib/logger');
 
   beforeEach(async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL;
     fetchSpy = vi.spyOn(globalThis, 'fetch');
-    loggerMod = await import('@/lib/logger') as typeof loggerMod;
+    loggerMod = await import('@/lib/logger');
     vi.mocked(loggerMod.logger.warn).mockClear();
   });
 
@@ -369,7 +369,7 @@ describe('images/convert resource hardening', () => {
 
   it('converts a valid WebP image to JPEG', async () => {
     const webp = await makeImage('webp', { width: 40, height: 40 });
-    fetchSpy.mockResolvedValue(new Response(webp, { status: 200 }));
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(webp), { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
 
@@ -385,7 +385,7 @@ describe('images/convert resource hardening', () => {
 
   it('converts a valid JPEG image (re-encodes to JPEG)', async () => {
     const jpeg = await makeImage('jpeg', { width: 50, height: 50 });
-    fetchSpy.mockResolvedValue(new Response(jpeg, { status: 200 }));
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(jpeg), { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
 
@@ -400,7 +400,7 @@ describe('images/convert resource hardening', () => {
 
   it('returns correct cache-control headers', async () => {
     const png = await makeImage('png', { width: 20, height: 20 });
-    fetchSpy.mockResolvedValue(new Response(png, { status: 200 }));
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(png), { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(200);
@@ -443,7 +443,7 @@ describe('images/convert resource hardening', () => {
   it('handles non-numeric Content-Length gracefully', async () => {
     const png = await makeImage('png', { width: 10, height: 10 });
     const headers = new Headers({ 'Content-Length': 'not-a-number' });
-    fetchSpy.mockResolvedValue(new Response(png, { status: 200, headers }));
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(png), { status: 200, headers }));
 
     const res = await callRoute(VALID_STORAGE_URL);
     // Non-numeric Content-Length should be ignored (NaN), actual bytes enforced
@@ -528,9 +528,9 @@ describe('images/convert resource hardening', () => {
     // by triggering it from outside. Use a short setTimeout to abort after
     // the route calls fetch but while reader.read() is pending.
     const originalSetTimeout = globalThis.setTimeout;
-    let capturedAbortFn: (() => void) | null = null;
+    const timeoutCapture: { callback?: () => void } = {};
     vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn: TimerHandler, _ms?: number) => {
-      capturedAbortFn = fn as () => void;
+      timeoutCapture.callback = fn as () => void;
       // Return a valid timer ID but don't actually schedule it
       return originalSetTimeout(() => {}, 0) as unknown as NodeJS.Timeout;
     });
@@ -542,7 +542,7 @@ describe('images/convert resource hardening', () => {
     await new Promise((r) => originalSetTimeout(r, 10));
 
     // Fire the captured timeout callback (the abort)
-    if (capturedAbortFn) capturedAbortFn();
+    timeoutCapture.callback?.();
 
     const res = await routePromise;
     expect(res.status).toBe(504);
@@ -737,7 +737,7 @@ describe('images/convert resource hardening', () => {
 
   it('JPEG output is within WhatsApp 5 MB limit for normal images', async () => {
     const productImage = await makeImage('png', { width: 800, height: 600 });
-    fetchSpy.mockResolvedValue(new Response(productImage, { status: 200 }));
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(productImage), { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(200);
@@ -749,7 +749,7 @@ describe('images/convert resource hardening', () => {
 
   it('large valid image (1200×800 WebP) converts within size limits', async () => {
     const largeImage = await makeImage('webp', { width: 1200, height: 800 });
-    fetchSpy.mockResolvedValue(new Response(largeImage, { status: 200 }));
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(largeImage), { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
     expect(res.status).toBe(200);
@@ -809,7 +809,7 @@ describe('images/convert resource hardening', () => {
 
   it('WhatsApp-compatible: typical product image (800×600 PNG)', async () => {
     const productImage = await makeImage('png', { width: 800, height: 600 });
-    fetchSpy.mockResolvedValue(new Response(productImage, { status: 200 }));
+    fetchSpy.mockResolvedValue(new Response(new Uint8Array(productImage), { status: 200 }));
 
     const res = await callRoute(VALID_STORAGE_URL);
 

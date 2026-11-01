@@ -262,7 +262,7 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
   expect(corrected).toContain('v_fee_allocated_at');
   const oldBody=corrected
     .replace(/\s*v_fee_allocated_at\s+DATE;/,'')
-    .replace(/-- Use the fee.*?IF v_fee_allocated_at IS NULL THEN v_fee_allocated_at := v_payment\.created_at::date; END IF;\n/s,'')
+    .replace(/-- Use the fee[\s\S]*?IF v_fee_allocated_at IS NULL THEN v_fee_allocated_at := v_payment\.created_at::date; END IF;\n/,'')
     .replace(/v_fee_allocated_at/g,'v_payment.created_at::date');
   await run("CREATE OR REPLACE FUNCTION public.finalize_refund_execution(p_refund_id UUID) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$"+oldBody+"$fn$");
   const downgraded=(await run("SELECT prosrc FROM pg_proc WHERE oid='public.finalize_refund_execution(uuid)'::regprocedure")).rows[0].prosrc;

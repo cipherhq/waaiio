@@ -227,7 +227,7 @@ describe('#453 Architecture: Admin-controlled via platform_settings', () => {
   it('signup_open is fetched from platform_settings table', () => {
     expect(platformSettingsSrc).toContain("'signup_open'");
     // It's in the .in('key', [...]) list
-    const inKeyList = platformSettingsSrc.match(/\.in\('key',\s*\[([^\]]+)\]/s);
+    const inKeyList = platformSettingsSrc.match(/\.in\('key',\s*\[([^\]]+)\]/);
     expect(inKeyList).not.toBeNull();
     expect(inKeyList![1]).toContain('signup_open');
   });

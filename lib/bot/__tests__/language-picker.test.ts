@@ -1270,6 +1270,8 @@ describe('Greeting key overrides — handleMessage path', () => {
     vi.spyOn(ci, 'getCustomerHistory').mockResolvedValue({
       isReturning: true,
       totalVisits: 5,
+      totalSpent: 0,
+      lastVisitDate: null,
       ltvTier: 'regular',
       lastServiceId: null,
       lastServiceName: 'Haircut',
@@ -1308,6 +1310,8 @@ describe('Greeting key overrides — handleMessage path', () => {
     vi.spyOn(ci, 'getCustomerHistory').mockResolvedValue({
       isReturning: true,
       totalVisits: 5,
+      totalSpent: 0,
+      lastVisitDate: null,
       ltvTier: 'regular',
       lastServiceId: null,
       lastServiceName: 'Massage',

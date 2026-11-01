@@ -105,7 +105,7 @@ export interface FlowContext {
     category: BusinessCategoryKey;
     flow_type: FlowType;
     subscription_tier: string;
-    trial_ends_at: string;
+    trial_ends_at: string | null;
     metadata: Record<string, unknown>;
     operating_hours?: Record<string, { open?: string; close?: string; closed?: boolean }>;
     country_code?: CountryCode;

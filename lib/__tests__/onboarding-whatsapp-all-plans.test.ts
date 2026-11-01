@@ -150,7 +150,7 @@ let lastInsertPayload: Record<string, unknown> | null = null;
 let lastBusinessUpdate: Record<string, unknown> | null = null;
 let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
 
-const mockServiceFrom = vi.fn((table: string) => {
+const mockServiceFrom = vi.fn((table: string): Record<string, unknown> => {
   if (table === 'countries') {
     return {
       select: () => ({

@@ -162,6 +162,7 @@ function makeCtx(sessionData: Record<string, unknown>, overrides?: Partial<FlowC
     return c;
   };
   return {
+    copyLang: 'en',
     supabase: {
       from: vi.fn().mockImplementation((table: string) => makeChain(table)),
       rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 2 }, error: null }),
@@ -316,7 +317,8 @@ describe('#393 §1: buildSavedCardOffer returns null during PIN wait', () => {
     const ctx = makeCtx({ _saved_method_id: 'spm-1' });
     const result = await buildSavedCardOffer(ctx, 5000);
     expect(result).not.toBeNull();
-    expect(result!.prompt.body).toContain('saved card');
+    if (!result || !('body' in result.prompt)) throw new Error('Expected a saved-card interactive prompt');
+    expect(result.prompt.body).toContain('saved card');
   });
 
   it('returns null when _awaiting_card_pin is set (even with valid saved method)', async () => {

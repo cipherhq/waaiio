@@ -306,7 +306,7 @@ describe('P1-QUEUE-2: Queue Reopen Subscription', () => {
 
     const mockWithContext = vi.mocked((await import('@/lib/logger')).logger.withContext);
     const mockWithContextError = vi.fn();
-    mockWithContext.mockReturnValue({ error: mockWithContextError, info: vi.fn(), warn: vi.fn() });
+    mockWithContext.mockReturnValue({ ...(await import('@/lib/logger')).logger, error: mockWithContextError, info: vi.fn(), warn: vi.fn() });
 
     const { ctx, sendTextMock } = buildMockContext({
       paused: true,
@@ -327,7 +327,7 @@ describe('P1-QUEUE-2: Queue Reopen Subscription', () => {
 
     const mockWithContext = vi.mocked((await import('@/lib/logger')).logger.withContext);
     const mockWithContextError = vi.fn();
-    mockWithContext.mockReturnValue({ error: mockWithContextError, info: vi.fn(), warn: vi.fn() });
+    mockWithContext.mockReturnValue({ ...(await import('@/lib/logger')).logger, error: mockWithContextError, info: vi.fn(), warn: vi.fn() });
 
     const { ctx, sendTextMock } = buildMockContext({
       paused: true,

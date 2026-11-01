@@ -132,12 +132,12 @@ describe('M422 regression: capability_overrides reads use service client', () =>
 
     // Verify service client was called for capability_overrides
     const serviceOverrideCalls = mockServiceFrom.mock.calls
-      .filter(([table]: [string]) => table === 'capability_overrides');
+      .filter(([table]) => table === 'capability_overrides');
     expect(serviceOverrideCalls.length).toBeGreaterThanOrEqual(1);
 
     // Verify authenticated client was NOT called for capability_overrides
     const authOverrideCalls = mockAuthFrom.mock.calls
-      .filter(([table]: [string]) => table === 'capability_overrides');
+      .filter(([table]) => table === 'capability_overrides');
     expect(authOverrideCalls).toHaveLength(0);
   });
 
@@ -148,7 +148,7 @@ describe('M422 regression: capability_overrides reads use service client', () =>
 
     // Verify authenticated client was used for businesses lookup (ownership check)
     const authBusinessCalls = mockAuthFrom.mock.calls
-      .filter(([table]: [string]) => table === 'businesses');
+      .filter(([table]) => table === 'businesses');
     expect(authBusinessCalls.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -179,7 +179,7 @@ describe('M422 regression: capability_overrides reads use service client', () =>
 
     // Verify service client was NOT called for overrides (short-circuited before)
     const serviceOverrideCalls = mockServiceFrom.mock.calls
-      .filter(([table]: [string]) => table === 'capability_overrides');
+      .filter(([table]) => table === 'capability_overrides');
     expect(serviceOverrideCalls).toHaveLength(0);
   });
 

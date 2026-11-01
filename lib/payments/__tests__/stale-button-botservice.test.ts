@@ -181,7 +181,7 @@ function makeSelectCapabilitySession() {
     current_step: 'select_capability',
     session_data: {
       capabilities: ['ordering', 'payment'],
-      active_capability: null,
+      active_capability: null as string | null,
       business_id: BIZ_ID,
       business_name: 'Test Store 197',
       business_category: 'restaurant',

@@ -28,7 +28,7 @@ vi.mock('@/lib/rate-limit', () => ({
 // Recursive chainable mock that returns { data: null, error: null } for terminal calls
 function chainable(): Record<string, unknown> {
   const terminal = { data: null, error: null };
-  const handler: ProxyHandler<object> = {
+  const handler: ProxyHandler<Record<string, unknown>> = {
     get(_target, prop) {
       if (prop === 'then') return undefined; // not a Promise
       if (prop === 'data') return null;

@@ -544,13 +544,13 @@ describe('R7-B2 Test A: handleCardPinStep — commit failure produces zero Card 
     );
 
     // Assert: claim_confirmation_delivery was NEVER called
-    const claimCalls = rpcFn.mock.calls.filter(([name]: [string]) => name === 'claim_confirmation_delivery');
+    const claimCalls = rpcFn.mock.calls.filter(([name]) => name === 'claim_confirmation_delivery');
     expect(claimCalls).toHaveLength(0);
 
     // Assert: no card-saved confirmation was sent via sendText
     const CARD_CONFIRM_PREFIX = '\u{1F4B3} Card'; // 💳 Card
     const cardSavedSends = sendText.mock.calls.filter(
-      ([, msg]: [string, string]) => typeof msg === 'string' && msg.includes(CARD_CONFIRM_PREFIX),
+      ([, msg]) => typeof msg === 'string' && msg.includes(CARD_CONFIRM_PREFIX),
     );
     expect(cardSavedSends).toHaveLength(0);
   });

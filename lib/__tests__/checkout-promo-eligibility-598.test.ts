@@ -9,7 +9,7 @@ const base: CheckoutPromo = {
   applicable_services: ['product-a'], applicable_flow_types: ['ordering'],
 };
 const order = { businessId: 'biz-1', flow: 'ordering' as const, itemIds: ['product-a'], subtotal: 1000, now };
-function result(overrides: CheckoutPromo, opts = order) {
+function result(overrides: CheckoutPromo, opts: Parameters<typeof validatePromoForCheckout>[1] = order) {
   return validatePromoForCheckout({ ...base, ...overrides }, opts);
 }
 
@@ -19,14 +19,14 @@ describe('#598 authoritative-shape bot promo eligibility', () => {
   });
   it('accepts a service-only code only in scheduling for the matching service', () => {
     expect(result({ applicable_services: ['service-a'], applicable_flow_types: ['scheduling'] },
-      { ...order, flow: 'scheduling', itemIds: ['service-a'] } as typeof order)).toEqual({ ok: true, discount: 200 });
+      { ...order, flow: 'scheduling', itemIds: ['service-a'] })).toEqual({ ok: true, discount: 200 });
   });
   it('rejects a product-specific promo for the wrong product or mixed cart', () => {
     expect(result({}, { ...order, itemIds: ['product-b'] }).ok).toBe(false);
     expect(result({}, { ...order, itemIds: ['product-a', 'product-b'] }).ok).toBe(false);
   });
   it('rejects a code in the wrong checkout flow', () => {
-    expect(result({}, { ...order, flow: 'scheduling' } as typeof order).ok).toBe(false);
+    expect(result({}, { ...order, flow: 'scheduling' }).ok).toBe(false);
   });
   it('rejects another business, inactive, future and expired codes', () => {
     expect(result({ business_id: 'biz-2' }).ok).toBe(false);

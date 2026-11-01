@@ -75,7 +75,7 @@ const mockServiceFrom = vi.fn((table: string) => {
   return { select: () => dc(null), update: () => dc(null), insert: () => dc(null) };
 });
 
-const mockServiceRpc = vi.fn(async (fn: string, args: Record<string, unknown>) => {
+const mockServiceRpc = vi.fn(async (fn: string, args: Record<string, unknown>): Promise<{ data: Record<string, unknown> | null; error: null }> => {
   rpcCalls.push({ fn, args });
   if (fn === 'check_phone_conflict') return { data: { conflict: false }, error: null };
   if (fn === 'promote_candidate_with_merchant_auth') return { data: { ok: true, channel_id: PROMOTED_CHANNEL_ID, action: 'first_connect' }, error: null };
@@ -297,7 +297,7 @@ describe('#592 transfer negative path — failed registration blocks promotion',
   });
 
   it('promotion RPC itself fails: HTTP 409, candidate marked failed', async () => {
-    mockServiceRpc.mockImplementation(async (fn: string, args: Record<string, unknown>) => {
+    mockServiceRpc.mockImplementation(async (fn: string, args: Record<string, unknown>): Promise<{ data: Record<string, unknown> | null; error: null }> => {
       rpcCalls.push({ fn, args });
       if (fn === 'check_phone_conflict') return { data: { conflict: false }, error: null };
       if (fn === 'promote_candidate_with_merchant_auth') return { data: { ok: false, reason: 'concurrent_mutation' }, error: null };

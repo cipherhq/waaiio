@@ -65,7 +65,7 @@ function makeCtx(overrides: Partial<FlowContext> = {}): FlowContext {
       country_code: 'US',
     } as FlowContext['business'],
     session: {
-      id: 'session-123',
+      id: 'session-123', user_id: null,
       whatsapp_number: '15551234567',
       business_id: 'biz-123',
       current_step: 'saved_card_prompt',
@@ -276,7 +276,7 @@ describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path'
       { data: { currency_code: 'USD' }, error: null },
     );
 
-    const result = await step.validate!('1234', ctx);
+    const result = await step!.validate!('1234', ctx);
     expect(result.valid).toBe(true);
     expect(result.data?._saved_card_paid).toBe(true);
     expect(mockChargeSavedMethod).toHaveBeenCalledTimes(1);
@@ -294,7 +294,7 @@ describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path'
       { data: { currency_code: 'USD' }, error: null },
     );
 
-    const result = await step.validate!('pay_saved', ctx);
+    const result = await step!.validate!('pay_saved', ctx);
     expect(result.valid).toBe(true);
     expect(result.data?._saved_card_paid).toBe(true);
     expect(mockChargeSavedMethod).toHaveBeenCalledTimes(1);
@@ -312,7 +312,7 @@ describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path'
       { data: null, error: null }, // Country not found
     );
 
-    const result = await step.validate!('1234', ctx);
+    const result = await step!.validate!('1234', ctx);
 
     // Fail closed — zero provider dispatch
     expect(mockChargeSavedMethod).not.toHaveBeenCalled();
@@ -338,7 +338,7 @@ describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path'
       { data: null, error: null },
     );
 
-    const result = await step.validate!('pay_saved', ctx);
+    const result = await step!.validate!('pay_saved', ctx);
     expect(mockChargeSavedMethod).not.toHaveBeenCalled();
     expect(result.data?._skip_saved_card).toBe(true);
   });

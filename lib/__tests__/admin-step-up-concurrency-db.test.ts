@@ -450,7 +450,7 @@ describe('commercial_config verification binding through actual consumeStepUp (d
   const target = '00000000-0000-0000-0000-000000762002';
   const grant = '00000000-0000-0000-0000-000000762003';
   const session = 'synthetic-commercial-review';
-  const admin = { userId: actor, email: 'synthetic@example.test', role: 'admin', aal: 'aal2', bearerToken: 'synthetic', sessionId: session } as const;
+  const admin = { id: actor, userId: actor, email: 'synthetic@example.test', role: 'admin', aal: 'aal2', bearerToken: 'synthetic', sessionId: session } as const;
   const params = {
     scope: 'business_verification_review', action: 'approve', level: 'standard', notes: 'review',
     document_ids: ['00000000-0000-0000-0000-000000762004'],

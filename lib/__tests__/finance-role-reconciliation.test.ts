@@ -116,7 +116,7 @@ const resellerPayoutsPatchModule = await import('@/app/api/admin/reseller-payout
 // ── Helpers ──
 
 function makeRequest(url: string, method = 'GET', body?: Record<string, unknown>) {
-  const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer test-token' } };
+  const opts: NonNullable<ConstructorParameters<typeof NextRequest>[1]> = { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer test-token' } };
   if (body) opts.body = JSON.stringify(body);
   return new NextRequest(`http://localhost${url}`, opts);
 }

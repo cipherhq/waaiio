@@ -76,7 +76,7 @@ describe('#597 R3: Source-contract checks', () => {
       expect(src).toContain("'transfer.updated'");
       expect(src).toContain("'transfer.reversed'");
       // Must NOT handle payout events (different Stripe resource)
-      const handledLine = src.match(/handledEvents\s*=\s*\[(.*?)\]/s);
+      const handledLine = src.match(new RegExp("handledEvents\\s*=\\s*\\[(.*?)\\]", "s"));
       expect(handledLine).toBeTruthy();
       expect(handledLine![1]).not.toContain('payout.paid');
       expect(handledLine![1]).not.toContain('payout.failed');

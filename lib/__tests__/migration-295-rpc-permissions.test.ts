@@ -32,25 +32,25 @@ describe('Migration 295 targets correct function signature', () => {
 describe('Migration 295 privilege changes', () => {
   it('REVOKE EXECUTE FROM PUBLIC is present', () => {
     expect(migrationCode).toMatch(
-      /REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.process_recurring_charge\(.*?\)\s+FROM\s+PUBLIC/is
+      /REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.process_recurring_charge\([\s\S]*?\)\s+FROM\s+PUBLIC/i
     );
   });
 
   it('REVOKE EXECUTE FROM anon is present', () => {
     expect(migrationCode).toMatch(
-      /REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.process_recurring_charge\(.*?\)\s+FROM\s+anon/is
+      /REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.process_recurring_charge\([\s\S]*?\)\s+FROM\s+anon/i
     );
   });
 
   it('REVOKE EXECUTE FROM authenticated is present', () => {
     expect(migrationCode).toMatch(
-      /REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.process_recurring_charge\(.*?\)\s+FROM\s+authenticated/is
+      /REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.process_recurring_charge\([\s\S]*?\)\s+FROM\s+authenticated/i
     );
   });
 
   it('GRANT EXECUTE TO service_role is present', () => {
     expect(migrationCode).toMatch(
-      /GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+public\.process_recurring_charge\(.*?\)\s+TO\s+service_role/is
+      /GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+public\.process_recurring_charge\([\s\S]*?\)\s+TO\s+service_role/i
     );
   });
 });
