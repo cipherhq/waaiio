@@ -1,0 +1,74 @@
+name: Verify reduced release source targets
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: reduced-release-verification
+  cancel-in-progress: false
+jobs:
+  plan:
+    name: Verify trusted reduced release plan
+    runs-on: ubuntu-24.04
+    outputs:
+      merchant_target: ${{ steps.plan.outputs.merchant_target }}
+      admin_target: ${{ steps.plan.outputs.admin_target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+      - name: Verify protected integration and bounded source deltas
+        id: plan
+        env:
+          CONTROL_PATH: trusted
+          GITHUB_TOKEN: ${{ github.token }}
+          REDUCED_RELEASE_MANIFEST: ${{ secrets.REDUCED_RELEASE_MANIFEST }}
+        run: node trusted/scripts/reduced-release-gate.mjs plan
+  verify:
+    name: Verify ${{ matrix.project }} target
+    needs: plan
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: merchant
+            target: ${{ needs.plan.outputs.merchant_target }}
+          - project: admin
+            target: ${{ needs.plan.outputs.admin_target }}
+    steps:
+      - name: Checkout trusted verifier
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - name: Checkout exact source target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.target }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+      - name: Verify exact target source, tests, and build
+        env:
+          CONTROL_PATH: trusted
+          REDUCED_RELEASE_MANIFEST: ${{ secrets.REDUCED_RELEASE_MANIFEST }}
+          PROJECT_KIND: ${{ matrix.project }}
+        run: node trusted/scripts/reduced-release-gate.mjs test "$PROJECT_KIND" source code-evidence
+      - name: Upload code evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: reduced-code-${{ matrix.project }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: code-evidence/receipt.json
+          if-no-files-found: error
+          retention-days: 7

@@ -45,9 +45,10 @@ jobs:
       - name: Verify Owner authorization
         shell: bash
         run: |
-          if [ "${{ github.actor }}" != "${{ env.OWNER_ACTOR }}" ]; then
-            echo "❌ ABORT: Only the Owner (${{ env.OWNER_ACTOR }}) may deploy production."
-            echo "   Triggered by: ${{ github.actor }}"
+          if [ "${{ github.actor }}" != "${{ env.OWNER_ACTOR }}" ] \
+            || [ "${{ github.triggering_actor }}" != "${{ env.OWNER_ACTOR }}" ]; then
+            echo "❌ ABORT: Production runs and reruns must be initiated by the Owner (${{ env.OWNER_ACTOR }})."
+            echo "   Initiated by: ${{ github.triggering_actor }}"
             exit 1
           fi
 

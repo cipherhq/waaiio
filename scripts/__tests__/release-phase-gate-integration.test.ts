@@ -116,3 +116,31 @@ describe('actual admin workflow shell with fake CLI/control plane',()=>{
   it('rejects an ID substring match',()=>expect(adminStep('dpl_adminOTHER already the current production deployment').status).toBe(1));
   it('rejects wrong project before promotion',()=>expect(adminStep('dpl_admin already the current production deployment','prj_wrong').status).toBe(1));
 });
+
+
+describe('actual production workflow Owner authorization shell', () => {
+  function ownerGuard(actor: string, triggeringActor: string) {
+    const workflow: any = yaml.load(readFileSync(join(root, '.github/workflows/deploy-production.yml'), 'utf8'));
+    const step = workflow.jobs['deploy-production'].steps.find((s: any) => s.name === 'Verify Owner authorization');
+    const values: Record<string, string> = {
+      'github.actor': actor,
+      'github.triggering_actor': triggeringActor,
+      'github.event_name': 'workflow_dispatch',
+      'env.OWNER_ACTOR': 'cipherhq',
+    };
+    const shell = step.run.replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_: string, name: string) => {
+      if (!(name in values)) throw new Error('Unexpected workflow expression');
+      return values[name];
+    });
+    return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', shell], { cwd: dir, encoding: 'utf8' });
+  }
+  it('allows Owner-originated and Owner-initiated production runs', () => {
+    const result = ownerGuard('cipherhq', 'cipherhq');
+    expect(result.status, result.stderr).toBe(0);
+  });
+  it('rejects a run initiated by someone else even when the original actor was Owner', () => {
+    const result = ownerGuard('cipherhq', 'another-user');
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('must be initiated by the Owner');
+  });
+});
