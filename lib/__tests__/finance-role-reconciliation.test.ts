@@ -78,6 +78,7 @@ vi.mock('@/lib/supabase/service', () => ({
       update: vi.fn(() => mockUpdateChain),
     })),
     auth: { admin: { getUserById: vi.fn() } },
+    rpc: vi.fn().mockResolvedValue({ data: [{ rejected_id: 'p-1', adjustments_released: 0 }], error: null }),
   })),
 }));
 
@@ -178,7 +179,7 @@ describe('Business payout reject authorization', () => {
     });
     mockUpdateChain.maybeSingle.mockResolvedValueOnce({ data: { id: 'p-1' }, error: null });
     const res = await payoutsRejectModule.POST(
-      makeRequest('/api/admin/payouts/p-1/reject', 'POST', { reason: 'test' }),
+      makeRequest('/api/admin/payouts/p-1/reject', 'POST', { reason: 'test', stepUpId: 'verified-fixture' }),
       { params: Promise.resolve({ id: 'p-1' }) },
     );
     expect(res.status).not.toBe(403);
@@ -317,8 +318,12 @@ describe('Payout list response excludes operational tokens', () => {
 describe('Payout rejection is atomic (TOCTOU fix)', () => {
   const rejectSource = readFileSync('app/api/admin/payouts/[id]/reject/route.ts', 'utf-8');
 
-  it('UPDATE includes status guard via .in()', () => {
-    expect(rejectSource).toContain(".in('status',");
+  it('delegates final locked status checks to the atomic rejection RPC', () => {
+    expect(rejectSource).toContain('reject_payout_and_release_adjustments');
+    const rpc = readFileSync('supabase/migrations/498_manual_settlement_rejection_guard.sql', 'utf-8');
+    expect(rpc).toContain('FOR UPDATE');
+    expect(rpc).toContain('manual_settlement_in_flight');
+    expect(rpc).toContain("v_payout.status NOT IN ('pending', 'approved', 'held')");
   });
 
   it('checks affected row count for conflict', () => {

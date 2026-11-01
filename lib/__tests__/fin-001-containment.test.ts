@@ -78,8 +78,8 @@ describe('FIN-001: Payout kill switch (approve route)', () => {
   });
 
   async function loadApproveRoute() {
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -753,8 +753,8 @@ describe('FIN-001: Transfer-method allowlist', () => {
   });
 
   async function loadApproveRoute() {
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -773,7 +773,7 @@ describe('FIN-001: Transfer-method allowlist', () => {
     return import('@/app/api/admin/payouts/[id]/approve/route');
   }
 
-  const VALID_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank', 'manual_cash'];
+  const VALID_METHODS = ['paystack_transfer', 'stripe_transfer', 'manual_bank'];
 
   for (const method of VALID_METHODS) {
     it(`accepts valid transfer method: ${method}`, async () => {
@@ -783,6 +783,12 @@ describe('FIN-001: Transfer-method allowlist', () => {
       expect(res.status).not.toBe(400);
     });
   }
+
+  it('rejects removed manual_cash without weakening manual bank settlement', async () => {
+    const { POST } = await loadApproveRoute();
+    const res = await POST(makePostRequest('/api/admin/payouts/test-id/approve', { transfer_method: 'manual_cash' }), { params: Promise.resolve({ id: 'test-id' }) });
+    expect(res.status).toBe(400);
+  });
 
   it('rejects unknown transfer method with 400', async () => {
     const { POST } = await loadApproveRoute();
@@ -859,7 +865,7 @@ describe('FIN-001: Transfer-method allowlist', () => {
     expect(destCheck).toBeLessThan(stripeFetch);
   });
 
-  it('automated methods never use the manual paid path', async () => {
+  it('manual approval never marks paid and automated transfers cannot use that path', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
@@ -870,10 +876,11 @@ describe('FIN-001: Transfer-method allowlist', () => {
     // and never enter the automated provider code path (claim + provider call).
     // The AUTOMATED_TRANSFER_METHODS set separates them explicitly.
     expect(source).toContain("AUTOMATED_TRANSFER_METHODS.has(transfer_method)");
-    // Manual path sets status to 'paid' directly without claim
+    // Manual bank approval is distinct from confirmed settlement.
     const manualSection = source.indexOf('!AUTOMATED_TRANSFER_METHODS.has');
-    const paidAssign = source.indexOf("status: 'paid'", manualSection);
-    expect(paidAssign).toBeGreaterThan(manualSection);
+    const manualBody = source.slice(manualSection, source.indexOf('const { data: claimResult', manualSection));
+    expect(manualBody).toContain("status: 'approved'");
+    expect(manualBody).not.toContain("status: 'paid'");
     // The automated try block does NOT contain a 'paid' assignment
     const tryBlock = source.indexOf('try {', manualSection + 200);
     const automatedSection = source.slice(tryBlock, source.indexOf('} catch', tryBlock));
