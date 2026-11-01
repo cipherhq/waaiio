@@ -101,13 +101,22 @@ describe('M496 — Channel Number Continuity (real PG)', () => {
       DROP FUNCTION IF EXISTS public.check_phone_conflict(TEXT,UUID,TEXT);
     `);
         // ── Apply schema ─────────────────────────────────────────────
+        await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM service_role');
         await pool.query(BOOTSTRAP_SQL);
         await pool.query(readFileSync('supabase/migrations/391_channel_candidate_system.sql', 'utf8'));
         await pool.query(readFileSync('supabase/migrations/430_shared_number_tenant_isolation.sql', 'utf8'));
         await pool.query(M439_S1_SQL);
         await pool.query(readFileSync('supabase/migrations/494_business_status_step_up.sql', 'utf8'));
         await pool.query(readFileSync('supabase/migrations/495_embedded_signup_sessions.sql', 'utf8'));
+        // Supabase-style broad service defaults must not survive explicit continuity grants.
+        await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role');
+        await pool.query('CREATE TABLE public.continuity_default_grant_probe(id integer)');
+        const inherited = await pool.query(`SELECT has_table_privilege('service_role', 'public.continuity_default_grant_probe', 'UPDATE') AS u,
+          has_table_privilege('service_role', 'public.continuity_default_grant_probe', 'DELETE') AS d`);
+        expect(inherited.rows[0]).toEqual({ u: true, d: true });
+        await pool.query('DROP TABLE public.continuity_default_grant_probe');
         await pool.query(readFileSync('supabase/migrations/496_channel_number_continuity.sql', 'utf8'));
+        await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM service_role');
     });
     afterAll(async () => { await pool?.end(); });
     beforeEach(async () => {
@@ -118,6 +127,20 @@ describe('M496 — Channel Number Continuity (real PG)', () => {
     // §1. Schema & Grant Verification
     // ════════════════════════════════════════════════════════════════
     describe('Schema & Grants', () => {
+        it('normalizes all service-role table permissions despite inherited ALL defaults', async () => {
+            for (const table of ['merchant_step_up_authorizations', 'channel_change_approvals', 'channel_transition_audit']) {
+                const { rows: [grants] } = await pool.query(`SELECT
+                  has_table_privilege('service_role',$1,'SELECT') AS s,
+                  has_table_privilege('service_role',$1,'INSERT') AS i,
+                  has_table_privilege('service_role',$1,'UPDATE') AS u,
+                  has_table_privilege('service_role',$1,'DELETE') AS d,
+                  has_table_privilege('service_role',$1,'TRUNCATE') AS t,
+                  has_table_privilege('service_role',$1,'REFERENCES') AS r,
+                  has_table_privilege('service_role',$1,'TRIGGER') AS g`, ['public.' + table]);
+                expect(grants).toEqual({ s: true, i: true, u: table !== 'channel_transition_audit', d: false, t: false, r: false, g: false });
+            }
+        });
+
         it('all new tables deny public client access and retain RLS in final state', async () => {
             for (const table of ['merchant_step_up_authorizations', 'channel_change_approvals', 'channel_transition_audit', 'whatsapp_signup_sessions']) {
                 const { rows: [state] } = await pool.query(`SELECT relrowsecurity AS rls,
@@ -216,6 +239,26 @@ describe('M496 — Channel Number Continuity (real PG)', () => {
     // §2. promote_candidate_with_merchant_auth
     // ════════════════════════════════════════════════════════════════
     describe('promote_candidate_with_merchant_auth', () => {
+        it('promotion audit records the actual coexist business mode', async () => {
+            await seedCandidate(pool);
+            await pool.query("UPDATE whatsapp_channel_candidates SET business_wa_method='coexist' WHERE id=$1", [CAND]);
+            const { rows: [result] } = await pool.query('SELECT promote_candidate_with_merchant_auth($1,$2,NULL,$3,NULL,NULL) AS value', [CAND, BIZ, OWNER]);
+            const { rows: [biz] } = await pool.query('SELECT wa_method,assigned_channel_id FROM businesses WHERE id=$1', [BIZ]);
+            expect(biz.wa_method).toBe('coexist');
+            const { rows: [audit] } = await pool.query('SELECT new_wa_method,new_channel_id,new_assigned_channel_id FROM channel_transition_audit WHERE business_id=$1', [BIZ]);
+            expect(audit).toEqual({ new_wa_method: biz.wa_method, new_channel_id: result.value.channel_id, new_assigned_channel_id: biz.assigned_channel_id });
+        });
+        it('promotion audit retains the old shared channel on shared-to-dedicated upgrade', async () => {
+            await pool.query("UPDATE businesses SET wa_method='shared',assigned_channel_id=$1 WHERE id=$2", [SH_NG, BIZ]);
+            await seedCandidate(pool, { assignedId: SH_NG, waMethod: 'shared' });
+            await pool.query('UPDATE whatsapp_channel_candidates SET expected_whatsapp_channel_id=NULL WHERE id=$1', [CAND]);
+            await seedMerchantStepUp(pool, 'channel_number_change', CAND, 'upgrade-hash');
+            const { rows: [result] } = await pool.query('SELECT promote_candidate_with_merchant_auth($1,$2,$3,$4,$5,$6) AS value', [CAND, BIZ, M_SU, OWNER, 'sess-1', 'upgrade-hash']);
+            expect(result.value.ok).toBe(true);
+            const { rows: [audit] } = await pool.query('SELECT old_channel_id,old_wa_method,old_assigned_channel_id,new_wa_method FROM channel_transition_audit WHERE business_id=$1', [BIZ]);
+            expect(audit).toEqual({ old_channel_id: SH_NG, old_wa_method: 'shared', old_assigned_channel_id: SH_NG, new_wa_method: 'transfer' });
+        });
+
         it('first-connect: succeeds without step-up, creates audit', async () => {
             // Business has no channel assignments — no authority
             await seedCandidate(pool, { assignedId: null, waMethod: 'transfer' });

@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS public.merchant_step_up_authorizations (
 ALTER TABLE public.merchant_step_up_authorizations ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "merchant_step_up_deny_all" ON public.merchant_step_up_authorizations
   FOR ALL USING (false) WITH CHECK (false);
-REVOKE ALL ON TABLE public.merchant_step_up_authorizations FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.merchant_step_up_authorizations FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.merchant_step_up_authorizations TO service_role;
 CREATE INDEX IF NOT EXISTS idx_merchant_step_up_lookup
   ON public.merchant_step_up_authorizations (owner_user_id, consumed_at, expires_at);
@@ -83,7 +83,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_channel_change_open_per_business
 ALTER TABLE public.channel_change_approvals ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "channel_change_approvals_deny_all" ON public.channel_change_approvals
   FOR ALL USING (false) WITH CHECK (false);
-REVOKE ALL ON TABLE public.channel_change_approvals FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.channel_change_approvals FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.channel_change_approvals TO service_role;
 
 -- ── §3. channel_transition_audit (append-only) ──────────────────────────
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS public.channel_transition_audit (
 ALTER TABLE public.channel_transition_audit ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "channel_transition_audit_deny_all" ON public.channel_transition_audit
   FOR ALL USING (false) WITH CHECK (false);
-REVOKE ALL ON TABLE public.channel_transition_audit FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.channel_transition_audit FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT ON TABLE public.channel_transition_audit TO service_role;
 
 -- ── §4. Extend admin step-up CHECK ──────────────────────────────────────
@@ -1325,6 +1325,7 @@ SET search_path = ''
 AS $$
 DECLARE
   v_biz              RECORD;
+  v_biz_post         RECORD;
   v_has_authority     BOOLEAN := false;
   v_has_hist_ded      BOOLEAN := false;
   v_promo_result      JSONB;
@@ -1414,6 +1415,10 @@ BEGIN
     END IF;
   END IF;
 
+  -- Read the actual promoted state (including coexist mode) while holding the business lock.
+  SELECT assigned_channel_id, whatsapp_channel_id, wa_method
+  INTO v_biz_post FROM public.businesses WHERE id = p_business_id;
+
   -- 7. Audit (redacted — no credentials)
   INSERT INTO public.channel_transition_audit (
     business_id, transition_type,
@@ -1423,9 +1428,10 @@ BEGIN
     merchant_step_up_id, connection_source, provider_verified
   ) VALUES (
     p_business_id, v_transition_type,
-    (v_promo_result ->> 'replaced_channel_id')::uuid, v_old_wa_method, v_old_assigned,
-    (v_promo_result ->> 'channel_id')::uuid, 'transfer',
-    (v_promo_result ->> 'channel_id')::uuid,
+    COALESCE((v_promo_result ->> 'replaced_channel_id')::uuid,
+      v_biz.whatsapp_channel_id, v_old_assigned), v_old_wa_method, v_old_assigned,
+    COALESCE(v_biz_post.whatsapp_channel_id, v_biz_post.assigned_channel_id),
+    v_biz_post.wa_method, v_biz_post.assigned_channel_id,
     p_owner_user_id, p_owner_user_id,
     p_step_up_id, v_cand_source, true
   );

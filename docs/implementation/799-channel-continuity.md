@@ -31,7 +31,7 @@ The three continuity tables enable RLS and deny public client access. Only the s
 | `admin/src/__tests__/channel-changes.test.tsx` | Rendered admin recovery controls |
 | `lib/__tests__/merchant-channel-rendered.test.tsx` | Rendered merchant channel controls |
 
-The maintained PostgreSQL suite passed **75 tests, zero failed and zero skipped**, on a disposable local loopback database while implementing this change. It applies M391, M430, the relevant M439 table definition, and M494–M496 with faithful core fixtures. SQL tests are not HTTP tests or provider certification.
+The maintained PostgreSQL suite passed **78 tests, zero failed and zero skipped**, on a disposable local loopback database while implementing this change. It applies M391, M430, the relevant M439 table definition, and M494–M496 with faithful core fixtures and broad inherited service-role default grants. Final checks verify explicit grant normalization, coexist-mode audit accuracy, and the prior shared-channel audit pointer on upgrade. SQL tests are not HTTP tests or provider certification.
 
 `.github/workflows/ci.yml` discovers `.pg.test.ts` files in job `security-acl-tests`, step `Run .pg.test.ts files in parallel with isolated databases`, and enforces zero skips in `Verify zero skipped .pg.test.ts tests (per-file)`. The main unit-test step excludes this database-dependent file so it runs in that isolated job. Rendered admin tests run in the Admin test job; ordinary handler and merchant UI tests are discovered by the root unit-test runner.
 
