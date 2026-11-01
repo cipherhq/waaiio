@@ -211,6 +211,8 @@ export interface MessageSender {
   sendTemplate?(msg: {
     to: string;
     templateName: string;
+    /** Explicit provider locale; omitted callers retain the en_US provider default. */
+    languageCode?: string;
     templateParams: string[];
     buttonParams?: string[];
     noRetry?: boolean;
@@ -638,6 +640,8 @@ export class MetaCloudSender implements MessageSender {
   async sendTemplate(msg: {
     to: string;
     templateName: string;
+    /** Explicit provider locale; omitted callers retain the en_US provider default. */
+    languageCode?: string;
     templateParams: string[];
     buttonParams?: string[];
     /** Skip automatic retry for delivery-critical sends where ambiguous outcomes must not produce duplicate provider POSTs */
@@ -656,7 +660,7 @@ export class MetaCloudSender implements MessageSender {
     }
     const templateCall = async () => {
       return this.withAttemptAndGuard(
-        () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, components }),
+        () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, languageCode: msg.languageCode, components }),
         { recipientPhone: msg.to, templateName: msg.templateName, messageCategory: msg.messageCategory },
       );
     };

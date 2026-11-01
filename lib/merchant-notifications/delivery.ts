@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver, type ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { sendEmail } from '@/lib/email/client';
-import { isMerchantNotificationsEnabled, MERCHANT_NOTIFICATION_TEMPLATE, type MerchantNotificationDelivery } from './types';
+import { isMerchantNotificationsEnabled, MERCHANT_NOTIFICATION_TEMPLATE, MERCHANT_NOTIFICATION_TEMPLATE_LANGUAGE, type MerchantNotificationDelivery } from './types';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export function merchantNotificationEmail(business: string, payload: MerchantNotificationDelivery['payload']) {
@@ -31,7 +31,7 @@ export async function deliverMerchantNotification(db: SupabaseClient, d: Merchan
       resolved = await new ChannelResolver(db).resolveByChannelIdForBusiness(d.whatsapp_channel_id,d.business_id);
       if (!resolved?.cloud || !resolved.sender.sendTemplate) return finish('pending','channel_unavailable');
       const templates = await resolved.cloud.getTemplates();
-      const approved = templates.data.some(t => t.name===MERCHANT_NOTIFICATION_TEMPLATE && t.status==='APPROVED' && t.category==='UTILITY' && t.language==='en_US');
+      const approved = templates.data.some(t => t.name===MERCHANT_NOTIFICATION_TEMPLATE && t.status==='APPROVED' && t.category==='UTILITY' && t.language===MERCHANT_NOTIFICATION_TEMPLATE_LANGUAGE);
       if (!approved) return finish('pending','template_unavailable');
     }
   } catch {
@@ -46,7 +46,7 @@ export async function deliverMerchantNotification(db: SupabaseClient, d: Merchan
       const result = await sendEmail({to:d.address,...merchantNotificationEmail(businessName!,d.payload),noRetry:true});
       if (result.success === true && !('dev' in result && result.dev) && 'id' in result && result.id) providerId=result.id;
     } else {
-      const result = await resolved!.sender.sendTemplate!({to:d.address,templateName:MERCHANT_NOTIFICATION_TEMPLATE,templateParams:[businessName!,d.payload.title,d.payload.reference,d.payload.detail],messageCategory:'utility',noRetry:true});
+      const result = await resolved!.sender.sendTemplate!({to:d.address,templateName:MERCHANT_NOTIFICATION_TEMPLATE,languageCode:MERCHANT_NOTIFICATION_TEMPLATE_LANGUAGE,templateParams:[businessName!,d.payload.title,d.payload.reference,d.payload.detail],messageCategory:'utility',noRetry:true});
       if (result.success === true && result.messageId) providerId=result.messageId;
     }
   } catch {

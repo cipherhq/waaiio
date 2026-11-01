@@ -41,6 +41,30 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
  },30000);
  beforeEach(async()=>{await sql('RESET ROLE; TRUNCATE merchant_notification_recipients,orders,bookings,reservations,payments,whatsapp_config CASCADE');});
  afterAll(async()=>{await db?.end();});
+ it.each([
+  ['missing search path', 'ALTER FUNCTION public.claim_merchant_notification() RESET search_path', 'security/search_path'],
+  ['wrong search path', 'ALTER FUNCTION public.claim_merchant_notification() SET search_path=public', 'security/search_path'],
+  ['security invoker', 'ALTER FUNCTION public.claim_merchant_notification() SECURITY INVOKER', 'security/search_path'],
+  ['PUBLIC execution', 'GRANT EXECUTE ON FUNCTION public.capture_merchant_notification() TO PUBLIC', 'public execution'],
+  ['anon execution', 'GRANT EXECUTE ON FUNCTION public.claim_merchant_notification() TO anon', 'public execution'],
+  ['authenticated execution', 'GRANT EXECUTE ON FUNCTION public.claim_merchant_notification() TO authenticated', 'public execution'],
+  ['missing service execution', 'REVOKE EXECUTE ON FUNCTION public.claim_merchant_notification() FROM service_role', 'service execution'],
+  ['missing function', 'DROP FUNCTION public.claim_merchant_notification()', 'missing function'],
+  ['disabled RLS', 'ALTER TABLE public.merchant_notification_invitations DISABLE ROW LEVEL SECURITY', 'RLS'],
+ ])('migration verifier aborts and rolls back %s',async(_name,tamper,reason)=>{
+  const migration=readFileSync('supabase/migrations/499_merchant_notifications.sql','utf8');
+  const verifier=migration.match(/DO \$verify_merchant_notifications\$[\s\S]*?END \$verify_merchant_notifications\$;/)?.[0];
+  expect(verifier).toBeTruthy();
+  // Execute the actual migration block, not a duplicated test-only catalog check.
+  await sql('BEGIN');
+  try {
+   await sql(tamper);
+   await expect(sql(verifier!)).rejects.toThrow(`M499 verification FAILED: ${reason}`);
+   await expect(sql('SELECT 1')).rejects.toMatchObject({code:'25P02'});
+  } finally {await sql('ROLLBACK');}
+  // Successful re-verification proves rollback restored the original security state.
+  await expect(sql(verifier!)).resolves.toBeDefined();
+ });
  it('service-only writes and RPCs, owner-scoped reads',async()=>{
   await recipient();await recipient('email','other@example.com',OTHER);
   const grants=await sql(`SELECT has_function_privilege('anon','create_merchant_notification_recipient(uuid,text,text,text,text[])','EXECUTE') a,has_function_privilege('authenticated','fence_merchant_notification(uuid,uuid)','EXECUTE') b,has_function_privilege('service_role','fence_merchant_notification(uuid,uuid)','EXECUTE') c`);

@@ -185,4 +185,39 @@ END $$;
 REVOKE ALL ON FUNCTION public.capture_merchant_notification() FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.create_merchant_notification_recipient(uuid,text,text,text,text[]),public.issue_merchant_notification_invitation(uuid,uuid,text,uuid),public.consume_merchant_notification_invitation(text,text,text,uuid),public.revoke_merchant_notification_whatsapp(text,uuid),public.claim_merchant_notification(),public.reserve_merchant_notification_allowance(uuid),public.fence_merchant_notification(uuid,uuid),public.finish_merchant_notification(uuid,uuid,text,text,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.create_merchant_notification_recipient(uuid,text,text,text,text[]),public.issue_merchant_notification_invitation(uuid,uuid,text,uuid),public.consume_merchant_notification_invitation(text,text,text,uuid),public.revoke_merchant_notification_whatsapp(text,uuid),public.claim_merchant_notification(),public.reserve_merchant_notification_allowance(uuid),public.fence_merchant_notification(uuid,uuid),public.finish_merchant_notification(uuid,uuid,text,text,text) TO service_role;
+-- Verify the final catalog state before committing any migration changes.
+DO $verify_merchant_notifications$
+DECLARE signature text; function_id oid; definition record; table_name text;
+BEGIN
+ FOREACH signature IN ARRAY ARRAY[
+  'public.create_merchant_notification_recipient(uuid,text,text,text,text[])',
+  'public.issue_merchant_notification_invitation(uuid,uuid,text,uuid)',
+  'public.consume_merchant_notification_invitation(text,text,text,uuid)',
+  'public.revoke_merchant_notification_whatsapp(text,uuid)',
+  'public.capture_merchant_notification()',
+  'public.claim_merchant_notification()',
+  'public.reserve_merchant_notification_allowance(uuid)',
+  'public.fence_merchant_notification(uuid,uuid)',
+  'public.finish_merchant_notification(uuid,uuid,text,text,text)'
+ ] LOOP
+  function_id:=to_regprocedure(signature);
+  IF function_id IS NULL THEN RAISE EXCEPTION 'M499 verification FAILED: missing function %',signature; END IF;
+  SELECT p.prosecdef,p.proconfig,p.proacl,p.proowner INTO definition FROM pg_proc p WHERE p.oid=function_id;
+  IF NOT definition.prosecdef OR NOT COALESCE('search_path=public, extensions'=ANY(definition.proconfig),false) THEN
+   RAISE EXCEPTION 'M499 verification FAILED: security/search_path for %',signature;
+  END IF;
+  IF EXISTS(SELECT 1 FROM aclexplode(COALESCE(definition.proacl,acldefault('f',definition.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')
+   OR has_function_privilege('anon',function_id,'EXECUTE') OR has_function_privilege('authenticated',function_id,'EXECUTE') THEN
+   RAISE EXCEPTION 'M499 verification FAILED: public execution for %',signature;
+  END IF;
+  IF signature<>'public.capture_merchant_notification()' AND NOT has_function_privilege('service_role',function_id,'EXECUTE') THEN
+   RAISE EXCEPTION 'M499 verification FAILED: service execution for %',signature;
+  END IF;
+ END LOOP;
+ FOREACH table_name IN ARRAY ARRAY['merchant_notification_recipients','merchant_notification_invitations','merchant_notification_deliveries'] LOOP
+  IF NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=table_name AND c.relrowsecurity) THEN
+   RAISE EXCEPTION 'M499 verification FAILED: RLS for %',table_name;
+  END IF;
+ END LOOP;
+END $verify_merchant_notifications$;
 COMMIT;

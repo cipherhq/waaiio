@@ -2,7 +2,8 @@ export const MERCHANT_NOTIFICATION_EVENTS = ['sale', 'payment', 'appointment', '
 export type MerchantNotificationEvent = typeof MERCHANT_NOTIFICATION_EVENTS[number];
 export type MerchantNotificationChannel = 'whatsapp' | 'email';
 export const MERCHANT_NOTIFICATION_CONSENT_VERSION = 'merchant-alerts-v1';
-export const MERCHANT_NOTIFICATION_TEMPLATE = 'waaiio_merchant_alert_v1';
+export const MERCHANT_NOTIFICATION_TEMPLATE = 'name_waaiio_merchant_alert_v1';
+export const MERCHANT_NOTIFICATION_TEMPLATE_LANGUAGE = 'en';
 export function isMerchantNotificationsEnabled(): boolean {
   return process.env.MERCHANT_NOTIFICATIONS_ENABLED === 'true';
 }
