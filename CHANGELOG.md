@@ -1,3 +1,15 @@
+## 2026-11-01 — Isolated scheduled-broadcast acceptance tests
+
+- Extend PR #792 handler tests with the existing capture sender, deny-all fetch/socket boundaries and explicit blocked-egress probes. Preserve consent/acceptance cases and add mixed-recipient dispatch coverage.
+- Focused local verification: 53 passed, zero failures/skips across three suites. Test-only change; no application behavior, hosted consent, provider sends or deployments. Hosted acceptance remains separate.
+
+## 2026-10-31 — Scheduled broadcast consent and acceptance
+
+- `app/api/broadcasts/schedule/route.ts`: Validate the audience array and reject the complete schedule when a recipient lacks recorded WhatsApp marketing consent, preserving ownership, capability and quota checks. Consent checks use bounded concurrency and fail closed.
+- `app/api/cron/scheduled-broadcasts/route.ts`: Recheck existing marketing permission before dispatch, resolve actual WABA template billing category, tag text fallback consistently with immediate sends, and report zero accepted dispatches as failed with no sent timestamp.
+- `lib/__tests__/scheduled-broadcast-consent.test.ts`: Actual route tests use the real consent helper with synthetic database/provider boundaries; cover denial, revocation, global opt-out, read failures, categories and acceptance outcomes. Three related files pass46tests withzero skips; production build passes locally. Full local root run:16460passed/2845skipped/11failed, with sandbox IPC/socket denials and nested-checkout scanner failures/timeouts recorded; clean-checkout CI remains required.
+- **Affects**: Scheduled broadcasts only; no consent creation, provider sends, schema, quota policy or immediate-send changes. **Could break**: Scheduling now rejects a mixed eligible/ineligible audience; callers retain it for correction. Concurrency/replay claiming and hosted provider delivery are not certified. Not deployed.
+
 ## 2026-10-31 — Payout reporting clarity
 
 - `admin/src/pages/Payouts.tsx`: Display returned partial-failure/skipped counts, server explanations and attention payout IDs alongside created/held counts. HTTP207 no longer hides failed results, and empty successful runs retain the server's no-eligible explanation.

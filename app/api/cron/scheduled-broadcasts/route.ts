@@ -5,6 +5,8 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
 import { ensurePlus } from '@/lib/utils/phone';
+import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
+import { resolveTemplateCategory } from '@/lib/bot/automation/sealed-rule-actions';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -70,6 +72,15 @@ export async function GET(request: NextRequest) {
 
       let sentCount = 0;
       let failedCount = 0;
+      let eligibleCount = 0;
+      let templateCategory: Awaited<ReturnType<typeof resolveTemplateCategory>> = null;
+      if (broadcast.template_name && sender.sendTemplate) {
+        try {
+          templateCategory = await resolveTemplateCategory(resolved.cloud, broadcast.template_name);
+        } catch {
+          logger.warn('[SCHEDULED-BROADCAST] Template category unavailable; using guarded text fallback.');
+        }
+      }
 
       const TEMPLATE_WRAPPERS: Record<string, (biz: string, msg: string) => string> = {
         business_update: (biz, msg) => `Hello! Here is an update from *${biz}*:\n\n${msg}\n\nReply to this message if you have any questions.`,
@@ -82,6 +93,8 @@ export async function GET(request: NextRequest) {
 
       for (const phone of broadcast.phones) {
         try {
+          if (!await hasRecipientPermission(supabase, broadcast.business_id, phone, 'marketing')) continue;
+          eligibleCount++;
           // Check opt-out before sending promotional message (scoped to this business)
           const { count: optOutCount, error: optOutErr } = await supabase
             .from('messaging_opt_outs')
@@ -101,12 +114,13 @@ export async function GET(request: NextRequest) {
 
           let messageSent = false;
 
-          if (broadcast.template_name && sender.sendTemplate) {
+          if (broadcast.template_name && sender.sendTemplate && templateCategory) {
             try {
               await sender.sendTemplate({
                 to: phone,
                 templateName: broadcast.template_name,
                 templateParams: [business.name, broadcast.message],
+                messageCategory: templateCategory,
               });
               messageSent = true;
             } catch {
@@ -115,7 +129,7 @@ export async function GET(request: NextRequest) {
           }
 
           if (!messageSent) {
-            await sender.sendText({ to: phone, text: formattedText });
+            await sender.sendText({ to: phone, text: formattedText, messageCategory: 'service' });
           }
 
           await supabase.from('notifications').insert({
@@ -150,12 +164,15 @@ export async function GET(request: NextRequest) {
         p_recipient_count: broadcast.phones.length,
       });
 
-      // Mark as sent
+      // "sent" means at least one provider dispatch was accepted, not merely processed.
       await supabase.from('business_broadcasts').update({
-        status: 'sent',
-        sent_at: new Date().toISOString(),
+        status: sentCount > 0 ? 'sent' : 'failed',
+        sent_at: sentCount > 0 ? new Date().toISOString() : null,
         sent_count: sentCount,
         failed_count: failedCount,
+        error_message: sentCount > 0 ? null : eligibleCount === 0
+          ? 'No eligible recipients at dispatch time'
+          : 'No WhatsApp messages were accepted',
       }).eq('id', broadcast.id);
 
       totalProcessed++;
