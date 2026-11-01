@@ -77,6 +77,7 @@ import SiteAnnouncementPage from './pages/SiteAnnouncement';
 import LaunchSubscribers from './pages/LaunchSubscribers';
 import PlatformCampaigns from './pages/PlatformCampaigns';
 import CustomerOnboarding from './pages/CustomerOnboarding';
+import ChannelChanges from './pages/ChannelChanges';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -124,6 +125,7 @@ export const router = createBrowserRouter([
       { path: 'llm-logs', element: <RoleGuard roles={ADMIN_PERMISSIONS['llm-logs']}><LLMClassifications /></RoleGuard> },
       { path: 'whatsapp-channels', element: <RoleGuard roles={ADMIN_PERMISSIONS['whatsapp-channels']}><WhatsAppChannels /></RoleGuard> },
       { path: 'whatsapp-assistance', element: <RoleGuard roles={ADMIN_PERMISSIONS['customer-onboarding']}><WhatsAppAssistance /></RoleGuard> },
+      { path: 'channel-changes', element: <RoleGuard roles={ADMIN_PERMISSIONS['channel-changes']}><ChannelChanges /></RoleGuard> },
       { path: 'whatsapp-templates', element: <RoleGuard roles={ADMIN_PERMISSIONS['whatsapp-templates']}><WhatsAppTemplates /></RoleGuard> },
       { path: 'notifications', element: <RoleGuard roles={ADMIN_PERMISSIONS['notifications']}><Notifications /></RoleGuard> },
       { path: 'broadcasts', element: <RoleGuard roles={ADMIN_PERMISSIONS['broadcasts']}><Broadcasts /></RoleGuard> },

@@ -1,32 +1,21 @@
+import { listSignupPhones } from '@/lib/whatsapp/embedded-signup-assets';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { encryptToken } from '@/lib/encryption';
+import { consumeSignupSession } from '@/lib/whatsapp/embedded-signup-session';
 import { randomInt } from 'crypto';
 import { logger } from '@/lib/logger';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logAdminAudit } from '@/lib/admin-audit';
 
-/**
- * POST /api/auth/facebook/callback
- *
- * Called after the Facebook Embedded Signup flow completes.
- * Accepts either:
- *   - access_token (already exchanged by /api/auth/facebook/discover)
- *   - code (legacy: will be exchanged here)
- *
- * Body: {
- *   business_id: string,
- *   access_token?: string,        // Pre-exchanged token from discover endpoint
- *   token_expires_at?: string,    // Token expiry from discover endpoint
- *   code?: string,                // Legacy: authorization code from FB.login
- *   waba_id: string,              // WhatsApp Business Account ID
- *   phone_number_id: string,      // Phone Number ID
- *   connection_method: 'transfer' | 'coexist',
- * }
- */
+/** Finalize an explicit selection from a merchant-bound, one-use discovery session. */
 export async function POST(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  if (origin && origin !== request.nextUrl.origin) {
+    return NextResponse.json({ message: 'Invalid request origin' }, { status: 403 });
+  }
   const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'fb-callback'), 5, 60_000);
   if (rateLimit) return rateLimit;
 
@@ -41,7 +30,7 @@ export async function POST(request: NextRequest) {
     const {
       business_id,
       access_token: providedAccessToken,
-      token_expires_at: providedTokenExpiresAt,
+      connection_id,
       code,
       waba_id: providedWabaId,
       phone_number_id: providedPhoneNumberId,
@@ -62,9 +51,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unsupported connection method' }, { status: 400 });
     }
 
-    if (!business_id || (!code && !providedAccessToken)) {
+    if (!business_id || typeof connection_id !== 'string' || !providedWabaId || !providedPhoneNumberId || code || providedAccessToken) {
       return NextResponse.json(
-        { message: 'Missing required fields: business_id and (access_token or code)' },
+        { message: 'Choose an account and number from a fresh Meta connection.' },
         { status: 400 }
       );
     }
@@ -83,96 +72,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Business not found or not owned by you' }, { status: 403 });
     }
 
-    // Get access token — either pre-exchanged or from code
-    let longLivedToken: string;
-    let tokenExpiresAt: string | null = null;
-
-    if (providedAccessToken) {
-      // Token already exchanged by /api/auth/facebook/discover
-      longLivedToken = providedAccessToken;
-      tokenExpiresAt = providedTokenExpiresAt || null;
-    } else {
-      // Legacy path: exchange authorization code for access token
-      const appId = (process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '').trim();
-      const appSecret = (process.env.META_APP_SECRET || '').trim();
-
-      if (!appId || !appSecret) {
-        logger.error('Missing META_APP_ID or META_APP_SECRET env vars');
-        return NextResponse.json(
-          { message: 'Server configuration error: missing Meta app credentials' },
-          { status: 500 }
-        );
-      }
-
-      try {
-        const tokenRes = await fetch(
-          `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`
-        );
-        if (!tokenRes.ok) {
-          const errData = await tokenRes.json().catch(() => ({}));
-          logger.error('Code exchange failed:', errData);
-          return NextResponse.json(
-            { message: 'Failed to exchange Facebook authorization code', error: errData },
-            { status: 400 }
-          );
-        }
-        const tokenData = await tokenRes.json();
-        longLivedToken = tokenData.access_token;
-        tokenExpiresAt = tokenData.expires_in
-          ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
-          : null;
-      } catch (err) {
-        logger.error('Code exchange network error:', err);
-        return NextResponse.json(
-          { message: 'Failed to exchange authorization code' },
-          { status: 500 }
-        );
-      }
+    const session = await consumeSignupSession(user.id, business_id, connection_id);
+    if (!session) {
+      return NextResponse.json({ message: 'This Meta connection expired or was already used. Please reconnect with Meta.' }, { status: 409 });
     }
+    const account = session.accounts.find(account => account.waba_id === waba_id);
+    if (!account?.phones.some(phone => phone.id === phone_number_id)) {
+      return NextResponse.json({ message: 'Choose a number shared by this Meta account.' }, { status: 403 });
+    }
+    const longLivedToken = session.accessToken;
+    const tokenExpiresAt = session.tokenExpiresAt;
 
-    // Auto-discover WABA/phone IDs if not provided (e.g. popup opened as new tab)
-    if (!waba_id || !phone_number_id) {
-      const fallbackAppId = (process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '').trim();
-      const fallbackAppSecret = (process.env.META_APP_SECRET || '').trim();
-      try {
-        // Use debug_token to find which WABAs were shared with our app
-        const debugRes = await fetch(
-          `https://graph.facebook.com/v22.0/debug_token?input_token=${longLivedToken}&access_token=${fallbackAppId}|${fallbackAppSecret}`
-        );
-        if (debugRes.ok) {
-          const debugData = await debugRes.json();
-          const scopes = debugData.data?.granular_scopes || [];
-          const wabaScope = scopes.find(
-            (s: any) => s.permission === 'whatsapp_business_management' && s.target_ids?.length > 0
-          );
-          if (wabaScope) {
-            waba_id = waba_id || wabaScope.target_ids[wabaScope.target_ids.length - 1];
-          }
-        }
-
-        // If we have a WABA ID, get the phone numbers
-        if (waba_id && !phone_number_id) {
-          const phonesRes = await fetch(
-            `https://graph.facebook.com/v22.0/${waba_id}/phone_numbers?access_token=${longLivedToken}`
-          );
-          if (phonesRes.ok) {
-            const phonesData = await phonesRes.json();
-            const phones = phonesData.data || [];
-            if (phones.length > 0) {
-              phone_number_id = phones[phones.length - 1].id;
-            }
-          }
-        }
-      } catch (err) {
-        logger.error('WABA auto-discovery failed:', err);
-      }
-
-      if (!waba_id || !phone_number_id) {
-        return NextResponse.json(
-          { message: 'Could not discover WhatsApp account. Please try again or use manual setup.' },
-          { status: 400 }
-        );
-      }
+    // Recheck current account membership before any database/provider mutation.
+    const currentPhones = await listSignupPhones(waba_id, longLivedToken);
+    if (!currentPhones.some(phone => phone.id === phone_number_id)) {
+      return NextResponse.json({ message: 'This number is no longer shared by the selected account. Please reconnect.' }, { status: 403 });
     }
 
     // Get phone number info from Meta
@@ -195,8 +109,10 @@ export async function POST(request: NextRequest) {
       messagingLimit = phoneInfo.messaging_limit || '';
     } catch (err) {
       logger.error('Failed to get phone info:', err);
-      // Non-fatal — we can still create the channel
+      return NextResponse.json({ message: 'Unable to verify the selected number with Meta. Please reconnect.' }, { status: 422 });
     }
+
+    if (!phoneNumber) return NextResponse.json({ message: 'Meta did not return a verified phone identity.' }, { status: 422 });
 
     // ── Candidate-based connection (R9 §5: fence BEFORE provider mutation) ──
     const service = createServiceClient();
@@ -205,11 +121,12 @@ export async function POST(request: NextRequest) {
 
     // Conflict check via DB helper (R9 §2)
     if (normalized) {
-      const { data: conflict } = await service.rpc('check_phone_conflict', {
+      const { data: conflict, error: conflictError } = await service.rpc('check_phone_conflict', {
         p_normalized_phone: normalized,
         p_business_id: business_id,
         p_connection_source: 'embedded_signup',
       });
+      if (conflictError) return NextResponse.json({ message: 'Unable to verify number availability. Please retry.' }, { status: 503 });
       if ((conflict as { conflict?: boolean })?.conflict) {
         const reason = (conflict as { reason?: string })?.reason || 'phone_conflict';
         return NextResponse.json(
@@ -341,15 +258,49 @@ export async function POST(request: NextRequest) {
       updated_at: new Date().toISOString(),
     }).eq('id', candidate.id);
 
-    // 4. Atomic promotion (H8: single PostgreSQL transaction)
+    // 4. Atomic promotion with merchant auth (#799)
+    // Original provider endpoint: always NULL step_up_id for genuine first connect.
+    // If business has existing authority, SQL raises step_up_required and the
+    // user must use the /finish endpoint with a verified step-up.
     const { data: promoResult, error: promoErr } = await service.rpc(
-      'promote_channel_candidate',
-      { p_candidate_id: candidate.id, p_business_id: business_id },
+      'promote_candidate_with_merchant_auth',
+      {
+        p_candidate_id: candidate.id,
+        p_business_id: business_id,
+        p_step_up_id: null,
+        p_owner_user_id: user.id,
+      },
     );
 
-    if (promoErr || !(promoResult as { ok?: boolean })?.ok) {
-      const reason = (promoResult as { reason?: string })?.reason || promoErr?.message || 'unknown';
-      logger.error('[FB-CALLBACK] Promotion failed:', reason);
+    if (promoErr) {
+      const msg = promoErr.message || 'unknown';
+      logger.error('[FB-CALLBACK] Promotion failed:', msg);
+      if (msg.includes('step_up_required')) {
+        return NextResponse.json(
+          { error: 'Two-factor authentication is required to replace your existing WhatsApp number.', code: 'STEP_UP_REQUIRED', candidate_id: candidate.id },
+          { status: 403 },
+        );
+      }
+      if (msg.includes('step_up_invalid')) {
+        return NextResponse.json(
+          { error: 'MFA authorization invalid, expired, or already used.', code: 'STEP_UP_INVALID', candidate_id: candidate.id },
+          { status: 403 },
+        );
+      }
+      await service.from('whatsapp_channel_candidates').update({
+        status: 'failed',
+        failure_reason: `Promotion failed: ${msg}`,
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
+      return NextResponse.json(
+        { error: 'Channel activation failed. Please try again.', recoverable: true, reason: msg },
+        { status: 409 },
+      );
+    }
+
+    if (!(promoResult as { ok?: boolean })?.ok) {
+      const reason = (promoResult as { reason?: string })?.reason || 'unknown';
+      logger.error('[FB-CALLBACK] Promotion returned not-ok:', reason);
       await service.from('whatsapp_channel_candidates').update({
         status: 'failed',
         failure_reason: `Promotion failed: ${reason}`,

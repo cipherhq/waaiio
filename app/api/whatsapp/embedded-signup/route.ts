@@ -125,8 +125,13 @@ export async function POST(request: NextRequest) {
     const phoneNumberId = phone.id;
     const displayNumber = phone.display_phone_number;
 
-    // 5. Register the phone number for cloud API (if not already)
-    await fetch(
+    // 5. Generate PIN once, use for both registration and candidate storage
+    const { encryptToken } = await import('@/lib/encryption');
+    const { randomInt } = await import('crypto');
+    const pin = String(randomInt(100000, 1000000));
+
+    // Register the phone number for cloud API with the generated PIN
+    const regRes = await fetch(
       `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/register`,
       {
         method: 'POST',
@@ -134,90 +139,125 @@ export async function POST(request: NextRequest) {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ messaging_product: 'whatsapp', pin: '000000' }),
+        body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
       }
     );
+    if (!regRes.ok) {
+      const regData = await regRes.json().catch(() => ({}));
+      logger.error('[EMBEDDED-SIGNUP] Phone registration failed:', safeProviderError(regData));
+      return NextResponse.json({ error: 'Phone registration failed' }, { status: 422 });
+    }
 
-    // 6. Save channel in Waaiio
+    // 6. #799: Use candidate system instead of direct writes
     const service = createServiceClient();
 
-    // Deactivate any existing dedicated channels for this business
-    await service.from('whatsapp_channels')
-      .update({ is_active: false })
-      .eq('business_id', business_id)
-      .eq('channel_type', 'dedicated')
-      .eq('is_active', true);
-
-    // Create new channel
-    const { data: channel, error: channelError } = await service
-      .from('whatsapp_channels')
-      .insert({
-        business_id,
-        provider: 'meta_cloud',
-        channel_type: 'dedicated',
-        phone_number_id: phoneNumberId,
-        waba_id: wabaId,
-        meta_access_token: accessToken,
-        phone_number: displayNumber,
-        display_name: phone.verified_name || biz.name,
-        quality_rating: phone.quality_rating || null,
-        country_code: biz.country_code || 'US',
-        connection_method: 'transfer',
-        connection_status: 'provisioning',
-        is_active: false,
-      })
-      .select()
+    // Read current business state for CAS snapshot
+    const { data: bizFull } = await service
+      .from('businesses')
+      .select('id, assigned_channel_id, whatsapp_channel_id, wa_method')
+      .eq('id', business_id)
       .single();
 
-    if (channelError) {
+    const existingDedicated = await service
+      .from('whatsapp_channels')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('channel_type', 'dedicated')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    // Insert candidate with CAS snapshot (pin already generated above)
+    const { data: candidate, error: candErr } = await service
+      .from('whatsapp_channel_candidates')
+      .insert({
+        business_id,
+        connection_source: 'embedded_signup',
+        business_wa_method: 'transfer',
+        provider: 'meta_cloud',
+        phone_number: displayNumber,
+        phone_number_normalized: displayNumber ? displayNumber.replace(/[^0-9]/g, '') : null,
+        phone_number_id: phoneNumberId,
+        waba_id: wabaId,
+        meta_access_token: encryptToken(accessToken),
+        display_name: phone.verified_name || biz.name,
+        country_code: biz.country_code || 'US',
+        status: 'ready', // registration + subscription already succeeded
+        expected_assigned_channel_id: bizFull?.assigned_channel_id || null,
+        expected_whatsapp_channel_id: bizFull?.whatsapp_channel_id || null,
+        expected_wa_method: bizFull?.wa_method || null,
+        replacing_dedicated_channel_id: existingDedicated?.data?.id || null,
+        provider_state: { registered: true, webhook_subscribed: true },
+        encrypted_registration_pin: encryptToken(pin),
+      })
+      .select('id')
+      .single();
+
+    if (candErr || !candidate) {
+      if (candErr?.code === '23505') {
+        return NextResponse.json({ error: 'A connection attempt is already in progress.' }, { status: 409 });
+      }
       logger.withContext({
-        op: 'embedded-signup.channel-insert',
+        op: 'embedded-signup.candidate-insert',
         businessId: business_id,
-        wabaId,
-        ...(typeof channelError.code === 'string' && isSafeIdentifier(channelError.code) ? { errorCode: channelError.code } : {}),
-      }).error('[EMBEDDED-SIGNUP] Channel insert failed');
+        ...(typeof candErr?.code === 'string' && isSafeIdentifier(candErr.code) ? { errorCode: candErr.code } : {}),
+      }).error('[EMBEDDED-SIGNUP] Candidate creation failed');
       return NextResponse.json({ error: 'Failed to save channel' }, { status: 500 });
     }
 
-    // 6b. Positive READY transition — registration + subscription already succeeded before INSERT
-    await service.from('whatsapp_channels')
-      .update({ connection_status: 'active', is_active: true, metadata: {} })
-      .eq('id', channel.id);
+    // Atomic promotion with merchant auth
+    const { data: promoResult, error: promoErr } = await service.rpc(
+      'promote_candidate_with_merchant_auth',
+      {
+        p_candidate_id: candidate.id,
+        p_business_id: business_id,
+        p_step_up_id: null, // step-up handled by the SQL function based on existing authority
+        p_owner_user_id: user.id,
+      },
+    );
 
-    // 7. Update business — assign channel and set wa_method
-    const { error: bizAssignError } = await service.from('businesses')
-      .update({
-        wa_method: 'transfer',
-        whatsapp_channel_id: channel.id,
-        assigned_channel_id: channel.id,
-      })
-      .eq('id', business_id);
-
-    // 8. Attempt trial activation (atomic: grant + clock together)
-    // Only invoke if the prerequisite channel assignment succeeded — the DB authority
-    // checks for an active assigned channel for dedicated businesses.
-    if (bizAssignError) {
-      console.warn('[EMBEDDED-SIGNUP] Business channel assignment failed, skipping trial activation:', bizAssignError.message);
-    }
-    try {
-      if (!bizAssignError) {
-        await service.rpc('activate_trial_if_eligible', { p_business_id: business_id });
+    if (promoErr) {
+      const msg = promoErr.message || 'unknown';
+      if (msg.includes('step_up_required')) {
+        // Business has existing authority — needs MFA to replace
+        return NextResponse.json({
+          error: 'Two-factor authentication is required to replace your existing WhatsApp number.',
+          code: 'STEP_UP_REQUIRED',
+          candidate_id: candidate.id,
+        }, { status: 403 });
       }
+      logger.error('[EMBEDDED-SIGNUP] Promotion failed:', msg);
+      await service.from('whatsapp_channel_candidates').update({
+        status: 'failed', failure_reason: `Promotion failed: ${msg}`,
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
+      return NextResponse.json({ error: 'Failed to save channel' }, { status: 500 });
+    }
+
+    if (!(promoResult as { ok?: boolean })?.ok) {
+      await service.from('whatsapp_channel_candidates').update({
+        status: 'failed', failure_reason: 'Promotion returned not-ok',
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
+      return NextResponse.json({ error: 'Failed to save channel' }, { status: 500 });
+    }
+
+    const channelId = (promoResult as { channel_id?: string })?.channel_id;
+
+    // Trial activation (non-fatal)
+    try {
+      await service.rpc('activate_trial_if_eligible', { p_business_id: business_id });
     } catch (trialErr) {
-      // Non-fatal: trial activation failure should not block channel setup
       console.warn('[EMBEDDED-SIGNUP] Trial activation failed (non-fatal):', trialErr);
     }
 
-    // 8b. Reconcile paid allowance if business has active subscription
+    // Reconcile paid allowance (non-fatal)
     try {
-      if (!bizAssignError) {
-        await service.rpc('reconcile_paid_allowance', { p_business_id: business_id });
-      }
+      await service.rpc('reconcile_paid_allowance', { p_business_id: business_id });
     } catch (reconcileErr) {
       console.warn('[EMBEDDED-SIGNUP] Paid allowance reconciliation (non-fatal):', reconcileErr);
     }
 
-    // 9. Auto-provision message templates (non-fatal)
+    // Auto-provision templates (non-fatal)
     try {
       const { provisionTemplates } = await import('@/lib/channels/provision-templates');
       await provisionTemplates(wabaId, accessToken);
@@ -231,16 +271,16 @@ export async function POST(request: NextRequest) {
       }).error('[EMBEDDED-SIGNUP] Template provisioning warning');
     }
 
-    logger.debug('[EMBEDDED-SIGNUP] Success:', { businessId: business_id, wabaId, phoneNumberId, channelId: channel.id });
+    logger.debug('[EMBEDDED-SIGNUP] Success:', { businessId: business_id, wabaId, phoneNumberId, channelId });
 
     try {
       const { emitServerEvent } = await import('@/lib/observability/server-events');
-      emitServerEvent(request, 'whatsapp.connect_completed', user.id, { business_id: business_id, entity_id: channel.id });
+      emitServerEvent(request, 'whatsapp.connect_completed', user.id, { business_id: business_id, entity_id: channelId });
     } catch { /* instrumentation must never fail signup */ }
 
     return NextResponse.json({
       success: true,
-      channel_id: channel.id,
+      channel_id: channelId,
       phone_number: displayNumber,
       waba_id: wabaId,
     });

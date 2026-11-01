@@ -85,6 +85,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Building2, label: 'Accounts', path: '/businesses', roles: ADMIN_PERMISSIONS['businesses'] },
       { icon: UserCog, label: 'Onboard Customer', path: '/customer-onboarding', roles: ADMIN_PERMISSIONS['customer-onboarding'] },
       { icon: MessageCircle, label: 'WhatsApp Setup Assistance', path: '/whatsapp-assistance', roles: ADMIN_PERMISSIONS['customer-onboarding'] },
+      { icon: ShieldCheck, label: 'Channel Changes', path: '/channel-changes', roles: ADMIN_PERMISSIONS['channel-changes'] },
       { icon: BadgeCheck, label: 'Verification', path: '/verification', roles: ADMIN_PERMISSIONS['verification'] },
       { icon: Layers, label: 'Category Templates', path: '/category-templates', roles: ADMIN_PERMISSIONS['category-templates'] },
       { icon: UserCog, label: 'Impersonation', path: '/impersonation', roles: ADMIN_PERMISSIONS['impersonation'] },

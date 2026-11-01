@@ -10,6 +10,108 @@
 - `lib/__tests__/scheduled-broadcast-consent.test.ts`: Actual route tests use the real consent helper with synthetic database/provider boundaries; cover denial, revocation, global opt-out, read failures, categories and acceptance outcomes. Three related files pass46tests withzero skips; production build passes locally. Full local root run:16460passed/2845skipped/11failed, with sandbox IPC/socket denials and nested-checkout scanner failures/timeouts recorded; clean-checkout CI remains required.
 - **Affects**: Scheduled broadcasts only; no consent creation, provider sends, schema, quota policy or immediate-send changes. **Could break**: Scheduling now rejects a mixed eligible/ineligible audience; callers retain it for correction. Concurrency/replay claiming and hosted provider delivery are not certified. Not deployed.
 
+## 2026-10-31 — Channel number continuity & recovery (#799)
+
+- **`supabase/migrations/496_channel_number_continuity.sql`** (SOURCE ONLY): Three new tables (`merchant_step_up_authorizations`, `channel_change_approvals`, `channel_transition_audit`), three atomic SQL wrappers (`promote_candidate_with_merchant_auth`, `disconnect_with_merchant_auth`, `execute_channel_change_approval`), extended admin step-up CHECK constraint. All RLS deny-all, service_role only, SECURITY DEFINER with `search_path = ''`.
+- **`lib/merchant-step-up.ts`**: Merchant MFA step-up prepare/verify for channel changes. Reuses `hashOperationParams` from admin-step-up. 5-minute expiry. Separate table from admin step-ups.
+- **`lib/admin-step-up.ts`**: Added `channel_change_execute` to StepUpAction type.
+- **`app/api/settings/whatsapp-channel/step-up/prepare/route.ts`**: Merchant step-up prepare endpoint. Verifies business ownership, extracts session ID from JWT claims.
+- **`app/api/settings/whatsapp-channel/step-up/verify/route.ts`**: Merchant step-up verify endpoint. Returns refreshed session tokens.
+- **`app/api/settings/whatsapp-channel/route.ts`** (DELETE): Now requires merchant MFA step-up via `disconnect_with_merchant_auth` atomic wrapper. Old direct `transition_to_shared` call replaced.
+- **`app/api/whatsapp/add-number/route.ts`**: Promotion via `promote_candidate_with_merchant_auth` instead of direct `promote_channel_candidate`. Returns `STEP_UP_REQUIRED` when replacing existing authority. Provider-verified candidate preserved for fresh MFA at promotion time.
+- **`app/api/auth/facebook/callback/route.ts`**: Same atomic wrapper integration. Returns `STEP_UP_REQUIRED` for replacement.
+- **`app/api/whatsapp/embedded-signup/route.ts`**: Converted from direct channel INSERT to candidate system. Creates candidate with CAS snapshot, promotes via atomic wrapper. No more legacy direct writes.
+- **`app/api/admin/channel-changes/route.ts`**: GET (list) and POST (create request) for recovery/shared-replacement. Admin-only, step-up required, verification record server-populated.
+- **`app/api/admin/channel-changes/[id]/approve/route.ts`**: Two-admin approval. Distinct from requester and business owner.
+- **`app/api/admin/channel-changes/[id]/reject/route.ts`**: Reject/cancel (terminal).
+- **`app/api/admin/channel-changes/[id]/execute/route.ts`**: Execute approved change via atomic SQL function. Checks 5-min freshness, roles, CAS, owner, evidence.
+- **`app/api/admin/channel-changes/[id]/re-request/route.ts`**: Refresh requester step-up, increment version, invalidate old approval.
+- **`admin/src/pages/ChannelChanges.tsx`**: Admin UI for viewing, approving, executing, rejecting channel change requests. Wired with step-up dialog.
+- **`admin/src/routes.tsx`**, **`admin/src/components/AdminSidebar.tsx`**, **`admin/src/lib/permissions.ts`**: Added channel-changes route and sidebar entry (admin-only).
+- **`docs/MIGRATION_REGISTRY.md`**: M496 reserved, SOURCE ONLY.
+- **`app/api/whatsapp/add-number/finish/route.ts`**: New endpoint for completing a ready candidate with MFA step-up. Called after OTP validation when STEP_UP_REQUIRED was returned. Owner/candidate/session bound, server-side params hash.
+- **Merchant MFA UI** (`app/dashboard/whatsapp/connect/page.tsx`): Added `mfa-verify` step with TOTP prompt. When OTP verify returns STEP_UP_REQUIRED, flow enters MFA → calls prepare → user enters TOTP → calls verify → session refresh → calls finish → success. Missing TOTP factor shows actionable enrollment message.
+- **Disconnect MFA UI** (`app/dashboard/settings/tabs/AccountTab.tsx`): Disconnect button now initiates prepare → TOTP prompt → verify → session refresh → DELETE with stepUpId. No TOTP enrolled shows alert with enrollment guidance.
+- **Tests**: Maintained `channel-number-continuity.pg.test.ts`: 78 local PostgreSQL tests passed, zero skipped, including authoritative atomic lifecycle, evidence isolation, concurrency, rollback, candidate promotion, explicit disconnect destination and legacy-pointer audit. Admin/merchant HTTP handler and rendered UI suites cover operation selection and authorization; see `docs/implementation/799-channel-continuity.md`. CI auto-discovers the PG file in the isolated `security-acl-tests` job; local results do not certify final-head CI or provider behavior.
+- **Audit/grant regressions**: Promotion audits record actual coexist mode and preserve prior shared-channel identity. M496 explicitly resets inherited service-role table grants before applying the intended permissions; disposable PostgreSQL tests exercise broad default grants.
+- **Security**: Promotion wrapper delegates to existing `promote_channel_candidate` — does NOT copy logic (correction #7). Step-up consumed ONLY after successful underlying transition — failure rolls back entire transaction including step-up (no auth burn, no audit on failure). Execute route does NOT consume step-up in TypeScript — SQL function handles atomic consumption (correction #1). Embedded-signup generates PIN once before Meta registration (correction #6). All new functions service_role only.
+- **Affects**: WhatsApp number connection (add-number, embedded-signup, facebook callback), disconnect, admin recovery/shared-replacement. Does NOT affect bot routing, payment custody, directory, existing shared allocation, or customer data. Existing promotion behavior is preserved; disconnect uses the explicitly reviewed shared destination via `transition_to_shared_exact`.
+
+## 2026-10-31 — Permanent Waaiio merchant links (#799)
+
+- **`app/m/resolve.ts`**: Shared resolver for all /m/ routes — business+channel lookup, readiness validation via `isAssignedWhatsAppChannelReady`, rate limiting via `rateLimitResponseAsync`/`getRateLimitKey`, query-param rejection (any params rejected, not just named overrides), and no-store error rendering. Eliminates triple-copied resolver logic.
+- **`app/m/[businessId]/route.ts`**: Public redirect. Uses `buildVerifiedWhatsAppLink` which preserves existing dedicated "Hi" and shared bot_code prefill semantics. 302, no-store, rate-limited.
+- **`app/m/[businessId]/[action]/route.ts`**: Action-suffixed permanent links (book, order, pay, ticket, donate, queue, waitlist, give, chat, generic). Shared: `bot_code:capability` (existing deep-link format from `bot-code-detection.ts`). Dedicated: `?text=Hi` (existing QR semantics). Generic falls through to base route behaviour. Attendance validates UUID + rejects query params then redirects to canonical `/checkin/{businessId}` web page. Unknown actions fail closed.
+- **`app/m/[businessId]/campaign/[campaignId]/route.ts`**: Campaign permanent links. Keyword prefill for both shared and dedicated (preserves original `getWaLink(keyword)` behaviour). Parsed timestamp comparison for date range; rejects invalid dates and empty keywords. Validates campaign ownership, active state, date range.
+- **`lib/url.ts`**: Added `buildMerchantLink(businessId, action?)`, `buildMerchantCampaignLink(businessId, campaignId)`, `ACTION_CAPABILITY_MAP`, and `MerchantLinkAction` type.
+- **`app/dashboard/qr-code/page.tsx`**: QR codes encode permanent Waaiio link (`/m/{uuid}`) for all WhatsApp templates. Attendance preserved as `/checkin/{id}` web URL. Label says "Permanent WhatsApp Link" with explanation it survives connected number changes.
+- **`app/dashboard/page.tsx`**: Uses permanent Waaiio link. Removed false US shared number display fallback and unnecessary `queryChannelsPublic` query.
+- **`app/dashboard/whatsapp/page.tsx`**: Uses permanent Waaiio link. Removed channel-resolution query waterfall.
+- **`app/dashboard/keyword-campaigns/page.tsx`**: Campaign sharing uses permanent campaign links.
+- **`app/(marketing)/directory/DirectoryClient.tsx`**: Public directory uses permanent Waaiio links.
+- **`app/get-started/OnboardingWizard.tsx`**: Success screen uses permanent Waaiio link when business_id is available.
+- **`app/get-started/steps/StepSuccess.tsx`**: URL validation accepts both wa.me and permanent Waaiio `/m/{uuid}` links.
+- **`app/api/admin/onboarding/route.ts`**: Adds `permanent_link` field alongside existing `whatsapp_link` in onboarding readiness response. Preserves all existing readiness status.
+- **`admin/src/pages/WhatsAppAssistance.tsx`**: Shows permanent Waaiio link QR alongside existing direct WhatsApp test link. Preserves step-up behavior.
+- **Tests**: `lib/__tests__/permanent-merchant-links.test.ts` — actual handler imports with mocked Supabase, real NextRequest, HTTP assertions. Shared bot_code:capability suffix, dedicated ?text=Hi, campaign keyword-on-both, missing-bot_code (explicit null fixture), invalid UUID, status/suspension/country/channel errors, no-store on all responses including 429, query-param rejection, rate limiting, campaign date parsing including NaN, empty keyword, tenant isolation, minimal projection. `issue-496-qr-production.test.tsx` and `queue-share-qr.test.tsx` updated for permanent links with action suffixes. `promotionGuidance.test.tsx` updated for permanent link acceptance.
+- **Security**: Rate limiting via existing `rateLimitResponseAsync`. Strict UUID validation on attendance route. Action allowlist. All query parameters rejected. No-store on all responses including 429. HTML escaping in error pages. Campaign date comparison uses parsed timestamps not ISO string comparison. Empty/null keyword rejected as unavailable.
+- **Residual gaps**: Number-replacement mutations/MFA/recovery not implemented (separate Phase A correction). Rendered directory sharing acceptance test not yet added (DirectoryClient is a client component with fetch dependency). No bot parser changes.
+- **Affects**: QR code generation, onboarding success, dashboard sharing, directory listing, keyword campaigns, admin onboarding, admin WhatsApp assistance. No schema migration. Connected WhatsApp number changes are now transparent to shared QR codes and printed links.
+
+## 2026-10-31 — Nigeria-only pricing page
+- Limited footer country badges to Nigeria on `/pricing` only; other pages unchanged.
+- Fixed the pricing page to Nigeria and replaced the five-country promotion with Nigeria-specific copy.
+- Preserved canonical API pricing, unavailable/retry handling, and both connected-provider and admin-controlled settlement explanations.
+- Files: `app/(marketing)/pricing/page.tsx`, `lib/__tests__/marketing-country-pricing.test.tsx`.
+- Impact: pricing-page country selection only; shared country configuration and payment processing unchanged.
+
+### 2026-10-31 — Website corrections and interactive WhatsApp demo
+
+- Public pricing uses the current country projection and standard fee snapshot; country switches hide stale prices. Booking comparisons follow enforced limits (50/300/unlimited), superseding the activities wording below.
+- Clarifies connected-provider versus platform-collected settlement and backend-supported refund fee reversals. Removes unsupported marketing claims and expired launch dates.
+- Adds interactive booking, order and ticket examples with retained choices, simulated payment before confirmation, replay and reduced-motion support.
+- Local focused verification: 86 tests passed, zero skipped. Staging browser verification remains pending because automatic non-main website builds are ignored. No production deployment or database change.
+
+### codex/pricing-feature-corrections — Align pricing display with Owner-approved schedule (2026-10-31)
+
+- **`lib/constants.ts`**: Fixed COUNTRY_PRICING fallback for NG (growth 15,000→49,000, business 45,000→99,000) and GH (growth 150→450, business 400→900) to match Owner-approved pricing schedule. Fixed PRICING_TIERS NGN defaults (growth 15,000→49,000, business 45,000→99,000). US/GB/CA unchanged — already correct.
+- **`app/(marketing)/pricing/page.tsx`**: Fixed comparison table "Monthly bookings" → "Monthly activities" with values "Up to 100" / "Up to 1,000" / "Unlimited" to match TIER_FEATURES (single source of truth). Previous values (50/500) contradicted the TierCard highlights on the same page.
+- **`app/(marketing)/page.tsx`**: Updated home page FAQ gateway list to include all 5 supported gateways (Paystack, Stripe, Square, Flutterwave, PayPal). Previously only listed Stripe and Paystack.
+- **`app/(marketing)/features/page.tsx`**: Fixed gateway grid layout from `sm:grid-cols-4` to `sm:grid-cols-3 lg:grid-cols-5` for 5-item grid alignment.
+- **Affects**: Public marketing pages only (pricing, features, home). No API, database, payment logic, subscription, authentication, or provider configuration changes.
+- **Could break**: Nothing — display-only changes to marketing pages. Authoritative pricing source `/api/public/pricing` reads from DB and is unchanged. COUNTRY_PRICING is a display-only fallback used when DB cache is not loaded.
+- **Unresolved discrepancy — DB pricing**: The authoritative `countries.pricing` DB values cannot be verified from this branch. The COUNTRY_PRICING fallback had stale NG/GH prices, suggesting the DB may also need updating. Owner should verify DB pricing matches the approved schedule via `/api/public/pricing?country=NG` and `?country=GH`.
+- **Unresolved discrepancy — booking limits**: TIER_FEATURES.maxBookings (100/1,000) differs from TIER_TRANSACTION_LIMITS.bookings (50/300). The comparison table now uses TIER_FEATURES values (labelled "activities") since TIER_FEATURES is declared as single source of truth. The enforced transaction limits may be more restrictive — Owner should clarify.
+
+### 2026-10-31 — Admin profile and account-status saves
+
+- Route existing profile/status controls through authenticated server writes and render confirmed persisted values. Preserve drafts on failures and report audit-write failures separately from successful saves.
+- Require operation-bound MFA for account status with stale-status protection. M494 adds only the new authorization action; source only, not applied.
+- Add handler authorization, rendered UI, real local PostgreSQL persistence/concurrency and migration regression tests. No payment or messaging behavior changes.
+
+### 2026-10-31 — Historical replay Storage prerequisites
+
+- Independent replay-fixture scan identified R90 and standalone Stripe recurring bootstraps that also apply M491. Added only their missing service-role Storage CRUD grants. Historical cutover/concurrency logic, payment assertions and migration self-checks are unchanged.
+
+### 2026-10-31 — Storage delta fixture parity
+
+- Added the same explicit Storage service grants to the isolated release-gate delta SQL bootstrap. Its separate fixture now matches the full replay bootstrap; M491 assertions and runtime behavior remain unchanged.
+
+### 2026-10-31 — Storage CI fixture parity
+
+- Full migration replay now supplies Supabase Storage service-role CRUD grants in its disposable bootstrap. The storage policy suite also recognizes the shared GitHub Actions runner's isolated `pg_test_N` databases, with localhost/CI/user guards retained. No runtime policy assertions or tests were removed.
+
+### 2026-10-31 — Storage UPDATE regression coverage
+
+- Added real PostgreSQL allow/deny checks for public catalog renames and stale verification overwrites following independent review. Test-only follow-up; no rollout performed.
+
+## 2026-10-31 — Private document storage and outbound webhook destination boundary
+
+- Verification uploads use private storage and document-ID access for the owning merchant or MFA-verified full admin; existing public catalog images retain their behavior. Legacy relocation verifies copied bytes and matching references before removing public originals.
+- M491 restricts generated document/report access while preserving service signed links and merchant report ownership; M492 is an app-first guard against stale public verification uploads. These migrations are prepared for staging only and are not yet applied.
+- Outbound webhook registration and dispatch enforce public HTTP(S) destinations, validate every redirect and pin validated DNS addresses without changing event envelopes or POST signatures.
+- Tests cover owner/admin allow, cross-tenant/anonymous deny, storage policy semantics, private upload/viewing, relocation recovery and webhook DNS/redirect behavior. Risks: apply documented rollout order; legacy files need separate verified relocation; no production changes or live sends.
+
 ## 2026-10-31 — Party questions and reminder review (source only)
 
 - Adds bounded, versioned Party questions, organizer answer readback and atomic web/bot RSVP saves; required answers apply only to Accepted. Preserves answer history and seating/capacity authority. Affects Party detail, RSVP routes and bot entry/flow; M489 must precede app rollout.
@@ -650,6 +752,7 @@
 - Risk: provider network calls are non-atomic with Postgres; already-dispatched charges may settle and must reconcile. Owner approval required before migration/deploy.
 
 # Changelog
+
 
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.

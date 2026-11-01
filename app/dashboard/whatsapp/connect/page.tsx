@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { buildEmbeddedSignupLoginOptions, extractAuthCode, buildDiscoverRequestBody } from '@/lib/whatsapp/embedded-signup-config';
+import { EmbeddedSignupSelection } from '@/components/whatsapp/EmbeddedSignupSelection';
+import type { SignupAccount } from '@/lib/whatsapp/embedded-signup-session';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 
 declare global {
@@ -14,7 +16,7 @@ declare global {
   }
 }
 
-type Step = 'loading' | 'existing' | 'choose' | 'enter-phone' | 'verify-otp' | 'pending-approval' | 'success';
+type Step = 'loading' | 'existing' | 'choose' | 'enter-phone' | 'verify-otp' | 'mfa-verify' | 'pending-approval' | 'success';
 
 interface ExistingChannel {
   id: string;
@@ -43,11 +45,18 @@ export default function ConnectWhatsAppPage() {
     phone_number_display: string | null; failure_message: string | null;
   } | null>(null);
 
+  // MFA step-up state for number replacement
+  const [mfaStepUpId, setMfaStepUpId] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaError, setMfaError] = useState<string | null>(null);
+
   // FB SDK state
   const [fbSdkReady, setFbSdkReady] = useState(false);
   const fbSdkLoaded = useRef(false);
   const [fbConnecting, setFbConnecting] = useState(false);
+  const [fbDiscovery, setFbDiscovery] = useState<{ connection_id: string; accounts: SignupAccount[] } | null>(null);
 
+  const directOnboardingEnabled = process.env.NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED !== 'false';
   const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
   const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
 
@@ -65,13 +74,16 @@ export default function ConnectWhatsAppPage() {
           setCandidateId(data.candidate.id);
         }
 
-        if (data.active_channel) {
+        if (data.candidate?.status === 'ready') {
+          if (data.active_channel) setExistingChannel(data.active_channel);
+          setStep('mfa-verify');
+        } else if (data.active_channel) {
           setExistingChannel(data.active_channel);
           // Active channel exists — show existing card (candidate notice rendered alongside)
           setStep('existing');
         } else if (data.candidate) {
           const cand = data.candidate;
-          if (cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
+          if (directOnboardingEnabled && cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
             // OTP validating → show OTP verification screen with masked phone
             setStep('verify-otp');
           } else if (cand.connection_source === 'embedded_signup' && (cand.status === 'pending' || cand.status === 'validating')) {
@@ -91,7 +103,7 @@ export default function ConnectWhatsAppPage() {
       }
     }
     checkExisting();
-  }, [business.id]);
+  }, [business.id, directOnboardingEnabled]);
 
   // Load FB SDK (only when advanced flow is selected)
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -125,6 +137,7 @@ export default function ConnectWhatsAppPage() {
     script.src = 'https://connect.facebook.net/en_US/sdk.js';
     script.async = true;
     script.crossOrigin = 'anonymous';
+    script.onerror = () => setError('Meta could not load. Check your browser connection or continue with the shared number.');
     document.body.appendChild(script);
   }, [showAdvanced, appId]);
 
@@ -177,15 +190,96 @@ export default function ConnectWhatsAppPage() {
         body: JSON.stringify({ business_id: business.id, otp: otp.trim(), candidate_id: candidateId }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data.error || 'Verification failed'); setLoading(false); return; }
+      if (!res.ok) {
+        if (data.code === 'STEP_UP_REQUIRED') {
+          // Candidate is ready but needs MFA — initiate step-up flow
+          await initiateMfaStepUp();
+          setLoading(false);
+          return;
+        }
+        setError(data.error || 'Verification failed'); setLoading(false); return;
+      }
       setConnectedNumber(data.phone_number);
       setStep('success');
     } catch { setError('Something went wrong. Try again.'); }
     setLoading(false);
   };
 
+  // ── MFA step-up for number replacement ──
+  const initiateMfaStepUp = async (selectedCandidateId: string | null = candidateId) => {
+    if (!selectedCandidateId) { setMfaError('Select a ready number first.'); return; }
+    setMfaError(null);
+    try {
+      // Params are derived server-side from the ready candidate — never sent from client
+      const res = await fetch('/api/settings/whatsapp-channel/step-up/prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: business.id,
+          action_type: 'channel_number_change',
+          candidate_id: selectedCandidateId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === 'NO_TOTP_ENROLLED') {
+          setMfaError('Two-factor authentication is required to change your WhatsApp number. Please enable 2FA in Account Settings first.');
+          setStep('mfa-verify');
+          return;
+        }
+        setMfaError(data.error || 'Failed to start verification');
+        return;
+      }
+      setMfaStepUpId(data.stepUpId);
+      setStep('mfa-verify');
+    } catch {
+      setMfaError('Failed to start verification');
+    }
+  };
+
+  const handleMfaSubmit = async () => {
+    if (!mfaCode.trim() || mfaCode.length < 6) { setMfaError('Enter the 6-digit code from your authenticator app'); return; }
+    if (!mfaStepUpId) { setMfaError('No pending verification'); return; }
+    setMfaError(null);
+    setLoading(true);
+    try {
+      // Verify the TOTP code
+      const verifyRes = await fetch('/api/settings/whatsapp-channel/step-up/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepUpId: mfaStepUpId, code: mfaCode.trim() }),
+      });
+      const verifyData = await verifyRes.json();
+      if (!verifyRes.ok) { setMfaError(verifyData.error || 'Verification failed'); setMfaStepUpId(null); setMfaCode(''); setLoading(false); return; }
+
+      // Update session with refreshed tokens
+      const supabase = createClient();
+      if (verifyData.session?.access_token && verifyData.session?.refresh_token) {
+        await supabase.auth.setSession({
+          access_token: verifyData.session.access_token,
+          refresh_token: verifyData.session.refresh_token,
+        });
+      }
+
+      // Now finish the promotion with the verified step-up
+      const finishRes = await fetch('/api/whatsapp/add-number/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, candidate_id: candidateId, step_up_id: mfaStepUpId }),
+      });
+      const finishData = await finishRes.json();
+      if (!finishRes.ok) { setMfaError(finishData.error || 'Activation failed'); setMfaStepUpId(null); setMfaCode(''); setLoading(false); return; }
+
+      setConnectedNumber(phone || 'Connected');
+      setStep('success');
+    } catch { setMfaError('Something went wrong. Try again.'); }
+    setLoading(false);
+  };
+
   // ── Advanced flow: Facebook Embedded Signup ──
   function launchFacebookLogin() {
+    if (!appId || !configId) { setError('Meta connection is not configured for this environment. You can still use the shared number.'); return; }
+    setFbDiscovery(null);
     if (!window.FB || !fbSdkLoaded.current) {
       setError('Facebook is still loading. Please wait.');
       return;
@@ -199,33 +293,49 @@ export default function ConnectWhatsAppPage() {
           fetch('/api/auth/facebook/discover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildDiscoverRequestBody(code)),
+            body: JSON.stringify({ ...buildDiscoverRequestBody(code), business_id: business.id }),
           })
             .then(r => r.json().then(d => ({ ok: r.ok, d })))
             .then(({ ok, d }) => {
               if (!ok) { setError(d.message || 'Failed'); setFbConnecting(false); return; }
               const wabas = d.wabas || [];
               if (wabas.length === 0) { setError('No WhatsApp Business Account found.'); setFbConnecting(false); return; }
-              const waba = wabas[0];
-              const ph = waba.phones?.[waba.phones.length - 1];
-              fetch('/api/auth/facebook/callback', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ business_id: business.id, waba_id: waba.waba_id, phone_number_id: ph?.id, access_token: d.access_token, token_expires_at: d.token_expires_at, display_name: ph?.display_phone_number || ph?.verified_name, phone_number: ph?.display_phone_number }),
-              })
-                .then(r => r.json().then(d2 => ({ ok: r.ok, d2 })))
-                .then(({ ok: ok2, d2 }) => {
-                  if (ok2) { setConnectedNumber(ph?.display_phone_number || 'Connected'); setStep('success'); }
-                  else { setError(d2.error || d2.message || 'Failed to save.'); }
-                  setFbConnecting(false);
-                })
-                .catch(() => { setError('Failed. Try again.'); setFbConnecting(false); });
+              if (!d.connection_id) { setError('Meta connection could not be saved. Please retry.'); setFbConnecting(false); return; }
+              setFbDiscovery({ connection_id: d.connection_id, accounts: wabas });
+              setFbConnecting(false);
+
             })
             .catch(() => { setError('Failed. Try again.'); setFbConnecting(false); });
         } else { setFbConnecting(false); setError('Cancelled.'); }
       },
       buildEmbeddedSignupLoginOptions(configId),
     );
+  }
+
+  async function confirmFacebookNumber(accountId: string, phoneId: string) {
+    if (!fbDiscovery || fbConnecting) return;
+    const phone = fbDiscovery.accounts.find(account => account.waba_id === accountId)?.phones.find(phone => phone.id === phoneId);
+    if (!phone) return;
+    setFbConnecting(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/auth/facebook/callback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, connection_id: fbDiscovery.connection_id, waba_id: accountId, phone_number_id: phoneId }),
+      });
+      const data = await response.json();
+      if (data.code === 'STEP_UP_REQUIRED' && data.candidate_id) {
+        setCandidateId(data.candidate_id);
+        setCandidateAttempt({ id: data.candidate_id, status: 'ready', connection_source: 'embedded_signup', phone_number_display: phone.display_phone_number, failure_message: null });
+        await initiateMfaStepUp(data.candidate_id);
+        return;
+      }
+      if (!response.ok) { setError((data.message || data.error || 'Connection failed.') + ' Reconnect with Meta to try again.'); return; }
+      if (data.connection_status !== 'active') { setError('Meta setup is not active yet. Refresh to check connection status.'); return; }
+      setConnectedNumber(data.phone_number || phone.display_phone_number);
+      setStep('success');
+    } catch { setError('Unable to confirm the connection. Refresh to check its status before reconnecting.'); }
+    finally { setFbDiscovery(null); setFbConnecting(false); }
   }
 
   // ── Loading ──
@@ -313,6 +423,55 @@ export default function ConnectWhatsAppPage() {
             className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
           >
             Back to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── MFA Verify (number replacement requires 2FA) ──
+  if (step === 'mfa-verify') {
+    return (
+      <div className="max-w-lg mx-auto mt-8 space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Verify Your Identity</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Replacing your WhatsApp number requires two-factor authentication. Your existing number stays connected until the change succeeds.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-5 space-y-4">
+          <p className="text-sm">Selected number: {candidateAttempt?.phone_number_display || phone || 'Provider-verified number'}</p>
+          {!mfaStepUpId && <button onClick={() => initiateMfaStepUp()} className="rounded-lg bg-purple-600 px-4 py-2 text-white">Start verification</button>}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Authenticator Code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={mfaCode}
+              onChange={e => { setMfaCode(e.target.value.replace(/\D/g, '')); setMfaError(null); }}
+              placeholder="000000"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-center text-lg tracking-widest font-mono focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-white"
+            />
+          </div>
+
+          {mfaError && <p className="text-sm text-red-600 dark:text-red-400">{mfaError}</p>}
+
+          <button
+            onClick={handleMfaSubmit}
+            disabled={loading || !mfaStepUpId || mfaCode.length < 6}
+            className="w-full rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+          >
+            {loading ? 'Verifying...' : 'Verify & Connect'}
+          </button>
+
+          <button
+            onClick={() => { setStep('choose'); setMfaCode(''); setMfaStepUpId(null); }}
+            className="w-full text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+          >
+            Cancel
           </button>
         </div>
       </div>
@@ -422,7 +581,7 @@ export default function ConnectWhatsAppPage() {
       {/* ── Choose method ── */}
       {step === 'choose' && (
         <div className="space-y-3">
-          <button
+          {directOnboardingEnabled && <button
             onClick={() => setStep('enter-phone')}
             className="w-full rounded-lg border-2 border-brand bg-brand/5 p-4 text-left transition hover:bg-brand/10"
           >
@@ -433,7 +592,8 @@ export default function ConnectWhatsAppPage() {
                 <p className="text-xs text-gray-500 mt-0.5">Recommended — just enter your number and verify with OTP. Your number joins Waaiio&apos;s platform.</p>
               </div>
             </div>
-          </button>
+          </button>}
+          {!directOnboardingEnabled && <p className="text-sm text-gray-600 dark:text-gray-300">Direct number setup is temporarily unavailable. Connect your dedicated number through Meta below, or continue using your shared number.</p>}
 
           <button
             onClick={() => { setShowAdvanced(true); }}
@@ -443,7 +603,7 @@ export default function ConnectWhatsAppPage() {
               <span className="text-2xl">🔗</span>
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Connect via Facebook</p>
-                <p className="text-xs text-gray-500 mt-0.5">Use if you already have a WhatsApp Business Account on Meta.</p>
+                <p className="text-xs text-gray-500 mt-0.5">Add or connect your own number using Meta Embedded Signup.</p>
               </div>
             </div>
           </button>
@@ -469,7 +629,7 @@ export default function ConnectWhatsAppPage() {
             <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-900/20 p-4 text-center">
               <button
                 onClick={launchFacebookLogin}
-                disabled={fbConnecting || !fbSdkReady}
+                disabled={fbConnecting || !fbSdkReady || !appId || !configId}
                 className="px-6 py-3 bg-[#1877F2] text-white rounded-lg text-sm font-semibold hover:bg-[#166FE5] disabled:opacity-50 inline-flex items-center gap-2"
               >
                 {fbConnecting ? 'Connecting...' : (
@@ -479,7 +639,9 @@ export default function ConnectWhatsAppPage() {
                   </>
                 )}
               </button>
-              {!fbSdkReady && !fbConnecting && <p className="text-xs text-gray-400 mt-2">Loading Facebook SDK...</p>}
+              {(!appId || !configId) && <p className="mt-2 text-sm">Meta connection is not configured yet. You can continue with the shared number.</p>}
+              {fbDiscovery && <EmbeddedSignupSelection accounts={fbDiscovery.accounts} busy={fbConnecting} onConfirm={confirmFacebookNumber} onCancel={() => { setFbDiscovery(null); setError(null); }} />}
+              {appId && configId && !fbSdkReady && !fbConnecting && <p className="text-xs text-gray-400 mt-2">Loading Facebook SDK...</p>}
             </div>
           )}
         </div>

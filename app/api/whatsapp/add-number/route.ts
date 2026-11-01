@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { encryptToken, decryptToken } from '@/lib/encryption';
 import { randomInt } from 'crypto';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { logger } from '@/lib/logger';
 
 const API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
@@ -24,6 +25,10 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  if (process.env.NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED === 'false') {
+    return NextResponse.json({ error: 'Direct number setup is temporarily unavailable. Please use Connect via Facebook or the shared number.', code: 'DIRECT_ONBOARDING_DISABLED' }, { status: 503 });
+  }
+
   const action = request.nextUrl.searchParams.get('action');
   const body = await request.json();
 
@@ -38,7 +43,7 @@ export async function POST(request: NextRequest) {
   if (!action || action === 'request') {
     const { business_id, phone_number, display_name } = body;
 
-    if (!business_id || !phone_number) {
+    if (!business_id || typeof phone_number !== 'string' || !phone_number) {
       return NextResponse.json({ error: 'Missing business_id or phone_number' }, { status: 400 });
     }
 
@@ -51,8 +56,15 @@ export async function POST(request: NextRequest) {
       .single();
     if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
-    const cleanPhone = phone_number.replace(/[\s\-()]/g, '');
-    const phoneForMeta = cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone;
+    const submittedPhone = phone_number.trim();
+    const parsedPhone = parsePhoneNumberFromString(
+      submittedPhone.startsWith('+') ? submittedPhone : `+${submittedPhone}`,
+      { extract: false },
+    );
+    if (!parsedPhone?.isPossible() || parsedPhone.ext) {
+      return NextResponse.json({ error: 'Enter a valid phone number including its country code.' }, { status: 400 });
+    }
+    const cleanPhone = parsedPhone.number;
 
     // 2. Normalize phone + conflict check (R9 §2)
     const normalized = normalizePhone(cleanPhone);
@@ -146,8 +158,8 @@ export async function POST(request: NextRequest) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            cc: phoneForMeta.slice(0, phoneForMeta.length > 10 ? phoneForMeta.length - 10 : 1),
-            phone_number: phoneForMeta,
+            cc: parsedPhone.countryCallingCode,
+            phone_number: parsedPhone.nationalNumber,
             migrate_phone_number: false,
             verified_name: display_name || biz.name,
           }),
@@ -433,18 +445,52 @@ export async function POST(request: NextRequest) {
         updated_at: new Date().toISOString(),
       }).eq('id', candidate.id);
 
-      // 5. Atomic promotion
+      // 5. Atomic promotion with merchant auth (#799)
+      // Original provider endpoint: always NULL step_up_id for genuine first connect.
+      // If business has existing authority, SQL raises step_up_required and the
+      // user must use the /finish endpoint with a verified step-up.
       const { data: promoResult, error: promoErr } = await service.rpc(
-        'promote_channel_candidate',
-        { p_candidate_id: candidate.id, p_business_id: business_id },
+        'promote_candidate_with_merchant_auth',
+        {
+          p_candidate_id: candidate.id,
+          p_business_id: business_id,
+          p_step_up_id: null,
+          p_owner_user_id: user.id,
+        },
       );
 
-      if (promoErr || !(promoResult as { ok?: boolean })?.ok) {
-        const reason = (promoResult as { reason?: string })?.reason || promoErr?.message || 'unknown';
-        logger.error('[ADD-NUMBER] Promotion failed:', reason);
+      if (promoErr) {
+        const msg = promoErr.message || 'unknown';
+        logger.error('[ADD-NUMBER] Promotion failed:', msg);
+        // Don't mark candidate as failed for step_up_required — user can retry with MFA
+        if (msg.includes('step_up_required')) {
+          return NextResponse.json(
+            { error: 'Two-factor authentication is required to replace your existing WhatsApp number.', code: 'STEP_UP_REQUIRED', candidate_id: candidate.id },
+            { status: 403 },
+          );
+        }
+        if (msg.includes('step_up_invalid')) {
+          return NextResponse.json(
+            { error: 'MFA authorization invalid, expired, or already used. Please verify again.', code: 'STEP_UP_INVALID', candidate_id: candidate.id },
+            { status: 403 },
+          );
+        }
         await service.from('whatsapp_channel_candidates').update({
           status: 'failed',
-          failure_reason: `Promotion failed: ${reason}`,
+          failure_reason: `Promotion failed: ${msg}`,
+          updated_at: new Date().toISOString(),
+        }).eq('id', candidate.id);
+        return NextResponse.json(
+          { error: 'Channel activation failed. Please try again.', recoverable: true, reason: msg },
+          { status: 409 },
+        );
+      }
+
+      if (!(promoResult as { ok?: boolean })?.ok) {
+        const reason = 'unknown';
+        await service.from('whatsapp_channel_candidates').update({
+          status: 'failed',
+          failure_reason: `Promotion returned not-ok`,
           updated_at: new Date().toISOString(),
         }).eq('id', candidate.id);
         return NextResponse.json(

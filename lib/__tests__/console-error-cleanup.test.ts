@@ -79,7 +79,7 @@ describe('Production console.error allowlist (exact counts)', () => {
     'app/dashboard/reservations/page.tsx': { count: 3, client: true, reason: 'Browser error debugging for reservation queries + atomic cancel API failure' },
     'app/dashboard/staff/page.tsx': { count: 3, client: true, reason: 'Browser error debugging for staff operations' },
     'app/dashboard/settings/tabs/AccountTab.tsx': { count: 2, client: true, reason: 'Browser error debugging for subscription downgrade' },
-    'app/get-started/OnboardingWizard.tsx': { count: 2, client: true, reason: 'Browser error debugging for signup/onboarding' },
+    'app/get-started/OnboardingWizard.tsx': { count: 1, client: true, reason: 'Browser error debugging for signup/onboarding' },
     'app/sign/[token]/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for PDF rendering' },
     'app/api/cron/trial-activation/route.ts': { count: 6, client: false, reason: 'Cron error logging for trial activation + legacy reconciliation failures' },
     'app/api/promo-codes/route.ts': { count: 8, client: false, reason: 'Server-side DB error logging for promo code CRUD (#473)' },
