@@ -1,5 +1,42 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
+
+// Install before route imports. No hosted clients or real sockets are allowed.
+const network = await vi.hoisted(async () => {
+  const { Socket } = await import('node:net');
+  const originalFetch = globalThis.fetch;
+  const originalConnect = Socket.prototype.connect;
+  const state = { attempts: 0, expected: 0 };
+  globalThis.fetch = async () => {
+    state.attempts++;
+    throw new Error('NETWORK-DENY: isolated acceptance forbids all external fetch');
+  };
+  Socket.prototype.connect = function () {
+    state.attempts++;
+    throw new Error('NETWORK-DENY: isolated acceptance forbids all socket connections');
+  };
+  return { state, restore() {
+    globalThis.fetch = originalFetch;
+    Socket.prototype.connect = originalConnect;
+  } };
+});
+import { CapturingMessageSender } from '@/synthetic-e2e/lib/capturing-sender';
+import { installMetaEgressDeny, uninstallMetaEgressDeny, getBlockedMetaAttempts } from '@/synthetic-e2e/lib/network-deny';
+import { request as httpsRequest } from 'node:https';
+
+const capture = new CapturingMessageSender();
+let expectedMetaAttempts = 0;
+afterEach(() => {
+  try {
+    expect(getBlockedMetaAttempts()).toBe(expectedMetaAttempts);
+    expect(network.state.attempts).toBe(network.state.expected);
+    // Routes must never manufacture or change consent, even in the fixture DB.
+    expect(m.writes.filter(w => ['customer_consents', 'messaging_opt_outs'].includes(w.table))).toEqual([]);
+  } finally {
+    uninstallMetaEgressDeny();
+  }
+});
+afterAll(() => network.restore());
 
 const m = vi.hoisted(() => ({
   user: { id: 'owner' } as { id: string } | null, owns: true,
@@ -41,10 +78,13 @@ const finalWrite = () => m.writes.filter(w => w.table === 'business_broadcasts' 
 const enqueue = (extra: Record<string, unknown> = {}) => { m.due = [{ id: 'scheduled1', ...body(), ...extra }]; };
 
 beforeEach(() => {
-  vi.clearAllMocks(); m.user = { id: 'owner' }; m.owns = true; m.due = [];
+  capture.reset(); network.state.attempts = 0; network.state.expected = 0; expectedMetaAttempts = 0;
+  installMetaEgressDeny();
+  vi.resetAllMocks(); m.user = { id: 'owner' }; m.owns = true; m.due = [];
   m.consents = { [phone]: grant }; m.optOutCount = 0; m.readError = null; m.writes = []; m.calls = [];
   m.capability.mockResolvedValue({ allowed: true }); m.cronAuth.mockReturnValue(null);
-  m.text.mockResolvedValue({ success: true }); m.template.mockResolvedValue({ success: true });
+  m.text.mockImplementation(msg => capture.sendText(msg));
+  m.template.mockImplementation(msg => capture.sendTemplate(msg));
   m.category.mockResolvedValue('marketing'); m.rpc.mockResolvedValue({ error: null });
   m.from.mockImplementation((table: string) => {
     let phones: string[] = [];
@@ -134,7 +174,9 @@ describe('scheduled broadcast dispatch', () => {
     expect(finalWrite()).toMatchObject({ status: 'failed', sent_at: null, sent_count: 0 });
   });
   it('tags accepted text with service billing category and records its acceptance', async () => {
-    enqueue(); await tick();
+    enqueue(); expect((await tick()).status).toBe(200);
+    expect(capture.getCapturedSends()).toHaveLength(1);
+    expect(capture.getLastSend()).toMatchObject({ method: 'sendText', to: phone, content: { messageCategory: 'service' } });
     expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ to: phone, messageCategory: 'service' }));
     expect(finalWrite()).toMatchObject({ status: 'sent', sent_count: 1, failed_count: 0, error_message: null });
   });
@@ -143,6 +185,8 @@ describe('scheduled broadcast dispatch', () => {
     expect(m.category).toHaveBeenCalledWith({ wabaId: 'actual-waba' }, 'business_update');
     expect(m.template).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'marketing' }));
     expect(m.text).not.toHaveBeenCalled();
+    expect(capture.getCapturedSends()).toHaveLength(1);
+    expect(capture.getLastSend()).toMatchObject({ method: 'sendTemplate', to: phone, content: { templateName: 'business_update' } });
     expect(finalWrite()).toMatchObject({ status: 'sent', sent_count: 1 });
   });
   it.each(['unknown category', 'lookup failure', 'template rejection'])('uses guarded text fallback for %s', async reason => {
@@ -158,5 +202,43 @@ describe('scheduled broadcast dispatch', () => {
     m.text.mockRejectedValue(new Error('provider rejected')); enqueue(); await tick();
     expect(finalWrite()).toMatchObject({ status: 'failed', sent_at: null, sent_count: 0, failed_count: 1, error_message: 'No WhatsApp messages were accepted' });
     expect(m.writes.filter(w => w.table === 'notifications').map(w => w.row.status)).toEqual(['failed']);
+  });
+});
+
+// Deliberate safety probes: these assert blocked attempts, never successful egress.
+describe('isolated acceptance network boundary', () => {
+  it.each([
+    'https://graph.facebook.com/v21.0/synthetic/messages',
+    new URL('https://graph.facebook.com/v21.0/synthetic/messages'),
+    new Request('https://graph.facebook.com/v21.0/synthetic/messages'),
+  ])('blocks Meta fetch input %s before transport', async input => {
+    expectedMetaAttempts = 1;
+    await expect(fetch(input)).rejects.toThrow('NETWORK-DENY');
+    expect(network.state.attempts).toBe(0);
+    expect(capture.getCapturedSends()).toEqual([]);
+  });
+  it('blocks non-Meta fetch too, including accidental hosted database access', async () => {
+    network.state.expected = 1;
+    await expect(fetch('https://example.invalid/rest/v1/customer_consents')).rejects.toThrow('NETWORK-DENY');
+  });
+  it('blocks native HTTPS if a sender bypasses fetch', () => {
+    network.state.expected = 1;
+    expect(() => httpsRequest('https://graph.facebook.com/v21.0/synthetic/messages')).toThrow('NETWORK-DENY');
+  });
+  it('cannot report acceptance when an accidentally unmocked sender attempts Meta', async () => {
+    expectedMetaAttempts = 1;
+    m.text.mockImplementation(() => fetch('https://graph.facebook.com/v21.0/synthetic/messages'));
+    enqueue();
+    expect((await tick()).status).toBe(200);
+    expect(capture.getCapturedSends()).toEqual([]);
+    expect(finalWrite()).toMatchObject({ status: 'failed', sent_at: null, sent_count: 0, failed_count: 1 });
+    expect(m.writes.filter(w => w.table === 'notifications').map(w => w.row.status)).toEqual(['failed']);
+  });
+  it('captures only currently eligible recipients in a mixed dispatch', async () => {
+    enqueue({ phones: [phone, otherPhone] });
+    expect((await tick()).status).toBe(200);
+    expect(capture.getCapturedSends().map(send => send.to)).toEqual([phone]);
+    expect(finalWrite()).toMatchObject({ status: 'sent', sent_count: 1, failed_count: 0 });
+    expect(finalWrite()?.sent_at).toEqual(expect.any(String));
   });
 });

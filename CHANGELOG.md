@@ -1,3 +1,8 @@
+## 2026-11-01 — Isolated scheduled-broadcast acceptance tests
+
+- Extend PR #792 handler tests with the existing capture sender, deny-all fetch/socket boundaries and explicit blocked-egress probes. Preserve consent/acceptance cases and add mixed-recipient dispatch coverage.
+- Focused local verification: 53 passed, zero failures/skips across three suites. Test-only change; no application behavior, hosted consent, provider sends or deployments. Hosted acceptance remains separate.
+
 ## 2026-10-31 — Scheduled broadcast consent and acceptance
 
 - `app/api/broadcasts/schedule/route.ts`: Validate the audience array and reject the complete schedule when a recipient lacks recorded WhatsApp marketing consent, preserving ownership, capability and quota checks. Consent checks use bounded concurrency and fail closed.
