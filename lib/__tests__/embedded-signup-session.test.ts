@@ -1,24 +1,45 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const { values, set, getdel } = vi.hoisted(() => {
-  const values = new Map<string, string>();
-  return { values, set: vi.fn(async (key: string, value: string) => { values.set(key, value); return 'OK'; }),
-    getdel: vi.fn(async (key: string) => { const value = values.get(key); values.delete(key); return value ?? null; }) };
+const { values, insert, from } = vi.hoisted(() => {
+  const values = new Map<string, { payload: string; expires_at: string }>();
+  const insert = vi.fn(async (row: { session_key: string; payload: string; expires_at: string }) => {
+    values.set(row.session_key, row); return { error: null };
+  });
+  const from = vi.fn(() => ({ insert, delete: () => {
+    let key = ''; let expiry = '';
+    const query = {
+      lt: async (_field: string, cutoff: string) => {
+        for (const [id, row] of values) if (row.expires_at < cutoff) values.delete(id);
+        return { error: null };
+      },
+      eq: (_field: string, value: string) => { key = value; return query; },
+      gt: (_field: string, value: string) => { expiry = value; return query; },
+      select: () => query,
+      maybeSingle: async () => {
+        const row = values.get(key);
+        if (!row || row.expires_at <= expiry) return { data: null, error: null };
+        values.delete(key); return { data: { payload: row.payload }, error: null };
+      },
+    };
+    return query;
+  } }));
+  return { values, insert, from };
 });
-vi.mock('@upstash/redis', () => ({ Redis: class { set = set; getdel = getdel; } }));
+vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({ from }) }));
 import { createSignupSession, consumeSignupSession } from '@/lib/whatsapp/embedded-signup-session';
 const data = { accessToken: 'secret-meta-token', tokenExpiresAt: null, accounts: [] };
 beforeEach(() => {
   values.clear(); vi.clearAllMocks(); vi.useRealTimers();
   vi.stubEnv('TOKEN_ENCRYPTION_KEY', 'a'.repeat(64));
   vi.stubEnv('NEXT_PUBLIC_META_APP_ID', 'app-a');
-  vi.stubEnv('UPSTASH_REDIS_REST_URL', 'https://redis.example');
-  vi.stubEnv('UPSTASH_REDIS_REST_TOKEN', 'redis-token');
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://db.example');
+  vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
 });
 describe('merchant-bound signup sessions', () => {
   it('stores encrypted credentials with a ten-minute TTL and consumes once', async () => {
     const id = await createSignupSession('user-a', 'biz-a', data);
-    expect(set.mock.calls[0][1]).not.toContain(data.accessToken);
-    expect(set).toHaveBeenCalledWith(expect.any(String), expect.any(String), { ex: 600 });
+    expect(insert.mock.calls[0][0].payload).not.toContain(data.accessToken);
+    expect(Date.parse(insert.mock.calls[0][0].expires_at) - Date.now()).toBeGreaterThan(599000);
+    expect(from).toHaveBeenCalledWith('whatsapp_signup_sessions');
     expect(await consumeSignupSession('user-a', 'biz-a', id)).toMatchObject(data);
     expect(await consumeSignupSession('user-a', 'biz-a', id)).toBeNull();
   });
@@ -45,6 +66,6 @@ describe('merchant-bound signup sessions', () => {
   it('fails closed with no encryption key, including development', async () => {
     vi.stubEnv('TOKEN_ENCRYPTION_KEY', '');
     await expect(createSignupSession('u', 'b', data)).rejects.toThrow('not configured');
-    expect(set).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
   });
 });
