@@ -90,7 +90,7 @@ export async function issueInvitation(db: Database, businessId: string, recipien
   if (!issued.data?.issued) throw new EnrollmentError('Please wait before sending another confirmation.',429);
   if (channel) return { url:`https://wa.me/${channel.phone_number.replace(/\D/g,'')}?text=${encodeURIComponent(`WAAIIO ALERTS ${token}\nI agree to receive merchant sale, payment, appointment and booking alerts for ${businessName}. Reply STOP to unsubscribe.`)}`, expires_at:issued.data.expires_at };
   const url = `${emailOrigin}/notifications/confirm#token=${token}`;
-  const sent = await sendEmail({to:recipient.address,subject:'Confirm Waaiio merchant notifications',html:`<p>You have been invited to receive sale, payment, appointment or booking notifications for <strong>${escapedName}</strong> on Waaiio.</p><p>Confirm only if you want these notifications.</p><p><a href="${url}">Review and confirm notifications</a></p><p>This link expires in 30 minutes. If you did not expect this invitation, ignore it.</p>`,noRetry:true});
+  const sent = await sendEmail({to:recipient.address,subject:'Confirm Waaiio merchant notifications',html:`<p>You have been invited to receive sale, payment, appointment or booking notifications for <strong>${escapedName}</strong> on Waaiio.</p><p>Confirm only if you want these notifications.</p><p><a href="${url}">Review and confirm notifications</a></p><p>This link expires in 48 hours. If you did not expect this invitation, ignore it.</p>`,noRetry:true});
   if (!sent.success || !('id' in sent) || !sent.id) throw new EnrollmentError('Confirmation email was not accepted. Please try again later.',503);
   return {sent:true,expires_at:issued.data.expires_at};
 }

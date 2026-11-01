@@ -49,7 +49,7 @@ describe('invitation issuance',()=>{
  }
  afterEach(()=>vi.unstubAllEnvs());
  beforeEach(()=>{vi.stubEnv('NEXT_PUBLIC_APP_URL',undefined);process.env.RESEND_API_KEY='test-placeholder';mocks.rpc.mockResolvedValue({data:{issued:true,expires_at:'future'},error:null});mocks.send.mockResolvedValue({success:true,id:'mail-id'});});
- it('stores only a token hash and sends business-scoped explicit email invitation',async()=>{await expect(issueInvitation(database(),biz,id)).resolves.toEqual({sent:true,expires_at:'future'});const html=mocks.send.mock.calls[0][0].html;expect(html).toContain('Acme &lt;team&gt;');const token=html.match(/#token=([A-Za-z0-9_-]{43})/)[1];expect(mocks.rpc).toHaveBeenCalledWith('issue_merchant_notification_invitation',expect.objectContaining({p_token_hash:hashInvitation(token)}));expect(JSON.stringify(mocks.rpc.mock.calls)).not.toContain(token);});
+ it('stores only a token hash and sends business-scoped explicit email invitation',async()=>{await expect(issueInvitation(database(),biz,id)).resolves.toEqual({sent:true,expires_at:'future'});const html=mocks.send.mock.calls[0][0].html;expect(html).toContain('Acme &lt;team&gt;');expect(html).toContain('This link expires in 48 hours.');const token=html.match(/#token=([A-Za-z0-9_-]{43})/)[1];expect(mocks.rpc).toHaveBeenCalledWith('issue_merchant_notification_invitation',expect.objectContaining({p_token_hash:hashInvitation(token)}));expect(JSON.stringify(mocks.rpc.mock.calls)).not.toContain(token);});
  it.each([
   [undefined, 'https://www.waaiio.com'],
   ['https://www.waaiio.com', 'https://www.waaiio.com'],

@@ -38,9 +38,66 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
   INSERT INTO businesses(id,owner_id) VALUES('${B}','${OWNER}'),('${OTHER}','20000000-0000-0000-0000-000000000002');
   INSERT INTO whatsapp_channels(id) VALUES('${CHANNEL}');`);
   await sql(readFileSync('supabase/migrations/499_merchant_notifications.sql','utf8'));
+  await sql(readFileSync('supabase/migrations/502_merchant_notification_invitation_lifetime.sql','utf8'));
  },30000);
  beforeEach(async()=>{await sql('RESET ROLE; TRUNCATE merchant_notification_recipients,orders,bookings,reservations,payments,whatsapp_config CASCADE');});
  afterAll(async()=>{await db?.end();});
+ it('M502 preserves existing expiry timestamps and cannot revive expired invitations',async()=>{
+  const original=readFileSync('supabase/migrations/499_merchant_notifications.sql','utf8')
+   .match(/CREATE FUNCTION public\.issue_merchant_notification_invitation[\s\S]*?END \$\$;/)?.[0];
+  expect(original).toBeTruthy();
+  await sql(original!.replace('CREATE FUNCTION','CREATE OR REPLACE FUNCTION'));
+  const expired=await recipient(), active=await recipient('email','active@example.com');
+  await sql('SELECT issue_merchant_notification_invitation($1,$2,$3)',[expired,B,'1'.repeat(64)]);
+  await sql('SELECT issue_merchant_notification_invitation($1,$2,$3)',[active,B,'2'.repeat(64)]);
+  expect((await sql('SELECT bool_and(expires_at-created_at=interval \'30 minutes\') ok FROM merchant_notification_invitations')).rows[0].ok).toBe(true);
+  await sql("UPDATE merchant_notification_invitations SET expires_at=now()-interval '1 second' WHERE recipient_id=$1",[expired]);
+  const before=(await sql('SELECT id,expires_at,consumed_at FROM merchant_notification_invitations ORDER BY id')).rows;
+  await sql(readFileSync('supabase/migrations/502_merchant_notification_invitation_lifetime.sql','utf8'));
+  expect((await sql('SELECT id,expires_at,consumed_at FROM merchant_notification_invitations ORDER BY id')).rows).toEqual(before);
+  expect((await sql("SELECT consume_merchant_notification_invitation($1,'email') r",['1'.repeat(64)])).rows[0].r.verified).toBe(false);
+  expect((await sql("SELECT consume_merchant_notification_invitation($1,'email') r",['2'.repeat(64)])).rows[0].r.verified).toBe(true);
+ });
+ it.each(['email','whatsapp'])('new %s invitations last exactly48hours and reject at expiry',async(channel)=>{
+  const address=channel==='email'?'owner@example.com':'+2348012345678';const id=await recipient(channel,address);const hash='3'.repeat(64);
+  const result=(await sql('SELECT issue_merchant_notification_invitation($1,$2,$3,$4) r',[id,B,hash,CHANNEL])).rows[0].r;
+  expect(result.issued).toBe(true);
+  expect((await sql("SELECT expires_at-created_at=interval '48 hours' AS correct FROM merchant_notification_invitations WHERE recipient_id=$1",[id])).rows[0].correct).toBe(true);
+  expect(new Date(result.expires_at).getTime()).toBeGreaterThan(Date.now()+47*60*60*1000);
+  await sql('BEGIN');
+  try {
+   await sql('UPDATE merchant_notification_invitations SET expires_at=now() WHERE recipient_id=$1',[id]);
+   expect((await sql('SELECT consume_merchant_notification_invitation($1,$2,$3,$4) r',[hash,channel,address,CHANNEL])).rows[0].r.verified).toBe(false);
+  } finally {await sql('ROLLBACK');}
+  // Still valid beyond the former30-minute window (47hours elapsed, onehour remaining).
+  await sql("UPDATE merchant_notification_invitations SET created_at=now()-interval '47 hours',expires_at=now()+interval '1 hour' WHERE recipient_id=$1",[id]);
+  expect((await sql('SELECT consume_merchant_notification_invitation($1,$2,$3,$4) r',[hash,channel,address,CHANNEL])).rows[0].r).toMatchObject({verified:true,replay:false});
+  const verified=(await sql('SELECT verified_at FROM merchant_notification_recipients WHERE id=$1',[id])).rows[0].verified_at;
+  expect((await sql('SELECT consume_merchant_notification_invitation($1,$2,$3,$4) r',[hash,channel,address,CHANNEL])).rows[0].r).toMatchObject({verified:true,replay:true});
+  expect((await sql('SELECT verified_at FROM merchant_notification_recipients WHERE id=$1',[id])).rows[0].verified_at).toEqual(verified);
+ });
+ it.each(['email','whatsapp'])('replacement %s invitation retains throttle and invalidates earlier token',async(channel)=>{
+  const address=channel==='email'?'owner@example.com':'+2348012345678';const id=await recipient(channel,address);
+  const issue=(hash:string)=>sql('SELECT issue_merchant_notification_invitation($1,$2,$3,$4) r',[id,B,hash,CHANNEL]);
+  expect((await issue('4'.repeat(64))).rows[0].r.issued).toBe(true);
+  expect((await issue('5'.repeat(64))).rows[0].r).toEqual({issued:false,reason:'rate_limited'});
+  await sql("UPDATE merchant_notification_invitations SET created_at=now()-interval '61 seconds' WHERE recipient_id=$1",[id]);
+  expect((await issue('5'.repeat(64))).rows[0].r.issued).toBe(true);
+  expect((await sql('SELECT consume_merchant_notification_invitation($1,$2,$3,$4) r',['4'.repeat(64),channel,address,CHANNEL])).rows[0].r.verified).toBe(false);
+  expect((await sql('SELECT consume_merchant_notification_invitation($1,$2,$3,$4) r',['5'.repeat(64),channel,address,CHANNEL])).rows[0].r).toMatchObject({verified:true,replay:false});
+ });
+ it.each([
+  ['search_path', 'ALTER FUNCTION public.issue_merchant_notification_invitation(uuid,uuid,text,uuid) RESET search_path', 'security/search_path'],
+  ['PUBLIC execute', 'GRANT EXECUTE ON FUNCTION public.issue_merchant_notification_invitation(uuid,uuid,text,uuid) TO PUBLIC', 'public execution'],
+  ['service execute', 'REVOKE EXECUTE ON FUNCTION public.issue_merchant_notification_invitation(uuid,uuid,text,uuid) FROM service_role', 'service execution'],
+ ])('M502 verifier rejects and rolls back changed %s',async(_name,tamper,reason)=>{
+  const verifier=readFileSync('supabase/migrations/502_merchant_notification_invitation_lifetime.sql','utf8')
+   .match(/DO \$verify_invitation_lifetime\$[\s\S]*?END \$verify_invitation_lifetime\$;/)?.[0];
+  expect(verifier).toBeTruthy();await sql('BEGIN');
+  try {await sql(tamper);await expect(sql(verifier!)).rejects.toThrow(`M502 verification FAILED: ${reason}`);await expect(sql('SELECT 1')).rejects.toMatchObject({code:'25P02'});}
+  finally {await sql('ROLLBACK');}
+  await expect(sql(verifier!)).resolves.toBeDefined();
+ });
  it.each([
   ['missing search path', 'ALTER FUNCTION public.claim_merchant_notification() RESET search_path', 'security/search_path'],
   ['wrong search path', 'ALTER FUNCTION public.claim_merchant_notification() SET search_path=public', 'security/search_path'],

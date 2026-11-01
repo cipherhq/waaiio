@@ -1,3 +1,9 @@
+## 2026-11-01 — Longer merchant notification invitations
+
+- M502 extends newly issued email and WhatsApp notification invitations to 48 hours; existing invitation expiry remains unchanged.
+- Email invitation copy reflects the new lifetime. Replacement, rate limits, token binding, revocation and idempotent consent replay remain unchanged.
+- Requires M502 before the updated email copy is deployed. No payment behavior changes or hosted migration execution are included.
+
 ## 2026-11-01 — Protected staging email confirmation
 
 - `app/notifications/confirm/page.tsx`: Send same-origin credentials so deployment access cookies accompany explicit invitation confirmation. Token verification and consent remain required.
