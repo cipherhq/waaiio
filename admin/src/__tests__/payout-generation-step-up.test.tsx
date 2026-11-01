@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const m = vi.hoisted(() => ({ token: 'before-mfa', fetch: vi.fn(), setSession: vi.fn(), prepare: 0,
-  rejectVerification: false, status: 200, result: {} as Record<string, unknown> }));
+  rejectVerification: false, status: 200, result: {} as Record<string, unknown>, rows: [] as Record<string, unknown>[] }));
 vi.mock('@/lib/supabase', () => ({ supabase: { auth: {
   getSession: async () => ({ data: { session: { access_token: m.token } } }),
   setSession: m.setSession,
@@ -13,7 +13,7 @@ import Payouts from '../pages/Payouts';
 
 beforeEach(() => {
   vi.clearAllMocks(); m.token = 'before-mfa'; m.prepare = 0; m.rejectVerification = false;
-  m.status = 200; m.result = { created: 2, held: 0, skipped: 0, failed: 0 };
+  m.status = 200; m.result = { created: 2, held: 0, skipped: 0, failed: 0 }; m.rows = [];
   vi.spyOn(window, 'confirm').mockReturnValue(true);
   vi.spyOn(window, 'alert').mockImplementation(() => {});
   m.setSession.mockImplementation(async ({ access_token }) => { m.token = access_token; return { error: null }; });
@@ -23,7 +23,7 @@ beforeEach(() => {
       ? Response.json({ error: 'Restart required', code: 'STEP_UP_RESTART_REQUIRED' }, { status: 400 })
       : Response.json({ session: { access_token: 'after-mfa', refresh_token: 'rotated-refresh' } });
     if (url.endsWith('/payouts/generate')) return Response.json(m.result, { status: m.status });
-    return Response.json({ payouts: [], total_pages: 1 });
+    return Response.json({ payouts: m.rows, total_pages: 1 });
   });
   vi.stubGlobal('fetch', m.fetch);
 });
@@ -70,4 +70,27 @@ it.each([
   expect(vi.mocked(window.alert).mock.calls[0][0]).toContain(message);
   expect(calls('/payouts/generate')).toHaveLength(1);
   expect(m.setSession).toHaveBeenCalledWith({ access_token: 'after-mfa', refresh_token: 'rotated-refresh' });
+});
+
+it.each([
+  ['USD', 'NG', /USD\s*94\.25/],
+  ['NGN', 'US', /NGN\s*94\.25/],
+  [null, 'NG', /94\.25 \(currency unknown\)/],
+  ['invalid', 'US', /94\.25 \(currency unknown\)/],
+] as const)('uses stored currency %s in the row, settlement modal and MFA description', async (currency, country, amount) => {
+  m.rows = [{ id: 'fixture-payout', business_id: 'fixture-business', business_name: 'Currency fixture',
+    country_code: country, currency, net_amount: 94.25, gross_amount: 100, platform_fee: 5,
+    gateway_fee: 0.75, status: 'approved', transfer_method: 'manual_bank', flags: [],
+    period_start: '2026-01-01', period_end: '2026-01-07', created_at: '2026-01-08T00:00:00Z' }];
+  render(<Payouts />);
+  expect(await screen.findByText(amount)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm Settlement' }));
+  expect(screen.getByText((text) => text.startsWith('Currency fixture —') && amount.test(text))).toBeTruthy();
+  fireEvent.change(screen.getByPlaceholderText('e.g. NIP/SESSION-ID/RECEIPT-NUMBER'), { target: { value: 'SYNTHETIC-REFERENCE' } });
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getAllByRole('button', { name: 'Confirm Settlement' }).at(-1)!);
+  expect(await screen.findByText((text) => text.startsWith('Confirm settlement for Currency fixture —') && amount.test(text))).toBeTruthy();
+  expect(calls('/step-up/prepare')).toHaveLength(1);
+  expect(calls('/step-up/verify')).toHaveLength(0);
+  expect(calls('/confirm-settlement')).toHaveLength(0);
 });
