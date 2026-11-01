@@ -7,12 +7,12 @@
  *
  *   SUCCESS PATH:
  *   - HTTP 200 (not just "not 409")
- *   - promote_channel_candidate RPC called with correct candidate + business IDs
+ *   - promote_candidate_with_merchant_auth RPC called with correct candidate + business IDs
  *   - Response contains activated channel data (channel_id, connection_status, display_name, phone_number)
  *
  *   NEGATIVE PATH (registration failure):
  *   - HTTP error status (422)
- *   - promote_channel_candidate NOT called
+ *   - promote_candidate_with_merchant_auth NOT called
  *   - Candidate marked failed
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -78,7 +78,7 @@ const mockServiceFrom = vi.fn((table: string) => {
 const mockServiceRpc = vi.fn(async (fn: string, args: Record<string, unknown>) => {
   rpcCalls.push({ fn, args });
   if (fn === 'check_phone_conflict') return { data: { conflict: false }, error: null };
-  if (fn === 'promote_channel_candidate') return { data: { ok: true, channel_id: PROMOTED_CHANNEL_ID, action: 'first_connect' }, error: null };
+  if (fn === 'promote_candidate_with_merchant_auth') return { data: { ok: true, channel_id: PROMOTED_CHANNEL_ID, action: 'first_connect' }, error: null };
   if (fn === 'reconcile_paid_allowance') return { data: null, error: null };
   return { data: null, error: null };
 });
@@ -160,7 +160,7 @@ describe('#592 transfer non-regression — end-to-end route handler proof', () =
     expect(body.phone_number).toBe('+2349001234567');
   });
 
-  it('connection_method="transfer": promote_channel_candidate called with correct IDs', async () => {
+  it('connection_method="transfer": promote_candidate_with_merchant_auth called with correct IDs', async () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     await POST(makeReq({
       business_id: 'biz-1',
@@ -170,10 +170,12 @@ describe('#592 transfer non-regression — end-to-end route handler proof', () =
       connection_method: 'transfer',
     }));
 
-    const promo = rpcCalls.find(c => c.fn === 'promote_channel_candidate');
+    const promo = rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth');
     expect(promo).toBeDefined();
     expect(promo!.args.p_candidate_id).toBe('cand-592');
     expect(promo!.args.p_business_id).toBe('biz-1');
+    expect(promo!.args.p_owner_user_id).toBe('user-1');
+    expect(promo!.args.p_step_up_id).toBeNull();
   });
 
   it('omitted connection_method (undefined): HTTP 200, full promotion chain', async () => {
@@ -193,10 +195,12 @@ describe('#592 transfer non-regression — end-to-end route handler proof', () =
     expect(body.connection_status).toBe('active');
 
     // Promotion RPC called with correct IDs
-    const promo = rpcCalls.find(c => c.fn === 'promote_channel_candidate');
+    const promo = rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth');
     expect(promo).toBeDefined();
     expect(promo!.args.p_candidate_id).toBe('cand-592');
     expect(promo!.args.p_business_id).toBe('biz-1');
+    expect(promo!.args.p_owner_user_id).toBe('user-1');
+    expect(promo!.args.p_step_up_id).toBeNull();
 
     // Candidate was inserted with embedded_signup source
     expect(candidateInserts.length).toBe(1);
@@ -227,7 +231,7 @@ describe('#592 transfer non-regression — end-to-end route handler proof', () =
 describe('#592 transfer negative path — failed registration blocks promotion', () => {
   beforeEach(resetAll);
 
-  it('registerPhoneNumber throws: HTTP 422, no promote_channel_candidate call', async () => {
+  it('registerPhoneNumber throws: HTTP 422, no promote_candidate_with_merchant_auth call', async () => {
     // Make registration fail
     mockFetch.mockImplementation(async (url: string) => {
       const u = String(url);
@@ -252,8 +256,8 @@ describe('#592 transfer negative path — failed registration blocks promotion',
     expect(body.error).toContain('Phone registration failed');
     expect(body.recoverable).toBe(true);
 
-    // promote_channel_candidate MUST NOT be called on failure
-    const promo = rpcCalls.find(c => c.fn === 'promote_channel_candidate');
+    // promote_candidate_with_merchant_auth MUST NOT be called on failure
+    const promo = rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth');
     expect(promo).toBeUndefined();
 
     // Candidate is marked failed
@@ -286,7 +290,7 @@ describe('#592 transfer negative path — failed registration blocks promotion',
     expect(body.error).toContain('webhook subscription failed');
 
     // No promotion on webhook failure
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
 
     // Candidate marked failed
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
@@ -296,7 +300,7 @@ describe('#592 transfer negative path — failed registration blocks promotion',
     mockServiceRpc.mockImplementation(async (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
       if (fn === 'check_phone_conflict') return { data: { conflict: false }, error: null };
-      if (fn === 'promote_channel_candidate') return { data: { ok: false, reason: 'concurrent_mutation' }, error: null };
+      if (fn === 'promote_candidate_with_merchant_auth') return { data: { ok: false, reason: 'concurrent_mutation' }, error: null };
       return { data: null, error: null };
     });
 
@@ -315,7 +319,7 @@ describe('#592 transfer negative path — failed registration blocks promotion',
     expect(body.error).toContain('Channel activation failed');
 
     // promote was called but failed — candidate should be marked failed
-    const promo = rpcCalls.find(c => c.fn === 'promote_channel_candidate');
+    const promo = rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth');
     expect(promo).toBeDefined();
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
   });
