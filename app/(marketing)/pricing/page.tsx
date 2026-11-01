@@ -37,7 +37,7 @@ interface PricingProjection {
 }
 
 export default function PricingPage() {
-  const [country, setCountry] = useState<CountryCode>('NG');
+  const country: CountryCode = 'NG';
   const [projection, setProjection] = useState<PricingProjection | null>(null);
   const [loadError, setLoadError] = useState(false);
 
@@ -91,7 +91,6 @@ export default function PricingPage() {
 
   const { trialDays, annualDiscountPercentage, tierFees, categoryFees, byoFeePolicy } = projection;
   const countryPricing = projection.country.pricing;
-  const countryList = projection.countries;
 
   return (
     <>
@@ -106,23 +105,9 @@ export default function PricingPage() {
             {trialDays}-day free trial with zero fees, then {tierFees.free.feePercentage}% standard platform fee. Category rates and custom agreements may differ. No monthly fees on Starter. Free reservations don&apos;t count.
           </p>
 
-          {/* Country picker */}
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
-            {countryList.map((c) => (
-              <button
-                key={c.code}
-                onClick={() => setCountry(c.code as CountryCode)}
-                className={`flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition ${
-                  country === c.code
-                    ? 'border-brand bg-brand-50 text-brand'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                }`}
-              >
-                <span>{c.flag}</span>
-                <span>{c.name}</span>
-              </button>
-            ))}
-          </div>
+          <p className="mt-8 text-sm font-medium text-brand">
+            🇳🇬 Available in Nigeria · Prices in NGN
+          </p>
         </div>
       </section>
 
@@ -333,7 +318,7 @@ export default function PricingPage() {
               {[
                 { icon: '&#x1F4AC;', title: 'WhatsApp Native', desc: 'Customers interact on the app they use daily. No downloads, no links, no friction.' },
                 { icon: '&#x1F3ED;', title: '89+ Business Types', desc: 'Churches, mosques, salons, clinics, schools, shops, NGOs, events — pre-built flows for every category.' },
-                { icon: '&#x1F30D;', title: '5 Countries', desc: 'Nigeria, US, UK, Canada & Ghana with localized pricing and payment gateways.' },
+                { icon: '&#x1F30D;', title: 'Built for Nigeria', desc: 'Naira pricing and payment options for Nigerian businesses.' },
                 { icon: '&#x1F916;', title: 'AI Intelligence', desc: 'Smart intent detection, auto-upsell, multi-language support including Pidgin.' },
               ].map((f) => (
                 <div key={f.title} className="rounded-2xl border border-gray-100 bg-white p-6">
