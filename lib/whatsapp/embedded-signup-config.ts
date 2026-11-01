@@ -2,7 +2,7 @@
  * Embedded Signup v4 — FB.login options builder
  *
  * Pure function that produces the v4-compliant FB.login configuration.
- * Used by both call sites (OnboardingWizard + dashboard connect).
+ * Used by the dashboard connection screen after business registration.
  *
  * V4 contract:
  * - config_id from environment

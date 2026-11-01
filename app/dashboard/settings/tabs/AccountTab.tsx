@@ -75,7 +75,8 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailSuccess, setEmailSuccess] = useState('');
   const [emailError, setEmailError] = useState('');
-  const [waChannel, setWaChannel] = useState<{ wa_method: string; channel: { phone_number: string; display_name: string; connection_status: string } | null } | null>(null);
+  const [waChannel, setWaChannel] = useState<{ wa_method: string; channel: { phone_number: string; display_name: string; connection_status: string } | null; shared_targets?: { id: string; phone_number: string; country_code: string }[] } | null>(null);
+  const [waTargetId, setWaTargetId] = useState('');
   const [waDisconnecting, setWaDisconnecting] = useState(false);
 
   // MFA / Two-Factor Authentication state
@@ -101,6 +102,12 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [reAuthAction, setReAuthAction] = useState<'delete' | 'email' | 'downgrade' | null>(null);
+
+  async function reloadSharedDestinations() {
+    setWaTargetId('');
+    const response = await fetch(`/api/settings/whatsapp-channel?business_id=${business.id}`);
+    if (response.ok) setWaChannel(await response.json());
+  }
 
   // Load WhatsApp channel info
   useEffect(() => {
@@ -538,9 +545,17 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                 </div>
 
                 <p className="mt-4 text-xs text-gray-500">
-                  To change your WhatsApp number, disconnect first, then reconnect with your new number from the onboarding page.
+                  Connect and verify a replacement number before switching. Your permanent business link and business records stay the same; old WhatsApp chat history does not transfer.
                 </p>
 
+                <div className="mt-3">
+                  <label htmlFor="shared-destination" className="block text-xs font-medium">Shared destination for disconnect</label>
+                  <select id="shared-destination" value={waTargetId} onChange={event => setWaTargetId(event.target.value)} className="mt-1 w-full rounded border p-2 text-sm">
+                    <option value="">Select a shared number</option>
+                    {(waChannel.shared_targets || []).map(target => <option key={target.id} value={target.id}>{target.phone_number} ({target.country_code})</option>)}
+                  </select>
+                  {!waChannel.shared_targets?.length && <p className="mt-1 text-xs text-gray-500">No eligible shared destination is available. Contact support.</p>}
+                </div>
                 <div className="mt-3 flex gap-2">
                   <Link
                     href="/dashboard/whatsapp/connect"
@@ -550,17 +565,64 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                   </Link>
                   <button
                     onClick={async () => {
-                      if (!confirm('Disconnect your dedicated WhatsApp number? You will revert to the shared platform number.')) return;
+                      const destination = waChannel.shared_targets?.find(target => target.id === waTargetId);
+                      if (!destination || !confirm(`Disconnect your dedicated number and switch to ${destination.phone_number}? Your permanent link stays the same. Two-factor authentication is required.`)) return;
                       setWaDisconnecting(true);
                       try {
-                        const delRes = await fetch(`/api/settings/whatsapp-channel?business_id=${business.id}`, { method: 'DELETE' });
-                        if (!delRes.ok) throw new Error('Disconnect failed');
+                        // Step 1: Prepare MFA step-up
+                        // Params are derived server-side — never sent from client
+                        const prepRes = await fetch('/api/settings/whatsapp-channel/step-up/prepare', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            business_id: business.id,
+                            action_type: 'channel_disconnect',
+                            target_channel_id: destination.id,
+                          }),
+                        });
+                        const prepData = await prepRes.json();
+                        if (!prepRes.ok) {
+                          await reloadSharedDestinations();
+                          if (prepData.code === 'NO_TOTP_ENROLLED') {
+                            alert('Two-factor authentication is required. Please enable 2FA in your account settings first.');
+                          } else {
+                            alert(prepData.error || 'MFA setup failed');
+                          }
+                          return;
+                        }
+                        // Step 2: Prompt for TOTP code
+                        const code = prompt('Enter the 6-digit code from your authenticator app:');
+                        if (!code || code.length < 6) return;
+                        // Step 3: Verify
+                        const verifyRes = await fetch('/api/settings/whatsapp-channel/step-up/verify', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ stepUpId: prepData.stepUpId, code }),
+                        });
+                        const verifyData = await verifyRes.json();
+                        if (!verifyRes.ok) { alert(verifyData.error || 'Verification failed'); return; }
+                        // Refresh session
+                        if (verifyData.session?.access_token) {
+                          const supabase = createClient();
+                          await supabase.auth.setSession({
+                            access_token: verifyData.session.access_token,
+                            refresh_token: verifyData.session.refresh_token,
+                          });
+                        }
+                        // Step 4: Disconnect with step-up
+                        const delRes = await fetch('/api/settings/whatsapp-channel', {
+                          method: 'DELETE',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ business_id: business.id, stepUpId: prepData.stepUpId, target_channel_id: destination.id }),
+                        });
+                        const delData = await delRes.json();
+                        if (!delRes.ok) { await reloadSharedDestinations(); alert(delData.error || 'Disconnect failed'); return; }
                         setWaChannel({ wa_method: 'shared', channel: null });
-                      } catch {} finally {
+                      } catch { alert('Disconnect failed. Please try again.'); } finally {
                         setWaDisconnecting(false);
                       }
                     }}
-                    disabled={waDisconnecting}
+                    disabled={waDisconnecting || !waTargetId}
                     className="rounded-lg border border-red-200 px-4 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                   >
                     {waDisconnecting ? 'Disconnecting...' : 'Disconnect'}

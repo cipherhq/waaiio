@@ -23,6 +23,12 @@ import {
 // Mock infrastructure for callback route
 // ─────────────────────────────────────────────────────────────────────────
 
+vi.mock('@/lib/whatsapp/embedded-signup-session', () => ({
+  consumeSignupSession: async () => ({ accessToken: 'test-token', tokenExpiresAt: null,
+    accounts: [{ waba_id: 'waba-1', phones: [{ id: 'pn-1' }] }] }),
+}));
+vi.mock('@/lib/whatsapp/embedded-signup-assets', () => ({ listSignupPhones: async () => [{ id: 'pn-1' }] }));
+
 const mockGetUser = vi.fn();
 const mockAuthClientFrom = vi.fn();
 
@@ -71,7 +77,7 @@ const mockServiceFrom = vi.fn((table: string) => {
 const mockServiceRpc = vi.fn(async (fn: string, args: Record<string, unknown>) => {
   rpcCalls.push({ fn, args });
   if (fn === 'check_phone_conflict') return { data: { conflict: false }, error: null };
-  if (fn === 'promote_channel_candidate') return { data: { ok: true, channel_id: 'ch-new', action: 'first_connect' }, error: null };
+  if (fn === 'promote_candidate_with_merchant_auth') return { data: { ok: true, channel_id: 'ch-new', action: 'first_connect' }, error: null };
   if (fn === 'reconcile_paid_allowance') return { data: null, error: null };
   return { data: null, error: null };
 });
@@ -233,7 +239,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'coexist',
@@ -258,7 +264,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'coexistence',
@@ -274,7 +280,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'magicmethod',
@@ -294,16 +300,14 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',
     }));
 
-    // Standard transfer should succeed (200) or at least proceed past the fence
-    // into the business ownership check and provider flow
-    expect(res.status).not.toBe(409); // Not coexist rejection
-    expect(res.status).not.toBe(400); // Not unknown method rejection
+    // First connection completes through the merchant authorization wrapper.
+    expect(res.status).toBe(200);
 
     // PROOF: provider calls were made (fetch was invoked for phone info, registration, etc.)
     expect(mockFetch).toHaveBeenCalled();
@@ -321,15 +325,14 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       // connection_method intentionally omitted
     }));
 
-    // Should proceed as standard transfer
-    expect(res.status).not.toBe(409);
-    expect(res.status).not.toBe(400);
+    // Should complete as a standard first connection.
+    expect(res.status).toBe(200);
 
     // Provider calls were made (not blocked)
     expect(mockFetch).toHaveBeenCalled();
@@ -347,7 +350,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
 
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',

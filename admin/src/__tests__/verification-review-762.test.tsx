@@ -166,3 +166,26 @@ describe('Verification deferred preparation lifecycle', () => {
     expect(f.mutation.mock.calls[0][0].business_id).toBe('00000000-0000-0000-0000-000000000002');
   });
 });
+
+describe('Private verification document viewing', () => {
+  it('uses an authenticated document-ID request and opens the returned short-lived link', async () => {
+    const tab = { opener: window, location: { href: '' }, close: vi.fn() };
+    const popup = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    f.fetch.mockResolvedValue(new Response('{"url":"https://synthetic.supabase.co/signed"}'));
+    render(<Verification />); await open();
+    await userEvent.click((await screen.findAllByRole('button', { name: 'View', exact: true }))[0]);
+    await waitFor(() => expect(tab.location.href).toBe('https://synthetic.supabase.co/signed'));
+    expect(f.fetch.mock.calls[0][0]).toContain(`/api/admin/verification/document?id=${docB}`);
+    expect(f.fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer initial-token');
+    expect(tab.opener).toBeNull(); expect(f.mutation).not.toHaveBeenCalled(); popup.mockRestore();
+  });
+  it('closes the blank window and shows an error on signing denial', async () => {
+    const tab = { opener: window, location: { href: '' }, close: vi.fn() };
+    const popup = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    f.fetch.mockResolvedValue(new Response('{}', { status: 403 }));
+    render(<Verification />); await open();
+    await userEvent.click((await screen.findAllByRole('button', { name: 'View', exact: true }))[0]);
+    await screen.findByText('Document unavailable. Please try again.');
+    expect(tab.close).toHaveBeenCalled(); expect(tab.location.href).toBe(''); popup.mockRestore();
+  });
+});

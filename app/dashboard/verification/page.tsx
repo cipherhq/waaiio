@@ -83,37 +83,15 @@ export default function VerificationPage() {
   async function handleUpload(docType: string, file: File) {
     setUploading(docType);
 
-    const ext = file.name.split('.').pop() || 'pdf';
-    const path = `${business.id}/verification/${docType}-${Date.now()}.${ext}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from('business-documents')
-      .upload(path, file, { upsert: false });
-
-    if (uploadError) {
-      alert('Upload failed: ' + uploadError.message);
-      setUploading(null);
-      return;
-    }
-
-    const { data: urlData } = supabase.storage
-      .from('business-documents')
-      .getPublicUrl(path);
-
-    const fileUrl = urlData.publicUrl;
-
-    const { error: insertError } = await supabase
-      .from('business_documents')
-      .insert({
-        business_id: business.id,
-        type: docType,
-        file_url: fileUrl,
-        file_name: file.name,
-        status: 'pending',
-      });
-
-    if (insertError) {
-      alert('Failed to save document: ' + insertError.message);
+    const form = new FormData();
+    form.append('file', file);
+    form.append('business_id', business.id);
+    form.append('type', docType);
+    try {
+      const response = await fetch('/api/verification/upload', { method: 'POST', body: form });
+      if (!response.ok) throw new Error('Upload failed. Please try again.');
+    } catch {
+      alert('Upload failed. Please try again.');
       setUploading(null);
       return;
     }
@@ -324,7 +302,7 @@ export default function VerificationPage() {
                     </td>
                     <td className="px-4 py-3">
                       <a
-                        href={doc.file_url}
+                        href={`/api/verification/document?id=${encodeURIComponent(doc.id)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-brand hover:underline text-xs"

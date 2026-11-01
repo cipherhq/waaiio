@@ -31,7 +31,7 @@ beforeEach(() => {
   state.imageUpload.mockResolvedValue('https://example.test/additional.png');
   vi.spyOn(window, 'alert').mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it('renders an additional product image immediately before saving and removes it', async () => {
   const { container } = render(<ProductsPage />);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit test product' }));
@@ -42,14 +42,20 @@ it('renders an additional product image immediately before saving and removes it
   fireEvent.click(screen.getByTitle('Remove'));
   expect(screen.queryByAltText('Gallery 1')).toBeNull();
 });
-it('uploads verification files under the existing business-first storage prefix', async () => {
+it('uploads verification files through the authenticated private upload route', async () => {
+  const fetcher = vi.fn().mockResolvedValue({ ok: true });
+  vi.stubGlobal('fetch', fetcher);
   const { container } = render(<VerificationPage />);
   fireEvent.click((await screen.findAllByRole('button', { name: 'Upload' }))[0]);
   const file = new File(['document'], 'proof.pdf', { type: 'application/pdf' });
   fireEvent.change(container.querySelector('input[type=file]')!, { target: { files: [file] } });
-  await waitFor(() => expect(state.upload).toHaveBeenCalled());
-  expect(state.upload.mock.calls[0][0]).toMatch(/^business-785\/verification\/[^/]+\.pdf$/);
-  expect(state.upload.mock.calls[0][1]).toBe(file);
-  expect(state.upload.mock.calls[0][2]).toEqual({ upsert: false });
-  await waitFor(() => expect(state.insert).toHaveBeenCalledWith(expect.objectContaining({ business_id: 'business-785', status: 'pending' })));
+  await waitFor(() => expect(fetcher).toHaveBeenCalled());
+  const [url, options] = fetcher.mock.calls[0];
+  expect(url).toBe('/api/verification/upload');
+  expect(options.method).toBe('POST');
+  expect(options.body.get('business_id')).toBe('business-785');
+  expect(options.body.get('file')).toBe(file);
+  expect(options.body.get('type')).toBeTruthy();
+  expect(state.upload).not.toHaveBeenCalled();
+  expect(state.insert).not.toHaveBeenCalled();
 });
