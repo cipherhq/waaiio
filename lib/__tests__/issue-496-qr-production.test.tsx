@@ -77,56 +77,52 @@ function allQrValues(): string[] {
 }
 
 describe('#496 QR production routing safety', () => {
-  it('preserves the shared-number routing code in the production generic QR link', async () => {
-    render(<QRCodePage />);
+  // QR codes now encode permanent Waaiio links /m/{uuid}[/{action}].
+  // Server-side resolves to shared bot_code:capability / dedicated ?text=Hi.
+  // Handler tests in permanent-merchant-links.test.ts verify redirect semantics.
 
+  const base = () => `https://www.waaiio.com/m/${state.business.id}`;
+
+  it('generic template encodes base permanent link (no action suffix)', async () => {
+    render(<QRCodePage />);
     await waitFor(() => {
-      const values = allQrValues();
-      expect(values.length).toBeGreaterThanOrEqual(1);
-      for (const v of values) {
-        expect(v).toBe('https://wa.me/12025550199?text=TESTBIZ');
-      }
+      for (const v of allQrValues()) expect(v).toBe(base());
     });
   });
 
-  it('keeps routing code immutable while adding production template suffixes', async () => {
+  it('template change updates action suffix in permanent link', async () => {
     render(<QRCodePage />);
-
-    await waitFor(() => {
-      for (const v of allQrValues()) expect(v).toContain('text=TESTBIZ');
-    });
+    await waitFor(() => { for (const v of allQrValues()) expect(v).toBe(base()); });
 
     fireEvent.click(screen.getByRole('button', { name: /Scan to Pay/i }));
-    await waitFor(() => {
-      for (const v of allQrValues()) {
-        expect(v).toBe('https://wa.me/12025550199?text=TESTBIZ%3Apayment');
-      }
-    });
+    await waitFor(() => { for (const v of allQrValues()) expect(v).toBe(`${base()}/pay`); });
 
     fireEvent.click(screen.getByRole('button', { name: /Scan to Chat/i }));
+    await waitFor(() => { for (const v of allQrValues()) expect(v).toBe(`${base()}/chat`); });
+  });
+
+  it('dedicated business uses same permanent link pattern (no bot_code leak)', async () => {
+    state.business = { ...state.business, wa_method: 'dedicated', bot_code: 'SHOULD_NOT_APPEAR' };
+    render(<QRCodePage />);
     await waitFor(() => {
       for (const v of allQrValues()) {
-        expect(v).toBe('https://wa.me/12025550199?text=TESTBIZ%3Achat');
+        expect(v).toBe(base());
+        expect(v).not.toContain('SHOULD_NOT_APPEAR');
+        expect(v).not.toContain('wa.me');
       }
     });
   });
 
-  it('does not inject a routing code for a dedicated-number business', async () => {
-    state.business = {
-      ...state.business,
-      wa_method: 'dedicated',
-      bot_code: 'SHOULD_NOT_APPEAR',
-    };
-
+  it('poster preview shows permanent link, not raw phone number', async () => {
     render(<QRCodePage />);
-
-    await waitFor(() => {
-      const values = allQrValues();
-      expect(values.length).toBeGreaterThanOrEqual(1);
-      for (const v of values) {
-        expect(v).toBe('https://wa.me/12025550199?text=Hi');
-        expect(v).not.toContain('SHOULD_NOT_APPEAR');
-      }
-    });
+    await waitFor(() => expect(allQrValues().length).toBeGreaterThanOrEqual(1));
+    const html = document.body.innerHTML;
+    // Preview fallback section: permanent URL, not raw phone
+    expect(html).toContain('Or open this link');
+    expect(html).toContain(base());
+    expect(html).not.toContain('Or send a message to');
+    // No hardcoded US fallback number
+    expect(html).not.toContain('12025550199');
+    expect(html).not.toContain('+12025550000'); // business.phone
   });
 });

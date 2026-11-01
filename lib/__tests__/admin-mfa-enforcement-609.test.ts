@@ -133,7 +133,29 @@ describe('SEC-005 Layer 2: route coverage manifest', () => {
       if (isExempt && routePath.includes('template-status')) continue;
 
       const source = readSource(routePath);
-      expect(source).toContain('requirePlatformAdmin');
+      const channelMutationActions: Record<string, string> = {
+        'app/api/admin/channel-changes/[id]/approve/route.ts': 'approve',
+        'app/api/admin/channel-changes/[id]/re-request/route.ts': 'refresh',
+        'app/api/admin/channel-changes/[id]/execute/route.ts': 'execute',
+      };
+      const delegatedAction = channelMutationActions[routePath];
+      if (delegatedAction) {
+        // These handlers delegate their entire body to one guarded boundary.
+        // Check the exact delegation AND that auth is the helper's first operation;
+        // listing a path here alone never exempts it from the MFA gate.
+        expect(source).toContain("import { channelChangeOptions, mutateChannelChange } from '@/lib/admin-channel-change'");
+        expect(source).toContain(`return mutateChannelChange(request, '${delegatedAction}', (await params).id);`);
+        expect(source.slice(source.indexOf('export async function POST'))).toMatch(
+          /^export async function POST\(request: NextRequest, \{ params \}: \{ params: Promise<\{ id: string \}> \}\) \{\s*return mutateChannelChange\(request, '(approve|refresh|execute)', \(await params\)\.id\);\s*\}\s*$/,
+        );
+        const helper = readSource('lib/admin-channel-change.ts');
+        expect(helper).toContain("import { requirePlatformAdmin, type PlatformAdmin } from '@/lib/admin-auth'");
+        expect(helper.slice(helper.indexOf('export async function mutateChannelChange'))).toMatch(
+          /^export async function mutateChannelChange\([^)]*\) \{\s*const admin = await requirePlatformAdmin\(request, \{ requiredRole: 'admin' \}\);\s*if \(!admin\) return channelChangeResponse\(request, \{ error: 'Forbidden' \}, 403\);/,
+        );
+      } else {
+        expect(source).toContain('requirePlatformAdmin');
+      }
     }
   });
 

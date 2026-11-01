@@ -445,18 +445,52 @@ export async function POST(request: NextRequest) {
         updated_at: new Date().toISOString(),
       }).eq('id', candidate.id);
 
-      // 5. Atomic promotion
+      // 5. Atomic promotion with merchant auth (#799)
+      // Original provider endpoint: always NULL step_up_id for genuine first connect.
+      // If business has existing authority, SQL raises step_up_required and the
+      // user must use the /finish endpoint with a verified step-up.
       const { data: promoResult, error: promoErr } = await service.rpc(
-        'promote_channel_candidate',
-        { p_candidate_id: candidate.id, p_business_id: business_id },
+        'promote_candidate_with_merchant_auth',
+        {
+          p_candidate_id: candidate.id,
+          p_business_id: business_id,
+          p_step_up_id: null,
+          p_owner_user_id: user.id,
+        },
       );
 
-      if (promoErr || !(promoResult as { ok?: boolean })?.ok) {
-        const reason = (promoResult as { reason?: string })?.reason || promoErr?.message || 'unknown';
-        logger.error('[ADD-NUMBER] Promotion failed:', reason);
+      if (promoErr) {
+        const msg = promoErr.message || 'unknown';
+        logger.error('[ADD-NUMBER] Promotion failed:', msg);
+        // Don't mark candidate as failed for step_up_required — user can retry with MFA
+        if (msg.includes('step_up_required')) {
+          return NextResponse.json(
+            { error: 'Two-factor authentication is required to replace your existing WhatsApp number.', code: 'STEP_UP_REQUIRED', candidate_id: candidate.id },
+            { status: 403 },
+          );
+        }
+        if (msg.includes('step_up_invalid')) {
+          return NextResponse.json(
+            { error: 'MFA authorization invalid, expired, or already used. Please verify again.', code: 'STEP_UP_INVALID', candidate_id: candidate.id },
+            { status: 403 },
+          );
+        }
         await service.from('whatsapp_channel_candidates').update({
           status: 'failed',
-          failure_reason: `Promotion failed: ${reason}`,
+          failure_reason: `Promotion failed: ${msg}`,
+          updated_at: new Date().toISOString(),
+        }).eq('id', candidate.id);
+        return NextResponse.json(
+          { error: 'Channel activation failed. Please try again.', recoverable: true, reason: msg },
+          { status: 409 },
+        );
+      }
+
+      if (!(promoResult as { ok?: boolean })?.ok) {
+        const reason = 'unknown';
+        await service.from('whatsapp_channel_candidates').update({
+          status: 'failed',
+          failure_reason: `Promotion returned not-ok`,
           updated_at: new Date().toISOString(),
         }).eq('id', candidate.id);
         return NextResponse.json(

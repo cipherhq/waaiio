@@ -8,6 +8,7 @@ import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
 import { buildVerifiedWhatsAppLink, isAssignedWhatsAppChannelReady } from '@/lib/onboarding/whatsapp-readiness';
+import { buildMerchantLink } from '@/lib/url';
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
@@ -96,6 +97,7 @@ export async function GET(request: NextRequest) {
         bot_code: biz?.bot_code || null,
         channel_ready: channelReady,
         whatsapp_link: buildVerifiedWhatsAppLink(biz, ch),
+        permanent_link: biz ? buildMerchantLink(biz.id) : null,
         channel_type: ch?.channel_type || null,
         connection_status: ch?.connection_status || null,
         owner_connection_required: requested !== 'shared' && !(channelReady && ch?.channel_type === 'dedicated'),

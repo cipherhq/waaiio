@@ -21,16 +21,29 @@ export function StepSuccess({
   const qrRef = useRef<{ SVG: React.ComponentType<any>; Canvas: React.ComponentType<any> } | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<'link' | 'message' | 'error' | null>(null);
 
-  // Full URL validation: HTTPS, exact wa.me host, digits-only phone path,
-  // no credentials, no unexpected port. Encoded query params are preserved.
+  // URL validation: accepts permanent Waaiio links (/m/{uuid}) and wa.me links.
+  // Exact known origins only — no arbitrary *.vercel.app or unknown hosts.
+  // No credentials, non-standard ports, query strings, or hash fragments on /m/ links.
   const safeWaLink = (() => {
     try {
       const u = new URL(waLink);
       if (u.protocol !== 'https:') return '';
-      if (u.hostname !== 'wa.me') return '';
       if (u.port !== '' && u.port !== '443') return '';
       if (u.username || u.password) return '';
-      if (!/^\/\d+$/.test(u.pathname)) return '';
+
+      // Accept wa.me links (direct WhatsApp — backward compat for pre-registration display)
+      if (u.hostname === 'wa.me') {
+        if (!/^\/\d+$/.test(u.pathname)) return '';
+        return waLink;
+      }
+
+      // Accept permanent Waaiio links: exact known hosts, /m/{uuid} base path only.
+      // StepSuccess only receives base permanent links from OnboardingWizard.
+      const KNOWN_WAAIIO_HOSTS = new Set(['www.waaiio.com', 'waaiio.com', 'staging.waaiio.com']);
+      if (!KNOWN_WAAIIO_HOSTS.has(u.hostname)) return '';
+      if (u.search || u.hash) return '';
+      const UUID_PATH = /^\/m\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!UUID_PATH.test(u.pathname)) return '';
       return waLink;
     } catch {
       return '';
@@ -89,11 +102,12 @@ export function StepSuccess({
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-700">
               <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-              You&apos;re live!
+              Account created
             </span>
-            <h2 className="mt-4 text-2xl font-bold text-gray-900">Print this. Stick it anywhere.</h2>
+            <h2 className="mt-4 text-2xl font-bold text-gray-900">Your permanent Waaiio link is ready</h2>
             <p className="mt-2 text-sm text-gray-500">
-              Anyone who scans this QR code can {actionVerb} on WhatsApp instantly. No app download needed.
+              This link stays the same even if your connected WhatsApp number changes.
+              Connect WhatsApp and set up your bot below so customers can {actionVerb}.
             </p>
           </div>
 
@@ -245,7 +259,7 @@ export function StepSuccess({
           {/* ── What to set up next ── */}
           <div className="mt-8 text-left">
             <h3 className="text-lg font-bold text-gray-900">Set up your bot</h3>
-            <p className="mt-1 text-xs text-gray-500">Your bot is live but needs content. Add your services, products, or events so customers can interact with it.</p>
+            <p className="mt-1 text-xs text-gray-500">Add your services, products, or events so customers can interact with your bot once WhatsApp is connected.</p>
 
             <div className="mt-4 space-y-2">
               {([
