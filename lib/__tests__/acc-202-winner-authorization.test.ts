@@ -1165,9 +1165,9 @@ describe('Extended role denial matrix', () => {
       maybeSingle: vi.fn().mockImplementation(() => {
         // Return winner only when ALL predicates are present
         const calls = eqSpy.mock.calls.map((c: unknown[]) => [c[0], c[1]]);
-        const hasBusiness = calls.some(([c, v]: [string, string]) => c === 'business_id' && v === 'biz-1');
-        const hasCampaign = calls.some(([c, v]: [string, string]) => c === 'campaign_id' && v === 'camp-1');
-        const hasOutcome = calls.some(([c, v]: [string, string]) => c === 'outcome' && v === 'winner');
+        const hasBusiness = calls.some(([c, v]) => c === 'business_id' && v === 'biz-1');
+        const hasCampaign = calls.some(([c, v]) => c === 'campaign_id' && v === 'camp-1');
+        const hasOutcome = calls.some(([c, v]) => c === 'outcome' && v === 'winner');
         if (hasBusiness && hasCampaign && hasOutcome) {
           return Promise.resolve({ data: winnerRow, error: null });
         }

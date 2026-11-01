@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createCaptureSender, createMockDb, FIXTURES } from './bot-harness';
 import { schedulingFlow } from '../flows/scheduling.flow';
 import { ticketingFlow } from '../flows/ticketing.flow';
@@ -16,7 +16,8 @@ function buildCtx(
   } = {},
 ) {
   const sender = createCaptureSender();
-  const db = createMockDb();
+  const originalDb = createMockDb();
+  const db = { ...originalDb, from: vi.fn((_table: string) => originalDb.from()) };
   const business = { ...FIXTURES.business, ...overrides.businessOverrides } as FlowContext['business'];
 
   return {
@@ -176,7 +177,7 @@ describe('Ticketing Flow', () => {
           }),
         };
       }
-      return createMockDb().from(table);
+      return createMockDb().from();
     });
 
     const step = getStep(ticketingFlow, 'select_event');

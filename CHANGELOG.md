@@ -1,3 +1,15 @@
+## 2026-11-01 — Longer merchant notification invitations
+
+- M502 extends newly issued email and WhatsApp notification invitations to 48 hours; existing invitation expiry remains unchanged.
+- Email invitation copy reflects the new lifetime. Replacement, rate limits, token binding, revocation and idempotent consent replay remain unchanged.
+- Requires M502 before the updated email copy is deployed. No payment behavior changes or hosted migration execution are included.
+
+## 2026-11-01 — Protected staging email confirmation
+
+- `app/notifications/confirm/page.tsx`: Send same-origin credentials so deployment access cookies accompany explicit invitation confirmation. Token verification and consent remain required.
+- `components/dashboard/__tests__/merchant-notifications-811.test.tsx`: Regression covers explicit click, same-origin transport and unchanged token payload.
+- Affects protected-deployment confirmation; could affect cookie transport to the same-origin endpoint. Focused UI/API tests: 52 passed, zero skipped. Hosted confirmation and provider delivery remain pending.
+
 ## 2026-11-01 — Separate accounting installation from activation
 
 - Add M500 inert accounting-hold schema/private implementations and M501 owner-only activation procedure installer. Ordinary migration installation performs no enrollment or financial activation.

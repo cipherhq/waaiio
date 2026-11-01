@@ -18,7 +18,6 @@ import type { FlowContext } from '@/lib/bot/flows/types';
 describe('#730: Table Reservation type and routing', () => {
   it('FlowType union includes table_reservation', async () => {
     // TypeScript type check — if this compiles, the type is correct
-    const { type } = await import('@/lib/constants');
     const flowType: import('@/lib/constants').FlowType = 'table_reservation';
     expect(flowType).toBe('table_reservation');
   });

@@ -2444,7 +2444,8 @@ describe('Batch 3 repair-specific validation', () => {
         expect(r.exit_status).toBe(0);
         expect(r.version_tracked).toBe(true);
       }
-      expect(batch.confirmations.no_unrelated_version_changed).toBe(true);
+      expect(batch.confirmations).toBeDefined();
+      expect(batch.confirmations!.no_unrelated_version_changed).toBe(true);
     }
   });
 
@@ -2456,10 +2457,10 @@ describe('Batch 3 repair-specific validation', () => {
     const manifestByVersion: Record<string, ManifestEntry> = {};
     manifest.forEach(e => { manifestByVersion[e.version] = e; });
 
-    expect(repairData.migration_filenames.length).toBe(repairData.approved_versions.length);
-    expect(new Set(repairData.migration_filenames).size).toBe(repairData.migration_filenames.length);
-    repairData.approved_versions.forEach((ver: string, i: number) => {
-      const fn = repairData.migration_filenames[i];
+    expect(repairData.migration_filenames!.length).toBe(repairData.approved_versions.length);
+    expect(new Set(repairData.migration_filenames!).size).toBe(repairData.migration_filenames!.length);
+    repairData.approved_versions.forEach((ver: number, i: number) => {
+      const fn = repairData.migration_filenames![i];
       const me = manifestByVersion[ver];
       expect(me).toBeDefined();
       expect(fn).toBe(me.filename);
@@ -2475,9 +2476,9 @@ describe('Batch 3 repair-specific validation', () => {
     const manifestByVersion: Record<string, ManifestEntry> = {};
     manifest.forEach(e => { manifestByVersion[e.version] = e; });
 
-    const csKeys = Object.keys(repairData.approved_checksums);
+    const csKeys = Object.keys(repairData.approved_checksums!);
     expect(csKeys.length).toBe(repairData.approved_versions.length);
-    for (const [ver, cs] of Object.entries(repairData.approved_checksums) as [string, string][]) {
+    for (const [ver, cs] of Object.entries(repairData.approved_checksums!) as [string, string][]) {
       expect(cs).toMatch(/^[0-9a-f]{64}$/);
       const me = manifestByVersion[ver];
       expect(me).toBeDefined();
@@ -2498,9 +2499,9 @@ describe('Batch 3 repair-specific validation', () => {
     const manifestByVersion: Record<string, ManifestEntry> = {};
     manifest.forEach(e => { manifestByVersion[e.version] = e; });
 
-    const pedKeys = Object.keys(repairData.approved_production_evidence_digests);
+    const pedKeys = Object.keys(repairData.approved_production_evidence_digests!);
     expect(pedKeys.length).toBe(repairData.approved_versions.length);
-    for (const [ver, storedDigest] of Object.entries(repairData.approved_production_evidence_digests) as [string, string][]) {
+    for (const [ver, storedDigest] of Object.entries(repairData.approved_production_evidence_digests!) as [string, string][]) {
       expect(storedDigest).toMatch(/^[0-9a-f]{64}$/);
       const me = manifestByVersion[ver]!;
       expect(me).toBeDefined();
@@ -2524,6 +2525,7 @@ describe('Batch 3 repair-specific validation', () => {
     const postSnap = repairData.post_repair.tracked_version_snapshot;
     expect(Array.isArray(preSnap)).toBe(true);
     expect(Array.isArray(postSnap)).toBe(true);
+    if (!preSnap || !postSnap) throw new Error('Required migration snapshots missing');
     expect(preSnap.every((v: number) => Number.isInteger(v) && v > 0)).toBe(true);
     expect(postSnap.every((v: number) => Number.isInteger(v) && v > 0)).toBe(true);
     expect(new Set(preSnap).size).toBe(preSnap.length);
@@ -2557,7 +2559,7 @@ describe('Batch 3 repair-specific validation', () => {
       'batch_4_did_not_start'
     ];
     for (const key of required) {
-      expect(repairData.confirmations[key]).toBe(true);
+      expect(repairData.confirmations![key]).toBe(true);
     }
   });
 
@@ -2854,8 +2856,8 @@ describe('Batch 3+ required-field schema validation', () => {
       return true;
     };
 
-    requireArray('migration_filenames', repairData.migration_filenames);
-    requireObject('approved_checksums', repairData.approved_checksums);
+    requireArray('migration_filenames', repairData.migration_filenames!);
+    requireObject('approved_checksums', repairData.approved_checksums!);
     requireObject('approved_production_evidence_digests', repairData.approved_production_evidence_digests);
     const hasPreRepair = requireObject('pre_repair', repairData.pre_repair);
     const hasPostRepair = requireObject('post_repair', repairData.post_repair);

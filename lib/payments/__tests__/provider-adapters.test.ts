@@ -243,6 +243,7 @@ describe('Provider adapters', () => {
       paymentMetadata: {}, isNewAuthority: true, businessId: 'biz-1',
     });
     expect(r.status).toBe('config_error');
+    if (r.status !== 'config_error') throw new Error('Expected configuration error');
     expect(r.reason).toContain('missing_payment_origin');
     expect(mockFetch).not.toHaveBeenCalled();
   });

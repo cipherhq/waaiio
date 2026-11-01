@@ -31,7 +31,7 @@ const logErrors: string[] = [];
 vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(), info: vi.fn(), warn: vi.fn(),
-    error: vi.fn().mockImplementation((...args: any[]) => { logErrors.push(args.map(String).join(' ')); }),
+    error: vi.fn().mockImplementation((...args: unknown[]) => { logErrors.push(args.map(String).join(' ')); }),
     withContext: vi.fn().mockReturnValue({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
   },
 }));
@@ -392,7 +392,7 @@ describe('WhatsApp Directory Flow', () => {
     // Spy that captures the recursive call but does NOT execute it (avoids OOM)
     const origHM = bot.handleMessage.bind(bot);
     const calls: any[][] = [];
-    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: Parameters<typeof bot.handleMessage>) => {
       calls.push(args);
       if (calls.length === 1) return origHM(...args); // first call: real
       // recursive calls: captured but not executed
@@ -424,7 +424,7 @@ describe('WhatsApp Directory Flow', () => {
     const { bot } = createBot(db);
     const origHM = bot.handleMessage.bind(bot);
     const calls: any[][] = [];
-    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: Parameters<typeof bot.handleMessage>) => {
       calls.push(args);
       if (calls.length === 1) return origHM(...args);
     }) as any;
@@ -455,7 +455,7 @@ describe('WhatsApp Directory Flow', () => {
     const { bot } = createBot(db);
     const origHM = bot.handleMessage.bind(bot);
     const calls: any[][] = [];
-    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: Parameters<typeof bot.handleMessage>) => {
       calls.push(args);
       if (calls.length === 1) return origHM(...args);
     }) as any;
@@ -488,7 +488,7 @@ describe('WhatsApp Directory Flow', () => {
     const { bot } = createBot(db);
     const origHM = bot.handleMessage.bind(bot);
     const calls: any[][] = [];
-    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: Parameters<typeof bot.handleMessage>) => {
       calls.push(args);
       if (calls.length === 1) return origHM(...args);
     }) as any;
@@ -507,7 +507,7 @@ describe('WhatsApp Directory Flow', () => {
     const { bot } = createBot(db);
     const origHM = bot.handleMessage.bind(bot);
     const calls: any[][] = [];
-    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: Parameters<typeof bot.handleMessage>) => {
       calls.push(args);
       if (calls.length === 1) return origHM(...args);
     }) as any;
@@ -534,7 +534,7 @@ describe('WhatsApp Directory Flow', () => {
     const { bot } = createBot(db);
     const origHM = bot.handleMessage.bind(bot);
     const calls: any[][] = [];
-    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: Parameters<typeof bot.handleMessage>) => {
       calls.push(args);
       if (calls.length === 1) return origHM(...args);
     }) as any;

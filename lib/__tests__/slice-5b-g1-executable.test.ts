@@ -82,6 +82,7 @@ describe('G1 — localized PDF generation (real generators)', () => {
     const yoBundle = getPdfLocalizationBundle('yo');
 
     const buffer = await generateInvoicePdf({
+      customerAddress: null, currency: 'NGN',
       businessName: 'TestBiz',
       referenceCode: 'INV-001',
       issueDate: '2026-12-01',

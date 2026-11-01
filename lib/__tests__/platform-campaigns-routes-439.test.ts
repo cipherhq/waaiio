@@ -31,7 +31,7 @@ vi.mock('@/lib/admin-cors', () => ({
 }));
 
 function makeReq(url: string, method: string, body?: Record<string, unknown>): NextRequest {
-  const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts: NonNullable<ConstructorParameters<typeof NextRequest>[1]> = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   return new NextRequest(url, opts);
 }

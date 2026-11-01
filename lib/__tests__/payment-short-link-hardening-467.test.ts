@@ -67,7 +67,7 @@ describe('#467 /api/pay route — redirect status and Paystack fallback', () => 
   // Verify the route source code directly for redirect behavior.
   // We test the route handler by importing it and calling with mock requests.
 
-  let routeModule: { GET: (req: import('next/server').NextRequest) => Promise<import('next/server').NextResponse> };
+  let routeModule: typeof import('@/app/api/pay/route');
   const mockMaybeSingle = vi.fn();
   const mockSelect = vi.fn();
 

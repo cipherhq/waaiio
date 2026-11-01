@@ -301,7 +301,8 @@ describe('Invite API capacity enforcement', () => {
     const res = await POST(req);
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.error).toContain('capacity') || expect(body.error).toContain('attendees');
+    expect(body.error).toContain('capacity');
+    expect(body.error).toContain('attendees');
   });
 
   it('allows invites when under capacity', async () => {

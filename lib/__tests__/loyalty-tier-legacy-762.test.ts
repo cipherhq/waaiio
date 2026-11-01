@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Dependency mocks (same pattern as phase-2d-r13-post-completion.test.ts) ──
 
-const capsMock = vi.fn<[], Promise<string[]>>();
+const capsMock = vi.fn<() => Promise<string[]>>();
 vi.mock('@/lib/capabilities/service', () => ({ getEnabledCapabilities: (...args: unknown[]) => capsMock() }));
 vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), withContext: vi.fn(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() })) },

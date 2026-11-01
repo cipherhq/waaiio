@@ -89,20 +89,16 @@ function makeApiResponse(overrides: Array<{ lang: string; key: string; value: st
 
 /* ── Fetch mock helpers ── */
 
-type FetchMock = ReturnType<typeof vi.fn>;
+type FetchMock = ReturnType<typeof vi.fn<typeof fetch>>;
 
 function jsonResponse(status: number, body: unknown) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  };
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
 let fetchMock: FetchMock;
 
 beforeEach(() => {
-  fetchMock = vi.fn();
+  fetchMock = vi.fn<typeof fetch>();
   global.fetch = fetchMock;
   state.business = {
     id: 'biz-test-001',
@@ -262,7 +258,7 @@ describe('Bot Text page', () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, makeApiResponse()))
       .mockResolvedValueOnce(jsonResponse(200, { success: true, upserted: 1, deleted: 0 }))
-      .mockResolvedValueOnce({ ok: true, status: 200, json: reloadJson });
+      .mockResolvedValueOnce(Object.assign(new Response(null, { status: 200 }), { json: reloadJson }));
 
     render(<TranslationsPage />);
 
@@ -339,7 +335,7 @@ describe('Bot Text page', () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, makeApiResponse(existingOverrides)))
       .mockResolvedValueOnce(jsonResponse(200, { success: true, upserted: 0, deleted: 1 }))
-      .mockResolvedValueOnce({ ok: true, status: 200, json: reloadJson });
+      .mockResolvedValueOnce(Object.assign(new Response(null, { status: 200 }), { json: reloadJson }));
 
     render(<TranslationsPage />);
 

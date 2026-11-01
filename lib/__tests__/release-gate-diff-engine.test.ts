@@ -377,6 +377,7 @@ describe('#366: PAY-002 does not assume Stripe API version root cause', () => {
     // Verify the invariant registry does not prescribe a Stripe-Version header
     const pay002 = INVARIANTS.find(i => i.id === 'PAY-002');
     expect(pay002).toBeDefined();
+    if (!pay002) throw new Error('PAY-002 must exist');
     expect(pay002.description).not.toContain('Stripe-Version');
     expect(pay002.description).not.toContain('header');
     expect(pay002.description).not.toContain('>= 2024');

@@ -243,7 +243,7 @@ describe('Flow-start bypass wiring (Point B)', () => {
       session_data: { capabilities: ['ordering'] }, // scheduling NOT in effective set
       version: 0,
     } as any;
-    const kw = { keyword: 'book', action_type: 'start_capability' as const, payload: 'scheduling', priority: 0 };
+    const kw = { id: 'keyword-test', match_type: 'exact' as const, scope: 'system' as const, category: null, business_id: null, campaign_id: null, description: null, keyword: 'book', action_type: 'start_capability' as const, payload: 'scheduling', priority: 0 };
     const ctx = {
       supabase: {
         from: vi.fn(() => ({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: null }) })),
@@ -274,7 +274,7 @@ describe('Flow-start bypass wiring (Point B)', () => {
       session_data: { capabilities: ['scheduling'] },
       version: 0,
     } as any;
-    const kw = { keyword: 'book', action_type: 'start_capability' as const, payload: 'scheduling', priority: 0 };
+    const kw = { id: 'keyword-test', match_type: 'exact' as const, scope: 'system' as const, category: null, business_id: null, campaign_id: null, description: null, keyword: 'book', action_type: 'start_capability' as const, payload: 'scheduling', priority: 0 };
     const mockFrom = vi.fn(() => {
       const c: Record<string, any> = {};
       c.select = vi.fn().mockReturnValue(c);
@@ -312,7 +312,7 @@ describe('Flow-start bypass wiring (Point B)', () => {
       session_data: { capabilities: ['scheduling'] }, // queue NOT present
       version: 0,
     } as any;
-    const kw = { keyword: 'checkin', action_type: 'navigate_step' as const, payload: JSON.stringify({ action: 'checkin' }), priority: 0 };
+    const kw = { id: 'keyword-test', match_type: 'exact' as const, scope: 'system' as const, category: null, business_id: null, campaign_id: null, description: null, keyword: 'checkin', action_type: 'navigate_step' as const, payload: JSON.stringify({ action: 'checkin' }), priority: 0 };
     const ctx = {
       supabase: { from: vi.fn(() => ({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: null }) })) } as any,
       messageSender: { sendText: sendTextSpy } as any,

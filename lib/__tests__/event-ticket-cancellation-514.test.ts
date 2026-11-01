@@ -50,7 +50,7 @@ function deliveryDb(options: { cancelled?: boolean; finalizeError?: boolean } = 
   const states = new Map<string, string>();
   const db = {
     from: vi.fn(() => chain({ name: 'Venue', subscription_tier: 'free' })),
-    rpc: vi.fn(async (name: string, args: Record<string, string>) => {
+    rpc: vi.fn<(name: string, args: Record<string, string>) => Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }>>(async (name, args) => {
       if (name === 'authorize_event_ticket_emission') {
         const id = args.p_channel + ':' + args.p_emission_key;
         if (options.cancelled) return { data: { authorized: false, reason: 'event_cancelled' }, error: null };
@@ -66,7 +66,7 @@ function deliveryDb(options: { cancelled?: boolean; finalizeError?: boolean } = 
       throw new Error('unexpected rpc ' + name);
     }),
   };
-  return { db: db as unknown as SupabaseClient, states };
+  return { db: db as unknown as SupabaseClient, states, rpc: db.rpc };
 }
 function deliveryOpts(db: SupabaseClient, sender?: any) {
   return {
@@ -331,8 +331,8 @@ describe('actual media sender single-attempt option', () => {
 describe('actual ticket purchase webhook authorization', () => {
   function fixture(soldOut = false) {
     const options = { cancelled: false };
-    const { db, states } = deliveryDb(options);
-    const previous = db.rpc as unknown as ReturnType<typeof vi.fn>;
+    const { db, states, rpc } = deliveryDb(options);
+    const previous = rpc;
     const original = previous.getMockImplementation()!;
     previous.mockImplementation((name: string, args: Record<string, string>) => {
       if (name === 'converge_event_ticket_booking') return Promise.resolve({

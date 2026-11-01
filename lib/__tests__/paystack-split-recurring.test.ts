@@ -4,7 +4,7 @@
  * Verifies that direct_split businesses get gateway-level splitting
  * on recurring/saved-card charges, matching one-time payment behavior.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 
 // ── Source code structural tests ──
@@ -393,7 +393,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     };
 
     const result = await chargeSavedCard(mockSupabase as never, {
-      savedMethod: { id: 'sm-1', gateway: 'paystack', authorization_code: 'AUTH_test', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '4242', card_brand: 'visa' },
+      savedMethod: { id: 'sm-1', authorization_email: 'test@test.com', gateway: 'paystack', authorization_code: 'AUTH_test', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '4242', card_brand: 'visa' },
       amount: 5000,
       currency: 'NGN',
       email: 'test@test.com',
@@ -440,7 +440,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     };
 
     const result = await chargeSavedCard(mockSupabase as never, {
-      savedMethod: { id: 'sm-2', gateway: 'paystack', authorization_code: 'AUTH_test2', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'mastercard' },
+      savedMethod: { id: 'sm-2', authorization_email: 'test2@test.com', gateway: 'paystack', authorization_code: 'AUTH_test2', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'mastercard' },
       amount: 3000,
       currency: 'NGN',
       email: 'test2@test.com',
@@ -506,7 +506,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     }));
 
     const result = await chargeSavedCard(mockSupabase as never, {
-      savedMethod: { id: 'sm-3', gateway: 'paystack', authorization_code: 'AUTH_valid', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '5678', card_brand: 'visa' },
+      savedMethod: { id: 'sm-3', authorization_email: 'valid@test.com', gateway: 'paystack', authorization_code: 'AUTH_valid', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '5678', card_brand: 'visa' },
       amount: 5000,
       currency: 'NGN',
       email: 'valid@test.com',
@@ -562,7 +562,7 @@ describe('fail-closed behavioral: no payment row created on split failure', () =
     }));
 
     const result = await chargeSavedCard(mockSupabase as never, {
-      savedMethod: { id: 'sm-4', gateway: 'paystack', authorization_code: 'AUTH_pm', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '9999', card_brand: 'visa' },
+      savedMethod: { id: 'sm-4', authorization_email: 'pm@test.com', gateway: 'paystack', authorization_code: 'AUTH_pm', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '9999', card_brand: 'visa' },
       amount: 2000,
       currency: 'NGN',
       email: 'pm@test.com',

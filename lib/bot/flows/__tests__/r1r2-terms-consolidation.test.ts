@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createMockContext, createMockSupabase, getStep } from './helpers';
 import { getTermsPrompt } from '../shared/terms';
+import type { PromptMessage, PromptButtons } from '../types';
+function buttons(message: PromptMessage): PromptButtons {
+  expect(message.type).toBe('buttons');
+  if (message.type !== 'buttons') throw new Error('Expected buttons prompt');
+  return message;
+}
 import { schedulingFlow } from '../scheduling.flow';
 
 // ──────────────────────────────────────────────────────────
@@ -10,25 +16,25 @@ import { schedulingFlow } from '../scheduling.flow';
 describe('#554 R1 — Terms label', () => {
   it('R1-T1: getTermsPrompt body contains "View T&Cs"', () => {
     const [prompt] = getTermsPrompt('Test Biz');
-    expect(prompt.body).toContain('📎 View T&Cs:');
-    expect(prompt.body).not.toContain('View details');
+    expect(buttons(prompt).body).toContain('📎 View T&Cs:');
+    expect(buttons(prompt).body).not.toContain('View details');
   });
 
   it('R1-T2: custom terms URL is preserved in output', () => {
     const customUrl = ['https:', '//example.com/my-terms'].join('');
     const [prompt] = getTermsPrompt('Test Biz', null, null, customUrl);
-    expect(prompt.body).toContain(customUrl);
-    expect(prompt.body).toMatch(/📎 View T&Cs:/);
+    expect(buttons(prompt).body).toContain(customUrl);
+    expect(buttons(prompt).body).toMatch(/📎 View T&Cs:/);
   });
 
   it('R1-T3: fallback URL (waaiio.com/terms) is used when no custom URL', () => {
     const [prompt] = getTermsPrompt('Test Biz');
-    expect(prompt.body).toContain('waaiio.com/terms');
+    expect(buttons(prompt).body).toContain('waaiio.com/terms');
   });
 
   it('R1-T4: accept_terms / cancel_terms button IDs unchanged', () => {
     const [prompt] = getTermsPrompt('Test Biz');
-    expect(prompt.buttons).toEqual([
+    expect(buttons(prompt).buttons).toEqual([
       { id: 'accept_terms', title: 'Continue ✅' },
       { id: 'cancel_terms', title: 'Cancel' },
     ]);
@@ -36,8 +42,8 @@ describe('#554 R1 — Terms label', () => {
 
   it('R1-T4b: custom terms text is included in body', () => {
     const [prompt] = getTermsPrompt('Test Biz', 'No refunds after 24 hours.');
-    expect(prompt.body).toContain('No refunds after 24 hours.');
-    expect(prompt.body).toContain('📎 View T&Cs:');
+    expect(buttons(prompt).body).toContain('No refunds after 24 hours.');
+    expect(buttons(prompt).body).toContain('📎 View T&Cs:');
   });
 });
 
@@ -90,11 +96,11 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
     const ctx = buildConfirmCtx();
     const messages = await confirmStep.prompt!(ctx);
     expect(messages).toHaveLength(1);
-    const body = messages[0].body;
+    const body = buttons(messages[0]).body;
     expect(body).toContain('📎 Terms:');
     expect(body).toContain('waaiio.com/t/test-salon');
     // Button should be the accept-confirm variant
-    const confirmBtn = messages[0].buttons?.find((b: { id: string }) => b.id === 'confirm');
+    const confirmBtn = buttons(messages[0]).buttons?.find((b: { id: string }) => b.id === 'confirm');
     expect(confirmBtn).toBeDefined();
     expect(confirmBtn!.title).toContain('Accept');
   });
@@ -102,9 +108,9 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
   it('R2-T2: confirm_booking shows regular "Confirm" for free booking (no T&C)', async () => {
     const ctx = buildConfirmCtx({ service_price: 0, service_deposit: 0 });
     const messages = await confirmStep.prompt!(ctx);
-    const body = messages[0].body;
+    const body = buttons(messages[0]).body;
     expect(body).not.toContain('📎 Terms:');
-    const confirmBtn = messages[0].buttons?.find((b: { id: string }) => b.id === 'confirm');
+    const confirmBtn = buttons(messages[0]).buttons?.find((b: { id: string }) => b.id === 'confirm');
     expect(confirmBtn).toBeDefined();
     expect(confirmBtn!.title).not.toContain('Accept');
   });
@@ -142,9 +148,9 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
   it('R2-T4: confirm_booking uses regular button when require_terms_before_payment=false', async () => {
     const ctx = buildConfirmCtx({}, { require_terms_before_payment: false });
     const messages = await confirmStep.prompt!(ctx);
-    const body = messages[0].body;
+    const body = buttons(messages[0]).body;
     expect(body).not.toContain('📎 Terms:');
-    const confirmBtn = messages[0].buttons?.find((b: { id: string }) => b.id === 'confirm');
+    const confirmBtn = buttons(messages[0]).buttons?.find((b: { id: string }) => b.id === 'confirm');
     expect(confirmBtn!.title).not.toContain('Accept');
   });
 
@@ -152,8 +158,8 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
     const customUrl = ['https:', '//mybiz.com/terms'].join('');
     const ctx = buildConfirmCtx({}, { terms_url: customUrl });
     const messages = await confirmStep.prompt!(ctx);
-    expect(messages[0].body).toContain('mybiz.com/terms');
-    expect(messages[0].body).not.toContain('waaiio.com');
+    expect(buttons(messages[0]).body).toContain('mybiz.com/terms');
+    expect(buttons(messages[0]).body).not.toContain('waaiio.com');
   });
 
   it('R2-T7: cancel at confirm_booking does NOT set _terms_accepted', async () => {
@@ -179,7 +185,7 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
       special_requests: 'No talking please',
     });
     const messages = await confirmStep.prompt!(ctx);
-    const body = messages[0].body;
+    const body = buttons(messages[0]).body;
     expect(body).toContain('💰');
     expect(body).toContain('Deposit');
     expect(body).toContain('🎟️ Promo (SAVE10)');
@@ -232,9 +238,9 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
   it('R2-T9: merchant disables terms → no T&C in confirm_booking', async () => {
     const ctx = buildConfirmCtx({ service_price: 5000 }, { require_terms_before_payment: false });
     const messages = await confirmStep.prompt!(ctx);
-    const body = messages[0].body;
+    const body = buttons(messages[0]).body;
     expect(body).not.toContain('📎 Terms:');
-    const confirmBtn = messages[0].buttons?.find((b: { id: string }) => b.id === 'confirm');
+    const confirmBtn = buttons(messages[0]).buttons?.find((b: { id: string }) => b.id === 'confirm');
     expect(confirmBtn!.title).not.toContain('Accept');
   });
 
@@ -294,9 +300,9 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
     const dedicatedMsgs = await confirmStep.prompt!(dedicatedCtx);
 
     // Both should have identical T&C treatment
-    expect(sharedMsgs[0].body).toContain('📎 Terms:');
-    expect(dedicatedMsgs[0].body).toContain('📎 Terms:');
-    expect(sharedMsgs[0].buttons).toEqual(dedicatedMsgs[0].buttons);
+    expect(buttons(sharedMsgs[0]).body).toContain('📎 Terms:');
+    expect(buttons(dedicatedMsgs[0]).body).toContain('📎 Terms:');
+    expect(buttons(sharedMsgs[0]).buttons).toEqual(buttons(dedicatedMsgs[0]).buttons);
   });
 
   // ── R2: Deposit-only booking T&C ──
@@ -304,9 +310,9 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
   it('R2-T14: deposit-only booking (service_price=0, deposit>0) shows T&C', async () => {
     const ctx = buildConfirmCtx({ service_price: 0, service_deposit: 3000 });
     const messages = await confirmStep.prompt!(ctx);
-    const body = messages[0].body;
+    const body = buttons(messages[0]).body;
     expect(body).toContain('📎 Terms:');
-    const confirmBtn = messages[0].buttons?.find((b: { id: string }) => b.id === 'confirm');
+    const confirmBtn = buttons(messages[0]).buttons?.find((b: { id: string }) => b.id === 'confirm');
     expect(confirmBtn!.title).toContain('Accept');
   });
 });

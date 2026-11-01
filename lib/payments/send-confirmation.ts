@@ -1,3 +1,4 @@
+import { hasMerchantNotificationIntent } from '@/lib/merchant-notifications/compatibility';
 import { transactionNextSteps } from '@/lib/bot/flows/shared/navigation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
@@ -1045,7 +1046,7 @@ export async function sendProactiveConfirmation(
             if (ownerNotifBooking.flow_type === 'payment') {
               const svc = ownerNotifBooking.services as unknown as { name: string } | null;
               const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
-              await notifyOwnerNewPayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', amount: payment.amount, categoryName: svc?.name || 'Payment' });
+              await notifyOwnerNewPayment({ paymentId: payment.id, supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', amount: payment.amount, categoryName: svc?.name || 'Payment' });
             } else {
               const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
               await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', date: ownerNotifBooking.date, time: ownerNotifBooking.time, quantity: ownerNotifBooking.party_size || 1, quantityLabel: 'guest(s)', amount: payment.amount });
@@ -1055,12 +1056,12 @@ export async function sendProactiveConfirmation(
             if (res) { const ci = new Date(res.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' }); const co = new Date(res.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' }); const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: res.guest_name || 'Guest', date: ci, time: `→ ${co}`, quantity: res.guest_count || 1, quantityLabel: 'guest(s)', amount: payment.amount }); }
           } else if (payment.invoice_id) {
             const { data: inv } = await supabase.from('invoices').select('reference_code, customer_name').eq('id', payment.invoice_id).single();
-            if (inv) { const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewInvoicePayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: inv.reference_code || referenceCode, customerName: inv.customer_name || 'Customer', amount: payment.amount, invoiceNumber: inv.reference_code || referenceCode }); }
+            if (inv) { const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewInvoicePayment({ paymentId: payment.id, supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: inv.reference_code || referenceCode, customerName: inv.customer_name || 'Customer', amount: payment.amount, invoiceNumber: inv.reference_code || referenceCode }); }
           } else if (payment.campaign_id) {
             const { data: don } = await supabase.from('campaign_donations').select('donor_name, reference_code, campaigns(title)').eq('payment_id', payment.id).eq('status', 'success').maybeSingle();
             const ct = (don?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
             const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
-            await notifyOwnerNewDonation({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: don?.reference_code || referenceCode, donorName: don?.donor_name || null, amount: payment.amount, campaignTitle: ct });
+            await notifyOwnerNewDonation({ paymentId: payment.id, supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: don?.reference_code || referenceCode, donorName: don?.donor_name || null, amount: payment.amount, campaignTitle: ct });
           } else if (payment.order_id) {
             const { data: ord } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
             if (ord) { const its = ((ord.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity })); const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: ord.reference_code || referenceCode, customerName: ord.delivery_name || 'Customer', items: its, totalAmount: payment.amount, deliveryAddress: ord.delivery_address || undefined }); }
@@ -1073,7 +1074,7 @@ export async function sendProactiveConfirmation(
           const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
           if (biz?.owner_id) {
             const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
-            if (ownerProfile?.email) {
+            if (ownerProfile?.email && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'email', address: ownerProfile.email, event: 'payment', sourceTable: 'payments', sourceId: payment.id })) {
               const { sendEmail } = await import('@/lib/email/client');
               const { paymentReceivedEmail } = await import('@/lib/email/templates');
               await sendEmail({ to: ownerProfile.email, ...paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName) });
@@ -1131,7 +1132,7 @@ export async function sendProactiveConfirmation(
 
             if (resolved) {
               const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
-              await notifyOwnerNewPayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode,
+              await notifyOwnerNewPayment({ paymentId: payment.id, supabase, sender: resolved.sender, businessId, businessName, countryCode,
                 referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', amount: payment.amount, categoryName: svc?.name || 'Payment' });
             }
           } else if (ownerNotifBooking && resolved) {
@@ -1156,13 +1157,13 @@ export async function sendProactiveConfirmation(
         if (payment.invoice_id && resolved) {
           const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner');
           const { data: invoice } = await supabase.from('invoices').select('reference_code, customer_name, customer_phone').eq('id', payment.invoice_id).single();
-          if (invoice) { notifyOwnerNewInvoicePayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: invoice.reference_code || referenceCode, customerName: invoice.customer_name || 'Customer', amount: payment.amount, invoiceNumber: invoice.reference_code || referenceCode }).catch(err => logSafeError(logPrefix, 'invoice-owner-notify', err)); }
+          if (invoice) { notifyOwnerNewInvoicePayment({ paymentId: payment.id, supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: invoice.reference_code || referenceCode, customerName: invoice.customer_name || 'Customer', amount: payment.amount, invoiceNumber: invoice.reference_code || referenceCode }).catch(err => logSafeError(logPrefix, 'invoice-owner-notify', err)); }
         }
         if (payment.campaign_id && resolved) {
           const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
           const { data: donation } = await supabase.from('campaign_donations').select('donor_name, reference_code, campaigns(title)').eq('payment_id', payment.id).eq('status', 'success').maybeSingle();
           const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
-          notifyOwnerNewDonation({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: donation?.reference_code || referenceCode, donorName: donation?.donor_name || null, amount: payment.amount, campaignTitle }).catch(err => logSafeError(logPrefix, 'donation-owner-notify', err));
+          notifyOwnerNewDonation({ paymentId: payment.id, supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: donation?.reference_code || referenceCode, donorName: donation?.donor_name || null, amount: payment.amount, campaignTitle }).catch(err => logSafeError(logPrefix, 'donation-owner-notify', err));
           const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
           createNotification(supabase, { businessId, type: 'payment', channel: 'whatsapp', body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${campaignTitle}${donation?.donor_name ? ` from ${donation.donor_name}` : ''}. Ref: ${donation?.reference_code || referenceCode}` }).catch(err => logSafeError(logPrefix, 'campaign-in-app-notification', err));
         }
@@ -1178,7 +1179,7 @@ export async function sendProactiveConfirmation(
           const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
           if (biz?.owner_id) {
             const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
-            if (ownerProfile?.email) {
+            if (ownerProfile?.email && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'email', address: ownerProfile.email, event: 'payment', sourceTable: 'payments', sourceId: payment.id })) {
               const { sendEmail } = await import('@/lib/email/client');
               const { paymentReceivedEmail } = await import('@/lib/email/templates');
               await sendEmail({ to: ownerProfile.email, ...paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName) });

@@ -114,8 +114,8 @@ function setupService(activationResult: Record<string, unknown>) {
           const origSelect = updateChain.select;
           updateChain.select = () => ({
             ...origSelect(),
-            then: (resolve: (v: unknown) => unknown) =>
-              resolve({ data: [{ id: state.businessId, status: 'active' }], error: null }),
+            then: (resolve: (v: Result) => unknown, reject?: (reason: unknown) => unknown) =>
+              Promise.resolve({ data: [{ id: state.businessId, status: 'active' }], error: null }).then(resolve, reject),
           });
           return updateChain;
         },

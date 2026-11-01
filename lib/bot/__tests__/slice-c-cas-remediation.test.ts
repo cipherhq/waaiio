@@ -1420,7 +1420,7 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
 
     const msgs = sender.getMessages();
     expect(msgs).toHaveLength(1);
-    const msg = msgs[0] as Record<string, unknown>;
+    const msg = msgs[0];
     expect(msg['type']).toBe('buttons');
     expect(msg['body']).toBe('When would you like to book?');
     const btns = msg['buttons'] as Array<{ id: string; title: string }>;
@@ -1627,7 +1627,7 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     // Exact production output: capability selection prompt (full stable text)
     const msgs = sender.getMessages();
     expect(msgs).toHaveLength(1);
-    const msg = msgs[0] as Record<string, unknown>;
+    const msg = msgs[0];
     expect(msg['type']).toBe('text');
     expect(msg['text']).toBe('What would you like to do? \u{1F447}\n\nThis business is still setting up. Please try again later.');
     const sendEvents = eventLog.filter(e => e.event === 'send');
@@ -1855,7 +1855,7 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     // Exact production output: correction confirmation
     const msgs = sender.getMessages();
     expect(msgs).toHaveLength(1);
-    const msg = msgs[0] as Record<string, unknown>;
+    const msg = msgs[0];
     expect(msg['type']).toBe('text');
     expect(msg['text']).toBe('Got it! Changed date to Friday.');
     // Continuation event logged after target CAS success

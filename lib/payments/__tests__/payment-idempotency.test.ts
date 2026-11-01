@@ -359,7 +359,7 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(source).toContain('p_invoice_id');
     expect(source).toContain('p_payment_id');
     // RPC loads amount from payment row — no caller-supplied amount or business_id
-    const rpcCall = source.match(/rpc\('apply_invoice_payment',\s*\{[^}]+\}/s);
+    const rpcCall = source.match(/rpc\('apply_invoice_payment',\s*\{[^}]+\}/);
     expect(rpcCall).not.toBeNull();
     expect(rpcCall![0]).not.toContain('p_payment_amount');
     expect(rpcCall![0]).not.toContain('p_business_id');
@@ -379,7 +379,7 @@ describe('process-success.ts uses atomic RPCs and payment_id', () => {
     expect(source).toContain('p_campaign_id');
     expect(source).toContain('p_payment_id');
     // RPC loads amount from payment row — no caller-supplied amount
-    const rpcCall = source.match(/rpc\('apply_campaign_donation',\s*\{[^}]+\}/s);
+    const rpcCall = source.match(/rpc\('apply_campaign_donation',\s*\{[^}]+\}/);
     expect(rpcCall).not.toBeNull();
     expect(rpcCall![0]).not.toContain('p_amount');
   });
@@ -451,19 +451,19 @@ describe('Transaction amount correctness', () => {
   });
 
   it('booking fee uses payment.amount (actual collected)', () => {
-    const bookingFeeCall = source.match(/recordPlatformFee\(supabase, \{[^}]*bookingId[^}]*\}/s);
+    const bookingFeeCall = source.match(/recordPlatformFee\(supabase, \{[^}]*bookingId[^}]*\}/);
     expect(bookingFeeCall).not.toBeNull();
     expect(bookingFeeCall![0]).toContain('paymentAmount: payment.amount');
   });
 
   it('order fee uses payment.amount (actual collected)', () => {
-    const orderFeeCall = source.match(/recordPlatformFee\(supabase, \{[^}]*orderId[^}]*\}/s);
+    const orderFeeCall = source.match(/recordPlatformFee\(supabase, \{[^}]*orderId[^}]*\}/);
     expect(orderFeeCall).not.toBeNull();
     expect(orderFeeCall![0]).toContain('paymentAmount: payment.amount');
   });
 
   it('reservation fee uses payment.amount (actual collected)', () => {
-    const resFeeCall = source.match(/recordPlatformFee\(supabase, \{[^}]*reservationId[^}]*\}/s);
+    const resFeeCall = source.match(/recordPlatformFee\(supabase, \{[^}]*reservationId[^}]*\}/);
     expect(resFeeCall).not.toBeNull();
     expect(resFeeCall![0]).toContain('paymentAmount: payment.amount');
   });

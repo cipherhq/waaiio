@@ -141,6 +141,7 @@ vi.mock('@/lib/payments/bot-recovery', () => ({
 /** Build a minimal FlowContext with only session_data populated */
 function makeCtx(sessionData: Record<string, unknown>, overrides?: Partial<FlowContext>): FlowContext {
   return {
+    copyLang: 'en',
     supabase: {} as any,
     sender: { sendText: vi.fn().mockResolvedValue(undefined) } as any,
     standalone: {

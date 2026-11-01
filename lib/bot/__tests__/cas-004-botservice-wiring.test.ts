@@ -292,7 +292,7 @@ describe('CAS-004 action dispatcher', () => {
       supabase, messageSender: { sendText: vi.fn().mockResolvedValue({}) } as any,
       flowExecutor: {} as any, from: PHONE, businessId: BIZ_ID, businessName: 'Test',
       sessionData: {}, semanticFamily: 'service_time_booking', requestedAction: 'informational',
-      originalText: 'Do you offer appointments?', existingSessionId: 'existing-sess-id',
+      originalText: 'Do you offer appointments?', existingSession: { id: 'existing-sess-id', version: 0 },
     });
 
     expect(result.handled).toBe(true);

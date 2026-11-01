@@ -319,7 +319,7 @@ describe('Lane 1: Invoice status race guard — draft-only transition', () => {
 
     // Verify the guard is present AND that there is NO unconditional
     // .update({ status: 'sent' }) without the draft guard
-    const updateBlocks = [...src.matchAll(/\.update\(\{[^}]*status:\s*'sent'[^}]*\}\)/gs)];
+    const updateBlocks = [...src.matchAll(/\.update\(\{[^}]*status:\s*'sent'[^}]*\}\)/g)];
     expect(updateBlocks.length).toBeGreaterThan(0);
 
     for (const block of updateBlocks) {

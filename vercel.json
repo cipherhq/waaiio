@@ -132,6 +132,10 @@
     {
       "path": "/api/cron/saved-card-activation-retry",
       "schedule": "10,25,40,55 * * * *"
+    },
+    {
+      "path": "/api/cron/merchant-notifications",
+      "schedule": "* * * * *"
     }
   ]
 }

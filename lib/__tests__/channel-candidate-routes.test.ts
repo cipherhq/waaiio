@@ -45,7 +45,7 @@ const defaultBiz = {
   status: 'pending', subscription_tier: 'free', category: 'salon', bot_code: 'TC', slug: 'tc',
 };
 
-const mockServiceFrom = vi.fn((table: string) => {
+const mockServiceFrom = vi.fn((table: string): Record<string, unknown> => {
   if (table === 'whatsapp_channel_candidates') {
     const eqChain = (): Record<string, unknown> => ({
       eq: eqChain, in: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }),

@@ -88,7 +88,7 @@ vi.mock('@/lib/supabase/service', () => ({
 }));
 
 function makeRequest(bizId: string, method: string, body?: Record<string, unknown>): NextRequest {
-  const init: RequestInit = {
+  const init: NonNullable<ConstructorParameters<typeof NextRequest>[1]> = {
     method,
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' },
   };

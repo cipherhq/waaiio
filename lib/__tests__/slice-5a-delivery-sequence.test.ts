@@ -8,7 +8,7 @@ const mockRpc = vi.fn();
 const mockFrom = vi.fn();
 const mockTransportSend = vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-1' });
 const mockCalLinks = vi.fn().mockReturnValue('');
-const mockProactiveResolve = vi.fn<any[], Promise<any>>();
+const mockProactiveResolve = vi.fn<(...args: unknown[]) => Promise<any>>();
 
 const mockLogError = vi.fn();
 const mockLogWarn = vi.fn();

@@ -357,25 +357,25 @@ describe('Production secret validation', () => {
   it('fails closed when secret is missing in production', async () => {
     delete process.env.PHONE_OTP_HMAC_SECRET;
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     await expect(generatePhoneOtp('+2348012345678')).rejects.toThrow('required in production');
-    process.env.NODE_ENV = origEnv;
+    vi.stubEnv('NODE_ENV', origEnv);
   });
 
   it('fails closed when secret is too short in production', async () => {
     process.env.PHONE_OTP_HMAC_SECRET = 'abcdef';
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     await expect(generatePhoneOtp('+2348012345678')).rejects.toThrow('at least 64 hexadecimal');
-    process.env.NODE_ENV = origEnv;
+    vi.stubEnv('NODE_ENV', origEnv);
   });
 
   it('fails closed when secret has non-hex chars in production', async () => {
     process.env.PHONE_OTP_HMAC_SECRET = 'g'.repeat(64);
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     await expect(generatePhoneOtp('+2348012345678')).rejects.toThrow('hexadecimal characters');
-    process.env.NODE_ENV = origEnv;
+    vi.stubEnv('NODE_ENV', origEnv);
   });
 
   it('uses fallback in non-production when secret is missing', async () => {

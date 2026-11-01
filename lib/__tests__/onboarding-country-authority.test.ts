@@ -39,7 +39,7 @@ vi.mock('@/lib/supabase/server', () => ({
 // Track which tables are queried
 let serviceFromCalls: string[] = [];
 
-const mockServiceFrom = vi.fn((table: string) => {
+const mockServiceFrom = vi.fn<(table: string) => Record<string, unknown>>((table: string) => {
   serviceFromCalls.push(table);
 
   if (table === 'countries') {

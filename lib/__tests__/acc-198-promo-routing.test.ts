@@ -493,7 +493,7 @@ describe('Create route handler (actual POST)', () => {
     expect(res.status).toBe(201);
     // Verify insert was called with normalized keyword
     const insertCall = mockServiceFrom.mock.results.find(
-      (r: { value: { insert: unknown } }) => r.value?.insert,
+      r => r.type === 'return' && r.value?.insert,
     );
     expect(insertCall).toBeDefined();
   });
@@ -516,7 +516,7 @@ describe('Routing mode change via update RPC', () => {
   it('keyword to bare_code clears keyword', () => {
     const newMode = 'bare_code';
     const newKeyword = newMode === 'bare_code' ? null : 'PROMO';
-    const newBare = newMode === 'bare_code' || newMode === 'both';
+    const newBare = ['bare_code', 'both'].includes(newMode);
     expect(newKeyword).toBeNull();
     expect(newBare).toBe(true);
   });
@@ -532,7 +532,7 @@ describe('Routing mode change via update RPC', () => {
     const currentKeyword = 'PROMO';
     const newMode = 'both';
     const newKeyword = currentKeyword;
-    const newBare = newMode === 'bare_code' || newMode === 'both';
+    const newBare = ['bare_code', 'both'].includes(newMode);
     expect(newKeyword).toBe('PROMO');
     expect(newBare).toBe(true);
   });

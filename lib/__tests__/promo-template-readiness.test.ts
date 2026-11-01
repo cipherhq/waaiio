@@ -8,7 +8,7 @@
  * Includes both source-contract assertions and behavioral tests with
  * mocked ChannelResolver/MetaCloudService.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi , beforeAll, beforeEach} from 'vitest';
 
 // ── Template definition contract ──
 

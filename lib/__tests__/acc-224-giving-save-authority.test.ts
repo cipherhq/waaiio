@@ -10,7 +10,7 @@
  *   Uses TEST_DATABASE_URL / psql for DB-level invariant proofs.
  *   Proves update scoping, service_type enforcement, interval persistence.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach , beforeAll, afterAll} from 'vitest';
 
 // ═══════════════════════════════════════════════════════════════════════
 //  LAYER 1 — Real POST() handler with mocked Supabase transport

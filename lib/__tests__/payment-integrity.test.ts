@@ -180,7 +180,7 @@ describe('BYO Webhook — foreign-business reference ignored', () => {
     const sig = paystackSignature(rawBody, secretKey);
 
     const req = makeByoWebhookRequest('biz-ATTACKER', body, { 'x-paystack-signature': sig });
-    const res = await POST(req, { params: { businessId: 'biz-ATTACKER' } });
+    const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-ATTACKER' }) });
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -236,7 +236,7 @@ describe('BYO Webhook — provider verification failure', () => {
       const sig = paystackSignature(rawBody, secretKey);
 
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
 
@@ -291,7 +291,7 @@ describe('BYO Webhook — provider verification failure', () => {
       const sig = paystackSignature(rawBody, secretKey);
 
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
 
@@ -331,7 +331,7 @@ describe('BYO Webhook — Flutterwave hash verification', () => {
     const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
     const body = { event: 'charge.completed', data: { tx_ref: 'ref-1', id: 123 } };
     const req = makeByoWebhookRequest('biz-fw', body, { 'verif-hash': 'WRONG_HASH' });
-    const res = await POST(req, { params: { businessId: 'biz-fw' } });
+    const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-fw' }) });
 
     expect(res.status).toBe(400);
   });
@@ -352,7 +352,7 @@ describe('BYO Webhook — Flutterwave hash verification', () => {
     const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
     const body = { event: 'charge.completed', data: { tx_ref: 'ref-1', id: 123 } };
     const req = makeByoWebhookRequest('biz-fw', body, { 'verif-hash': 'some_hash' });
-    const res = await POST(req, { params: { businessId: 'biz-fw' } });
+    const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-fw' }) });
 
     expect(res.status).toBe(400);
     const json = await res.json();
@@ -497,7 +497,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
       const body = { event: 'charge.success', data: { reference: 'ref-terminal' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-t', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-t' } });
+      const res = await POST(makeByoWebhookRequest('biz-t', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-t' }) });
       expect(res.status).toBe(200);
       const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
       expect(failUpdates.length).toBeGreaterThan(0);
@@ -528,7 +528,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
       const body = { event: 'charge.success', data: { reference: 'ref-u' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-u', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-u' } });
+      const res = await POST(makeByoWebhookRequest('biz-u', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-u' }) });
       expect(res.status).toBe(200);
       const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
       expect(failUpdates).toHaveLength(0);
@@ -558,7 +558,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
       const body = { event: 'charge.success', data: { reference: 'ref-404' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-404', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-404' } });
+      const res = await POST(makeByoWebhookRequest('biz-404', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-404' }) });
       expect(res.status).toBe(200);
       const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
       expect(failUpdates).toHaveLength(0);
@@ -592,7 +592,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
       const body = { event: 'charge.success', data: { reference: 'ref-curr' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-curr', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-curr' } });
+      const res = await POST(makeByoWebhookRequest('biz-curr', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-curr' }) });
       expect(res.status).toBe(200);
       const failUpdates = mockSb._updates.filter(u => u.table === 'payments' && u.data.status === 'failed');
       expect(failUpdates).toHaveLength(0);
@@ -623,7 +623,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
       const body = { event: 'charge.success', data: { reference: 'ref-503' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-503', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-503' } });
+      const res = await POST(makeByoWebhookRequest('biz-503', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-503' }) });
       expect(res.status).toBe(503);
     } finally { globalThis.fetch = originalFetch; }
   });
@@ -920,7 +920,7 @@ describe('BYO Webhook — transient failures (503, retryable)', () => {
       const sig = paystackSignature(rawBody, secretKey);
 
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(503);
       // Payment NOT updated
@@ -949,7 +949,7 @@ describe('BYO Webhook — transient failures (503, retryable)', () => {
       const sig = paystackSignature(rawBody, secretKey);
 
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(503);
       expect(mockSb._updates.filter(u => u.table === 'payments')).toHaveLength(0);
@@ -990,7 +990,7 @@ describe('BYO Webhook — transient failures (503, retryable)', () => {
       const sig = paystackSignature(rawBody, secretKey);
 
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       expect(mockSuccess).toHaveBeenCalled();
@@ -1035,7 +1035,7 @@ describe('BYO Webhook — definitive mismatch marks payment failed', () => {
       const sig = paystackSignature(rawBody, secretKey);
 
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       // Payment must NOT be set to 'failed' — integrity case, provider said success
@@ -1087,7 +1087,7 @@ describe('BYO Webhook — fractional amount comparison (1999.99)', () => {
       const sig = paystackSignature(rawBody, secretKey);
 
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       // processPaystackChargeSuccess should have been called (verification passed)
@@ -1121,7 +1121,7 @@ describe('BYO Webhook — thrown error → 500', () => {
     const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
     const body = { event: 'charge.success', data: { reference: 'ref-err' } };
     const req = makeByoWebhookRequest('biz-1', body);
-    const res = await POST(req, { params: { businessId: 'biz-1' } });
+    const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
     expect(res.status).toBe(500);
     expect(sentryMock.captureException).toHaveBeenCalled();
@@ -1175,7 +1175,7 @@ describe('BYO Webhook — handler throws then retry succeeds', () => {
       const sig = paystackSignature(rawBody, secretKey);
 
       const req1 = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res1 = await POST1(req1, { params: { businessId: 'biz-1' } });
+      const res1 = await POST1(req1, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       // First call: 500 (handler threw)
       expect(res1.status).toBe(500);
@@ -1203,7 +1203,7 @@ describe('BYO Webhook — handler throws then retry succeeds', () => {
 
       const { POST: POST2 } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
       const req2 = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res2 = await POST2(req2, { params: { businessId: 'biz-1' } });
+      const res2 = await POST2(req2, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       // Second call: 200 (retry succeeded)
       expect(res2.status).toBe(200);
@@ -1249,7 +1249,7 @@ describe('BYO Webhook — provider auth error (401) leaves payment unchanged', (
       const sig = paystackSignature(rawBody, secretKey);
 
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       // Returns 200 to stop provider retries
       expect(res.status).toBe(200);
@@ -1324,7 +1324,7 @@ describe('BYO Webhook — Flutterwave BYO success uses verified data (test a)', 
         data: { tx_ref: 'ref-fw-ok', id: 12345, amount: 5000, currency: 'NGN' },
       };
       const req = makeByoWebhookRequest('biz-fw', body, { 'verif-hash': webhookHash });
-      const res = await POST(req, { params: { businessId: 'biz-fw' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-fw' }) });
 
       expect(res.status).toBe(200);
       // Payment NOT marked failed
@@ -1393,7 +1393,7 @@ describe('BYO Webhook — Paystack verify values override webhook body (test b)'
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       expect(mockSuccess).toHaveBeenCalled();
@@ -1437,7 +1437,7 @@ describe('BYO Webhook — Paystack ongoing status is transient (test c)', () => 
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(503);
       expect(mockSb._updates.filter(u => u.table === 'payments')).toHaveLength(0);
@@ -1480,7 +1480,7 @@ describe('BYO Webhook — 19.99 amount matches 1999 kobo (test d)', () => {
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       expect(mockSuccess).toHaveBeenCalled();
@@ -1527,7 +1527,7 @@ describe('BYO Webhook — dedup row already exists → 200, no processing (test 
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       expect(mockSuccess).not.toHaveBeenCalled();
@@ -1563,7 +1563,7 @@ describe('BYO Webhook — invalid JSON body → 400 (test f)', () => {
       new URL('http://localhost:3000/api/payments/byo-webhook/biz-1'),
       { method: 'POST', body: invalidBody, headers: { 'x-paystack-signature': sig } },
     );
-    const res = await POST(req, { params: { businessId: 'biz-1' } });
+    const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
     expect(res.status).toBe(400);
     const json = await res.json();
@@ -1710,7 +1710,7 @@ describe('BYO Webhook — Paystack authorization_code stripped (test 2)', () => 
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       expect(mockSuccess).toHaveBeenCalled();
@@ -1776,7 +1776,7 @@ describe('BYO Webhook — Flutterwave card has no authorization_code (test g)', 
       const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
       const body = { event: 'charge.completed', data: { tx_ref: 'ref-fw-card', id: 777 } };
       const req = makeByoWebhookRequest('biz-fw', body, { 'verif-hash': webhookHash });
-      const res = await POST(req, { params: { businessId: 'biz-fw' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-fw' }) });
 
       expect(res.status).toBe(200);
       expect(mockSuccess).toHaveBeenCalled();
@@ -1832,7 +1832,7 @@ describe('P1-A: scoped lookup — same reference, different business (test a)', 
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-A', body, { 'x-paystack-signature': sig });
-      await POST(req, { params: { businessId: 'biz-A' } });
+      await POST(req, { params: Promise.resolve({ businessId: 'biz-A' }) });
 
       expect(mockSuccess).toHaveBeenCalled();
       // The 4th argument must be the scope with the business-scoped paymentId
@@ -1873,7 +1873,7 @@ describe('P1-B: charge.failed with verify ongoing → 503 (test b)', () => {
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(503);
       expect(mockSb._updates.filter(u => u.table === 'payments')).toHaveLength(0);
@@ -1922,7 +1922,7 @@ describe('P1-B: charge.failed with verify failed → pending→failed, success u
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       expect(failedCalled).toBe(true);
@@ -1985,7 +1985,7 @@ describe('P1-C: incomplete finalization → 503, no dedup; retry finalizes → d
 
       // Call 1: incomplete → 503, no dedup
       const req1 = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res1 = await POST(req1, { params: { businessId: 'biz-1' } });
+      const res1 = await POST(req1, { params: Promise.resolve({ businessId: 'biz-1' }) });
       expect(res1.status).toBe(503);
       expect(upsertCalled).toBe(false);
 
@@ -2016,7 +2016,7 @@ describe('P1-C: incomplete finalization → 503, no dedup; retry finalizes → d
 
       const { POST: POST2 } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
       const req2 = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res2 = await POST2(req2, { params: { businessId: 'biz-1' } });
+      const res2 = await POST2(req2, { params: Promise.resolve({ businessId: 'biz-1' }) });
       expect(res2.status).toBe(200);
       expect(upsertCalled).toBe(true);
     } finally {
@@ -2069,7 +2069,7 @@ describe('P1-C: amount mismatch → failed, no dedup row (test e)', () => {
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       // Payment marked failed
@@ -2165,7 +2165,7 @@ describe('Deployment safety: webhook_secret_hash column missing → 503 (Flutter
     const { POST } = await import('@/app/api/payments/byo-webhook/[businessId]/route');
     const body = { event: 'charge.completed', data: { tx_ref: 'ref-x', id: 1 } };
     const req = makeByoWebhookRequest('biz-fw', body, { 'verif-hash': 'hash' });
-    const res = await POST(req, { params: { businessId: 'biz-fw' } });
+    const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-fw' }) });
 
     expect(res.status).toBe(503);
     expect(sentryMock.captureMessage).toHaveBeenCalled();
@@ -2738,7 +2738,7 @@ describe('Route: handler returns amount_mismatch → 200, no dedup (test 2)', ()
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       // Route returns 200 (amount_mismatch handled)
       expect(res.status).toBe(200);
@@ -2840,7 +2840,7 @@ describe('Route + real handler: finalized → dedup; incomplete → 503 (test 3)
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(200);
       expect(getUpsertCalled()).toBe(true);
@@ -2937,7 +2937,7 @@ describe('Route + real handler: incomplete → 503 (test 3b)', () => {
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
       const req = makeByoWebhookRequest('biz-1', body, { 'x-paystack-signature': sig });
-      const res = await POST(req, { params: { businessId: 'biz-1' } });
+      const res = await POST(req, { params: Promise.resolve({ businessId: 'biz-1' }) });
 
       expect(res.status).toBe(503);
       expect(upsertCalled).toBe(false);
@@ -3158,7 +3158,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
       const body = { event: 'charge.success', data: { reference: 'ref-dberr' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-dberr', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-dberr' } });
+      const res = await POST(makeByoWebhookRequest('biz-dberr', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-dberr' }) });
 
       expect(res.status).toBe(503);
       expect(mockSb._dedupUpserts).toHaveLength(0);
@@ -3191,7 +3191,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
       const body = { event: 'charge.success', data: { reference: 'ref-already' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-already', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-already' } });
+      const res = await POST(makeByoWebhookRequest('biz-already', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-already' }) });
 
       expect(res.status).toBe(200);
       expect(mockSb._dedupUpserts.length).toBeGreaterThan(0);
@@ -3224,7 +3224,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
       const body = { event: 'charge.success', data: { reference: 'ref-nonterm' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-nonterm', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-nonterm' } });
+      const res = await POST(makeByoWebhookRequest('biz-nonterm', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-nonterm' }) });
 
       expect(res.status).toBe(503);
       expect(mockSb._dedupUpserts).toHaveLength(0);
@@ -3256,6 +3256,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
           };
           // Override single to fail on re-read (second non-update call)
           const origSingle = base.single;
+          if (typeof origSingle !== 'function') throw new Error('Expected fixture single query');
           base.single = () => {
             paymentReadCount++;
             if (paymentReadCount > 1) {
@@ -3294,7 +3295,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
       const body = { event: 'charge.success', data: { reference: 'ref-rrf' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-rrf', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-rrf' } });
+      const res = await POST(makeByoWebhookRequest('biz-rrf', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-rrf' }) });
 
       expect(res.status).toBe(503);
       expect(sb._dedupUpserts).toHaveLength(0);
@@ -3326,7 +3327,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
       const body = { event: 'charge.failed', data: { reference: 'ref-failthrow' } };
       const rawBody = JSON.stringify(body);
       const sig = paystackSignature(rawBody, secretKey);
-      const res = await POST(makeByoWebhookRequest('biz-failthrow', body, { 'x-paystack-signature': sig }), { params: { businessId: 'biz-failthrow' } });
+      const res = await POST(makeByoWebhookRequest('biz-failthrow', body, { 'x-paystack-signature': sig }), { params: Promise.resolve({ businessId: 'biz-failthrow' }) });
 
       expect(res.status).toBe(503);
       expect(mockSb._dedupUpserts).toHaveLength(0);

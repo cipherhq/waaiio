@@ -131,7 +131,7 @@ function createMockSupabase() {
 function createSession(overrides?: { _detected_language?: string }) {
   return {
     id: 'sess-1',
-    user_id: null,
+    user_id: null as string | null,
     business_id: 'biz-1',
     current_step: 'test_step',
     session_data: {

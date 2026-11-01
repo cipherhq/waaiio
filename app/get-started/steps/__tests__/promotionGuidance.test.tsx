@@ -6,6 +6,11 @@ import { getPromotionGuidance } from '../promotionGuidance';
 import { StepSuccess } from '../StepSuccess';
 import type { StepSuccessProps } from '../types';
 
+// Recipient enrollment is covered by the rendered #811 integration suite.
+vi.mock('@/components/dashboard/MerchantNotificationRecipients', () => ({
+  MerchantNotificationRecipients: () => <section aria-label="Team notification recipients" />,
+}));
+
 vi.mock('qrcode.react', () => ({
   QRCodeSVG: () => <span>Test QR</span>,
   QRCodeCanvas: () => <canvas />,

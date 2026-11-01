@@ -168,7 +168,9 @@ describe('POST /api/promo-codes', () => {
 
   async function postPromo(body: Record<string, unknown>) {
     const { POST } = await import('@/app/api/promo-codes/route');
-    return POST(makePostRequest(body));
+    const response = await POST(makePostRequest(body));
+    if (!response) throw new Error('Route must return a response');
+    return response;
   }
 
   it('creates percentage discount', async () => {
@@ -325,7 +327,9 @@ describe('GET /api/promo-codes', () => {
 
   async function getCodes(businessId: string) {
     const { GET } = await import('@/app/api/promo-codes/route');
-    return GET(makeGetRequest(businessId));
+    const response = await GET(makeGetRequest(businessId));
+    if (!response) throw new Error('Route must return a response');
+    return response;
   }
 
   it('returns promo codes list', async () => {
@@ -394,6 +398,7 @@ describe('GET /api/promo-codes', () => {
     const { GET } = await import('@/app/api/promo-codes/route');
     const req = new NextRequest(new URL('http://localhost:3000/api/promo-codes'), { method: 'GET' });
     const res = await GET(req);
+    if (!res) throw new Error('Route must return a response');
     expect(res.status).toBe(400);
   });
 });
@@ -406,7 +411,9 @@ describe('PUT /api/promo-codes', () => {
 
   async function putPromo(body: Record<string, unknown>) {
     const { PUT } = await import('@/app/api/promo-codes/route');
-    return PUT(makePutRequest(body));
+    const response = await PUT(makePutRequest(body));
+    if (!response) throw new Error('Route must return a response');
+    return response;
   }
 
   it('updates promo code discount', async () => {
@@ -514,7 +521,9 @@ describe('DELETE /api/promo-codes', () => {
 
   async function deletePromo(body: Record<string, unknown>) {
     const { DELETE: deleteFn } = await import('@/app/api/promo-codes/route');
-    return deleteFn(makeDeleteRequest(body));
+    const response = await deleteFn(makeDeleteRequest(body));
+    if (!response) throw new Error('Route must return a response');
+    return response;
   }
 
   it('deletes promo code successfully', async () => {

@@ -1,3 +1,4 @@
+import { handleMerchantAlertOptIn } from '@/lib/bot/merchant-alert-optin';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -731,6 +732,18 @@ export async function POST(request: NextRequest) {
                   p_event_id: eventId,
                   p_claim_token: claimToken,
                 });
+                continue;
+              }
+
+              // Merchant opt-in requires this verified transport's actual sender and channel.
+              // STOP also continues into the existing customer consent handler.
+              const merchantAlertHandled = await handleMerchantAlertOptIn({
+                db: supabase, provenance: 'verified_meta_webhook', from: source, text, messageType: msg.type,
+                channel: resolved.channel,
+                sendReply: (reply) => guardedSender.sendText({ to: source, text: reply }),
+              });
+              if (merchantAlertHandled) {
+                await supabase.rpc('complete_webhook_event', { p_event_id: eventId, p_claim_token: claimToken });
                 continue;
               }
 

@@ -8,7 +8,7 @@
  * Skipped when not set (same pattern as all other -db.test.ts files).
  */
 
-import { describe, it, expect } from 'vitest';
+import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
@@ -189,11 +189,11 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
         ON CONFLICT (id) DO NOTHING;
       INSERT INTO profiles (id, phone) VALUES ('${TEST_OWNER}', '+2340000000000')
         ON CONFLICT (id) DO NOTHING;
-      INSERT INTO businesses (id, owner_id, name, slug, country_code, status)
-        VALUES ('${TEST_BIZ_OWN}', '${TEST_OWNER}', 'E1 Own Biz', 'e1-own-biz-test', 'NG', 'active')
+      INSERT INTO businesses (id, owner_id, name, slug, country_code, status, address, city, neighborhood, phone)
+        VALUES ('${TEST_BIZ_OWN}', '${TEST_OWNER}', 'E1 Own Biz', 'e1-own-biz-test', 'NG', 'active', '1 Test Street', 'Lagos', 'Ikeja', '+2340000000010')
         ON CONFLICT (id) DO NOTHING;
-      INSERT INTO businesses (id, owner_id, name, slug, country_code, status)
-        VALUES ('${TEST_BIZ_OTHER}', '${TEST_OWNER}', 'E1 Other Biz', 'e1-other-biz-test', 'NG', 'active')
+      INSERT INTO businesses (id, owner_id, name, slug, country_code, status, address, city, neighborhood, phone)
+        VALUES ('${TEST_BIZ_OTHER}', '${TEST_OWNER}', 'E1 Other Biz', 'e1-other-biz-test', 'NG', 'active', '2 Test Street', 'Lagos', 'Ikeja', '+2340000000020')
         ON CONFLICT (id) DO NOTHING;
     `);
 

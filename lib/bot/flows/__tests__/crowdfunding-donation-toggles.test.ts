@@ -62,6 +62,7 @@ function buildCtx(overrides: {
   const business = { ...FIXTURES.business, ...overrides.businessOverrides } as FlowContext['business'];
 
   return {
+    copyLang: 'en',
     supabase: overrides.db as any,
     sender: sender as any,
     standalone: {} as any,

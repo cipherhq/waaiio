@@ -222,7 +222,7 @@ describe('#682: draft validation behavior', () => {
   });
 
   it('BUSINESS_CATEGORIES contains all existing template categories', () => {
-    const allKeys = new Set(BUSINESS_CATEGORIES.map(c => c.key));
+    const allKeys = new Set<string>(BUSINESS_CATEGORIES.map(c => c.key));
     // All 38 READY categories must be in the hardcoded list
     const existing = ['restaurant', 'barber', 'shop', 'events', 'church', 'hotel', 'gym', 'taxi'];
     for (const key of existing) {
@@ -231,7 +231,7 @@ describe('#682: draft validation behavior', () => {
   });
 
   it('invented categories are not in BUSINESS_CATEGORIES', () => {
-    const allKeys = new Set(BUSINESS_CATEGORIES.map(c => c.key));
+    const allKeys = new Set<string>(BUSINESS_CATEGORIES.map(c => c.key));
     expect(allKeys.has('invented_nonexistent')).toBe(false);
     expect(allKeys.has('')).toBe(false);
   });

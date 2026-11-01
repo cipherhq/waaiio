@@ -104,8 +104,8 @@ interface PgClient {
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!TEST_DB_URL)('M431+M432 real PostgreSQL role tests', () => {
-  let pg: { Client: new (opts: { connectionString: string }) => PgClient };
-  let client: PgClient;
+  let pg: typeof import('pg');
+  let client: import('pg').Client;
 
   const TEST_BIZ_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   const TEST_USER_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';

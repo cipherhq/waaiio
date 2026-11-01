@@ -390,7 +390,7 @@ describe('Manual payout: source contract', () => {
     const source = fs.readFileSync(
       path.resolve('app/api/admin/payouts/[id]/approve/route.ts'), 'utf-8',
     );
-    const allowlistLine = source.match(/ALLOWED_TRANSFER_METHODS\s*=\s*\[(.*?)\]/s);
+    const allowlistLine = source.match(new RegExp("ALLOWED_TRANSFER_METHODS\\s*=\\s*\\[(.*?)\\]", "s"));
     expect(allowlistLine).toBeTruthy();
     expect(allowlistLine![1]).not.toContain('manual_cash');
     expect(allowlistLine![1]).toContain('manual_bank');

@@ -69,7 +69,7 @@ vi.mock('@/lib/promotions/normalize', () => ({
 const USER = { id: 'user-1', email: 'test@example.com' };
 
 function makeRequest(method: string, url: string, body?: unknown) {
-  const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts: NonNullable<ConstructorParameters<typeof NextRequest>[1]> = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   return new NextRequest(new URL(url, 'http://localhost:3000'), opts);
 }
@@ -610,7 +610,7 @@ describe('POST /api/promotions/create — timezone handling', () => {
     // Default: insert succeeds and returns campaign
     mockServiceFrom.mockImplementation((table: string) => {
       if (table === 'promo_campaigns') {
-        return chainable({ data: { id: 'camp-new', ...EXISTING_CAMPAIGN }, error: null });
+        return chainable({ data: { ...EXISTING_CAMPAIGN }, error: null });
       }
       if (table === 'promo_prizes') {
         return chainable({ data: [{ id: 'prize-1' }], error: null });
@@ -624,7 +624,7 @@ describe('POST /api/promotions/create — timezone handling', () => {
     mockServiceFrom.mockImplementation((table: string) => {
       if (table === 'promo_campaigns') {
         const chain = chainable({ data: { id: 'camp-new' }, error: null });
-        const origInsert = chain.insert as ReturnType<typeof vi.fn>;
+        const origInsert = chain.insert as ReturnType<typeof vi.fn<(data: Record<string, unknown>) => unknown>>;
         chain.insert = vi.fn().mockImplementation((data: Record<string, unknown>) => {
           insertedData = data;
           return origInsert(data);
