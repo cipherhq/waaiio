@@ -179,6 +179,8 @@ describe('payout v2 actual deployment orchestration',{timeout:15000},()=>{
   integrationNpm();const testEnv={...env,VERCEL_TOKEN:undefined,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',TEST_DATABASE_URL:'must-not-be-used'};
   const r=await testIntegration(manifest,controlPath,join(dir,'integration-out'),testEnv);validateIntegrationReceipt(r,manifest,'123',1,env.REDUCED_RELEASE_MANIFEST,controlPath);
   const calls=readFileSync(join(dir,'integration-npm.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);
+  expect(calls[1].args).toContain('--no-file-parallelism');
+  const parallelReceipt=structuredClone(r);parallelReceipt.commands[1]=parallelReceipt.commands[1].filter(arg=>arg!=='--no-file-parallelism');expect(()=>validateIntegrationReceipt(parallelReceipt,manifest,'123',1,env.REDUCED_RELEASE_MANIFEST,controlPath)).toThrow('receipt');
   expect(calls[0].env.TEST_DATABASE_URL).toBeUndefined();expect(calls[1].env.REQUIRE_PG_TESTS).toBe('true');expect(calls[1].env.TEST_DATABASE_URL).toBe('postgresql://postgres:postgres@127.0.0.1:5432/postgres');
   for(const c of calls){expect(c.env.GITHUB_TOKEN).toBeUndefined();expect(c.env.REDUCED_RELEASE_MANIFEST).toBeUndefined();expect(c.env.PRIVATE_RELEASE_ACCEPTANCE_REPORT).toBeUndefined();}
  });

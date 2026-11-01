@@ -45,6 +45,8 @@ export const PAYOUT_TARGETS = {
       "lib/payouts/format-amount.ts",
       "lib/payouts/verification-limit.ts",
       "lib/utils/calendar-date.ts",
+      "package-lock.json",
+      "package.json",
       "supabase/migrations/498_manual_settlement_rejection_guard.sql"
 ],
     suites: [

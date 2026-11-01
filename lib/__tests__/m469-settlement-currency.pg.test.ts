@@ -59,7 +59,7 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
    CREATE TYPE public.payment_status AS ENUM ('paid','refunded');
    CREATE TABLE public.business_payouts (
     id UUID PRIMARY KEY,business_id UUID NOT NULL,net_amount NUMERIC NOT NULL,
-    status TEXT NOT NULL,transfer_method TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL,transfer_method TEXT NOT NULL,
     period_start DATE NOT NULL,period_end DATE NOT NULL,
     transfer_reference TEXT,paid_at TIMESTAMPTZ,updated_at TIMESTAMPTZ);
    CREATE TABLE public.payout_adjustments (
@@ -96,6 +96,9 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
   `);
   await run(sqlFile('466_payout_currency_authority.sql'));
   await run(sqlFile('468_payout_dedup_currency_authority.sql'));
+  const contract = JSON.parse(readFileSync(resolve('scripts/reduced-payout-schema-contract.json'), 'utf8'));
+  const index = (await run("SELECT pg_get_indexdef(indexrelid, 0, false) AS definition, indisunique, indisvalid, indisready FROM pg_index WHERE indexrelid='public.idx_business_payouts_period_unique'::regclass")).rows[0];
+  expect(index).toMatchObject({ definition: contract.indexes[0].definition, indisunique: true, indisvalid: true, indisready: true });
   await run(sqlFile('469_settlement_currency_authority.sql'));
  },120000);
  beforeEach(async () => { await run("TRUNCATE public.payout_adjustments,public.admin_audit_logs,public.refunds,public.platform_fees,public.payments,public.bookings,public.reservations,public.business_payouts"); });

@@ -140,7 +140,7 @@ export function validateCodeReceipt(receipt, kind, manifest, runId, attempt, raw
   if (!isDeepStrictEqual(receipt.suites,suites)) fail('Exact-target per-file test evidence missing or skipped');
 }
 function integrationCommands() {
-  return [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(INTEGRATION_SQL_TESTS), '--reporter=json']];
+  return [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(INTEGRATION_SQL_TESTS), '--no-file-parallelism', '--reporter=json']];
 }
 function integrationSources(repository, integration) {
   const sql = {};
