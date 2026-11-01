@@ -12,6 +12,13 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 **Decision:** Continue sequential naming. Use an explicit reservation process to prevent collisions.
 
+## Reduced payout compatibility reservations
+
+| Version | Name | Status | Notes |
+|---------|------|--------|-------|
+| 498 | `manual_settlement_rejection_guard` | Reserved; source only, not applied | Locks and rejects already-approved manual payouts before rejection or adjustment release. Requires M440/M444 final state. |
+| 497 | `scheduling_price_authority_core` | Reserved by PR #806 | Separate work; reservation preserved. |
+
 ## Current State
 
 | Version | Name | Status | PR | Notes |
@@ -177,7 +184,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 **Batch 8 repair summary:** 15 versions (227-241) now tracked in remote schema_migrations. Remote count 209 -> 224 (+15). 101-246 tracked count 113 -> 128 (+15). 120 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-08-production-verification.json` (V3 SHA: `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`). Repair evidence: `docs/migrations/evidence/batch-08-repair.json` (SHA: `fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7`). No migration SQL executed. History-only operation.
 **Batch 9 repair summary:** 4 versions (242, 243, 245, 246) now tracked in remote schema_migrations. Remote count 224 -> 228 (+4). 101-246 tracked count 128 -> 132 (+4). 124 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-09-production-verification.json` (V3 SHA: `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`). Repair evidence: `docs/migrations/evidence/batch-09-repair.json` (SHA: `1bf9ad999576a73f2aa4e1f554f4a1806f5ec1e54270ffd9be4125fc048f1731`). No migration SQL executed. History-only operation.
 
-**Next available version:** 497 (recheck main and open PR reservations before use)
+**Next available version:** 499 (recheck main and open PR reservations before use)
 
 ## Storage security repair reservations — 2026-10-31
 

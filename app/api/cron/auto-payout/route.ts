@@ -407,7 +407,7 @@ export async function GET(request: NextRequest) {
 
       // Check monthly verification-tier limit
       const payoutMinor = Math.round(net * 100);
-      const limitCheck = await checkVerificationLimit(supabase, biz.id, payoutMinor);
+      const limitCheck = await checkVerificationLimit(supabase, biz.id, payoutMinor, undefined, currency);
       const withinLimit = limitCheck.allowed;
 
       // Auto-approval: Nigeria only. Ghana requires explicit Owner approval for

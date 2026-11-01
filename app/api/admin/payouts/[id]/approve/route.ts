@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutApprovedEmail, payoutPaidEmail } from '@/lib/email/templates';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { getCountry } from '@/lib/countries';
+import { formatPayoutAmount } from '@/lib/payouts/format-amount';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
@@ -100,7 +99,6 @@ export async function POST(
     .eq('id', payout.business_id)
     .single();
 
-  const bizCountry = (bizCheck?.country_code || 'NG') as CountryCode;
   // M466: Use authoritative payout currency, not country-inferred currency
   const bizCurrency = payout.currency;
 
@@ -112,7 +110,7 @@ export async function POST(
 
   // ── Monthly verification-tier limit check ──
   const payoutAmountMinor = Math.round(Number(payout.net_amount) * 100);
-  const limitCheck = await checkVerificationLimit(serviceClient, payout.business_id, payoutAmountMinor, id);
+  const limitCheck = await checkVerificationLimit(serviceClient, payout.business_id, payoutAmountMinor, id, payout.currency);
   if (!limitCheck.allowed) {
     return NextResponse.json({
       error: `Cannot approve payout: ${limitCheck.reason}`,
@@ -643,8 +641,7 @@ async function logAndNotify(
     .single();
 
   if (biz) {
-    const cc = (biz.country_code || 'NG') as CountryCode;
-    const amountStr = formatCurrency(Number(payout.net_amount), cc);
+    const amountStr = formatPayoutAmount(Number(payout.net_amount), payout.currency);
 
     const { data: ownerProfile } = await client
       .from('profiles')
