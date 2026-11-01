@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 interface DropoffRow {
   id: string;
   flow_type: string;
-  step_name: string | null;
+  step_id: string | null;
   reason: string | null;
   capability: string | null;
   created_at: string;
@@ -47,24 +47,34 @@ const reasonColors: Record<string, string> = {
 export default function FlowDropoffsPage() {
   const business = useBusiness();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [dropoffs, setDropoffs] = useState<DropoffRow[]>([]);
 
   useEffect(() => {
     async function load() {
+      setLoading(true);
+      setError(null);
       const supabase = createClient();
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      const { data } = await supabase
-        .from('flow_dropoffs')
-        .select('id, flow_type, step_name, reason, capability, created_at')
-        .eq('business_id', business.id)
-        .gte('created_at', thirtyDaysAgo.toISOString())
-        .order('created_at', { ascending: false })
-        .limit(500);
+      try {
+        const { data, error: queryError } = await supabase
+          .from('flow_dropoffs')
+          .select('id, flow_type, step_id, reason, capability, created_at')
+          .eq('business_id', business.id)
+          .gte('created_at', thirtyDaysAgo.toISOString())
+          .order('created_at', { ascending: false })
+          .limit(500);
 
-      setDropoffs(data || []);
-      setLoading(false);
+        if (queryError) throw queryError;
+        setDropoffs(data || []);
+      } catch {
+        setDropoffs([]);
+        setError('Unable to load flow analytics. Refresh the page to try again.');
+      } finally {
+        setLoading(false);
+      }
     }
     load();
   }, [business.id]);
@@ -78,7 +88,7 @@ export default function FlowDropoffsPage() {
   const cancelledDropoffs = dropoffs.filter(d => d.reason === 'cancelled');
   const stepCounts = new Map<string, number>();
   for (const d of cancelledDropoffs) {
-    const step = d.step_name || 'unknown';
+    const step = d.step_id || 'unknown';
     stepCounts.set(step, (stepCounts.get(step) || 0) + 1);
   }
   const topDropoffStep = stepCounts.size > 0
@@ -129,6 +139,10 @@ export default function FlowDropoffsPage() {
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
       </div>
     );
+  }
+
+  if (error) {
+    return <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">{error}</div>;
   }
 
   return (
@@ -247,7 +261,7 @@ export default function FlowDropoffsPage() {
                       {(d.flow_type || 'unknown').replace(/_/g, ' ')}
                     </td>
                     <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
-                      {(d.step_name || '--').replace(/_/g, ' ')}
+                      {(d.step_id || '--').replace(/_/g, ' ')}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
