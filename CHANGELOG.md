@@ -1,3 +1,50 @@
+## 2026-10-31 — Channel number continuity & recovery (#799)
+
+- **`supabase/migrations/496_channel_number_continuity.sql`** (SOURCE ONLY): Three new tables (`merchant_step_up_authorizations`, `channel_change_approvals`, `channel_transition_audit`), three atomic SQL wrappers (`promote_candidate_with_merchant_auth`, `disconnect_with_merchant_auth`, `execute_channel_change_approval`), extended admin step-up CHECK constraint. All RLS deny-all, service_role only, SECURITY DEFINER with `search_path = ''`.
+- **`lib/merchant-step-up.ts`**: Merchant MFA step-up prepare/verify for channel changes. Reuses `hashOperationParams` from admin-step-up. 5-minute expiry. Separate table from admin step-ups.
+- **`lib/admin-step-up.ts`**: Added `channel_change_execute` to StepUpAction type.
+- **`app/api/settings/whatsapp-channel/step-up/prepare/route.ts`**: Merchant step-up prepare endpoint. Verifies business ownership, extracts session ID from JWT claims.
+- **`app/api/settings/whatsapp-channel/step-up/verify/route.ts`**: Merchant step-up verify endpoint. Returns refreshed session tokens.
+- **`app/api/settings/whatsapp-channel/route.ts`** (DELETE): Now requires merchant MFA step-up via `disconnect_with_merchant_auth` atomic wrapper. Old direct `transition_to_shared` call replaced.
+- **`app/api/whatsapp/add-number/route.ts`**: Promotion via `promote_candidate_with_merchant_auth` instead of direct `promote_channel_candidate`. Returns `STEP_UP_REQUIRED` when replacing existing authority. Provider-verified candidate preserved for fresh MFA at promotion time.
+- **`app/api/auth/facebook/callback/route.ts`**: Same atomic wrapper integration. Returns `STEP_UP_REQUIRED` for replacement.
+- **`app/api/whatsapp/embedded-signup/route.ts`**: Converted from direct channel INSERT to candidate system. Creates candidate with CAS snapshot, promotes via atomic wrapper. No more legacy direct writes.
+- **`app/api/admin/channel-changes/route.ts`**: GET (list) and POST (create request) for recovery/shared-replacement. Admin-only, step-up required, verification record server-populated.
+- **`app/api/admin/channel-changes/[id]/approve/route.ts`**: Two-admin approval. Distinct from requester and business owner.
+- **`app/api/admin/channel-changes/[id]/reject/route.ts`**: Reject/cancel (terminal).
+- **`app/api/admin/channel-changes/[id]/execute/route.ts`**: Execute approved change via atomic SQL function. Checks 5-min freshness, roles, CAS, owner, evidence.
+- **`app/api/admin/channel-changes/[id]/re-request/route.ts`**: Refresh requester step-up, increment version, invalidate old approval.
+- **`admin/src/pages/ChannelChanges.tsx`**: Admin UI for viewing, approving, executing, rejecting channel change requests. Wired with step-up dialog.
+- **`admin/src/routes.tsx`**, **`admin/src/components/AdminSidebar.tsx`**, **`admin/src/lib/permissions.ts`**: Added channel-changes route and sidebar entry (admin-only).
+- **`docs/MIGRATION_REGISTRY.md`**: M496 reserved, SOURCE ONLY.
+- **`app/api/whatsapp/add-number/finish/route.ts`**: New endpoint for completing a ready candidate with MFA step-up. Called after OTP validation when STEP_UP_REQUIRED was returned. Owner/candidate/session bound, server-side params hash.
+- **Merchant MFA UI** (`app/dashboard/whatsapp/connect/page.tsx`): Added `mfa-verify` step with TOTP prompt. When OTP verify returns STEP_UP_REQUIRED, flow enters MFA → calls prepare → user enters TOTP → calls verify → session refresh → calls finish → success. Missing TOTP factor shows actionable enrollment message.
+- **Disconnect MFA UI** (`app/dashboard/settings/tabs/AccountTab.tsx`): Disconnect button now initiates prepare → TOTP prompt → verify → session refresh → DELETE with stepUpId. No TOTP enrolled shows alert with enrollment guidance.
+- **Tests**: `channel-number-continuity.pg.test.ts` (real PG: schema, grants, SECURITY DEFINER, constraints, append-only audit, identity preservation), `channel-number-continuity.test.ts` (behavioral: handler 403 on missing step-up, admin routes deny non-admin, step-up prepare requires ownership).
+- **Security**: Promotion wrapper delegates to existing `promote_channel_candidate` — does NOT copy logic (correction #7). Step-up consumed ONLY after successful underlying transition — failure rolls back entire transaction including step-up (no auth burn, no audit on failure). Execute route does NOT consume step-up in TypeScript — SQL function handles atomic consumption (correction #1). Embedded-signup generates PIN once before Meta registration (correction #6). All new functions service_role only.
+- **Affects**: WhatsApp number connection (add-number, embedded-signup, facebook callback), disconnect, admin recovery/shared-replacement. Does NOT affect bot routing, payment custody, directory, existing shared allocation, or customer data. Existing `promote_channel_candidate` and `transition_to_shared` preserved — wrappers delegate to them.
+
+## 2026-10-31 — Permanent Waaiio merchant links (#799)
+
+- **`app/m/resolve.ts`**: Shared resolver for all /m/ routes — business+channel lookup, readiness validation via `isAssignedWhatsAppChannelReady`, rate limiting via `rateLimitResponseAsync`/`getRateLimitKey`, query-param rejection (any params rejected, not just named overrides), and no-store error rendering. Eliminates triple-copied resolver logic.
+- **`app/m/[businessId]/route.ts`**: Public redirect. Uses `buildVerifiedWhatsAppLink` which preserves existing dedicated "Hi" and shared bot_code prefill semantics. 302, no-store, rate-limited.
+- **`app/m/[businessId]/[action]/route.ts`**: Action-suffixed permanent links (book, order, pay, ticket, donate, queue, waitlist, give, chat, generic). Shared: `bot_code:capability` (existing deep-link format from `bot-code-detection.ts`). Dedicated: `?text=Hi` (existing QR semantics). Generic falls through to base route behaviour. Attendance validates UUID + rejects query params then redirects to canonical `/checkin/{businessId}` web page. Unknown actions fail closed.
+- **`app/m/[businessId]/campaign/[campaignId]/route.ts`**: Campaign permanent links. Keyword prefill for both shared and dedicated (preserves original `getWaLink(keyword)` behaviour). Parsed timestamp comparison for date range; rejects invalid dates and empty keywords. Validates campaign ownership, active state, date range.
+- **`lib/url.ts`**: Added `buildMerchantLink(businessId, action?)`, `buildMerchantCampaignLink(businessId, campaignId)`, `ACTION_CAPABILITY_MAP`, and `MerchantLinkAction` type.
+- **`app/dashboard/qr-code/page.tsx`**: QR codes encode permanent Waaiio link (`/m/{uuid}`) for all WhatsApp templates. Attendance preserved as `/checkin/{id}` web URL. Label says "Permanent WhatsApp Link" with explanation it survives connected number changes.
+- **`app/dashboard/page.tsx`**: Uses permanent Waaiio link. Removed false US shared number display fallback and unnecessary `queryChannelsPublic` query.
+- **`app/dashboard/whatsapp/page.tsx`**: Uses permanent Waaiio link. Removed channel-resolution query waterfall.
+- **`app/dashboard/keyword-campaigns/page.tsx`**: Campaign sharing uses permanent campaign links.
+- **`app/(marketing)/directory/DirectoryClient.tsx`**: Public directory uses permanent Waaiio links.
+- **`app/get-started/OnboardingWizard.tsx`**: Success screen uses permanent Waaiio link when business_id is available.
+- **`app/get-started/steps/StepSuccess.tsx`**: URL validation accepts both wa.me and permanent Waaiio `/m/{uuid}` links.
+- **`app/api/admin/onboarding/route.ts`**: Adds `permanent_link` field alongside existing `whatsapp_link` in onboarding readiness response. Preserves all existing readiness status.
+- **`admin/src/pages/WhatsAppAssistance.tsx`**: Shows permanent Waaiio link QR alongside existing direct WhatsApp test link. Preserves step-up behavior.
+- **Tests**: `lib/__tests__/permanent-merchant-links.test.ts` — actual handler imports with mocked Supabase, real NextRequest, HTTP assertions. Shared bot_code:capability suffix, dedicated ?text=Hi, campaign keyword-on-both, missing-bot_code (explicit null fixture), invalid UUID, status/suspension/country/channel errors, no-store on all responses including 429, query-param rejection, rate limiting, campaign date parsing including NaN, empty keyword, tenant isolation, minimal projection. `issue-496-qr-production.test.tsx` and `queue-share-qr.test.tsx` updated for permanent links with action suffixes. `promotionGuidance.test.tsx` updated for permanent link acceptance.
+- **Security**: Rate limiting via existing `rateLimitResponseAsync`. Strict UUID validation on attendance route. Action allowlist. All query parameters rejected. No-store on all responses including 429. HTML escaping in error pages. Campaign date comparison uses parsed timestamps not ISO string comparison. Empty/null keyword rejected as unavailable.
+- **Residual gaps**: Number-replacement mutations/MFA/recovery not implemented (separate Phase A correction). Rendered directory sharing acceptance test not yet added (DirectoryClient is a client component with fetch dependency). No bot parser changes.
+- **Affects**: QR code generation, onboarding success, dashboard sharing, directory listing, keyword campaigns, admin onboarding, admin WhatsApp assistance. No schema migration. Connected WhatsApp number changes are now transparent to shared QR codes and printed links.
+
 ### 2026-10-31 — Admin profile and account-status saves
 
 - Route existing profile/status controls through authenticated server writes and render confirmed persisted values. Preserve drafts on failures and report audit-write failures separately from successful saves.

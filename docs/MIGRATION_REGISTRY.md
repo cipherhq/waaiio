@@ -16,6 +16,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
+| 496 | `channel_number_continuity` | SOURCE ONLY — NOT APPLIED | #799 | Channel number continuity & recovery: merchant_step_up_authorizations, channel_change_approvals (two-admin), channel_transition_audit (append-only), atomic promotion/disconnect/execution wrappers, admin step-up CHECK extension. Disposable PG only. |
 | 490 | `party_reminder_delivery` | SOURCE ONLY — NOT APPLIED | #762 / #785 | Party reminder dispatch records and service-only inbound transport receipts; requires whatsapp_channels; disposable PG only. |
 | 489 | `party_rsvp_questions` | SOURCE ONLY — NOT APPLIED | #762 / #785 | Versioned Party questions and atomic RSVP completion; requires M457/M486. |
 | 486 | `party_seating_groups_pins_atomic_plans` | RESERVED / PR ONLY — NOT APPLIED | #762 | Ten-path seating slice: group/table scope, manual pins, weighted atomic plans and replay. Real M457/M486 disposable PG acceptance in party-seating-762.pg.test.ts; no hosted migration authorized. |
