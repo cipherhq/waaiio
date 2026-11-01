@@ -38,6 +38,7 @@ function createMockSender() {
     sendList: vi.fn().mockResolvedValue({}),
     sendImage: vi.fn().mockResolvedValue({}),
     sendDocument: vi.fn().mockResolvedValue({}),
+    sendAudio: vi.fn().mockResolvedValue({}),
   };
 }
 
