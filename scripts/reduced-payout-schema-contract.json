@@ -1,0 +1,675 @@
+{
+  "normalization": {
+    "function_body": "exact UTF-8 pg_proc.prosrc SHA256; no whitespace normalization",
+    "function_metadata": "identity arguments, returns, language, security/volatility/strict/leakproof/parallel/config pinned",
+    "acl": "explicit effective ACL incl PUBLIC; owner grantee normalized OWNER; actual production owner must independently remain approved",
+    "index_trigger": "collapse whitespace only in pg_get_indexdef/pg_get_triggerdef; retain expression/predicate/function/events/enabled fields",
+    "existing_auth": "Current reviewed hosted-existing authorization table privileges/action CHECK and session/audit prerequisites are pinned separately from intended future payout-function fixture definitions. No permission changes implied."
+  },
+  "canonical_sources": [
+    {
+      "name": "292_atomic_payout_claim.sql",
+      "sha256": "30469f60b57a728b41406a55e14799e1c20c4d6b5c785e34eab5c610d417b1d5"
+    },
+    {
+      "name": "439_admin_mfa_enforcement.sql",
+      "sha256": "75045767e49a5a8039a4615397d076d5ac3898769383997afab4030d6a9e9bd3"
+    },
+    {
+      "name": "494_business_status_step_up.sql",
+      "sha256": "36481136ec6c2cacd9e6acee6df7369298e04c852d073dbf812b7a976e873141"
+    },
+    {
+      "name": "440_payout_linkage_guard.sql",
+      "sha256": "59aa9bc8258bf8c0c62a0330229de2321c0682e731a0ac634a1851647bce7249"
+    },
+    {
+      "name": "444_reject_payout_release_adjustments.sql",
+      "sha256": "cb0398b2186a361ddccfd2bebfe9321e5e6df8c1e3e3aff16de262af5edddc6f"
+    },
+    {
+      "name": "453_settlement_confirmation.sql",
+      "sha256": "1e98194dc621130682e17bc936a59995f4a8ed891114172f2f77de01cfb7a9f3"
+    },
+    {
+      "name": "466_payout_currency_authority.sql",
+      "sha256": "a9b1e1d1ff5dd67ec56c5c6cf9f1dde7c7725b0c93747b4ae72143c3d7f72dcb"
+    },
+    {
+      "name": "468_payout_dedup_currency_authority.sql",
+      "sha256": "69f051660c7f77247ab80366dae7736420d58332f8541e5e67dae44b1c4e2763"
+    },
+    {
+      "name": "469_settlement_currency_authority.sql",
+      "sha256": "fcb8dba9e0ba561d1269973979ca33cbd07579da960dcf6cd7687c3a41d7f754"
+    },
+    {
+      "name": "472_refund_fee_allocation_period_fix.sql",
+      "sha256": "703edf5b5fdc961e2ab29696d0542525628b0971db45ca1ce3cb2f877d4782c3"
+    },
+    {
+      "name": "498_manual_settlement_rejection_guard.sql",
+      "sha256": "b85404c7423095fb14a279d60c5116fc67e0133291b43b581e76ce66439254a0"
+    }
+  ],
+  "step_up": {
+    "table": {
+      "relrowsecurity": true,
+      "relforcerowsecurity": false
+    },
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "uuid",
+        "udt_name": "uuid",
+        "is_nullable": "NO",
+        "column_default": "gen_random_uuid()",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "admin_user_id",
+        "data_type": "uuid",
+        "udt_name": "uuid",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "session_id",
+        "data_type": "text",
+        "udt_name": "text",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "action_type",
+        "data_type": "text",
+        "udt_name": "text",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "target_id",
+        "data_type": "text",
+        "udt_name": "text",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "params_hash",
+        "data_type": "text",
+        "udt_name": "text",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "challenge_id",
+        "data_type": "uuid",
+        "udt_name": "uuid",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "factor_id",
+        "data_type": "uuid",
+        "udt_name": "uuid",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "verified_at",
+        "data_type": "timestamp with time zone",
+        "udt_name": "timestamptz",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "consumed_at",
+        "data_type": "timestamp with time zone",
+        "udt_name": "timestamptz",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "expires_at",
+        "data_type": "timestamp with time zone",
+        "udt_name": "timestamptz",
+        "is_nullable": "NO",
+        "column_default": "(now() + '00:05:00'::interval)",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone",
+        "udt_name": "timestamptz",
+        "is_nullable": "NO",
+        "column_default": "now()",
+        "character_maximum_length": null
+      }
+    ],
+    "constraints": [
+      {
+        "conname": "admin_step_up_authorizations_action_type_check",
+        "contype": "c",
+        "convalidated": true,
+        "definition": "CHECK (action_type = ANY (ARRAY['payout_approve'::text, 'payout_reject'::text, 'payout_generate'::text, 'payout_confirm_settlement'::text, 'payout_force_settle'::text, 'provider_config'::text, 'team_grant'::text, 'team_revoke'::text, 'impersonate'::text, 'refund'::text, 'reseller_payout_approve'::text, 'reseller_payout_reject'::text, 'reseller_payout_mark_paid'::text, 'reseller_payout_generate'::text, 'commercial_config'::text, 'messaging_config'::text, 'messaging_suspension'::text, 'business_status'::text]))"
+      },
+      {
+        "conname": "admin_step_up_authorizations_admin_user_id_fkey",
+        "contype": "f",
+        "convalidated": true,
+        "definition": "FOREIGN KEY (admin_user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+      },
+      {
+        "conname": "admin_step_up_authorizations_pkey",
+        "contype": "p",
+        "convalidated": true,
+        "definition": "PRIMARY KEY (id)"
+      }
+    ],
+    "policies": [
+      {
+        "polname": "admin_step_up_deny_all",
+        "polpermissive": true,
+        "polcmd": "*",
+        "roles": [
+          "PUBLIC"
+        ],
+        "qual": "false",
+        "with_check": "false"
+      }
+    ],
+    "acl": [
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "DELETE"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "INSERT"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "MAINTAIN"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "REFERENCES"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "SELECT"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "TRIGGER"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "TRUNCATE"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "UPDATE"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "DELETE"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "INSERT"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "MAINTAIN"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "REFERENCES"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "SELECT"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "TRIGGER"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "TRUNCATE"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "UPDATE"
+      }
+    ],
+    "owner": "postgres",
+    "contract_sha256": "1bbf7bfd3357cd04d89681ad5a9d847b6c0800ab63cc4ed24716c4e3b7abddc0"
+  },
+  "functions": [
+    {
+      "proname": "claim_payout_for_transfer",
+      "arguments": "p_payout_id uuid, p_transfer_method text, p_approved_by uuid",
+      "returns": "TABLE(claimed_id uuid, claimed_token uuid, idempotency_key text)",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public, extensions"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "d2efb99ccc55749cf22e653fc1887fc10c559605a8728cfbdb5c1338c2d54cc9",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "c535aa88943b30fd70b26f03f7ad07226067dcbf0908abf6a1ef3cbec57ac2fc"
+    },
+    {
+      "proname": "confirm_manual_settlement",
+      "arguments": "p_payout_id uuid, p_transfer_ref text, p_attestation boolean, p_admin_id uuid",
+      "returns": "TABLE(confirmed_id uuid)",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public, extensions"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "6c7f7a3031bdaf66516c414a964b108e3e938b95bd9709aea9509b3fff7b212b",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "102cd7b85a16ccedd26d49581443860a29a38df67d31a75e6f35475332099765"
+    },
+    {
+      "proname": "finalize_refund_execution",
+      "arguments": "p_refund_id uuid",
+      "returns": "jsonb",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "cea411167bf6ce46fe235eda83881859220a16fe257217b739e7b0d7f9515b1f",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "dbb8dc1d58121a053ad5b94d6c4d1d41a211dc0e87b441ecf90887d215bb44c6"
+    },
+    {
+      "proname": "fn_payout_linkage_guard",
+      "arguments": "",
+      "returns": "trigger",
+      "language": "plpgsql",
+      "prosecdef": false,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public, pg_temp"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "PUBLIC",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "a0812d479775f083e858972aca2afc0f54f11aa4672334ea7b97ba20acf09f1b",
+      "acl_sha256": "60fa4de5d1acd1f7b9bb1181b64c789cb3c01c8e0af14c9a8de73550b521308c",
+      "owner": "postgres",
+      "metadata_sha256": "2d9fbdbf79feef1834054d77350fb580bc2d434a97d4a03531dd32d567796b3e"
+    },
+    {
+      "proname": "mark_payout_provider_submitted",
+      "arguments": "p_payout_id uuid, p_claim_token uuid, p_gateway_transfer_code text",
+      "returns": "TABLE(submitted_id uuid)",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "955c46d8655af71c4b3ae61652859f82746c787a269540b3a2e53b8005e5cefb",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "1764f1044b2c105acaa4f882339e8e0f9fc22f82e6c61fe68668563610e94a14"
+    },
+    {
+      "proname": "mark_payout_review_required",
+      "arguments": "p_payout_id uuid, p_claim_token uuid",
+      "returns": "TABLE(review_id uuid)",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "d91dccc3dc1200a0a61b66f28e2f4e672de9a7ce75c8f0ac06a9b92cc49cf22b",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "8631b6057273d3ec91789c8f3371cfbff966705acbb5080a4110f1800097fd39"
+    },
+    {
+      "proname": "mark_payout_transfer_failed",
+      "arguments": "p_payout_id uuid, p_claim_token uuid",
+      "returns": "TABLE(failed_id uuid)",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "f804254a89143991b28a12263505385dc48776cdcedce4b7be35c8f73f171463",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "cf0b962e8cc44d36879dd6fd23060bcce2408225bb6a643ac2e06692a91483c2"
+    },
+    {
+      "proname": "payout_flag_adjustment_ids",
+      "arguments": "flags jsonb, flag_type text",
+      "returns": "uuid[]",
+      "language": "plpgsql",
+      "prosecdef": false,
+      "provolatile": "i",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public, pg_temp"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "PUBLIC",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "9fe825b98dd1c522c940cb66918f444a16aa29ddc77c2a7df35eb240fde0eca6",
+      "acl_sha256": "60fa4de5d1acd1f7b9bb1181b64c789cb3c01c8e0af14c9a8de73550b521308c",
+      "owner": "postgres",
+      "metadata_sha256": "9cc7fb0a89a9c7a89a277ce8f986f82081ce39e98c4d7e9d4ec4337bc03e5d8c"
+    },
+    {
+      "proname": "payout_flag_present",
+      "arguments": "flags jsonb, flag_type text",
+      "returns": "boolean",
+      "language": "plpgsql",
+      "prosecdef": false,
+      "provolatile": "i",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public, pg_temp"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "PUBLIC",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "8696e734f51b42ba685ba520d050ae831ae2b4622647856364169a66e2e61bd5",
+      "acl_sha256": "60fa4de5d1acd1f7b9bb1181b64c789cb3c01c8e0af14c9a8de73550b521308c",
+      "owner": "postgres",
+      "metadata_sha256": "b39ec1f2f2eccd1416bd54779ab1fa240aafc4bd592b99380670570e294a9efd"
+    },
+    {
+      "proname": "reject_payout_and_release_adjustments",
+      "arguments": "p_payout_id uuid, p_reason text",
+      "returns": "TABLE(rejected_id uuid, adjustments_released integer)",
+      "language": "plpgsql",
+      "prosecdef": false,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public, pg_temp"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "1f97fddb1a7f59656bc3f045c3d6a235bd4f596d589c407cfd30663e346baa77",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "dce45a25270a5fe2f079f46bc04b8cb16f65905c430f9c1adfe74dffaa3d14ee"
+    }
+  ],
+  "triggers": [
+    {
+      "tgname": "trg_payout_linkage_guard",
+      "tgenabled": "O",
+      "tgtype": 23,
+      "function_name": "fn_payout_linkage_guard",
+      "definition": "CREATE TRIGGER trg_payout_linkage_guard BEFORE INSERT OR UPDATE ON business_payouts FOR EACH ROW EXECUTE FUNCTION fn_payout_linkage_guard()",
+      "definition_sha256": "a68b238ca942ec4f901bc9e9fd025919ce560ef18c39699025c95cec558cb212"
+    }
+  ],
+  "indexes": [
+    {
+      "relname": "idx_business_payouts_period_unique",
+      "indisunique": true,
+      "indisvalid": true,
+      "indisready": true,
+      "definition": "CREATE UNIQUE INDEX idx_business_payouts_period_unique ON public.business_payouts USING btree (business_id, period_start, period_end, COALESCE(currency, '__legacy__'::character varying)) WHERE (status <> ALL (ARRAY['rejected'::text, 'failed'::text]))",
+      "definition_sha256": "ec282795795d1d7fec5ced7eefb425a4a800c5ab52834e5ef2684014f92a2340"
+    }
+  ],
+  "columns": [
+    {
+      "table_name": "business_payouts",
+      "column_name": "currency",
+      "data_type": "character varying",
+      "character_maximum_length": 3,
+      "is_nullable": "YES"
+    },
+    {
+      "table_name": "payout_adjustments",
+      "column_name": "currency",
+      "data_type": "character varying",
+      "character_maximum_length": 3,
+      "is_nullable": "YES"
+    }
+  ],
+  "existing_auth_prerequisites": {
+    "session": {
+      "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\""
+      ],
+      "returns": "TABLE(session_exists boolean)",
+      "signature": "check_session_exists(uuid)",
+      "body_sha256": "70f8d2258eb482407676c6f0d62cdd5bbf95a3dce4d63e00c1a80c1138ebe801",
+      "security_definer": true
+    },
+    "audit": {
+      "rls": true,
+      "owner": "postgres",
+      "columns": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": "NO"
+        },
+        {
+          "name": "actor_id",
+          "type": "uuid",
+          "nullable": "YES"
+        },
+        {
+          "name": "action",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "entity_type",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "entity_id",
+          "type": "uuid",
+          "nullable": "YES"
+        },
+        {
+          "name": "details",
+          "type": "jsonb",
+          "nullable": "YES"
+        },
+        {
+          "name": "ip_address",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        }
+      ],
+      "anon_insert": false,
+      "service_insert": true,
+      "authenticated_insert": false
+    }
+  }
+}

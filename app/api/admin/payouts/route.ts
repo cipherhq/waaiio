@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 // Safe columns for payout list response — excludes claim_token, provider_idempotency_key
 const PAYOUT_LIST_COLUMNS = [
   'id', 'business_id', 'period_start', 'period_end',
-  'gross_amount', 'platform_fee', 'gateway_fee', 'net_amount',
+  'gross_amount', 'platform_fee', 'gateway_fee', 'net_amount', 'currency',
   'status', 'flags', 'payout_account_id', 'transfer_method',
   'approved_by', 'approved_at', 'rejected_reason',
   'gateway_transfer_code', 'transfer_reference',
@@ -74,6 +74,7 @@ export async function GET(request: NextRequest) {
       platform_fee: p.platform_fee,
       gateway_fee: p.gateway_fee,
       net_amount: p.net_amount,
+      currency: p.currency,
       status: p.status,
       flags: p.flags,
       transfer_method: p.transfer_method,

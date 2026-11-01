@@ -1,6 +1,6 @@
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { getVerificationTiers, type CountryCode, type VerificationLevel } from '@/lib/constants';
-import { loadCountries } from '@/lib/countries';
+import { getCountry, loadCountries } from '@/lib/countries';
 import { logger } from '@/lib/logger';
 
 export interface VerificationLimitResult {
@@ -38,15 +38,16 @@ export async function checkVerificationLimit(
   businessId: string,
   payoutAmountMinor: number,
   excludePayoutId?: string,
+  payoutCurrency?: string,
 ): Promise<VerificationLimitResult> {
   // 1. Load business verification level and country
-  const { data: biz } = await supabase
+  const { data: biz, error: businessError } = await supabase
     .from('businesses')
     .select('verification_level, payout_limit_monthly, country_code')
     .eq('id', businessId)
     .single();
 
-  if (!biz) {
+  if (businessError || !biz) {
     return { allowed: false, limit: 0, used: 0, remaining: 0, reason: 'Business not found' };
   }
 
@@ -76,6 +77,14 @@ export async function checkVerificationLimit(
     return { allowed: true, limit: limitMajor, used: 0, remaining: limitMajor };
   }
 
+  // Verification tiers are denominated in the business country's local
+  // currency. Never convert or sum foreign/unknown amounts implicitly.
+  const localCurrency = getCountry(cc)?.currency_code;
+  if (!localCurrency || !payoutCurrency || payoutCurrency !== localCurrency) {
+    return { allowed: false, limit: limitMajor * 100, used: 0, remaining: 0,
+      reason: 'Payout currency cannot be evaluated against the local-currency verification limit' };
+  }
+
   // Convert major-unit limit to minor units (kobo/cents/pesewas)
   const limitMinor = Math.round(limitMajor * 100);
 
@@ -85,7 +94,7 @@ export async function checkVerificationLimit(
 
   let query = supabase
     .from('business_payouts')
-    .select('net_amount')
+    .select('net_amount, currency')
     .eq('business_id', businessId)
     .in('status', ['approved', 'processing', 'paid'])
     .gte('created_at', monthStart);
@@ -94,7 +103,13 @@ export async function checkVerificationLimit(
     query = query.neq('id', excludePayoutId);
   }
 
-  const { data: payouts } = await query;
+  const { data: payouts, error: usageError } = await query;
+  if (usageError || !Array.isArray(payouts) || payouts.some(p =>
+    p.currency !== localCurrency || p.net_amount == null ||
+    !Number.isFinite(Number(p.net_amount)) || Number(p.net_amount) < 0)) {
+    return { allowed: false, limit: limitMinor, used: 0, remaining: 0,
+      reason: 'Verification limit usage requires currency reconciliation or could not be loaded' };
+  }
 
   // net_amount is stored in major units → convert to minor
   const usedMinor = (payouts || []).reduce((sum, p) => sum + Math.round(Number(p.net_amount) * 100), 0);

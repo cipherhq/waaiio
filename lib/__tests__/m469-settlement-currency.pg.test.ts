@@ -8,6 +8,9 @@ import { randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 const URL = process.env.TEST_DATABASE_URL;
+let isolatedUrl: string;
+let control: Client;
+const databaseName = `settlement_currency_${randomUUID().replaceAll('-', '')}`;
 if (!URL && process.env.REQUIRE_PG_TESTS === 'true') throw new Error('M469 requires TEST_DATABASE_URL');
 const suite = URL ? describe : describe.skip;
 const B = '00000000-0000-0000-0000-000000000469';
@@ -15,7 +18,7 @@ const OTHER = '00000000-0000-0000-0000-000000000470';
 const ADMIN = '00000000-0000-0000-0000-000000000471';
 const run = (sql: string, values: unknown[] = []) => db.query(sql, values);
 let db: Client;
-const connect = async () => { const c = new Client({ connectionString: URL }); await c.connect(); return c; };
+const connect = async () => { const c = new Client({ connectionString: isolatedUrl }); await c.connect(); return c; };
 const sqlFile = (p: string) => readFileSync(resolve('supabase/migrations',p),'utf8');
 async function payment(currency: string | null, direct=false, business=B, gross=100, fee=10) {
  const id=randomUUID(), booking=randomUUID();
@@ -40,6 +43,11 @@ async function finish(id:string) { return run("SELECT public.finalize_refund_exe
 
 suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
  beforeAll(async () => {
+  const parsed = new globalThis.URL(URL!);
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) throw new Error('Disposable localhost PostgreSQL only');
+  control = new Client({ connectionString: URL }); await control.connect();
+  await control.query(`CREATE DATABASE ${databaseName}`);
+  parsed.pathname = `/${databaseName}`; isolatedUrl = parsed.toString();
   db=await connect();
   await run(`
    CREATE SCHEMA IF NOT EXISTS extensions;
@@ -91,7 +99,10 @@ suite('M469 settlement and refund currency safety — real PostgreSQL', () => {
   await run(sqlFile('469_settlement_currency_authority.sql'));
  },120000);
  beforeEach(async () => { await run("TRUNCATE public.payout_adjustments,public.admin_audit_logs,public.refunds,public.platform_fees,public.payments,public.bookings,public.reservations,public.business_payouts"); });
- afterAll(async () => {if(db) await db.end();});
+ afterAll(async () => {
+  if(db) await db.end();
+  if(control) { await control.query(`DROP DATABASE IF EXISTS ${databaseName}`); await control.end(); }
+ });
  it('does not count NGN revenue toward a USD settlement',async()=>{
   await payment('USD');await payment('NGN',false,B,1000000,0);
   const id=await payout(150,'USD');

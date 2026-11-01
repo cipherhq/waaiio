@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutRejectedEmail } from '@/lib/email/templates';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatPayoutAmount } from '@/lib/payouts/format-amount';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logAdminAudit } from '@/lib/admin-audit';
@@ -31,7 +31,7 @@ export async function POST(
   // if the payout doesn't exist or is in an invalid status
   const { data: payout } = await serviceClient
     .from('business_payouts')
-    .select('id, business_id, net_amount, status, transfer_method')
+    .select('id, business_id, net_amount, currency, status, transfer_method')
     .eq('id', id)
     .single();
 
@@ -79,7 +79,7 @@ export async function POST(
     if (rpcHas('payout_not_found')) {
       return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
     }
-    if (rpcHas('ineligible_status')) {
+    if (rpcHas('ineligible_status') || rpcHas('manual_settlement_in_flight')) {
       return NextResponse.json({ error: 'Payout status has changed — please refresh and try again' }, { status: 409 });
     }
     if (rpcHas('linkage_flag_blocks_rejection')) {
@@ -116,8 +116,7 @@ export async function POST(
     .eq('id', payout.business_id)
     .single();
   if (biz) {
-    const cc = (biz.country_code || 'NG') as CountryCode;
-    const amountStr = formatCurrency(Number(payout.net_amount), cc);
+    const amountStr = formatPayoutAmount(Number(payout.net_amount), payout.currency);
 
     const { data: ownerProfile } = await serviceClient
       .from('profiles')

@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock countries module for loadCountries
 vi.mock('@/lib/countries', () => ({
   loadCountries: vi.fn().mockResolvedValue([]),
-  getCountry: vi.fn().mockReturnValue(null),
+  getCountry: vi.fn().mockReturnValue({ currency_code: 'NGN' }),
 }));
 
 // Mock constants — return REAL tier values in MAJOR units (as stored in DB)
@@ -30,7 +30,7 @@ vi.mock('@/lib/constants', async () => {
 
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 
-function mockSupabase(bizData: Record<string, unknown> | null, payouts: Array<{ net_amount: number }> = []) {
+function mockSupabase(bizData: Record<string, unknown> | null, payouts: Array<{ net_amount: number; currency: string }> = []) {
   const payoutResult = Promise.resolve({ data: payouts, error: null });
   const gteStep = { ...payoutResult, neq: () => payoutResult, then: payoutResult.then.bind(payoutResult) };
   return {
@@ -73,9 +73,9 @@ describe('checkVerificationLimit', () => {
     // total: 40,000,000 + 10,000,000 = 50,000,000 kobo = ₦500,000 limit → exactly at limit
     const sb = mockSupabase(
       { verification_level: 'basic', payout_limit_monthly: 500_000, country_code: 'NG' },
-      [{ net_amount: 400_000 }],
+      [{ net_amount: 400_000, currency: 'NGN' }],
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 10_000_000);
+    const result = await checkVerificationLimit(sb, 'biz-1', 10_000_000, undefined, 'NGN');
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(0);
   });
@@ -83,9 +83,9 @@ describe('checkVerificationLimit', () => {
   it('NG basic: ₦400,000 used + ₦100,001 payout → refused (1 kobo over)', async () => {
     const sb = mockSupabase(
       { verification_level: 'basic', payout_limit_monthly: 500_000, country_code: 'NG' },
-      [{ net_amount: 400_000 }],
+      [{ net_amount: 400_000, currency: 'NGN' }],
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 10_000_100); // ₦100,001
+    const result = await checkVerificationLimit(sb, 'biz-1', 10_000_100, undefined, 'NGN'); // ₦100,001
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('exceeded');
   });
@@ -97,18 +97,18 @@ describe('checkVerificationLimit', () => {
     // total: 500,000,000 = exactly at limit
     const sb = mockSupabase(
       { verification_level: 'standard', payout_limit_monthly: 5_000_000, country_code: 'NG' },
-      [{ net_amount: 4_999_999 }],
+      [{ net_amount: 4_999_999, currency: 'NGN' }],
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 100);
+    const result = await checkVerificationLimit(sb, 'biz-1', 100, undefined, 'NGN');
     expect(result.allowed).toBe(true);
   });
 
   it('NG standard: ₦5,000,000 used + ₦1 payout → refused', async () => {
     const sb = mockSupabase(
       { verification_level: 'standard', payout_limit_monthly: 5_000_000, country_code: 'NG' },
-      [{ net_amount: 5_000_000 }],
+      [{ net_amount: 5_000_000, currency: 'NGN' }],
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 100);
+    const result = await checkVerificationLimit(sb, 'biz-1', 100, undefined, 'NGN');
     expect(result.allowed).toBe(false);
   });
 
@@ -118,7 +118,7 @@ describe('checkVerificationLimit', () => {
     const sb = mockSupabase(
       { verification_level: 'unverified', payout_limit_monthly: 0, country_code: 'NG' },
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 100);
+    const result = await checkVerificationLimit(sb, 'biz-1', 100, undefined, 'NGN');
     expect(result.allowed).toBe(false);
     expect(result.limit).toBe(0);
     expect(result.reason).toContain('does not allow');
@@ -126,7 +126,7 @@ describe('checkVerificationLimit', () => {
 
   it('holds when business not found', async () => {
     const sb = mockSupabase(null);
-    const result = await checkVerificationLimit(sb, 'biz-missing', 100);
+    const result = await checkVerificationLimit(sb, 'biz-missing', 100, undefined, 'NGN');
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('not found');
   });
@@ -135,7 +135,7 @@ describe('checkVerificationLimit', () => {
     const sb = mockSupabase(
       { verification_level: 'full', payout_limit_monthly: 999_999_999, country_code: 'NG' },
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 99_999_999_900);
+    const result = await checkVerificationLimit(sb, 'biz-1', 99_999_999_900, undefined, 'NGN');
     expect(result.allowed).toBe(true);
   });
 
@@ -143,7 +143,7 @@ describe('checkVerificationLimit', () => {
     const sb = mockSupabase(
       { verification_level: 'nonexistent', payout_limit_monthly: 0, country_code: 'NG' },
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 100);
+    const result = await checkVerificationLimit(sb, 'biz-1', 100, undefined, 'NGN');
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('No verification tier');
   });
@@ -153,7 +153,7 @@ describe('checkVerificationLimit', () => {
       { verification_level: 'basic', payout_limit_monthly: 500_000, country_code: 'NG' },
       [], // no payouts
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 49_999_900); // ₦499,999
+    const result = await checkVerificationLimit(sb, 'biz-1', 49_999_900, undefined, 'NGN'); // ₦499,999
     expect(result.allowed).toBe(true);
     expect(result.used).toBe(0);
   });
@@ -161,9 +161,9 @@ describe('checkVerificationLimit', () => {
   it('returns limit and used in minor units', async () => {
     const sb = mockSupabase(
       { verification_level: 'basic', payout_limit_monthly: 500_000, country_code: 'NG' },
-      [{ net_amount: 100_000 }], // ₦100,000 used
+      [{ net_amount: 100_000, currency: 'NGN' }], // ₦100,000 used
     );
-    const result = await checkVerificationLimit(sb, 'biz-1', 100); // tiny payout
+    const result = await checkVerificationLimit(sb, 'biz-1', 100, undefined, 'NGN'); // tiny payout
     expect(result.allowed).toBe(true);
     expect(result.limit).toBe(50_000_000); // ₦500,000 in kobo
     expect(result.used).toBe(10_000_000);  // ₦100,000 in kobo

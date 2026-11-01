@@ -21,6 +21,7 @@ jobs:
     name: Verify trusted reduced release plan
     runs-on: ubuntu-24.04
     outputs:
+      payout_policy: ${{ steps.plan.outputs.payout_policy }}
       merchant_target: ${{ steps.plan.outputs.merchant_target }}
       admin_target: ${{ steps.plan.outputs.admin_target }}
     steps:
@@ -75,6 +76,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           REDUCED_RELEASE_MANIFEST: ${{ secrets.REDUCED_RELEASE_MANIFEST }}
+          PRIVATE_RELEASE_RECEIPT: ${{ needs.plan.outputs.payout_policy == 'true' && secrets.PRIVATE_RELEASE_RECEIPT || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_REPORT: ${{ needs.plan.outputs.payout_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_REPORT || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_SHA256: ${{ needs.plan.outputs.payout_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_SHA256 || '' }}
           VERIFY_RUN_ID: ${{ inputs.verify_run_id }}
           VERIFY_RUN_ATTEMPT: ${{ inputs.verify_run_attempt }}
         run: node trusted/scripts/reduced-release-gate.mjs deploy merchant-source admin-source

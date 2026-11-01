@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutPaidEmail } from '@/lib/email/templates';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { getCountry } from '@/lib/countries';
+import { formatPayoutAmount } from '@/lib/payouts/format-amount';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logAdminAudit } from '@/lib/admin-audit';
@@ -66,7 +65,7 @@ export async function POST(
   // ── Fetch and validate payout ──
   const { data: payout } = await serviceClient
     .from('business_payouts')
-    .select('id, business_id, net_amount, status, transfer_method, payout_account_id, notes')
+    .select('id, business_id, net_amount, currency, status, transfer_method, payout_account_id, notes')
     .eq('id', id)
     .single();
 
@@ -172,8 +171,7 @@ export async function POST(
     .single();
 
   if (biz) {
-    const cc = (biz.country_code || 'NG') as CountryCode;
-    const amountStr = formatCurrency(Number(payout.net_amount), cc);
+    const amountStr = formatPayoutAmount(Number(payout.net_amount), payout.currency);
 
     const { data: ownerProfile } = await serviceClient
       .from('profiles')

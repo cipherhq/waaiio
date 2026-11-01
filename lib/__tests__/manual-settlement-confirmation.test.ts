@@ -88,7 +88,7 @@ describe('Manual payout: approve sets approved status', () => {
 
     const payoutData = {
       id: 'p1', business_id: 'b1', status: 'pending',
-      net_amount: 100, currency: 'NGN', payout_account_id: 'pa1',
+      net_amount: 100, currency: 'USD', payout_account_id: 'pa1',
       period_start: '2024-01-01', period_end: '2024-01-07',
       flags: [],
     };
@@ -147,6 +147,7 @@ describe('Manual payout: approve sets approved status', () => {
     expect(res.status).toBe(200);
     const responseBody = await res.json();
     expect(responseBody.status).toBe('approved');
+    expect((await import('@/lib/email/templates')).payoutApprovedEmail).toHaveBeenCalledWith('Test Biz', expect.stringMatching(/^USD\s/), 'manual_bank');
 
     // The DB update should set 'approved', NOT 'paid'
     expect(capturedUpdatePayload).toBeTruthy();
@@ -194,6 +195,7 @@ describe('Manual payout: confirm-settlement', () => {
 
   function setupConfirmMocks(opts: {
     payoutStatus?: string;
+    payoutCurrency?: string;
     payoutMethod?: string;
     payoutBusinessId?: string;
     confirmResult?: unknown[] | null;
@@ -201,6 +203,7 @@ describe('Manual payout: confirm-settlement', () => {
   } = {}) {
     const {
       payoutStatus = 'approved',
+      payoutCurrency = 'NGN',
       payoutMethod = 'manual_bank',
       payoutBusinessId = 'b1',
       confirmResult = [{ id: 'p1' }],
@@ -231,7 +234,7 @@ describe('Manual payout: confirm-settlement', () => {
       if (table === 'business_payouts') {
         chain.single = vi.fn().mockResolvedValue({
           data: {
-            id: 'p1', business_id: payoutBusinessId, net_amount: 100, currency: 'NGN', status: payoutStatus, transfer_method: payoutMethod, payout_account_id: 'pa1', notes: null,
+            id: 'p1', business_id: payoutBusinessId, net_amount: 100, currency: payoutCurrency, status: payoutStatus, transfer_method: payoutMethod, payout_account_id: 'pa1', notes: null,
           },
         });
       } else if (table === 'businesses') {
@@ -285,7 +288,7 @@ describe('Manual payout: confirm-settlement', () => {
   });
 
   it('valid confirmation: approved manual_bank with reference → paid', async () => {
-    setupConfirmMocks();
+    setupConfirmMocks({ payoutCurrency: 'USD' });
     const { POST } = await import('@/app/api/admin/payouts/[id]/confirm-settlement/route');
     const req = makePostRequest('/api/admin/payouts/p1/confirm-settlement', {
       transfer_reference: 'NIP-20261019-123456', attestation: true,
@@ -294,6 +297,7 @@ describe('Manual payout: confirm-settlement', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe('paid');
+    expect((await import('@/lib/email/templates')).payoutPaidEmail).toHaveBeenCalledWith('Test Biz', expect.stringMatching(/^USD\s/), 'NIP-20261019-123456');
   });
 
   it('missing transfer_reference → 400', async () => {
