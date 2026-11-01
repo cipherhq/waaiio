@@ -1437,7 +1437,7 @@ REVOKE ALL ON FUNCTION public.promote_candidate_with_merchant_auth(UUID,UUID,UUI
 GRANT EXECUTE ON FUNCTION public.promote_candidate_with_merchant_auth(UUID,UUID,UUID,UUID,TEXT,TEXT) TO service_role;
 
 -- ── §6. disconnect_with_merchant_auth ───────────────────────────────────
--- Lock business → verify owner → call transition_to_shared → check JSON ok →
+-- Lock business → verify owner → transition to exact target → check JSON ok →
 -- consume step-up → assert target → audit. RAISE on failure = full rollback.
 
 CREATE OR REPLACE FUNCTION public.disconnect_with_merchant_auth(
@@ -1476,6 +1476,9 @@ BEGIN
   IF v_biz.wa_method = 'shared' AND v_biz.assigned_channel_id = p_expected_target_channel_id THEN
     RETURN jsonb_build_object('ok', true, 'idempotent', true,
       'channel_id', v_biz.assigned_channel_id);
+  END IF;
+  IF v_biz.wa_method = 'shared' THEN
+    RAISE EXCEPTION 'disconnect_auth: shared_replacement_requires_admin';
   END IF;
   v_old_channel := COALESCE(v_biz.whatsapp_channel_id, v_biz.assigned_channel_id);
 

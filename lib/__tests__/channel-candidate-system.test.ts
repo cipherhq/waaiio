@@ -152,9 +152,9 @@ describe('OTP route — R9 §4 UI contract', () => {
     expect(verifyBlock).toContain(".eq('status', 'validating')");
   });
 
-  it('verify calls promote_channel_candidate on all-READY', () => {
+  it('verify calls promote_candidate_with_merchant_auth on all-READY', () => {
     const verifyBlock = addNumberSource.slice(addNumberSource.indexOf("action === 'verify'"));
-    expect(verifyBlock).toContain("'promote_channel_candidate'");
+    expect(verifyBlock).toContain("'promote_candidate_with_merchant_auth'");
   });
 
   it('verify marks candidate failed on registration failure', () => {

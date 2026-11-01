@@ -30,16 +30,16 @@ async function show() {
   return data;
 }
 describe('directory assigned-channel links', () => {
-  it('renders the assigned staging shared number with business code for a UK merchant', async () => {
+  it('renders a permanent merchant link for a ready assigned shared channel', async () => {
     const data = await show();
     expect(data.businesses[0]).toMatchObject({wa_method:'shared',wa_phone:'12404712139'});
-    expect(screen.getByRole('link',{name:/WhatsApp/}).getAttribute('href')).toBe('https://wa.me/12404712139?text=AYO');
+    expect(screen.getByRole('link',{name:/WhatsApp/}).getAttribute('href')).toBe('https://www.waaiio.com/m/business-a');
     expect(document.querySelector('a[href*="12029226251"]')).toBeNull();
   });
-  it('renders an owned dedicated number without a shared business code', async () => {
+  it('renders a permanent merchant link for a ready owned dedicated channel', async () => {
     state.rows.businesses = [{id:'business-a',wa_method:'dedicated',whatsapp_channel_id:'dedicated'}];
     state.rows.whatsapp_channels = [{id:'dedicated',business_id:'business-a',channel_type:'dedicated',phone_number:'447700900123',is_active:true,connection_status:'active'}];
-    await show(); expect(screen.getByRole('link',{name:/WhatsApp/}).getAttribute('href')).toBe('https://wa.me/447700900123?text=Hi');
+    await show(); expect(screen.getByRole('link',{name:/WhatsApp/}).getAttribute('href')).toBe('https://www.waaiio.com/m/business-a');
   });
   it.each(['inactive','unassigned','wrong-owner'])('does not invent a fallback number when %s', async (kind) => {
     if(kind==='inactive') state.rows.whatsapp_channels = [{id:'stage-channel',channel_type:'shared',phone_number:'12404712139',is_active:false,connection_status:'active'}];

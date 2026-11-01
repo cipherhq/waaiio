@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { canonicalMerchantParams } from '@/lib/merchant-step-up';
 import { hashOperationParams } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
+import { decryptToken } from '@/lib/encryption';
 
 /**
  * POST /api/whatsapp/add-number/finish
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
   // Verify the candidate is ready and owned by this business
   const { data: cand } = await service
     .from('whatsapp_channel_candidates')
-    .select('id, status, business_id, connection_source, waba_id')
+    .select('id, status, business_id, connection_source, waba_id, meta_access_token')
     .eq('id', candidate_id)
     .eq('business_id', business_id)
     .single();
@@ -102,9 +103,11 @@ export async function POST(request: NextRequest) {
 
     // Post-promotion: templates + trial/allowance reconciliation (non-fatal)
     // Use candidate's WABA or fall back to platform WABA
-    const effectiveWabaId = cand.waba_id || process.env.META_CLOUD_WABA_ID;
-    const effectiveToken = process.env.META_CLOUD_ACCESS_TOKEN;
     try {
+      const hosted = cand.connection_source === 'waaiio_hosted';
+      const effectiveWabaId = cand.waba_id || (hosted ? process.env.META_CLOUD_WABA_ID : undefined);
+      const effectiveToken = hosted ? process.env.META_CLOUD_ACCESS_TOKEN
+        : cand.meta_access_token ? decryptToken(cand.meta_access_token) : undefined;
       if (effectiveWabaId && effectiveToken) {
         const { provisionTemplates } = await import('@/lib/channels/provision-templates');
         await provisionTemplates(effectiveWabaId, effectiveToken);

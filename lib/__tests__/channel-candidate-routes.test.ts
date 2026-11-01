@@ -116,7 +116,7 @@ const mockServiceFrom = vi.fn((table: string) => {
 const mockServiceRpc = vi.fn(async (fn: string, args: Record<string, unknown>) => {
   rpcCalls.push({ fn, args });
   if (fn === 'check_phone_conflict') return { data: { conflict: false }, error: null };
-  if (fn === 'promote_channel_candidate') return { data: { ok: true, channel_id: 'ch-new', action: 'first_connect' }, error: null };
+  if (fn === 'promote_candidate_with_merchant_auth') return { data: { ok: true, channel_id: 'ch-new', action: 'first_connect' }, error: null };
   if (fn === 'activate_trial_if_eligible') return { data: { activated: true }, error: null };
   return { data: null, error: null };
 });
@@ -305,7 +305,7 @@ describe('OTP add-number handler', () => {
     const res = await POST(makeReq('/api/whatsapp/add-number?action=verify', { business_id: 'biz-1', otp: '123456', candidate_id: 'cand-test' }));
     expect(res.status).toBe(422);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('verify: webhook failure -> failed, no promotion', async () => {
@@ -318,14 +318,14 @@ describe('OTP add-number handler', () => {
     const { POST } = await import('@/app/api/whatsapp/add-number/route');
     const res = await POST(makeReq('/api/whatsapp/add-number?action=verify', { business_id: 'biz-1', otp: '123456', candidate_id: 'cand-test' }));
     expect(res.status).toBe(422);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('verify: success -> promotion RPC called', async () => {
     const { POST } = await import('@/app/api/whatsapp/add-number/route');
     const res = await POST(makeReq('/api/whatsapp/add-number?action=verify', { business_id: 'biz-1', otp: '123456', candidate_id: 'cand-test' }));
     expect(res.status).toBe(200);
-    const promo = rpcCalls.find(c => c.fn === 'promote_channel_candidate');
+    const promo = rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth');
     expect(promo).toBeDefined();
     expect(promo!.args.p_candidate_id).toBe('cand-test');
   });
@@ -441,7 +441,7 @@ describe('Facebook callback handler', () => {
     expect(insertIdx).toBeGreaterThanOrEqual(0);
     expect(registerIdx).toBeGreaterThan(insertIdx);
     // Promotion called
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeDefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeDefined();
   });
 
   it('registration failure: candidate failed, no promotion', async () => {
@@ -457,7 +457,7 @@ describe('Facebook callback handler', () => {
     const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(422);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('webhook failure: candidate failed, no promotion', async () => {
@@ -474,7 +474,7 @@ describe('Facebook callback handler', () => {
     const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(422);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('cross-source conflict: 409 before provider mutation', async () => {
@@ -487,7 +487,7 @@ describe('Facebook callback handler', () => {
     const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(409);
     expect(candidateInserts.length).toBe(0);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('M3: cross-business same-phone: 409 before provider mutation', async () => {

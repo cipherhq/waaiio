@@ -3,7 +3,7 @@
  *
  * Provides base schema (auth, roles, core tables), M439 section 1 extract
  * (admin_step_up_authorizations table), and deterministic seed data.
- * Actual migrations (M391, M430, M494, M496) are loaded via readFileSync
+ * Actual migrations (M391, M430, M494–M496) are loaded via readFileSync
  * in the test file for faithful reproduction.
  *
  * Source of M439 extract: supabase/migrations/439_admin_mfa_enforcement.sql

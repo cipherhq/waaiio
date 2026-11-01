@@ -103,6 +103,12 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   const [deleteError, setDeleteError] = useState('');
   const [reAuthAction, setReAuthAction] = useState<'delete' | 'email' | 'downgrade' | null>(null);
 
+  async function reloadSharedDestinations() {
+    setWaTargetId('');
+    const response = await fetch(`/api/settings/whatsapp-channel?business_id=${business.id}`);
+    if (response.ok) setWaChannel(await response.json());
+  }
+
   // Load WhatsApp channel info
   useEffect(() => {
     fetch(`/api/settings/whatsapp-channel?business_id=${business.id}`)
@@ -576,6 +582,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                         });
                         const prepData = await prepRes.json();
                         if (!prepRes.ok) {
+                          await reloadSharedDestinations();
                           if (prepData.code === 'NO_TOTP_ENROLLED') {
                             alert('Two-factor authentication is required. Please enable 2FA in your account settings first.');
                           } else {
@@ -609,7 +616,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                           body: JSON.stringify({ business_id: business.id, stepUpId: prepData.stepUpId, target_channel_id: destination.id }),
                         });
                         const delData = await delRes.json();
-                        if (!delRes.ok) { alert(delData.error || 'Disconnect failed'); return; }
+                        if (!delRes.ok) { await reloadSharedDestinations(); alert(delData.error || 'Disconnect failed'); return; }
                         setWaChannel({ wa_method: 'shared', channel: null });
                       } catch { alert('Disconnect failed. Please try again.'); } finally {
                         setWaDisconnecting(false);

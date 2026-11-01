@@ -4,12 +4,14 @@ import { createHash } from 'crypto';
 const mocks = vi.hoisted(() => ({ admin: vi.fn(), service: vi.fn(), prepare: vi.fn() }));
 vi.mock('@/lib/admin-auth', () => ({ requirePlatformAdmin: mocks.admin }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: mocks.service }));
+vi.mock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn() }));
 vi.mock('@/lib/admin-step-up', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/admin-step-up')>(), prepareStepUp: mocks.prepare }));
 import { POST as preview } from '@/app/api/admin/channel-changes/preview/route';
 import { GET, POST as create } from '@/app/api/admin/channel-changes/route';
 import { POST as approve } from '@/app/api/admin/channel-changes/[id]/approve/route';
 import { POST as refresh } from '@/app/api/admin/channel-changes/[id]/re-request/route';
 import { POST as execute } from '@/app/api/admin/channel-changes/[id]/execute/route';
+import { POST as reject } from '@/app/api/admin/channel-changes/[id]/reject/route';
 import { POST as prepare } from '@/app/api/admin/step-up/prepare/route';
 import { hashOperationParams, stableStringify } from '@/lib/admin-step-up';
 
@@ -25,6 +27,8 @@ let descriptorFailure = false;
 let mutationFailure = false;
 let version = 1;
 let selected = '';
+let filters: Array<[string, unknown]> = [];
+let updateBody: unknown;
 function descriptor(args: Record<string, unknown>) {
   return { action: args.p_action, actor_user_id: args.p_actor_id, session_id: args.p_session_id, approval_id: args.p_approval_id,
     prior_version: args.p_action === 'refresh' ? 1 : null, review_confirmed: args.p_action === 'approve', operation: { ...operation, request_version: version } };
@@ -39,7 +43,7 @@ async function previewFor(action = 'create') {
   return { input, data: await response.json(), response };
 }
 beforeEach(() => {
-  vi.clearAllMocks(); descriptorFailure = false; mutationFailure = false; version = 1; selected = '';
+  vi.clearAllMocks(); descriptorFailure = false; mutationFailure = false; version = 1; selected = ''; filters = []; updateBody = undefined;
   mocks.admin.mockResolvedValue(admin);
   mocks.prepare.mockResolvedValue({ stepUpId: 'step-1', challengeId: 'challenge-1', factorId: 'factor-1' });
   rpc = vi.fn(async (name, args) => {
@@ -47,15 +51,15 @@ beforeEach(() => {
     return { data: mutationFailure ? null : { ok: true, id: 'approval-1', new_channel_id: 'channel-1' }, error: mutationFailure ? { message: 'step_up_stale private-session' } : null };
   });
   mocks.service.mockReturnValue({ rpc, from: vi.fn(() => {
-    const query = { select: vi.fn((columns: string) => { selected = columns; return query; }), order: vi.fn(() => query), limit: vi.fn(() => query), eq: vi.fn(() => query), then: (resolve: (result: unknown) => unknown) => Promise.resolve({ data: [{ id: 'approval-1', ...operation }], error: null }).then(resolve) };
+    const query = { select: vi.fn((columns: string) => { selected = columns; return query; }), order: vi.fn(() => query), limit: vi.fn(() => query), eq: vi.fn((key, value) => { filters.push([key, value]); return query; }), in: vi.fn(() => query), update: vi.fn(value => { updateBody = value; return query; }), maybeSingle: async () => ({ data: { id: 'approval-1', request_type: 'recovery', business_id: 'business-1' }, error: null }), then: (resolve: (result: unknown) => unknown) => Promise.resolve({ data: [{ id: 'approval-1', ...operation }], error: null }).then(resolve) };
     return query;
   }) });
 });
 
 describe('channel change actual HTTP handlers', () => {
-  it.each(['preview', 'create', 'approve', 'refresh', 'execute', 'list'])('denies unauthenticated %s before service access', async route => {
+  it.each(['preview', 'create', 'approve', 'refresh', 'execute', 'reject', 'list'])('denies unauthenticated %s before service access', async route => {
     mocks.admin.mockResolvedValue(null);
-    const response = route === 'list' ? await GET(req(null, 'GET')) : await ({ preview, create, approve, refresh, execute }[route as 'preview'])(req({}), context);
+    const response = route === 'list' ? await GET(req(null, 'GET')) : await ({ preview, create, approve, refresh, execute, reject }[route as 'preview'])(req({}), context);
     expect(response.status).toBe(403); expect(mocks.service).not.toHaveBeenCalled();
   });
   it('preview uses verified actor/session and returns only safe evidence and destination', async () => {
@@ -110,6 +114,17 @@ describe('channel change actual HTTP handlers', () => {
     expect(response.status).toBe(200);
     expect(selected).not.toMatch(/\*|session_id|authorized_text|operation_descriptor/);
     expect(JSON.stringify(await response.json())).not.toMatch(/private-url|private-notes|private-fingerprint/);
+  });
+  it('scopes cancellation to the requester and returns admin CORS headers', async () => {
+    const response = await reject(req({ action: 'cancel' }), context);
+    expect(response.status).toBe(200);
+    expect(filters).toContainEqual(['requester_admin_id', 'admin-a']);
+    expect(updateBody).toEqual({ status: 'cancelled' });
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://admin.waaiio.com');
+  });
+  it('rejects unknown terminal actions without a write', async () => {
+    expect((await reject(req({ action: 'execute' }), context)).status).toBe(400);
+    expect(updateBody).toBeUndefined();
   });
   it('preserves existing generic step-up consumers', async () => {
     const params = { amount: 100 };

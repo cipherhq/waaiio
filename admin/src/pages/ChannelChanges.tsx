@@ -186,7 +186,9 @@ export default function ChannelChanges() {
         </div>
       </article>;
     })}
-    <StepUpDialog state={stepUp.state} onSubmit={async code => { if (pending) await stepUp.submitCode(code, pending); }}
+    <StepUpDialog open={['awaiting-code', 'verifying', 'executing'].includes(stepUp.state.phase)}
+      description={stepUp.state.description} error={stepUp.state.error}
+      loading={stepUp.state.phase === 'verifying' || stepUp.state.phase === 'executing'} onSubmit={async code => { if (pending) await stepUp.submitCode(code, pending); }}
       onCancel={() => { stepUp.reset(); setPending(null); setBusy(false); }} />
   </div>;
 }

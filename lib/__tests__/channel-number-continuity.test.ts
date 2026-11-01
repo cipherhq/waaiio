@@ -201,10 +201,10 @@ describe('Finish endpoint uses canonical params hash', () => {
 });
 
 describe('Legacy parameter hashing remains stable', () => {
-  it('execute and UI use identical payload for channel_change_execute', async () => {
+  it('identical legacy operation payloads produce identical hashes', async () => {
     const { hashOperationParams } = await import('@/lib/admin-step-up');
 
-    // What the admin UI sends to prepare
+    // Legacy payload shape remains supported by the general-purpose hash helper.
     const uiParams = {
       operation: 'channel_change_execute',
       approval_id: 'ap-123',
@@ -212,7 +212,7 @@ describe('Legacy parameter hashing remains stable', () => {
       request_type: 'recovery',
     };
 
-    // What the execute route now computes (fixed to match)
+    // A separately constructed copy has the same digest; HTTP contract tests live separately.
     const routeParams = {
       operation: 'channel_change_execute',
       approval_id: 'ap-123',
