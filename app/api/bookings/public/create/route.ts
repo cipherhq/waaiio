@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
       quantity,
       otpToken,
       classSessionId,
+      expectedTerms,
     } = body as {
       businessSlug: string;
       serviceId?: string;
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest) {
       quantity?: number;
       otpToken?: string;
       classSessionId?: string;
+      expectedTerms?: { price: number; deposit: number; country: string; quantity: number };
     };
 
     // Basic validation — exactly one of serviceId or appointmentId required
@@ -89,7 +91,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
     }
 
-    const partySize = Math.max(1, Math.min(quantity || 1, 50));
+    const partySize = quantity ?? 1;
+    if (!Number.isInteger(partySize) || partySize < 1 || partySize > 50) {
+      return NextResponse.json({ error: 'Invalid quantity' }, { status: 400 });
+    }
 
     const supabase = createServiceClient();
 
@@ -110,6 +115,7 @@ export async function POST(request: NextRequest) {
     let itemName: string;
     let itemPrice: number;
     let itemDeposit: number;
+    let configuredDeposit: number;
     let itemDuration: number;
     let itemBuffer: number;
     let itemMaxCapacity: number | null;
@@ -133,6 +139,7 @@ export async function POST(request: NextRequest) {
       itemId = appt.id;
       itemName = appt.name;
       itemPrice = appt.price || 0;
+      configuredDeposit = appt.deposit_amount ?? 0;
       itemDeposit = appt.deposit_amount || appt.price || 0;
       itemDuration = appt.duration_minutes || 30;
       itemBuffer = appt.buffer_minutes || 0;
@@ -155,6 +162,7 @@ export async function POST(request: NextRequest) {
       itemId = service.id;
       itemName = service.name;
       itemPrice = service.price || 0;
+      configuredDeposit = service.deposit_amount ?? 0;
       itemDeposit = service.deposit_amount || service.price || 0;
       itemDuration = service.duration_minutes || 30;
       itemBuffer = service.buffer_minutes || 0;
@@ -162,6 +170,12 @@ export async function POST(request: NextRequest) {
       itemMetadata = service.metadata as Record<string, unknown> | null;
       itemRequiresStaff = service.requires_staff ?? false;
       itemStaffIds = (service.staff_ids as string[]) || [];
+    }
+
+    const currentTerms = { price: itemPrice, deposit: configuredDeposit, country: business.country_code, quantity: partySize };
+    if (!expectedTerms || expectedTerms.price !== currentTerms.price || expectedTerms.deposit !== currentTerms.deposit
+        || expectedTerms.country !== currentTerms.country || expectedTerms.quantity !== partySize) {
+      return NextResponse.json({ code: 'terms_changed', error: 'Booking terms changed. Review the current price and confirm again.', currentTerms }, { status: 409 });
     }
 
     // Class XOR validation
@@ -298,7 +312,7 @@ export async function POST(request: NextRequest) {
 
     // Use atomic booking RPC to prevent race conditions
     const { data: slotResult, error: slotError } = await supabase
-      .rpc('book_slot_atomic' as string, {
+      .rpc('book_slot_authoritative_604' as string, {
         p_business_id: business.id,
         p_user_id: userId,
         p_service_id: isAppointmentBooking ? null : itemId,
@@ -319,19 +333,23 @@ export async function POST(request: NextRequest) {
         p_end_date: null,
         p_addons_snapshot: null,
         p_promo_code_id: null,
-        p_total_amount: totalDeposit,
+        p_total_amount: itemPrice * partySize,
         p_staff_name: autoStaffName,
         p_appointment_id: isAppointmentBooking ? itemId : null,
         p_buffer_minutes: itemBuffer,
         p_duration: itemDuration,
         p_class_session_id: classSessionId || null,
+        p_expected_terms: { ...currentTerms, discount: 0, source: 'public' },
       })
       .single() as {
-        data: { booking_id: string; reference_code: string; slot_available: boolean } | null;
+        data: { booking_id: string; reference_code: string; slot_available: boolean; committed_total: number; committed_deposit: number } | null;
         error: unknown;
       };
 
     if (slotError || !slotResult) {
+      if ((slotError as { message?: string } | null)?.message?.includes('terms_changed')) {
+        return NextResponse.json({ code: 'terms_changed', error: 'Booking terms changed. Refresh the page and confirm the current terms.' }, { status: 409 });
+      }
       logger.withContext({ op: 'public-booking.create', ...safeLogErrorContext(slotError) }).error('[PUBLIC_BOOKING] Failed to create booking');
       return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
     }
@@ -343,12 +361,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!Number.isSafeInteger(slotResult.committed_deposit) || slotResult.committed_deposit < 0
+        || !Number.isSafeInteger(slotResult.committed_total) || slotResult.committed_total < slotResult.committed_deposit) {
+      return NextResponse.json({ error: 'Committed booking terms unavailable' }, { status: 503 });
+    }
+
     // If deposit > 0, initialize payment
-    if (totalDeposit > 0) {
+    if (slotResult.committed_deposit > 0) {
       const paymentResult = await initializePayment(supabase, {
         bookingId: slotResult.booking_id,
         userId,
-        amount: totalDeposit,
+        amount: slotResult.committed_deposit,
         referenceCode: slotResult.reference_code,
         businessName: business.name,
         phone: guestPhone || '',

@@ -103,6 +103,19 @@ function getStaffPrompt(category: string, lang?: string): string {
 /** Special request options are now fully business-driven via metadata.special_request_options */
 // Removed hardcoded category defaults — businesses configure their own options in dashboard
 
+
+/** Expected customer terms only; monetary authority remains in M497. */
+function schedulingExpectedTerms604(d: Record<string, unknown>, country: string) {
+  return {
+    price: Number(d.service_price ?? 0), deposit: Number(d.service_deposit ?? 0),
+    discount: Number(d._promo_discount ?? 0), country,
+    service: d.service_id ?? null, staff: d.staff_id ?? null,
+    classSession: d._class_session_id ?? null, location: d.location_id ?? null,
+    date: d.date ?? null, time: String(d.time ?? '').slice(0, 5),
+    quantity: Number(d.party_size ?? 1), addons: d._selected_addons ?? [],
+  };
+}
+
 export const schedulingFlow: FlowDefinition = {
   type: 'scheduling',
   steps: [
@@ -2354,7 +2367,14 @@ export const schedulingFlow: FlowDefinition = {
           const payableAmount = servicePrice > 0 ? servicePrice : deposit;
           const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
           const requireTerms = payableAmount > 0 && meta.require_terms_before_payment !== false;
-          return { valid: true, data: { _action: 'confirm', ...(requireTerms ? { _terms_accepted: true } : {}) } };
+          return { valid: true, data: { _action: 'confirm',
+            ...(!data._is_table_reservation ? { _604_confirmation: {
+              service_id: data.service_id ?? null, date: data.date,
+              time: String(data.time ?? '').length === 5 ? String(data.time) + ':00' : data.time,
+              party_size: Number(data.party_size ?? 1),
+              terms: schedulingExpectedTerms604(data, ctx.business?.country_code || 'NG'),
+            } } : {}),
+            ...(requireTerms ? { _terms_accepted: true } : {}) } };
         }
         return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.confirm_hint') };
       },
@@ -2703,8 +2723,14 @@ export const schedulingFlow: FlowDefinition = {
         // Booking total is transaction authority, not merely the upfront deposit.
         // Table reservations: total = flat deposit (not multiplied by partySize).
         // Variable-price: total must be at least the known upfront amount.
-        const baseTransactionTotal = d._is_table_reservation ? totalDeposit : finalServicePrice * partySize;
-        const bookingTotalAmount = d._is_table_reservation
+        const addonTotal604 = ((d._selected_addons as Array<{ price: number }> | undefined) ?? [])
+          .reduce((sum, addon) => sum + Number(addon.price), 0);
+        const baseTransactionTotal = d._is_table_reservation ? totalDeposit : finalServicePrice * partySize + addonTotal604;
+        if (!d._is_table_reservation && !packageEnrollmentId && prepayMode !== 'free'
+            && serviceDeposit === 0 && depositPerGuest === 0 && isPrepay) {
+          totalDeposit = baseTransactionTotal;
+        }
+        let bookingTotalAmount = d._is_table_reservation
           ? totalDeposit
           : (servicePriceIsVariable
             ? Math.max(baseTransactionTotal, totalDeposit)
@@ -2852,7 +2878,7 @@ export const schedulingFlow: FlowDefinition = {
           } else if (packageEnrollmentId) {
             // ── Atomic package booking: booking + claim in ONE PostgreSQL transaction ──
             const { data: pkgResult, error: pkgError } = await ctx.supabase
-              .rpc('book_with_package_atomic' as string, {
+              .rpc('book_with_package_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
                 p_user_id: userId,
                 p_service_id: isAppointment ? null : ((d.service_id as string) || null),
@@ -2882,6 +2908,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_bot_session_id: ctx.session.id,
                 p_class_session_id: (d._class_session_id as string) || null,
                 p_enrollment_id: packageEnrollmentId,
+                p_expected_terms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'),
               });
 
             if (pkgError || !pkgResult?.success) {
@@ -2899,7 +2926,7 @@ export const schedulingFlow: FlowDefinition = {
           } else {
             // ── Standard non-package booking ──
             const { data: slotResult, error: slotError } = await ctx.supabase
-              .rpc('book_slot_atomic' as string, {
+              .rpc('book_slot_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
                 p_user_id: userId,
                 p_service_id: isAppointment ? null : ((d.service_id as string) || null),
@@ -2928,6 +2955,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_duration: (d.service_duration as number) || 30,
                 p_bot_session_id: ctx.session.id,
                 p_class_session_id: (d._class_session_id as string) || null,
+                p_expected_terms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'),
               })
               .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
@@ -3014,10 +3042,7 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (isNewBooking) {
-          // Increment promo code usage atomically
-          if (!d._is_table_reservation && d._promo_id) {
-            await ctx.supabase.rpc('increment_promo_usage', { p_code_id: d._promo_id as string });
-          }
+          // M497 owns promo reservation and exactly-once finalization.
 
           // Convert referral if applied
           if (d.referral_id) {
@@ -3033,6 +3058,29 @@ export const schedulingFlow: FlowDefinition = {
           }
         }
 
+        // Use persisted authority on create, response-loss recovery and payment retry.
+        if (!d._is_table_reservation) {
+          const { data: committed, error: committedError } = await ctx.supabase.from('bookings')
+            .select('id, total_amount, deposit_amount, service_id, appointment_id, party_size, date, time, class_session_id, staff_id')
+            .eq('id', booking.id).eq('business_id', ctx.business!.id)
+            .eq('user_id', userId).eq('bot_session_id', ctx.session.id)
+            .in('status', ['pending', 'confirmed', 'in_progress']).single();
+          const sameSelection = committed
+            && committed.service_id === (isAppointmentBooking ? null : (d.service_id || null))
+            && committed.appointment_id === (isAppointmentBooking ? (d.service_id || null) : null)
+            && committed.party_size === partySize && committed.date === d.date
+            && String(committed.time).slice(0, 5) === String(d.time).slice(0, 5)
+            && committed.class_session_id === (d._class_session_id || null)
+            && committed.staff_id === (d.staff_id || null);
+          const committedTotal = Number(committed?.total_amount);
+          const committedDeposit = Number(committed?.deposit_amount);
+          if (committedError || !sameSelection || !Number.isSafeInteger(committedTotal)
+              || !Number.isSafeInteger(committedDeposit) || committedDeposit < 0 || committedTotal < committedDeposit) {
+            return [{ type: 'text', text: await ctx.t('Your booking terms could not be verified. Please contact the business before retrying payment.') }];
+          }
+          totalDeposit = committedDeposit;
+          bookingTotalAmount = committedTotal;
+        }
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;

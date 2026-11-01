@@ -131,6 +131,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
   const [guestName, setGuestName] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
+  const [termsNeedRefresh, setTermsNeedRefresh] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [emailVerified, setEmailVerified] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
@@ -273,12 +274,23 @@ export default function BookingForm({ business, services }: BookingFormProps) {
           guestEmail: guestEmail.trim().toLowerCase(),
           guestPhone: guestPhone || undefined,
           otpToken,
+          expectedTerms: { price: selectedService.price, deposit: selectedService.deposit_amount ?? 0, country: business.country_code, quantity: 1 },
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
+        if (data.code === 'terms_changed') {
+          setAgreedToTerms(false);
+          if (data.currentTerms && data.currentTerms.country === business.country_code
+              && Number.isSafeInteger(data.currentTerms.price) && data.currentTerms.price >= 0
+              && Number.isSafeInteger(data.currentTerms.deposit) && data.currentTerms.deposit >= 0) {
+            setSelectedService({ ...selectedService, price: data.currentTerms.price, deposit_amount: data.currentTerms.deposit });
+          } else {
+            setTermsNeedRefresh(true);
+          }
+        }
         setError(data.error || 'Something went wrong. Please try again.');
         setSubmitting(false);
         return;
@@ -638,9 +650,10 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                 </span>
               </label>
 
+              {termsNeedRefresh && <button type="button" onClick={() => window.location.reload()} className="text-brand underline">Refresh booking details</button>}
               <button
                 onClick={handleBooking}
-                disabled={submitting || !agreedToTerms}
+                disabled={submitting || !agreedToTerms || termsNeedRefresh}
                 className="w-full rounded-lg bg-brand py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
               >
                 {submitting
