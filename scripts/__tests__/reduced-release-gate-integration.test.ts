@@ -1,5 +1,6 @@
 import { beforeEach,afterEach,describe,it,expect,vi } from 'vitest';
 import { mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,existsSync,chmodSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve,join } from 'node:path';
 import { execFileSync,spawnSync } from 'node:child_process';
 import { TARGETS,hash,inspectTarget,testTarget,testIntegration,validateIntegrationReceipt,preflight,deployReduced } from '../reduced-release-gate.mjs';
@@ -102,6 +103,16 @@ describe('actual reduced orchestration with local Git, ZIPs and mocked external 
     expect(requests.some(r=>r.method!=='GET')).toBe(false);
   } finally {logged.mockRestore();}
  });
+ it('keeps new acceptance inputs empty in the actual v1 CLI environment',async()=>{
+  const workflow=createRequire(import.meta.url)('js-yaml').load(readFileSync(resolve('.github/workflows/deploy-reduced-release.yml'),'utf8'));
+  expect(workflow.jobs.plan.outputs.payout_policy).toBe('${{ steps.plan.outputs.payout_policy }}');
+  const step=workflow.jobs.deploy.steps.find(s=>s.name==='Verify both evidence chains and deploy exact clean targets');
+  const keys=['PRIVATE_RELEASE_RECEIPT','PRIVATE_RELEASE_ACCEPTANCE_REPORT','PRIVATE_RELEASE_ACCEPTANCE_SHA256'];
+  for(const key of keys){expect(step.env[key]).toBe("${{ needs.plan.outputs.payout_policy == 'true' && secrets."+key+" || '' }}");env[key]='';}
+  await deployReduced(manifest,controlPath,sourcePaths,'123',1,env);
+  const calls=readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);
+  for(const call of calls)for(const key of keys)expect(call.env[key]).toBe('');
+ });
  it('stops on second-project failure with no automatic rollback',async()=>{state.failAdmin=true;persist();await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow();const calls=readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);expect(calls.every(c=>c.args[0]==='deploy')).toBe(true);expect(JSON.parse(readFileSync(join(dir,'state.json'),'utf8')).merchant.sha).toBe(manifest.projects.merchant.target_sha);});
 });
 
@@ -161,7 +172,8 @@ function attachPrivateEvidence(){
  const reportBytes=JSON.stringify(report),approvedHash=digest(reportBytes);
  Object.assign(env,{REDUCED_RELEASE_MANIFEST:rawManifest,PRIVATE_RELEASE_ACCEPTANCE_REPORT:reportBytes,PRIVATE_RELEASE_ACCEPTANCE_SHA256:approvedHash,PRIVATE_RELEASE_RECEIPT:JSON.stringify({schema_version:2,binding,code_verification,approved_at:new Date(now).toISOString(),owner_approval_reference:'private',acceptance_artifact_sha256:approvedHash})});
 }
-describe('payout v2 actual deployment orchestration',()=>{
+// Actual Git/blob/ZIP checks can exceed the default5s under shared-runner load.
+describe('payout v2 actual deployment orchestration',{timeout:15000},()=>{
  function integrationNpm(skip=false){const file=join(dir,'bin/npm');writeFileSync(file,`#!/usr/bin/env node\nconst fs=require('fs');fs.appendFileSync(${JSON.stringify(join(dir,'integration-npm.log'))},JSON.stringify({args:process.argv.slice(2),env:process.env})+'\\n');if(process.argv[2]==='exec'){const counts=${JSON.stringify(INTEGRATION_SQL_TESTS)};console.log(JSON.stringify({testResults:Object.entries(counts).map(([file,count])=>({name:require('path').resolve(file),status:'passed',assertionResults:Array.from({length:count},()=>({status:${JSON.stringify(skip?'skipped':'passed')}}))}))}));}`);chmodSync(file,0o755);}
  it('executes trusted integration commands with localhost PG only and validates exact SQL/source receipt',async()=>{
   integrationNpm();const testEnv={...env,VERCEL_TOKEN:undefined,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',TEST_DATABASE_URL:'must-not-be-used'};
