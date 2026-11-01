@@ -352,7 +352,13 @@ describe('Complete paid appointment regression path', () => {
 
       fromMock.mockImplementation((table: string) => {
         const chain = makeChain();
-        if (table === 'whatsapp_users') {
+        if (table === 'bookings') {
+          chain.single.mockResolvedValue({ data: {
+            id: 'booking-uuid-001', service_id: 'svc-uuid-001', appointment_id: null,
+            party_size: 1, date: ctx.session.session_data.date, time: '10:00:00',
+            class_session_id: null, staff_id: null, total_amount: 5000, deposit_amount: 2000,
+          }, error: null });
+        } else if (table === 'whatsapp_users') {
           chain.maybeSingle.mockResolvedValue({ data: { id: 'user-uuid-001', phone: '+2348012345678' }, error: null });
         } else if (table === 'businesses') {
           chain.single.mockResolvedValue({ data: bizData, error: null });

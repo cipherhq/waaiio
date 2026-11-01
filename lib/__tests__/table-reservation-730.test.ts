@@ -1418,7 +1418,7 @@ describe('#731: table selection and flat-deposit promo boundaries', () => {
         p_deposit_status: deposit > 0 ? 'pending' : 'none',
         p_status: deposit > 0 ? 'pending' : 'confirmed',
       }));
-      expect(vi.mocked(ctx.supabase.rpc).mock.calls.some(([name]) => name === 'book_slot_atomic' || name === 'increment_promo_usage')).toBe(false);
+      expect(vi.mocked(ctx.supabase.rpc).mock.calls.some(([name]) => name === 'book_slot_atomic' || name === 'book_slot_authoritative_604' || name === 'increment_promo_usage')).toBe(false);
       expect(ctx.session.session_data).toMatchObject({ booking_id: 'booking-table', deposit_amount: deposit, total_amount: deposit });
       expectNoPromo(ctx);
       expect(JSON.stringify(messages)).not.toMatch(/SAVE20|discount/);
@@ -1427,7 +1427,7 @@ describe('#731: table selection and flat-deposit promo boundaries', () => {
       else expect(initializePayment).not.toHaveBeenCalled();
     });
 
-    it('normal scheduling creation retains the discount, promo linkage and usage increment', async () => {
+    it('normal scheduling creation retains discount and promo linkage through atomic reservation', async () => {
       const { schedulingFlow } = await flows();
       const ctx = context({
         service_id: 'service-a', service_price: 5000, service_deposit: 0,
@@ -1435,15 +1435,21 @@ describe('#731: table selection and flat-deposit promo boundaries', () => {
       });
       ctx.business!.metadata = { prepay_mode: 'full', require_terms_before_payment: false };
       vi.mocked(ctx.supabase.rpc).mockImplementation(((name: string) => {
-        if (name === 'book_slot_atomic') return query({ booking_id: 'booking-service', reference_code: 'SERVICE1', slot_available: true });
+        if (name === 'book_slot_authoritative_604') return query({ booking_id: 'booking-service', reference_code: 'SERVICE1', slot_available: true });
         return Promise.resolve({ data: null, error: null });
       }) as any);
+      vi.mocked(ctx.supabase.from).mockImplementation(((table: string) => table === 'bookings' ? query({
+        id: 'booking-service', service_id: 'service-a', appointment_id: null,
+        party_size: 1, date: '2030-01-07', time: '18:00:00', staff_id: null,
+        class_session_id: null, total_amount: 4000, deposit_amount: 4000,
+      }) : query()) as any);
       await getStep(schedulingFlow, 'create_booking').prompt(ctx);
-      expect(ctx.supabase.rpc).toHaveBeenCalledWith('book_slot_atomic', expect.objectContaining({
+      expect(ctx.supabase.rpc).toHaveBeenCalledWith('book_slot_authoritative_604', expect.objectContaining({
         p_service_id: 'service-a', p_promo_code_id: 'promo-a',
         p_deposit_amount: 4000, p_total_amount: 4000,
       }));
-      expect(ctx.supabase.rpc).toHaveBeenCalledWith('increment_promo_usage', { p_code_id: 'promo-a' });
+      // M497 reserves atomically; payment finalization consumes the reservation.
+      expect(ctx.supabase.rpc).not.toHaveBeenCalledWith('increment_promo_usage', expect.anything());
       const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
       expect(initializePayment).toHaveBeenCalledWith(ctx.supabase, expect.objectContaining({ amount: 4000 }));
     });

@@ -1,0 +1,29 @@
+name: Core604 PostgREST acceptance
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/497_scheduling_price_authority_core.sql'
+      - 'lib/__tests__/scheduling-price-authority-604*'
+      - 'scripts/test-scheduling-price-authority-604-postgrest.sh'
+      - '.github/workflows/scheduling-price-authority-604-postgrest.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgrest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+      - run: npm ci
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Real old/new schema RPC acceptance, role denial and zero skips
+        run: bash scripts/test-scheduling-price-authority-604-postgrest.sh

@@ -34,6 +34,8 @@ function mockChain(overrides: Record<string, unknown> = {}): any {
 
 function buildSupabase(opts: {
   bookingUpdateError?: unknown;
+  bookingPromo?: boolean;
+  bookingPromoError?: boolean;
   feeInsertError?: unknown;
   orderUpdateError?: unknown;
   stockRpcError?: unknown;
@@ -43,6 +45,9 @@ function buildSupabase(opts: {
   orderItems?: Array<{ product_id: string; variant_id: string | null; quantity: number }>;
 } = {}) {
   const rpcFn = vi.fn().mockImplementation((name: string) => {
+    if (name === 'finalize_booking_promo_reservation') {
+      return Promise.resolve({ data: { finalized: !opts.bookingPromoError }, error: null });
+    }
     if (name === 'apply_invoice_payment') {
       if (opts.invoiceRpcError) return Promise.resolve({ data: null, error: opts.invoiceRpcError });
       return Promise.resolve({ data: { applied: true, amount: 5000 }, error: null });
@@ -80,7 +85,7 @@ function buildSupabase(opts: {
           })),
         })),
         // Postcondition read: .select().eq().single()
-        single: vi.fn().mockResolvedValue({ data: { status: 'confirmed', deposit_status: 'paid', business_id: 'biz-1', service_id: 'svc-1', guest_phone: '+234' }, error: null }),
+        single: vi.fn().mockResolvedValue({ data: { status: 'confirmed', deposit_status: 'paid', business_id: 'biz-1', service_id: 'svc-1', guest_phone: '+234', ...(opts.bookingPromo ? { promo_code_id: 'promo1', metadata: { scheduling_authority_604: {} } } : {}) }, error: null }),
       });
     }
     if (table === 'orders') {
@@ -287,5 +292,23 @@ describe('processSuccessfulPayment — FinalizationResult', () => {
     });
     const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
     expect(r.criticalSuccess).toBe(true);
+  });
+});
+
+describe('M497 required booking promo finalization', () => {
+  it('fails before downstream effects when promo finalization is not confirmed', async () => {
+    const { processSuccessfulPayment } = await import('../process-success');
+    const supabase = buildSupabase({ bookingPromo: true, bookingPromoError: true });
+    const result = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
+    expect(result.criticalSuccess).toBe(false);
+    expect(result.errors).toContain('booking_promo_finalization_failed');
+    expect(supabase.rpc).not.toHaveBeenCalledWith('apply_payment_spend_once', expect.anything());
+  });
+  it('binds the finalization request to the verified payment and booking', async () => {
+    const { processSuccessfulPayment } = await import('../process-success');
+    const supabase = buildSupabase({ bookingPromo: true });
+    const result = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: 'bk1', invoice_id: null, campaign_id: null });
+    expect(supabase.rpc).toHaveBeenCalledWith('finalize_booking_promo_reservation', { p_booking_id: 'bk1', p_payment_id: 'p1' });
+    expect(result.criticalSuccess).toBe(true);
   });
 });

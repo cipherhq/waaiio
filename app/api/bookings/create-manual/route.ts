@@ -102,6 +102,7 @@ export async function POST(request: NextRequest) {
     // Resolve the bookable item — service or appointment
     let itemName: string;
     let itemPrice: number;
+    let itemDeposit: number;
     let itemDuration: number;
     let itemMaxCapacity: number;
     let itemBufferMinutes: number;
@@ -111,13 +112,14 @@ export async function POST(request: NextRequest) {
     if (appointmentId) {
       const { data: appt } = await serviceClient
         .from('appointments')
-        .select('name, price, duration_minutes, max_capacity, buffer_minutes, requires_staff')
+        .select('name, price, deposit_amount, duration_minutes, max_capacity, buffer_minutes, requires_staff')
         .eq('id', appointmentId)
         .eq('business_id', businessId)
         .single();
       if (!appt) return NextResponse.json({ error: 'Appointment type not found' }, { status: 404 });
       itemName = appt.name;
       itemPrice = appt.price ?? 0;
+      itemDeposit = appt.deposit_amount ?? 0;
       itemDuration = appt.duration_minutes ?? 30;
       itemMaxCapacity = appt.max_capacity ?? 1;
       itemBufferMinutes = appt.buffer_minutes ?? 0;
@@ -125,13 +127,14 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: service } = await serviceClient
         .from('services')
-        .select('name, price, duration_minutes, max_capacity, buffer_minutes, requires_staff')
+        .select('name, price, deposit_amount, duration_minutes, max_capacity, buffer_minutes, requires_staff')
         .eq('id', serviceId)
         .eq('business_id', businessId)
         .single();
       if (!service) return NextResponse.json({ error: 'Service not found' }, { status: 404 });
       itemName = service.name;
       itemPrice = service.price ?? 0;
+      itemDeposit = service.deposit_amount ?? 0;
       itemDuration = service.duration_minutes ?? 30;
       itemMaxCapacity = service.max_capacity ?? 1;
       itemBufferMinutes = service.buffer_minutes ?? 0;
@@ -180,27 +183,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to resolve customer identity' }, { status: 500 });
     }
 
+    const quantity = partySize ?? 1;
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 50) {
+      return NextResponse.json({ error: 'Invalid party size' }, { status: 400 });
+    }
     // ── Atomic manual booking via wrapper RPC ──
     const { data: slotResult, error: slotError } = await serviceClient
-      .rpc('book_manual_slot_atomic', {
+      .rpc('book_manual_slot_authoritative_604', {
         p_business_id: businessId,
         p_user_id: customerId,
         p_service_id: appointmentId ? null : serviceId,
         p_staff_id: staffId || null,
         p_date: date,
         p_time: time,
-        p_party_size: partySize || 1,
+        p_party_size: quantity,
         p_max_capacity: itemMaxCapacity,
         p_guest_name: customerName,
         p_guest_phone: customerPhone,
         p_guest_email: customerEmail || null,
         p_notes: notes || null,
-        p_total_amount: itemPrice,
+        p_total_amount: itemPrice * quantity,
         p_staff_name: staffName,
         p_buffer_minutes: itemBufferMinutes,
         p_duration: itemDuration,
         p_appointment_id: appointmentId || null,
         p_class_session_id: classSessionId || null,
+        p_expected_terms: { price: itemPrice, deposit: itemDeposit, country: biz.country_code, discount: 0 },
       })
       .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 

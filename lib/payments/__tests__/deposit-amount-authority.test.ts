@@ -177,7 +177,9 @@ describe('#376 production wiring guards', () => {
 
   it('booking total uses transaction authority instead of deposit amount', () => {
     const src = readSource('lib/bot/flows/scheduling.flow.ts');
-    expect(src).toContain('const bookingTotalAmount =');
+    expect(src).toContain('let bookingTotalAmount =');
+    expect(src).toContain('bookingTotalAmount = committedTotal;');
+    expect(src).toContain('totalDeposit = committedDeposit;');
     expect(src).toContain('total_amount: bookingTotalAmount');
     expect(src).toContain('p_total_amount: bookingTotalAmount');
   });

@@ -98,7 +98,7 @@ export async function processSuccessfulPayment(
     // before proceeding to fee/ticket consequences.
     const { data: bookingPost, error: postErr } = await supabase
       .from('bookings')
-      .select('status, deposit_status')
+      .select('status, deposit_status, promo_code_id, metadata')
       .eq('id', payment.booking_id)
       .single();
 
@@ -134,6 +134,17 @@ export async function processSuccessfulPayment(
         logger.error('[PROCESS-SUCCESS] Booking deposit_status still not paid after repair', payment.booking_id);
         return { criticalSuccess: false, errors: criticalErrors };
       }
+    }
+
+    // Required booking promo consequences must complete before downstream effects.
+    if (bookingPost.promo_code_id && bookingPost.metadata?.scheduling_authority_604) {
+    const { data: promoResult, error: promoError } = await supabase.rpc('finalize_booking_promo_reservation', {
+      p_booking_id: payment.booking_id, p_payment_id: payment.id,
+    });
+    if (promoError || promoResult?.finalized !== true) {
+      criticalErrors.push('booking_promo_finalization_failed');
+      return { criticalSuccess: false, errors: criticalErrors };
+    }
     }
 
     try {

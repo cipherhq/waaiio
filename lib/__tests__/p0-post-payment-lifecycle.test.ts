@@ -817,6 +817,18 @@ describe('Blocker 4: Real caller boundaries + explicit zero-reinit', () => {
 
     const mockSb: any = {
       from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'bookings') {
+          const chain: any = {};
+          chain.select = vi.fn(() => chain);
+          chain.eq = vi.fn(() => chain);
+          chain.in = vi.fn(() => chain);
+          chain.single = vi.fn().mockResolvedValue({ data: {
+            id: 'bk-sched', service_id: 'svc-1', appointment_id: null, party_size: 1,
+            date: '2026-10-01', time: '10:00:00', staff_id: null, class_session_id: null,
+            total_amount: 3000, deposit_amount: 3000,
+          }, error: null });
+          return chain;
+        }
         if (table === 'bot_sessions') {
           return {
             update: vi.fn().mockReturnValue({
@@ -834,7 +846,7 @@ describe('Blocker 4: Real caller boundaries + explicit zero-reinit', () => {
         };
       }),
       rpc: vi.fn().mockImplementation((fnName: string) => {
-        if (fnName === 'book_slot_atomic') {
+        if (fnName === 'book_slot_authoritative_604') {
           // RPC returns a chainable query builder — .single() is called on it
           const result = { data: { booking_id: 'bk-sched', reference_code: 'REF-SCHED', slot_available: true }, error: null };
           return { single: vi.fn().mockResolvedValue(result) };
