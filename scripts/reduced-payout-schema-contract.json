@@ -3,7 +3,7 @@
     "function_body": "exact UTF-8 pg_proc.prosrc SHA256; no whitespace normalization",
     "function_metadata": "identity arguments, returns, language, security/volatility/strict/leakproof/parallel/config pinned",
     "acl": "explicit effective ACL incl PUBLIC; owner grantee normalized OWNER; actual production owner must independently remain approved",
-    "index_trigger": "collapse whitespace only in pg_get_indexdef/pg_get_triggerdef; retain expression/predicate/function/events/enabled fields",
+    "index_trigger": "collapse whitespace only; index pg_get_indexdef(indexrelid, 0, false), trigger pg_get_triggerdef(oid, true), constraint pg_get_constraintdef(oid, true); retain expression/predicate/function/events/enabled fields",
     "existing_auth": "Current reviewed hosted-existing authorization table privileges/action CHECK and session/audit prerequisites are pinned separately from intended future payout-function fixture definitions. No permission changes implied."
   },
   "canonical_sources": [
@@ -590,8 +590,8 @@
       "indisunique": true,
       "indisvalid": true,
       "indisready": true,
-      "definition": "CREATE UNIQUE INDEX idx_business_payouts_period_unique ON public.business_payouts USING btree (business_id, period_start, period_end, COALESCE(currency, '__legacy__'::character varying)) WHERE (status <> ALL (ARRAY['rejected'::text, 'failed'::text]))",
-      "definition_sha256": "ec282795795d1d7fec5ced7eefb425a4a800c5ab52834e5ef2684014f92a2340"
+      "definition": "CREATE UNIQUE INDEX idx_business_payouts_period_unique ON public.business_payouts USING btree (business_id, period_start, period_end, COALESCE(currency, '__legacy__'::character varying)) WHERE ((status)::text <> ALL ((ARRAY['rejected'::character varying, 'failed'::character varying])::text[]))",
+      "definition_sha256": "9162ee84549842e83bbc79a7093ee68a170163d3f37c32609eebd1433613afcd"
     }
   ],
   "columns": [
@@ -608,6 +608,13 @@
       "data_type": "character varying",
       "character_maximum_length": 3,
       "is_nullable": "YES"
+    },
+    {
+      "table_name": "business_payouts",
+      "column_name": "status",
+      "data_type": "character varying",
+      "character_maximum_length": 20,
+      "is_nullable": "NO"
     }
   ],
   "existing_auth_prerequisites": {

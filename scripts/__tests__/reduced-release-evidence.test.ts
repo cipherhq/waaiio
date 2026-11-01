@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PAYOUT_EVIDENCE_POLICY } from '../reduced-payout-policy.mjs';
 import { PAYOUT_POLICY, SCHEMA_MAX_AGE_MS, digest, manifestBinding, verifyPrivateEvidence, deploymentEnvironment } from '../reduced-release-evidence.mjs';
 const I='1'.repeat(40),B='2'.repeat(40),M='3'.repeat(40),A='4'.repeat(40),T='5'.repeat(40),H='6'.repeat(64);
 const now=Date.parse('2026-11-01T12:00:00Z');
@@ -90,4 +91,33 @@ describe('bounded cron and approval chronology',()=>{
   expect(()=>verifyPrivateEvidence(args(f))).toThrow('cron');
  });
  it('rejects approval that predates completed acceptance',()=>{const f=fixture();f.report.staging_acceptance.completed_at=new Date(now-10000).toISOString();expect(()=>verifyPrivateEvidence(args(f))).toThrow('acceptance');});
+});
+
+
+describe('exact VARCHAR payout index evidence', () => {
+ function indexFixture() {
+  const f: any = fixture();
+  f.policy.schema_contract_sha256 = PAYOUT_EVIDENCE_POLICY.schema_contract_sha256;
+  f.policy.schema_contracts = structuredClone(PAYOUT_EVIDENCE_POLICY.schema_contracts);
+  f.report.production_schema.contract_sha256 = f.policy.schema_contract_sha256;
+  f.report.production_schema.contracts = structuredClone(f.policy.schema_contracts);
+  return f;
+ }
+ it('accepts the fixed typed definition and its exact byte hash', () => {
+  const f = indexFixture(), index = f.policy.schema_contracts.indexes[0];
+  expect(index.definition).toContain("(status)::text <> ALL ((ARRAY['rejected'::character varying, 'failed'::character varying])::text[])");
+  expect(index.definition_sha256).toBe(digest(index.definition));
+  expect(f.policy.schema_contracts.columns).toContainEqual({table_name:'business_payouts',column_name:'status',data_type:'character varying',character_maximum_length:20,is_nullable:'NO'});
+  expect(() => verifyPrivateEvidence(args(f))).not.toThrow();
+ });
+ it.each(['old-three-column-key', 'wrong-predicate', 'invalid', 'not-ready', 'wrong-status-type'])('rejects independently rehashed %s schema evidence', kind => {
+  const f = indexFixture(), schema = f.report.production_schema.contracts, index = schema.indexes[0];
+  if (kind === 'old-three-column-key') index.definition = index.definition.replace(", COALESCE(currency, '__legacy__'::character varying)", '');
+  if (kind === 'wrong-predicate') index.definition = index.definition.replace("'failed'::character varying", "'paid'::character varying");
+  if (kind === 'invalid') index.indisvalid = false;
+  if (kind === 'not-ready') index.indisready = false;
+  if (kind === 'wrong-status-type') schema.columns.find(column => column.column_name === 'status').data_type = 'text';
+  index.definition_sha256 = digest(index.definition);
+  expect(() => verifyPrivateEvidence(args(f))).toThrow('schema');
+ });
 });

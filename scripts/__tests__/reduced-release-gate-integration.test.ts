@@ -160,7 +160,7 @@ describe('actual reduced CLI Owner-rerun authorization',()=>{
  },15000);
 });
 
-function integrationReceipt(){return {schema_version:2,kind:'integration-sql',manifest_sha256:digest(JSON.stringify(manifest)),integration_sha:manifest.integration_sha,merchant_target_sha:manifest.projects.merchant.target_sha,merchant_target_tree:manifest.projects.merchant.target_tree,run_id:'123',run_attempt:1,commands:[['npm','ci'],['npm','exec','--','vitest','run',...Object.keys(INTEGRATION_SQL_TESTS),'--reporter=json']],sources:{runtime:{'lib/admin-step-up.ts':digest('// fixture')},sql:{'supabase/migrations/498_manual_settlement_rejection_guard.sql':digest('// fixture')},tests:Object.fromEntries(Object.keys(INTEGRATION_SQL_TESTS).map(file=>[file,digest('// synthetic SQL test')]))},files:Object.fromEntries(Object.entries(INTEGRATION_SQL_TESTS).map(([file,count])=>[file,{passed:count,failed:0,skipped:0}]))};}
+function integrationReceipt(){return {schema_version:2,kind:'integration-sql',manifest_sha256:digest(JSON.stringify(manifest)),integration_sha:manifest.integration_sha,merchant_target_sha:manifest.projects.merchant.target_sha,merchant_target_tree:manifest.projects.merchant.target_tree,run_id:'123',run_attempt:1,commands:[['npm','ci'],['npm','exec','--','vitest','run',...Object.keys(INTEGRATION_SQL_TESTS),'--no-file-parallelism','--reporter=json']],sources:{runtime:{'lib/admin-step-up.ts':digest('// fixture')},sql:{'supabase/migrations/498_manual_settlement_rejection_guard.sql':digest('// fixture')},tests:Object.fromEntries(Object.keys(INTEGRATION_SQL_TESTS).map(file=>[file,digest('// synthetic SQL test')]))},files:Object.fromEntries(Object.entries(INTEGRATION_SQL_TESTS).map(([file,count])=>[file,{passed:count,failed:0,skipped:0}]))};}
 function attachPrivateEvidence(){
  const now=Date.now(),rawManifest=JSON.stringify(manifest),binding=manifestBinding(rawManifest,manifest),code_verification={run_id:'123',run_attempt:1};
  const policy=PAYOUT_EVIDENCE_POLICY,H='a'.repeat(64);
@@ -179,6 +179,8 @@ describe('payout v2 actual deployment orchestration',{timeout:15000},()=>{
   integrationNpm();const testEnv={...env,VERCEL_TOKEN:undefined,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',TEST_DATABASE_URL:'must-not-be-used'};
   const r=await testIntegration(manifest,controlPath,join(dir,'integration-out'),testEnv);validateIntegrationReceipt(r,manifest,'123',1,env.REDUCED_RELEASE_MANIFEST,controlPath);
   const calls=readFileSync(join(dir,'integration-npm.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);
+  expect(calls[1].args).toContain('--no-file-parallelism');
+  const parallelReceipt=structuredClone(r);parallelReceipt.commands[1]=parallelReceipt.commands[1].filter(arg=>arg!=='--no-file-parallelism');expect(()=>validateIntegrationReceipt(parallelReceipt,manifest,'123',1,env.REDUCED_RELEASE_MANIFEST,controlPath)).toThrow('receipt');
   expect(calls[0].env.TEST_DATABASE_URL).toBeUndefined();expect(calls[1].env.REQUIRE_PG_TESTS).toBe('true');expect(calls[1].env.TEST_DATABASE_URL).toBe('postgresql://postgres:postgres@127.0.0.1:5432/postgres');
   for(const c of calls){expect(c.env.GITHUB_TOKEN).toBeUndefined();expect(c.env.REDUCED_RELEASE_MANIFEST).toBeUndefined();expect(c.env.PRIVATE_RELEASE_ACCEPTANCE_REPORT).toBeUndefined();}
  });
