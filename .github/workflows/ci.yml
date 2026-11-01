@@ -67,7 +67,7 @@ jobs:
 
       - name: Run tests
         # Runs in security-acl-tests with a disposable database and zero-skip guard.
-        run: npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts
+        run: npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts --exclude lib/__tests__/legacy-accounting-hold.pg.test.ts --exclude lib/__tests__/recurring-payment-provenance.pg.test.ts
 
       - name: Build
         env:
@@ -4729,6 +4729,8 @@ jobs:
           # Discover files
           mapfile -t PG_FILES < <(find lib -name '*.pg.test.ts' -type f | sort)
           PG_COUNT=${#PG_FILES[@]}
+          printf '%s\n' "${PG_FILES[@]}" | grep -Fx 'lib/__tests__/legacy-accounting-hold.pg.test.ts' >/dev/null || { echo 'Missing required accounting-hold SQL proof'; exit 1; }
+          printf '%s\n' "${PG_FILES[@]}" | grep -Fx 'lib/__tests__/recurring-payment-provenance.pg.test.ts' >/dev/null || { echo 'Missing required recurring payment provenance SQL proof'; exit 1; }
           echo "Found $PG_COUNT .pg.test.ts file(s):"
           printf '  %s\n' "${PG_FILES[@]}"
 
