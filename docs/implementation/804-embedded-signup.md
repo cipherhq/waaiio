@@ -60,3 +60,14 @@ These are local tests, not proof of live Meta acceptance, live session storage a
 4. Send an inbound WhatsApp message and verify a reply from that same dedicated number, scoped to the correct merchant.
 5. Repeat with multiple visible numbers, cancellation, and a rejected connection. Confirm the previous/shared channel remains usable on failure.
 6. Verify shared-number and direct OTP paths still work independently. Do not change production to complete staging acceptance.
+
+## Owner-authorized production preparation
+
+Owner requested merge and production Embedded Signup setup, with direct OTP disabled only in production pending testing. `NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED=false` hides the direct-number choice, avoids restoring its pending OTP screen, and rejects request/resend/verify at the authenticated server route before provider or candidate mutations. Existing active channels and bot messaging are unaffected. Staging defaults to enabled for continued testing.
+
+| Change | Affected files/callers | Risk | Verification |
+|---|---|---|---|
+| Direct onboarding release switch | Dashboard connection page and sole direct OTP API; dashboard request/resend/verify callers | Bounded onboarding-only pause | Actual route tests deny all three actions without provider/database mutation; rendered test preserves Embedded Signup |
+| Console-error inventory | Exact-count test for removed unused onboarding handler | Test-only | Count reduced from two to one; strict assertion retained |
+
+Production Meta app is 1349751307206844. Its Vercel project already has an Embedded Signup config variable; this does not prove that the configuration is current or SDK login is enabled. Connected WhatsApp MCP tools do not expose creation of Facebook Login for Business configurations or SDK-domain settings. No fresh-number end-to-end certification is claimed; Aerospace postponed that test until the next day.

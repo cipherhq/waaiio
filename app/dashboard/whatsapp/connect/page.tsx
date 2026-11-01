@@ -50,6 +50,7 @@ export default function ConnectWhatsAppPage() {
   const [fbConnecting, setFbConnecting] = useState(false);
   const [fbDiscovery, setFbDiscovery] = useState<{ connection_id: string; accounts: SignupAccount[] } | null>(null);
 
+  const directOnboardingEnabled = process.env.NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED !== 'false';
   const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
   const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
 
@@ -73,7 +74,7 @@ export default function ConnectWhatsAppPage() {
           setStep('existing');
         } else if (data.candidate) {
           const cand = data.candidate;
-          if (cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
+          if (directOnboardingEnabled && cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
             // OTP validating → show OTP verification screen with masked phone
             setStep('verify-otp');
           } else if (cand.connection_source === 'embedded_signup' && (cand.status === 'pending' || cand.status === 'validating')) {
@@ -93,7 +94,7 @@ export default function ConnectWhatsAppPage() {
       }
     }
     checkExisting();
-  }, [business.id]);
+  }, [business.id, directOnboardingEnabled]);
 
   // Load FB SDK (only when advanced flow is selected)
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -436,7 +437,7 @@ export default function ConnectWhatsAppPage() {
       {/* ── Choose method ── */}
       {step === 'choose' && (
         <div className="space-y-3">
-          <button
+          {directOnboardingEnabled && <button
             onClick={() => setStep('enter-phone')}
             className="w-full rounded-lg border-2 border-brand bg-brand/5 p-4 text-left transition hover:bg-brand/10"
           >
@@ -447,7 +448,8 @@ export default function ConnectWhatsAppPage() {
                 <p className="text-xs text-gray-500 mt-0.5">Recommended — just enter your number and verify with OTP. Your number joins Waaiio&apos;s platform.</p>
               </div>
             </div>
-          </button>
+          </button>}
+          {!directOnboardingEnabled && <p className="text-sm text-gray-600 dark:text-gray-300">Direct number setup is temporarily unavailable. Connect your dedicated number through Meta below, or continue using your shared number.</p>}
 
           <button
             onClick={() => { setShowAdvanced(true); }}

@@ -602,3 +602,20 @@ describe('M2: Paid register -> subscribe orchestration', () => {
     expect(rpcCalls.find(c => c.fn === 'activate_trial_if_eligible')).toBeUndefined();
   });
 });
+
+describe('direct onboarding release switch', () => {
+  beforeEach(resetAll);
+  it.each(['request', 'resend', 'verify'])('blocks %s without provider or candidate mutation when disabled', async action => {
+    vi.stubEnv('NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED', 'false');
+    try {
+      const { POST } = await import('@/app/api/whatsapp/add-number/route');
+      const response = await POST(makeReq('/api/whatsapp/add-number?action=' + action, { business_id: 'biz-1', candidate_id: 'cand-test', otp: '123456' }));
+      expect(response.status).toBe(503);
+      expect((await response.json()).code).toBe('DIRECT_ONBOARDING_DISABLED');
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(candidateInserts).toHaveLength(0);
+      expect(candidateUpdates).toHaveLength(0);
+      expect(rpcCalls).toHaveLength(0);
+    } finally { vi.unstubAllEnvs(); }
+  });
+});

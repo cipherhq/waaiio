@@ -67,3 +67,10 @@ it('provider rejection stays recoverable and does not display success', async ()
   expect(screen.queryByText('WhatsApp Connected!')).toBeNull();
   await waitFor(() => expect((screen.getByRole('button', { name: 'Connect with Facebook' }) as HTMLButtonElement).disabled).toBe(false));
 });
+
+it('hides direct OTP when disabled but retains Embedded Signup', async () => {
+  vi.stubEnv('NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED', 'false');
+  await openMeta();
+  expect(screen.queryByRole('button', { name: /Enter Phone Number/ })).toBeNull();
+  await screen.findByLabelText('WhatsApp account');
+});
