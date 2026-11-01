@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 const mocks = vi.hoisted(() => ({getUser:vi.fn(),rpc:vi.fn(),from:vi.fn(),send:vi.fn()}));
 vi.mock('@supabase/ssr',()=>({createServerClient:()=>({auth:{getUser:mocks.getUser}})}));
@@ -47,8 +47,34 @@ describe('invitation issuance',()=>{
  function database(channel='email') {
   return {rpc:mocks.rpc,from:(table:string)=>{const q={select:()=>q,eq:()=>q,is:()=>q,maybeSingle:async()=>({data:table==='businesses'?{name:'Acme <team>',country_code:'US'}:table==='whatsapp_channels'?{id,phone_number:'+14155552671',phone_number_id:'meta-id'}:{id,enabled:true,channel,address:'team@example.com'},error:null})};return q;}} as never;
  }
- beforeEach(()=>{process.env.RESEND_API_KEY='test-placeholder';mocks.rpc.mockResolvedValue({data:{issued:true,expires_at:'future'},error:null});mocks.send.mockResolvedValue({success:true,id:'mail-id'});});
+ afterEach(()=>vi.unstubAllEnvs());
+ beforeEach(()=>{vi.stubEnv('NEXT_PUBLIC_APP_URL',undefined);process.env.RESEND_API_KEY='test-placeholder';mocks.rpc.mockResolvedValue({data:{issued:true,expires_at:'future'},error:null});mocks.send.mockResolvedValue({success:true,id:'mail-id'});});
  it('stores only a token hash and sends business-scoped explicit email invitation',async()=>{await expect(issueInvitation(database(),biz,id)).resolves.toEqual({sent:true,expires_at:'future'});const html=mocks.send.mock.calls[0][0].html;expect(html).toContain('Acme &lt;team&gt;');const token=html.match(/#token=([A-Za-z0-9_-]{43})/)[1];expect(mocks.rpc).toHaveBeenCalledWith('issue_merchant_notification_invitation',expect.objectContaining({p_token_hash:hashInvitation(token)}));expect(JSON.stringify(mocks.rpc.mock.calls)).not.toContain(token);});
+ it.each([
+  [undefined, 'https://www.waaiio.com'],
+  ['https://www.waaiio.com', 'https://www.waaiio.com'],
+  ['https://waaiio.com/', 'https://waaiio.com'],
+  ['https://staging.waaiio.com/', 'https://staging.waaiio.com'],
+  ['https://waaiiostaging-bajides-projects.vercel.app', 'https://waaiiostaging-bajides-projects.vercel.app'],
+  ['https://waaiiostaging-git-codex-merchant-notifications-bajides-projects.vercel.app', 'https://waaiiostaging-git-codex-merchant-notifications-bajides-projects.vercel.app'],
+ ])('routes confirmation using trusted configured origin %s',async(configured,expected)=>{
+  vi.stubEnv('NEXT_PUBLIC_APP_URL',configured);
+  await issueInvitation(database(),biz,id);
+  const html=mocks.send.mock.calls[0][0].html;
+  expect(html).toContain(`href="${expected}/notifications/confirm#token=`);
+  expect(html).not.toContain('/notifications/confirm?token=');
+ });
+ it.each([
+  'https://evil.example', 'https://staging.waaiio.com.evil.example',
+  'https://untrusted-preview.vercel.app', 'http://staging.waaiio.com',
+  'https://user:pass@staging.waaiio.com', 'https://staging.waaiio.com:8443',
+  'https://staging.waaiio.com/redirect', 'https://staging.waaiio.com/?next=evil',
+  'https://staging.waaiio.com/#fragment', 'invalid-url', '',
+ ])('rejects invalid confirmation origin before issuing or sending: %s',async(configured)=>{
+  vi.stubEnv('NEXT_PUBLIC_APP_URL',configured);
+  await expect(issueInvitation(database(),biz,id)).rejects.toMatchObject({status:503});
+  expect(mocks.rpc).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled();
+ });
  it('does not report development email as sent',async()=>{mocks.send.mockResolvedValue({success:true,dev:true});await expect(issueInvitation(database(),biz,id)).rejects.toThrow('not accepted');});
  it('pins a shared channel and names business in opt-in message',async()=>{const result=await issueInvitation(database('whatsapp'),biz,id);if (typeof result.url !== 'string') throw new Error('WhatsApp invitation must return a URL');expect(decodeURIComponent(result.url)).toContain('I agree to receive');expect(mocks.rpc).toHaveBeenCalledWith('issue_merchant_notification_invitation',expect.objectContaining({p_channel_id:id}));expect(mocks.send).not.toHaveBeenCalled();});
  it('does not send on rejected or throttled issuance',async()=>{mocks.rpc.mockResolvedValue({data:{issued:false,reason:'throttled'}});await expect(issueInvitation(database(),biz,id)).rejects.toThrow('wait');expect(mocks.send).not.toHaveBeenCalled();});
