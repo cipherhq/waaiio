@@ -1,4 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('@/lib/merchant-notifications/compatibility', () => ({ hasMerchantNotificationIntent: vi.fn().mockResolvedValue(false), hasStoppedMerchantNotifications: vi.fn().mockResolvedValue(false) }));
+import { hasMerchantNotificationIntent, hasStoppedMerchantNotifications } from '@/lib/merchant-notifications/compatibility';
+afterEach(() => { vi.unstubAllEnvs(); vi.mocked(hasMerchantNotificationIntent).mockResolvedValue(false); vi.mocked(hasStoppedMerchantNotifications).mockResolvedValue(false); });
 
 // Mock email client
 vi.mock('@/lib/email/client', () => ({
@@ -22,7 +26,7 @@ vi.mock('@/lib/constants', async () => {
   };
 });
 
-import { notifyOwnerNewOrder } from '../notify-owner';
+import { notifyOwnerNewOrder, notifyOwnerNewBooking, notifyOwnerNewTicketSale, notifyOwnerNewDonation, notifyOwnerNewInvoicePayment } from '../notify-owner';
 import { sendEmail } from '@/lib/email/client';
 
 const mockSendEmail = sendEmail as ReturnType<typeof vi.fn>;
@@ -277,5 +281,78 @@ describe('notifyOwnerNewOrder', () => {
 
     expect(mockSendEmail).not.toHaveBeenCalled();
     expect(sender.sendText).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('#811 durable recipient compatibility', () => {
+  const base = { businessId:'biz-1', businessName:'Shop', countryCode:'NG' as const, referenceCode:'ORD-123', customerName:'Customer', items:[], totalAmount:5000 };
+  function dependencies() {
+    const db = createMockSupabase({notifyWhatsappEnabled:true,notifyWhatsappPhone:'+2341234567890'});
+    return {db: {...db,rpc:vi.fn().mockResolvedValue({data:true,error:null})}, sender:createMockSender()};
+  }
+  it('suppresses only the matching channel and does not spend WhatsApp allowance on suppressed sends', async () => {
+    vi.stubEnv('MERCHANT_NOTIFICATIONS_ENABLED','true');
+    const {db,sender}=dependencies();
+    vi.mocked(hasMerchantNotificationIntent).mockImplementation(async (_db,input)=>input.channel==='whatsapp');
+    await notifyOwnerNewOrder({...base,supabase:db as any,sender:sender as any});
+    expect(mockSendEmail).toHaveBeenCalled(); expect(sender.sendText).not.toHaveBeenCalled(); expect(db.rpc).not.toHaveBeenCalled();
+    expect(hasMerchantNotificationIntent).toHaveBeenCalledWith(db,expect.objectContaining({businessId:'biz-1',channel:'whatsapp',address:'+2341234567890',event:'sale',sourceTable:'orders',reference:'ORD-123'}));
+  });
+  it('keeps WhatsApp independent when matching email intent exists and uses atomic quota', async () => {
+    vi.stubEnv('MERCHANT_NOTIFICATIONS_ENABLED','true');
+    const {db,sender}=dependencies(); mockSendEmail.mockClear();
+    vi.mocked(hasMerchantNotificationIntent).mockImplementation(async (_db,input)=>input.channel==='email');
+    await notifyOwnerNewOrder({...base,supabase:db as any,sender:sender as any});
+    expect(mockSendEmail).not.toHaveBeenCalled(); expect(sender.sendText).toHaveBeenCalledOnce();
+    expect(db.rpc).toHaveBeenCalledWith('reserve_merchant_notification_allowance',{p_business_id:'biz-1'});
+  });
+  it('appointment intent suppresses the exact appointment channel', async () => {
+    vi.stubEnv('MERCHANT_NOTIFICATIONS_ENABLED','true');
+    const {db,sender}=dependencies(); mockSendEmail.mockClear();
+    vi.mocked(hasMerchantNotificationIntent).mockImplementation(async (_db,input)=>input.event==='appointment' && input.channel==='email');
+    await notifyOwnerNewBooking({...base,supabase:db as any,sender:sender as any,date:'2026-11-01',time:'10:00',quantity:1,quantityLabel:'person'});
+    expect(mockSendEmail).not.toHaveBeenCalled(); expect(sender.sendText).toHaveBeenCalledOnce();
+  });
+  it('preserves invoice, ticket and donation legacy notifications even if another intent exists', async () => {
+    vi.stubEnv('MERCHANT_NOTIFICATIONS_ENABLED','true');
+    const {db,sender}=dependencies(); mockSendEmail.mockClear();
+    vi.mocked(hasMerchantNotificationIntent).mockResolvedValue(true).mockClear();
+    const opts={...base,supabase:db as any,sender:sender as any};
+    await notifyOwnerNewTicketSale({...opts,eventName:'Event',quantity:1});
+    await notifyOwnerNewDonation({...opts,donorName:'Donor',amount:5000});
+    await notifyOwnerNewInvoicePayment({...opts,invoiceNumber:'INV-1',amount:5000});
+    expect(hasMerchantNotificationIntent).not.toHaveBeenCalled();
+    expect(mockSendEmail).toHaveBeenCalledTimes(3); expect(sender.sendText).toHaveBeenCalledTimes(3);
+  });
+  it('hands off payment-triggered invoice and donation only for matching payment channel', async () => {
+    vi.stubEnv('MERCHANT_NOTIFICATIONS_ENABLED','true');
+    const {db,sender}=dependencies(); mockSendEmail.mockClear();
+    vi.mocked(hasMerchantNotificationIntent).mockClear().mockImplementation(async (_db,input)=>input.channel==='email');
+    const opts={...base,paymentId:'payment-1',supabase:db as any,sender:sender as any,amount:5000};
+    await notifyOwnerNewDonation({...opts,donorName:'Donor'});
+    await notifyOwnerNewInvoicePayment({...opts,invoiceNumber:'INV-1'});
+    expect(mockSendEmail).not.toHaveBeenCalled(); expect(sender.sendText).toHaveBeenCalledTimes(2);
+    expect(hasMerchantNotificationIntent).toHaveBeenCalledWith(db,expect.objectContaining({event:'payment',sourceTable:'payments',sourceId:'payment-1',channel:'email'}));
+  });
+  it('quota denial never prevents independent email', async () => {
+    vi.stubEnv('MERCHANT_NOTIFICATIONS_ENABLED','true');
+    const {db,sender}=dependencies(); db.rpc.mockResolvedValue({data:false,error:null}); mockSendEmail.mockClear();
+    await notifyOwnerNewOrder({...base,supabase:db as any,sender:sender as any});
+    expect(sender.sendText).not.toHaveBeenCalled(); expect(mockSendEmail).toHaveBeenCalledOnce();
+  });
+});
+
+describe('merchant STOP also protects legacy owner notifications', () => {
+  it.each(['true', 'false'])('suppresses WhatsApp with rollout %s while preserving email', async (flag) => {
+    mockSendEmail.mockClear();
+    vi.stubEnv('MERCHANT_NOTIFICATIONS_ENABLED', flag);
+    vi.mocked(hasStoppedMerchantNotifications).mockResolvedValue(true);
+    const supabase = createMockSupabase({ notifyWhatsappEnabled: true, notifyWhatsappPhone: '+2341234567890' });
+    const sender = createMockSender();
+    await notifyOwnerNewOrder({ supabase: supabase as never, sender, businessId: 'biz-stop', businessName: 'Shop', countryCode: 'NG', referenceCode: 'NEW-AFTER-STOP', customerName: 'Customer', items: [], totalAmount: 1000 });
+    expect(hasStoppedMerchantNotifications).toHaveBeenCalledWith(supabase, 'biz-stop', '+2341234567890');
+    expect(sender.sendText).not.toHaveBeenCalled();
+    expect(mockSendEmail).toHaveBeenCalled();
   });
 });

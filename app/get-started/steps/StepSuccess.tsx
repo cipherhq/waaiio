@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import type { StepSuccessProps } from './types';
+import { MerchantNotificationRecipients } from '@/components/dashboard/MerchantNotificationRecipients';
 import { getPromotionGuidance } from './promotionGuidance';
 
 export function StepSuccess({
@@ -255,6 +256,8 @@ export function StepSuccess({
               </a>
             </div>
           )}
+
+          <div className="mt-8"><MerchantNotificationRecipients businessId={successData.business_id} /></div>
 
           {/* ── What to set up next ── */}
           <div className="mt-8 text-left">

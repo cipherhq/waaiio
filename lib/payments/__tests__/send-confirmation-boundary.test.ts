@@ -80,6 +80,8 @@ vi.mock('@/lib/payments/saved-card-offer', () => ({
   retryPendingSavedCardOffer: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('@/lib/merchant-notifications/compatibility', () => ({ hasMerchantNotificationIntent: vi.fn().mockResolvedValue(false) }));
+
 // ── Mock Supabase factory ──
 function buildSupabase(paymentType: 'booking' | 'reservation' | 'order') {
   // eslint-disable-next-line
@@ -258,5 +260,29 @@ describe('sendProactiveConfirmation → handlePostCompletion call boundary', () 
     expect(args.amountPaid).toBe(8000);           // Orders: real amount for receipts
     expect(args.skipCustomerSpend).toBe(true);    // Stage 2 owns durable spend
     expect(args.skipAutomation).toBe(true);       // Orders skip automation at webhook
+  });
+});
+
+
+describe('#811 owner email handoff', () => {
+  it.each([true,false])('suppresses payment email only with exact durable intent: %s', async (hasIntent) => {
+    vi.clearAllMocks();
+    const { hasMerchantNotificationIntent } = await import('@/lib/merchant-notifications/compatibility');
+    const { sendEmail } = await import('@/lib/email/client');
+    const { sendProactiveConfirmation } = await import('../send-confirmation');
+    vi.mocked(hasMerchantNotificationIntent).mockResolvedValue(hasIntent);
+    const db=buildSupabase('booking');
+    const original=db.from.getMockImplementation()!;
+    db.from.mockImplementation((table:string)=>{
+      const query=original(table);
+      if(table==='businesses') query.single.mockResolvedValue({data:{subscription_tier:'free',owner_id:'owner-1'},error:null});
+      if(table==='profiles') query.single.mockResolvedValue({data:{email:'owner@example.com'},error:null});
+      return query;
+    });
+    await sendProactiveConfirmation(db as never,{id:'p1',amount:8000,booking_id:'bk-1',invoice_id:null,campaign_id:null,reservation_id:null,order_id:null});
+    expect(hasMerchantNotificationIntent).toHaveBeenCalledWith(db,{businessId:'biz-1',channel:'email',address:'owner@example.com',event:'payment',sourceTable:'payments',sourceId:'p1'});
+    const ownerSends=vi.mocked(sendEmail).mock.calls.filter(([args])=>args.to==='owner@example.com');
+    expect(ownerSends).toHaveLength(hasIntent ? 0 : 1);
+    vi.mocked(hasMerchantNotificationIntent).mockResolvedValue(false);
   });
 });

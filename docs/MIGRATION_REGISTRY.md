@@ -16,6 +16,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 | Version | Name | Status | Notes |
 |---------|------|--------|-------|
+| 499 | `merchant_notifications` | Reserved by #811; source only, not applied | Verified multi-recipient enrollment and durable merchant alert dispatch. |
 | 498 | `manual_settlement_rejection_guard` | Reserved; source only, not applied | Locks and rejects already-approved manual payouts before rejection or adjustment release. Requires M440/M444 final state. |
 | 497 | `scheduling_price_authority_core` | Reserved by PR #806 | Separate work; reservation preserved. |
 
