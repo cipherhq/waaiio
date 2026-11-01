@@ -67,7 +67,7 @@ jobs:
 
       - name: Run tests
         # Runs in security-acl-tests with a disposable database and zero-skip guard.
-        run: npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts
+        run: npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts --exclude lib/__tests__/accounting-migration-installation.pg.test.ts
 
       - name: Build
         env:
@@ -4728,6 +4728,7 @@ jobs:
 
           # Discover files
           mapfile -t PG_FILES < <(find lib -name '*.pg.test.ts' -type f | sort)
+          test -f lib/__tests__/accounting-migration-installation.pg.test.ts || exit 1
           PG_COUNT=${#PG_FILES[@]}
           echo "Found $PG_COUNT .pg.test.ts file(s):"
           printf '  %s\n' "${PG_FILES[@]}"
