@@ -821,7 +821,8 @@ describe('Blocker 4: Real caller boundaries + explicit zero-reinit', () => {
           const chain: any = {};
           chain.select = vi.fn(() => chain);
           chain.eq = vi.fn(() => chain);
-          chain.maybeSingle = vi.fn().mockResolvedValue({ data: {
+          chain.in = vi.fn(() => chain);
+          chain.single = vi.fn().mockResolvedValue({ data: {
             id: 'bk-sched', service_id: 'svc-1', appointment_id: null, party_size: 1,
             date: '2026-10-01', time: '10:00:00', staff_id: null, class_session_id: null,
             total_amount: 3000, deposit_amount: 3000,
