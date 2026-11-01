@@ -89,6 +89,14 @@ vi.mock('@/lib/logger', () => ({
 vi.mock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
 vi.mock('@/lib/email/templates', () => ({ payoutRejectedEmail: vi.fn(() => ({ subject: '', html: '' })) }));
 vi.mock('@/lib/constants', () => ({ formatCurrency: vi.fn(() => '$100'), CountryCode: {} }));
+vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]) }));
+vi.mock('@/lib/admin-step-up', () => ({
+  StepUpError: class extends Error {},
+  consumeStepUp: vi.fn(async (_admin: unknown, id: string) => {
+    if (id !== 'verified-fixture') throw new Error('Step-up required');
+    return true;
+  }),
+}));
 
 // Import route handlers
 const payoutsListModule = await import('@/app/api/admin/payouts/route');
@@ -148,9 +156,9 @@ describe('Business payouts list authorization', () => {
 // ══════════════════════════════════════════════════════════
 
 describe('Business payout generate authorization', () => {
-  it('admin generate allowed', async () => {
+  it('admin generate with a verified operation grant allowed', async () => {
     mockAuthRole = 'admin';
-    const res = await payoutsGenerateModule.POST(makeRequest('/api/admin/payouts/generate', 'POST'));
+    const res = await payoutsGenerateModule.POST(makeRequest('/api/admin/payouts/generate', 'POST', { stepUpId: 'verified-fixture' }));
     expect(res.status).not.toBe(403);
   });
 

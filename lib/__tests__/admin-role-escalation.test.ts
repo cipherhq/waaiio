@@ -152,7 +152,14 @@ describe('requirePlatformAdmin helper', () => {
 
   function mockAuth(user: Record<string, unknown> | null) {
     vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user } }) } }),
+      createServiceClient: vi.fn().mockReturnValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user } }),
+          getClaims: vi.fn().mockResolvedValue({ data: { claims: user ? { sub: user.id, aal: 'aal2', session_id: 'fixture-session' } : null } }),
+        },
+        rpc: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: { session_exists: true } }) }),
+        from: vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue({ error: null }) }),
+      }),
     }));
   }
   const req = () => new NextRequest('https://t.waaiio.com/api/admin/test', { headers: { Authorization: 'Bearer t' } });
@@ -176,7 +183,7 @@ describe('requirePlatformAdmin helper', () => {
   it('denies unauthenticated', async () => {
     mockAuth(null);
     vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) } }),
+      createClient: vi.fn().mockResolvedValue({ auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) } }),
     }));
     const { requirePlatformAdmin } = await import('@/lib/admin-auth');
     expect(await requirePlatformAdmin(new NextRequest('https://t.waaiio.com/api/admin/test'))).toBeNull();
