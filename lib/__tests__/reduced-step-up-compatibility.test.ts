@@ -90,9 +90,16 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe('reduced admin → backend prepare/verify/generate compatibility', () => {
-  it.each(['payout_approve', 'payout_reject', 'refund', 'channel_change_execute', 'business_status'])('denies unsupported %s without issuing grants', async actionType => {
+  it.each(['payout_force_settle', 'refund', 'channel_change_execute', 'business_status'])('denies unsupported %s without issuing grants', async actionType => {
     expect((await prepare(request('step-up/prepare', { actionType, params: { action: 'generate' } }))).status).toBe(400);
     expect(fetch).not.toHaveBeenCalled(); expect(fixture.writes).toEqual([]);
+  });
+  it.each(['payout_approve', 'payout_reject', 'payout_confirm_settlement'])('prepares the explicitly supported %s action with the submitted binding', async actionType => {
+    const params = { fixture: 'operation-bound' };
+    const response = await prepare(request('step-up/prepare', { actionType, targetId: 'payout-fixture', params }));
+    expect(response.status).toBe(200);
+    const row = fixture.rows.admin_step_up_authorizations?.[0];
+    expect(row).toMatchObject({ action_type: actionType, target_id: 'payout-fixture' });
   });
   it('denies support role and channel descriptors before issuing grants', async () => {
     fixture.role = 'support';

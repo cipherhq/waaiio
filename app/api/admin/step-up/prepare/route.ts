@@ -4,8 +4,8 @@ import { prepareStepUp, StepUpError } from '@/lib/admin-step-up';
 import type { StepUpAction } from '@/lib/admin-step-up';
 import { adminCorsHeaders } from '@/lib/admin-cors';
 
-// This reduced backend certifies generation only; other consumers are not ported.
-const VALID_ACTIONS: StepUpAction[] = ['payout_generate'];
+// Only the complete merchant payout flow is included in this reduced backend.
+const VALID_ACTIONS: StepUpAction[] = ['payout_generate', 'payout_approve', 'payout_reject', 'payout_confirm_settlement'];
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin')) });
