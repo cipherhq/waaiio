@@ -97,7 +97,7 @@ describe('P1-APPT-3: manual booking source verification', () => {
     expect(routeSrc).toContain(".from('appointments')");
   });
 
-  it('11. route passes p_appointment_id to book_manual_slot_atomic', () => {
+  it('11. route passes p_appointment_id to authoritative manual booking', () => {
     expect(routeSrc).toContain('p_appointment_id: appointmentId || null');
   });
 
@@ -117,8 +117,8 @@ describe('P1-APPT-3: manual booking source verification', () => {
     expect(manualFn).not.toContain("NULL,          -- p_appointment_id\n");
   });
 
-  it('15. MK-3 guarantees preserved: still calls book_manual_slot_atomic RPC', () => {
-    expect(routeSrc).toContain("rpc('book_manual_slot_atomic'");
+  it('15. MK-3 guarantees preserved: calls atomic authoritative manual RPC', () => {
+    expect(routeSrc).toContain("rpc('book_manual_slot_authoritative_604'");
   });
 
   it('16. MK-3 guarantees preserved: still uses createWhatsAppUser for customer identity', () => {
@@ -261,7 +261,7 @@ describe('P1-APPT-3: manual booking route behavior', () => {
       customerName: 'Jane Doe',
       customerPhone: '+2348000000001',
     }));
-    expect(mockRpc2).toHaveBeenCalledWith('book_manual_slot_atomic', expect.objectContaining({
+    expect(mockRpc2).toHaveBeenCalledWith('book_manual_slot_authoritative_604', expect.objectContaining({
       p_appointment_id: 'appt-1',
       p_service_id: null,
       p_buffer_minutes: 10,
@@ -316,7 +316,7 @@ describe('P1-APPT-3: manual booking route behavior', () => {
       customerPhone: '+2348000000000',
     }));
     expect(res.status).toBe(200);
-    expect(mockRpc2).toHaveBeenCalledWith('book_manual_slot_atomic', expect.objectContaining({
+    expect(mockRpc2).toHaveBeenCalledWith('book_manual_slot_authoritative_604', expect.objectContaining({
       p_service_id: 'svc-1',
       p_appointment_id: null,
     }));
@@ -332,7 +332,7 @@ describe('P1-APPT-3: manual booking route behavior', () => {
       customerPhone: '+2348000000001',
     }));
     expect(mockCreateWhatsAppUser2).toHaveBeenCalled();
-    expect(mockRpc2).toHaveBeenCalledWith('book_manual_slot_atomic', expect.objectContaining({
+    expect(mockRpc2).toHaveBeenCalledWith('book_manual_slot_authoritative_604', expect.objectContaining({
       p_user_id: 'customer-123',
     }));
   });

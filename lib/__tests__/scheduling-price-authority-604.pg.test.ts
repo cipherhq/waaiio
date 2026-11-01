@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -9,6 +10,9 @@ const id = (n: number) => '00000000-0000-4000-a604-' + n.toString(16).padStart(1
 const business=id(1), user=id(2), service=id(3), promo=id(4), addon=id(5);
 suite('M497 final-state scheduling authority', () => {
  let pool: pg.Pool;
+ let admin: pg.Pool;
+ const databaseName = 'core604_' + randomUUID().replaceAll('-', '');
+ let databaseCreated = false;
  function payload(overrides: Record<string, unknown> = {}) {
    return { p_business_id:business,p_user_id:user,p_service_id:service,p_staff_id:null,
      p_date:'2027-12-01',p_time:'10:00',p_party_size:1,p_max_capacity:99,p_flow_type:'scheduling',
@@ -32,14 +36,18 @@ suite('M497 final-state scheduling authority', () => {
    } catch(error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
  }
  beforeAll(async()=>{
-   // The isolated CI template predates the canonical auth.users prerequisites.
-   pool=new pg.Pool({connectionString:url,max:6});
-   await pool.query(`DO $fixture$ BEGIN
-     IF to_regclass('auth.users') IS NOT NULL THEN
-       ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone_confirmed_at timestamptz;
-     END IF;
-   END $fixture$`);
-   execFileSync('bash',['scripts/ci-bootstrap-test-db.sh',url!],{encoding:'utf8',timeout:180000,stdio:'pipe'});
+   // Bootstrap a fresh, owned database; CI's shared template contains skeletal app tables.
+   const endpoint = new URL(url!);
+   if (!['localhost', '127.0.0.1', '[::1]', 'postgres'].includes(endpoint.hostname)) {
+     throw new Error('Core604 requires a disposable local CI PostgreSQL endpoint');
+   }
+   admin=new pg.Pool({connectionString:url,max:1});
+   await admin.query('CREATE DATABASE "' + databaseName + '" TEMPLATE template0');
+   databaseCreated = true;
+   const isolatedUrl = new URL(url!);
+   isolatedUrl.pathname = '/' + databaseName;
+   execFileSync('bash',['scripts/ci-bootstrap-test-db.sh',isolatedUrl.toString()],{encoding:'utf8',timeout:180000,stdio:'pipe'});
+   pool=new pg.Pool({connectionString:isolatedUrl.toString(),max:6});
    await pool.query("INSERT INTO auth.users(id,email) VALUES($1,'core604@example.test') ON CONFLICT DO NOTHING",[user]);
    await pool.query("INSERT INTO profiles(id,phone) VALUES($1,'+2348000000604') ON CONFLICT(id) DO UPDATE SET phone=EXCLUDED.phone",[user]);
    await pool.query(`INSERT INTO businesses(id,name,slug,address,city,neighborhood,phone,country_code,owner_id,status,metadata)
@@ -53,7 +61,12 @@ suite('M497 final-state scheduling authority', () => {
    await pool.query("UPDATE businesses SET metadata='{\"prepay_mode\":\"full\"}',deposit_per_guest=0 WHERE id=$1",[business]);
    await pool.query('UPDATE services SET price=1000,deposit_amount=0,max_capacity=1,is_active=true,price_is_variable=false WHERE id=$1',[service]);
  });
- afterAll(async()=>{await pool?.end();});
+ afterAll(async()=>{
+   await pool?.end();
+   try {
+     if (databaseCreated) await admin.query('DROP DATABASE "' + databaseName + '"');
+   } finally { await admin?.end(); }
+ });
  it('commits full value and payable from authoritative rows',async()=>{
    const r=await rpc();
    expect(r).toMatchObject({slot_available:true,committed_total:1000,committed_deposit:1000});
@@ -89,7 +102,7 @@ suite('M497 final-state scheduling authority', () => {
    await pool.query("INSERT INTO service_addons(id,business_id,service_id,name,price,is_active,is_required) VALUES($1,$2,$3,'Addon',100,true,false)",[addon,business,service]);
    await expect(rpc({p_addons_snapshot:[{id:addon,price:1}]})).rejects.toThrow('addon_terms_changed');
  });
- it('serializes the last available slot',async()=>{
+ it('serializes the last authoritative slot despite caller capacity 99',async()=>{
    const results=await Promise.all([rpc(),rpc({p_guest_phone:'+2348000000605'})]);
    expect(results.filter(r=>r.slot_available)).toHaveLength(1);
  });

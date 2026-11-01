@@ -62,12 +62,12 @@ describe('Migration 320: source verification', () => {
   });
 
   it('4. public booking omits p_bot_session_id (relies on default)', () => {
-    const rpcBlock = publicRoute.slice(publicRoute.indexOf("'book_slot_atomic'"));
+    const rpcBlock = publicRoute.slice(publicRoute.indexOf("'book_slot_authoritative_604'"));
     expect(rpcBlock).not.toContain('p_bot_session_id');
   });
 
   it('5. WhatsApp booking explicitly passes p_bot_session_id', () => {
-    const rpcBlock = schedulingFlow.slice(schedulingFlow.indexOf("'book_slot_atomic'"));
+    const rpcBlock = schedulingFlow.slice(schedulingFlow.indexOf("'book_slot_authoritative_604'"));
     expect(rpcBlock).toContain('p_bot_session_id');
   });
 
@@ -89,7 +89,7 @@ describe('Migration 320: source verification', () => {
   });
 
   it('9. manual booking wrapper calls book_slot_atomic internally', () => {
-    expect(manualRoute).toContain("'book_manual_slot_atomic'");
+    expect(manualRoute).toContain("'book_manual_slot_authoritative_604'");
     // The wrapper SQL (migration 318) delegates to book_slot_atomic
     const migration318 = readFileSync('supabase/migrations/318_appointment_buffer_booking_authority.sql', 'utf-8');
     const manualFn = migration318.slice(migration318.indexOf('book_manual_slot_atomic'));

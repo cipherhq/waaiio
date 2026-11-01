@@ -104,7 +104,7 @@ if [ "$WINNER_NOTES" != "t" ]; then echo "FAIL: notes should be set"; FAILED=1; 
 echo ""
 echo "--- Test 2: Two concurrent bookings, capacity=2 ---"
 
-psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID';"
+psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID'; UPDATE services SET max_capacity=2 WHERE id='$SVC_ID';"
 
 psql -t -A <<SESSION_C > /tmp/mk3_c.txt 2>&1 &
 BEGIN;
@@ -150,7 +150,7 @@ if [ "$ALL_DASHBOARD" -ne 2 ]; then echo "FAIL: both should have channel=dashboa
 echo ""
 echo "--- Test 3: Forced metadata failure => atomic rollback ---"
 
-psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID';"
+psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM bookings WHERE business_id = '$BIZ_ID'; UPDATE services SET max_capacity=1 WHERE id='$SVC_ID';"
 
 # Create a test-only trigger that forces the dashboard metadata UPDATE to fail
 psql -v ON_ERROR_STOP=1 -q <<TRIGGER_SETUP

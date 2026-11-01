@@ -831,7 +831,11 @@ describe('MANAGE_EXISTING payment continuation — scheduling', () => {
       const c: Record<string, any> = {};
       for (const m of ['select','insert','update','delete','upsert','eq','neq','or','in','is','not','order','limit','gte','lte','contains','containedBy','filter','match','range']) c[m] = vi.fn().mockReturnValue(c);
       c.single = vi.fn().mockResolvedValue({ data: null, error: null });
-      c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      c.maybeSingle = vi.fn().mockResolvedValue({ data: table === 'bookings' ? {
+        id: 'existing-booking-123', service_id: 'svc-1', appointment_id: null,
+        party_size: 1, date: '2026-09-01', time: '10:00:00', staff_id: null,
+        class_session_id: null, total_amount: 50, deposit_amount: 50,
+      } : null, error: null });
       return c;
     });
 
