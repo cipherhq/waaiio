@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
 import { buildEmbeddedSignupLoginOptions, extractAuthCode, buildDiscoverRequestBody } from '@/lib/whatsapp/embedded-signup-config';
+import { EmbeddedSignupSelection } from '@/components/whatsapp/EmbeddedSignupSelection';
+import type { SignupAccount } from '@/lib/whatsapp/embedded-signup-session';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 
 declare global {
@@ -47,7 +48,9 @@ export default function ConnectWhatsAppPage() {
   const [fbSdkReady, setFbSdkReady] = useState(false);
   const fbSdkLoaded = useRef(false);
   const [fbConnecting, setFbConnecting] = useState(false);
+  const [fbDiscovery, setFbDiscovery] = useState<{ connection_id: string; accounts: SignupAccount[] } | null>(null);
 
+  const directOnboardingEnabled = process.env.NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED !== 'false';
   const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
   const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
 
@@ -71,7 +74,7 @@ export default function ConnectWhatsAppPage() {
           setStep('existing');
         } else if (data.candidate) {
           const cand = data.candidate;
-          if (cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
+          if (directOnboardingEnabled && cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
             // OTP validating → show OTP verification screen with masked phone
             setStep('verify-otp');
           } else if (cand.connection_source === 'embedded_signup' && (cand.status === 'pending' || cand.status === 'validating')) {
@@ -91,7 +94,7 @@ export default function ConnectWhatsAppPage() {
       }
     }
     checkExisting();
-  }, [business.id]);
+  }, [business.id, directOnboardingEnabled]);
 
   // Load FB SDK (only when advanced flow is selected)
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -125,6 +128,7 @@ export default function ConnectWhatsAppPage() {
     script.src = 'https://connect.facebook.net/en_US/sdk.js';
     script.async = true;
     script.crossOrigin = 'anonymous';
+    script.onerror = () => setError('Meta could not load. Check your browser connection or continue with the shared number.');
     document.body.appendChild(script);
   }, [showAdvanced, appId]);
 
@@ -186,6 +190,8 @@ export default function ConnectWhatsAppPage() {
 
   // ── Advanced flow: Facebook Embedded Signup ──
   function launchFacebookLogin() {
+    if (!appId || !configId) { setError('Meta connection is not configured for this environment. You can still use the shared number.'); return; }
+    setFbDiscovery(null);
     if (!window.FB || !fbSdkLoaded.current) {
       setError('Facebook is still loading. Please wait.');
       return;
@@ -199,33 +205,42 @@ export default function ConnectWhatsAppPage() {
           fetch('/api/auth/facebook/discover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildDiscoverRequestBody(code)),
+            body: JSON.stringify({ ...buildDiscoverRequestBody(code), business_id: business.id }),
           })
             .then(r => r.json().then(d => ({ ok: r.ok, d })))
             .then(({ ok, d }) => {
               if (!ok) { setError(d.message || 'Failed'); setFbConnecting(false); return; }
               const wabas = d.wabas || [];
               if (wabas.length === 0) { setError('No WhatsApp Business Account found.'); setFbConnecting(false); return; }
-              const waba = wabas[0];
-              const ph = waba.phones?.[waba.phones.length - 1];
-              fetch('/api/auth/facebook/callback', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ business_id: business.id, waba_id: waba.waba_id, phone_number_id: ph?.id, access_token: d.access_token, token_expires_at: d.token_expires_at, display_name: ph?.display_phone_number || ph?.verified_name, phone_number: ph?.display_phone_number }),
-              })
-                .then(r => r.json().then(d2 => ({ ok: r.ok, d2 })))
-                .then(({ ok: ok2, d2 }) => {
-                  if (ok2) { setConnectedNumber(ph?.display_phone_number || 'Connected'); setStep('success'); }
-                  else { setError(d2.error || d2.message || 'Failed to save.'); }
-                  setFbConnecting(false);
-                })
-                .catch(() => { setError('Failed. Try again.'); setFbConnecting(false); });
+              if (!d.connection_id) { setError('Meta connection could not be saved. Please retry.'); setFbConnecting(false); return; }
+              setFbDiscovery({ connection_id: d.connection_id, accounts: wabas });
+              setFbConnecting(false);
             })
             .catch(() => { setError('Failed. Try again.'); setFbConnecting(false); });
         } else { setFbConnecting(false); setError('Cancelled.'); }
       },
       buildEmbeddedSignupLoginOptions(configId),
     );
+  }
+
+  async function confirmFacebookNumber(accountId: string, phoneId: string) {
+    if (!fbDiscovery || fbConnecting) return;
+    const phone = fbDiscovery.accounts.find(account => account.waba_id === accountId)?.phones.find(phone => phone.id === phoneId);
+    if (!phone) return;
+    setFbConnecting(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/auth/facebook/callback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, connection_id: fbDiscovery.connection_id, waba_id: accountId, phone_number_id: phoneId }),
+      });
+      const data = await response.json();
+      if (!response.ok) { setError((data.message || data.error || 'Connection failed.') + ' Reconnect with Meta to try again.'); return; }
+      if (data.connection_status !== 'active') { setError('Meta setup is not active yet. Refresh to check connection status.'); return; }
+      setConnectedNumber(data.phone_number || phone.display_phone_number);
+      setStep('success');
+    } catch { setError('Unable to confirm the connection. Refresh to check its status before reconnecting.'); }
+    finally { setFbDiscovery(null); setFbConnecting(false); }
   }
 
   // ── Loading ──
@@ -422,7 +437,7 @@ export default function ConnectWhatsAppPage() {
       {/* ── Choose method ── */}
       {step === 'choose' && (
         <div className="space-y-3">
-          <button
+          {directOnboardingEnabled && <button
             onClick={() => setStep('enter-phone')}
             className="w-full rounded-lg border-2 border-brand bg-brand/5 p-4 text-left transition hover:bg-brand/10"
           >
@@ -433,7 +448,8 @@ export default function ConnectWhatsAppPage() {
                 <p className="text-xs text-gray-500 mt-0.5">Recommended — just enter your number and verify with OTP. Your number joins Waaiio&apos;s platform.</p>
               </div>
             </div>
-          </button>
+          </button>}
+          {!directOnboardingEnabled && <p className="text-sm text-gray-600 dark:text-gray-300">Direct number setup is temporarily unavailable. Connect your dedicated number through Meta below, or continue using your shared number.</p>}
 
           <button
             onClick={() => { setShowAdvanced(true); }}
@@ -443,7 +459,7 @@ export default function ConnectWhatsAppPage() {
               <span className="text-2xl">🔗</span>
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Connect via Facebook</p>
-                <p className="text-xs text-gray-500 mt-0.5">Use if you already have a WhatsApp Business Account on Meta.</p>
+                <p className="text-xs text-gray-500 mt-0.5">Add or connect your own number using Meta Embedded Signup.</p>
               </div>
             </div>
           </button>
@@ -469,7 +485,7 @@ export default function ConnectWhatsAppPage() {
             <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-900/20 p-4 text-center">
               <button
                 onClick={launchFacebookLogin}
-                disabled={fbConnecting || !fbSdkReady}
+                disabled={fbConnecting || !fbSdkReady || !appId || !configId}
                 className="px-6 py-3 bg-[#1877F2] text-white rounded-lg text-sm font-semibold hover:bg-[#166FE5] disabled:opacity-50 inline-flex items-center gap-2"
               >
                 {fbConnecting ? 'Connecting...' : (
@@ -479,7 +495,9 @@ export default function ConnectWhatsAppPage() {
                   </>
                 )}
               </button>
-              {!fbSdkReady && !fbConnecting && <p className="text-xs text-gray-400 mt-2">Loading Facebook SDK...</p>}
+              {(!appId || !configId) && <p className="mt-2 text-sm">Meta connection is not configured yet. You can continue with the shared number.</p>}
+              {fbDiscovery && <EmbeddedSignupSelection accounts={fbDiscovery.accounts} busy={fbConnecting} onConfirm={confirmFacebookNumber} onCancel={() => { setFbDiscovery(null); setError(null); }} />}
+              {appId && configId && !fbSdkReady && !fbConnecting && <p className="text-xs text-gray-400 mt-2">Loading Facebook SDK...</p>}
             </div>
           )}
         </div>

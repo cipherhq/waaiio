@@ -18,6 +18,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
+vi.mock('@/lib/whatsapp/embedded-signup-session', () => ({
+  consumeSignupSession: async () => ({
+    accessToken: 'test-token', tokenExpiresAt: null,
+    accounts: [{ waba_id: 'waba-1', phones: [{ id: 'pn-1' }] }],
+  }),
+}));
+vi.mock('@/lib/whatsapp/embedded-signup-assets', () => ({
+  listSignupPhones: async () => [{ id: 'pn-1' }],
+}));
+
 // ── Mock infrastructure ──
 
 const mockGetUser = vi.fn();
@@ -132,7 +142,7 @@ describe('#592 transfer non-regression — end-to-end route handler proof', () =
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeReq({
       business_id: 'biz-1',
-      access_token: 'test-long-lived-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',
@@ -154,7 +164,7 @@ describe('#592 transfer non-regression — end-to-end route handler proof', () =
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     await POST(makeReq({
       business_id: 'biz-1',
-      access_token: 'test-long-lived-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',
@@ -170,7 +180,7 @@ describe('#592 transfer non-regression — end-to-end route handler proof', () =
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeReq({
       business_id: 'biz-1',
-      access_token: 'test-long-lived-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       // connection_method intentionally omitted
@@ -197,7 +207,7 @@ describe('#592 transfer non-regression — end-to-end route handler proof', () =
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     await POST(makeReq({
       business_id: 'biz-1',
-      access_token: 'test-long-lived-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',
@@ -229,7 +239,7 @@ describe('#592 transfer negative path — failed registration blocks promotion',
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeReq({
       business_id: 'biz-1',
-      access_token: 'test-long-lived-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',
@@ -264,7 +274,7 @@ describe('#592 transfer negative path — failed registration blocks promotion',
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeReq({
       business_id: 'biz-1',
-      access_token: 'test-long-lived-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',
@@ -293,7 +303,7 @@ describe('#592 transfer negative path — failed registration blocks promotion',
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeReq({
       business_id: 'biz-1',
-      access_token: 'test-long-lived-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',

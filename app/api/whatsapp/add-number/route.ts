@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { encryptToken, decryptToken } from '@/lib/encryption';
 import { randomInt } from 'crypto';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { logger } from '@/lib/logger';
 
 const API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
@@ -24,6 +25,10 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  if (process.env.NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED === 'false') {
+    return NextResponse.json({ error: 'Direct number setup is temporarily unavailable. Please use Connect via Facebook or the shared number.', code: 'DIRECT_ONBOARDING_DISABLED' }, { status: 503 });
+  }
+
   const action = request.nextUrl.searchParams.get('action');
   const body = await request.json();
 
@@ -38,7 +43,7 @@ export async function POST(request: NextRequest) {
   if (!action || action === 'request') {
     const { business_id, phone_number, display_name } = body;
 
-    if (!business_id || !phone_number) {
+    if (!business_id || typeof phone_number !== 'string' || !phone_number) {
       return NextResponse.json({ error: 'Missing business_id or phone_number' }, { status: 400 });
     }
 
@@ -51,8 +56,15 @@ export async function POST(request: NextRequest) {
       .single();
     if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
-    const cleanPhone = phone_number.replace(/[\s\-()]/g, '');
-    const phoneForMeta = cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone;
+    const submittedPhone = phone_number.trim();
+    const parsedPhone = parsePhoneNumberFromString(
+      submittedPhone.startsWith('+') ? submittedPhone : `+${submittedPhone}`,
+      { extract: false },
+    );
+    if (!parsedPhone?.isPossible() || parsedPhone.ext) {
+      return NextResponse.json({ error: 'Enter a valid phone number including its country code.' }, { status: 400 });
+    }
+    const cleanPhone = parsedPhone.number;
 
     // 2. Normalize phone + conflict check (R9 §2)
     const normalized = normalizePhone(cleanPhone);
@@ -146,8 +158,8 @@ export async function POST(request: NextRequest) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            cc: phoneForMeta.slice(0, phoneForMeta.length > 10 ? phoneForMeta.length - 10 : 1),
-            phone_number: phoneForMeta,
+            cc: parsedPhone.countryCallingCode,
+            phone_number: parsedPhone.nationalNumber,
             migrate_phone_number: false,
             verified_name: display_name || biz.name,
           }),

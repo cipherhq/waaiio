@@ -23,6 +23,12 @@ import {
 // Mock infrastructure for callback route
 // ─────────────────────────────────────────────────────────────────────────
 
+vi.mock('@/lib/whatsapp/embedded-signup-session', () => ({
+  consumeSignupSession: async () => ({ accessToken: 'test-token', tokenExpiresAt: null,
+    accounts: [{ waba_id: 'waba-1', phones: [{ id: 'pn-1' }] }] }),
+}));
+vi.mock('@/lib/whatsapp/embedded-signup-assets', () => ({ listSignupPhones: async () => [{ id: 'pn-1' }] }));
+
 const mockGetUser = vi.fn();
 const mockAuthClientFrom = vi.fn();
 
@@ -233,7 +239,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'coexist',
@@ -258,7 +264,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'coexistence',
@@ -274,7 +280,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'magicmethod',
@@ -294,7 +300,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',
@@ -321,7 +327,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       // connection_method intentionally omitted
@@ -347,7 +353,7 @@ describe('#592 Facebook callback — executable coexistence fence', () => {
 
     const res = await POST(makeCallbackReq({
       business_id: 'biz-1',
-      access_token: 'pre-exchanged-token',
+      connection_id: 'session-test',
       waba_id: 'waba-1',
       phone_number_id: 'pn-1',
       connection_method: 'transfer',

@@ -1,3 +1,4 @@
+import { isSharedConversation, DIRECTORY_ACTION, transactionNextSteps } from './shared/navigation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
@@ -882,6 +883,9 @@ export class FlowExecutor {
         await this.showPostCompletionMenu(from, session, ctx, translationCtx, scopedSender);
         logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'completed', capability: sd.active_capability as string });
       } else {
+        // State-neutral navigation also covers free cancellations and payment-pending exits.
+        await scopedSender.sendText({ to: from, text: transactionNextSteps(
+          String(sd.active_capability || ''), await isSharedConversation(this.supabase, sd)) });
         await this.deactivateSession(session.id);
         logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'cancelled', capability: sd.active_capability as string });
       }
@@ -1236,7 +1240,16 @@ export class FlowExecutor {
     if (!saved) return; // stale — another worker owns this session
 
     // Localize the entire post-completion message through the canonical boundary
-    const postCompletionMsg: PromptMessage = { type: 'buttons', body: bodyText, buttons };
+    const shared = await isSharedConversation(this.supabase, session.session_data);
+    if (cap === 'payment' || cap === 'invoice') {
+      buttons = [{ id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
+        { id: 'history', title: 'Payment history' }];
+    }
+    const postCompletionMsg: PromptMessage = shared
+      ? { type: 'list', title: getFlowCopy(cl, 'menu.title'), body: bodyText,
+        buttonLabel: getFlowCopy(cl, 'nav.view_options'),
+        items: [...buttons, DIRECTORY_ACTION].map(b => ({ title: b.title, postbackText: b.id })) }
+      : { type: 'buttons', body: bodyText, buttons };
     const shouldTranslate = lang && lang !== 'en';
     const localizedMsg = shouldTranslate
       ? await localizeMessage(postCompletionMsg, lang, tCtx)
@@ -1245,6 +1258,8 @@ export class FlowExecutor {
     const s = sender || this.sender;
     if (localizedMsg.type === 'buttons') {
       await s.sendButtons({ to: from, body: localizedMsg.body, buttons: localizedMsg.buttons });
+    } else if (localizedMsg.type === 'list') {
+      await s.sendList({ to: from, ...localizedMsg });
     }
   }
 

@@ -271,3 +271,11 @@ Of the 146 migrations in the 101-246 range:
 - **0 remaining candidates pending verification:** all actionable candidates verified
 - **12 not verifiable safely:** 101, 105, 107, 126, 160, 163, 164, 187, 216, 217, 222, 226
 - **2 superseded:** 122 (by 233), 130 (by 233)
+
+### Reservation — 2026-10-31
+
+| Version | Description | Branch | Reserved By | Date |
+|---------|-------------|--------|-------------|------|
+| 493 | shared_conversation_binding | codex/ayo-routing-directory | Codex | 2026-10-31 |
+
+Verified against main e62199d2124719f470306aa85aa8310960939ee6, all ten open PR file lists, and both environment migration histories. Not applied.
