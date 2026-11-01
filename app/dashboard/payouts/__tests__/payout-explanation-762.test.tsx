@@ -77,6 +77,16 @@ async function show(surface: 'Account' | 'History') {
 }
 
 describe.each(['Account', 'History'] as const)('W06 mounted %s consumer', surface => {
+  it('preserves calendar periods while retaining local timestamp dates', async () => {
+    const createdAt = '2026-01-08T00:30:00Z';
+    fixture.payouts = [record({ created_at: createdAt })];
+    await show(surface);
+    const period = surface === 'Account' ? '1 Jan – 7 Jan' : '1 Jan 2026 - 7 Jan 2026';
+    expect(screen.getAllByText(period).length).toBe(surface === 'Account' ? 1 : 2);
+    const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', ...(surface === 'History' ? { year: 'numeric' } : {}) };
+    expect(screen.getByRole('cell', { name: new Date(createdAt).toLocaleDateString('en-GB', options) })).toBeTruthy();
+  });
+
   it('consumes nonempty payouts and displays recorded context plus the linked historical account', async () => {
     await show(surface);
     expect(screen.queryByText(surface === 'Account' ? 'No payouts yet' : 'No payout records found')).toBeNull();

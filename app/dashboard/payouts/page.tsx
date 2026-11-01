@@ -8,6 +8,7 @@ import { getCountry } from '@/lib/countries';
 import Link from 'next/link';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { t } from '@/lib/dashboard-i18n';
+import { formatCalendarDate } from '@/lib/utils/calendar-date';
 
 interface Bank {
   code: string;
@@ -786,9 +787,9 @@ export default function PayoutsPage() {
                           {new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                         </td>
                         <td className="py-2 text-gray-500">
-                          {new Date(p.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          {formatCalendarDate(p.period_start, false)}
                           {' – '}
-                          {new Date(p.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          {formatCalendarDate(p.period_end, false)}
                         </td>
                         <td className="py-2 text-right font-medium text-gray-900">
                           {formatCurrency(p.net_amount, country)}
