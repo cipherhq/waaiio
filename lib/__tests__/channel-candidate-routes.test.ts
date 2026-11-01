@@ -11,6 +11,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
+const { mockConsumeSignup, mockListSignupPhones } = vi.hoisted(() => ({ mockConsumeSignup: vi.fn(), mockListSignupPhones: vi.fn() }));
+vi.mock('@/lib/whatsapp/embedded-signup-session', () => ({ consumeSignupSession: mockConsumeSignup }));
+vi.mock('@/lib/whatsapp/embedded-signup-assets', () => ({ listSignupPhones: mockListSignupPhones }));
+
 // --- Mock infrastructure ---
 
 const mockGetUser = vi.fn();
@@ -160,6 +164,9 @@ function makeReq(url: string, body: Record<string, unknown>) {
 
 function resetAll() {
   vi.resetAllMocks();
+  mockConsumeSignup.mockResolvedValue({ accessToken: 'test-token', tokenExpiresAt: null,
+    accounts: [{ waba_id: 'waba-1', phones: [{ id: 'pn-1' }] }] });
+  mockListSignupPhones.mockResolvedValue([{ id: 'pn-1' }]);
   candidateInserts = []; candidateUpdates = []; rpcCalls = []; lastBusinessInsert = null; eventLog = [];
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 't@t.com' } } });
   mockResolveBusinessGw.mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
@@ -386,10 +393,45 @@ describe('K2/M4: encrypted PIN fail-closed', () => {
 describe('Facebook callback handler', () => {
   beforeEach(resetAll);
 
+  it('rejects client-supplied tokens before session or provider access', async () => {
+    const { POST } = await import('@/app/api/auth/facebook/callback/route');
+    const res = await POST(makeReq('/api/auth/facebook/callback', {
+      business_id: 'biz-1', access_token: 'untrusted', waba_id: 'waba-1', phone_number_id: 'pn-1',
+    }));
+    expect(res.status).toBe(400);
+    expect(mockConsumeSignup).not.toHaveBeenCalled();
+    expect(candidateInserts).toHaveLength(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects another business owner before consuming the session', async () => {
+    mockAuthClientFrom.mockImplementation(() => ({ select: () => dc({ ...defaultBiz, owner_id: 'other' }) }));
+    const { POST } = await import('@/app/api/auth/facebook/callback/route');
+    const res = await POST(makeReq('/api/auth/facebook/callback', {
+      business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1',
+    }));
+    expect(res.status).toBe(403);
+    expect(mockConsumeSignup).not.toHaveBeenCalled();
+    expect(candidateInserts).toHaveLength(0);
+  });
+
+  it.each(['expired', 'wrong-selection', 'removed-from-account'])('rejects %s before provider mutation', async mode => {
+    if (mode === 'expired') mockConsumeSignup.mockResolvedValue(null);
+    if (mode === 'removed-from-account') mockListSignupPhones.mockResolvedValue([]);
+    const { POST } = await import('@/app/api/auth/facebook/callback/route');
+    const res = await POST(makeReq('/api/auth/facebook/callback', {
+      business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1',
+      phone_number_id: mode === 'wrong-selection' ? 'other-phone' : 'pn-1',
+    }));
+    expect(res.status).toBe(mode === 'expired' ? 409 : 403);
+    expect(candidateInserts).toHaveLength(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('M3: candidate INSERT before provider_register (ordering proof)', async () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeReq('/api/auth/facebook/callback', {
-      business_id: 'biz-1', access_token: 'test-token', waba_id: 'waba-1', phone_number_id: 'pn-1',
+      business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1',
     }));
     expect(candidateInserts.length).toBeGreaterThanOrEqual(1);
     expect(candidateInserts[0].connection_source).toBe('embedded_signup');
@@ -412,7 +454,7 @@ describe('Facebook callback handler', () => {
       return { ok: true, json: async () => ({ success: true }), text: async () => '' };
     });
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
-    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', access_token: 'tok', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
+    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(422);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
     expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
@@ -429,7 +471,7 @@ describe('Facebook callback handler', () => {
       return { ok: true, json: async () => ({}), text: async () => '' };
     });
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
-    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', access_token: 'tok', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
+    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(422);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
     expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
@@ -442,7 +484,7 @@ describe('Facebook callback handler', () => {
       return { data: null, error: null };
     });
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
-    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', access_token: 'tok', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
+    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(409);
     expect(candidateInserts.length).toBe(0);
     expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
@@ -455,7 +497,7 @@ describe('Facebook callback handler', () => {
       return { data: null, error: null };
     });
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
-    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', access_token: 'tok', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
+    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(409);
     expect(candidateInserts.length).toBe(0);
     // No /register or /subscribed_apps calls

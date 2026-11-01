@@ -146,13 +146,9 @@ describe('cancel/no-auth path (executable)', () => {
     const code = extractAuthCode(cancelResponse);
     expect(code).toBeNull();
 
-    // The code path in both call sites is:
-    //   const code = extractAuthCode(response);
-    //   if (code) { fetch('/api/auth/facebook/discover', ...) }
-    //   else { setFbConnecting(false); setError('Cancelled.'); }
-    //
-    // When code is null, the fetch is never invoked.
-    // This proves no server mutation on cancel.
+    // Helper contract only. The rendered dashboard test verifies cancellation
+    // does not call discovery or activation.
+
   });
 
   it('extractAuthCode returns null for error response → no server mutation', () => {
@@ -182,12 +178,8 @@ describe('supplemental source guards', () => {
     expect(connectPage).not.toContain('sessionInfoVersion');
   });
 
-  it('no featureType in OnboardingWizard FB.login block', () => {
-    const block = onboardingWizard.slice(
-      onboardingWizard.indexOf('window.FB.login'),
-      onboardingWizard.indexOf('window.FB.login') + 500
-    );
-    expect(block).not.toContain('featureType');
+  it('registration no longer loads a separate Facebook SDK', () => {
+    expect(onboardingWizard).not.toContain('connect.facebook.net/en_US/sdk.js');
   });
 
   it('no featureType in connect page FB.login block', () => {
@@ -198,24 +190,21 @@ describe('supplemental source guards', () => {
     expect(block).not.toContain('featureType');
   });
 
-  it('both sites import and use buildEmbeddedSignupLoginOptions', () => {
-    expect(onboardingWizard).toContain('buildEmbeddedSignupLoginOptions');
+  it('dashboard imports and uses buildEmbeddedSignupLoginOptions', () => {
     expect(connectPage).toContain('buildEmbeddedSignupLoginOptions');
   });
 
-  it('both sites import and use extractAuthCode', () => {
-    expect(onboardingWizard).toContain('extractAuthCode');
+  it('dashboard imports and uses extractAuthCode', () => {
     expect(connectPage).toContain('extractAuthCode');
   });
 
-  it('both sites import and use buildDiscoverRequestBody', () => {
-    expect(onboardingWizard).toContain('buildDiscoverRequestBody');
+  it('dashboard imports and uses buildDiscoverRequestBody', () => {
     expect(connectPage).toContain('buildDiscoverRequestBody');
   });
 
-  it('OnboardingWizard has exactly one FB.login call', () => {
-    const matches = onboardingWizard.match(/window\.FB\.login\(/g);
-    expect(matches).toHaveLength(1);
+  it('OnboardingWizard routes connection to the merchant dashboard after registration', () => {
+    expect(onboardingWizard).not.toContain('window.FB.login(');
+    expect(onboardingWizard).toContain("router.push('/dashboard/whatsapp/connect')");
   });
 
   it('connect page has exactly one FB.login call', () => {
