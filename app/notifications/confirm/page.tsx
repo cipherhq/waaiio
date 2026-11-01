@@ -22,7 +22,7 @@ export default function ConfirmMerchantNotifications() {
     setBusy(true); setError('');
     try {
       const response = await fetch('/api/merchant-notifications/confirm', {
-        method: 'POST', credentials: 'omit', cache: 'no-store',
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: token.current, accept: true }),
       });

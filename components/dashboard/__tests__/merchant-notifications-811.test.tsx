@@ -110,6 +110,26 @@ describe('email confirmation consent', () => {
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({token,accept:true});
     expect(document.body.textContent).not.toContain(token);
   });
+  it('preserves same-origin deployment access on explicit confirmation without bypassing the token', async () => {
+    const token = 'y'.repeat(43);
+    window.history.replaceState(null, '', '/notifications/confirm#token=' + token);
+    // Model the protection boundary: dropping credentials prevents the API from being reached.
+    fetcher.mockImplementation((url, init) => {
+      expect(url).toBe('/api/merchant-notifications/confirm');
+      if (init.credentials !== 'same-origin') return response({error: 'Deployment authentication required'}, false);
+      expect(init.method).toBe('POST');
+      expect(init.cache).toBe('no-store');
+      expect(JSON.parse(init.body)).toEqual({token, accept: true});
+      return response({verified: true});
+    });
+    render(<Confirm />);
+    expect(fetcher).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', {name: 'I agree — confirm email alerts'}));
+    await screen.findByText('Email alerts confirmed');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][1].credentials).toBe('same-origin');
+    expect(window.location.hash).toBe('');
+  });
   it('shows invalid invitation without a request', () => {
     render(<Confirm />); expect(screen.getByRole('alert').textContent).toMatch(/missing or invalid/); expect(fetcher).not.toHaveBeenCalled();
   });

@@ -1,3 +1,9 @@
+## 2026-11-01 — Protected staging email confirmation
+
+- `app/notifications/confirm/page.tsx`: Send same-origin credentials so deployment access cookies accompany explicit invitation confirmation. Token verification and consent remain required.
+- `components/dashboard/__tests__/merchant-notifications-811.test.tsx`: Regression covers explicit click, same-origin transport and unchanged token payload.
+- Affects protected-deployment confirmation; could affect cookie transport to the same-origin endpoint. Focused UI/API tests: 52 passed, zero skipped. Hosted confirmation and provider delivery remain pending.
+
 ## 2026-10-31 — Payout reporting clarity
 
 - `admin/src/pages/Payouts.tsx`: Display returned partial-failure/skipped counts, server explanations and attention payout IDs alongside created/held counts. HTTP207 no longer hides failed results, and empty successful runs retain the server's no-eligible explanation.
