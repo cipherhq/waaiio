@@ -4,6 +4,11 @@
 - `components/dashboard/__tests__/merchant-notifications-811.test.tsx`: Regression covers explicit click, same-origin transport and unchanged token payload.
 - Affects protected-deployment confirmation; could affect cookie transport to the same-origin endpoint. Focused UI/API tests: 52 passed, zero skipped. Hosted confirmation and provider delivery remain pending.
 
+## 2026-11-01 — Separate accounting installation from activation
+
+- Add M500 inert accounting-hold schema/private implementations and M501 owner-only activation procedure installer. Ordinary migration installation performs no enrollment or financial activation.
+- Add mandatory disposable PostgreSQL composition coverage for legacy and canonical recurring definitions, authorization, unchanged installation behavior, explicit activation and atomic rollback. No application runtime changes; hosted execution remains separately gated.
+
 ## 2026-10-31 — Payout reporting clarity
 
 - `admin/src/pages/Payouts.tsx`: Display returned partial-failure/skipped counts, server explanations and attention payout IDs alongside created/held counts. HTTP207 no longer hides failed results, and empty successful runs retain the server's no-eligible explanation.
