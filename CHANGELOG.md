@@ -1,3 +1,10 @@
+## 2026-11-01 — Targeted accounting hold preparation
+
+- `lib/payouts/accounting-hold.ts`, admin payout routes, auto-payout cron, merchant balance API and payout page: add accounting-hold checks and provisional balance presentation while preserving connected-provider payment routes.
+- `lib/__tests__/fixtures/legacy-accounting-hold-candidate.sql` and recurring provenance fixtures: add unapplied SQL candidates and local PostgreSQL coverage for refund accounting, settlement holds and authoritative recurring payment links. These fixtures are not migrations or enrollment instructions.
+- `.github/workflows/ci.yml` and focused route/UI/SQL tests: require the two new PostgreSQL suites in the isolated database job. Local SQL proof: 55 passed, zero skipped; build and focused lint passed. Hosted CI and acceptance are not claimed.
+- **Affects**: Settlement availability, refund accounting compatibility and payout balance presentation. **Could break**: Runtime reads if required schema is absent, or payment finalization if writer compatibility prerequisites are omitted. Schema preparation, reviewed enrollment and rollout gates remain required before exposure; no hosted changes were made.
+
 ## 2026-10-31 — Payout reporting clarity
 
 - `admin/src/pages/Payouts.tsx`: Display returned partial-failure/skipped counts, server explanations and attention payout IDs alongside created/held counts. HTTP207 no longer hides failed results, and empty successful runs retain the server's no-eligible explanation.
