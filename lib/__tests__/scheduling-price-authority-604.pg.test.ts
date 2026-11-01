@@ -34,11 +34,11 @@ suite('M497 final-state scheduling authority', () => {
  beforeAll(async()=>{
    // The isolated CI template predates the canonical auth.users prerequisites.
    pool=new pg.Pool({connectionString:url,max:6});
-   await pool.query(`DO $ BEGIN
+   await pool.query(`DO $fixture$ BEGIN
      IF to_regclass('auth.users') IS NOT NULL THEN
        ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone_confirmed_at timestamptz;
      END IF;
-   END $`);
+   END $fixture$`);
    execFileSync('bash',['scripts/ci-bootstrap-test-db.sh',url!],{encoding:'utf8',timeout:180000,stdio:'pipe'});
    await pool.query("INSERT INTO auth.users(id,email) VALUES($1,'core604@example.test') ON CONFLICT DO NOTHING",[user]);
    await pool.query("INSERT INTO profiles(id,phone) VALUES($1,'+2348000000604') ON CONFLICT(id) DO UPDATE SET phone=EXCLUDED.phone",[user]);
