@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     if (err instanceof StepUpError) {
-      return NextResponse.json({ error: err.message }, { status: 400, headers: cors });
+      return NextResponse.json({ error: err.message, ...(err.restartRequired ? { code: 'STEP_UP_RESTART_REQUIRED' } : {}) }, { status: 400, headers: cors });
     }
     return NextResponse.json({ error: 'Verification failed' }, { status: 500, headers: cors });
   }
