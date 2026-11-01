@@ -250,7 +250,7 @@ export default function ConnectWhatsAppPage() {
         body: JSON.stringify({ stepUpId: mfaStepUpId, code: mfaCode.trim() }),
       });
       const verifyData = await verifyRes.json();
-      if (!verifyRes.ok) { setMfaError(verifyData.error || 'Verification failed'); setLoading(false); return; }
+      if (!verifyRes.ok) { setMfaError(verifyData.error || 'Verification failed'); setMfaStepUpId(null); setMfaCode(''); setLoading(false); return; }
 
       // Update session with refreshed tokens
       const supabase = createClient();
@@ -268,7 +268,7 @@ export default function ConnectWhatsAppPage() {
         body: JSON.stringify({ business_id: business.id, candidate_id: candidateId, step_up_id: mfaStepUpId }),
       });
       const finishData = await finishRes.json();
-      if (!finishRes.ok) { setMfaError(finishData.error || 'Activation failed'); setLoading(false); return; }
+      if (!finishRes.ok) { setMfaError(finishData.error || 'Activation failed'); setMfaStepUpId(null); setMfaCode(''); setLoading(false); return; }
 
       setConnectedNumber(phone || 'Connected');
       setStep('success');

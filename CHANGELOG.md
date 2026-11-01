@@ -22,7 +22,7 @@
 - **Disconnect MFA UI** (`app/dashboard/settings/tabs/AccountTab.tsx`): Disconnect button now initiates prepare → TOTP prompt → verify → session refresh → DELETE with stepUpId. No TOTP enrolled shows alert with enrollment guidance.
 - **Tests**: `channel-number-continuity.pg.test.ts` (real PG: schema, grants, SECURITY DEFINER, constraints, append-only audit, identity preservation), `channel-number-continuity.test.ts` (behavioral: handler 403 on missing step-up, admin routes deny non-admin, step-up prepare requires ownership).
 - **Security**: Promotion wrapper delegates to existing `promote_channel_candidate` — does NOT copy logic (correction #7). Step-up consumed ONLY after successful underlying transition — failure rolls back entire transaction including step-up (no auth burn, no audit on failure). Execute route does NOT consume step-up in TypeScript — SQL function handles atomic consumption (correction #1). Embedded-signup generates PIN once before Meta registration (correction #6). All new functions service_role only.
-- **Affects**: WhatsApp number connection (add-number, embedded-signup, facebook callback), disconnect, admin recovery/shared-replacement. Does NOT affect bot routing, payment custody, directory, existing shared allocation, or customer data. Existing `promote_channel_candidate` and `transition_to_shared` preserved — wrappers delegate to them.
+- **Affects**: WhatsApp number connection (add-number, embedded-signup, facebook callback), disconnect, admin recovery/shared-replacement. Does NOT affect bot routing, payment custody, directory, existing shared allocation, or customer data. Existing promotion behavior is preserved; disconnect uses the explicitly reviewed shared destination via `transition_to_shared_exact`.
 
 ## 2026-10-31 — Permanent Waaiio merchant links (#799)
 
@@ -44,6 +44,31 @@
 - **Security**: Rate limiting via existing `rateLimitResponseAsync`. Strict UUID validation on attendance route. Action allowlist. All query parameters rejected. No-store on all responses including 429. HTML escaping in error pages. Campaign date comparison uses parsed timestamps not ISO string comparison. Empty/null keyword rejected as unavailable.
 - **Residual gaps**: Number-replacement mutations/MFA/recovery not implemented (separate Phase A correction). Rendered directory sharing acceptance test not yet added (DirectoryClient is a client component with fetch dependency). No bot parser changes.
 - **Affects**: QR code generation, onboarding success, dashboard sharing, directory listing, keyword campaigns, admin onboarding, admin WhatsApp assistance. No schema migration. Connected WhatsApp number changes are now transparent to shared QR codes and printed links.
+
+## 2026-10-31 — Nigeria-only pricing page
+- Limited footer country badges to Nigeria on `/pricing` only; other pages unchanged.
+- Fixed the pricing page to Nigeria and replaced the five-country promotion with Nigeria-specific copy.
+- Preserved canonical API pricing, unavailable/retry handling, and both connected-provider and admin-controlled settlement explanations.
+- Files: `app/(marketing)/pricing/page.tsx`, `lib/__tests__/marketing-country-pricing.test.tsx`.
+- Impact: pricing-page country selection only; shared country configuration and payment processing unchanged.
+
+### 2026-10-31 — Website corrections and interactive WhatsApp demo
+
+- Public pricing uses the current country projection and standard fee snapshot; country switches hide stale prices. Booking comparisons follow enforced limits (50/300/unlimited), superseding the activities wording below.
+- Clarifies connected-provider versus platform-collected settlement and backend-supported refund fee reversals. Removes unsupported marketing claims and expired launch dates.
+- Adds interactive booking, order and ticket examples with retained choices, simulated payment before confirmation, replay and reduced-motion support.
+- Local focused verification: 86 tests passed, zero skipped. Staging browser verification remains pending because automatic non-main website builds are ignored. No production deployment or database change.
+
+### codex/pricing-feature-corrections — Align pricing display with Owner-approved schedule (2026-10-31)
+
+- **`lib/constants.ts`**: Fixed COUNTRY_PRICING fallback for NG (growth 15,000→49,000, business 45,000→99,000) and GH (growth 150→450, business 400→900) to match Owner-approved pricing schedule. Fixed PRICING_TIERS NGN defaults (growth 15,000→49,000, business 45,000→99,000). US/GB/CA unchanged — already correct.
+- **`app/(marketing)/pricing/page.tsx`**: Fixed comparison table "Monthly bookings" → "Monthly activities" with values "Up to 100" / "Up to 1,000" / "Unlimited" to match TIER_FEATURES (single source of truth). Previous values (50/500) contradicted the TierCard highlights on the same page.
+- **`app/(marketing)/page.tsx`**: Updated home page FAQ gateway list to include all 5 supported gateways (Paystack, Stripe, Square, Flutterwave, PayPal). Previously only listed Stripe and Paystack.
+- **`app/(marketing)/features/page.tsx`**: Fixed gateway grid layout from `sm:grid-cols-4` to `sm:grid-cols-3 lg:grid-cols-5` for 5-item grid alignment.
+- **Affects**: Public marketing pages only (pricing, features, home). No API, database, payment logic, subscription, authentication, or provider configuration changes.
+- **Could break**: Nothing — display-only changes to marketing pages. Authoritative pricing source `/api/public/pricing` reads from DB and is unchanged. COUNTRY_PRICING is a display-only fallback used when DB cache is not loaded.
+- **Unresolved discrepancy — DB pricing**: The authoritative `countries.pricing` DB values cannot be verified from this branch. The COUNTRY_PRICING fallback had stale NG/GH prices, suggesting the DB may also need updating. Owner should verify DB pricing matches the approved schedule via `/api/public/pricing?country=NG` and `?country=GH`.
+- **Unresolved discrepancy — booking limits**: TIER_FEATURES.maxBookings (100/1,000) differs from TIER_TRANSACTION_LIMITS.bookings (50/300). The comparison table now uses TIER_FEATURES values (labelled "activities") since TIER_FEATURES is declared as single source of truth. The enforced transaction limits may be more restrictive — Owner should clarify.
 
 ### 2026-10-31 — Admin profile and account-status saves
 

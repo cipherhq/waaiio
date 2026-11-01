@@ -17,8 +17,7 @@ export type ConnectSubStep = 'choose' | 'warnings' | 'setup' | 'phone_select';
 export interface FbConnectionData {
   waba_id: string;
   phone_number_id: string;
-  access_token: string;
-  token_expires_at: string | null;
+  connection_id: string;
   display_name?: string;
   phone_number?: string;
 }

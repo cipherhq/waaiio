@@ -1,3 +1,4 @@
+import { transactionNextSteps } from '@/lib/bot/flows/shared/navigation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -695,7 +696,9 @@ export async function sendProactiveConfirmation(
     lines.push('', `💳 Remaining balance: *${formatCurrency(balanceRemaining, countryCode)}*`);
   }
 
-  lines.push('', 'Type *receipt* to get your receipt', 'Type *my bookings* to view your bookings');
+  lines.push('', 'Type *receipt* to get your receipt', transactionNextSteps(
+    payment.order_id ? 'ordering' : payment.campaign_id ? 'crowdfunding' : payment.invoice_id ? 'invoice' : bookingFlowType || 'payment',
+    resolved?.channel.channel_type === 'shared'));
 
   // Add calendar links for bookings with specific date+time (not orders, invoices, donations)
   if (bookingDate && bookingTime && referenceCode) {
