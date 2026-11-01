@@ -414,8 +414,13 @@ export default function Payouts() {
         }
 
         const msg = [
+          data.error || data.message || null,
           `Created: ${data.created} payout(s)`,
           data.held ? `Held: ${data.held} (flagged for review)` : null,
+          data.failed ? `Failed: ${data.failed} payout(s)` : null,
+          data.skipped ? `Skipped: ${data.skipped}` : null,
+          Array.isArray(data.needs_attention) && data.needs_attention.length > 0
+            ? `Needs review (payout IDs): ${data.needs_attention.join(', ')}` : null,
           data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
         ].filter(Boolean).join('\n');
         alert(msg);

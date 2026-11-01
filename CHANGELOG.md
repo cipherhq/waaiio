@@ -10,6 +10,13 @@
 - `lib/__tests__/scheduled-broadcast-consent.test.ts`: Actual route tests use the real consent helper with synthetic database/provider boundaries; cover denial, revocation, global opt-out, read failures, categories and acceptance outcomes. Three related files pass46tests withzero skips; production build passes locally. Full local root run:16460passed/2845skipped/11failed, with sandbox IPC/socket denials and nested-checkout scanner failures/timeouts recorded; clean-checkout CI remains required.
 - **Affects**: Scheduled broadcasts only; no consent creation, provider sends, schema, quota policy or immediate-send changes. **Could break**: Scheduling now rejects a mixed eligible/ineligible audience; callers retain it for correction. Concurrency/replay claiming and hosted provider delivery are not certified. Not deployed.
 
+## 2026-10-31 — Payout reporting clarity
+
+- `admin/src/pages/Payouts.tsx`: Display returned partial-failure/skipped counts, server explanations and attention payout IDs alongside created/held counts. HTTP207 no longer hides failed results, and empty successful runs retain the server's no-eligible explanation.
+- `admin/src/__tests__/payout-generation-feedback.test.tsx`: Rendered checks invoke the existing step-up callback for207, ordinary200, no-eligible200 and500, retaining the Bearer header and step-up payload assertions.
+- `lib/utils/calendar-date.ts`, merchant payout Account/History pages and date/rendered regressions: Preserve SQL calendar dates for payout periods without shifting days across viewer timezones; leave creation/settlement timestamp formatting unchanged.
+- **Affects**: Payout result and period-date display only. **Could break**: Summary wording and period presentation. Focused admin tests: 23 passed, zero skipped; merchant/date tests: 26 passed, zero skipped in UTC and America/New_York. Both application builds passed. No backend, eligibility, financial writer, MFA or currency-record changes. Exact-head CI and hosted acceptance remain pending; actual generation/settlement is not certified; not deployed.
+
 ## 2026-10-31 — Channel number continuity & recovery (#799)
 
 - **`supabase/migrations/496_channel_number_continuity.sql`** (SOURCE ONLY): Three new tables (`merchant_step_up_authorizations`, `channel_change_approvals`, `channel_transition_audit`), three atomic SQL wrappers (`promote_candidate_with_merchant_auth`, `disconnect_with_merchant_auth`, `execute_channel_change_approval`), extended admin step-up CHECK constraint. All RLS deny-all, service_role only, SECURITY DEFINER with `search_path = ''`.
