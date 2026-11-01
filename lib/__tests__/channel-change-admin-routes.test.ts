@@ -59,7 +59,10 @@ beforeEach(() => {
 describe('channel change actual HTTP handlers', () => {
   it.each(['preview', 'create', 'approve', 'refresh', 'execute', 'reject', 'list'])('denies unauthenticated %s before service access', async route => {
     mocks.admin.mockResolvedValue(null);
-    const response = route === 'list' ? await GET(req(null, 'GET')) : await ({ preview, create, approve, refresh, execute, reject }[route as 'preview'])(req({}), context);
+    const response = route === 'list' ? await GET(req(null, 'GET'))
+      : route === 'preview' ? await preview(req({}))
+      : route === 'create' ? await create(req({}))
+      : await ({ approve, refresh, execute, reject }[route as 'approve'])(req({}), context);
     expect(response.status).toBe(403); expect(mocks.service).not.toHaveBeenCalled();
   });
   it('preview uses verified actor/session and returns only safe evidence and destination', async () => {
