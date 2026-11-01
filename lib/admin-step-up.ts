@@ -39,8 +39,10 @@ export type StepUpAction =
   | 'commercial_config'
   | 'messaging_config'
   | 'messaging_suspension'
+  | 'business_status'
   | 'payout_confirm_settlement'
-  | 'payout_force_settle';
+  | 'payout_force_settle'
+  | 'channel_change_execute';
 
 const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 
@@ -59,7 +61,7 @@ export function hashOperationParams(params: Record<string, unknown>): string {
  * Recursively serialize a value with sorted object keys at every nesting level.
  * Produces a deterministic string for any JSON-compatible value tree.
  */
-function stableStringify(value: unknown): string {
+export function stableStringify(value: unknown): string {
   if (value === null || value === undefined) return 'null';
   if (typeof value === 'boolean' || typeof value === 'number') return String(value);
   if (typeof value === 'string') return JSON.stringify(value);

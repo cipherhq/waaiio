@@ -11,6 +11,7 @@ import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { Building2, CheckCircle, Clock, Ban, Search, FlaskConical, Shield } from 'lucide-react';
 import { getCurrencyCode, type CountryCode } from '@/lib/verification';
+import { adminApiFetch } from '@/lib/adminApi';
 import { logAudit } from '@/lib/auditLog';
 import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, PLAN_LABELS, tierMeetsRequirement, type SubscriptionTier } from '@shared/capabilities';
 
@@ -172,6 +173,7 @@ export default function Businesses() {
   const [editField, setEditField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [editSaving, setEditSaving] = useState(false);
+  const profileFlightRef = useRef(false);
   // Products & Services
   const [showServices, setShowServices] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
@@ -409,6 +411,8 @@ export default function Businesses() {
 
   useEffect(() => {
     ++selectionGenerationRef.current;
+    setEditField(null);
+    setEditValue('');
     ++capRequestRef.current;
     capMutationRef.current = false;
     setCapSaving(null);
@@ -511,29 +515,48 @@ export default function Businesses() {
   }
 
   async function handleStatusChange() {
-    if (!selected || selectedStatus === selected.status || !isFullAdmin) return;
+    if (!selected || selectedStatus === selected.status || !isFullAdmin || stepUpFlightRef.current || stepUpBlocked || reviewOperationRef.current) return;
+    const businessId = selected.id;
+    const status = selectedStatus;
+    const previous_status = selected.status;
+    const generation = selectionGenerationRef.current;
+    const current = () => selectedIdRef.current === businessId && selectionGenerationRef.current === generation;
+    stepUpFlightRef.current = true;
+    setStepUpFlight(true);
     setStatusSaving(true);
     try {
-      const { error } = await adminDb
-        .from('businesses')
-        .update({ status: selectedStatus })
-        .eq('id', selected.id);
-
-      if (error) throw error;
-
-      await logAudit({
-        action: 'change_business_status',
-        entity_type: 'business',
-        entity_id: selected.id,
-        details: { previous_status: selected.status, new_status: selectedStatus, business_name: selected.name },
+      const onAuthorized = async (stepUpId: string) => {
+        if (!current()) return;
+        try {
+          const res = await adminApiFetch(`/api/admin/businesses/${businessId}/status`, { status, previous_status, stepUpId });
+          const data = await res.json();
+          if (!current()) return;
+          if (!res.ok) throw new Error(data.error || 'Failed to change status');
+          if (data.business?.id !== businessId || !['active', 'pending', 'suspended'].includes(data.business.status)) {
+            throw new Error('Unable to confirm saved status. Refresh before retrying.');
+          }
+          const persistedStatus = data.business.status as string;
+          setBusinesses(prev => prev.map(b => b.id === businessId ? { ...b, status: persistedStatus } : b));
+          setSelected(prev => prev?.id === businessId ? { ...prev, status: persistedStatus } : prev);
+          if (data.auditRecorded === false) alert('Status saved, but the audit record could not be written. Contact support; do not repeat the change.');
+        } catch (err) {
+          if (current()) alert(err instanceof Error ? err.message : 'Unable to confirm status. Refresh before retrying.');
+          throw err;
+        }
+      };
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'business_status', targetId: businessId,
+        params: { business_id: businessId, previous_status, status },
+        description: `Change ${selected.name} account status from ${previous_status} to ${status}`,
+        onAuthorized,
       });
-
-      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, status: selectedStatus } : b));
-      setSelected(prev => prev ? { ...prev, status: selectedStatus } : prev);
     } catch (err) {
-      console.error('Status change error:', err);
-      alert('Failed to change status');
+      if (current()) alert(err instanceof Error ? err.message : 'Failed to change status');
     } finally {
+      if (!current()) stepUp.reset();
+      stepUpFlightRef.current = false;
+      setStepUpFlight(false);
       setStatusSaving(false);
     }
   }
@@ -599,29 +622,31 @@ export default function Businesses() {
   }
 
   async function handleEditSave() {
-    if (!selected || !editField || !isFullAdmin) return;
+    if (!selected || !editField || !isFullAdmin || profileFlightRef.current) return;
+    const businessId = selected.id;
+    const field = editField;
+    const generation = selectionGenerationRef.current;
+    const current = () => selectedIdRef.current === businessId && selectionGenerationRef.current === generation;
+    profileFlightRef.current = true;
     setEditSaving(true);
     try {
-      const { error } = await adminDb
-        .from('businesses')
-        .update({ [editField]: editValue.trim() })
-        .eq('id', selected.id);
-      if (error) throw error;
-      await logAudit({
-        action: 'edit_business_field',
-        entity_type: 'business',
-        entity_id: selected.id,
-        details: { field: editField, new_value: editValue.trim(), business_name: selected.name },
-      });
-      // Update local state
-      setSelected({ ...selected, [editField]: editValue.trim() } as Business);
+      const res = await adminApiFetch(`/api/admin/businesses/${businessId}/profile`, { field, value: editValue.trim() });
+      const data = await res.json();
+      if (!current()) return;
+      if (!res.ok) throw new Error(data.error || 'Failed to update');
+      if (data.business?.id !== businessId || typeof data.business[field] !== 'string') {
+        throw new Error('Unable to confirm saved value. Refresh before retrying.');
+      }
+      const patch = { [field]: data.business[field] };
+      setBusinesses(prev => prev.map(b => b.id === businessId ? { ...b, ...patch } : b));
+      setSelected(prev => prev?.id === businessId ? { ...prev, ...patch } : prev);
       setEditField(null);
       setEditValue('');
-      await loadData();
+      if (data.auditRecorded === false) alert('Change saved, but the audit record could not be written. Contact support; do not repeat the change.');
     } catch (err) {
-      console.error('Edit error:', err);
-      alert('Failed to update');
+      if (current()) alert(err instanceof Error ? err.message : 'Failed to update');
     } finally {
+      profileFlightRef.current = false;
       setEditSaving(false);
     }
   }
@@ -863,25 +888,25 @@ export default function Businesses() {
                 {editField === field ? (
                   <div className="flex items-center gap-1.5">
                     {field === 'category' ? (
-                      <select value={editValue} onChange={e => setEditValue(e.target.value)}
+                      <select disabled={editSaving} aria-label={`Edit ${field}`} value={editValue} onChange={e => setEditValue(e.target.value)}
                         className="rounded border border-brand px-2 py-1 text-sm w-48 focus:outline-none" autoFocus>
                         {categories.map(c => (
                           <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
                         ))}
                       </select>
                     ) : (
-                      <input value={editValue} onChange={e => setEditValue(e.target.value)}
+                      <input disabled={editSaving} aria-label={`Edit ${field}`} value={editValue} onChange={e => setEditValue(e.target.value)}
                         className="rounded border border-brand px-2 py-0.5 text-sm w-40 focus:outline-none" autoFocus />
                     )}
                     <button onClick={handleEditSave} disabled={editSaving}
                       className="text-xs text-brand font-semibold">{editSaving ? '...' : 'Save'}</button>
-                    <button onClick={() => setEditField(null)}
+                    <button disabled={editSaving} onClick={() => setEditField(null)}
                       className="text-xs text-gray-400">Cancel</button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <span className="text-gray-900">{field === 'category' ? (selected[field] || '').replace(/_/g, ' ') : (selected as Record<string, unknown>)[field] as string || '—'}</span>
-                    <button onClick={() => { setEditField(field); setEditValue((selected as Record<string, unknown>)[field] as string || ''); }}
+                    <button disabled={!isFullAdmin || editSaving} aria-label={`Edit ${field}`} onClick={() => { setEditField(field); setEditValue((selected as Record<string, unknown>)[field] as string || ''); }}
                       className="text-xs text-brand hover:underline">Edit</button>
                   </div>
                 )}
@@ -943,7 +968,7 @@ export default function Businesses() {
                     </select>
                     <button
                       onClick={handleStatusChange}
-                      disabled={statusSaving || selectedStatus === selected.status}
+                      disabled={statusSaving || stepUpBlocked || selectedStatus === selected.status}
                       className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                     >
                       {statusSaving ? '...' : 'Save'}

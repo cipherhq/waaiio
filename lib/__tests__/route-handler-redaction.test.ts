@@ -77,7 +77,7 @@ describe('Embedded-signup route handler', () => {
     tokenResponse?: Record<string, unknown>;
     longLivedTokenThrow?: Error;
     channelInsertError?: Record<string, unknown> | null;
-    channelData?: Record<string, unknown>;
+    channelData?: Record<string, unknown> | null;
     templateThrow?: Error;
     outerThrow?: boolean;
     phonesData?: Record<string, unknown>;
@@ -103,25 +103,30 @@ describe('Embedded-signup route handler', () => {
 
     // Mock supabase/service
     const channelError = overrides.channelInsertError !== undefined ? overrides.channelInsertError : null;
-    const channelData = overrides.channelData || { id: 'ch-789' };
-    const mockServiceFrom = vi.fn().mockReturnValue({
-      update: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
-          }),
-        }),
-      }),
-      insert: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data: channelData, error: channelError }),
-        }),
-      }),
+    const channelData = overrides.channelData === undefined ? { id: 'candidate-789' } : overrides.channelData;
+    const mockServiceFrom = vi.fn((table: string) => {
+      let inserted = false;
+      const result = () => {
+        if (table === 'businesses') return { data: { id: 'biz-456', assigned_channel_id: null, whatsapp_channel_id: null, wa_method: null }, error: null };
+        if (table === 'whatsapp_channel_candidates' && inserted) return { data: channelData, error: channelError };
+        return { data: null, error: null };
+      };
+      const chain: any = {};
+      for (const method of ['select', 'eq', 'update']) chain[method] = vi.fn(() => chain);
+      chain.insert = vi.fn(() => { inserted = true; return chain; });
+      chain.single = vi.fn(async () => result());
+      chain.maybeSingle = vi.fn(async () => result());
+      chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result()).then(resolve);
+      return chain;
     });
 
     vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({ from: mockServiceFrom }),
+      createServiceClient: vi.fn().mockReturnValue({ from: mockServiceFrom,
+        rpc: vi.fn(async (name: string) => ({ data: name === 'promote_candidate_with_merchant_auth'
+          ? { ok: true, channel_id: 'ch-789', action: 'first_connect' } : {}, error: null })),
+      }),
     }));
+    vi.doMock('@/lib/encryption', () => ({ encryptToken: vi.fn(() => 'encrypted-test-value') }));
 
     // Mock MetaCloudService
     const exchangeTokenMock = overrides.longLivedTokenThrow
@@ -179,7 +184,7 @@ describe('Embedded-signup route handler', () => {
       vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
         const resp = fetchResponses[fetchCallIndex] || { json: () => Promise.resolve({}) };
         fetchCallIndex++;
-        return Promise.resolve(resp);
+        return Promise.resolve({ ok: true, ...resp });
       }));
     }
   }
@@ -243,11 +248,11 @@ describe('Embedded-signup route handler', () => {
     expect(hasWarning).toBe(true);
   });
 
-  it('channel insert failure with sensitive DB error: returns 500, logs no raw error', async () => {
+  it('candidate insert failure with sensitive DB error: returns 500, logs no raw error', async () => {
     setupEmbeddedSignupMocks({
       channelInsertError: {
-        message: 'duplicate key value violates unique constraint "whatsapp_channels_phone_number_key" for phone +2348012345678',
-        code: '23505',
+        message: 'foreign key violation for phone +2348012345678',
+        code: '23503',
         details: 'Key (phone_number)=(+2348012345678) already exists.',
       },
       channelData: null,
@@ -263,15 +268,24 @@ describe('Embedded-signup route handler', () => {
 
     // Logs must not contain the raw DB error text
     assertNoSensitiveData(capturedErrors, [
-      'duplicate key value',
+      'foreign key violation',
       '+2348012345678',
       'phone_number_key',
       'Key (phone_number)',
     ]);
 
-    // The safe error code (23505) is a valid identifier so may appear
-    const hasChannelInsert = capturedErrors.some(l => l.includes('Channel insert failed'));
+    // The safe error code (23503) is a valid identifier so may appear
+    const hasChannelInsert = capturedErrors.some(l => l.includes('Candidate creation failed'));
     expect(hasChannelInsert).toBe(true);
+  });
+
+  it('duplicate candidate conflict returns 409 without leaking its DB details', async () => {
+    setupEmbeddedSignupMocks({ channelInsertError: { code: '23505', message: 'duplicate candidate for +2348012345678 user@meta.com' }, channelData: null });
+    const { POST } = await import('@/app/api/whatsapp/embedded-signup/route');
+    const res = await POST(mockRequest({ business_id: 'biz-456', code: 'auth-code' }) as any);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'A connection attempt is already in progress.' });
+    assertNoSensitiveData(capturedLogs, ['+2348012345678', 'user@meta.com', 'duplicate candidate']);
   });
 
   it('template provisioning failure is non-fatal', async () => {

@@ -30,7 +30,7 @@ vi.mock('@/lib/channels/channel-resolver', () => {
   class MockResolver {
     async resolveByChannelIdForBusiness() { return null; }
     async resolveByBusinessId() {
-      return { channelId: 'ch-1', sender: { sendText: (...a: unknown[]) => mockTransportSend(...a), sendButtons: vi.fn().mockResolvedValue({}), sendDocument: vi.fn().mockResolvedValue({}), sendImage: vi.fn().mockResolvedValue({}) } };
+      return { channel: { id: 'ch-1', channel_type: 'dedicated' }, channelId: 'ch-1', sender: { sendText: (...a: unknown[]) => mockTransportSend(...a), sendButtons: vi.fn().mockResolvedValue({}), sendDocument: vi.fn().mockResolvedValue({}), sendImage: vi.fn().mockResolvedValue({}) } };
     }
   }
   return { ChannelResolver: MockResolver };

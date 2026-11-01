@@ -173,6 +173,7 @@ function buildMock(opts: {
       return chain(null);
     }),
     rpc: vi.fn().mockImplementation((fn: string) => {
+      if (fn === 'get_shared_conversation') return Promise.resolve({data:{version:3,business_id:existingSession?.business_id || null,session:existingSession},error:null});
       if (fn === 'get_bot_context') {
         if (existingSession) {
           return Promise.resolve({
@@ -212,7 +213,7 @@ function dirSession(extra: Record<string, any> = {}) {
     user_id: null,
     business_id: null,
     current_step: 'directory_search',
-    session_data: { _directory_mode: true, _directory_country: 'NG', ...extra },
+    session_data: { _inbound_channel_id:'ch-001', _conversation_version:3, _directory_mode: true, _directory_country: 'NG', ...extra },
     is_active: true,
     expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
     version: 0,
@@ -227,7 +228,7 @@ function bizSession(step = 'select_service') {
     user_id: null,
     business_id: 'biz-001',
     current_step: step,
-    session_data: { business_id: 'biz-001', business_name: 'Test Salon', business_category: 'salon', capabilities: ['scheduling'] },
+    session_data: { _inbound_channel_id:'ch-001', business_id: 'biz-001', business_name: 'Test Salon', business_category: 'salon', capabilities: ['scheduling'] },
     is_active: true,
     expires_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
     version: 0,
@@ -258,7 +259,8 @@ describe('WhatsApp Directory Flow', () => {
     expect(m.length).toBeGreaterThan(0);
     const welcome = m.find(x => textOf(x).includes('I can help you find businesses'));
     expect(welcome).toBeDefined();
-    expect(textOf(welcome!)).toContain('salon in Lagos');
+    expect(textOf(welcome!)).toContain('restaurants in Ikoyi');
+    expect(textOf(welcome!)).toContain('barbers in Lekki');
     expect(textOf(welcome!)).toContain('connect');
 
     const ses = db._inserted.find((s: any) => s.current_step === 'directory_search');
@@ -396,8 +398,10 @@ describe('WhatsApp Directory Flow', () => {
       // recursive calls: captured but not executed
     }) as any;
     await bot.handleMessage(PHONE, 'dir_result_0', 'text', SHARED_PNID);
-    const recursive = calls.find(c => c[4] === 'biz-tap');
+    const recursive = calls.find(c => c[8]?.businessId === 'biz-tap');
     expect(recursive).toBeDefined();
+    expect(recursive![4]).toBeUndefined();
+    expect(recursive![8].conversationVersion).toBe(3);
     expect(recursive![7]).toBe('fuzzy');
   });
 
@@ -425,8 +429,10 @@ describe('WhatsApp Directory Flow', () => {
       if (calls.length === 1) return origHM(...args);
     }) as any;
     await bot.handleMessage(PHONE, 'dir_sug_0', 'text', SHARED_PNID);
-    const recursive = calls.find(c => c[4] === 'biz-sug');
+    const recursive = calls.find(c => c[8]?.businessId === 'biz-sug');
     expect(recursive).toBeDefined();
+    expect(recursive![4]).toBeUndefined();
+    expect(recursive![8].conversationVersion).toBe(3);
     expect(recursive![7]).toBe('fuzzy');
   });
 
@@ -454,8 +460,10 @@ describe('WhatsApp Directory Flow', () => {
       if (calls.length === 1) return origHM(...args);
     }) as any;
     await bot.handleMessage(PHONE, '1', 'text', SHARED_PNID);
-    const recursive = calls.find(c => c[4] === 'biz-num');
+    const recursive = calls.find(c => c[8]?.businessId === 'biz-num');
     expect(recursive).toBeDefined();
+    expect(recursive![4]).toBeUndefined();
+    expect(recursive![8].conversationVersion).toBe(3);
     expect(recursive![7]).toBe('fuzzy');
   });
 
@@ -472,6 +480,7 @@ describe('WhatsApp Directory Flow', () => {
       return origFrom(t);
     });
     db.rpc = vi.fn().mockImplementation((fn: string) => {
+      if (fn === 'get_shared_conversation') return Promise.resolve({data:{version:3,session:dirSession()},error:null});
       if (fn === 'get_bot_context') return Promise.resolve({ data: { has_session: true, ambiguous: false, session: dirSession(), business: null, capabilities: null, capability_overrides: null }, error: null });
       if (fn === 'search_businesses_fuzzy') return Promise.resolve({ data: [{ id: 'biz-cx', name: 'ConnBiz', bot_code: 'CB', category: 'salon', city: 'Lagos', state: 'Lagos', country_code: 'NG', match_score: 0.8 }], error: null });
       return Promise.resolve({ data: { success: true }, error: null });
@@ -484,8 +493,10 @@ describe('WhatsApp Directory Flow', () => {
       if (calls.length === 1) return origHM(...args);
     }) as any;
     await bot.handleMessage(PHONE, 'connect ConnBiz', 'text', SHARED_PNID);
-    const recursive = calls.find(c => c[4] === 'biz-cx');
+    const recursive = calls.find(c => c[8]?.businessId === 'biz-cx');
     expect(recursive).toBeDefined();
+    expect(recursive![4]).toBeUndefined();
+    expect(recursive![8].conversationVersion).toBe(3);
     expect(recursive![7]).toBe('fuzzy');
   });
 
@@ -501,8 +512,10 @@ describe('WhatsApp Directory Flow', () => {
       if (calls.length === 1) return origHM(...args);
     }) as any;
     await bot.handleMessage(PHONE, 'biz_0', 'text', SHARED_PNID);
-    const recursive = calls.find(c => c[4] === 'biz-ret');
+    const recursive = calls.find(c => c[8]?.businessId === 'biz-ret');
     expect(recursive).toBeDefined();
+    expect(recursive![4]).toBeUndefined();
+    expect(recursive![8].conversationVersion).toBe(3);
     expect(recursive![7]).toBe('returning_customer');
   });
 
@@ -526,8 +539,10 @@ describe('WhatsApp Directory Flow', () => {
       if (calls.length === 1) return origHM(...args);
     }) as any;
     await bot.handleMessage(PHONE, 'CODEBIZ', 'text', SHARED_PNID);
-    const recursive = calls.find(c => c[4] === 'biz-bc');
+    const recursive = calls.find(c => c[8]?.businessId === 'biz-bc');
     expect(recursive).toBeDefined();
+    expect(recursive![4]).toBeUndefined();
+    expect(recursive![8].conversationVersion).toBe(3);
     expect(recursive![7]).toBe('bot_code');
   });
 
@@ -571,10 +586,8 @@ describe('WhatsApp Directory Flow', () => {
     expect(dirSes).toBeUndefined();
   });
 
-  it('inside a flow, "switch Glow Studio" with a match deactivates current session', async () => {
-    // When switch finds an exact match, it deactivates the current session
-    // and routes to the new business. We verify the deactivation happened
-    // (the session update to is_active=false).
+  it('inside a flow, fuzzy switch preserves the merchant session and saves a picker before sending', async () => {
+    // A fuzzy name match needs an explicit selection without destroying the current merchant session.
     const biz = {
       id: 'biz-glow', name: 'Glow Studio', bot_code: 'GLOW',
       slug: 'glow', category: 'salon', flow_type: 'scheduling',
@@ -582,15 +595,37 @@ describe('WhatsApp Directory Flow', () => {
       metadata: {}, country_code: 'NG', status: 'active',
     };
     const db = buildMock({ existingSession: bizSession('select_service'), searchResults: [biz] });
+    const originalFrom = db.from;
+    db.from = vi.fn((table: string) => {
+      if (table === 'business_capabilities') return chain([{capability:'scheduling',is_enabled:true,sort_order:0}],{asList:true});
+      if (table === 'capability_overrides') return chain([],{asList:true});
+      if (table !== 'businesses') return originalFrom(table);
+      const c = chain([biz], {asList:true});
+      c.maybeSingle.mockResolvedValue({data:null,error:null});
+      c.eq.mockImplementation((column: string, value: string) => {
+        if (column === 'id' && value === 'biz-001') return chain({...biz,id:'biz-001',name:'Current Salon'});
+        return c;
+      });
+      return c;
+    });
+    const originalRpc = db.rpc;
+    db.rpc = vi.fn((name: string, args: unknown) => name === 'update_session_cas'
+      ? Promise.resolve({data:{success:true,version:1},error:null}) : originalRpc(name,args));
 
-    const { bot } = createBot(db);
+    const { bot, sender } = createBot(db);
     await bot.handleMessage(PHONE, 'switch Glow Studio', 'text', SHARED_PNID);
 
     // deactivateSession uses RPC 'deactivate_session_atomic'
     const deactivationCalls = db.rpc.mock.calls.filter(
       (c: any[]) => c[0] === 'deactivate_session_atomic',
     );
-    expect(deactivationCalls.length).toBeGreaterThan(0);
+    expect(deactivationCalls).toHaveLength(0);
+    const picker = db._inserted.find((s:any)=>s.current_step==='select_business_suggestion');
+    expect(logErrors).toEqual([]);
+    expect(picker).toBeDefined();
+    expect(picker?.session_data).toMatchObject({_inbound_channel_id:'ch-001',_conversation_version:3});
+    expect(picker?.session_data.suggestions.length).toBeGreaterThan(0);
+    expect(msgs(sender).some(m=>textOf(m).includes('Which business'))).toBe(true);
   });
 
   // ─── Dedicated channel ───

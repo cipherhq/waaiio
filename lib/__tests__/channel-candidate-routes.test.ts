@@ -11,6 +11,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
+const { mockConsumeSignup, mockListSignupPhones } = vi.hoisted(() => ({ mockConsumeSignup: vi.fn(), mockListSignupPhones: vi.fn() }));
+vi.mock('@/lib/whatsapp/embedded-signup-session', () => ({ consumeSignupSession: mockConsumeSignup }));
+vi.mock('@/lib/whatsapp/embedded-signup-assets', () => ({ listSignupPhones: mockListSignupPhones }));
+
 // --- Mock infrastructure ---
 
 const mockGetUser = vi.fn();
@@ -112,7 +116,7 @@ const mockServiceFrom = vi.fn((table: string) => {
 const mockServiceRpc = vi.fn(async (fn: string, args: Record<string, unknown>) => {
   rpcCalls.push({ fn, args });
   if (fn === 'check_phone_conflict') return { data: { conflict: false }, error: null };
-  if (fn === 'promote_channel_candidate') return { data: { ok: true, channel_id: 'ch-new', action: 'first_connect' }, error: null };
+  if (fn === 'promote_candidate_with_merchant_auth') return { data: { ok: true, channel_id: 'ch-new', action: 'first_connect' }, error: null };
   if (fn === 'activate_trial_if_eligible') return { data: { activated: true }, error: null };
   return { data: null, error: null };
 });
@@ -160,6 +164,9 @@ function makeReq(url: string, body: Record<string, unknown>) {
 
 function resetAll() {
   vi.resetAllMocks();
+  mockConsumeSignup.mockResolvedValue({ accessToken: 'test-token', tokenExpiresAt: null,
+    accounts: [{ waba_id: 'waba-1', phones: [{ id: 'pn-1' }] }] });
+  mockListSignupPhones.mockResolvedValue([{ id: 'pn-1' }]);
   candidateInserts = []; candidateUpdates = []; rpcCalls = []; lastBusinessInsert = null; eventLog = [];
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 't@t.com' } } });
   mockResolveBusinessGw.mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
@@ -188,12 +195,35 @@ describe('OTP add-number handler', () => {
 
   it('request: candidate INSERT before Meta fetch', async () => {
     const { POST } = await import('@/app/api/whatsapp/add-number/route');
-    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+234900', display_name: 'T' }));
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+2348031234567', display_name: 'T' }));
     expect(res.status).toBe(200);
     expect(candidateInserts.length).toBe(1);
     expect(candidateInserts[0].connection_source).toBe('waaiio_hosted');
     expect(candidateInserts[0].status).toBe('pending');
     expect(rpcCalls.find(c => c.fn === 'check_phone_conflict')).toBeDefined();
+  });
+
+  it.each([
+    ['+12025579406', '1', '2025579406'],
+    ['+442079460123', '44', '2079460123'],
+    ['+2348031234567', '234', '8031234567'],
+    ['+6591234567', '65', '91234567'],
+  ])('sends national-only phone_number to Meta for %s', async (phone, cc, national) => {
+    const { POST } = await import('@/app/api/whatsapp/add-number/route');
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: phone, display_name: 'Test' }));
+    expect(res.status).toBe(200);
+    const call = mockFetch.mock.calls.find(c => String(c[0]).includes('/phone_numbers'));
+    expect(JSON.parse(call![1].body)).toEqual({ cc, phone_number: national, verified_name: 'Test', migrate_phone_number: false });
+    expect(candidateInserts[0].phone_number).toBe(phone);
+    expect(candidateInserts[0].phone_number_normalized).toBe(phone.slice(1));
+  });
+
+  it.each(['not-a-number', '+123', '', 12345])('rejects malformed phone %s before creating a candidate or calling Meta', async phone => {
+    const { POST } = await import('@/app/api/whatsapp/add-number/route');
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: phone }));
+    expect(res.status).toBe(400);
+    expect(candidateInserts).toHaveLength(0);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('#349: fresh add sends migrate_phone_number=false to Meta', async () => {
@@ -246,7 +276,7 @@ describe('OTP add-number handler', () => {
       return { ok: true, json: async () => ({}) };
     });
     const { POST } = await import('@/app/api/whatsapp/add-number/route');
-    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+234900' }));
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+2348031234567' }));
     expect(res.status).toBe(400);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
   });
@@ -275,7 +305,7 @@ describe('OTP add-number handler', () => {
     const res = await POST(makeReq('/api/whatsapp/add-number?action=verify', { business_id: 'biz-1', otp: '123456', candidate_id: 'cand-test' }));
     expect(res.status).toBe(422);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('verify: webhook failure -> failed, no promotion', async () => {
@@ -288,14 +318,14 @@ describe('OTP add-number handler', () => {
     const { POST } = await import('@/app/api/whatsapp/add-number/route');
     const res = await POST(makeReq('/api/whatsapp/add-number?action=verify', { business_id: 'biz-1', otp: '123456', candidate_id: 'cand-test' }));
     expect(res.status).toBe(422);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('verify: success -> promotion RPC called', async () => {
     const { POST } = await import('@/app/api/whatsapp/add-number/route');
     const res = await POST(makeReq('/api/whatsapp/add-number?action=verify', { business_id: 'biz-1', otp: '123456', candidate_id: 'cand-test' }));
     expect(res.status).toBe(200);
-    const promo = rpcCalls.find(c => c.fn === 'promote_channel_candidate');
+    const promo = rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth');
     expect(promo).toBeDefined();
     expect(promo!.args.p_candidate_id).toBe('cand-test');
   });
@@ -311,7 +341,7 @@ describe('K2/M4: encrypted PIN fail-closed', () => {
     const eqChain = (): Record<string, unknown> => ({
       eq: eqChain,
       single: () => Promise.resolve({
-        data: { id: 'cand-nopin', phone_number_id: 'pn-1', phone_number: '+234900', display_name: 'T', waba_id: 'w1', encrypted_registration_pin: null, provider_state: {}, connection_source: 'waaiio_hosted', status: 'validating' },
+        data: { id: 'cand-nopin', phone_number_id: 'pn-1', phone_number: '+2348031234567', display_name: 'T', waba_id: 'w1', encrypted_registration_pin: null, provider_state: {}, connection_source: 'waaiio_hosted', status: 'validating' },
         error: null,
       }),
       maybeSingle: () => Promise.resolve({ data: null, error: null }),
@@ -336,7 +366,7 @@ describe('K2/M4: encrypted PIN fail-closed', () => {
     const eqChain = (): Record<string, unknown> => ({
       eq: eqChain,
       single: () => Promise.resolve({
-        data: { id: 'cand-corrupt', phone_number_id: 'pn-1', phone_number: '+234900', display_name: 'T', waba_id: 'w1', encrypted_registration_pin: 'CORRUPT', provider_state: {}, connection_source: 'waaiio_hosted', status: 'validating' },
+        data: { id: 'cand-corrupt', phone_number_id: 'pn-1', phone_number: '+2348031234567', display_name: 'T', waba_id: 'w1', encrypted_registration_pin: 'CORRUPT', provider_state: {}, connection_source: 'waaiio_hosted', status: 'validating' },
         error: null,
       }),
       maybeSingle: () => Promise.resolve({ data: null, error: null }),
@@ -363,10 +393,45 @@ describe('K2/M4: encrypted PIN fail-closed', () => {
 describe('Facebook callback handler', () => {
   beforeEach(resetAll);
 
+  it('rejects client-supplied tokens before session or provider access', async () => {
+    const { POST } = await import('@/app/api/auth/facebook/callback/route');
+    const res = await POST(makeReq('/api/auth/facebook/callback', {
+      business_id: 'biz-1', access_token: 'untrusted', waba_id: 'waba-1', phone_number_id: 'pn-1',
+    }));
+    expect(res.status).toBe(400);
+    expect(mockConsumeSignup).not.toHaveBeenCalled();
+    expect(candidateInserts).toHaveLength(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects another business owner before consuming the session', async () => {
+    mockAuthClientFrom.mockImplementation(() => ({ select: () => dc({ ...defaultBiz, owner_id: 'other' }) }));
+    const { POST } = await import('@/app/api/auth/facebook/callback/route');
+    const res = await POST(makeReq('/api/auth/facebook/callback', {
+      business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1',
+    }));
+    expect(res.status).toBe(403);
+    expect(mockConsumeSignup).not.toHaveBeenCalled();
+    expect(candidateInserts).toHaveLength(0);
+  });
+
+  it.each(['expired', 'wrong-selection', 'removed-from-account'])('rejects %s before provider mutation', async mode => {
+    if (mode === 'expired') mockConsumeSignup.mockResolvedValue(null);
+    if (mode === 'removed-from-account') mockListSignupPhones.mockResolvedValue([]);
+    const { POST } = await import('@/app/api/auth/facebook/callback/route');
+    const res = await POST(makeReq('/api/auth/facebook/callback', {
+      business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1',
+      phone_number_id: mode === 'wrong-selection' ? 'other-phone' : 'pn-1',
+    }));
+    expect(res.status).toBe(mode === 'expired' ? 409 : 403);
+    expect(candidateInserts).toHaveLength(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('M3: candidate INSERT before provider_register (ordering proof)', async () => {
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
     const res = await POST(makeReq('/api/auth/facebook/callback', {
-      business_id: 'biz-1', access_token: 'test-token', waba_id: 'waba-1', phone_number_id: 'pn-1',
+      business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1',
     }));
     expect(candidateInserts.length).toBeGreaterThanOrEqual(1);
     expect(candidateInserts[0].connection_source).toBe('embedded_signup');
@@ -376,7 +441,7 @@ describe('Facebook callback handler', () => {
     expect(insertIdx).toBeGreaterThanOrEqual(0);
     expect(registerIdx).toBeGreaterThan(insertIdx);
     // Promotion called
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeDefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeDefined();
   });
 
   it('registration failure: candidate failed, no promotion', async () => {
@@ -389,10 +454,10 @@ describe('Facebook callback handler', () => {
       return { ok: true, json: async () => ({ success: true }), text: async () => '' };
     });
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
-    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', access_token: 'tok', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
+    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(422);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('webhook failure: candidate failed, no promotion', async () => {
@@ -406,10 +471,10 @@ describe('Facebook callback handler', () => {
       return { ok: true, json: async () => ({}), text: async () => '' };
     });
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
-    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', access_token: 'tok', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
+    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(422);
     expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('cross-source conflict: 409 before provider mutation', async () => {
@@ -419,10 +484,10 @@ describe('Facebook callback handler', () => {
       return { data: null, error: null };
     });
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
-    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', access_token: 'tok', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
+    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(409);
     expect(candidateInserts.length).toBe(0);
-    expect(rpcCalls.find(c => c.fn === 'promote_channel_candidate')).toBeUndefined();
+    expect(rpcCalls.find(c => c.fn === 'promote_candidate_with_merchant_auth')).toBeUndefined();
   });
 
   it('M3: cross-business same-phone: 409 before provider mutation', async () => {
@@ -432,7 +497,7 @@ describe('Facebook callback handler', () => {
       return { data: null, error: null };
     });
     const { POST } = await import('@/app/api/auth/facebook/callback/route');
-    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', access_token: 'tok', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
+    const res = await POST(makeReq('/api/auth/facebook/callback', { business_id: 'biz-1', connection_id: 'session-test', waba_id: 'waba-1', phone_number_id: 'pn-1' }));
     expect(res.status).toBe(409);
     expect(candidateInserts.length).toBe(0);
     // No /register or /subscribed_apps calls
@@ -535,5 +600,22 @@ describe('M2: Paid register -> subscribe orchestration', () => {
     expect(mockFetch.mock.calls.some((c: unknown[]) => String(c[0]).includes('api.paystack.co/transaction/initialize'))).toBe(true);
     // Trial NOT called
     expect(rpcCalls.find(c => c.fn === 'activate_trial_if_eligible')).toBeUndefined();
+  });
+});
+
+describe('direct onboarding release switch', () => {
+  beforeEach(resetAll);
+  it.each(['request', 'resend', 'verify'])('blocks %s without provider or candidate mutation when disabled', async action => {
+    vi.stubEnv('NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED', 'false');
+    try {
+      const { POST } = await import('@/app/api/whatsapp/add-number/route');
+      const response = await POST(makeReq('/api/whatsapp/add-number?action=' + action, { business_id: 'biz-1', candidate_id: 'cand-test', otp: '123456' }));
+      expect(response.status).toBe(503);
+      expect((await response.json()).code).toBe('DIRECT_ONBOARDING_DISABLED');
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(candidateInserts).toHaveLength(0);
+      expect(candidateUpdates).toHaveLength(0);
+      expect(rpcCalls).toHaveLength(0);
+    } finally { vi.unstubAllEnvs(); }
   });
 });

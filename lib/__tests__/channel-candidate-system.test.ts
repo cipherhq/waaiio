@@ -152,9 +152,9 @@ describe('OTP route — R9 §4 UI contract', () => {
     expect(verifyBlock).toContain(".eq('status', 'validating')");
   });
 
-  it('verify calls promote_channel_candidate on all-READY', () => {
+  it('verify calls promote_candidate_with_merchant_auth on all-READY', () => {
     const verifyBlock = addNumberSource.slice(addNumberSource.indexOf("action === 'verify'"));
-    expect(verifyBlock).toContain("'promote_channel_candidate'");
+    expect(verifyBlock).toContain("'promote_candidate_with_merchant_auth'");
   });
 
   it('verify marks candidate failed on registration failure', () => {
@@ -223,12 +223,11 @@ describe('Privacy (R9 §7)', () => {
 });
 
 describe('Dashboard safety', () => {
-  it('main page uses is_active filter on assigned channel', () => {
-    const linkBlock = dashboardPageSource.slice(
-      dashboardPageSource.indexOf('loadWhatsAppLink'),
-      dashboardPageSource.indexOf('loadWhatsAppLink') + 500,
-    );
-    expect(linkBlock).toContain(".eq('is_active', true).maybeSingle()");
+  it('main page uses permanent Waaiio link (no direct channel/credential read)', () => {
+    // Dashboard replaced channel query waterfall with buildMerchantLink (server-side resolver handles readiness)
+    expect(dashboardPageSource).toContain('buildMerchantLink');
+    expect(dashboardPageSource).not.toContain('loadWhatsAppLink');
+    expect(dashboardPageSource).not.toContain('queryChannelsPublic');
   });
 
   it('connect page stores candidate_id from OTP request (R9 §4)', () => {
