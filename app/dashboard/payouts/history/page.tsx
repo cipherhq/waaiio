@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCalendarDate } from '@/lib/utils/calendar-date';
 
 interface PayoutRecord {
   id: string;
@@ -321,7 +322,7 @@ export default function PayoutHistoryPage() {
                 >
                   <td className="px-4 py-3 text-gray-900">{formatDate(p.created_at)}</td>
                   <td className="px-4 py-3 text-gray-600">
-                    {formatDate(p.period_start)} - {formatDate(p.period_end)}
+                    {formatCalendarDate(p.period_start)} - {formatCalendarDate(p.period_end)}
                   </td>
                   <td className="px-4 py-3 text-right text-gray-900">{formatCurrency(p.gross_amount, country)}</td>
                   <td className="px-4 py-3 text-right text-gray-500">{formatCurrency(p.platform_fee + p.gateway_fee, country)}</td>
@@ -377,7 +378,7 @@ export default function PayoutHistoryPage() {
             </div>
 
             <div className="mt-4 space-y-3 text-sm">
-              <DetailRow label="Period" value={`${formatDate(selected.period_start)} - ${formatDate(selected.period_end)}`} />
+              <DetailRow label="Period" value={`${formatCalendarDate(selected.period_start)} - ${formatCalendarDate(selected.period_end)}`} />
               <DetailRow label="Gross Amount" value={formatCurrency(selected.gross_amount, country)} />
               <DetailRow label="Platform Fee" value={formatCurrency(selected.platform_fee, country)} />
               <DetailRow label="Gateway Fee" value={formatCurrency(selected.gateway_fee, country)} />
