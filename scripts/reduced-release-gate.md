@@ -74,7 +74,11 @@ bytes are downloaded from the authenticated run and hashed; a caller-supplied
 JSON report is not accepted in place of those artifacts.
 
 Only then does the pinned Vercel CLI deploy merchant from its target checkout and
-admin from its separate target checkout. Both projects are rechecked before each
+admin from its separate target checkout. Each deployment explicitly passes its
+verified source SHA as `VERCEL_GIT_COMMIT_SHA` through both `--env` and
+`--build-env`; local process environment and Git metadata are not substitutes for
+runtime/build environment transport. The control integration SHA is never used
+as either app's runtime identity. Both projects are rechecked before each
 mutation. Each created deployment must have the expected project/SHA and its own
 exact captured ID; same-SHA replacement IDs do not satisfy that check. Serving
 verification uses bounded read-only polling, public health, merchant runtime

@@ -64,10 +64,25 @@ describe('actual reduced orchestration with local Git, ZIPs and mocked external 
  it('rejects a project alias mismatch before first mutation',async()=>{options.wrongAlias=true;await expect(prepare()).rejects.toThrow('identity');expect(existsSync(join(dir,'cli.log'))).toBe(false);});
  it('rejects partial release replay without resetting baseline',async()=>{state.merchant.sha=manifest.projects.merchant.target_sha;persist();await expect(prepare()).rejects.toThrow('identity');expect(existsSync(join(dir,'cli.log'))).toBe(false);});
  it('runs actual deployment orchestrator against fake CLI, separately pinned source targets',async()=>{
-  const result=await deployReduced(manifest,controlPath,sourcePaths,'123',1,env);
-  const calls=readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);
-  for(const [index,kind] of ['merchant','admin'].entries()){expect(calls[index].kind).toBe(kind);expect(calls[index].cwd).toBe(sourcePaths[kind]);expect(calls[index].sha).toBe(manifest.projects[kind].target_sha);expect(result.deployed[kind].sha).toBe(manifest.projects[kind].target_sha);}
-  expect(requests.some(r=>r.method!=='GET')).toBe(false);
+  const logged=vi.spyOn(console,'log').mockImplementation(()=>{});
+  try {
+    const result=await deployReduced(manifest,controlPath,sourcePaths,'123',1,env);
+    const calls=readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);
+    for(const [index,kind] of ['merchant','admin'].entries()){
+      const target=manifest.projects[kind].target_sha,args=calls[index].args;
+      expect(calls[index].kind).toBe(kind);expect(calls[index].cwd).toBe(sourcePaths[kind]);
+      expect(calls[index].sha).toBe(target);expect(result.deployed[kind].sha).toBe(target);
+      for(const flag of ['--env','--build-env']){
+        expect(args.filter((arg:string)=>arg===flag)).toHaveLength(1);
+        expect(args[args.indexOf(flag)+1]).toBe(`VERCEL_GIT_COMMIT_SHA=${target}`);
+      }
+      expect(args).not.toContain(`VERCEL_GIT_COMMIT_SHA=${manifest.integration_sha}`);
+      expect(args).not.toContain(`VERCEL_GIT_COMMIT_SHA=${manifest.projects[kind==='merchant'?'admin':'merchant'].target_sha}`);
+    }
+    const output=JSON.stringify(logged.mock.calls);
+    expect(output).not.toContain(env.VERCEL_TOKEN);expect(output).not.toContain(env.GITHUB_TOKEN);
+    expect(requests.some(r=>r.method!=='GET')).toBe(false);
+  } finally {logged.mockRestore();}
  });
  it('stops on second-project failure with no automatic rollback',async()=>{state.failAdmin=true;persist();await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow();const calls=readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);expect(calls.every(c=>c.args[0]==='deploy')).toBe(true);expect(JSON.parse(readFileSync(join(dir,'state.json'),'utf8')).merchant.sha).toBe(manifest.projects.merchant.target_sha);});
 });
