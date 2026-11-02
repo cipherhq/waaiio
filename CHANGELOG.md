@@ -1,5 +1,6 @@
 ## 2026-11-02 — Full-source phased release verification
 
+- Update the exact logging allowlist to require zero browser error logs for the server-backed account downgrade flow.
 - Bind complete merchant/admin source inventories to an immutable runtime ancestor, including explicit deleted-file evidence.
 - Validate separate database contracts before and after compatible application cutover, preserving untargeted metadata and existing migration history.
 - Retain private evidence, freshness, exact approval and manual admin-alias controls. Require the full release verifier suites in CI alongside the existing release policies.
