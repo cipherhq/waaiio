@@ -1,3 +1,8 @@
+## 2026-11-02 — Exact environment release evidence contracts
+
+- Select finite staging and production accounting schema profiles while retaining exact definitions, ownership and permission checks. Reject profile substitution and unexpected privilege changes.
+- This corrects release evidence validation only; application targets, database grants, financial behavior and v1/v2 gates are unchanged.
+
 ## 2026-11-02 — Reduced accounting release gate
 
 - Preserve separately reviewed reduced merchant accounting-hold source and unchanged admin source as ordinary ancestors.
