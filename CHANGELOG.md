@@ -1,3 +1,9 @@
+## 2026-11-02 — Cumulative recurring cancellation compatibility
+
+- Add M503 nullable cancellation intent, compatible claim/dispatch serialization and bounded read-only recovery discovery while retaining authoritative recurring fee payment linkage. Already-dispatched successful payments can still reconcile after cancellation.
+- Assert final function signatures, defaults, security attributes and service-only authority; reject incompatible existing column shapes or unexpected overloads. Add required isolated PostgreSQL concurrency, provenance and rollback tests.
+- **Affects**: Recurring cancellation and recovery schema. **Could break**: Installation intentionally rejects incompatible prior state. Provider HTTP after committed dispatch remains outside the database transaction; hosted application requires a separately reviewed fresh-state packet.
+
 ## 2026-11-02 — Explicit manual admin release identity
 
 - Add a fixed security successor release profile with phased storage prerequisites, complete ledger preservation digests and isolated verification evidence.
