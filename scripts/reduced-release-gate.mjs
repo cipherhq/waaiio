@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { decodePrivateReport } from './private-report-transport.mjs';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, appendFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -311,8 +312,9 @@ export async function preflight(manifest,controlPath,sourcePaths,runId,attempt,e
 }
 function privateEvidence(manifest, runId, attempt, env) {
   if (!payout(manifest)) return;
-  const evidence = verifyPrivateEvidence({ rawManifest: env.REDUCED_RELEASE_MANIFEST, manifest, receiptBytes: env.PRIVATE_RELEASE_RECEIPT, reportBytes: env.PRIVATE_RELEASE_ACCEPTANCE_REPORT, approvedHash: env.PRIVATE_RELEASE_ACCEPTANCE_SHA256, policy: policyFor(manifest) });
-  if (accounting(manifest)) verifyAccountingActivation(JSON.parse(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  const reportBytes = decodePrivateReport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
+  const evidence = verifyPrivateEvidence({ rawManifest: env.REDUCED_RELEASE_MANIFEST, manifest, receiptBytes: env.PRIVATE_RELEASE_RECEIPT, reportBytes, approvedHash: env.PRIVATE_RELEASE_ACCEPTANCE_SHA256, policy: policyFor(manifest) });
+  if (accounting(manifest)) verifyAccountingActivation(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   if (evidence.verification.run_id !== runId || evidence.verification.run_attempt !== attempt) fail('Approved private evidence refers to a different code verification');
 }
 export async function deployReduced(manifest,controlPath,sourcePaths,runId,attempt,env=process.env){

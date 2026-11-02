@@ -1,3 +1,5 @@
+import { gzipSync } from 'node:zlib';
+import { ACCOUNTING_EVIDENCE_POLICY, ACCOUNTING_SCHEMA_PROFILES } from '../reduced-accounting-policy.mjs';
 import { beforeEach,afterEach,describe,it,expect,vi } from 'vitest';
 import { mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,existsSync,chmodSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -200,6 +202,37 @@ describe('payout v2 actual deployment orchestration',{timeout:15000},()=>{
  it('rejects tampered canonical SQL receipt even inside authenticated archive',async()=>{receipts.integration.sources.sql['supabase/migrations/498_manual_settlement_rejection_guard.sql']='0'.repeat(64);archive('integration');await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('SQL receipt');expect(existsSync(join(dir,'cli.log'))).toBe(false);});
  it('rejects wrong project root before mutation',async()=>{options.wrongRoot=true;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('root');expect(existsSync(join(dir,'cli.log'))).toBe(false);});
  it('rejects changed canonical baseline before mutation',async()=>{state.merchant.sha=manifest.projects.merchant.target_sha;persist();await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('identity');expect(existsSync(join(dir,'cli.log'))).toBe(false);});
- it('rejects missing private acceptance before external calls',async()=>{delete env.PRIVATE_RELEASE_ACCEPTANCE_REPORT;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('digest');expect(requests).toHaveLength(0);expect(existsSync(join(dir,'cli.log'))).toBe(false);});
+ it('rejects missing private acceptance before external calls',async()=>{delete env.PRIVATE_RELEASE_ACCEPTANCE_REPORT;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('transport');expect(requests).toHaveLength(0);expect(existsSync(join(dir,'cli.log'))).toBe(false);});
+ it('accepts compressed original report bytes through real deployment orchestration',async()=>{
+  const raw=env.PRIVATE_RELEASE_ACCEPTANCE_REPORT;env.PRIVATE_RELEASE_ACCEPTANCE_REPORT='gzip-base64-v1:'+gzipSync(raw).toString('base64');
+  await deployReduced(manifest,controlPath,sourcePaths,'123',1,env);
+  expect(readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n')).toHaveLength(2);
+ });
+ it('uses decoded original JSON for v3 accounting validation before reaching mocked preflight',async()=>{
+  const now=Date.now(),H='b'.repeat(64),rawReport=JSON.parse(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
+  manifest.schema_version=3;manifest.policy='accounting-hold-v1';manifest.accounting_activation={};rawReport.schema_version=3;rawReport.accounting_activation={};
+  for(const [i,environment]of ['staging','production'].entries()){
+   const profile=ACCOUNTING_SCHEMA_PROFILES[environment];
+   const binding={environment,project_ref:environment==='staging'?ACCOUNTING_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref:ACCOUNTING_EVIDENCE_POLICY.production_project_ref,actor_id:'11111111-1111-1111-1111-111111111111',approved_manifest_sha256:H,executed_envelope_sha256:H,cohort_sha256:H,approval_receipt_sha256:String(i+1).repeat(64),counts:{holds:0,memberships:0,audit_rows:0,preserved_pending_payments:0},preserved_pending_rows_sha256:H};
+   manifest.accounting_activation[environment]=binding;
+   rawReport.accounting_activation[environment]={binding,owner_approval_reference:'fixture',independent_review_reference:'fixture',method:'authorized-connector-read-only',active:true,installation_only:false,...profile,contracts:profile.schema_contracts,canonical_installers:profile.schema_contracts.canonical_sources.filter(x=>/^50[01]_/.test(x.name)),raw_evidence_sha256:H,audit_rows_sha256:H,hold_rows_sha256:H,membership_rows_sha256:H,existing_financial_rows_changed:0,provider_calls:0,observed_at:new Date(now-1000).toISOString(),committed_at:new Date(now-2000).toISOString(),counts:binding.counts,preserved_pending_rows_sha256:H};
+  }
+  env.REDUCED_RELEASE_MANIFEST=JSON.stringify(manifest);rawReport.binding=manifestBinding(env.REDUCED_RELEASE_MANIFEST,manifest);
+  rawReport.production_schema.contracts=ACCOUNTING_EVIDENCE_POLICY.schema_contracts;rawReport.production_schema.contract_sha256=ACCOUNTING_EVIDENCE_POLICY.schema_contract_sha256;
+  rawReport.staging_acceptance.cases=ACCOUNTING_EVIDENCE_POLICY.acceptance_cases.map(x=>({...x,outcome:'passed',evidence_sha256:H}));rawReport.staging_acceptance.passed=rawReport.staging_acceptance.cases.length;
+  const bytes=JSON.stringify(rawReport);env.PRIVATE_RELEASE_ACCEPTANCE_REPORT='gzip-base64-v1:'+gzipSync(bytes).toString('base64');env.PRIVATE_RELEASE_ACCEPTANCE_SHA256=digest(bytes);
+  const receipt=JSON.parse(env.PRIVATE_RELEASE_RECEIPT);Object.assign(receipt,{schema_version:3,binding:rawReport.binding,acceptance_artifact_sha256:digest(bytes),approved_at:new Date(now).toISOString()});env.PRIVATE_RELEASE_RECEIPT=JSON.stringify(receipt);
+  options.badMainCI=true;
+  await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('Fresh exact protected-main CI');
+  expect(requests).toHaveLength(1);expect(existsSync(join(dir,'cli.log'))).toBe(false);
+ });
+ it.each(['gzip-base64-v1:broken','gzip-base64-v2:AAAA'])('rejects malformed report transport before external calls (%s)',async(value)=>{
+  env.PRIVATE_RELEASE_ACCEPTANCE_REPORT=value;
+  await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('transport');expect(requests).toHaveLength(0);expect(existsSync(join(dir,'cli.log'))).toBe(false);
+ });
+ it('rejects compressed report whose original digest differs before external calls',async()=>{
+  env.PRIVATE_RELEASE_ACCEPTANCE_REPORT='gzip-base64-v1:'+gzipSync(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT+' ').toString('base64');
+  await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('digest');expect(requests).toHaveLength(0);expect(existsSync(join(dir,'cli.log'))).toBe(false);
+ });
  it('stops before second mutation when schema snapshot expires after first deployment',async()=>{options.expireAfterMerchant=true;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('stale');const calls=readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(1);expect(calls[0].kind).toBe('merchant');});
 });
