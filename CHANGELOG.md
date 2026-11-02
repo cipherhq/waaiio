@@ -1,3 +1,8 @@
+## 2026-11-02 — Bounded private report transport
+
+- Support a versioned compressed private acceptance-report envelope while validating the original decoded report bytes and approval digest.
+- Bound envelope/decompression size, require canonical base64 and valid UTF-8, and fail before deployment on invalid transport. Legacy raw JSON remains supported; schema, targets, approvals and permissions are unchanged.
+
 ## 2026-11-02 — Exact environment release evidence contracts
 
 - Select finite staging and production accounting schema profiles while retaining exact definitions, ownership and permission checks. Reject profile substitution and unexpected privilege changes.
