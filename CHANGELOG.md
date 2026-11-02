@@ -1,3 +1,7 @@
+## 2026-11-02 — Canonical function permission verification
+
+- Align release catalog expectations with canonical server-only function permissions and reject additional client execution grants.
+
 ## 2026-11-02 — Canonical policy removal verification
 
 - Match the production release catalog projection to the canonical bank-account policy removals, preserving exact checks for remaining objects.
