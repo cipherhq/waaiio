@@ -1,3 +1,7 @@
+## 2026-11-02 — Canonical policy removal verification
+
+- Match the production release catalog projection to the canonical bank-account policy removals, preserving exact checks for remaining objects.
+
 ## 2026-11-02 — Full-source phased release verification
 
 - Update the exact logging allowlist to require zero browser error logs for the server-backed account downgrade flow.

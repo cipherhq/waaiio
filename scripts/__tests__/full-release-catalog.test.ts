@@ -50,3 +50,26 @@ describe('complete fixed phase policy using synthetic metadata fixtures',()=>{
  }
  it('keeps production435 contracted authority exclusively post-app',()=>{const pre=fullKnownComponentProjection('production','pre_app'),post=fullKnownComponentProjection('production','post_app');expect(pre.financial_functions.some((f:any)=>f.identity.startsWith('create_order_atomic('))).toBe(false);expect(post.financial_functions.filter((f:any)=>f.identity.startsWith('create_order_atomic('))).toHaveLength(1);expect(()=>verifyFullKnownComponents('production',post,'pre_app')).toThrow();expect(verifyFullKnownComponents('production',pre,'pre_app')).toBe(true)});
 });
+
+describe('canonical bank-account policy removal contract',()=>{
+ const names=['Owners manage bank accounts','Resellers manage sub-account bank accounts'];
+ const ids=names.map(n=>`policy:public.business_bank_accounts.${n}`);
+ const phase=FULL_CATALOG_CONTRACTS.profiles.production.phases.pre_app;
+ const patches=phase.patches.filter((p:any)=>ids.includes(p.identity));
+ it('requires exactly the two canonical source-bound removals',()=>{
+  expect(patches).toHaveLength(2);
+  for(const p of patches){expect(p.operation).toBe('remove-bound');expect(p.source_sha256).toBe('bd15cf736cdb4082b20a9f7af96829b8ffdf44b580d2f41640f475f60601f13f');expect(p.preconditions).toMatchObject({roles:['public'],command:'ALL',permissive:'PERMISSIVE',with_check:null});expect(p.preconditions.using).toEqual(expect.any(String));}
+ });
+ it('deletes only the exact policies and preserves an unrelated policy',()=>{
+  const retained=object('policy:public.business_bank_accounts.Admin reads bank accounts',{command:'SELECT',roles:['authenticated']});
+  const before=[...patches.map((p:any)=>object(p.identity,structuredClone(p.preconditions))),retained];
+  expect(projectCatalog(before,{patches,required_before:[],required_after:[retained.identity]})).toEqual([retained]);
+ });
+ it.each(['roles','command','permissive','using','with_check'])('rejects unexpected %s metadata before deleting a policy',key=>{
+  const before=patches.map((p:any)=>object(p.identity,structuredClone(p.preconditions)));before[0].value[key]=key==='roles'?['authenticated']:'unexpected';
+  expect(()=>projectCatalog(before,{patches,required_before:[],required_after:[]})).toThrow();
+ });
+ it('rejects an already omitted policy rather than weakening the baseline',()=>{
+  expect(()=>projectCatalog([object(patches[0].identity,patches[0].preconditions)],{patches,required_before:[],required_after:[]})).toThrow();
+ });
+});
