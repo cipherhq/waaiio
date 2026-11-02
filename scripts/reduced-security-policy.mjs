@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
-import { SECURITY_POLICY, SCHEMA_MAX_AGE_MS } from './reduced-release-evidence.mjs';
+import { SECURITY_POLICY, digest, SCHEMA_MAX_AGE_MS } from './reduced-release-evidence.mjs';
 import { ACCOUNTING_TARGETS, ACCOUNTING_EVIDENCE_POLICY, ACCOUNTING_SQL_TESTS, ACCOUNTING_RUNTIME_SOURCES } from './reduced-accounting-policy.mjs';
 
 export const SECURITY_IDENTITIES = JSON.parse(readFileSync(new URL('./reduced-security-targets.json', import.meta.url), 'utf8'));
@@ -43,12 +43,34 @@ const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const text = value => typeof value === 'string' && value.trim().length > 0;
 const ledgerName = name => name.replace(/\.sql$/, '');
 const stage491 = '5d5d6acb547e6fe5c42ca770d3ad8844e0774d6ab4b1c27afd6bace30f80b481';
-function rows(value) {
+export const SECURITY_LEDGER_RECIPE = 'version-row-sha256-json-v1';
+function rows(value, allowHistoricalNull = false) {
   if (!Array.isArray(value) || value.some(x => !x || Object.keys(x).sort().join(',') !== 'name,row_sha256,statement_sha256,version'
-    || !hash(x.row_sha256) || !/^\d+$/.test(x.version) || !text(x.name) || !hash(x.statement_sha256))
+    || !hash(x.row_sha256) || !/^\d+$/.test(x.version) || !text(x.name)
+    || !(hash(x.statement_sha256) || (allowHistoricalNull && x.statement_sha256 === null)))
     || new Set(value.map(x => x.version)).size !== value.length) fail();
   return value;
 }
+// Compact JSON, fixed key order and lexical C-equivalent ordering of numeric
+// version strings. The whole-row digest includes metadata and NULL statements.
+export function securityLedgerSnapshot(value) {
+  const ordered = [...rows(value, true)].sort((a,b) => a.version < b.version ? -1 : a.version > b.version ? 1 : 0)
+    .map(({version,row_sha256}) => ({version,row_sha256}));
+  return { count: ordered.length, sha256: digest(JSON.stringify(ordered)) };
+}
+export function observeSecurityLedger(value, allowedAdditions) {
+  const complete = rows(value, true), allowed = rows(allowedAdditions);
+  const additions = complete.filter(row => allowed.some(pin => pin.version === row.version));
+  if (!isDeepStrictEqual(additions, allowed)) fail();
+  const baseline = complete.filter(row => !allowed.some(pin => pin.version === row.version && pin.row_sha256 === row.row_sha256));
+  const before = securityLedgerSnapshot(baseline);
+  const names = SECURITY_MIGRATIONS.flatMap(x => [ledgerName(x.name), ledgerName(x.name).replace(/^\d+_/, '')]);
+  return { ...securityLedgerSnapshot(complete), baseline_count: before.count, baseline_sha256: before.sha256,
+    duplicate_versions: 0, additions, excluded_rows: additions,
+    security_migrations: complete.filter(row => names.includes(row.name)) };
+}
+const snapshot = x => !!x && Object.keys(x).sort().join(',') === 'count,sha256'
+  && Number.isSafeInteger(x.count) && x.count >= 0 && hash(x.sha256);
 // Complete baseline rows are immutable. Only the explicitly bound M491 addition
 // is allowed before application deployment; M492 and object closure are later
 // operations, never instructions executed by this code-only gate.
@@ -67,23 +89,28 @@ export function verifySecurityPrerequisites(report, manifest, now = Date.now(), 
     const observed = Date.parse(actual.observed_at);
     if (!Number.isFinite(observed) || !Number.isFinite(now) || !Number.isFinite(approvedAt)
       || observed > now || now - observed > SCHEMA_MAX_AGE_MS || approvedAt < observed || approvedAt > now) fail();
-    const before = rows(expected.baseline_ledger), after = rows(actual.ledger);
-    if (!isDeepStrictEqual(after, rows(expected.expected_ledger))) fail();
-    for (const row of before) if (!isDeepStrictEqual(after.find(x => x.version === row.version), row)) fail();
-    const added = after.filter(x => !before.some(y => y.version === x.version));
-    const one = (name, collection = after) => {
-      const found = collection.filter(x => x.name === ledgerName(name) || x.name === ledgerName(name).replace(/^\d+_/, ''));
+    const before = expected.baseline_ledger, after = expected.expected_ledger, observedLedger = actual.ledger;
+    const added = rows(expected.allowed_additions), migrations = rows(expected.security_migrations);
+    if (expected.ledger_digest_recipe !== SECURITY_LEDGER_RECIPE || !snapshot(before) || !snapshot(after)
+      || after.count !== before.count + added.length || !observedLedger
+      || observedLedger.count !== after.count || observedLedger.sha256 !== after.sha256
+      || observedLedger.baseline_count !== before.count || observedLedger.baseline_sha256 !== before.sha256
+      || observedLedger.duplicate_versions !== 0
+      || !isDeepStrictEqual(observedLedger.additions, added) || !isDeepStrictEqual(observedLedger.excluded_rows, added)
+      || !isDeepStrictEqual(observedLedger.security_migrations, migrations)) fail();
+    const one = name => {
+      const found = migrations.filter(x => x.name === ledgerName(name) || x.name === ledgerName(name).replace(/^\d+_/, ''));
       if (found.length !== 1) fail(); return found[0];
     };
     const first = one(SECURITY_MIGRATIONS[0].name);
     if (environment === 'staging') {
-      if (added.length || first.version !== '491' || first.statement_sha256 !== stage491
+      if (added.length || migrations.length !== 2 || first.version !== '491' || first.statement_sha256 !== stage491
         || one(SECURITY_MIGRATIONS[1].name).statement_sha256 !== SECURITY_MIGRATIONS[1].sha256
         || actual.m492_phase !== 'already-installed'
         || !isDeepStrictEqual(actual.m491_provenance, { kind: 'historical-delimiter-reconciliation', canonical_sha256: SECURITY_MIGRATIONS[0].sha256, recorded_sha256: stage491, canonical_execution_proven: false })) fail();
     } else {
-      if (added.length !== 1 || !isDeepStrictEqual(added[0], first)
-        || after.some(x => [ledgerName(SECURITY_MIGRATIONS[1].name), ledgerName(SECURITY_MIGRATIONS[1].name).replace(/^\d+_/, '')].includes(x.name))
+      if (added.length !== 1 || migrations.length !== 1 || !isDeepStrictEqual(added[0], first)
+        || migrations.some(x => [ledgerName(SECURITY_MIGRATIONS[1].name), ledgerName(SECURITY_MIGRATIONS[1].name).replace(/^\d+_/, '')].includes(x.name))
         || actual.m492_phase !== 'deferred-until-application'
         || actual.m491_provenance?.kind !== 'approved-canonical-prerequisite'
         || actual.m491_provenance.canonical_sha256 !== SECURITY_MIGRATIONS[0].sha256

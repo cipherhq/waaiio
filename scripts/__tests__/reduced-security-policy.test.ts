@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { SECURITY_IDENTITIES, SECURITY_TARGETS, SECURITY_STORAGE_CONTRACTS, SECURITY_EVIDENCE_POLICY, SECURITY_SQL_TESTS, SECURITY_MIGRATIONS, verifySecurityPrerequisites } from '../reduced-security-policy.mjs';
+import { SECURITY_IDENTITIES, SECURITY_TARGETS, SECURITY_STORAGE_CONTRACTS, SECURITY_EVIDENCE_POLICY, SECURITY_SQL_TESTS, SECURITY_MIGRATIONS, SECURITY_LEDGER_RECIPE, securityLedgerSnapshot, observeSecurityLedger, verifySecurityPrerequisites } from '../reduced-security-policy.mjs';
 import { SECURITY_POLICY, ACCOUNTING_POLICY, manifestBinding } from '../reduced-release-evidence.mjs';
 import { ACCOUNTING_EVIDENCE_POLICY } from '../reduced-accounting-policy.mjs';
 import { parseManifest, inspectTarget, checkDelta, TARGETS, manualAdminPolicy } from '../reduced-release-gate.mjs';
@@ -15,9 +15,9 @@ function fixture(){
   const first={version:environment==='staging'?'491':'20261102100000',name:'private_document_storage',row_sha256:h(8),statement_sha256:environment==='staging'?'5d5d6acb547e6fe5c42ca770d3ad8844e0774d6ab4b1c27afd6bace30f80b481':h(2)};
   const second={version:'492',name:'verification_public_upload_guard',row_sha256:h(9),statement_sha256:SECURITY_MIGRATIONS[1].sha256};
   const after=[...old,first,...(environment==='staging'?[second]:[])];
-  const binding={environment,project_ref:environment==='staging'?SECURITY_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref:SECURITY_EVIDENCE_POLICY.production_project_ref,baseline_ledger:structuredClone(environment==='staging'?after:old),expected_ledger:structuredClone(after),...(environment==='production'?{m491_envelope_sha256:h(2),m491_approval_receipt_sha256:h(3)}:{})};
+  const binding={environment,project_ref:environment==='staging'?SECURITY_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref:SECURITY_EVIDENCE_POLICY.production_project_ref,ledger_digest_recipe:SECURITY_LEDGER_RECIPE,baseline_ledger:securityLedgerSnapshot(environment==='staging'?after:old),expected_ledger:securityLedgerSnapshot(after),allowed_additions:environment==='staging'?[]:[first],security_migrations:environment==='staging'?[first,second]:[first],...(environment==='production'?{m491_envelope_sha256:h(2),m491_approval_receipt_sha256:h(3)}:{})};
   manifest.storage_prerequisite[environment]=binding;
-  report.storage_prerequisite[environment]={binding:structuredClone(binding),method:'authorized-connector-read-only',raw_evidence_sha256:h(4),independent_review_reference:'fixture-review',business_mutations:0,provider_calls:0,legacy_closure_complete:false,application_phase:'not-deployed',contracts:structuredClone(SECURITY_STORAGE_CONTRACTS[environment]),observed_at:new Date(now-1000).toISOString(),ledger:structuredClone(after),m492_phase:environment==='staging'?'already-installed':'deferred-until-application',m491_provenance:environment==='staging'?{kind:'historical-delimiter-reconciliation',canonical_sha256:SECURITY_MIGRATIONS[0].sha256,recorded_sha256:first.statement_sha256,canonical_execution_proven:false}:{kind:'approved-canonical-prerequisite',canonical_sha256:SECURITY_MIGRATIONS[0].sha256,executed_envelope_sha256:h(2),approval_receipt_sha256:h(3),execution_reference:'fixture-apply'}};
+  report.storage_prerequisite[environment]={binding:structuredClone(binding),method:'authorized-connector-read-only',raw_evidence_sha256:h(4),independent_review_reference:'fixture-review',business_mutations:0,provider_calls:0,legacy_closure_complete:false,application_phase:'not-deployed',contracts:structuredClone(SECURITY_STORAGE_CONTRACTS[environment]),observed_at:new Date(now-1000).toISOString(),ledger:observeSecurityLedger(after,environment==='staging'?[]:[first]),m492_phase:environment==='staging'?'already-installed':'deferred-until-application',m491_provenance:environment==='staging'?{kind:'historical-delimiter-reconciliation',canonical_sha256:SECURITY_MIGRATIONS[0].sha256,recorded_sha256:first.statement_sha256,canonical_execution_proven:false}:{kind:'approved-canonical-prerequisite',canonical_sha256:SECURITY_MIGRATIONS[0].sha256,executed_envelope_sha256:h(2),approval_receipt_sha256:h(3),execution_reference:'fixture-apply'}};
  }
  return {manifest,report};
 }
@@ -52,17 +52,28 @@ describe('phase-aware observed storage prerequisite',()=>{
   ['premature M492',(f:any)=>f.report.storage_prerequisite.production.m492_phase='already-installed'],
   ['canonical stage fiction',(f:any)=>f.report.storage_prerequisite.staging.m491_provenance.canonical_execution_proven=true],
   ['stage unknown discrepancy',(f:any)=>f.report.storage_prerequisite.staging.m491_provenance.recorded_sha256=h(9)],
-  ['changed old row metadata',(f:any)=>f.report.storage_prerequisite.production.ledger[0].row_sha256=h(9)],
-  ['changed old ledger',(f:any)=>f.report.storage_prerequisite.production.ledger[0].statement_sha256=h(9)],
-  ['extra migration',(f:any)=>f.report.storage_prerequisite.production.ledger.push({version:'999',name:'unrelated',row_sha256:h(8),statement_sha256:h(8)})],
+  ['changed old row metadata',(f:any)=>f.report.storage_prerequisite.production.ledger.baseline_sha256=h(9)],
+  ['changed old ledger',(f:any)=>f.report.storage_prerequisite.production.ledger.baseline_sha256=h(9)],
+  ['extra migration',(f:any)=>f.report.storage_prerequisite.production.ledger.additions.push({version:'999',name:'unrelated',row_sha256:h(8),statement_sha256:h(8)})],
   ['missing receipt',(f:any)=>f.report.storage_prerequisite.production.m491_provenance.approval_receipt_sha256=''],
   ['wrong envelope',(f:any)=>f.report.storage_prerequisite.production.m491_provenance.executed_envelope_sha256=h(8)],
   ['wrong canonical',(f:any)=>f.report.storage_prerequisite.production.m491_provenance.canonical_sha256=h(8)],
   ['missing raw',(f:any)=>f.report.storage_prerequisite.production.raw_evidence_sha256=''],
  ])('rejects %s',(_name,mutate)=>{const f=fixture();mutate(f);expect(()=>verifySecurityPrerequisites(f.report,f.manifest,now)).toThrow('prerequisite');});
  it('does not accept an approval that predates the observation',()=>{const f=fixture();expect(()=>verifySecurityPrerequisites(f.report,f.manifest,now,now-2000)).toThrow();});
- it('denies an unrelated addition even when manifest and observed ledger agree',()=>{const f=fixture(),row={version:'999',name:'other',row_sha256:h(9),statement_sha256:h(9)};f.manifest.storage_prerequisite.production.expected_ledger.push(row);f.report.storage_prerequisite.production.binding=structuredClone(f.manifest.storage_prerequisite.production);f.report.storage_prerequisite.production.ledger.push(row);expect(()=>verifySecurityPrerequisites(f.report,f.manifest,now)).toThrow();});
- it.each(['statement_sha256','row_sha256'])('denies old %s change even when expected and observed agree',field=>{const f=fixture();f.manifest.storage_prerequisite.production.expected_ledger[0][field]=h(9);f.report.storage_prerequisite.production.binding=structuredClone(f.manifest.storage_prerequisite.production);f.report.storage_prerequisite.production.ledger[0][field]=h(9);expect(()=>verifySecurityPrerequisites(f.report,f.manifest,now)).toThrow();});
+ it('denies an unrelated addition even when manifest and observed additions agree',()=>{const f=fixture(),row={version:'999',name:'other',row_sha256:h(9),statement_sha256:h(9)};f.manifest.storage_prerequisite.production.allowed_additions.push(row);f.manifest.storage_prerequisite.production.expected_ledger.count++;f.report.storage_prerequisite.production.binding=structuredClone(f.manifest.storage_prerequisite.production);const ledger=f.report.storage_prerequisite.production.ledger;ledger.additions.push(row);ledger.count++;expect(()=>verifySecurityPrerequisites(f.report,f.manifest,now)).toThrow();});
+ it('denies changed existing metadata even when the post-snapshot hash agrees',()=>{const f=fixture();f.manifest.storage_prerequisite.production.expected_ledger.sha256=h(9);f.report.storage_prerequisite.production.binding=structuredClone(f.manifest.storage_prerequisite.production);Object.assign(f.report.storage_prerequisite.production.ledger,{sha256:h(9),baseline_sha256:h(9)});expect(()=>verifySecurityPrerequisites(f.report,f.manifest,now)).toThrow();});
+ it.each([
+  ['wrong exclusion version',(x:any)=>x.ledger.excluded_rows[0].version='999'],
+  ['wrong exclusion row',(x:any)=>x.ledger.excluded_rows[0].row_sha256=h(7)],
+  ['deleted baseline row',(x:any)=>x.ledger.baseline_count--],
+  ['extra baseline row',(x:any)=>x.ledger.baseline_count++],
+  ['duplicate version',(x:any)=>x.ledger.duplicate_versions=1],
+  ['total mismatch',(x:any)=>x.ledger.count++],
+  ['null canonical statement',(x:any)=>x.ledger.security_migrations[0].statement_sha256=null],
+  ['unexpected M492',(x:any)=>x.ledger.security_migrations.push({version:'492',name:'verification_public_upload_guard',statement_sha256:SECURITY_MIGRATIONS[1].sha256,row_sha256:h(9)})],
+ ])('denies %s',(_name,mutate)=>{const f=fixture();mutate(f.report.storage_prerequisite.production);expect(()=>verifySecurityPrerequisites(f.report,f.manifest,now)).toThrow();});
+
 });
 
 import { vi, afterEach } from 'vitest';
@@ -93,5 +104,28 @@ describe('actual deploy entrypoint security prerequisite ordering',()=>{
  it('accepts complete security/accounting evidence and proceeds to control checkout verification only',async()=>{
   vi.useFakeTimers();vi.setSystemTime(now);const fetch=vi.fn();vi.stubGlobal('fetch',fetch);const f=completeEvidence();
   await expect(deployReduced(f.manifest,'/nonexistent-control',{},'123',1,f.env())).rejects.toThrow('Trusted protected-main control checkout');expect(fetch).not.toHaveBeenCalled();
+ });
+});
+
+
+describe('complete ledger aggregation transport',()=>{
+ const row=(version:string,statement:string|null=h(1))=>({version,name:'synthetic',statement_sha256:statement,row_sha256:h(2)});
+ it('uses deterministic lexical ordering and preserves legitimate NULL history through full-row hashes',()=>{
+  const a=[row('2',null),row('10')];expect(securityLedgerSnapshot(a)).toEqual(securityLedgerSnapshot([...a].reverse()));
+  expect(securityLedgerSnapshot(a).sha256).toBe(digest(JSON.stringify([{version:'10',row_sha256:h(2)},{version:'2',row_sha256:h(2)}])));
+ });
+ it.each(['duplicate','changed','wrong-version'])('rejects %s exclusion without hiding any row',kind=>{
+  const addition={...row('491'),name:'private_document_storage'};const all=[row('100',null),addition],pin=structuredClone(addition);
+  if(kind==='duplicate')all.push(structuredClone(addition));if(kind==='changed')pin.row_sha256=h(3);if(kind==='wrong-version')pin.version='999';
+  expect(()=>observeSecurityLedger(all,[pin])).toThrow();
+ });
+ it('fits full source manifest and large historical inventories below the secret bound',()=>{
+  const f=fixture();for(const [environment,count,nullCount] of [['staging',512,400],['production',384,40]] as const){
+   const existing=Array.from({length:count},(_,i)=>row(String(i+1000),i<nullCount?null:h(1))),b=f.manifest.storage_prerequisite[environment];
+   const current=environment==='staging'?existing:[...existing,...b.allowed_additions];
+   b.baseline_ledger=securityLedgerSnapshot(existing);b.expected_ledger=securityLedgerSnapshot(current);
+   expect(securityLedgerSnapshot(existing).count).toBe(count);
+  }
+  expect(Buffer.byteLength(JSON.stringify(f.manifest))).toBeLessThan(48*1024);
  });
 });

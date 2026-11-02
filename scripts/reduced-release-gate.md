@@ -149,9 +149,19 @@ accounting contracts, authenticated code receipts, report approval/freshness and
 manual canonical admin alias behavior. Earlier policies retain their contracts.
 
 The separate `storage_prerequisite` report binds complete storage policy/bucket
-contracts for each environment and complete migration ledger rows. Each ledger
-row contains `version`, `name`, `statement_sha256` and the PostgreSQL full-row
-`row_sha256`; existing rows cannot change. The production pre-app phase permits
+contracts for each environment and complete migration ledger preservation. The
+manifest binds counts and deterministic digests of the complete baseline and
+expected ledger. The recipe `version-row-sha256-json-v1` is compact JSON of exact
+`{version,row_sha256}` objects, sorted lexically by version (C ordering), with no
+trailing newline. Full-row hashes cover all metadata, including legitimate NULL
+historical statement payloads. Retain the complete raw inventories privately.
+
+The observed baseline excludes only exact manifest-bound addition versions with
+matching whole-row hashes and metadata. It must retain the original count and
+digest; the total must equal baseline plus the exact additions. Duplicate versions,
+extra/deleted/changed rows and alternate exclusions fail. Explicit M491/M492 rows
+still require their known nonnull statement hashes. This aggregate transport keeps
+the manifest within the existing secret size limit without dropping row fields. The production pre-app phase permits
 only its explicitly bound M491 prerequisite addition. Staging's installed M492
 and specific historical M491 statement serialization discrepancy are explicit
 reconciliation evidence, not a claim of canonical historical execution. Unknown
