@@ -140,3 +140,42 @@ This policy requires the fixed paired project configuration: merchant root empty
 After the invocation creates and verifies the admin READY deployment (production target, CLI source), the gate rechecks both serving identities and fresh private evidence, then assigns only the fixed canonical admin alias to that exact deployment ID. It does not promote a project or enable automatic assignment. During this invocation only, the project target may remain the exact preexisting record or advance to the just-created candidate. Post-assignment polling keeps that same context and requires exact alias/project/SHA/ID/health. No other READY, BUILDING or newly substituted target is allowed. Default or other aliases are not assigned.
 
 Alias permission/conflict errors and uncertain outcomes stop after one mutation attempt; no automatic retry, baseline redefinition or rollback occurs. Any created candidate remains for private recovery inspection. Reconcile actual aliases and deployment IDs before a separately authorized retry.
+
+### Fixed security successor (schema 4)
+
+`security-storage-webhook-v1` accepts only its reviewed merchant/admin commits,
+base commits, trees and complete source blob inventories. It retains schema 3's
+accounting contracts, authenticated code receipts, report approval/freshness and
+manual canonical admin alias behavior. Earlier policies retain their contracts.
+
+The separate `storage_prerequisite` report binds complete storage policy/bucket
+contracts for each environment and complete migration ledger preservation. The
+manifest binds counts and deterministic digests of the complete baseline and
+expected ledger. The recipe `version-row-sha256-json-v1` is compact JSON of exact
+`{version,row_sha256}` objects, sorted lexically by version (C ordering), with no
+trailing newline. Full-row hashes cover all metadata, including legitimate NULL
+historical statement payloads. Retain the complete raw inventories privately.
+
+The observed baseline excludes only exact manifest-bound addition versions with
+matching whole-row hashes and metadata. It must retain the original count and
+digest; the total must equal baseline plus the exact additions. Duplicate versions,
+extra/deleted/changed rows and alternate exclusions fail. Explicit M491/M492 rows
+still require their known nonnull statement hashes. This aggregate transport keeps
+the manifest within the existing secret size limit without dropping row fields. The production pre-app phase permits
+only its explicitly bound M491 prerequisite addition. Staging's installed M492
+and specific historical M491 statement serialization discrepancy are explicit
+reconciliation evidence, not a claim of canonical historical execution. Unknown
+policy, ledger, source or provenance drift stops deployment.
+
+Integration verification retains the accounting SQL suite and separately creates
+`storage_security_test` on its disposable localhost PostgreSQL service to run the
+17 storage tests with `REQUIRE_PG_TESTS=true`. It refuses an existing database,
+cleans up its own new database and records the separate command and source hashes.
+The application targets receive no private evidence or provider credentials.
+
+This gate deploys applications only. Production M492 follows the verified new
+application switch; legacy object closure requires a separately reviewed exact
+inventory and authorized Storage operation with byte/reference/CAS evidence.
+Neither operation runs in this workflow. Application deployment does not certify
+legacy closure. A standing authorization must not be relabeled as a later exact
+report-digest approval or used to bypass freshness.

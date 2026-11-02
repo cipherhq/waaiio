@@ -1,5 +1,7 @@
 ## 2026-11-02 — Explicit manual admin release identity
 
+- Add a fixed security successor release profile with phased storage prerequisites, complete ledger preservation digests and isolated verification evidence.
+
 - Add a named, exact manifest-bound admin manual-alias policy. Validate serving baseline, recorded non-serving target, project settings and newly created deployment before assigning only the canonical admin alias.
 - Keep automatic domain assignment settings unchanged, recheck private evidence before alias mutation, and stop without automatic rollback on partial failure. Existing release policies and application sources remain unchanged.
 
@@ -510,6 +512,8 @@
 - **Could break**: Nothing. No code imports or runtime dependencies on these documents.
 
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
+
+- Prepare private verification document access and bounded security compatibility on the existing release baseline.
 
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
 - **`app/api/events/purchase/route.ts`**: Handles `tier_paused` RPC error with 409 and descriptive message, matching existing `price_changed` pattern.

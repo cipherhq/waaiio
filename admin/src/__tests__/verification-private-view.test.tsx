@@ -1,0 +1,15 @@
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+const m=vi.hoisted(()=>({get:vi.fn()}));
+vi.mock('@/lib/adminApi',()=>({adminApiGet:m.get}));
+vi.mock('@/hooks/useStepUp',()=>({useStepUp:()=>({state:{phase:'idle'},reset:vi.fn(),execute:vi.fn(),submitCode:vi.fn()})}));
+vi.mock('@/lib/auditLog',()=>({logAudit:vi.fn()}));
+vi.mock('@/lib/formatters',()=>({fmtDate:()=> 'date',fmtDateTime:()=> 'date',fmtCurrency:()=> 'amount'}));
+vi.mock('@/lib/supabase',()=>({supabase:{auth:{getSession:vi.fn()}},adminDb:{from:(table:string)=>{const rows=table==='verification_requests'?[{id:'request',business_id:'business',requested_level:'standard',documents_required:[],status:'pending',created_at:'2026-01-01',businesses:{name:'Fixture Shop',owner_id:'owner',country_code:'NG',verification_level:'basic',verification_status:'unverified'}}]:table==='business_documents'?[{id:'doc/id',business_id:'business',type:'id',status:'pending',uploaded_at:'2026-01-01',file_url:'https://untrusted.invalid/private'}]:[];const c={select:()=>c,eq:()=>c,order:()=>c,gte:()=>c,then:(f:any)=>Promise.resolve({data:rows,count:0,error:null}).then(f)};return c;}}}));
+import Verification from '@/pages/Verification';
+beforeEach(()=>{m.get.mockReset();vi.spyOn(window,'alert').mockImplementation(()=>{});});
+afterEach(()=>{cleanup();vi.restoreAllMocks();});
+async function open(){render(<Verification/>);fireEvent.click(await screen.findByText('Fixture Shop'));return screen.findByRole('button',{name:'View'});}
+it('fetches by document ID and opens signed result with opener removed',async()=>{const tab={opener:{},location:{href:''},close:vi.fn()};vi.spyOn(window,'open').mockReturnValue(tab as any);m.get.mockResolvedValue(new Response(JSON.stringify({url:'https://fixture.invalid/signed'})));fireEvent.click(await open());await waitFor(()=>expect(tab.location.href).toBe('https://fixture.invalid/signed'));expect(tab.opener).toBe(null);expect(m.get).toHaveBeenCalledWith('/api/admin/verification/document?id=doc%2Fid');expect(screen.queryByRole('link',{name:'View'})).toBeNull();});
+it.each([403,404,500])('denied/unavailable response%s closes empty tab without arbitrary locator fallback',async status=>{const tab={opener:{},location:{href:''},close:vi.fn()};vi.spyOn(window,'open').mockReturnValue(tab as any);m.get.mockResolvedValue(new Response('{}',{status}));fireEvent.click(await open());await waitFor(()=>expect(tab.close).toHaveBeenCalledOnce());expect(tab.location.href).toBe('');expect(await screen.findByText('Document unavailable. Please try again.')).toBeTruthy();});
+it('network error closes the popup and preserves failure feedback',async()=>{const tab={opener:{},location:{href:''},close:vi.fn()};vi.spyOn(window,'open').mockReturnValue(tab as any);m.get.mockRejectedValue(new Error('fixture offline'));fireEvent.click(await open());await waitFor(()=>expect(tab.close).toHaveBeenCalledOnce());expect(tab.location.href).toBe('');});
