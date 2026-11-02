@@ -10,6 +10,31 @@ export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin')) });
 }
 
+// Read the current sign-in address from Auth, not the potentially stale profile copy.
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const headers = { ...adminCorsHeaders(request.headers.get('origin')), 'Cache-Control': 'private, no-store' };
+  const reply = (body: unknown, status = 200) => NextResponse.json(body, { status, headers });
+  try {
+    const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+    if (!admin) return reply({ error: 'Unauthorized' }, 403);
+    const { id } = await params;
+    if (!UUID.test(id)) return reply({ error: 'Invalid business ID' }, 400);
+    const service = createServiceClient();
+    const { data: business, error } = await service.from('businesses')
+      .select('id, owner_id').eq('id', id).maybeSingle();
+    if (error) return reply({ error: 'Could not read business' }, 500);
+    if (!business) return reply({ error: 'Business not found' }, 404);
+    if (business.id !== id || !business.owner_id) return reply({ error: 'Owner email unavailable' }, 503);
+    const { data: owner, error: ownerError } = await service.auth.admin.getUserById(business.owner_id);
+    if (ownerError || !owner?.user || owner.user.id !== business.owner_id) {
+      return reply({ error: 'Owner email unavailable' }, 503);
+    }
+    return reply({ businessId: id, ownerEmail: owner.user.email || null });
+  } catch {
+    return reply({ error: 'Owner email unavailable' }, 503);
+  }
+}
+
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const headers = { ...adminCorsHeaders(request.headers.get('origin')), 'Cache-Control': 'private, no-store' };
   const reply = (body: unknown, status = 200) => NextResponse.json(body, { status, headers });

@@ -34,7 +34,7 @@ export default function Navbar() {
     });
   }, []);
 
-  // Hero pages where nav starts transparent
+  // Reserve announcement space on the homepage; all current pages use light surfaces.
   const isHeroPage = pathname === '/';
 
   return (
@@ -43,14 +43,14 @@ export default function Navbar() {
         className={`fixed left-0 right-0 z-40 transition-all duration-300 ${
           scrolled || !isHeroPage
             ? 'border-b border-gray-200/60 bg-white/85 shadow-sm backdrop-blur-lg'
-            : 'bg-transparent'
+            : 'bg-white/95'
         }`}
         style={{ top: 'var(--announcement-h, 0px)' }}
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <Link href="/" className="flex items-center gap-2">
             <WaaiioMark />
-            <WaaiioWordmark variant={scrolled || !isHeroPage ? 'dark' : 'light'} />
+            <WaaiioWordmark variant="dark" />
           </Link>
 
           {/* Desktop links */}
@@ -62,9 +62,7 @@ export default function Navbar() {
                 className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   pathname === link.href
                     ? 'bg-brand-50 font-semibold text-brand'
-                    : scrolled || !isHeroPage
-                      ? 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                      : 'text-white/90 hover:bg-white/10 hover:text-white'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                 }`}
               >
                 {link.label}
@@ -78,11 +76,7 @@ export default function Navbar() {
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Link
                     href="/dashboard"
-                    className={`rounded-xl px-5 py-2 text-sm font-semibold transition ${
-                      scrolled || !isHeroPage
-                        ? 'bg-brand text-white hover:bg-brand-500'
-                        : 'bg-white text-gray-900 hover:bg-gray-100'
-                    }`}
+                    className="rounded-xl px-5 py-2 text-sm font-semibold transition bg-brand text-white hover:bg-brand-500"
                   >
                     Dashboard
                   </Link>
@@ -94,11 +88,7 @@ export default function Navbar() {
                       await supabase.auth.signOut();
                       window.location.href = '/';
                     }}
-                    className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
-                      scrolled || !isHeroPage
-                        ? 'border border-gray-300 text-gray-600 hover:bg-gray-100'
-                        : 'border border-white/30 text-white/90 hover:bg-white/10'
-                    }`}
+                    className="rounded-xl px-4 py-2 text-sm font-medium transition border border-gray-300 text-gray-600 hover:bg-gray-100"
                   >
                     Log Out
                   </button>
@@ -108,24 +98,16 @@ export default function Navbar() {
               <>
                 <Link
                   href="/login"
-                  className={`hidden text-sm font-medium transition md:inline-flex ${
-                    scrolled || !isHeroPage ? 'text-gray-700 hover:text-gray-900' : 'text-white/90 hover:text-white'
-                  }`}
+                  className="hidden text-sm font-medium transition md:inline-flex text-gray-700 hover:text-gray-900"
                 >
                   Log In
                 </Link>
-                {/* Pre-launch: route to /launch. When Admin-controlled signup gate
-                    opens (#453), this CTA must switch to /get-started for onboarding. */}
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Link
-                    href="/launch"
-                    className={`hidden rounded-xl px-5 py-2 text-sm font-bold shadow-lg transition sm:inline-flex ${
-                      scrolled || !isHeroPage
-                        ? 'bg-accent text-gray-900 shadow-accent/20 hover:bg-accent-400'
-                        : 'bg-white text-gray-900 shadow-white/10 hover:bg-gray-100'
-                    }`}
+                    href="/features"
+                    className="hidden rounded-xl px-5 py-2 text-sm font-bold shadow-lg transition sm:inline-flex bg-accent text-gray-900 shadow-accent/20 hover:bg-accent-400"
                   >
-                    Get Updates
+                    Explore Features
                   </Link>
                 </motion.div>
               </>
@@ -133,9 +115,7 @@ export default function Navbar() {
 
             <button
               onClick={() => setMenuOpen(true)}
-              className={`rounded-lg p-2 transition-colors md:hidden ${
-                scrolled || !isHeroPage ? 'text-gray-700 hover:bg-gray-100' : 'text-white hover:bg-white/10'
-              }`}
+              className="rounded-lg p-2 transition-colors md:hidden text-gray-700 hover:bg-gray-100"
               aria-label="Open menu"
               aria-expanded={menuOpen}
             >

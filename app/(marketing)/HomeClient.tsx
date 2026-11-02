@@ -86,10 +86,10 @@ export default function HomeClient({
                 className="mt-10 flex flex-wrap justify-center gap-3 lg:justify-start"
               >
                 <Link
-                  href="/launch"
+                  href="/features"
                   className="rounded-2xl bg-brand px-7 py-3.5 text-sm font-bold text-white shadow-xl shadow-brand/20 transition hover:bg-brand-500 hover:shadow-brand/30"
                 >
-                  Get Launch Updates
+                  Explore Features
                 </Link>
                 <Link
                   href="/pricing"
@@ -462,14 +462,14 @@ export default function HomeClient({
                   Ready to run your business on WhatsApp?
                 </h2>
                 <p className="mx-auto mt-4 max-w-lg text-brand-200">
-                  Get notified when Waaiio launches and be among the first to automate your business.
+                  Explore how Waaiio helps you manage bookings, orders, and customer conversations on WhatsApp.
                 </p>
                 <div className="mt-8 flex flex-wrap justify-center gap-3">
                   <Link
-                    href="/launch"
+                    href="/features"
                     className="rounded-xl bg-accent px-8 py-4 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400"
                   >
-                    Get Launch Updates
+                    Explore Features
                   </Link>
                   <Link
                     href="/pricing"

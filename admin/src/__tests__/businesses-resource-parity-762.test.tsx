@@ -93,10 +93,11 @@ function assertValue(resource: string, label: string) {
 }
 beforeEach(() => {
   f.queries.length = 0; f.plans.clear(); f.fetch.mockReset(); snapshots.length = 0;
-  f.fetch.mockImplementation(async () => new Response(JSON.stringify({ capabilities: [], overrides: [] }), { status: 200 }));
+  f.fetch.mockImplementation(async (url: string) => new Response(JSON.stringify(url.endsWith('/profile') ? { businessId: url.includes('/a/') ? 'a' : 'b', ownerEmail: null } : { capabilities: [], overrides: [] }), { status: 200 }));
+  vi.stubEnv('VITE_API_URL', 'https://staging.example');
   vi.stubGlobal('fetch', f.fetch); vi.stubGlobal('alert', vi.fn());
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('#762 actual Businesses ancillary resource parity', () => {
   it('uses stock_quantity, retains zero/null, scopes every read and masks both accounts', async () => {
