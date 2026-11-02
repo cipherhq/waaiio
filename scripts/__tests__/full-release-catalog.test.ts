@@ -95,3 +95,34 @@ describe('canonical server-only function permissions',()=>{
   });
  }
 });
+
+describe('canonical provider-plan function signature replacement',()=>{
+ const oldId='function:public.save_provider_plan_refs(p_country_code text, p_plan_refs jsonb, p_expected_version_id uuid, p_actor_id uuid)';
+ const phase=FULL_CATALOG_CONTRACTS.profiles.production.phases.pre_app;
+ const patch=phase.patches.find((p:any)=>p.identity===oldId);
+ it('binds the sole removal to its canonical source and complete prior metadata',()=>{
+  expect(patch.operation).toBe('remove-bound');expect(patch.source_sha256).toBe('2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0');
+  expect(Object.keys(patch.preconditions).sort()).toEqual(['acl','arguments','body_sha256','config','definer','kind','language','leakproof','owner','parallel','returns','strict','volatility']);
+  expect(FULL_CATALOG_CONTRACTS.profiles.production.phases.post_app.patches.some((p:any)=>p.identity===oldId)).toBe(false);
+  expect(FULL_CATALOG_CONTRACTS.profiles.staging.phases.pre_app.patches.some((p:any)=>p.identity===oldId)).toBe(false);
+ });
+ it('accepts canonical absence and denies retaining the old signature',()=>{
+  const f=fixedFixture('production','pre_app');expect(f.actual.after.some(x=>x.identity===oldId)).toBe(false);
+  expect(verifyFullCatalogPhase('production','pre_app',f.actual,f.binding)).toBe(true);
+  f.actual.after.push(object(oldId,structuredClone(patch.preconditions)));f.actual.after_catalog_sha256=catalogObjectsDigest(f.actual.after);
+  expect(()=>verifyFullCatalogPhase('production','pre_app',f.actual,f.binding)).toThrow();
+ });
+ it.each(['acl','body_sha256','owner','config','arguments'])('rejects changed prior %s',key=>{
+  const before=[object(oldId,structuredClone(patch.preconditions))];before[0].value[key]=key==='acl'?[]:'unexpected';
+  expect(()=>projectCatalog(before,{patches:[patch],required_before:[],required_after:[]})).toThrow();
+ });
+ it('preserves absence through the cumulative post-app projection',()=>{
+  const f=fixedFixture('production','pre_app');const post=FULL_CATALOG_CONTRACTS.profiles.production.phases.post_app;
+  // Populate unrelated pre-existing post-phase metadata in the synthetic baseline.
+  // Both complete trusted phases still execute; no patch or precondition is omitted.
+  for(const p of post.patches){let existing=f.actual.before.find(x=>x.identity===p.identity);if(!existing&&p.operation!=='add'){existing=object(p.identity,structuredClone(p.preconditions||{}));f.actual.before.push(existing);}if(existing){if(p.preconditions)Object.assign(existing.value,structuredClone(p.preconditions));for(const [key,value] of Object.entries(p.fields||{}))if(!Object.hasOwn(existing.value,key))existing.value[key]=structuredClone(value);}}
+  const pre=projectCatalog(f.actual.before,phase);const after=projectCatalog(pre,post);
+  expect(after.some(x=>x.identity===oldId)).toBe(false);
+  expect(after.some(x=>x.identity.startsWith('function:public.save_provider_plan_refs('))).toBe(true);
+ });
+});

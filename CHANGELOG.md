@@ -1,3 +1,7 @@
+## 2026-11-02 — Function signature replacement verification
+
+- Align the production catalog projection with the canonical removal of a superseded function signature, retaining strict metadata checks.
+
 ## 2026-11-02 — Canonical function permission verification
 
 - Align release catalog expectations with canonical server-only function permissions and reject additional client execution grants.
