@@ -9,7 +9,7 @@
  * 3. Successful pricing → features step shows exact DB fixture prices/fees, progression enabled
  * 4. Successful pricing → clicking Continue reaches details step with DB-derived CTA
  *
- * The wizard flow is: auth → category → features → details → success.
+ * The wizard flow is: auth → category → features → plan → details → success.
  * The features step is the first pricing-dependent boundary (shows tier prices).
  * The details step shows the pay CTA with the plan price.
  */
@@ -255,8 +255,11 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
     await waitFor(() => assertTextPresent(container, 'set up for you'), { timeout: 2000 });
 
     // Click the Continue/Start button to advance to details step
-    const continueBtn = findButton(container, /Start Free Trial|Continue/);
+    const continueBtn = findButton(container, /Continue to plans/);
     await act(async () => { continueBtn.click(); });
+    await waitFor(() => assertTextPresent(container, 'Choose your plan'));
+    expect(container.textContent).toContain('3% + ₦200 Waaiio fee');
+    await act(async () => { findButton(container, /Start free — upgrade later/).click(); });
 
     // Non-conditional: must arrive at details step (has First Name form field)
     await waitFor(() => assertTextPresent(container, 'First Name'), { timeout: 2000 });
@@ -266,6 +269,21 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
     // #341: parking category now defaults to free-tier capabilities only.
     // Details step should show "Start Free Trial" (no paid pricing CTA).
     expect(text).toContain('Start Free Trial');
+  });
+
+  it('free-feature customer can choose the paid plan for its fee and reach paid details', async () => {
+    setupFetch('success');
+    const container = await renderWizardOnCategoryStep();
+    await navigateCategoryToFeatures(container);
+    await act(async () => { findButton(container, /Continue to plans/).click(); });
+    await waitFor(() => assertTextPresent(container, 'Choose your plan'));
+    await act(async () => { findButton(container, /Premium/).click(); });
+    await act(async () => { findButton(container, /Continue with/).click(); });
+    await waitFor(() => assertTextPresent(container, 'First Name'));
+    expect(container.textContent).toContain('Pay ₦70,000/mo');
+    await act(async () => { findButton(container, /^Back$/).click(); });
+    await waitFor(() => assertTextPresent(container, 'Choose your plan'));
+    expect(findButton(container, /Premium/).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('stale ?billing=annual URL: real wizard verify request emits billing_interval=month', async () => {

@@ -336,7 +336,9 @@ describe('OnboardingWizard — registration payload contains only free-tier capa
     }, { timeout: 3000 });
 
     // Click "Start Free Trial" to advance to details
-    await act(async () => { findButton(container, /Start Free Trial/).click(); });
+    await act(async () => { findButton(container, /Continue to plans/).click(); });
+    await waitFor(() => expect(container.textContent).toContain('Choose your plan'));
+    await act(async () => { findButton(container, /Start free — upgrade later/).click(); });
 
     // Wait for details step
     await waitFor(() => {

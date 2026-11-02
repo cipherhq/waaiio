@@ -107,7 +107,7 @@ describe('StepDetails — Back navigation (executable)', () => {
     setStep.mockClear();
   });
 
-  it('Back button calls setStep("features"), not "category"', async () => {
+  it('Back button calls setStep("plan"), not "category"', async () => {
     const { StepDetails } = await import('@/app/get-started/steps/StepDetails');
     // Call the component function directly to get the rendered React tree
     const element = StepDetails({
@@ -128,8 +128,8 @@ describe('StepDetails — Back navigation (executable)', () => {
     const backClick = findButtonWithLabel(element, 'Back');
     expect(backClick).not.toBeNull();
     backClick!();
-    expect(setStep).toHaveBeenCalledWith('features');
-    expect(capturedStep).toBe('features');
+    expect(setStep).toHaveBeenCalledWith('plan');
+    expect(capturedStep).toBe('plan');
   });
 });
 
@@ -152,14 +152,14 @@ describe('StepFeatures — navigation (executable)', () => {
     expect(setStep).toHaveBeenCalledWith('category');
   });
 
-  it('Continue button calls setStep("details")', async () => {
+  it('Continue button calls setStep("plan")', async () => {
     const { StepFeatures } = await import('@/app/get-started/steps/StepFeatures');
     const element = StepFeatures({ ...baseProps, setStep } as any);
 
-    const continueClick = findButtonWithLabel(element, 'Start Free Trial');
+    const continueClick = findButtonWithLabel(element, 'Continue to plans');
     expect(continueClick).not.toBeNull();
     continueClick!();
-    expect(setStep).toHaveBeenCalledWith('details');
+    expect(setStep).toHaveBeenCalledWith('plan');
   });
 });
 
@@ -168,30 +168,30 @@ describe('StepPlan — navigation (executable)', () => {
 
   beforeEach(() => setStep.mockClear());
 
-  it('Back button calls setStep("category")', async () => {
+  it('Back button calls setStep("features")', async () => {
     const { StepPlan } = await import('@/app/get-started/steps/StepPlan');
     const element = StepPlan({ ...baseProps, setStep } as any);
 
     const backClick = findButtonWithLabel(element, 'Back');
     expect(backClick).not.toBeNull();
     backClick!();
-    expect(setStep).toHaveBeenCalledWith('category');
+    expect(setStep).toHaveBeenCalledWith('features');
   });
 });
 
 describe('Restored draft — Plan step entry', () => {
-  it('restoreDraft with step="plan" sets step to plan (then Details Back still goes to features)', () => {
+  it('restoreDraft with step="plan" sets step to plan (then Details Back returns to plan)', () => {
     // The restoreDraft function calls setStep(draft.step)
     // For a plan draft: step is 'plan', user sees plan, clicks through to details.
-    // Details Back is hardcoded to 'features' regardless of entry path.
-    // This is intentional: after going Back from Details, user re-enters through Features.
+    // Details Back returns to the plan choice.
+    // This is intentional: after going Back from Details, user can revise the plan.
     const setStep = vi.fn();
     // Simulate restoreDraft
     const draft = { step: 'plan' as const };
     setStep(draft.step);
     expect(setStep).toHaveBeenCalledWith('plan');
     // From plan, user can go to details (StepPlan Continue → details)
-    // From details, Back always goes to features (hardcoded)
-    // This is the documented behavior — Details Back is fixed at 'features'
+    // From details, Back goes to plan
+    // This is the documented behavior — Details Back is fixed at 'plan'
   });
 });
