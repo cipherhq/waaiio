@@ -1,3 +1,66 @@
+## 2026-11-02 — Function signature replacement verification
+
+- Align the production catalog projection with the canonical removal of a superseded function signature, retaining strict metadata checks.
+
+## 2026-11-02 — Canonical function permission verification
+
+- Align release catalog expectations with canonical server-only function permissions and reject additional client execution grants.
+
+## 2026-11-02 — Canonical policy removal verification
+
+- Match the production release catalog projection to the canonical bank-account policy removals, preserving exact checks for remaining objects.
+
+## 2026-11-02 — Full-source phased release verification
+
+- Update the exact logging allowlist to require zero browser error logs for the server-backed account downgrade flow.
+- Bind complete merchant/admin source inventories to an immutable runtime ancestor, including explicit deleted-file evidence.
+- Validate separate database contracts before and after compatible application cutover, preserving untargeted metadata and existing migration history.
+- Retain private evidence, freshness, exact approval and manual admin-alias controls. Require the full release verifier suites in CI alongside the existing release policies.
+
+## 2026-11-02 — Full-release compatibility foundations
+
+- M503 composes cancellation intent with recurring payment provenance, using explicit trusted UUID resolution.
+- M504 adds the Party slug foundation without historical backfill.
+- M505 moves the existing owner-requested downgrade into an atomic server operation. Preserve local downgrade on unconfirmed provider cancellation, show an accurate warning, and prevent stale or cross-owner updates.
+- M506 prepares compatible form fields and the service-only OAuth/account interface before the later permission-contract phase, with exact structure checks.
+- Keep the new PostgreSQL suites mandatory in isolated CI. Application rollout and hosted migration execution remain separate release gates.
+
+## 2026-11-02 — Channel operation admission
+
+- Positive-path onboarding fixtures explicitly enable and restore the admission flag, while default-denial tests continue to exercise the disabled state.
+- Add a server-controlled admission check across merchant/admin channel setup, allocation and number-change routes, with unavailable responses before affected mutations or step-up consumption.
+- Preserve existing assigned/dedicated channel reads and messaging; merchant settings explain temporary unavailability. The flag defaults disabled and cannot be enabled by request data.
+- **Affects**: New channel setup and changes through the reviewed routes. **Could break**: Provisioning if the flag is disabled where allocation is needed. Local handler and neighboring regression evidence: 392 passed, zero failed/skipped; independent source review accepted. Hosted enablement and migration execution are separate release decisions.
+
+## 2026-11-02 — Explicit manual admin release identity
+
+- Add a fixed security successor release profile with phased storage prerequisites, complete ledger preservation digests and isolated verification evidence.
+
+- Add a named, exact manifest-bound admin manual-alias policy. Validate serving baseline, recorded non-serving target, project settings and newly created deployment before assigning only the canonical admin alias.
+- Keep automatic domain assignment settings unchanged, recheck private evidence before alias mutation, and stop without automatic rollback on partial failure. Existing release policies and application sources remain unchanged.
+
+## 2026-11-02 — Bounded private report transport
+
+- Support a versioned compressed private acceptance-report envelope while validating the original decoded report bytes and approval digest.
+- Bound envelope/decompression size, require canonical base64 and valid UTF-8, and fail before deployment on invalid transport. Legacy raw JSON remains supported; schema, targets, approvals and permissions are unchanged.
+
+## 2026-11-02 — Exact environment release evidence contracts
+
+- Select finite staging and production accounting schema profiles while retaining exact definitions, ownership and permission checks. Reject profile substitution and unexpected privilege changes.
+- This corrects release evidence validation only; application targets, database grants, financial behavior and v1/v2 gates are unchanged.
+
+## 2026-11-02 — Reduced accounting release gate
+
+- Preserve separately reviewed reduced merchant accounting-hold source and unchanged admin source as ordinary ancestors.
+- Require a named accounting policy with exact source/test and activated-schema/cohort evidence before code deployment.
+
+## 2026-11-01 — Targeted accounting hold preparation
+
+- `lib/payouts/accounting-hold.ts`, admin payout routes, auto-payout cron, merchant balance API and payout page: add accounting-hold checks and provisional balance presentation while preserving connected-provider payment routes.
+- `lib/__tests__/fixtures/legacy-accounting-hold-candidate.sql` and recurring provenance fixtures: add unapplied SQL candidates and local PostgreSQL coverage for refund accounting, settlement holds and authoritative recurring payment links. These fixtures are not migrations or enrollment instructions.
+- `.github/workflows/ci.yml` and focused route/UI/SQL tests: require the two new PostgreSQL suites in the isolated database job. Local SQL proof: 55 passed, zero skipped; build and focused lint passed. Hosted CI and acceptance are not claimed.
+- **Affects**: Settlement availability, refund accounting compatibility and payout balance presentation. **Could break**: Runtime reads if required schema is absent, or payment finalization if writer compatibility prerequisites are omitted. Schema preparation, reviewed enrollment and rollout gates remain required before exposure; no hosted changes were made.
+
 ## 2026-11-01 — Longer merchant notification invitations
 
 - M502 extends newly issued email and WhatsApp notification invitations to 48 hours; existing invitation expiry remains unchanged.
@@ -495,6 +558,8 @@
 - **Could break**: Nothing. No code imports or runtime dependencies on these documents.
 
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
+
+- Prepare private verification document access and bounded security compatibility on the existing release baseline.
 
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
 - **`app/api/events/purchase/route.ts`**: Handles `tier_paused` RPC error with 409 and descriptive message, matching existing `price_changed` pattern.

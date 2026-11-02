@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
   // Country is loaded from the business, never from a request override.
   const country = business.country_code?.trim();
   const sharedTargets: { id: string; phone_number: string; country_code: string }[] = [];
-  if (country && business.wa_method !== 'shared') {
+  if (channelOperationsEnabled() && country && business.wa_method !== 'shared') {
     const { data: channels, error } = await service.from('whatsapp_channels')
       .select('id').eq('channel_type', 'shared').eq('is_active', true)
       .eq('connection_status', 'active').is('business_id', null)
@@ -56,6 +57,7 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json({
+    channel_operations_available: channelOperationsEnabled(),
     shared_targets: sharedTargets,
     wa_method: business.wa_method || 'shared',
     channel: channel || null,
@@ -76,6 +78,7 @@ export async function DELETE(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+  if (!channelOperationsEnabled()) return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
 
   let body: Record<string, unknown> = {};
   try {

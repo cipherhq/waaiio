@@ -110,3 +110,72 @@ boundaries use fake executables. Synthetic test artifacts are never actual CI or
 hosted acceptance evidence. Deployment still requires real exact-target CI and
 normal independent review/Owner authorization; those are not inferred from local
 unit-test results.
+
+### Accounting-hold v3 profile
+
+`schema_version: 3`, `policy: accounting-hold-v1` selects a separate fixed source, test and active-schema contract. V1 and v2 retain their existing rules. Merchant source is the reduced accounting descendant; admin source remains separately pinned. Ordinary ancestry, protected-main CI, exact-target checkout/build and authenticated run/attempt/artifact checks still apply. The workflow's existing `payout_policy` capability output enables required private evidence and isolated PostgreSQL tests for both v2 and v3; it is not a migration bypass.
+
+The v3 manifest additionally binds independent `accounting_activation.staging` and `.production` objects: environment/project, verified audit actor UUID, approved manifest and executed envelope SHA256, cohort and Owner approval receipt SHA256, exact hold/member/audit/preserved-pending counts, and preserved-pending row digest. Do not copy staging counts into production. Bind this immutable manifest before generating the independently reviewed report.
+
+Each report activation record must contain that exact binding, actual commit/read-back timestamps, independently reviewed Owner references, exact fixed schema contracts and source hashes, raw evidence and hold/member/audit row digests, zero existing-financial-row changes and zero provider calls. It must attest active dispatcher/private helpers, recurring definitions, guards/index, ownership/config/ACL and cohort—not merely installer ledger rows. Read-back freshness and disabled payout-cron evidence are rechecked before each deployment mutation. Installer source filenames are provenance, not instructions to replay SQL.
+
+These are code deployment gates only. They never execute DDL, enroll a cohort, reconcile a payment, release a hold or call a provider. Activation and later post-fence restoration require their separately approved operational envelopes. Intercepted hosted UI acceptance is labeled UI-only; actual held server denial is supported by exact-target handler and disposable SQL evidence, not inferred from an intercepted request. No operational report, account identifier, cohort list or approval receipt belongs in public code or Actions output.
+
+V3 uses two finite schema profiles exported as `ACCOUNTING_SCHEMA_PROFILES`. Staging requires service-role SELECT/INSERT/UPDATE on step-up grants; production retains its full fixed table ACL. Production also pins explicit application-role EXECUTE entries on the three public payout flag/linkage helpers whose staging ACL contains owner and PUBLIC entries. These are exact environment contracts, not permission-subset matching. Unknown grantees, changed grantors/grantability, private execution grants and cross-environment profile substitution fail. No database permissions are modified by the verifier.
+
+Profile digests are SHA256 of UTF-8 JSON with recursively sorted object keys, compact separators, preserved array order and no trailing newline. The staging step-up sub-contract digest uses the same recipe without its own `contract_sha256` field. The production-schema evidence gate selects the production profile; each activation record selects its independently pinned environment profile. Report producers must use these expanded contracts/digests and retain raw observations. Return metadata follows the fixed contract recipe (normalized TABLE return formatting; procedure return type from its catalog type). This formatting does not normalize ACLs or relax definition/security/ownership equality.
+
+### Private report transport
+
+`PRIVATE_RELEASE_ACCEPTANCE_REPORT` accepts either the original raw JSON text or `gzip-base64-v1:` followed by canonical padded base64 of its gzip bytes. The complete compressed envelope must be smaller than 48 KiB; decompressed output is limited to 1 MiB and must be valid UTF-8. Raw JSON also has a 1 MiB byte limit. Unsupported prefixes, malformed/truncated data, invalid base64/UTF-8 and oversized input fail with a generic error before external checks or deployment. No payload is logged.
+
+The trusted gate decodes once per private-evidence invocation and passes the same original text to digest approval verification and accounting activation validation. The approved SHA256 always covers original uncompressed report bytes, including their exact whitespace; it never covers the gzip/base64 envelope. No report reserialization or approval regeneration is implied by encoding. Keep the original receipt/report/digest evidence private and unchanged. Only the acceptance-report secret uses this transport; manifest and approval receipt formats remain unchanged.
+
+### Optional v3 manual admin alias policy
+
+A reviewed private v3 manifest may specify `projects.admin.manual_alias` with `policy: canonical-admin-alias-v1` and an exact `preexisting_target` descriptor: `id`, `project_id`, `sha`, `ready_state` (READY), `source` (cli), and integer `created_at`. Unknown policy/fields, other project placement, changed descriptor or a target not older than the pinned serving baseline fail closed. This operational descriptor remains private; its exact bytes are covered by existing manifest, CI and approval bindings. Existing v1/v2 paths do not gain a READY-target exception.
+
+This policy requires the fixed paired project configuration: merchant root empty, Next.js, automatic assignment enabled, default build/install/output commands, ignored Git build command `exit 0`; admin root `admin`, Vite, automatic assignment disabled, default build/install/output and ignored-build commands. Both deploy commands run from each clean repository checkout root; admin is not entered twice. The admin CLI deployment explicitly uses `--skip-domain`.
+
+After the invocation creates and verifies the admin READY deployment (production target, CLI source), the gate rechecks both serving identities and fresh private evidence, then assigns only the fixed canonical admin alias to that exact deployment ID. It does not promote a project or enable automatic assignment. During this invocation only, the project target may remain the exact preexisting record or advance to the just-created candidate. Post-assignment polling keeps that same context and requires exact alias/project/SHA/ID/health. No other READY, BUILDING or newly substituted target is allowed. Default or other aliases are not assigned.
+
+Alias permission/conflict errors and uncertain outcomes stop after one mutation attempt; no automatic retry, baseline redefinition or rollback occurs. Any created candidate remains for private recovery inspection. Reconcile actual aliases and deployment IDs before a separately authorized retry.
+
+### Fixed security successor (schema 4)
+
+`security-storage-webhook-v1` accepts only its reviewed merchant/admin commits,
+base commits, trees and complete source blob inventories. It retains schema 3's
+accounting contracts, authenticated code receipts, report approval/freshness and
+manual canonical admin alias behavior. Earlier policies retain their contracts.
+
+The separate `storage_prerequisite` report binds complete storage policy/bucket
+contracts for each environment and complete migration ledger preservation. The
+manifest binds counts and deterministic digests of the complete baseline and
+expected ledger. The recipe `version-row-sha256-json-v1` is compact JSON of exact
+`{version,row_sha256}` objects, sorted lexically by version (C ordering), with no
+trailing newline. Full-row hashes cover all metadata, including legitimate NULL
+historical statement payloads. Retain the complete raw inventories privately.
+
+The observed baseline excludes only exact manifest-bound addition versions with
+matching whole-row hashes and metadata. It must retain the original count and
+digest; the total must equal baseline plus the exact additions. Duplicate versions,
+extra/deleted/changed rows and alternate exclusions fail. Explicit M491/M492 rows
+still require their known nonnull statement hashes. This aggregate transport keeps
+the manifest within the existing secret size limit without dropping row fields. The production pre-app phase permits
+only its explicitly bound M491 prerequisite addition. Staging's installed M492
+and specific historical M491 statement serialization discrepancy are explicit
+reconciliation evidence, not a claim of canonical historical execution. Unknown
+policy, ledger, source or provenance drift stops deployment.
+
+Integration verification retains the accounting SQL suite and separately creates
+`storage_security_test` on its disposable localhost PostgreSQL service to run the
+17 storage tests with `REQUIRE_PG_TESTS=true`. It refuses an existing database,
+cleans up its own new database and records the separate command and source hashes.
+The application targets receive no private evidence or provider credentials.
+
+This gate deploys applications only. Production M492 follows the verified new
+application switch; legacy object closure requires a separately reviewed exact
+inventory and authorized Storage operation with byte/reference/CAS evidence.
+Neither operation runs in this workflow. Application deployment does not certify
+legacy closure. A standing authorization must not be relabeled as a later exact
+report-digest approval or used to bypass freshness.

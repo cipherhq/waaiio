@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       payout_policy: ${{ steps.plan.outputs.payout_policy }}
+      full_release_policy: ${{ steps.plan.outputs.full_release_policy }}
       merchant_target: ${{ steps.plan.outputs.merchant_target }}
       admin_target: ${{ steps.plan.outputs.admin_target }}
     steps:
@@ -79,6 +80,16 @@ jobs:
           PRIVATE_RELEASE_RECEIPT: ${{ needs.plan.outputs.payout_policy == 'true' && secrets.PRIVATE_RELEASE_RECEIPT || '' }}
           PRIVATE_RELEASE_ACCEPTANCE_REPORT: ${{ needs.plan.outputs.payout_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_REPORT || '' }}
           PRIVATE_RELEASE_ACCEPTANCE_SHA256: ${{ needs.plan.outputs.payout_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_SHA256 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_1: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_1 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_2: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_2 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_3: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_3 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_4: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_4 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_5: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_5 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_6: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_6 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_7: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_7 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_8: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_8 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_9: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_9 || '' }}
+          PRIVATE_RELEASE_ACCEPTANCE_CHUNK_10: ${{ needs.plan.outputs.full_release_policy == 'true' && secrets.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_10 || '' }}
           VERIFY_RUN_ID: ${{ inputs.verify_run_id }}
           VERIFY_RUN_ATTEMPT: ${{ inputs.verify_run_attempt }}
         run: node trusted/scripts/reduced-release-gate.mjs deploy merchant-source admin-source

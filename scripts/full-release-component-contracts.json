@@ -1,0 +1,2675 @@
+{
+  "status": "review-required-partial-components-not-deployment-authority",
+  "projections": {
+    "staging": {
+      "financial_functions": [
+        {
+          "identity": "apply_payment_loyalty_once(uuid)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "ec097efa23300186b7f37adb62412ae309591c3bbd591a11c671767355a2a834",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "create_order_atomic(uuid,uuid,uuid,text,text,text,integer,integer,integer,uuid,text,text,uuid,text,integer,integer,text,text,text,text,jsonb,uuid,boolean,integer)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "6deb6c1ce672cc48203f5eb51a1f7c0c4168261437dcc54fc3766ac5686e9651",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "disconnect_payout_account(uuid)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public, pg_temp"
+          ],
+          "definer": false,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "64b81719c4932e8427174060d6dbfd45ba7f9741f98e4b47c2a3c7e5cd3246cd",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "persist_verified_paystack_card_authorization(uuid,numeric,text,jsonb)",
+          "owner": "postgres",
+          "config": [
+            "search_path=pg_catalog, pg_temp"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "7b8fbdb47ff9254299f2b8ea0d80f6d8d038c22b9213eea5955d45a3d05a154d",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "redeem_loyalty_reward_once(uuid,uuid,text,integer,text,text)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public, pg_temp"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "bd1d7bbadb4e7874b50e2d0efe9d6d24afd75bb2de854089ffa56f41695399fd",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "save_provider_plan_refs(text,jsonb,uuid,uuid,jsonb)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public, extensions, pg_temp"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "ce9c4c442182c31a13b4b97a1e1aa1a6aced839070e724cc96920eea7a17ed53",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "swap_payout_account(uuid,text,text,text,text,text,text,timestamp with time zone,text,text,text)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public, pg_temp"
+          ],
+          "definer": false,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "79fe31751047718c5b374fe526cdc027855ac0543c2670c9147c6615f826437f",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        }
+      ],
+      "category_reference": [
+        {
+          "key": "accounting",
+          "icon": "📊",
+          "label": "Accounting & Tax",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 76,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "bakery",
+          "icon": "🧁",
+          "label": "Bakery",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 42,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "bar",
+          "icon": "🍸",
+          "label": "Bar",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 43,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "barber",
+          "icon": "💈",
+          "label": "Barbershop",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 0,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "bootcamp",
+          "icon": "🔥",
+          "label": "Bootcamp / CrossFit",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 36,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "bus",
+          "icon": "🚆",
+          "label": "Bus / Train",
+          "flow_type": "ticketing",
+          "is_active": true,
+          "sort_order": 85,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "cafe",
+          "icon": "☕",
+          "label": "Cafe / Coffee Shop",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 44,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "car_park",
+          "icon": "🅿️",
+          "label": "Parking",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 50,
+          "category_group": "Government & Public"
+        },
+        {
+          "key": "car_rental",
+          "icon": "🚙",
+          "label": "Car Rental",
+          "flow_type": "reservation",
+          "is_active": true,
+          "sort_order": 67,
+          "category_group": "Hospitality"
+        },
+        {
+          "key": "car_wash",
+          "icon": "🚿",
+          "label": "Car Wash",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 58,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "catering",
+          "icon": "🍳",
+          "label": "Catering",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 45,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "church",
+          "icon": "⛪",
+          "label": "Church",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 32,
+          "category_group": "Faith & Community"
+        },
+        {
+          "key": "cinema",
+          "icon": "🎬",
+          "label": "Cinema",
+          "flow_type": "ticketing",
+          "is_active": true,
+          "sort_order": 28,
+          "category_group": "Events & Entertainment"
+        },
+        {
+          "key": "cleaning",
+          "icon": "🧹",
+          "label": "Cleaning Services",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 59,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "clinic",
+          "icon": "🏥",
+          "label": "Clinic / Hospital",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 51,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "consultant",
+          "icon": "💼",
+          "label": "Consultant",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 77,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "content_creator",
+          "icon": "📱",
+          "label": "Content Creator",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 9,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "courier",
+          "icon": "🏍️",
+          "label": "Courier / Delivery",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 86,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "coworking",
+          "icon": "🏢",
+          "label": "Coworking Space",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 78,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "crowdfunding_org",
+          "icon": "❤️",
+          "label": "Crowdfunding",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 33,
+          "category_group": "Faith & Community"
+        },
+        {
+          "key": "dance",
+          "icon": "💃",
+          "label": "Dance Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 37,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "daycare",
+          "icon": "👶",
+          "label": "Daycare / Creche",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 22,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "dental",
+          "icon": "🦷",
+          "label": "Dental Clinic",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 52,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "dj",
+          "icon": "🎧",
+          "label": "DJ",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 10,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "dog_walking",
+          "icon": "🦮",
+          "label": "Dog Walking",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 72,
+          "category_group": "Pet Services"
+        },
+        {
+          "key": "driving_school",
+          "icon": "🚗",
+          "label": "Driving School",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 23,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "electrician",
+          "icon": "⚡",
+          "label": "Electrician",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 60,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "event_services",
+          "icon": "🎉",
+          "label": "Event Services & Rentals",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 29,
+          "category_group": "Events & Entertainment"
+        },
+        {
+          "key": "events",
+          "icon": "🎪",
+          "label": "Events",
+          "flow_type": "ticketing",
+          "is_active": true,
+          "sort_order": 30,
+          "category_group": "Events & Entertainment"
+        },
+        {
+          "key": "food_delivery",
+          "icon": "🛵",
+          "label": "Food Delivery",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 14,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "food_truck",
+          "icon": "🚚",
+          "label": "Food Truck",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 46,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "funeral",
+          "icon": "🌺",
+          "label": "Funeral Services",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 70,
+          "category_group": "Other"
+        },
+        {
+          "key": "government",
+          "icon": "🏛️",
+          "label": "Government & Utilities",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 49,
+          "category_group": "Government & Public"
+        },
+        {
+          "key": "graphic_designer",
+          "icon": "🎨",
+          "label": "Graphic Designer",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 11,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "gym",
+          "icon": "🏋️",
+          "label": "Gym / Fitness",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 38,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "handyman",
+          "icon": "🛠️",
+          "label": "Handyman",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 61,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "hotel",
+          "icon": "🛏️",
+          "label": "Hotel & Lodge",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 68,
+          "category_group": "Hospitality"
+        },
+        {
+          "key": "hvac",
+          "icon": "❄️",
+          "label": "HVAC",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 62,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "instagram_vendor",
+          "icon": "🛒",
+          "label": "Online Vendor",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 16,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "landscaping",
+          "icon": "🌿",
+          "label": "Landscaping",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 63,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "language_school",
+          "icon": "🌍",
+          "label": "Language School",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 24,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "lash_tech",
+          "icon": "👁️",
+          "label": "Lash Tech",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 2,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "laundry",
+          "icon": "👔",
+          "label": "Laundry & Dry Cleaning",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 64,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "legal",
+          "icon": "⚖️",
+          "label": "Legal / Notary",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 79,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "logistics",
+          "icon": "🚚",
+          "label": "Logistics & Shipping",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 87,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "lounge",
+          "icon": "🥂",
+          "label": "Lounge",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 47,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "mall_vendor",
+          "icon": "🏪",
+          "label": "Mall Vendor",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 15,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "martial_arts",
+          "icon": "🥋",
+          "label": "Martial Arts",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 39,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "mechanic",
+          "icon": "🔧",
+          "label": "Auto Mechanic",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 57,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "medspa",
+          "icon": "💉",
+          "label": "Med Spa",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 4,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "mortgage_broker",
+          "icon": "🏦",
+          "label": "Mortgage Broker",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 82,
+          "category_group": "Real Estate & Property"
+        },
+        {
+          "key": "mosque",
+          "icon": "🕌",
+          "label": "Mosque",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 34,
+          "category_group": "Faith & Community"
+        },
+        {
+          "key": "moving",
+          "icon": "🚛",
+          "label": "Moving Company",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 88,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "mua",
+          "icon": "💄",
+          "label": "Makeup Artist",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 3,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "music_studio",
+          "icon": "🎵",
+          "label": "Music / Recording Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 31,
+          "category_group": "Events & Entertainment"
+        },
+        {
+          "key": "nail_tech",
+          "icon": "💅",
+          "label": "Nail Tech",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 5,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "ngo",
+          "icon": "🤝",
+          "label": "NGO / Charity",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 35,
+          "category_group": "Faith & Community"
+        },
+        {
+          "key": "optician",
+          "icon": "👓",
+          "label": "Optician / Eye Care",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 53,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "other",
+          "icon": "🔧",
+          "label": "Other (Custom)",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 71,
+          "category_group": "Other"
+        },
+        {
+          "key": "pest_control",
+          "icon": "🐜",
+          "label": "Pest Control",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 65,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "pet_boarding",
+          "icon": "🏠",
+          "label": "Pet Boarding",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 73,
+          "category_group": "Pet Services"
+        },
+        {
+          "key": "pet_grooming",
+          "icon": "🐕",
+          "label": "Pet Grooming",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 74,
+          "category_group": "Pet Services"
+        },
+        {
+          "key": "pet_training",
+          "icon": "🐾",
+          "label": "Pet Training",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 75,
+          "category_group": "Pet Services"
+        },
+        {
+          "key": "pharmacy",
+          "icon": "💊",
+          "label": "Pharmacy",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 17,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "photographer",
+          "icon": "📷",
+          "label": "Photographer",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 12,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "physiotherapy",
+          "icon": "🦴",
+          "label": "Physiotherapy",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 54,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "pilates",
+          "icon": "🤸",
+          "label": "Pilates Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 40,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "plumber",
+          "icon": "🔌",
+          "label": "Plumber",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 66,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "printing",
+          "icon": "🖨️",
+          "label": "Printing & Signage",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 18,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "property_manager",
+          "icon": "🏗️",
+          "label": "Property Manager",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 83,
+          "category_group": "Real Estate & Property"
+        },
+        {
+          "key": "real_estate",
+          "icon": "🏠",
+          "label": "Real Estate",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 84,
+          "category_group": "Real Estate & Property"
+        },
+        {
+          "key": "restaurant",
+          "icon": "🍽️",
+          "label": "Restaurant",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 48,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "salon",
+          "icon": "💇",
+          "label": "Hair Salon",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 1,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "school",
+          "icon": "🎓",
+          "label": "School",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 25,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "security",
+          "icon": "🛡️",
+          "label": "Security Services",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 80,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "shop",
+          "icon": "🛍️",
+          "label": "Shop / Retail",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 19,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "shortlet",
+          "icon": "🏘️",
+          "label": "Shortlet / Airbnb",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 69,
+          "category_group": "Hospitality"
+        },
+        {
+          "key": "spa",
+          "icon": "🧖",
+          "label": "Spa",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 6,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "supermarket",
+          "icon": "🏬",
+          "label": "Supermarket / Grocery",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 20,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "tailor",
+          "icon": "✂️",
+          "label": "Tailor & Fashion",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 21,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "tattoo",
+          "icon": "🎨",
+          "label": "Tattoo Shop",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 7,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "taxi",
+          "icon": "🚕",
+          "label": "Taxi & Ride-Hailing",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 89,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "therapy",
+          "icon": "🧠",
+          "label": "Therapy & Counseling",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 55,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "training_academy",
+          "icon": "🏫",
+          "label": "Training Academy",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 26,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "transport",
+          "icon": "🚌",
+          "label": "Transport",
+          "flow_type": "ticketing",
+          "is_active": true,
+          "sort_order": 90,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "travel_agency",
+          "icon": "✈️",
+          "label": "Travel Agency",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 81,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "tutor",
+          "icon": "📚",
+          "label": "Tutor & Coaching",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 27,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "veterinary",
+          "icon": "🐾",
+          "label": "Veterinary",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 56,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "videographer",
+          "icon": "🎥",
+          "label": "Videographer",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 13,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "waxing",
+          "icon": "✨",
+          "label": "Waxing Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 8,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "yoga",
+          "icon": "🧘",
+          "label": "Yoga Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 41,
+          "category_group": "Fitness"
+        }
+      ],
+      "storage": {
+        "buckets": [
+          {
+            "id": "business-documents",
+            "public": true
+          },
+          {
+            "id": "contracts",
+            "public": false
+          },
+          {
+            "id": "customer-reports",
+            "public": false
+          },
+          {
+            "id": "documents",
+            "public": false
+          },
+          {
+            "id": "verification-documents",
+            "public": false
+          }
+        ],
+        "objects_rls": true,
+        "service_role_crud": {
+          "SELECT": true,
+          "INSERT": true,
+          "UPDATE": true,
+          "DELETE": true
+        },
+        "policies": [
+          {
+            "name": "Allow public reads",
+            "roles": [
+              "public"
+            ],
+            "using": "(bucket_id = 'business-documents'::text)",
+            "command": "SELECT",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Allow service role all on documents",
+            "roles": [
+              "service_role"
+            ],
+            "using": "(bucket_id = 'documents'::text)",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Allow service role uploads on documents",
+            "roles": [
+              "service_role"
+            ],
+            "using": null,
+            "command": "INSERT",
+            "permissive": "PERMISSIVE",
+            "with_check": "(bucket_id = 'documents'::text)"
+          },
+          {
+            "name": "Business owners delete reports",
+            "roles": [
+              "authenticated"
+            ],
+            "using": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))",
+            "command": "DELETE",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Business owners manage own documents",
+            "roles": [
+              "public"
+            ],
+            "using": "((bucket_id = 'business-documents'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Business owners read own contracts",
+            "roles": [
+              "public"
+            ],
+            "using": "((bucket_id = 'contracts'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))",
+            "command": "SELECT",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Business owners read reports",
+            "roles": [
+              "authenticated"
+            ],
+            "using": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))",
+            "command": "SELECT",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Business owners upload own contracts",
+            "roles": [
+              "public"
+            ],
+            "using": null,
+            "command": "INSERT",
+            "permissive": "PERMISSIVE",
+            "with_check": "((bucket_id = 'contracts'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))"
+          },
+          {
+            "name": "Business owners upload reports",
+            "roles": [
+              "authenticated"
+            ],
+            "using": null,
+            "command": "INSERT",
+            "permissive": "PERMISSIVE",
+            "with_check": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))"
+          },
+          {
+            "name": "No new public verification objects",
+            "roles": [
+              "authenticated"
+            ],
+            "using": null,
+            "command": "INSERT",
+            "permissive": "RESTRICTIVE",
+            "with_check": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))"
+          },
+          {
+            "name": "No public verification object updates",
+            "roles": [
+              "authenticated"
+            ],
+            "using": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))",
+            "command": "UPDATE",
+            "permissive": "RESTRICTIVE",
+            "with_check": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))"
+          },
+          {
+            "name": "Service manages verification documents",
+            "roles": [
+              "service_role"
+            ],
+            "using": "(bucket_id = 'verification-documents'::text)",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": "(bucket_id = 'verification-documents'::text)"
+          },
+          {
+            "name": "Service role full access contracts",
+            "roles": [
+              "service_role"
+            ],
+            "using": "(bucket_id = 'contracts'::text)",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Service role full access documents",
+            "roles": [
+              "service_role"
+            ],
+            "using": "(bucket_id = 'business-documents'::text)",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Service role manages contracts storage",
+            "roles": [
+              "public"
+            ],
+            "using": "((bucket_id = 'contracts'::text) AND (auth.role() = 'service_role'::text))",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Service role reports access",
+            "roles": [
+              "public"
+            ],
+            "using": "((bucket_id = 'customer-reports'::text) AND (auth.role() = 'service_role'::text))",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": "((bucket_id = 'customer-reports'::text) AND (auth.role() = 'service_role'::text))"
+          }
+        ]
+      },
+      "recurring_functions": [
+        {
+          "proname": "claim_paystack_billing_cycle",
+          "identity": "claim_paystack_billing_cycle(uuid)",
+          "identity_arguments": "p_subscription_id uuid",
+          "arguments": "p_subscription_id uuid",
+          "result": "jsonb",
+          "defaults": null,
+          "pronargdefaults": 0,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public, extensions"
+          ],
+          "provolatile": "v",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "plpgsql",
+          "body_sha256": "6c239f074ec20b670722cf4a0ea3b6679733e0ce1a3f8cae743169fc3fad2b27",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        },
+        {
+          "proname": "claim_recurring_billing_cycle",
+          "identity": "claim_recurring_billing_cycle(uuid)",
+          "identity_arguments": "p_subscription_id uuid",
+          "arguments": "p_subscription_id uuid",
+          "result": "jsonb",
+          "defaults": null,
+          "pronargdefaults": 0,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public"
+          ],
+          "provolatile": "v",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "plpgsql",
+          "body_sha256": "bfbaa255e8be84c80dc0f01e4a0eca1bdfa8b3ee2c4d9e2caf62295c3646362b",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        },
+        {
+          "proname": "dispatch_paystack_attempt",
+          "identity": "dispatch_paystack_attempt(uuid,uuid)",
+          "identity_arguments": "p_attempt_id uuid, p_claim_token uuid",
+          "arguments": "p_attempt_id uuid, p_claim_token uuid",
+          "result": "jsonb",
+          "defaults": null,
+          "pronargdefaults": 0,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public"
+          ],
+          "provolatile": "v",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "plpgsql",
+          "body_sha256": "9657ac6e240a37eac30c1d7c437668edbc9c3ca7a2e5a335e581c3156cdd71ea",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        },
+        {
+          "proname": "finalize_paystack_recurring_charge",
+          "identity": "finalize_paystack_recurring_charge(uuid,integer,text,text,text)",
+          "identity_arguments": "p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text, p_provider_transaction_id text, p_provider_invoice_code text",
+          "arguments": "p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text DEFAULT 'NGN'::text, p_provider_transaction_id text DEFAULT NULL::text, p_provider_invoice_code text DEFAULT NULL::text",
+          "result": "jsonb",
+          "defaults": "'NGN'::text, NULL::text, NULL::text",
+          "pronargdefaults": 3,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public"
+          ],
+          "provolatile": "v",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "plpgsql",
+          "body_sha256": "c69b93ff28a01edbddac47e1205f0d9a94c5eceeca824098bec01ed3c4f0783c",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        },
+        {
+          "proname": "list_cancelled_flutterwave_claims",
+          "identity": "list_cancelled_flutterwave_claims(integer)",
+          "identity_arguments": "p_limit integer",
+          "arguments": "p_limit integer DEFAULT 6",
+          "result": "TABLE(stable_ref text, attempt_ref text, claim_status text, subscription_id uuid, amount numeric, currency text)",
+          "defaults": "6",
+          "pronargdefaults": 1,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public, extensions"
+          ],
+          "provolatile": "s",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "sql",
+          "body_sha256": "6c30d745be717aba3c41ba0d6d08ae8409a1a53f3e5734d8bacc1cb520236a07",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        }
+      ],
+      "category_enum_labels": [
+        "accounting",
+        "bakery",
+        "bar",
+        "barber",
+        "bootcamp",
+        "bus",
+        "cafe",
+        "car_park",
+        "car_rental",
+        "car_wash",
+        "catering",
+        "church",
+        "cinema",
+        "cleaning",
+        "clinic",
+        "consultant",
+        "content_creator",
+        "courier",
+        "coworking",
+        "crowdfunding_org",
+        "dance",
+        "daycare",
+        "dental",
+        "dj",
+        "dog_walking",
+        "driving_school",
+        "electrician",
+        "event_services",
+        "events",
+        "food_delivery",
+        "food_truck",
+        "funeral",
+        "government",
+        "graphic_designer",
+        "gym",
+        "handyman",
+        "hotel",
+        "hvac",
+        "instagram_vendor",
+        "landscaping",
+        "language_school",
+        "lash_tech",
+        "laundry",
+        "legal",
+        "logistics",
+        "lounge",
+        "mall_vendor",
+        "martial_arts",
+        "mechanic",
+        "medspa",
+        "mortgage_broker",
+        "mosque",
+        "moving",
+        "mua",
+        "music_studio",
+        "nail_tech",
+        "ngo",
+        "optician",
+        "other",
+        "pest_control",
+        "pet_boarding",
+        "pet_grooming",
+        "pet_training",
+        "pharmacy",
+        "photographer",
+        "physiotherapy",
+        "pilates",
+        "plumber",
+        "printing",
+        "property_manager",
+        "real_estate",
+        "restaurant",
+        "salon",
+        "school",
+        "security",
+        "shop",
+        "shortlet",
+        "spa",
+        "supermarket",
+        "tailor",
+        "tattoo",
+        "taxi",
+        "therapy",
+        "training_academy",
+        "transport",
+        "travel_agency",
+        "tutor",
+        "veterinary",
+        "videographer",
+        "waxing",
+        "yoga"
+      ]
+    },
+    "production": {
+      "financial_functions": [
+        {
+          "identity": "apply_payment_loyalty_once(uuid)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "ec097efa23300186b7f37adb62412ae309591c3bbd591a11c671767355a2a834",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "create_order_atomic(uuid,uuid,uuid,text,text,text,integer,integer,integer,uuid,text,text,uuid,text,integer,integer,text,text,text,text,jsonb,uuid,boolean,integer)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "6deb6c1ce672cc48203f5eb51a1f7c0c4168261437dcc54fc3766ac5686e9651",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "disconnect_payout_account(uuid)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public, pg_temp"
+          ],
+          "definer": false,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "64b81719c4932e8427174060d6dbfd45ba7f9741f98e4b47c2a3c7e5cd3246cd",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "persist_verified_paystack_card_authorization(uuid,numeric,text,jsonb)",
+          "owner": "postgres",
+          "config": [
+            "search_path=pg_catalog, pg_temp"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "7b8fbdb47ff9254299f2b8ea0d80f6d8d038c22b9213eea5955d45a3d05a154d",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "redeem_loyalty_reward_once(uuid,uuid,text,integer,text,text)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public, pg_temp"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "9d4d7b30174261c8e1a90fdaaee6c59f24c475fce657bc5ad6de4e377eaca68c",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "save_provider_plan_refs(text,jsonb,uuid,uuid,jsonb)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public, extensions, pg_temp"
+          ],
+          "definer": true,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "ce9c4c442182c31a13b4b97a1e1aa1a6aced839070e724cc96920eea7a17ed53",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        },
+        {
+          "identity": "swap_payout_account(uuid,text,text,text,text,text,text,timestamp with time zone,text,text,text)",
+          "owner": "postgres",
+          "config": [
+            "search_path=public, pg_temp"
+          ],
+          "definer": false,
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "body_sha256": "79fe31751047718c5b374fe526cdc027855ac0543c2670c9147c6615f826437f",
+          "anon_execute": false,
+          "auth_execute": false,
+          "service_execute": true
+        }
+      ],
+      "category_reference": [
+        {
+          "key": "accounting",
+          "icon": "📊",
+          "label": "Accounting & Tax",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 76,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "bakery",
+          "icon": "🧁",
+          "label": "Bakery",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 42,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "bar",
+          "icon": "🍸",
+          "label": "Bar",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 43,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "barber",
+          "icon": "💈",
+          "label": "Barbershop",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 0,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "bootcamp",
+          "icon": "🔥",
+          "label": "Bootcamp / CrossFit",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 36,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "bus",
+          "icon": "🚆",
+          "label": "Bus / Train",
+          "flow_type": "ticketing",
+          "is_active": true,
+          "sort_order": 85,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "cafe",
+          "icon": "☕",
+          "label": "Cafe / Coffee Shop",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 44,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "car_park",
+          "icon": "🅿️",
+          "label": "Parking",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 50,
+          "category_group": "Government & Public"
+        },
+        {
+          "key": "car_rental",
+          "icon": "🚙",
+          "label": "Car Rental",
+          "flow_type": "reservation",
+          "is_active": true,
+          "sort_order": 67,
+          "category_group": "Hospitality"
+        },
+        {
+          "key": "car_wash",
+          "icon": "🚿",
+          "label": "Car Wash",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 58,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "catering",
+          "icon": "🍳",
+          "label": "Catering",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 45,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "church",
+          "icon": "⛪",
+          "label": "Church",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 32,
+          "category_group": "Faith & Community"
+        },
+        {
+          "key": "cinema",
+          "icon": "🎬",
+          "label": "Cinema",
+          "flow_type": "ticketing",
+          "is_active": true,
+          "sort_order": 28,
+          "category_group": "Events & Entertainment"
+        },
+        {
+          "key": "cleaning",
+          "icon": "🧹",
+          "label": "Cleaning Services",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 59,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "clinic",
+          "icon": "🏥",
+          "label": "Clinic / Hospital",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 51,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "consultant",
+          "icon": "💼",
+          "label": "Consultant",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 77,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "content_creator",
+          "icon": "📱",
+          "label": "Content Creator",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 9,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "courier",
+          "icon": "🏍️",
+          "label": "Courier / Delivery",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 86,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "coworking",
+          "icon": "🏢",
+          "label": "Coworking Space",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 78,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "crowdfunding_org",
+          "icon": "❤️",
+          "label": "Crowdfunding",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 33,
+          "category_group": "Faith & Community"
+        },
+        {
+          "key": "dance",
+          "icon": "💃",
+          "label": "Dance Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 37,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "daycare",
+          "icon": "👶",
+          "label": "Daycare / Creche",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 22,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "dental",
+          "icon": "🦷",
+          "label": "Dental Clinic",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 52,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "dj",
+          "icon": "🎧",
+          "label": "DJ",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 10,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "dog_walking",
+          "icon": "🦮",
+          "label": "Dog Walking",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 72,
+          "category_group": "Pet Services"
+        },
+        {
+          "key": "driving_school",
+          "icon": "🚗",
+          "label": "Driving School",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 23,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "electrician",
+          "icon": "⚡",
+          "label": "Electrician",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 60,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "event_services",
+          "icon": "🎉",
+          "label": "Event Services & Rentals",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 29,
+          "category_group": "Events & Entertainment"
+        },
+        {
+          "key": "events",
+          "icon": "🎪",
+          "label": "Events",
+          "flow_type": "ticketing",
+          "is_active": true,
+          "sort_order": 30,
+          "category_group": "Events & Entertainment"
+        },
+        {
+          "key": "food_delivery",
+          "icon": "🛵",
+          "label": "Food Delivery",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 14,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "food_truck",
+          "icon": "🚚",
+          "label": "Food Truck",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 46,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "funeral",
+          "icon": "🌺",
+          "label": "Funeral Services",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 70,
+          "category_group": "Other"
+        },
+        {
+          "key": "government",
+          "icon": "🏛️",
+          "label": "Government & Utilities",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 49,
+          "category_group": "Government & Public"
+        },
+        {
+          "key": "graphic_designer",
+          "icon": "🎨",
+          "label": "Graphic Designer",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 11,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "gym",
+          "icon": "🏋️",
+          "label": "Gym / Fitness",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 38,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "handyman",
+          "icon": "🛠️",
+          "label": "Handyman",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 61,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "hotel",
+          "icon": "🛏️",
+          "label": "Hotel & Lodge",
+          "flow_type": "reservation",
+          "is_active": true,
+          "sort_order": 68,
+          "category_group": "Hospitality"
+        },
+        {
+          "key": "hvac",
+          "icon": "❄️",
+          "label": "HVAC",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 62,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "instagram_vendor",
+          "icon": "🛒",
+          "label": "Online Vendor",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 16,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "landscaping",
+          "icon": "🌿",
+          "label": "Landscaping",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 63,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "language_school",
+          "icon": "🌍",
+          "label": "Language School",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 24,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "lash_tech",
+          "icon": "👁️",
+          "label": "Lash Tech",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 2,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "laundry",
+          "icon": "👔",
+          "label": "Laundry & Dry Cleaning",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 64,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "legal",
+          "icon": "⚖️",
+          "label": "Legal / Notary",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 79,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "logistics",
+          "icon": "🚚",
+          "label": "Logistics & Shipping",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 87,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "lounge",
+          "icon": "🥂",
+          "label": "Lounge",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 47,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "mall_vendor",
+          "icon": "🏪",
+          "label": "Mall Vendor",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 15,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "martial_arts",
+          "icon": "🥋",
+          "label": "Martial Arts",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 39,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "mechanic",
+          "icon": "🔧",
+          "label": "Auto Mechanic",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 57,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "medspa",
+          "icon": "💉",
+          "label": "Med Spa",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 4,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "mortgage_broker",
+          "icon": "🏦",
+          "label": "Mortgage Broker",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 82,
+          "category_group": "Real Estate & Property"
+        },
+        {
+          "key": "mosque",
+          "icon": "🕌",
+          "label": "Mosque",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 34,
+          "category_group": "Faith & Community"
+        },
+        {
+          "key": "moving",
+          "icon": "🚛",
+          "label": "Moving Company",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 88,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "mua",
+          "icon": "💄",
+          "label": "Makeup Artist",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 3,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "music_studio",
+          "icon": "🎵",
+          "label": "Music / Recording Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 31,
+          "category_group": "Events & Entertainment"
+        },
+        {
+          "key": "nail_tech",
+          "icon": "💅",
+          "label": "Nail Tech",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 5,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "ngo",
+          "icon": "🤝",
+          "label": "NGO / Charity",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 35,
+          "category_group": "Faith & Community"
+        },
+        {
+          "key": "optician",
+          "icon": "👓",
+          "label": "Optician / Eye Care",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 53,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "other",
+          "icon": "🔧",
+          "label": "Other (Custom)",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 71,
+          "category_group": "Other"
+        },
+        {
+          "key": "pest_control",
+          "icon": "🐜",
+          "label": "Pest Control",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 65,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "pet_boarding",
+          "icon": "🏠",
+          "label": "Pet Boarding",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 73,
+          "category_group": "Pet Services"
+        },
+        {
+          "key": "pet_grooming",
+          "icon": "🐕",
+          "label": "Pet Grooming",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 74,
+          "category_group": "Pet Services"
+        },
+        {
+          "key": "pet_training",
+          "icon": "🐾",
+          "label": "Pet Training",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 75,
+          "category_group": "Pet Services"
+        },
+        {
+          "key": "pharmacy",
+          "icon": "💊",
+          "label": "Pharmacy",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 17,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "photographer",
+          "icon": "📷",
+          "label": "Photographer",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 12,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "physiotherapy",
+          "icon": "🦴",
+          "label": "Physiotherapy",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 54,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "pilates",
+          "icon": "🤸",
+          "label": "Pilates Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 40,
+          "category_group": "Fitness"
+        },
+        {
+          "key": "plumber",
+          "icon": "🔌",
+          "label": "Plumber",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 66,
+          "category_group": "Home & Auto Services"
+        },
+        {
+          "key": "printing",
+          "icon": "🖨️",
+          "label": "Printing & Signage",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 18,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "property_manager",
+          "icon": "🏗️",
+          "label": "Property Manager",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 83,
+          "category_group": "Real Estate & Property"
+        },
+        {
+          "key": "real_estate",
+          "icon": "🏠",
+          "label": "Real Estate",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 84,
+          "category_group": "Real Estate & Property"
+        },
+        {
+          "key": "restaurant",
+          "icon": "🍽️",
+          "label": "Restaurant",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 48,
+          "category_group": "Food & Dining"
+        },
+        {
+          "key": "salon",
+          "icon": "💇",
+          "label": "Hair Salon",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 1,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "school",
+          "icon": "🎓",
+          "label": "School",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 25,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "security",
+          "icon": "🛡️",
+          "label": "Security Services",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 80,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "shop",
+          "icon": "🛍️",
+          "label": "Shop / Retail",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 19,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "shortlet",
+          "icon": "🏘️",
+          "label": "Shortlet / Airbnb",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 69,
+          "category_group": "Hospitality"
+        },
+        {
+          "key": "spa",
+          "icon": "🧖",
+          "label": "Spa",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 6,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "supermarket",
+          "icon": "🏬",
+          "label": "Supermarket / Grocery",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 20,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "tailor",
+          "icon": "✂️",
+          "label": "Tailor & Fashion",
+          "flow_type": "ordering",
+          "is_active": true,
+          "sort_order": 21,
+          "category_group": "Delivery & Retail"
+        },
+        {
+          "key": "tattoo",
+          "icon": "🎨",
+          "label": "Tattoo Shop",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 7,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "taxi",
+          "icon": "🚕",
+          "label": "Taxi & Ride-Hailing",
+          "flow_type": "payment",
+          "is_active": true,
+          "sort_order": 89,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "therapy",
+          "icon": "🧠",
+          "label": "Therapy & Counseling",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 55,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "training_academy",
+          "icon": "🏫",
+          "label": "Training Academy",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 26,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "transport",
+          "icon": "🚌",
+          "label": "Transport",
+          "flow_type": "ticketing",
+          "is_active": true,
+          "sort_order": 90,
+          "category_group": "Transport & Logistics"
+        },
+        {
+          "key": "travel_agency",
+          "icon": "✈️",
+          "label": "Travel Agency",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 81,
+          "category_group": "Professional Services"
+        },
+        {
+          "key": "tutor",
+          "icon": "📚",
+          "label": "Tutor & Coaching",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 27,
+          "category_group": "Education & Training"
+        },
+        {
+          "key": "veterinary",
+          "icon": "🐾",
+          "label": "Veterinary",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 56,
+          "category_group": "Health & Medical"
+        },
+        {
+          "key": "videographer",
+          "icon": "🎥",
+          "label": "Videographer",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 13,
+          "category_group": "Creative & Media"
+        },
+        {
+          "key": "waxing",
+          "icon": "✨",
+          "label": "Waxing Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 8,
+          "category_group": "Beauty & Wellness"
+        },
+        {
+          "key": "yoga",
+          "icon": "🧘",
+          "label": "Yoga Studio",
+          "flow_type": "scheduling",
+          "is_active": true,
+          "sort_order": 41,
+          "category_group": "Fitness"
+        }
+      ],
+      "storage": {
+        "buckets": [
+          {
+            "id": "business-documents",
+            "public": true
+          },
+          {
+            "id": "contracts",
+            "public": false
+          },
+          {
+            "id": "customer-reports",
+            "public": false
+          },
+          {
+            "id": "documents",
+            "public": false
+          },
+          {
+            "id": "verification-documents",
+            "public": false
+          }
+        ],
+        "objects_rls": true,
+        "service_role_crud": {
+          "SELECT": true,
+          "INSERT": true,
+          "UPDATE": true,
+          "DELETE": true
+        },
+        "policies": [
+          {
+            "name": "Allow public reads",
+            "roles": [
+              "public"
+            ],
+            "using": "(bucket_id = 'business-documents'::text)",
+            "command": "SELECT",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Allow service role all on documents",
+            "roles": [
+              "service_role"
+            ],
+            "using": "(bucket_id = 'documents'::text)",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Allow service role uploads on documents",
+            "roles": [
+              "service_role"
+            ],
+            "using": null,
+            "command": "INSERT",
+            "permissive": "PERMISSIVE",
+            "with_check": "(bucket_id = 'documents'::text)"
+          },
+          {
+            "name": "Business owners delete reports",
+            "roles": [
+              "authenticated"
+            ],
+            "using": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))",
+            "command": "DELETE",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Business owners manage own documents",
+            "roles": [
+              "public"
+            ],
+            "using": "((bucket_id = 'business-documents'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Business owners read own contracts",
+            "roles": [
+              "public"
+            ],
+            "using": "((bucket_id = 'contracts'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))",
+            "command": "SELECT",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Business owners read reports",
+            "roles": [
+              "authenticated"
+            ],
+            "using": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))",
+            "command": "SELECT",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Business owners upload own contracts",
+            "roles": [
+              "public"
+            ],
+            "using": null,
+            "command": "INSERT",
+            "permissive": "PERMISSIVE",
+            "with_check": "((bucket_id = 'contracts'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))"
+          },
+          {
+            "name": "Business owners upload reports",
+            "roles": [
+              "authenticated"
+            ],
+            "using": null,
+            "command": "INSERT",
+            "permissive": "PERMISSIVE",
+            "with_check": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))"
+          },
+          {
+            "name": "No new public verification objects",
+            "roles": [
+              "authenticated"
+            ],
+            "using": null,
+            "command": "INSERT",
+            "permissive": "RESTRICTIVE",
+            "with_check": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))"
+          },
+          {
+            "name": "No public verification object updates",
+            "roles": [
+              "authenticated"
+            ],
+            "using": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))",
+            "command": "UPDATE",
+            "permissive": "RESTRICTIVE",
+            "with_check": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))"
+          },
+          {
+            "name": "Service manages verification documents",
+            "roles": [
+              "service_role"
+            ],
+            "using": "(bucket_id = 'verification-documents'::text)",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": "(bucket_id = 'verification-documents'::text)"
+          },
+          {
+            "name": "Service role full access contracts",
+            "roles": [
+              "service_role"
+            ],
+            "using": "(bucket_id = 'contracts'::text)",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Service role full access documents",
+            "roles": [
+              "service_role"
+            ],
+            "using": "(bucket_id = 'business-documents'::text)",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Service role manages contracts storage",
+            "roles": [
+              "public"
+            ],
+            "using": "((bucket_id = 'contracts'::text) AND (auth.role() = 'service_role'::text))",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": null
+          },
+          {
+            "name": "Service role reports access",
+            "roles": [
+              "public"
+            ],
+            "using": "((bucket_id = 'customer-reports'::text) AND (auth.role() = 'service_role'::text))",
+            "command": "ALL",
+            "permissive": "PERMISSIVE",
+            "with_check": "((bucket_id = 'customer-reports'::text) AND (auth.role() = 'service_role'::text))"
+          }
+        ]
+      },
+      "recurring_functions": [
+        {
+          "proname": "claim_paystack_billing_cycle",
+          "identity": "claim_paystack_billing_cycle(uuid)",
+          "identity_arguments": "p_subscription_id uuid",
+          "arguments": "p_subscription_id uuid",
+          "result": "jsonb",
+          "defaults": null,
+          "pronargdefaults": 0,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public, extensions"
+          ],
+          "provolatile": "v",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "plpgsql",
+          "body_sha256": "6c239f074ec20b670722cf4a0ea3b6679733e0ce1a3f8cae743169fc3fad2b27",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        },
+        {
+          "proname": "claim_recurring_billing_cycle",
+          "identity": "claim_recurring_billing_cycle(uuid)",
+          "identity_arguments": "p_subscription_id uuid",
+          "arguments": "p_subscription_id uuid",
+          "result": "jsonb",
+          "defaults": null,
+          "pronargdefaults": 0,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public"
+          ],
+          "provolatile": "v",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "plpgsql",
+          "body_sha256": "bfbaa255e8be84c80dc0f01e4a0eca1bdfa8b3ee2c4d9e2caf62295c3646362b",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        },
+        {
+          "proname": "dispatch_paystack_attempt",
+          "identity": "dispatch_paystack_attempt(uuid,uuid)",
+          "identity_arguments": "p_attempt_id uuid, p_claim_token uuid",
+          "arguments": "p_attempt_id uuid, p_claim_token uuid",
+          "result": "jsonb",
+          "defaults": null,
+          "pronargdefaults": 0,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public"
+          ],
+          "provolatile": "v",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "plpgsql",
+          "body_sha256": "9657ac6e240a37eac30c1d7c437668edbc9c3ca7a2e5a335e581c3156cdd71ea",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        },
+        {
+          "proname": "finalize_paystack_recurring_charge",
+          "identity": "finalize_paystack_recurring_charge(uuid,integer,text,text,text)",
+          "identity_arguments": "p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text, p_provider_transaction_id text, p_provider_invoice_code text",
+          "arguments": "p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text DEFAULT 'NGN'::text, p_provider_transaction_id text DEFAULT NULL::text, p_provider_invoice_code text DEFAULT NULL::text",
+          "result": "jsonb",
+          "defaults": "'NGN'::text, NULL::text, NULL::text",
+          "pronargdefaults": 3,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public"
+          ],
+          "provolatile": "v",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "plpgsql",
+          "body_sha256": "c69b93ff28a01edbddac47e1205f0d9a94c5eceeca824098bec01ed3c4f0783c",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        },
+        {
+          "proname": "list_cancelled_flutterwave_claims",
+          "identity": "list_cancelled_flutterwave_claims(integer)",
+          "identity_arguments": "p_limit integer",
+          "arguments": "p_limit integer DEFAULT 6",
+          "result": "TABLE(stable_ref text, attempt_ref text, claim_status text, subscription_id uuid, amount numeric, currency text)",
+          "defaults": "6",
+          "pronargdefaults": 1,
+          "prokind": "f",
+          "prosecdef": true,
+          "proconfig": [
+            "search_path=public, extensions"
+          ],
+          "provolatile": "s",
+          "proisstrict": false,
+          "proparallel": "u",
+          "owner": "postgres",
+          "acl": "{postgres=X/postgres,service_role=X/postgres}",
+          "language": "sql",
+          "body_sha256": "6c30d745be717aba3c41ba0d6d08ae8409a1a53f3e5734d8bacc1cb520236a07",
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "service_execute": true
+        }
+      ],
+      "category_enum_labels": [
+        "accounting",
+        "bakery",
+        "bar",
+        "barber",
+        "bootcamp",
+        "bus",
+        "cafe",
+        "car_park",
+        "car_rental",
+        "car_wash",
+        "catering",
+        "church",
+        "cinema",
+        "cleaning",
+        "clinic",
+        "consultant",
+        "content_creator",
+        "courier",
+        "coworking",
+        "crowdfunding_org",
+        "dance",
+        "daycare",
+        "dental",
+        "dj",
+        "dog_walking",
+        "driving_school",
+        "electrician",
+        "event_services",
+        "events",
+        "food_delivery",
+        "food_truck",
+        "funeral",
+        "government",
+        "graphic_designer",
+        "gym",
+        "handyman",
+        "hotel",
+        "hvac",
+        "instagram_vendor",
+        "landscaping",
+        "language_school",
+        "lash_tech",
+        "laundry",
+        "legal",
+        "logistics",
+        "lounge",
+        "mall_vendor",
+        "martial_arts",
+        "mechanic",
+        "medspa",
+        "mortgage_broker",
+        "mosque",
+        "moving",
+        "mua",
+        "music_studio",
+        "nail_tech",
+        "ngo",
+        "optician",
+        "other",
+        "pest_control",
+        "pet_boarding",
+        "pet_grooming",
+        "pet_training",
+        "pharmacy",
+        "photographer",
+        "physiotherapy",
+        "pilates",
+        "plumber",
+        "printing",
+        "property_manager",
+        "real_estate",
+        "restaurant",
+        "salon",
+        "school",
+        "security",
+        "shop",
+        "shortlet",
+        "spa",
+        "supermarket",
+        "tailor",
+        "tattoo",
+        "taxi",
+        "therapy",
+        "training_academy",
+        "transport",
+        "travel_agency",
+        "tutor",
+        "veterinary",
+        "videographer",
+        "waxing",
+        "yoga"
+      ]
+    }
+  },
+  "source_pins": {
+    "supabase/migrations/427_paystack_saved_card_persistence.sql": "03a35c8d704ccec30d5dc33d343510ede16bf35c7fa54ab7efd05a8c986a0f87",
+    "supabase/migrations/434_atomic_loyalty_reward_receipt.sql": "78171fce64e1adc4885f97684cc939ce8707450e2b3b606d610abe36704a58be",
+    "supabase/migrations/435_ordering_price_authority.sql": "39a43ce188b2074de2e790d079276bdd7b2ccc6ffa8d30b4f6faa808b57afc1f",
+    "supabase/migrations/441_payout_account_atomic_swap.sql": "011a123ce56b3fa7ea4921ccbfe1409c122f44b543380481b61311a2758743b7",
+    "supabase/migrations/446_payout_accounts_server_only.sql": "22a10369127e7147c29c8f76dd521e408a541619440b785f3d4e600f1e670f7f",
+    "supabase/migrations/467b_save_refs_tier_prices_upgrade.sql": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0",
+    "supabase/migrations/484_fix_loyalty_tier_multiplier.sql": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57",
+    "supabase/migrations/459_expand_business_categories.sql": "ea6857df447bf3dd8d654510a1332eb7885d90f155bdb48137d0d68108b17bbe",
+    "supabase/migrations/460_category_sort_order_correction.sql": "9bff6a466fc65cc1e10eaaae0ac932d87b828e2e85967ee89c77333b3994b404",
+    "supabase/migrations/491_private_document_storage.sql": "a89883986b2cfe77da04e219777dadbea8e36abaf8114a41462dc4f026fa204a",
+    "supabase/migrations/492_verification_public_upload_guard.sql": "18377b0c9e8ebb890a8a5fa1b640781c9ec3894ff3738673a4af8a3d8ba353dc",
+    "supabase/migrations/503_recurring_cancellation_compatibility.sql": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67"
+  },
+  "accounting_finalizer_patch": {
+    "source": "503_recurring_cancellation_compatibility.sql",
+    "source_sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67",
+    "schema": "public",
+    "name": "finalize_paystack_recurring_charge",
+    "previous_body_sha256": "8c237dcab859d6c18c307640dade3d6916a5af0ecd7b38f832613f2a594ca37d",
+    "body_sha256": "c69b93ff28a01edbddac47e1205f0d9a94c5eceeca824098bec01ed3c4f0783c"
+  }
+}

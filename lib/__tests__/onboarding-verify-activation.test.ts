@@ -1,3 +1,6 @@
+import { beforeEach as beforeChannelAdmissionFixture, vi as channelAdmissionFixture } from 'vitest';
+// These regressions exercise the explicitly enabled channel-operation contract.
+beforeChannelAdmissionFixture(() => channelAdmissionFixture.stubEnv('ENABLE_CHANNEL_ALLOCATION_OPERATIONS', 'true'));
 /**
  * Onboarding /api/onboarding/verify activation-invariant tests.
  *
@@ -128,6 +131,23 @@ describe('POST /api/onboarding/verify — activation invariant', () => {
         update: () => ({ eq: () => Promise.resolve({ error: null }) }),
       };
     });
+  });
+
+  it('disabled allocation denies unassigned shared activation before any writes', async () => {
+    vi.stubEnv('ENABLE_CHANNEL_ALLOCATION_OPERATIONS', 'false');
+    const { POST } = await import('@/app/api/onboarding/verify/route');
+    const response = await POST(makeRequest({ business_id: 'biz-1', plan: 'free', enabled: true }));
+    expect(response.status).toBe(503);
+    expect(subscriptionUpserts).toEqual([]); expect(paymentInserts).toEqual([]);
+    expect(businessUpdates).toEqual([]); expect(finalizeArgs).toEqual([]);
+    expect(mockServiceFrom).not.toHaveBeenCalled();
+  });
+  it.each(['shared', 'dedicated'])('disabled allocation preserves already assigned %s activation', async method => {
+    vi.stubEnv('ENABLE_CHANNEL_ALLOCATION_OPERATIONS', 'false');
+    mockAuthFrom.mockReturnValue({ select: () => ({ eq: () => ({ single: async () => ({ data: { owner_id: 'user-1', subscription_tier: 'free', wa_method: method, assigned_channel_id: 'assigned' }, error: null }) }) }) });
+    const { POST } = await import('@/app/api/onboarding/verify/route');
+    expect((await POST(makeRequest({business_id: 'biz-1', plan: 'free'}))).status).toBe(200);
+    expect(finalizeArgs).toHaveLength(1);
   });
 
   it('TEST 1: zero capability rows → 400 recoverable, no activation', async () => {

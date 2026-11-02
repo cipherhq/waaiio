@@ -1,3 +1,4 @@
+import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
@@ -72,6 +73,14 @@ export async function POST(
   if (!payout) {
     return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
   }
+  try {
+    if (await getMerchantAccountingHold(serviceClient, payout.business_id)) {
+      return NextResponse.json({ error: 'Settlement is held pending accounting reconciliation', code: 'merchant_accounting_held' }, { status: 409 });
+    }
+  } catch {
+    return NextResponse.json({ error: 'Unable to verify accounting reconciliation state' }, { status: 503 });
+  }
+
 
   // Only approved manual_bank payouts can be confirmed
   if (payout.status !== 'approved') {

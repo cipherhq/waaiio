@@ -1,0 +1,368 @@
+{
+  "staging": {
+    "buckets": [
+      {
+        "id": "business-documents",
+        "public": true
+      },
+      {
+        "id": "contracts",
+        "public": false
+      },
+      {
+        "id": "customer-reports",
+        "public": false
+      },
+      {
+        "id": "documents",
+        "public": false
+      },
+      {
+        "id": "verification-documents",
+        "public": false
+      }
+    ],
+    "objects_rls": true,
+    "service_role_crud": {
+      "SELECT": true,
+      "INSERT": true,
+      "UPDATE": true,
+      "DELETE": true
+    },
+    "policies": [
+      {
+        "name": "Allow public reads",
+        "roles": [
+          "public"
+        ],
+        "using": "(bucket_id = 'business-documents'::text)",
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Allow service role all on documents",
+        "roles": [
+          "service_role"
+        ],
+        "using": "(bucket_id = 'documents'::text)",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Allow service role uploads on documents",
+        "roles": [
+          "service_role"
+        ],
+        "using": null,
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "with_check": "(bucket_id = 'documents'::text)"
+      },
+      {
+        "name": "Business owners delete reports",
+        "roles": [
+          "authenticated"
+        ],
+        "using": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))",
+        "command": "DELETE",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Business owners manage own documents",
+        "roles": [
+          "public"
+        ],
+        "using": "((bucket_id = 'business-documents'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Business owners read own contracts",
+        "roles": [
+          "public"
+        ],
+        "using": "((bucket_id = 'contracts'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))",
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Business owners read reports",
+        "roles": [
+          "authenticated"
+        ],
+        "using": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))",
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Business owners upload own contracts",
+        "roles": [
+          "public"
+        ],
+        "using": null,
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "with_check": "((bucket_id = 'contracts'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))"
+      },
+      {
+        "name": "Business owners upload reports",
+        "roles": [
+          "authenticated"
+        ],
+        "using": null,
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "with_check": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))"
+      },
+      {
+        "name": "No new public verification objects",
+        "roles": [
+          "authenticated"
+        ],
+        "using": null,
+        "command": "INSERT",
+        "permissive": "RESTRICTIVE",
+        "with_check": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))"
+      },
+      {
+        "name": "No public verification object updates",
+        "roles": [
+          "authenticated"
+        ],
+        "using": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))",
+        "command": "UPDATE",
+        "permissive": "RESTRICTIVE",
+        "with_check": "((bucket_id <> 'business-documents'::text) OR (((storage.foldername(name))[1] IS DISTINCT FROM 'verification'::text) AND ((storage.foldername(name))[2] IS DISTINCT FROM 'verification'::text)))"
+      },
+      {
+        "name": "Service manages verification documents",
+        "roles": [
+          "service_role"
+        ],
+        "using": "(bucket_id = 'verification-documents'::text)",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": "(bucket_id = 'verification-documents'::text)"
+      },
+      {
+        "name": "Service role full access contracts",
+        "roles": [
+          "service_role"
+        ],
+        "using": "(bucket_id = 'contracts'::text)",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Service role full access documents",
+        "roles": [
+          "service_role"
+        ],
+        "using": "(bucket_id = 'business-documents'::text)",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Service role manages contracts storage",
+        "roles": [
+          "public"
+        ],
+        "using": "((bucket_id = 'contracts'::text) AND (auth.role() = 'service_role'::text))",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Service role reports access",
+        "roles": [
+          "public"
+        ],
+        "using": "((bucket_id = 'customer-reports'::text) AND (auth.role() = 'service_role'::text))",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": "((bucket_id = 'customer-reports'::text) AND (auth.role() = 'service_role'::text))"
+      }
+    ]
+  },
+  "production": {
+    "buckets": [
+      {
+        "id": "business-documents",
+        "public": true
+      },
+      {
+        "id": "contracts",
+        "public": false
+      },
+      {
+        "id": "customer-reports",
+        "public": false
+      },
+      {
+        "id": "documents",
+        "public": false
+      },
+      {
+        "id": "verification-documents",
+        "public": false
+      }
+    ],
+    "objects_rls": true,
+    "service_role_crud": {
+      "SELECT": true,
+      "INSERT": true,
+      "UPDATE": true,
+      "DELETE": true
+    },
+    "policies": [
+      {
+        "name": "Allow public reads",
+        "roles": [
+          "public"
+        ],
+        "using": "(bucket_id = 'business-documents'::text)",
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Allow service role all on documents",
+        "roles": [
+          "service_role"
+        ],
+        "using": "(bucket_id = 'documents'::text)",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Allow service role uploads on documents",
+        "roles": [
+          "service_role"
+        ],
+        "using": null,
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "with_check": "(bucket_id = 'documents'::text)"
+      },
+      {
+        "name": "Business owners delete reports",
+        "roles": [
+          "authenticated"
+        ],
+        "using": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))",
+        "command": "DELETE",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Business owners manage own documents",
+        "roles": [
+          "public"
+        ],
+        "using": "((bucket_id = 'business-documents'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Business owners read own contracts",
+        "roles": [
+          "public"
+        ],
+        "using": "((bucket_id = 'contracts'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))",
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Business owners read reports",
+        "roles": [
+          "authenticated"
+        ],
+        "using": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))",
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Business owners upload own contracts",
+        "roles": [
+          "public"
+        ],
+        "using": null,
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "with_check": "((bucket_id = 'contracts'::text) AND (auth.role() = 'authenticated'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))))"
+      },
+      {
+        "name": "Business owners upload reports",
+        "roles": [
+          "authenticated"
+        ],
+        "using": null,
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "with_check": "((bucket_id = 'customer-reports'::text) AND ((storage.foldername(name))[1] IN ( SELECT (businesses.id)::text AS id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid)))))"
+      },
+      {
+        "name": "Service manages verification documents",
+        "roles": [
+          "service_role"
+        ],
+        "using": "(bucket_id = 'verification-documents'::text)",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": "(bucket_id = 'verification-documents'::text)"
+      },
+      {
+        "name": "Service role full access contracts",
+        "roles": [
+          "service_role"
+        ],
+        "using": "(bucket_id = 'contracts'::text)",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Service role full access documents",
+        "roles": [
+          "service_role"
+        ],
+        "using": "(bucket_id = 'business-documents'::text)",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Service role manages contracts storage",
+        "roles": [
+          "public"
+        ],
+        "using": "((bucket_id = 'contracts'::text) AND (auth.role() = 'service_role'::text))",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      },
+      {
+        "name": "Service role reports access",
+        "roles": [
+          "public"
+        ],
+        "using": "((bucket_id = 'customer-reports'::text) AND (auth.role() = 'service_role'::text))",
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "with_check": "((bucket_id = 'customer-reports'::text) AND (auth.role() = 'service_role'::text))"
+      }
+    ]
+  }
+}

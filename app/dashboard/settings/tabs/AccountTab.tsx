@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCapabilities } from '@/components/dashboard/DashboardProvider';
@@ -57,6 +57,15 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   // Account tab state
   const [downgrading, setDowngrading] = useState(false);
   const [downgraded, setDowngraded] = useState(false);
+  const [downgradeError, setDowngradeError] = useState('');
+  const [downgradeWarning, setDowngradeWarning] = useState('');
+  const downgradeOperation = useRef<{businessId: string; id: string} | null>(null);
+  const currentBusinessId = useRef(business.id);
+  currentBusinessId.current = business.id;
+  useEffect(() => {
+    downgradeOperation.current = null;
+    setDowngrading(false); setDowngraded(false); setDowngradeError(''); setDowngradeWarning('');
+  }, [business.id]);
   const [upgrading, setUpgrading] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
   const [upgradeError, setUpgradeError] = useState('');
@@ -75,7 +84,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailSuccess, setEmailSuccess] = useState('');
   const [emailError, setEmailError] = useState('');
-  const [waChannel, setWaChannel] = useState<{ wa_method: string; channel: { phone_number: string; display_name: string; connection_status: string } | null; shared_targets?: { id: string; phone_number: string; country_code: string }[] } | null>(null);
+  const [waChannel, setWaChannel] = useState<{ wa_method: string; channel_operations_available?: boolean; channel: { phone_number: string; display_name: string; connection_status: string } | null; shared_targets?: { id: string; phone_number: string; country_code: string }[] } | null>(null);
   const [waTargetId, setWaTargetId] = useState('');
   const [waDisconnecting, setWaDisconnecting] = useState(false);
 
@@ -497,6 +506,8 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     <p className="text-xs text-gray-500">
                       Downgrading removes paid-tier benefits and increases platform fees.
                     </p>
+                    {downgradeError && <p role="alert" className="mt-3 text-sm text-red-600">{downgradeError}</p>}
+                    {downgradeWarning && <p role="status" className="mt-3 text-sm text-amber-700">{downgradeWarning}</p>}
                     {downgraded ? (
                       <p className="mt-3 text-sm font-medium text-green-600">
                         Downgraded to Free plan successfully.
@@ -554,7 +565,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     <option value="">Select a shared number</option>
                     {(waChannel.shared_targets || []).map(target => <option key={target.id} value={target.id}>{target.phone_number} ({target.country_code})</option>)}
                   </select>
-                  {!waChannel.shared_targets?.length && <p className="mt-1 text-xs text-gray-500">No eligible shared destination is available. Contact support.</p>}
+                  {!waChannel.shared_targets?.length && <p className="mt-1 text-xs text-gray-500">{waChannel.channel_operations_available === false ? 'Channel changes are temporarily unavailable. Your existing connection remains active.' : 'No eligible shared destination is available. Contact support.'}</p>}
                 </div>
                 <div className="mt-3 flex gap-2">
                   <Link
@@ -1440,55 +1451,39 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
               setEmailSaving(false);
             }
           } else if (reAuthAction === 'downgrade') {
-            setDowngrading(true);
-            // Cancel gateway subscription (Stripe/Paystack) BEFORE updating DB
+            const businessId = business.id;
+            if (downgrading) return;
+            const operation = downgradeOperation.current?.businessId === businessId
+              ? downgradeOperation.current
+              : { businessId, id: crypto.randomUUID() };
+            downgradeOperation.current = operation;
+            setDowngrading(true); setDowngradeError(''); setDowngradeWarning('');
             try {
-              const cancelRes = await fetch('/api/subscriptions/cancel', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ businessId: business.id }),
+              const response = await fetch('/api/subscriptions/cancel', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ businessId, operationId: operation.id }),
               });
-              if (!cancelRes.ok) {
-                const cancelData = await cancelRes.json();
-                console.error('[DOWNGRADE] Gateway cancellation failed:', cancelData);
-                // Continue with DB update even if gateway cancel fails —
-                // the subscription will eventually expire or be caught by reconciliation
+              const result = await response.json();
+              if (currentBusinessId.current !== businessId) return;
+              if (response.ok && result.replayed === true) {
+                setDowngradeWarning('This earlier downgrade request was completed. Your plan may have changed since then. Refresh to see your current plan.');
+                downgradeOperation.current = null;
+                return;
               }
-            } catch (cancelErr) {
-              console.error('[DOWNGRADE] Gateway cancellation error:', cancelErr);
+              if (!response.ok || result.downgraded !== true) {
+                const message = typeof result.error === 'string' ? result.error : 'Your downgrade was not completed. Please try again.';
+                setDowngradeError(message + (result.provider_cancellation_may_have_changed ? ' Provider cancellation may already have occurred.' : ''));
+                return;
+              }
+              if (typeof result.provider_warning === 'string') setDowngradeWarning(result.provider_warning);
+              // The server commits local tier, subscription and audit together.
+              // Capability configuration stays unchanged for a later upgrade.
+              setDowngraded(true);
+            } catch {
+              if (currentBusinessId.current === businessId) setDowngradeError('Your downgrade could not be confirmed. Please retry the same request.');
+            } finally {
+              if (currentBusinessId.current === businessId) setDowngrading(false);
             }
-            const supabase = createClient();
-            const { error: tierErr } = await supabase
-              .from('businesses')
-              .update({ subscription_tier: 'free' })
-              .eq('id', business.id);
-            if (tierErr) { setDowngrading(false); return; }
-            await supabase
-              .from('subscriptions')
-              .update({
-                status: 'cancelled',
-                cancelled_at: new Date().toISOString(),
-                cancellation_reason: 'User-initiated downgrade to Free plan',
-              })
-              .eq('business_id', business.id)
-              .eq('status', 'active');
-            await supabase
-              .from('subscription_payments')
-              .insert({
-                business_id: business.id,
-                amount: 0,
-                currency: 'NGN',
-                gateway: 'none',
-                plan: 'free',
-                action: 'downgrade',
-                status: 'success',
-              });
-            // Do NOT disable paid capabilities on downgrade.
-            // The capability policy resolver automatically pauses ineligible capabilities
-            // based on the new tier. The business's configuration is preserved so upgrading
-            // back restores access without reconfiguration.
-            setDowngrading(false);
-            setDowngraded(true);
           } else if (reAuthAction === 'delete') {
             setDeleting(true);
             setDeleteError('');
