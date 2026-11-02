@@ -1,3 +1,11 @@
+## 2026-11-02 — Full-release compatibility foundations
+
+- M503 composes cancellation intent with recurring payment provenance, using explicit trusted UUID resolution.
+- M504 adds the Party slug foundation without historical backfill.
+- M505 moves the existing owner-requested downgrade into an atomic server operation. Preserve local downgrade on unconfirmed provider cancellation, show an accurate warning, and prevent stale or cross-owner updates.
+- M506 prepares compatible form fields and the service-only OAuth/account interface before the later permission-contract phase, with exact structure checks.
+- Keep the new PostgreSQL suites mandatory in isolated CI. Application rollout and hosted migration execution remain separate release gates.
+
 ## 2026-11-02 — Channel operation admission
 
 - Positive-path onboarding fixtures explicitly enable and restore the admission flag, while default-denial tests continue to exercise the disabled state.
