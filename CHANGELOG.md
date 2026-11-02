@@ -1,3 +1,9 @@
+## 2026-11-02 — Additive Party share-link foundation
+
+- Add M504 nullable Party slug and a unique partial index without populating historical rows or changing existing generators, privileges or timestamps. Existing UUID links remain valid.
+- Add disposable PostgreSQL coverage for absent and already-compatible schema, unchanged historical values, uniqueness, reapplication and incompatible schema rejection. Require the suite in the isolated database CI job.
+- **Affects**: Party share-link schema compatibility. **Could break**: Installation intentionally stops on an incompatible preexisting column or index; hosted execution requires its own reviewed plan.
+
 ## 2026-11-02 — Explicit manual admin release identity
 
 - Add a fixed security successor release profile with phased storage prerequisites, complete ledger preservation digests and isolated verification evidence.
