@@ -511,6 +511,8 @@
 
 ### #716 — Ticket tier purchase and capacity guards (2026-10-25)
 
+- Prepare private verification document access and bounded security compatibility on the existing release baseline.
+
 - **`supabase/migrations/470_ticket_tier_purchase_and_capacity_guards.sql`** (new): Fixes two P1 blockers from CTO review. (P1-A) Replaces `purchase_tickets_atomic` to check `is_active` under the existing `FOR UPDATE` row lock — paused tiers now raise `tier_paused` before any inventory mutation. Bot session idempotency, price validation, event-business binding, and ACL preserved. (P1-B) Two-layer capacity guard on `event_ticket_types`: CHECK constraint `chk_capacity_gte_sold` enforcing `total_tickets >= tickets_sold` (absolute floor), plus BEFORE UPDATE trigger `trg_prevent_ticket_capacity_decrease` blocking ANY capacity decrease on saved tiers (conservative policy matching dashboard — no decreases until pending-hold reconciliation exists). Covers all paths: dashboard, partner API, direct Data API. Increases, pausing, reactivation, and `tickets_sold` increments are unaffected.
 - **`app/api/events/purchase/route.ts`**: Handles `tier_paused` RPC error with 409 and descriptive message, matching existing `price_changed` pattern.
 - **`lib/__tests__/ticket-tier-guards-m470-db.test.ts`** (new): 33+ tests — structural verification of migration (is_active SELECT under FOR UPDATE, tier_paused RAISE, CHECK constraint, ACL re-application), web route error handling, and real-PG functional tests (constraint enforcement, capacity increase, equal-to-sold boundary).
