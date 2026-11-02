@@ -21,13 +21,14 @@ describe('M503 cumulative cancellation and accounting provenance', () => {
     [a,b,observer] = [0,1,2].map(() => new Client({ connectionString: endpoint.href, statement_timeout: 8000 }));
     await Promise.all([a.connect(),b.connect(),observer.connect()]);
     await a.query(read('lib/__tests__/fixtures/recurring-payment-provenance-schema.sql'));
+    await a.query('CREATE SCHEMA extensions; ALTER EXTENSION pgcrypto SET SCHEMA extensions');
     await a.query(`CREATE TYPE subscription_tier AS ENUM('free','growth','pro'); ALTER TABLE platform_fees ADD COLUMN payment_id uuid, ADD COLUMN is_direct_transfer boolean DEFAULT false, ADD COLUMN invoice_id uuid, ADD COLUMN order_id uuid, ADD COLUMN invoiced_at timestamptz; ALTER TABLE payments ADD COLUMN invoice_id uuid,ADD COLUMN order_id uuid; CREATE TABLE platform_fee_invoices(id uuid,business_id uuid);`);
     for (const name of ['305_annual_subscriptions_loyalty','306_concurrent_finalizer_lock','334_payment_spend_marker','335_recurring_spend_finalization','337_paystack_recurring_finalization','339_stripe_recurring_finalization']) await a.query(read(`supabase/migrations/${name}.sql`));
     await a.query(read('lib/__tests__/fixtures/recurring-payment-provenance-candidate.sql'));
     const candidate = read('lib/__tests__/fixtures/legacy-accounting-hold-candidate.sql');
     const extract = (name: string) => { const start = candidate.indexOf(`CREATE FUNCTION accounting_private.${name}(`); if (start < 0) throw new Error('Missing canonical guard'); return candidate.slice(start, candidate.indexOf('END $$;', start)+7); };
     await a.query('CREATE SCHEMA accounting_private;' + extract('accounting_business_lock') + ';' + extract('guard_accounting_fee_provenance') + ';CREATE TRIGGER guard_accounting_fee_provenance BEFORE INSERT OR UPDATE OR DELETE ON platform_fees FOR EACH ROW EXECUTE FUNCTION accounting_private.guard_accounting_fee_provenance();');
-    beforeMetadata = await metadata();
+    beforeMetadata = (await metadata()).map(row => row.proname === 'claim_paystack_billing_cycle' ? {...row, proconfig: ['search_path=public, extensions']} : row);
     await a.query(migration);
   }, 30000);
   afterAll(async () => { await Promise.all([a?.end(),b?.end(),observer?.end()]); if (created) await control.query(`DROP DATABASE ${database} WITH(FORCE)`); await control?.end(); });
@@ -52,8 +53,10 @@ describe('M503 cumulative cancellation and accounting provenance', () => {
     throw new Error('Expected actual PostgreSQL lock wait');
   }
   async function snapshot() { const result: Record<string,unknown> = {}; for (const table of ['bookings','payments','subscription_charges','platform_fees','payment_spend_applications','customer_profiles','paystack_billing_attempts','customer_subscriptions','processed_webhook_events']) result[table] = await scalar(`SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY id),'[]') FROM ${table} t`); return result; }
-  it('preserves existing function metadata and exact service-only authority', async () => {
+  it('preserves metadata except the explicit claim extension path and service-only authority', async () => {
     expect(await metadata()).toEqual(beforeMetadata);
+    expect(await scalar("SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgcrypto'")).toBe('extensions');
+    expect(await scalar("SELECT pg_catalog.gen_random_uuid() IS NOT NULL")).toBe(true);
     const rows = (await a.query(`SELECT proname,has_function_privilege('anon',oid,'EXECUTE') anon,has_function_privilege('authenticated',oid,'EXECUTE') authenticated,has_function_privilege('service_role',oid,'EXECUTE') service FROM pg_proc WHERE proname=ANY($1)`, [[...names,'list_cancelled_flutterwave_claims']])).rows;
     expect(rows).toHaveLength(5); for (const row of rows) expect([row.anon,row.authenticated,row.service]).toEqual([false,false,true]);
     const col = (await a.query(`SELECT is_nullable,column_default,data_type FROM information_schema.columns WHERE table_name='customer_subscriptions' AND column_name='cancellation_requested_at'`)).rows[0];

@@ -8,7 +8,7 @@ ALTER TABLE public.customer_subscriptions
 CREATE OR REPLACE FUNCTION claim_paystack_billing_cycle(
   p_subscription_id UUID
 ) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
 DECLARE
   v_sub RECORD;
   v_existing RECORD;
@@ -74,7 +74,7 @@ BEGIN
         RETURN jsonb_build_object('claimed', false, 'active_lease', true);
       END IF;
       -- Expired lease on reserved (never dispatched) — safe to reclaim
-      v_token := gen_random_uuid();
+      v_token := pg_catalog.gen_random_uuid();
       UPDATE paystack_billing_attempts
         SET claim_token = v_token, lease_expires_at = NOW() + INTERVAL '5 minutes'
         WHERE id = v_existing.id AND status = 'reserved';
@@ -93,7 +93,7 @@ BEGIN
     WHERE customer_subscription_id = p_subscription_id AND cycle_key = v_cycle_key;
 
   v_attempt_num := v_attempt_num + 1;
-  v_token := gen_random_uuid();
+  v_token := pg_catalog.gen_random_uuid();
   v_attempt_ref := 'ps-retry-' || p_subscription_id::text || '-' || v_attempt_num || '-' || EXTRACT(EPOCH FROM NOW())::bigint::text;
 
   INSERT INTO paystack_billing_attempts (
@@ -278,7 +278,7 @@ BEGIN
   FOREACH v_name IN ARRAY ARRAY['claim_paystack_billing_cycle','dispatch_paystack_attempt','claim_recurring_billing_cycle'] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
       WHERE n.nspname='public' AND p.proname=v_name AND p.prosecdef
-      AND p.proconfig @> ARRAY['search_path=public']::text[]) THEN
+      AND p.proconfig = CASE WHEN v_name='claim_paystack_billing_cycle' THEN ARRAY['search_path=public, extensions']::text[] ELSE ARRAY['search_path=public']::text[] END) THEN
       RAISE EXCEPTION 'Security definer verification failed: %', v_name;
     END IF;
   END LOOP;
@@ -584,7 +584,7 @@ BEGIN
       AND NOT a.atthasdef AND a.attgenerated='' AND a.attidentity=''
   ) THEN RAISE EXCEPTION 'M503 incompatible cancellation intent column'; END IF;
   FOR spec IN SELECT * FROM (VALUES
-    ('claim_paystack_billing_cycle(uuid)', 'claim_paystack_billing_cycle', 0, 'v', ARRAY['search_path=public']),
+    ('claim_paystack_billing_cycle(uuid)', 'claim_paystack_billing_cycle', 0, 'v', ARRAY['search_path=public, extensions']),
     ('claim_recurring_billing_cycle(uuid)', 'claim_recurring_billing_cycle', 0, 'v', ARRAY['search_path=public']),
     ('dispatch_paystack_attempt(uuid,uuid)', 'dispatch_paystack_attempt', 0, 'v', ARRAY['search_path=public']),
     ('finalize_paystack_recurring_charge(uuid,integer,text,text,text)', 'finalize_paystack_recurring_charge', 3, 'v', ARRAY['search_path=public']),

@@ -2,6 +2,7 @@
 
 - Add M503 nullable cancellation intent, compatible claim/dispatch serialization and bounded read-only recovery discovery while retaining authoritative recurring fee payment linkage. Already-dispatched successful payments can still reconcile after cancellation.
 - Assert final function signatures, defaults, security attributes and service-only authority; reject incompatible existing column shapes or unexpected overloads. Add required isolated PostgreSQL concurrency, provenance and rollback tests.
+- Use the explicit PostgreSQL UUID builtin and extension-compatible claim search path; test with pgcrypto installed in the extensions schema.
 - **Affects**: Recurring cancellation and recovery schema. **Could break**: Installation intentionally rejects incompatible prior state. Provider HTTP after committed dispatch remains outside the database transaction; hosted application requires a separately reviewed fresh-state packet.
 
 ## 2026-11-02 — Explicit manual admin release identity
