@@ -303,3 +303,11 @@ Of the 146 migrations in the 101-246 range:
 | 493 | shared_conversation_binding | codex/ayo-routing-directory | Codex | 2026-10-31 |
 
 Verified against main e62199d2124719f470306aa85aa8310960939ee6, all ten open PR file lists, and both environment migration histories. Not applied.
+
+### Reservation — PR #813 pre-emission recovery
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 507 | merchant_notification_pre_emission_recovery | codex/merchant-notifications | Reserved; not applied to hosted environments |
+
+Checked current main and all 15 open PR migration file lists on 2026-11-02; no collision.

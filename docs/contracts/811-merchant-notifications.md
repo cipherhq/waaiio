@@ -83,3 +83,11 @@ M499 now verifies all nine privileged function definitions and their search path
 ### Invitation lifetime — Owner decision, 2026-11-01
 
 New email and WhatsApp invitations expire 48 hours after issuance once M502 is applied. Existing invitation timestamps are unchanged; expired or replaced invitations are not revived. Resending still invalidates earlier unconsumed tokens and retains the 60-second issuance throttle. Consumption still requires the bound destination/channel and explicit consent; successful replay remains idempotent, and STOP/revocation cannot be bypassed. M502 replaces only the issuing RPC and preserves service-only execution and its pinned search path. Apply M502 before deploying the corresponding 48-hour email copy. No hosted application is claimed by this source change.
+
+## PR #813 correction checkpoint — 2026-11-02
+
+Owner authorized Codex implementation as an exception to the Claude implementation role. Independent architecture/evidence review agreed to four bounded corrections: assignment-aware shared notification transport with dedicated-business compatibility, platform-scoped consent control replies, complete template pagination, and typed pre-emission recovery.
+
+M507 is a forward migration and is not applied to hosted environments. It records the allowance reservation month atomically at dispatch and provides service-only, claim-bound recovery. Only explicitly proven pre-emission transient failures are eligible; unknown provider or financial outcomes remain terminal for reconciliation. Recovery refunds once in the original accounting month, preserves the attempt bound/backoff, and never revives historical unknown deliveries. M499 remains unchanged.
+
+Local user-visible consent wording uses “business”; provider-owned approved template name/body and internal identifiers are unchanged. Real WhatsApp consent/delivery/STOP and isolated automatic scheduling acceptance remain separate from application/PostgreSQL tests. No global jobs, hosted schema, provider access or production changes are authorized by this checkpoint.

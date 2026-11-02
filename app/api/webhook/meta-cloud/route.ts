@@ -1,4 +1,4 @@
-import { handleMerchantAlertOptIn } from '@/lib/bot/merchant-alert-optin';
+import { handleMerchantAlertOptIn, sendMerchantAlertControlReply } from '@/lib/bot/merchant-alert-optin';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -740,7 +740,7 @@ export async function POST(request: NextRequest) {
               const merchantAlertHandled = await handleMerchantAlertOptIn({
                 db: supabase, provenance: 'verified_meta_webhook', from: source, text, messageType: msg.type,
                 channel: resolved.channel,
-                sendReply: (reply) => guardedSender.sendText({ to: source, text: reply }),
+                sendReply: (reply) => sendMerchantAlertControlReply(guardedSender, source, reply),
               });
               if (merchantAlertHandled) {
                 await supabase.rpc('complete_webhook_event', { p_event_id: eventId, p_claim_token: claimToken });

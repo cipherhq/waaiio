@@ -1,3 +1,4 @@
+import { PreEmissionRecoveryError } from '@/lib/channels/pre-emission-error';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver, type ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { sendEmail } from '@/lib/email/client';
@@ -30,8 +31,18 @@ export async function deliverMerchantNotification(db: SupabaseClient, d: Merchan
       if (!d.whatsapp_channel_id) return finish('failed','consent_channel_missing');
       resolved = await new ChannelResolver(db).resolveByChannelIdForBusiness(d.whatsapp_channel_id,d.business_id);
       if (!resolved?.cloud || !resolved.sender.sendTemplate) return finish('pending','channel_unavailable');
-      const templates = await resolved.cloud.getTemplates();
-      const approved = templates.data.some(t => t.name===MERCHANT_NOTIFICATION_TEMPLATE && t.status==='APPROVED' && t.category==='UTILITY' && t.language===MERCHANT_NOTIFICATION_TEMPLATE_LANGUAGE);
+      let approved = false;
+      let after: string | undefined;
+      const seen = new Set<string>();
+      do {
+        const templates = await resolved.cloud.getTemplates(after ? {after} : undefined);
+        approved = templates.data.some(t => t.name===MERCHANT_NOTIFICATION_TEMPLATE && t.status==='APPROVED' && t.category==='UTILITY' && t.language===MERCHANT_NOTIFICATION_TEMPLATE_LANGUAGE);
+        if (approved || !templates.paging?.next) break;
+        const next = templates.paging.cursors?.after;
+        if (!next || seen.has(next)) throw new Error('Invalid template pagination');
+        seen.add(next);
+        after = next;
+      } while (after);
       if (!approved) return finish('pending','template_unavailable');
     }
   } catch {
@@ -46,10 +57,15 @@ export async function deliverMerchantNotification(db: SupabaseClient, d: Merchan
       const result = await sendEmail({to:d.address,...merchantNotificationEmail(businessName!,d.payload),noRetry:true});
       if (result.success === true && !('dev' in result && result.dev) && 'id' in result && result.id) providerId=result.id;
     } else {
-      const result = await resolved!.sender.sendTemplate!({to:d.address,templateName:MERCHANT_NOTIFICATION_TEMPLATE,languageCode:MERCHANT_NOTIFICATION_TEMPLATE_LANGUAGE,templateParams:[businessName!,d.payload.title,d.payload.reference,d.payload.detail],messageCategory:'utility',noRetry:true});
+      const result = await resolved!.sender.sendTemplate!({to:d.address,templateName:MERCHANT_NOTIFICATION_TEMPLATE,languageCode:MERCHANT_NOTIFICATION_TEMPLATE_LANGUAGE,templateParams:[businessName!,d.payload.title,d.payload.reference,d.payload.detail],messageCategory:'utility',noRetry:true,reportSafePreEmissionFailure:true});
       if (result.success === true && result.messageId) providerId=result.messageId;
     }
-  } catch {
+  } catch (error) {
+    if (d.channel === 'whatsapp' && error instanceof PreEmissionRecoveryError) {
+      const recovered = await db.rpc('recover_merchant_notification_pre_emission', {p_id:d.id,p_claim_token:d.claim_token});
+      if (recovered.error || recovered.data !== true) throw new Error('Pre-emission recovery could not be persisted');
+      return 'recovered';
+    }
     // Timeout/crash can occur after provider acceptance; never automatically replay.
     return finish('unknown','provider_outcome_unknown');
   }

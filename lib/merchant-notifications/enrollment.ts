@@ -14,7 +14,7 @@ export function failure(error: unknown) {
   return NextResponse.json({ error: error instanceof EnrollmentError ? error.message : 'Notification settings are temporarily unavailable.' }, { status: error instanceof EnrollmentError ? error.status : 503 });
 }
 export function requireEnabled() {
-  if (!isMerchantNotificationsEnabled()) throw new EnrollmentError('Merchant notification setup is not enabled yet.', 503);
+  if (!isMerchantNotificationsEnabled()) throw new EnrollmentError('Business notification setup is not enabled yet.', 503);
 }
 export function uuid(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new EnrollmentError('A valid identifier is required.');
@@ -52,9 +52,21 @@ export const hashInvitation = (token: string) => createHash('sha256').update(tok
 export function validToken(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value); }
 export function missingSchema(error: { code?: string } | null) { return !!error && ['42P01','PGRST205','PGRST202'].includes(error.code || ''); }
 export async function sharedChannel(db: Database, businessId: string) {
-  const { data: business, error } = await db.from('businesses').select('country_code').eq('id', businessId).maybeSingle();
+  const { data: business, error } = await db.from('businesses').select('country_code,assigned_channel_id,whatsapp_channel_id').eq('id', businessId).maybeSingle();
   if (error || !business?.country_code) return null;
-  const result = await db.from('whatsapp_channels').select('id,phone_number,phone_number_id').eq('country_code', business.country_code).eq('channel_type', 'shared').eq('provider','meta_cloud').eq('is_active',true).maybeSingle();
+  const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
+  let assignedSharedId: string | undefined;
+  if (channelId) {
+    const assigned = await db.from('whatsapp_channels').select('id,channel_type,business_id').eq('id',channelId).maybeSingle();
+    if (assigned.error || !assigned.data) return null;
+    if (assigned.data.channel_type === 'shared') assignedSharedId = channelId;
+    else if (assigned.data.channel_type !== 'dedicated' || assigned.data.business_id !== businessId) return null;
+    // A business-owned dedicated transport does not replace platform alert transport.
+  }
+  let query = db.from('whatsapp_channels').select('id,phone_number,phone_number_id').eq('country_code', business.country_code).eq('channel_type', 'shared').eq('provider','meta_cloud').eq('is_active',true);
+  if (assignedSharedId) query = query.eq('id', assignedSharedId);
+  // Legacy/dedicated businesses retain unique shared fallback, never arbitrary spillover.
+  const result = await query.maybeSingle();
   return !result.error && result.data?.phone_number_id && result.data.phone_number ? result.data : null;
 }
 function confirmationOrigin(): string {
@@ -88,9 +100,9 @@ export async function issueInvitation(db: Database, businessId: string, recipien
   const issued = await db.rpc('issue_merchant_notification_invitation', {p_recipient_id:recipientId,p_business_id:businessId,p_token_hash:hashInvitation(token),p_channel_id:channel?.id || null});
   if (issued.error) throw issued.error;
   if (!issued.data?.issued) throw new EnrollmentError('Please wait before sending another confirmation.',429);
-  if (channel) return { url:`https://wa.me/${channel.phone_number.replace(/\D/g,'')}?text=${encodeURIComponent(`WAAIIO ALERTS ${token}\nI agree to receive merchant sale, payment, appointment and booking alerts for ${businessName}. Reply STOP to unsubscribe.`)}`, expires_at:issued.data.expires_at };
+  if (channel) return { url:`https://wa.me/${channel.phone_number.replace(/\D/g,'')}?text=${encodeURIComponent(`WAAIIO ALERTS ${token}\nI agree to receive business sale, payment, appointment and booking alerts for ${businessName}. Reply STOP to unsubscribe.`)}`, expires_at:issued.data.expires_at };
   const url = `${emailOrigin}/notifications/confirm#token=${token}`;
-  const sent = await sendEmail({to:recipient.address,subject:'Confirm Waaiio merchant notifications',html:`<p>You have been invited to receive sale, payment, appointment or booking notifications for <strong>${escapedName}</strong> on Waaiio.</p><p>Confirm only if you want these notifications.</p><p><a href="${url}">Review and confirm notifications</a></p><p>This link expires in 48 hours. If you did not expect this invitation, ignore it.</p>`,noRetry:true});
+  const sent = await sendEmail({to:recipient.address,subject:'Confirm Waaiio business notifications',html:`<p>You have been invited to receive sale, payment, appointment or booking notifications for <strong>${escapedName}</strong> on Waaiio.</p><p>Confirm only if you want these notifications.</p><p><a href="${url}">Review and confirm notifications</a></p><p>This link expires in 48 hours. If you did not expect this invitation, ignore it.</p>`,noRetry:true});
   if (!sent.success || !('id' in sent) || !sent.id) throw new EnrollmentError('Confirmation email was not accepted. Please try again later.',503);
   return {sent:true,expires_at:issued.data.expires_at};
 }

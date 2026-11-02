@@ -39,6 +39,7 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
   INSERT INTO whatsapp_channels(id) VALUES('${CHANNEL}');`);
   await sql(readFileSync('supabase/migrations/499_merchant_notifications.sql','utf8'));
   await sql(readFileSync('supabase/migrations/502_merchant_notification_invitation_lifetime.sql','utf8'));
+  await sql(readFileSync('supabase/migrations/507_merchant_notification_pre_emission_recovery.sql','utf8'));
  },30000);
  beforeEach(async()=>{await sql('RESET ROLE; TRUNCATE merchant_notification_recipients,orders,bookings,reservations,payments,whatsapp_config CASCADE');});
  afterAll(async()=>{await db?.end();});
@@ -257,4 +258,45 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
   expect((await sql('SELECT count(*)::int n FROM merchant_notification_recipients WHERE stopped_at IS NOT NULL')).rows[0].n).toBe(0);
  });
 
+
+ it('recovers a proven pre-emission failure once, refunds allowance and rotates claims',async()=>{
+  await verify(await recipient('whatsapp','+2348012345678'));await order();const d=await claim();expect(await fence(d)).toBe(true);
+  const recover=()=>sql('SELECT recover_merchant_notification_pre_emission($1,$2) ok',[d.id,d.claim_token]);
+  expect((await recover()).rows[0].ok).toBe(true);expect((await recover()).rows[0].ok).toBe(false);
+  expect((await sql('SELECT notify_monthly_count n FROM whatsapp_config')).rows[0].n).toBe(0);
+  await sql("UPDATE merchant_notification_deliveries SET available_at=now()");const next=await claim();expect(next.claim_token).not.toBe(d.claim_token);expect(await fence(next)).toBe(true);
+  expect((await sql('SELECT notify_monthly_count n FROM whatsapp_config')).rows[0].n).toBe(1);
+ });
+ it('does not refund a new month and stops at the attempt limit',async()=>{
+  await verify(await recipient('whatsapp','+2348012345678'));await order();const d=await claim();await fence(d);
+  await sql("UPDATE merchant_notification_deliveries SET allowance_reserved_month=(date_trunc('month',now())-interval '1 month')::date,attempts=5");
+  expect((await sql('SELECT recover_merchant_notification_pre_emission($1,$2) ok',[d.id,d.claim_token])).rows[0].ok).toBe(true);
+  expect((await sql('SELECT notify_monthly_count n FROM whatsapp_config')).rows[0].n).toBe(1);
+  expect((await sql('SELECT state FROM merchant_notification_deliveries')).rows[0].state).toBe('failed');expect(await claim()).toBeNull();
+ });
+ it.each(['unknown','accepted','failed'])('never recovers %s outcomes',async(state)=>{
+  await verify(await recipient('whatsapp','+2348012345678'));await order();const d=await claim();await fence(d);
+  await sql('UPDATE merchant_notification_deliveries SET state=$1',[state]);
+  expect((await sql('SELECT recover_merchant_notification_pre_emission($1,$2) ok',[d.id,d.claim_token])).rows[0].ok).toBe(false);
+ });
+ it('denies stale tokens, absent markers and unprivileged recovery',async()=>{
+  await verify(await recipient('whatsapp','+2348012345678'));await order();const d=await claim();await fence(d);
+  expect((await sql('SELECT recover_merchant_notification_pre_emission($1,$2) ok',[d.id,OWNER])).rows[0].ok).toBe(false);
+  await sql('UPDATE merchant_notification_deliveries SET allowance_reserved_month=NULL');
+  expect((await sql('SELECT recover_merchant_notification_pre_emission($1,$2) ok',[d.id,d.claim_token])).rows[0].ok).toBe(false);
+  expect((await sql("SELECT has_function_privilege('anon','recover_merchant_notification_pre_emission(uuid,uuid)','EXECUTE') a,has_function_privilege('authenticated','recover_merchant_notification_pre_emission(uuid,uuid)','EXECUTE') b,has_function_privilege('service_role','recover_merchant_notification_pre_emission(uuid,uuid)','EXECUTE') c")).rows[0]).toEqual({a:false,b:false,c:true});
+ });
+
+ it('serializes concurrent recoveries and refunds exactly once',async()=>{
+  await verify(await recipient('whatsapp','+2348012345678'));await order();const d=await claim();await fence(d);
+  const other=new Client({connectionString:url});await other.connect();
+  try {const results=await Promise.all([sql('SELECT recover_merchant_notification_pre_emission($1,$2) ok',[d.id,d.claim_token]),other.query('SELECT recover_merchant_notification_pre_emission($1,$2) ok',[d.id,d.claim_token])]);expect(results.map(r=>r.rows[0].ok).sort()).toEqual([false,true]);}finally{await other.end();}
+  expect((await sql('SELECT notify_monthly_count n FROM whatsapp_config')).rows[0].n).toBe(0);
+ });
+ it('rolls back recovery when allowance invariant fails',async()=>{
+  await verify(await recipient('whatsapp','+2348012345678'));await order();const d=await claim();await fence(d);
+  await sql('UPDATE whatsapp_config SET notify_monthly_count=0');
+  await expect(sql('SELECT recover_merchant_notification_pre_emission($1,$2)',[d.id,d.claim_token])).rejects.toThrow('allowance invariant');
+  expect((await sql('SELECT state,allowance_reserved_month IS NOT NULL marker FROM merchant_notification_deliveries')).rows[0]).toEqual({state:'dispatched',marker:true});
+ });
 });

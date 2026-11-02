@@ -1,3 +1,4 @@
+import { PreEmissionRecoveryError } from '@/lib/channels/pre-emission-error';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks=vi.hoisted(()=>({sendEmail:vi.fn(),resolve:vi.fn(),sendTemplate:vi.fn(),getTemplates:vi.fn()}));
 vi.mock('@/lib/email/client',()=>({sendEmail:mocks.sendEmail}));
@@ -48,4 +49,25 @@ describe('merchant notification guarded dispatch',()=>{
  it('provider success without message ID is unknown',async()=>{mocks.sendTemplate.mockResolvedValue({success:true});const {db,d}=fixture('whatsapp');expect(await deliverMerchantNotification(db,d)).toBe('unknown');});
  it('failed fence persistence cannot send',async()=>{const {db,d}=fixture();db.rpc.mockResolvedValue({data:null,error:{message:'db unavailable'}});await expect(deliverMerchantNotification(db,d)).rejects.toThrow('dispatch fence');expect(mocks.sendEmail).not.toHaveBeenCalled();});
  it('email escapes source-controlled HTML',()=>{expect(merchantNotificationEmail('<img>',{title:'<script>',reference:'&',detail:'"test"'}).html).toContain('&lt;script&gt;');expect(merchantNotificationEmail('<img>',{title:'x',reference:'&',detail:'y'}).html).not.toContain('<img>');});
+
+ it('follows template cursors before fencing',async()=>{
+  mocks.getTemplates.mockResolvedValueOnce({data:[],paging:{next:'next',cursors:{after:'page2'}}});
+  const {db,d}=fixture('whatsapp');expect(await deliverMerchantNotification(db,d)).toBe('accepted');
+  expect(mocks.getTemplates).toHaveBeenNthCalledWith(2,{after:'page2'});
+ });
+ it('fails closed on cyclic template pagination without sending',async()=>{
+  mocks.getTemplates.mockResolvedValue({data:[],paging:{next:'next',cursors:{after:'same'}}});
+  const {db,d}=fixture('whatsapp');expect(await deliverMerchantNotification(db,d)).toBe('pending');expect(mocks.sendTemplate).not.toHaveBeenCalled();
+ });
+ it('recovers only typed proven pre-emission failures',async()=>{
+  mocks.sendTemplate.mockRejectedValue(new PreEmissionRecoveryError(new Error('temporary')));
+  const {db,d}=fixture('whatsapp');expect(await deliverMerchantNotification(db,d)).toBe('recovered');
+  expect(db.rpc).toHaveBeenLastCalledWith('recover_merchant_notification_pre_emission',{p_id:'d',p_claim_token:'claim'});
+ });
+ it('does not overwrite uncertain recovery with another outcome',async()=>{
+  mocks.sendTemplate.mockRejectedValue(new PreEmissionRecoveryError(new Error('temporary')));
+  const {db,d}=fixture('whatsapp');db.rpc.mockImplementation(async(name:string)=>name==='recover_merchant_notification_pre_emission'?{error:{message:'timeout'}}:{data:true});
+  await expect(deliverMerchantNotification(db,d)).rejects.toThrow('recovery');
+  expect(db.rpc.mock.calls.some((c:any[])=>c[0]==='finish_merchant_notification')).toBe(false);
+ });
 });

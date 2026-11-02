@@ -9,7 +9,7 @@ import { POST, PATCH, DELETE } from '@/app/api/settings/merchant-notifications/r
 import { POST as enroll } from '@/app/api/settings/merchant-notifications/enrollment/route';
 import { POST as confirm } from '@/app/api/merchant-notifications/confirm/route';
 import { handleMerchantAlertOptIn } from '@/lib/bot/merchant-alert-optin';
-import { hashInvitation, normalizeAddress, validateEvents, issueInvitation } from '@/lib/merchant-notifications/enrollment';
+import { hashInvitation, sharedChannel, normalizeAddress, validateEvents, issueInvitation } from '@/lib/merchant-notifications/enrollment';
 const biz='11111111-1111-4111-8111-111111111111', id='22222222-2222-4222-8222-222222222222';
 function request(body:unknown, method='POST', origin='https://www.waaiio.com') { return new NextRequest('https://www.waaiio.com/api/settings/merchant-notifications',{method,headers:{'content-type':'application/json',origin},body:JSON.stringify(body)}); }
 let own=true; const filters:unknown[]=[];
@@ -78,4 +78,22 @@ describe('invitation issuance',()=>{
  it('does not report development email as sent',async()=>{mocks.send.mockResolvedValue({success:true,dev:true});await expect(issueInvitation(database(),biz,id)).rejects.toThrow('not accepted');});
  it('pins a shared channel and names business in opt-in message',async()=>{const result=await issueInvitation(database('whatsapp'),biz,id);if (typeof result.url !== 'string') throw new Error('WhatsApp invitation must return a URL');expect(decodeURIComponent(result.url)).toContain('I agree to receive');expect(mocks.rpc).toHaveBeenCalledWith('issue_merchant_notification_invitation',expect.objectContaining({p_channel_id:id}));expect(mocks.send).not.toHaveBeenCalled();});
  it('does not send on rejected or throttled issuance',async()=>{mocks.rpc.mockResolvedValue({data:{issued:false,reason:'throttled'}});await expect(issueInvitation(database(),biz,id)).rejects.toThrow('wait');expect(mocks.send).not.toHaveBeenCalled();});
+});
+
+describe('assigned shared notification transport',()=>{
+ it('uses authoritative assignment even with multiple same-country channels',async()=>{
+  const ids:string[]=[];
+  const db:any={from:(table:string)=>{const q:any={select:()=>q,eq:(key:string,value:string)=>{if(table==='whatsapp_channels'&&key==='id')ids.push(value);return q;},maybeSingle:async()=>table==='businesses'?{data:{country_code:'US',assigned_channel_id:'assigned',whatsapp_channel_id:'legacy'}}:ids.length?{data:{id:'assigned',channel_type:'shared',phone_number:'+14155552671',phone_number_id:'meta'}}:{error:{code:'PGRST116'}}};return q;}};
+  expect(await sharedChannel(db,biz)).toMatchObject({id:'assigned'});expect(ids).toEqual(['assigned','assigned']);
+ });
+ it('does not fall back when assigned channel is ineligible',async()=>{
+  const db:any={from:(table:string)=>{const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:table==='businesses'?{country_code:'US',assigned_channel_id:'inactive'}:null})};return q;}};
+  expect(await sharedChannel(db,biz)).toBeNull();
+ });
+
+ it('retains unique platform shared transport for a dedicated business',async()=>{
+  let idFilter:string|undefined;
+  const db:any={from:(table:string)=>{idFilter=undefined;const q:any={select:()=>q,eq:(key:string,value:string)=>{if(key==='id')idFilter=value;return q;},maybeSingle:async()=>({data:table==='businesses'?{country_code:'US',assigned_channel_id:'dedicated'}:idFilter==='dedicated'?{id:'dedicated',channel_type:'dedicated',business_id:biz}:{id:'shared',phone_number:'+14155552671',phone_number_id:'meta'}})};return q;}};
+  expect(await sharedChannel(db,biz)).toMatchObject({id:'shared'});
+ });
 });

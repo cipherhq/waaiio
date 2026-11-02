@@ -1,3 +1,4 @@
+import type { MessageSender } from '@/lib/channels/message-sender';
 import { createServiceClient } from '@/lib/supabase/service';
 import { hashInvitation, missingSchema, normalizeAddress } from '@/lib/merchant-notifications/enrollment';
 import { isMerchantNotificationsEnabled } from '@/lib/merchant-notifications/types';
@@ -21,7 +22,7 @@ export async function handleMerchantAlertOptIn(input: {
       .then(value => value, () => ({error:{code:'unavailable'},data:null}));
     if (result.error && !missingSchema(result.error)) {
       // Do not hide a failed merchant opt-out behind a successful customer response.
-      await input.sendReply('Merchant notification opt-out could not be saved. Please ask the business owner to remove this recipient in notification settings.').catch(() => undefined);
+      await input.sendReply('Business notification opt-out could not be saved. Please ask the business owner to remove this recipient in notification settings.').catch(() => undefined);
     }
     return false;
   }
@@ -30,7 +31,13 @@ export async function handleMerchantAlertOptIn(input: {
   if (!isMerchantNotificationsEnabled()) return true;
   const {data,error} = await db.rpc('consume_merchant_notification_invitation',{p_token_hash:hashInvitation(match[1]),p_channel:'whatsapp',p_address:address,p_channel_id:channel.id});
   await input.sendReply(!error && data?.verified
-    ? 'Merchant notifications are now enabled for this number. Reply STOP at any time to stop these alerts.'
+    ? 'Business notifications are now enabled for this number. Reply STOP at any time to stop these alerts.'
     : 'This invitation is invalid, expired, or intended for another number. Ask the business owner for a new invitation.');
   return true;
+}
+
+/** Tenantless control reply; never clear a sender binding or fall back to business text. */
+export function sendMerchantAlertControlReply(sender: Pick<MessageSender, 'sendPlatformText'>, to: string, text: string) {
+  if (!sender.sendPlatformText) throw new Error('Platform control replies unavailable');
+  return sender.sendPlatformText({to,text});
 }

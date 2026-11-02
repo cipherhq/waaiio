@@ -12,7 +12,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 
 export class MessagingSuspendedError extends Error {
-  constructor(businessId: string, reason: string) {
+  constructor(businessId: string, public readonly reason: string) {
     super(`Messaging suspended for business ${businessId}: ${reason}`);
     this.name = 'MessagingSuspendedError';
   }
