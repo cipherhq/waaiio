@@ -1,3 +1,8 @@
+## 2026-11-02 — Reduced accounting release gate
+
+- Preserve separately reviewed reduced merchant accounting-hold source and unchanged admin source as ordinary ancestors.
+- Require a named accounting policy with exact source/test and activated-schema/cohort evidence before code deployment.
+
 ## 2026-11-01 — Targeted accounting hold preparation
 
 - `lib/payouts/accounting-hold.ts`, admin payout routes, auto-payout cron, merchant balance API and payout page: add accounting-hold checks and provisional balance presentation while preserving connected-provider payment routes.
