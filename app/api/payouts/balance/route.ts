@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { computePlatformHeldTotals, getEligibleCurrencies, getUnknownCurrencyFeeRows, hasUnreconciledCurrencyRecords } from '@/lib/payments/payable-fees';
@@ -31,6 +33,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // The hold table is service-only; ownership must be established before this read.
+    const settlementHeld = await getMerchantAccountingHold(createServiceClient(), businessId);
     await loadCountries();
     // Total business revenue from completed bookings/orders/invoices (display metric — all modes)
     const [{ data: bookingPayments }, { data: orderPayments }, { data: invoicePayments }] = await Promise.all([
@@ -149,7 +153,7 @@ export async function GET(request: NextRequest) {
       if (platformFeesError || !homeCurrency || getUnknownCurrencyFeeRows(platformFees).length > 0 ||
           currencies.length > 1 || (currencies.length === 1 && currencies[0] !== homeCurrency) ||
           hasUnreconciledCurrencyRecords(allPriorPayouts, adjRows)) {
-        return NextResponse.json({ error: 'Currency reconciliation required. Available balance cannot safely be represented as one currency.' }, { status: 409 });
+        return NextResponse.json({ error: 'Currency reconciliation required. Available balance cannot safely be represented as one currency.', settlement_held: settlementHeld }, { status: 409 });
       }
       paidOut = (payouts || []).filter(p => p.currency === homeCurrency).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
       pending = (pendingPayouts || []).filter(p => p.currency === homeCurrency).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
@@ -193,6 +197,7 @@ export async function GET(request: NextRequest) {
       .eq('status', 'confirmed');
 
     return NextResponse.json({
+      settlement_held: settlementHeld,
       total_revenue,      // all completed business revenue (bookings + orders + invoices − refunds)
       gross,              // platform-held gross from platform_fees (platform_managed) or = total_revenue (direct_split)
       fees: totalFees,

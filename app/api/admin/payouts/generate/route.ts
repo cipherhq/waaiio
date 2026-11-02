@@ -1,3 +1,4 @@
+import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -72,11 +73,15 @@ export async function POST(request: NextRequest) {
     let skipped = 0;
     let held = 0;
     let failed = 0;
+    let accountingHeld = 0;
     const needsAttention: string[] = [];
     let custodyUnclassifiedCount = 0;
     let custodyUnclassifiedAmount = 0;
 
     for (const biz of businesses) {
+      try {
+        if (await getMerchantAccountingHold(supabase, biz.id)) { accountingHeld++; skipped++; continue; }
+      } catch { failed++; continue; }
       // Check if payout already exists for this period
       const { data: existing, error: existingError } = await supabase
         .from('business_payouts')
@@ -480,6 +485,7 @@ export async function POST(request: NextRequest) {
         skipped,
         needs_attention: needsAttention.length > 0 ? needsAttention : undefined,
         failed,
+        accounting_held: accountingHeld,
         period: { start: periodStartStr, end: periodEndStr },
         ...(custodyUnclassifiedCount > 0 ? {
           custody_warning: `${custodyUnclassifiedCount} fee rows excluded: custody unknown`,
@@ -495,8 +501,9 @@ export async function POST(request: NextRequest) {
         held: 0,
         skipped,
         failed: 0,
+        accounting_held: accountingHeld,
         period: { start: periodStartStr, end: periodEndStr },
-        message: 'No eligible payouts for this period',
+        message: accountingHeld > 0 ? `${accountingHeld} businesses awaiting accounting reconciliation` : 'No eligible payouts for this period',
       });
     }
 
@@ -506,6 +513,7 @@ export async function POST(request: NextRequest) {
       held,
       skipped,
       failed: 0,
+      accounting_held: accountingHeld,
       period: { start: periodStartStr, end: periodEndStr },
       ...(custodyUnclassifiedCount > 0 ? {
         custody_warning: `${custodyUnclassifiedCount} fee rows excluded: custody unknown`,
