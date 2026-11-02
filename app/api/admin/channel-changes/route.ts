@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import type { NextRequest } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -7,6 +8,7 @@ export const OPTIONS = channelChangeOptions;
 export async function GET(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return channelChangeResponse(request, { error: 'Forbidden' }, 403);
+  if (!channelOperationsEnabled()) return channelChangeResponse(request, CHANNEL_OPERATIONS_UNAVAILABLE, 503);
   try {
     const status = request.nextUrl.searchParams.get('status');
     let query = createServiceClient().from('channel_change_approvals')

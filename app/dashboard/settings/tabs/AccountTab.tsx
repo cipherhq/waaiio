@@ -75,7 +75,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailSuccess, setEmailSuccess] = useState('');
   const [emailError, setEmailError] = useState('');
-  const [waChannel, setWaChannel] = useState<{ wa_method: string; channel: { phone_number: string; display_name: string; connection_status: string } | null; shared_targets?: { id: string; phone_number: string; country_code: string }[] } | null>(null);
+  const [waChannel, setWaChannel] = useState<{ wa_method: string; channel_operations_available?: boolean; channel: { phone_number: string; display_name: string; connection_status: string } | null; shared_targets?: { id: string; phone_number: string; country_code: string }[] } | null>(null);
   const [waTargetId, setWaTargetId] = useState('');
   const [waDisconnecting, setWaDisconnecting] = useState(false);
 
@@ -554,7 +554,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     <option value="">Select a shared number</option>
                     {(waChannel.shared_targets || []).map(target => <option key={target.id} value={target.id}>{target.phone_number} ({target.country_code})</option>)}
                   </select>
-                  {!waChannel.shared_targets?.length && <p className="mt-1 text-xs text-gray-500">No eligible shared destination is available. Contact support.</p>}
+                  {!waChannel.shared_targets?.length && <p className="mt-1 text-xs text-gray-500">{waChannel.channel_operations_available === false ? 'Channel changes are temporarily unavailable. Your existing connection remains active.' : 'No eligible shared destination is available. Contact support.'}</p>}
                 </div>
                 <div className="mt-3 flex gap-2">
                   <Link

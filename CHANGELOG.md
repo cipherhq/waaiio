@@ -1,3 +1,9 @@
+## 2026-11-02 — Channel operation admission
+
+- Add a server-controlled admission check across merchant/admin channel setup, allocation and number-change routes, with unavailable responses before affected mutations or step-up consumption.
+- Preserve existing assigned/dedicated channel reads and messaging; merchant settings explain temporary unavailability. The flag defaults disabled and cannot be enabled by request data.
+- **Affects**: New channel setup and changes through the reviewed routes. **Could break**: Provisioning if the flag is disabled where allocation is needed. Local handler and neighboring regression evidence: 392 passed, zero failed/skipped; independent source review accepted. Hosted enablement and migration execution are separate release decisions.
+
 ## 2026-11-02 — Explicit manual admin release identity
 
 - Add a fixed security successor release profile with phased storage prerequisites, complete ledger preservation digests and isolated verification evidence.
