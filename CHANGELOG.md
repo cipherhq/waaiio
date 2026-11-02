@@ -1,3 +1,8 @@
+## 2026-11-02 — Additive release dependencies
+
+- Prepare form fields and the service-only OAuth/account interface before application cutover, retaining existing form and payout-account permissions until the complete permission-contract phase.
+- Validate exact existing structures and exercise compatibility, denied access, replay and rollback in isolated PostgreSQL tests.
+
 ## 2026-11-02 — Explicit manual admin release identity
 
 - Add a fixed security successor release profile with phased storage prerequisites, complete ledger preservation digests and isolated verification evidence.
