@@ -14,9 +14,36 @@ export const ACCOUNTING_TARGETS = {
   admin: { ...PAYOUT_TARGETS.admin, blobs: inventory.admin },
 };
 const bytes = readFileSync(new URL('./reduced-accounting-schema-contract.json', import.meta.url), 'utf8');
+// Fixed environment contracts, not an allowance for arbitrary extra grants.
+// Object keys are sorted recursively; array ordering remains part of the contract.
+const canonical = value => JSON.stringify(sortKeys(value));
+const sortKeys = value => Array.isArray(value) ? value.map(sortKeys)
+  : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sortKeys(value[key])])) : value;
+function environmentProfile(environment) {
+  const contracts = JSON.parse(bytes);
+  if (environment === 'staging') {
+    contracts.step_up.acl = [
+      ...['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'].map(privilege => ({ grantee: 'postgres', grantable: false, privilege })),
+      ...['INSERT', 'SELECT', 'UPDATE'].map(privilege => ({ grantee: 'service_role', grantable: false, privilege })),
+    ];
+    const { contract_sha256: _previous, ...stepUp } = contracts.step_up;
+    contracts.step_up.contract_sha256 = digest(canonical(stepUp));
+  } else if (environment === 'production') {
+    for (const name of ['payout_flag_present', 'payout_flag_adjustment_ids', 'fn_payout_linkage_guard']) {
+      const fn = contracts.accounting_active.functions.find(fn => fn.schema === 'public' && fn.name === name);
+      if (!fn) throw new Error('Fixed accounting helper contract is missing');
+      fn.acl = ['PUBLIC', 'anon', 'authenticated', 'postgres', 'service_role'].map(grantee => ({ grantee, grantor: 'postgres', privilege: 'EXECUTE', grantable: false }));
+    }
+  } else throw new Error('Unknown accounting schema environment');
+  return { schema_contracts: contracts, schema_contract_sha256: digest(canonical(contracts)) };
+}
+export const ACCOUNTING_SCHEMA_PROFILES = {
+  staging: environmentProfile('staging'), production: environmentProfile('production'),
+};
+
 export const ACCOUNTING_EVIDENCE_POLICY = {
   ...PAYOUT_EVIDENCE_POLICY, id: ACCOUNTING_POLICY,
-  schema_contract_sha256: digest(bytes), schema_contracts: JSON.parse(bytes),
+  ...ACCOUNTING_SCHEMA_PROFILES.production,
   acceptance_cases: [...PAYOUT_EVIDENCE_POLICY.acceptance_cases,
     { id: 'held-balance-display', observed: { scope: 'intercepted-ui-fixtures', provisional_totals: true, held_notice: true, stale_business_ignored: true } },
     { id: 'connected-custody-display', observed: { scope: 'intercepted-ui-fixtures', direct_split_unchanged: true, no_duplicate_manual_obligation: true } },
@@ -41,6 +68,7 @@ export function verifyAccountingActivation(report, manifest, now = Date.now(), a
   if (manifest?.schema_version !== 3 || manifest.policy !== ACCOUNTING_POLICY) fail();
   const sources = ACCOUNTING_EVIDENCE_POLICY.schema_contracts.canonical_sources.filter(x => /^50[01]_/.test(x.name));
   for (const environment of ['staging', 'production']) {
+    const profile = ACCOUNTING_SCHEMA_PROFILES[environment];
     const expected = manifest.accounting_activation?.[environment];
     const actual = report.accounting_activation?.[environment];
     const project = environment === 'staging' ? ACCOUNTING_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref : ACCOUNTING_EVIDENCE_POLICY.production_project_ref;
@@ -50,8 +78,8 @@ export function verifyAccountingActivation(report, manifest, now = Date.now(), a
       || !isDeepStrictEqual(actual.binding, expected) || !text(actual.owner_approval_reference)
       || !text(actual.independent_review_reference) || actual.method !== 'authorized-connector-read-only'
       || actual.active !== true || actual.installation_only !== false
-      || actual.schema_contract_sha256 !== ACCOUNTING_EVIDENCE_POLICY.schema_contract_sha256
-      || !isDeepStrictEqual(actual.contracts, ACCOUNTING_EVIDENCE_POLICY.schema_contracts)
+      || actual.schema_contract_sha256 !== profile.schema_contract_sha256
+      || !isDeepStrictEqual(actual.contracts, profile.schema_contracts)
       || !isDeepStrictEqual(actual.canonical_installers, sources)
       || !hash(actual.raw_evidence_sha256) || !hash(actual.audit_rows_sha256)
       || !hash(actual.hold_rows_sha256) || !hash(actual.membership_rows_sha256)
