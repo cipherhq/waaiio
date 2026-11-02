@@ -12,6 +12,13 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 **Decision:** Continue sequential naming. Use an explicit reservation process to prevent collisions.
 
+## Security successor source provenance
+
+| Version | Name | Status | Notes |
+|---------|------|--------|-------|
+| 491 | `private_document_storage` | Existing canonical PR #795 source | Prerequisite for private verification uploader/viewers; reconcile actual environment ledger and final policy state before application. |
+| 492 | `verification_public_upload_guard` | Existing canonical PR #795 source | App-first: only after private uploader and both readers serve. Does not relocate or certify legacy objects. |
+
 ## Reduced payout compatibility reservations
 
 | Version | Name | Status | Notes |

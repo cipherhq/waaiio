@@ -1,5 +1,7 @@
 # Changelog
 
+- Prepare private verification document access and bounded security compatibility on the existing release baseline.
+
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
