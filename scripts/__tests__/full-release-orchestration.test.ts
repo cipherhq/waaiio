@@ -1,0 +1,33 @@
+import {beforeAll,afterAll,afterEach,describe,it,expect,vi} from 'vitest';
+import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+import {resolve,join} from 'node:path';
+import {gzipSync} from 'node:zlib';
+import {preparedFixture,FIXTURE_NOW} from './fixtures/full-release-evidence.fixture';
+import {FULL_IDENTITIES,FULL_EVIDENCE_POLICY,fullInventoryDigest} from '../full-release-policy.mjs';
+import {manifestBinding,digest,deploymentEnvironment} from '../reduced-release-evidence.mjs';
+import {deployReduced,TARGETS} from '../reduced-release-gate.mjs';
+// Actual schema5 transport, original-byte approval/freshness and complete schema
+// validators run unchanged. Git is a local exact-source fixture; protected-main
+// HTTP is a deny-only mock. This is not a hosted deployment or real approval.
+let directory:string,control:string;
+const git=(...args:string[])=>execFileSync('git',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+beforeAll(()=>{const base=resolve('scripts/__tests__/.full-orchestration');mkdirSync(base,{recursive:true});directory=mkdtempSync(join(base,'case-'));control=join(directory,'control');git('clone','--shared','--no-checkout','--quiet',process.cwd(),control);git('-C',control,'checkout','--quiet',FULL_IDENTITIES.merchant.target_sha);git('-C',control,'update-ref','refs/remotes/origin/main',FULL_IDENTITIES.merchant.target_sha)},30000);
+afterAll(()=>rmSync(directory,{recursive:true,force:true}));
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals()});
+function fixture(){
+ const f=preparedFixture(),policy=FULL_EVIDENCE_POLICY,H='a'.repeat(64),now=FIXTURE_NOW;
+ f.manifest.integration_sha=FULL_IDENTITIES.merchant.target_sha;
+ for(const kind of ['merchant','admin'])f.manifest.projects[kind]={...FULL_IDENTITIES[kind],project_id:TARGETS[kind].project,baseline_deployment_id:'dpl_'+kind+'old',source_inventory_sha256:fullInventoryDigest(kind)};
+ for(const p of Object.values(f.manifest.projects) as any[]){delete p.blobs;delete p.deleted_blobs}
+ const rawManifest=JSON.stringify(f.manifest),binding=manifestBinding(rawManifest,f.manifest),code_verification={run_id:'123',run_attempt:1};
+ Object.assign(f.report,{schema_version:5,binding,code_verification,independent_review:{reviewer:'synthetic-only',reference:'synthetic-only'},owner_acceptance_reference:'synthetic-only',production_baselines:Object.fromEntries(Object.entries(binding.projects).map(([k,p]:any)=>[k,{project_id:p.project_id,sha:p.baseline_sha,deployment_id:p.baseline_deployment_id}])),production_schema:{observed_at:new Date(now-1000).toISOString(),project_ref:policy.production_project_ref,contract_sha256:policy.schema_contract_sha256,contracts:policy.schema_contracts,business_mutations:0,provider_calls:0,method:'authorized-connector-read-only',raw_evidence_sha256:H,payout_cron:{enabled:false,project_flag:'disabled',runtime_flag:'disabled',build_flag:'disabled',serving_deployment_id:f.manifest.projects.merchant.baseline_deployment_id,evidence_sha256:H}},staging_acceptance:{started_at:new Date(now-3000).toISOString(),completed_at:new Date(now-2000).toISOString(),runner:{name:'synthetic-only',command:'synthetic-only',run_id:'synthetic-only'},business_mutations:0,provider_calls:0,security_state_writes:0,passed:policy.acceptance_cases.length,failed:0,skipped:0,deployments:Object.fromEntries(Object.entries(binding.projects).map(([k,p]:any)=>[k,{...policy.staging_projects[k],sha:p.target_sha,tree:p.target_tree,deployment_id:'dpl_'+k+'stage',identity_evidence_sha256:H}])),cases:policy.acceptance_cases.map(c=>({...c,outcome:'passed',evidence_sha256:H}))}});
+ const env:any={VERCEL_TOKEN:'fixture-vercel',GITHUB_TOKEN:'fixture-github',REDUCED_RELEASE_MANIFEST:rawManifest};
+ const encode=()=>{const bytes=JSON.stringify(f.report),base64=gzipSync(bytes).toString('base64'),chunks=base64.match(/.{1,40960}/g)!;for(let i=1;i<=10;i++)delete env['PRIVATE_RELEASE_ACCEPTANCE_CHUNK_'+i];chunks.forEach((v,i)=>env['PRIVATE_RELEASE_ACCEPTANCE_CHUNK_'+(i+1)]=v);env.PRIVATE_RELEASE_ACCEPTANCE_REPORT=JSON.stringify({transport_version:2,encoding:'gzip-base64',chunk_count:chunks.length,chunk_sha256:chunks.map(digest),decoded_sha256:digest(bytes)});env.PRIVATE_RELEASE_ACCEPTANCE_SHA256=digest(bytes);env.PRIVATE_RELEASE_RECEIPT=JSON.stringify({schema_version:5,binding,code_verification,approved_at:new Date(now).toISOString(),owner_approval_reference:'synthetic-only',acceptance_artifact_sha256:digest(bytes)})};encode();return {...f,env,encode};
+}
+describe('schema5 actual private validation and read-only control boundary',()=>{
+ it('decodes once through original report validation and reaches exact Git/control HTTP denial',async()=>{vi.spyOn(Date,'now').mockReturnValue(FIXTURE_NOW);const f=fixture(),fetch=vi.fn(async()=>new Response('{}',{status:403}));vi.stubGlobal('fetch',fetch);await expect(deployReduced(f.manifest,control,{},'123',1,f.env)).rejects.toThrow('403');expect(fetch).toHaveBeenCalledTimes(1);expect(fetch.mock.calls.every(([,init]:any)=>!init.method||init.method==='GET')).toBe(true)});
+ it.each(['chunk','raw-hash','stale','stage-phase','channel','extra-grant'])('rejects %s before external access',async kind=>{vi.spyOn(Date,'now').mockReturnValue(FIXTURE_NOW);const f=fixture(),fetch=vi.fn(()=>{throw Error('external access forbidden')});vi.stubGlobal('fetch',fetch);
+ if(kind==='stale')f.report.full_release.production.observed_at=new Date(FIXTURE_NOW-16*60000).toISOString();if(kind==='stage-phase')f.report.full_release.staging.catalog.phase='pre_app';if(kind==='channel')f.report.full_release.production.runtime_controls.channel_operations.runtime=true;if(kind==='extra-grant')f.report.full_release.production.catalog.after.find(x=>x.identity.startsWith('function:')&&x.value.acl).value.acl.push({grantee:'PUBLIC',grantor:'postgres',privilege:'EXECUTE',grantable:true});f.encode();if(kind==='chunk')f.env.PRIVATE_RELEASE_ACCEPTANCE_CHUNK_1='AAAA';if(kind==='raw-hash')f.env.PRIVATE_RELEASE_ACCEPTANCE_SHA256='0'.repeat(64);await expect(deployReduced(f.manifest,control,{},'123',1,f.env)).rejects.toThrow();expect(fetch).not.toHaveBeenCalled()});
+ it('excludes descriptor, all ten chunks and approval credentials from actual child allowlist',()=>{const f=fixture();for(let i=1;i<=10;i++)f.env['PRIVATE_RELEASE_ACCEPTANCE_CHUNK_'+i]='synthetic-private';const child=deploymentEnvironment(f.env,TARGETS.merchant.project,'fixture-team',FULL_IDENTITIES.merchant.target_sha);expect(Object.keys(child).some(k=>k.startsWith('PRIVATE_RELEASE_'))).toBe(false);expect(child.GITHUB_TOKEN).toBeUndefined();expect(child.REDUCED_RELEASE_MANIFEST).toBeUndefined();expect(child.VERCEL_TOKEN).toBe('fixture-vercel')});
+});

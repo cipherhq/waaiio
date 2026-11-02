@@ -1,0 +1,52 @@
+import { describe,it,expect } from 'vitest';
+import {catalogDigest,catalogObjectsDigest,projectCatalog,verifyCatalogTransition} from '../full-release-catalog.mjs';
+const h='1'.repeat(64), object=(identity:string,value:any)=>({identity,value});
+function fixture(){
+ const before=[object('table:public.fixture',{owner:'postgres',rls:true,acl:[]}),object('function:public.old()',{owner:'postgres',body:'old',acl:[]})];
+ const trusted={environment:'production',phase:'pre_app',query_sha256:h,required_before:['table:public.fixture'],required_after:['table:public.fixture'],patches:[{identity:'column:public.fixture.additive',operation:'add',source_sha256:h,value:{type:'text',notnull:false}},{identity:'function:public.old()',operation:'fields',source_sha256:h,before:{body:['old']},fields:{body:'new'}}]};
+ const binding={environment:'production',phase:'pre_app',query_sha256:h,before_catalog_sha256:catalogObjectsDigest(before)};
+ const after=projectCatalog(before,trusted);
+ return {trusted,binding,actual:{...binding,before,after,after_catalog_sha256:catalogObjectsDigest(after)}};
+}
+describe('fixed complete catalog phase projection',()=>{
+ it('preserves untouched complete objects and accepts exact trusted patches',()=>{const f=fixture();expect(verifyCatalogTransition(f.actual,f.binding,f.trusted)).toBe(true)});
+ it('does not let a report-provided patch select authority',()=>{const f=fixture();(f.actual as any).patches=[{operation:'remove',identity:'table:public.fixture'}];f.actual.after=f.actual.after.filter(x=>x.identity!=='table:public.fixture');f.actual.after_catalog_sha256=catalogObjectsDigest(f.actual.after);expect(()=>verifyCatalogTransition(f.actual,f.binding,f.trusted)).toThrow()});
+ for(const changed of ['missing','duplicate','extra','owner','acl','body','before','digest','phase','environment'])it('rejects '+changed,()=>{const f=fixture();const a:any=f.actual;
+ if(changed==='missing')a.after.pop();if(changed==='duplicate')a.after.push(a.after[0]);if(changed==='extra')a.after.push(object('table:public.other',{owner:'postgres'}));
+ if(['owner','acl','body'].includes(changed)){const o=a.after.find((x:any)=>x.identity==='function:public.old()');o.value[changed]=changed==='acl'?[{grantee:'PUBLIC',privilege:'EXECUTE',grantable:true}]:'wrong'}
+ if(changed==='before')a.before[0].value.owner='untrusted';if(changed==='digest')a.after_catalog_sha256='0'.repeat(64);if(changed==='phase')a.phase='post_app';if(changed==='environment')a.environment='staging';
+ expect(()=>verifyCatalogTransition(a,f.binding,f.trusted)).toThrow();});
+ it('requires complete before binding even with internally recomputed observations',()=>{const f=fixture();f.actual.before[0].value.rls=false;f.actual.before_catalog_sha256=catalogObjectsDigest(f.actual.before);f.actual.after=projectCatalog(f.actual.before,f.trusted);f.actual.after_catalog_sha256=catalogObjectsDigest(f.actual.after);expect(()=>verifyCatalogTransition(f.actual,f.binding,f.trusted)).toThrow()});
+ it('rejects add over existing identity',()=>{const f=fixture();f.trusted.patches[0].identity='table:public.fixture';expect(()=>projectCatalog(f.actual.before,f.trusted)).toThrow()});
+ it('rejects unrecognized before definition',()=>{const f=fixture();f.actual.before[1].value.body='unreviewed';expect(()=>projectCatalog(f.actual.before,f.trusted)).toThrow()});
+ it('rejects duplicate patch identity',()=>{const f=fixture();f.trusted.patches.push(f.trusted.patches[0]);expect(()=>projectCatalog(f.actual.before,f.trusted)).toThrow()});
+ it('can remove an exact known superseded object and refuses a drifted one',()=>{const f=fixture();const p:any={environment:'production',phase:'post_app',required_before:[],required_after:[],patches:[{identity:f.actual.before[1].identity,operation:'remove',source_sha256:h,before_sha256:[catalogDigest(f.actual.before[1].value)]}]};expect(projectCatalog(f.actual.before,p)).toHaveLength(1);f.actual.before[1].value.owner='other';expect(()=>projectCatalog(f.actual.before,p)).toThrow()});
+ it('ensure permits exact existing foundation but rejects an incompatible object',()=>{const f=fixture();const p:any={required_before:[],required_after:[],patches:[{identity:f.actual.before[0].identity,operation:'ensure',source_sha256:h,value:structuredClone(f.actual.before[0].value)}]};expect(projectCatalog(f.actual.before,p)).toHaveLength(2);f.actual.before[0].value.rls=false;expect(()=>projectCatalog(f.actual.before,p)).toThrow()});
+ it('rejects omission of an unchanged required prerequisite even with consistent rebinding',()=>{const f=fixture();f.actual.before=f.actual.before.filter(x=>x.identity!=='table:public.fixture');f.actual.after=f.actual.after.filter(x=>x.identity!=='table:public.fixture');f.binding.before_catalog_sha256=f.actual.before_catalog_sha256=catalogObjectsDigest(f.actual.before);f.actual.after_catalog_sha256=catalogObjectsDigest(f.actual.after);expect(()=>verifyCatalogTransition(f.actual,f.binding,f.trusted)).toThrow()});
+ it('rejects a changed observation query',()=>{const f=fixture();f.actual.query_sha256='2'.repeat(64);expect(()=>verifyCatalogTransition(f.actual,f.binding,f.trusted)).toThrow()});
+ it('does not mutate evidence inputs',()=>{const f=fixture();const old=JSON.stringify(f);verifyCatalogTransition(f.actual,f.binding,f.trusted);expect(JSON.stringify(f)).toBe(old)});
+});
+
+import {FULL_CATALOG_CONTRACTS,verifyFullCatalogPhase,fullKnownComponentProjection,verifyFullKnownComponents} from '../full-release-evidence.mjs';
+function fixedFixture(environment:string,phase:string){
+ const trusted=FULL_CATALOG_CONTRACTS.profiles[environment].phases[phase];
+ const m=new Map(trusted.required_before.map((id:string)=>[id,{fixture_preserved:true}]));
+ for(const p of trusted.patches){
+  if(p.operation==='add')continue;
+  const value:any={...(m.get(p.identity)||{}),...p.preconditions};
+  for(const [key,v] of Object.entries(p.fields||{}))value[key]=structuredClone(v);
+  m.set(p.identity,value);
+ }
+ const before=[...m].map(([identity,value])=>({identity,value}));
+ const after=projectCatalog(before,trusted);
+ const binding={environment,phase,query_sha256:trusted.query_sha256,before_catalog_sha256:catalogObjectsDigest(before)};
+ return {binding,actual:{...binding,before,after,after_catalog_sha256:catalogObjectsDigest(after)}};
+}
+describe('complete fixed phase policy using synthetic metadata fixtures',()=>{
+ for(const environment of ['staging','production'])for(const phase of ['pre_app','post_app']){
+  it(`${environment} ${phase} accepts only its exact deterministic projection`,()=>{const f=fixedFixture(environment,phase);expect(verifyFullCatalogPhase(environment,phase,f.actual,f.binding)).toBe(true)});
+  it(`${environment} ${phase} rejects missing unchanged prerequisites`,()=>{const f=fixedFixture(environment,phase);const trusted=FULL_CATALOG_CONTRACTS.profiles[environment].phases[phase];const preserved=trusted.required_before.find((id:string)=>!trusted.patches.some((p:any)=>p.identity===id));expect(preserved).toBeTruthy();f.actual.before=f.actual.before.filter(x=>x.identity!==preserved);f.actual.after=f.actual.after.filter(x=>x.identity!==preserved);f.binding.before_catalog_sha256=f.actual.before_catalog_sha256=catalogObjectsDigest(f.actual.before);f.actual.after_catalog_sha256=catalogObjectsDigest(f.actual.after);expect(()=>verifyFullCatalogPhase(environment,phase,f.actual,f.binding)).toThrow()});
+  it(`${environment} ${phase} rejects source-authority substitutions`,()=>{const f=fixedFixture(environment,phase);expect(()=>verifyFullCatalogPhase(environment==='production'?'staging':'production',phase,f.actual,f.binding)).toThrow();expect(()=>verifyFullCatalogPhase(environment,phase==='pre_app'?'post_app':'pre_app',f.actual,f.binding)).toThrow()});
+ }
+ it('keeps production435 contracted authority exclusively post-app',()=>{const pre=fullKnownComponentProjection('production','pre_app'),post=fullKnownComponentProjection('production','post_app');expect(pre.financial_functions.some((f:any)=>f.identity.startsWith('create_order_atomic('))).toBe(false);expect(post.financial_functions.filter((f:any)=>f.identity.startsWith('create_order_atomic('))).toHaveLength(1);expect(()=>verifyFullKnownComponents('production',post,'pre_app')).toThrow();expect(verifyFullKnownComponents('production',pre,'pre_app')).toBe(true)});
+});

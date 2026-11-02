@@ -66,9 +66,15 @@ const fail = () => { throw new Error('Accounting activation evidence is absent, 
 // receipts, never instructions to CALL a procedure or mutate a cohort.
 export function verifyAccountingActivation(report, manifest, now = Date.now(), approvedAt = now) {
   if (!((manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY) || (manifest?.schema_version === 4 && manifest.policy === SECURITY_POLICY))) fail();
+  return verifyAccountingActivationWithTrustedProfiles(report, manifest, ACCOUNTING_SCHEMA_PROFILES, now, approvedAt);
+}
+
+// Profiles are supplied only by trusted policy modules, never by manifest/report.
+export function verifyAccountingActivationWithTrustedProfiles(report, manifest, profiles, now = Date.now(), approvedAt = now) {
   const sources = ACCOUNTING_EVIDENCE_POLICY.schema_contracts.canonical_sources.filter(x => /^50[01]_/.test(x.name));
   for (const environment of ['staging', 'production']) {
-    const profile = ACCOUNTING_SCHEMA_PROFILES[environment];
+    const profile = profiles?.[environment];
+    if (!profile?.schema_contracts || !hash(profile.schema_contract_sha256)) fail();
     const expected = manifest.accounting_activation?.[environment];
     const actual = report.accounting_activation?.[environment];
     const project = environment === 'staging' ? ACCOUNTING_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref : ACCOUNTING_EVIDENCE_POLICY.production_project_ref;
