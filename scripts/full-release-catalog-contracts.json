@@ -7308,24 +7308,6 @@
               "value": {
                 "acl": [
                   {
-                    "grantee": "PUBLIC",
-                    "grantor": "postgres",
-                    "grantable": false,
-                    "privilege": "EXECUTE"
-                  },
-                  {
-                    "grantee": "anon",
-                    "grantor": "postgres",
-                    "grantable": false,
-                    "privilege": "EXECUTE"
-                  },
-                  {
-                    "grantee": "authenticated",
-                    "grantor": "postgres",
-                    "grantable": false,
-                    "privilege": "EXECUTE"
-                  },
-                  {
                     "grantee": "postgres",
                     "grantor": "postgres",
                     "grantable": false,
@@ -7768,18 +7750,6 @@
               "operation": "add",
               "value": {
                 "acl": [
-                  {
-                    "grantee": "anon",
-                    "grantor": "postgres",
-                    "grantable": false,
-                    "privilege": "EXECUTE"
-                  },
-                  {
-                    "grantee": "authenticated",
-                    "grantor": "postgres",
-                    "grantable": false,
-                    "privilege": "EXECUTE"
-                  },
                   {
                     "grantee": "postgres",
                     "grantor": "postgres",

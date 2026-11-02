@@ -73,3 +73,25 @@ describe('canonical bank-account policy removal contract',()=>{
   expect(()=>projectCatalog([object(patches[0].identity,patches[0].preconditions)],{patches,required_before:[],required_after:[]})).toThrow();
  });
 });
+
+
+describe('canonical server-only function permissions',()=>{
+ const names=['persist_verified_paystack_card_authorization','create_ticket_booking_checked'];
+ const acl=['postgres','service_role'].map(grantee=>({grantee,grantor:'postgres',grantable:false,privilege:'EXECUTE'}));
+ for(const name of names){
+  it(`accepts canonical service-only permissions for ${name}`,()=>{
+   const f=fixedFixture('production','pre_app');
+   const target=f.actual.after.find(x=>x.identity.startsWith(`function:public.${name}(`));
+   expect(target).toBeDefined();target!.value.acl=structuredClone(acl);
+   f.actual.after_catalog_sha256=catalogObjectsDigest(f.actual.after);
+   expect(verifyFullCatalogPhase('production','pre_app',f.actual,f.binding)).toBe(true);
+  });
+  it.each(['PUBLIC','anon','authenticated'])(`rejects added %s execution for ${name}`,grantee=>{
+   const f=fixedFixture('production','pre_app');
+   const target=f.actual.after.find(x=>x.identity.startsWith(`function:public.${name}(`));
+   target!.value.acl=[...structuredClone(acl),{grantee,grantor:'postgres',grantable:false,privilege:'EXECUTE'}];
+   f.actual.after_catalog_sha256=catalogObjectsDigest(f.actual.after);
+   expect(()=>verifyFullCatalogPhase('production','pre_app',f.actual,f.binding)).toThrow();
+  });
+ }
+});
