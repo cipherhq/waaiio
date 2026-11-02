@@ -1,0 +1,1451 @@
+{
+  "normalization": {
+    "function_body": "exact UTF-8 pg_proc.prosrc SHA256; no whitespace normalization",
+    "function_metadata": "identity arguments, returns, language, security/volatility/strict/leakproof/parallel/config pinned",
+    "acl": "explicit effective ACL incl PUBLIC; owner grantee normalized OWNER; actual production owner must independently remain approved",
+    "index_trigger": "collapse whitespace only; index pg_get_indexdef(indexrelid, 0, false), trigger pg_get_triggerdef(oid, true), constraint pg_get_constraintdef(oid, true); retain expression/predicate/function/events/enabled fields",
+    "existing_auth": "Current reviewed hosted-existing authorization table privileges/action CHECK and session/audit prerequisites are pinned separately from intended future payout-function fixture definitions. No permission changes implied."
+  },
+  "canonical_sources": [
+    {
+      "name": "292_atomic_payout_claim.sql",
+      "sha256": "30469f60b57a728b41406a55e14799e1c20c4d6b5c785e34eab5c610d417b1d5"
+    },
+    {
+      "name": "439_admin_mfa_enforcement.sql",
+      "sha256": "75045767e49a5a8039a4615397d076d5ac3898769383997afab4030d6a9e9bd3"
+    },
+    {
+      "name": "494_business_status_step_up.sql",
+      "sha256": "36481136ec6c2cacd9e6acee6df7369298e04c852d073dbf812b7a976e873141"
+    },
+    {
+      "name": "440_payout_linkage_guard.sql",
+      "sha256": "59aa9bc8258bf8c0c62a0330229de2321c0682e731a0ac634a1851647bce7249"
+    },
+    {
+      "name": "444_reject_payout_release_adjustments.sql",
+      "sha256": "cb0398b2186a361ddccfd2bebfe9321e5e6df8c1e3e3aff16de262af5edddc6f"
+    },
+    {
+      "name": "453_settlement_confirmation.sql",
+      "sha256": "1e98194dc621130682e17bc936a59995f4a8ed891114172f2f77de01cfb7a9f3"
+    },
+    {
+      "name": "466_payout_currency_authority.sql",
+      "sha256": "a9b1e1d1ff5dd67ec56c5c6cf9f1dde7c7725b0c93747b4ae72143c3d7f72dcb"
+    },
+    {
+      "name": "468_payout_dedup_currency_authority.sql",
+      "sha256": "69f051660c7f77247ab80366dae7736420d58332f8541e5e67dae44b1c4e2763"
+    },
+    {
+      "name": "469_settlement_currency_authority.sql",
+      "sha256": "fcb8dba9e0ba561d1269973979ca33cbd07579da960dcf6cd7687c3a41d7f754"
+    },
+    {
+      "name": "472_refund_fee_allocation_period_fix.sql",
+      "sha256": "703edf5b5fdc961e2ab29696d0542525628b0971db45ca1ce3cb2f877d4782c3"
+    },
+    {
+      "name": "498_manual_settlement_rejection_guard.sql",
+      "sha256": "b85404c7423095fb14a279d60c5116fc67e0133291b43b581e76ce66439254a0"
+    },
+    {
+      "name": "500_accounting_hold_preparation.sql",
+      "sha256": "4496189a508616d74bd08c5fd5e80cbcd4bde6ff262c717447ca32ec1200aa1f"
+    },
+    {
+      "name": "501_accounting_cutover_installer.sql",
+      "sha256": "f060d8c2886e91fa151291101bd8378ed83c31359c38de4d0f65577947a25cd6"
+    }
+  ],
+  "step_up": {
+    "table": {
+      "relrowsecurity": true,
+      "relforcerowsecurity": false
+    },
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "uuid",
+        "udt_name": "uuid",
+        "is_nullable": "NO",
+        "column_default": "gen_random_uuid()",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "admin_user_id",
+        "data_type": "uuid",
+        "udt_name": "uuid",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "session_id",
+        "data_type": "text",
+        "udt_name": "text",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "action_type",
+        "data_type": "text",
+        "udt_name": "text",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "target_id",
+        "data_type": "text",
+        "udt_name": "text",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "params_hash",
+        "data_type": "text",
+        "udt_name": "text",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "challenge_id",
+        "data_type": "uuid",
+        "udt_name": "uuid",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "factor_id",
+        "data_type": "uuid",
+        "udt_name": "uuid",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "verified_at",
+        "data_type": "timestamp with time zone",
+        "udt_name": "timestamptz",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "consumed_at",
+        "data_type": "timestamp with time zone",
+        "udt_name": "timestamptz",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "expires_at",
+        "data_type": "timestamp with time zone",
+        "udt_name": "timestamptz",
+        "is_nullable": "NO",
+        "column_default": "(now() + '00:05:00'::interval)",
+        "character_maximum_length": null
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone",
+        "udt_name": "timestamptz",
+        "is_nullable": "NO",
+        "column_default": "now()",
+        "character_maximum_length": null
+      }
+    ],
+    "constraints": [
+      {
+        "conname": "admin_step_up_authorizations_action_type_check",
+        "contype": "c",
+        "convalidated": true,
+        "definition": "CHECK (action_type = ANY (ARRAY['payout_approve'::text, 'payout_reject'::text, 'payout_generate'::text, 'payout_confirm_settlement'::text, 'payout_force_settle'::text, 'provider_config'::text, 'team_grant'::text, 'team_revoke'::text, 'impersonate'::text, 'refund'::text, 'reseller_payout_approve'::text, 'reseller_payout_reject'::text, 'reseller_payout_mark_paid'::text, 'reseller_payout_generate'::text, 'commercial_config'::text, 'messaging_config'::text, 'messaging_suspension'::text, 'business_status'::text]))"
+      },
+      {
+        "conname": "admin_step_up_authorizations_admin_user_id_fkey",
+        "contype": "f",
+        "convalidated": true,
+        "definition": "FOREIGN KEY (admin_user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+      },
+      {
+        "conname": "admin_step_up_authorizations_pkey",
+        "contype": "p",
+        "convalidated": true,
+        "definition": "PRIMARY KEY (id)"
+      }
+    ],
+    "policies": [
+      {
+        "polname": "admin_step_up_deny_all",
+        "polpermissive": true,
+        "polcmd": "*",
+        "roles": [
+          "PUBLIC"
+        ],
+        "qual": "false",
+        "with_check": "false"
+      }
+    ],
+    "acl": [
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "DELETE"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "INSERT"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "MAINTAIN"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "REFERENCES"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "SELECT"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "TRIGGER"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "TRUNCATE"
+      },
+      {
+        "grantee": "postgres",
+        "grantable": false,
+        "privilege": "UPDATE"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "DELETE"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "INSERT"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "MAINTAIN"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "REFERENCES"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "SELECT"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "TRIGGER"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "TRUNCATE"
+      },
+      {
+        "grantee": "service_role",
+        "grantable": false,
+        "privilege": "UPDATE"
+      }
+    ],
+    "owner": "postgres",
+    "contract_sha256": "1bbf7bfd3357cd04d89681ad5a9d847b6c0800ab63cc4ed24716c4e3b7abddc0"
+  },
+  "functions": [
+    {
+      "proname": "mark_payout_provider_submitted",
+      "arguments": "p_payout_id uuid, p_claim_token uuid, p_gateway_transfer_code text",
+      "returns": "TABLE(submitted_id uuid)",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "955c46d8655af71c4b3ae61652859f82746c787a269540b3a2e53b8005e5cefb",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "1764f1044b2c105acaa4f882339e8e0f9fc22f82e6c61fe68668563610e94a14"
+    },
+    {
+      "proname": "mark_payout_review_required",
+      "arguments": "p_payout_id uuid, p_claim_token uuid",
+      "returns": "TABLE(review_id uuid)",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "d91dccc3dc1200a0a61b66f28e2f4e672de9a7ce75c8f0ac06a9b92cc49cf22b",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "8631b6057273d3ec91789c8f3371cfbff966705acbb5080a4110f1800097fd39"
+    },
+    {
+      "proname": "mark_payout_transfer_failed",
+      "arguments": "p_payout_id uuid, p_claim_token uuid",
+      "returns": "TABLE(failed_id uuid)",
+      "language": "plpgsql",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proleakproof": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=public"
+      ],
+      "acl": [
+        {
+          "grantee": "OWNER",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "source_body_sha256": "f804254a89143991b28a12263505385dc48776cdcedce4b7be35c8f73f171463",
+      "acl_sha256": "571db16b7ed0fd5a79c9a8a1cbf2cd86df21b18308c0b383122db5c473bb9435",
+      "owner": "postgres",
+      "metadata_sha256": "cf0b962e8cc44d36879dd6fd23060bcce2408225bb6a643ac2e06692a91483c2"
+    }
+  ],
+  "triggers": [
+    {
+      "tgname": "trg_payout_linkage_guard",
+      "tgenabled": "O",
+      "tgtype": 23,
+      "function_name": "fn_payout_linkage_guard",
+      "definition": "CREATE TRIGGER trg_payout_linkage_guard BEFORE INSERT OR UPDATE ON business_payouts FOR EACH ROW EXECUTE FUNCTION fn_payout_linkage_guard()",
+      "definition_sha256": "a68b238ca942ec4f901bc9e9fd025919ce560ef18c39699025c95cec558cb212"
+    }
+  ],
+  "indexes": [
+    {
+      "relname": "idx_business_payouts_period_unique",
+      "indisunique": true,
+      "indisvalid": true,
+      "indisready": true,
+      "definition": "CREATE UNIQUE INDEX idx_business_payouts_period_unique ON public.business_payouts USING btree (business_id, period_start, period_end, COALESCE(currency, '__legacy__'::character varying)) WHERE ((status)::text <> ALL ((ARRAY['rejected'::character varying, 'failed'::character varying])::text[]))",
+      "definition_sha256": "9162ee84549842e83bbc79a7093ee68a170163d3f37c32609eebd1433613afcd"
+    }
+  ],
+  "columns": [
+    {
+      "table_name": "business_payouts",
+      "column_name": "currency",
+      "data_type": "character varying",
+      "character_maximum_length": 3,
+      "is_nullable": "YES"
+    },
+    {
+      "table_name": "payout_adjustments",
+      "column_name": "currency",
+      "data_type": "character varying",
+      "character_maximum_length": 3,
+      "is_nullable": "YES"
+    },
+    {
+      "table_name": "business_payouts",
+      "column_name": "status",
+      "data_type": "character varying",
+      "character_maximum_length": 20,
+      "is_nullable": "NO"
+    }
+  ],
+  "existing_auth_prerequisites": {
+    "session": {
+      "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\""
+      ],
+      "returns": "TABLE(session_exists boolean)",
+      "signature": "check_session_exists(uuid)",
+      "body_sha256": "70f8d2258eb482407676c6f0d62cdd5bbf95a3dce4d63e00c1a80c1138ebe801",
+      "security_definer": true
+    },
+    "audit": {
+      "rls": true,
+      "owner": "postgres",
+      "columns": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": "NO"
+        },
+        {
+          "name": "actor_id",
+          "type": "uuid",
+          "nullable": "YES"
+        },
+        {
+          "name": "action",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "entity_type",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "entity_id",
+          "type": "uuid",
+          "nullable": "YES"
+        },
+        {
+          "name": "details",
+          "type": "jsonb",
+          "nullable": "YES"
+        },
+        {
+          "name": "ip_address",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        }
+      ],
+      "anon_insert": false,
+      "service_insert": true,
+      "authenticated_insert": false
+    }
+  },
+  "accounting_active": {
+    "installation_is_activation": false,
+    "functions": [
+      {
+        "schema": "accounting_private",
+        "name": "accounting_business_lock",
+        "signature": "accounting_private.accounting_business_lock(uuid)",
+        "returns": "void",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "7fcc6816b29d0082b4a1ce23de0ddf0f11b397dfbc85ae3cc2ffb2a6694d4333",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "assert_merchant_settlement_available",
+        "signature": "public.assert_merchant_settlement_available(uuid)",
+        "returns": "void",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "9a03896729e0161f5697a705ce68696947895a1f00be48927f90134620c022cd",
+        "definer": false,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "service_role",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "accounting_private",
+        "name": "enroll_merchant_accounting_hold",
+        "signature": "accounting_private.enroll_merchant_accounting_hold(uuid,text,uuid)",
+        "returns": "void",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "2bf329bfb7c738e97eff144c7266b514de127b3318c6e46bcc391c04fc684f63",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "accounting_private",
+        "name": "enroll_legacy_refund_accounting",
+        "signature": "accounting_private.enroll_legacy_refund_accounting(uuid,uuid,text,uuid)",
+        "returns": "void",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "47a6d7ebc98469de951a26e5875eaf31f0eb37a1b8328647358e41cad071084c",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "accounting_private",
+        "name": "guard_enrolled_payment_identity",
+        "signature": "accounting_private.guard_enrolled_payment_identity()",
+        "returns": "trigger",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "cec025ee6b4c8d4a0d45ad52238981b9c263012bfaf61c1a740ab9e3e3266e8a",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "accounting_private",
+        "name": "guard_accounting_held_payout",
+        "signature": "accounting_private.guard_accounting_held_payout()",
+        "returns": "trigger",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "e9089866d2c3160ff5c6860240ae5633ba16fe98e47d1a7cb21d34990b287175",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "accounting_private",
+        "name": "guard_accounting_fee_provenance",
+        "signature": "accounting_private.guard_accounting_fee_provenance()",
+        "returns": "trigger",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "e147e6ab4a2d379a274fd069190d499ceec2f9b004248227ea63998b418302de",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "accounting_private",
+        "name": "finalize_refund_accounting_modern",
+        "signature": "accounting_private.finalize_refund_accounting_modern(uuid)",
+        "returns": "jsonb",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "a87d30b00fb5c6ed6a55b7acd45b746a58da8a890420e106ee50df322985069a",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "accounting_private",
+        "name": "guard_accounting_adjustment_provenance",
+        "signature": "accounting_private.guard_accounting_adjustment_provenance()",
+        "returns": "trigger",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "104af61230505ab6c46cd6cf87c1a7bd8593a7bdd643efeacbafd857c17f56a5",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "payout_flag_present",
+        "signature": "public.payout_flag_present(jsonb,text)",
+        "returns": "boolean",
+        "config": [
+          "search_path=public, pg_temp"
+        ],
+        "volatility": "i",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "8696e734f51b42ba685ba520d050ae831ae2b4622647856364169a66e2e61bd5",
+        "definer": false,
+        "acl": [
+          {
+            "grantee": "PUBLIC",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "payout_flag_adjustment_ids",
+        "signature": "public.payout_flag_adjustment_ids(jsonb,text)",
+        "returns": "uuid[]",
+        "config": [
+          "search_path=public, pg_temp"
+        ],
+        "volatility": "i",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "9fe825b98dd1c522c940cb66918f444a16aa29ddc77c2a7df35eb240fde0eca6",
+        "definer": false,
+        "acl": [
+          {
+            "grantee": "PUBLIC",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "fn_payout_linkage_guard",
+        "signature": "public.fn_payout_linkage_guard()",
+        "returns": "trigger",
+        "config": [
+          "search_path=public, pg_temp"
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "a0812d479775f083e858972aca2afc0f54f11aa4672334ea7b97ba20acf09f1b",
+        "definer": false,
+        "acl": [
+          {
+            "grantee": "PUBLIC",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "reject_payout_and_release_adjustments",
+        "signature": "public.reject_payout_and_release_adjustments(uuid,text)",
+        "returns": "table(rejected_iduuid,adjustments_releasedinteger)",
+        "config": [
+          "search_path=public, pg_temp"
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "1f97fddb1a7f59656bc3f045c3d6a235bd4f596d589c407cfd30663e346baa77",
+        "definer": false,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "service_role",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "claim_payout_for_transfer",
+        "signature": "public.claim_payout_for_transfer(uuid,text,uuid)",
+        "returns": "table(claimed_iduuid,claimed_tokenuuid,idempotency_keytext)",
+        "config": [
+          "search_path=public, extensions"
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "d2efb99ccc55749cf22e653fc1887fc10c559605a8728cfbdb5c1338c2d54cc9",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "service_role",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "confirm_manual_settlement",
+        "signature": "public.confirm_manual_settlement(uuid,text,boolean,uuid)",
+        "returns": "table(confirmed_iduuid)",
+        "config": [
+          "search_path=public, extensions"
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "6c7f7a3031bdaf66516c414a964b108e3e938b95bd9709aea9509b3fff7b212b",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "service_role",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "finalize_token_recurring_charge",
+        "signature": "public.finalize_token_recurring_charge(text,uuid,numeric,text,text,text)",
+        "returns": "jsonb",
+        "config": [
+          "search_path=public"
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "3980973cf6da922f21e41653a3f383bc7bb4cdaaf4ea55a08aee2a0601c87371",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "service_role",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "finalize_stripe_recurring_charge",
+        "signature": "public.finalize_stripe_recurring_charge(uuid,text,text,int,text,text)",
+        "returns": "jsonb",
+        "config": [
+          "search_path=public"
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "1e6cd91c1e1fe607b43e46399212b87033745982768df81a89d988245e8fb56f",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "service_role",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "finalize_paystack_recurring_charge",
+        "signature": "public.finalize_paystack_recurring_charge(uuid,int,text,text,text)",
+        "returns": "jsonb",
+        "config": [
+          "search_path=public"
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "8c237dcab859d6c18c307640dade3d6916a5af0ecd7b38f832613f2a594ca37d",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "service_role",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      },
+      {
+        "schema": "public",
+        "name": "finalize_refund_execution",
+        "signature": "public.finalize_refund_execution(uuid)",
+        "returns": "jsonb",
+        "config": [
+          "search_path=\"\""
+        ],
+        "volatility": "v",
+        "parallel": "u",
+        "strict": false,
+        "body_sha256": "3981a0a7fea422f9498218bcd1e7a569bcfc38d01c8512820e0d021e18786660",
+        "definer": true,
+        "acl": [
+          {
+            "grantee": "postgres",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          },
+          {
+            "grantee": "service_role",
+            "grantor": "postgres",
+            "privilege": "EXECUTE",
+            "grantable": false
+          }
+        ],
+        "owner": "postgres",
+        "language": "plpgsql",
+        "leakproof": false
+      }
+    ],
+    "structure": {
+      "schema": {
+        "acl": "{postgres=UC/postgres}",
+        "name": "accounting_private",
+        "owner": "postgres",
+        "anon_usage": false,
+        "service_usage": false,
+        "authenticated_usage": false
+      },
+      "tables": [
+        {
+          "rls": true,
+          "name": "legacy_refund_accounting_membership",
+          "owner": "postgres",
+          "columns": [
+            {
+              "name": "payment_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "business_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "payment_currency",
+              "type": "text",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "payment_amount",
+              "type": "numeric",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "gateway",
+              "type": "text",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "gateway_reference",
+              "type": "text",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "provider_connection_id",
+              "type": "text",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "connect_account_id",
+              "type": "text",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "booking_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "invoice_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "order_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "reservation_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "evidence_sha256",
+              "type": "text",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "not_null": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "legacy_refund_accounting_membership_pkey",
+              "ready": true,
+              "valid": true,
+              "unique": true,
+              "definition": "CREATE UNIQUE INDEX legacy_refund_accounting_membership_pkey ON public.legacy_refund_accounting_membership USING btree (payment_id)"
+            }
+          ],
+          "policies": [],
+          "force_rls": false,
+          "constraints": [
+            {
+              "name": "legacy_refund_accounting_membership_business_id_fkey",
+              "validated": true,
+              "definition": "FOREIGN KEY (business_id) REFERENCES merchant_accounting_holds(business_id) ON DELETE RESTRICT"
+            },
+            {
+              "name": "legacy_refund_accounting_membership_evidence_sha256_check",
+              "validated": true,
+              "definition": "CHECK ((evidence_sha256 ~ '^[a-f0-9]{64}$'::text))"
+            },
+            {
+              "name": "legacy_refund_accounting_membership_payment_id_fkey",
+              "validated": true,
+              "definition": "FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE RESTRICT"
+            },
+            {
+              "name": "legacy_refund_accounting_membership_pkey",
+              "validated": true,
+              "definition": "PRIMARY KEY (payment_id)"
+            }
+          ],
+          "owner_default_acl_exact": true,
+          "nonowner_acl": [
+            {
+              "grantee": "service_role",
+              "grantor": "postgres",
+              "privilege": "SELECT",
+              "grantable": false
+            }
+          ]
+        },
+        {
+          "rls": true,
+          "name": "merchant_accounting_holds",
+          "owner": "postgres",
+          "columns": [
+            {
+              "name": "business_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "active",
+              "type": "boolean",
+              "default": "true",
+              "not_null": true
+            },
+            {
+              "name": "epoch",
+              "type": "bigint",
+              "default": "1",
+              "not_null": true
+            },
+            {
+              "name": "evidence_sha256",
+              "type": "text",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "activated_at",
+              "type": "timestamp with time zone",
+              "default": "clock_timestamp()",
+              "not_null": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "not_null": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "merchant_accounting_holds_pkey",
+              "ready": true,
+              "valid": true,
+              "unique": true,
+              "definition": "CREATE UNIQUE INDEX merchant_accounting_holds_pkey ON public.merchant_accounting_holds USING btree (business_id)"
+            }
+          ],
+          "policies": [],
+          "force_rls": false,
+          "constraints": [
+            {
+              "name": "merchant_accounting_holds_business_id_fkey",
+              "validated": true,
+              "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE RESTRICT"
+            },
+            {
+              "name": "merchant_accounting_holds_epoch_check",
+              "validated": true,
+              "definition": "CHECK ((epoch > 0))"
+            },
+            {
+              "name": "merchant_accounting_holds_evidence_sha256_check",
+              "validated": true,
+              "definition": "CHECK ((evidence_sha256 ~ '^[a-f0-9]{64}$'::text))"
+            },
+            {
+              "name": "merchant_accounting_holds_pkey",
+              "validated": true,
+              "definition": "PRIMARY KEY (business_id)"
+            }
+          ],
+          "owner_default_acl_exact": true,
+          "nonowner_acl": [
+            {
+              "grantee": "service_role",
+              "grantor": "postgres",
+              "privilege": "SELECT",
+              "grantable": false
+            }
+          ]
+        },
+        {
+          "rls": true,
+          "name": "refund_accounting_exceptions",
+          "owner": "postgres",
+          "columns": [
+            {
+              "name": "refund_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "payment_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "business_id",
+              "type": "uuid",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "amount",
+              "type": "numeric",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "currency",
+              "type": "text",
+              "default": null,
+              "not_null": false
+            },
+            {
+              "name": "provider_evidence",
+              "type": "jsonb",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "membership_evidence_sha256",
+              "type": "text",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "hold_epoch",
+              "type": "bigint",
+              "default": null,
+              "not_null": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "not_null": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "refund_accounting_exceptions_pkey",
+              "ready": true,
+              "valid": true,
+              "unique": true,
+              "definition": "CREATE UNIQUE INDEX refund_accounting_exceptions_pkey ON public.refund_accounting_exceptions USING btree (refund_id)"
+            }
+          ],
+          "policies": [],
+          "force_rls": false,
+          "constraints": [
+            {
+              "name": "refund_accounting_exceptions_amount_check",
+              "validated": true,
+              "definition": "CHECK ((amount > (0)::numeric))"
+            },
+            {
+              "name": "refund_accounting_exceptions_business_id_fkey",
+              "validated": true,
+              "definition": "FOREIGN KEY (business_id) REFERENCES merchant_accounting_holds(business_id) ON DELETE RESTRICT"
+            },
+            {
+              "name": "refund_accounting_exceptions_payment_id_fkey",
+              "validated": true,
+              "definition": "FOREIGN KEY (payment_id) REFERENCES legacy_refund_accounting_membership(payment_id) ON DELETE RESTRICT"
+            },
+            {
+              "name": "refund_accounting_exceptions_pkey",
+              "validated": true,
+              "definition": "PRIMARY KEY (refund_id)"
+            },
+            {
+              "name": "refund_accounting_exceptions_refund_id_fkey",
+              "validated": true,
+              "definition": "FOREIGN KEY (refund_id) REFERENCES refunds(id) ON DELETE RESTRICT"
+            }
+          ],
+          "owner_default_acl_exact": true,
+          "nonowner_acl": [
+            {
+              "grantee": "service_role",
+              "grantor": "postgres",
+              "privilege": "SELECT",
+              "grantable": false
+            }
+          ]
+        }
+      ],
+      "triggers": [
+        {
+          "name": "guard_accounting_held_payout",
+          "type": 31,
+          "table": "business_payouts",
+          "enabled": "O",
+          "function": "accounting_private.guard_accounting_held_payout()",
+          "definition": "CREATE TRIGGER guard_accounting_held_payout BEFORE INSERT OR DELETE OR UPDATE ON public.business_payouts FOR EACH ROW EXECUTE FUNCTION accounting_private.guard_accounting_held_payout()"
+        },
+        {
+          "name": "trg_payout_linkage_guard",
+          "type": 23,
+          "table": "business_payouts",
+          "enabled": "O",
+          "function": "fn_payout_linkage_guard()",
+          "definition": "CREATE TRIGGER trg_payout_linkage_guard BEFORE INSERT OR UPDATE ON public.business_payouts FOR EACH ROW EXECUTE FUNCTION fn_payout_linkage_guard()"
+        },
+        {
+          "name": "guard_enrolled_payment_identity",
+          "type": 27,
+          "table": "payments",
+          "enabled": "O",
+          "function": "accounting_private.guard_enrolled_payment_identity()",
+          "definition": "CREATE TRIGGER guard_enrolled_payment_identity BEFORE DELETE OR UPDATE ON public.payments FOR EACH ROW EXECUTE FUNCTION accounting_private.guard_enrolled_payment_identity()"
+        },
+        {
+          "name": "guard_accounting_adjustment_provenance",
+          "type": 31,
+          "table": "payout_adjustments",
+          "enabled": "O",
+          "function": "accounting_private.guard_accounting_adjustment_provenance()",
+          "definition": "CREATE TRIGGER guard_accounting_adjustment_provenance BEFORE INSERT OR DELETE OR UPDATE ON public.payout_adjustments FOR EACH ROW EXECUTE FUNCTION accounting_private.guard_accounting_adjustment_provenance()"
+        },
+        {
+          "name": "guard_accounting_fee_provenance",
+          "type": 31,
+          "table": "platform_fees",
+          "enabled": "O",
+          "function": "accounting_private.guard_accounting_fee_provenance()",
+          "definition": "CREATE TRIGGER guard_accounting_fee_provenance BEFORE INSERT OR DELETE OR UPDATE ON public.platform_fees FOR EACH ROW EXECUTE FUNCTION accounting_private.guard_accounting_fee_provenance()"
+        }
+      ]
+    },
+    "public_service_only": [
+      "assert_merchant_settlement_available",
+      "finalize_refund_execution",
+      "confirm_manual_settlement",
+      "claim_payout_for_transfer",
+      "reject_payout_and_release_adjustments",
+      "finalize_token_recurring_charge",
+      "finalize_stripe_recurring_charge",
+      "finalize_paystack_recurring_charge"
+    ],
+    "private_application_execute": false,
+    "owner": "postgres",
+    "installer_procedure": {
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantor": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "kind": "p",
+      "nargs": 5,
+      "owner": "postgres",
+      "config": [
+        "search_path=public, pg_temp"
+      ],
+      "strict": false,
+      "definer": false,
+      "returns": "void",
+      "argnames": [
+        "p_environment",
+        "p_project_ref",
+        "p_expected_catalog",
+        "p_manifest",
+        "p_receipt_sha256"
+      ],
+      "defaults": 0,
+      "language": "plpgsql",
+      "parallel": "u",
+      "signature": "accounting_private.activate_merchant_accounting(text,text,jsonb,jsonb,text)",
+      "volatility": "v",
+      "body_sha256": "96f61c9ea8bb9ba6c49f57407c03e93b966241256f075a26b1fb6ee9f350bb43",
+      "schema_owner": "postgres"
+    }
+  }
+}
