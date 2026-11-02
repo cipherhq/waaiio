@@ -7877,6 +7877,41 @@
               }
             },
             {
+              "identity": "function:public.save_provider_plan_refs(p_country_code text, p_plan_refs jsonb, p_expected_version_id uuid, p_actor_id uuid)",
+              "source_sha256": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0",
+              "operation": "remove-bound",
+              "preconditions": {
+                "acl": [
+                  {
+                    "grantee": "postgres",
+                    "grantor": "postgres",
+                    "grantable": false,
+                    "privilege": "EXECUTE"
+                  },
+                  {
+                    "grantee": "service_role",
+                    "grantor": "postgres",
+                    "grantable": false,
+                    "privilege": "EXECUTE"
+                  }
+                ],
+                "kind": "f",
+                "owner": "postgres",
+                "config": [
+                  "search_path=public, pg_temp"
+                ],
+                "strict": false,
+                "definer": true,
+                "returns": "uuid",
+                "language": "plpgsql",
+                "parallel": "u",
+                "arguments": "p_country_code text, p_plan_refs jsonb, p_expected_version_id uuid, p_actor_id uuid DEFAULT NULL::uuid",
+                "leakproof": false,
+                "volatility": "v",
+                "body_sha256": "cb3b0d1a06d749aae16e1d327e76cf807aebd355c2d4c98c7263e0341f875a3f"
+              }
+            },
+            {
               "identity": "function:public.save_provider_plan_refs(p_country_code text, p_plan_refs jsonb, p_expected_version_id uuid, p_actor_id uuid, p_tier_prices jsonb)",
               "source_sha256": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0",
               "operation": "add",
