@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { decodePrivateReport } from './private-report-transport.mjs';
+import { decodeFullReportTransport } from './full-report-transport.mjs';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, appendFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,11 +14,13 @@ import { PAYOUT_TARGETS, PAYOUT_EVIDENCE_POLICY, INTEGRATION_SQL_TESTS, INTEGRAT
 import { ACCOUNTING_TARGETS, ACCOUNTING_EVIDENCE_POLICY, ACCOUNTING_SQL_TESTS, ACCOUNTING_RUNTIME_SOURCES, verifyAccountingActivation } from './reduced-accounting-policy.mjs';
 
 import { SECURITY_IDENTITIES, SECURITY_TARGETS, SECURITY_EVIDENCE_POLICY, SECURITY_SQL_TESTS, SECURITY_STORAGE_TESTS, SECURITY_RUNTIME_SOURCES, SECURITY_MIGRATIONS, verifySecurityPrerequisites } from './reduced-security-policy.mjs';
+import { isFullRelease as full, FULL_IDENTITIES, FULL_SCHEMA_CONTRACT, fullInventoryDigest, FULL_TARGETS, FULL_EVIDENCE_POLICY, FULL_MAIN_SQL_TESTS, FULL_SQL_TESTS, FULL_RUNTIME_SOURCES, requireFrozenFullRelease } from './full-release-policy.mjs';
+import { verifyFullReleaseEvidence } from './full-release-evidence.mjs';
 const security = manifest => manifest?.schema_version === 4 && manifest.policy === SECURITY_POLICY;
-const accounting = manifest => (manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY) || security(manifest);
-const policyFor = manifest => security(manifest) ? SECURITY_EVIDENCE_POLICY : accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
-const sqlTestsFor = manifest => security(manifest) ? SECURITY_SQL_TESTS : accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
-const runtimeFor = manifest => security(manifest) ? SECURITY_RUNTIME_SOURCES : accounting(manifest) ? ACCOUNTING_RUNTIME_SOURCES : INTEGRATION_RUNTIME_SOURCES;
+const accounting = manifest => (manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY) || security(manifest) || full(manifest);
+const policyFor = manifest => full(manifest) ? FULL_EVIDENCE_POLICY : security(manifest) ? SECURITY_EVIDENCE_POLICY : accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
+const sqlTestsFor = manifest => full(manifest) ? FULL_SQL_TESTS : security(manifest) ? SECURITY_SQL_TESTS : accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
+const runtimeFor = manifest => full(manifest) ? FULL_RUNTIME_SOURCES : security(manifest) ? SECURITY_RUNTIME_SOURCES : accounting(manifest) ? ACCOUNTING_RUNTIME_SOURCES : INTEGRATION_RUNTIME_SOURCES;
 const REPO = 'cipherhq/waaiio';
 const TEAM = 'team_AEcg69CktrGEptXDznpae8Rp';
 const OWNER = 'cipherhq';
@@ -43,7 +46,7 @@ export const TARGETS = Object.freeze({
 const payout = manifest => (manifest?.schema_version === 2 && manifest.policy === PAYOUT_POLICY) || accounting(manifest);
 function targetConfig(manifest, kind) {
   if (!payout(manifest)) return TARGETS[kind];
-  const config = (security(manifest) ? SECURITY_TARGETS : accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
+  const config = (full(manifest) ? FULL_TARGETS : security(manifest) ? SECURITY_TARGETS : accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
   if (!config?.suites.length) fail('Payout policy execution contract is not frozen');
   return { ...TARGETS[kind], ...config };
 }
@@ -82,10 +85,11 @@ export function parseManifest(raw, integration) {
     if (!entry || !SHA.test(entry.baseline_sha) || !SHA.test(entry.target_sha) || !SHA.test(entry.target_tree)
       || entry.baseline_sha === entry.target_sha || entry.project_id !== TARGETS[kind].project) fail(`Invalid ${kind} target identity`);
   }
-  if (manifest.projects.admin.target_sha === manifest.projects.merchant.target_sha) fail('Project-specific source targets are required');
-  if (security(manifest)) for (const kind of Object.keys(TARGETS)) {
-    const expected = SECURITY_IDENTITIES[kind];
+  if (!full(manifest) && manifest.projects.admin.target_sha === manifest.projects.merchant.target_sha) fail('Project-specific source targets are required');
+  if (security(manifest) || full(manifest)) for (const kind of Object.keys(TARGETS)) {
+    const expected = (full(manifest) ? FULL_IDENTITIES : SECURITY_IDENTITIES)[kind];
     for (const field of ['baseline_sha', 'target_sha', 'target_tree']) if (manifest.projects[kind][field] !== expected[field]) fail('Security source identity differs from fixed reviewed target');
+    if (full(manifest) && manifest.projects[kind].source_inventory_sha256 !== fullInventoryDigest(kind)) fail('Full release source inventory binding mismatch');
   }
   manualAdminPolicy(manifest);
   if (payout(manifest)) manifestBinding(raw, manifest);
@@ -94,20 +98,48 @@ export function parseManifest(raw, integration) {
 export function checkDelta(kind, changed, deleted, manifest) {
   const allowed = targetConfig(manifest, kind)?.allowed;
   if (payout(manifest) && !isDeepStrictEqual([...changed].sort(), [...allowed].sort())) fail('Payout release requires the exact reviewed source inventory');
-  if (!allowed || deleted.length || !changed.length || new Set(changed).size !== changed.length
+  if (full(manifest) && !isDeepStrictEqual([...deleted].sort(), Object.keys(FULL_IDENTITIES[kind].deleted_blobs).sort())) fail('Full release deletion inventory mismatch');
+  if (!allowed || (!full(manifest) && deleted.length) || !changed.length || new Set(changed).size !== changed.length
     || changed.some(file => !allowed.includes(file))) fail('Reduced release contains an unapproved source delta');
+}
+// Full targets contain many files. Read exact Git blob bytes in one bounded
+// batch rather than spawning one process per file; never hash working-tree data.
+function fullBlobDigests(repository, revision, paths) {
+  if (paths.some(path => /[\r\n]/.test(path))) fail('Invalid full source path');
+  const bytes = execFileSync('git', ['cat-file', '--batch'], { cwd: repository,
+    input: paths.map(path => `${revision}:${path}\n`).join(''), maxBuffer: 128 * 1024 * 1024 });
+  const result = {}; let offset = 0;
+  for (const path of paths) {
+    const end = bytes.indexOf(10, offset);
+    const header = bytes.subarray(offset, end).toString('ascii');
+    const match = /^([a-f0-9]{40}) blob ([0-9]+)$/.exec(header);
+    if (end < offset || !match) fail('Missing full source blob');
+    const size = Number(match[2]); offset = end + 1;
+    if (!Number.isSafeInteger(size) || offset + size >= bytes.length || bytes[offset + size] !== 10) fail('Invalid full source blob framing');
+    result[path] = hash(bytes.subarray(offset, offset + size)); offset += size + 1;
+  }
+  if (offset !== bytes.length) fail('Unexpected full source blob data');
+  return result;
 }
 export function inspectTarget(repository, kind, entry, integration, manifest) {
   if (!TARGETS[kind]) fail('Unknown project');
+  if (full(manifest) && (entry.source_inventory_sha256 !== fullInventoryDigest(kind) || entry.source_blobs !== undefined || entry.deleted_blobs !== undefined)) fail('Full release source inventory binding mismatch');
   if (!ancestor(repository, entry.baseline_sha, entry.target_sha) || !ancestor(repository, entry.target_sha, integration)) fail('Reduced source lineage is unproven');
   if (git(repository, 'rev-parse', `${entry.target_sha}^{tree}`) !== entry.target_tree) fail('Reduced target tree mismatch');
-  const changed = git(repository, 'diff', '--name-only', entry.baseline_sha, entry.target_sha).split('\n').filter(Boolean);
+  const changed = git(repository, 'diff', '--name-only', ...(full(manifest) ? ['--no-renames'] : []), entry.baseline_sha, entry.target_sha).split('\n').filter(Boolean);
   const deleted = git(repository, 'diff', '--name-only', '--no-renames', '--diff-filter=D', entry.baseline_sha, entry.target_sha).split('\n').filter(Boolean);
   checkDelta(kind, changed, deleted, manifest);
   if (payout(manifest)) {
-    const blobs = Object.fromEntries(changed.map(file => [file, hash(execFileSync('git', ['show', `${entry.target_sha}:${file}`], { cwd: repository }))]));
+    const present = changed.filter(file => !deleted.includes(file));
+    const blobs = full(manifest) ? fullBlobDigests(repository, entry.target_sha, present) : Object.fromEntries(present.map(file => [file, hash(execFileSync('git', ['show', `${entry.target_sha}:${file}`], { cwd: repository }))]));
     if (accounting(manifest) && !isDeepStrictEqual(blobs, targetConfig(manifest, kind).blobs)) fail('Accounting source differs from fixed reviewed blobs');
-    if (!isDeepStrictEqual(entry.source_blobs, blobs)) fail('Private manifest source blob mismatch');
+    if (full(manifest)) {
+      const deletedBlobs = fullBlobDigests(repository, entry.baseline_sha, deleted);
+      if (!isDeepStrictEqual(deletedBlobs, FULL_IDENTITIES[kind].deleted_blobs)) fail('Full release deleted baseline blob mismatch');
+    }
+    if (full(manifest)) {
+      if (entry.source_inventory_sha256 !== fullInventoryDigest(kind) || entry.source_blobs !== undefined || entry.deleted_blobs !== undefined) fail('Full release source inventory binding mismatch');
+    } else if (!isDeepStrictEqual(entry.source_blobs, blobs)) fail('Private manifest source blob mismatch');
   }
   return changed;
 }
@@ -178,13 +210,13 @@ export function validateCodeReceipt(receipt, kind, manifest, runId, attempt, raw
   if (!isDeepStrictEqual(receipt.suites,suites)) fail('Exact-target per-file test evidence missing or skipped');
 }
 function integrationCommands(manifest) {
-  const commands = [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest)), '--no-file-parallelism', '--reporter=json']];
-  if (security(manifest)) commands.push(['node', 'scripts/reduced-security-storage-tests.mjs']);
+  const commands = [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(full(manifest) ? FULL_MAIN_SQL_TESTS : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest)), '--no-file-parallelism', '--reporter=json']];
+  if (security(manifest) || full(manifest)) commands.push(['node', 'scripts/reduced-security-storage-tests.mjs']);
   return commands;
 }
 function integrationSources(repository, integration, manifest) {
   const sql = {};
-  for (const entry of [...policyFor(manifest).schema_contracts.canonical_sources, ...(security(manifest) ? SECURITY_MIGRATIONS : [])]) {
+  for (const entry of [...(full(manifest) ? FULL_SCHEMA_CONTRACT : policyFor(manifest).schema_contracts).canonical_sources, ...(security(manifest) ? SECURITY_MIGRATIONS : [])]) {
     const file = `supabase/migrations/${entry.name}`;
     const actual = hash(execFileSync('git', ['show', `${integration}:${file}`], { cwd: repository }));
     if (actual !== entry.sha256) fail('Canonical integration SQL differs from reviewed prerequisite');
@@ -216,8 +248,8 @@ export async function testIntegration(manifest, sourcePath, outputPath, environm
     env:{...env, TEST_DATABASE_URL:'postgresql://postgres:postgres@127.0.0.1:5432/postgres', REQUIRE_PG_TESTS:'true'},
     encoding:'utf8', maxBuffer:20*1024*1024, stdio:['ignore','pipe','inherit'] });
   let report; try { report=JSON.parse(output); } catch { fail('Invalid integration SQL test report'); }
-  const files=summarizeTests(report, security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest), sourcePath);
-  if (security(manifest)) {
+  const files=summarizeTests(report, full(manifest) ? FULL_MAIN_SQL_TESTS : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest), sourcePath);
+  if (security(manifest) || full(manifest)) {
     const storageOutput = execFileSync('node', ['scripts/reduced-security-storage-tests.mjs'], { cwd: sourcePath, env, encoding: 'utf8', maxBuffer: 20*1024*1024, stdio: ['ignore','pipe','inherit'] });
     let storageReport; try { storageReport=JSON.parse(storageOutput); } catch { fail('Invalid storage SQL test report'); }
     Object.assign(files, summarizeTests(storageReport, SECURITY_STORAGE_TESTS, sourcePath));
@@ -364,10 +396,12 @@ export async function preflight(manifest,controlPath,sourcePaths,runId,attempt,e
   return before;
 }
 function privateEvidence(manifest, runId, attempt, env) {
+  if (full(manifest)) requireFrozenFullRelease();
   if (!payout(manifest)) return;
-  const reportBytes = decodePrivateReport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
+  const reportBytes = full(manifest) ? decodeFullReportTransport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT, env) : decodePrivateReport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
   const evidence = verifyPrivateEvidence({ rawManifest: env.REDUCED_RELEASE_MANIFEST, manifest, receiptBytes: env.PRIVATE_RELEASE_RECEIPT, reportBytes, approvedHash: env.PRIVATE_RELEASE_ACCEPTANCE_SHA256, policy: policyFor(manifest) });
-  if (accounting(manifest)) verifyAccountingActivation(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  if (full(manifest)) verifyFullReleaseEvidence(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  else if (accounting(manifest)) verifyAccountingActivation(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   if (security(manifest)) verifySecurityPrerequisites(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   if (evidence.verification.run_id !== runId || evidence.verification.run_attempt !== attempt) fail('Approved private evidence refers to a different code verification');
 }
@@ -415,7 +449,7 @@ async function main(){
   const manifest=parseManifest(process.env.REDUCED_RELEASE_MANIFEST,integration);
   if(command==='plan'){
     await control(manifest,controlPath,process.env.GITHUB_TOKEN);
-    if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,`payout_policy=${payout(manifest)}\n`);
+    if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,`payout_policy=${payout(manifest)}\nfull_release_policy=${full(manifest)}\n`);
     if(process.env.GITHUB_OUTPUT)for(const kind of Object.keys(TARGETS))appendFileSync(process.env.GITHUB_OUTPUT,`${kind}_target=${manifest.projects[kind].target_sha}\n`);
   }else if(command==='test-integration'){
     await testIntegration(manifest,controlPath,resolve(process.argv[3]));

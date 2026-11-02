@@ -1,3 +1,25 @@
+## 2026-11-02 — Full-source phased release verification
+
+- Update the exact logging allowlist to require zero browser error logs for the server-backed account downgrade flow.
+- Bind complete merchant/admin source inventories to an immutable runtime ancestor, including explicit deleted-file evidence.
+- Validate separate database contracts before and after compatible application cutover, preserving untargeted metadata and existing migration history.
+- Retain private evidence, freshness, exact approval and manual admin-alias controls. Require the full release verifier suites in CI alongside the existing release policies.
+
+## 2026-11-02 — Full-release compatibility foundations
+
+- M503 composes cancellation intent with recurring payment provenance, using explicit trusted UUID resolution.
+- M504 adds the Party slug foundation without historical backfill.
+- M505 moves the existing owner-requested downgrade into an atomic server operation. Preserve local downgrade on unconfirmed provider cancellation, show an accurate warning, and prevent stale or cross-owner updates.
+- M506 prepares compatible form fields and the service-only OAuth/account interface before the later permission-contract phase, with exact structure checks.
+- Keep the new PostgreSQL suites mandatory in isolated CI. Application rollout and hosted migration execution remain separate release gates.
+
+## 2026-11-02 — Channel operation admission
+
+- Positive-path onboarding fixtures explicitly enable and restore the admission flag, while default-denial tests continue to exercise the disabled state.
+- Add a server-controlled admission check across merchant/admin channel setup, allocation and number-change routes, with unavailable responses before affected mutations or step-up consumption.
+- Preserve existing assigned/dedicated channel reads and messaging; merchant settings explain temporary unavailability. The flag defaults disabled and cannot be enabled by request data.
+- **Affects**: New channel setup and changes through the reviewed routes. **Could break**: Provisioning if the flag is disabled where allocation is needed. Local handler and neighboring regression evidence: 392 passed, zero failed/skipped; independent source review accepted. Hosted enablement and migration execution are separate release decisions.
+
 ## 2026-11-02 — Explicit manual admin release identity
 
 - Add a fixed security successor release profile with phased storage prerequisites, complete ledger preservation digests and isolated verification evidence.

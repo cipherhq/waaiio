@@ -1,0 +1,1991 @@
+{
+  "status": "frozen",
+  "missing_contracts": [],
+  "canonical_sources": [
+    {
+      "name": "292_atomic_payout_claim.sql",
+      "sha256": "30469f60b57a728b41406a55e14799e1c20c4d6b5c785e34eab5c610d417b1d5"
+    },
+    {
+      "name": "426_staging_payment_setup_parity.sql",
+      "sha256": "d238cd83db4c3a8798c791e8c0d54d0a72f72428f025faad0f5244d3807c3b4b"
+    },
+    {
+      "name": "427_paystack_saved_card_persistence.sql",
+      "sha256": "03a35c8d704ccec30d5dc33d343510ede16bf35c7fa54ab7efd05a8c986a0f87"
+    },
+    {
+      "name": "428_customer_preferred_response_language.sql",
+      "sha256": "198c00744087e0d69e2d337413047f242b9e2cdb70fc2f68949ba872a4d7a1e8"
+    },
+    {
+      "name": "429_admin_assisted_onboarding.sql",
+      "sha256": "8698c3e7883b6784b8750de813499cadcf361151af12facd86ecb2ea46a635d2"
+    },
+    {
+      "name": "430_shared_number_tenant_isolation.sql",
+      "sha256": "04bd1fb7f6d9ca84e4faca94ba5d01a8acf32b67d13c60465a1d66ee6df1a653"
+    },
+    {
+      "name": "431_engage_segments.sql",
+      "sha256": "c00a105bbfa5bf4ea4cdb5f275604c8f83718aa3b546c198eb75d7c92425b7a5"
+    },
+    {
+      "name": "432_engage_segments_acl.sql",
+      "sha256": "ef6d3d08c6d1231c81715ada80a390061a8e7c0c1456dd4aff3982770c32f8cc"
+    },
+    {
+      "name": "433_p0_business_members_acl_containment.sql",
+      "sha256": "00274b93d8c50bebc59a745f2c54fb1cd55a00b61ebc590da2721dcbcfd9d5a0"
+    },
+    {
+      "name": "434_atomic_loyalty_reward_receipt.sql",
+      "sha256": "78171fce64e1adc4885f97684cc939ce8707450e2b3b606d610abe36704a58be"
+    },
+    {
+      "name": "435_ordering_price_authority.sql",
+      "sha256": "39a43ce188b2074de2e790d079276bdd7b2ccc6ffa8d30b4f6faa808b57afc1f"
+    },
+    {
+      "name": "437_native_whatsapp_forms.sql",
+      "sha256": "925f6219be9c50f52ae0a511536adc428503e20c7abbe738fc5e032013ad6a30"
+    },
+    {
+      "name": "438_business_app_coexistence.sql",
+      "sha256": "15d43b824525fb37dbd308e6e188f522a54047a91d38e85eaac38e293888b7fd"
+    },
+    {
+      "name": "439_admin_mfa_enforcement.sql",
+      "sha256": "75045767e49a5a8039a4615397d076d5ac3898769383997afab4030d6a9e9bd3"
+    },
+    {
+      "name": "440_payout_linkage_guard.sql",
+      "sha256": "59aa9bc8258bf8c0c62a0330229de2321c0682e731a0ac634a1851647bce7249"
+    },
+    {
+      "name": "441_payout_account_atomic_swap.sql",
+      "sha256": "011a123ce56b3fa7ea4921ccbfe1409c122f44b543380481b61311a2758743b7"
+    },
+    {
+      "name": "442_business_server_managed_columns.sql",
+      "sha256": "b812c1b94702fd35fcb4561a741d8751932d1831b9b136875a0c6c7432cd0767"
+    },
+    {
+      "name": "443_byo_webhook_secret_hash.sql",
+      "sha256": "d1d02593f334aa72cd0aaad26eb249abd0a7602a349ffb3fa6d8ef20adc42a54"
+    },
+    {
+      "name": "444_reject_payout_release_adjustments.sql",
+      "sha256": "cb0398b2186a361ddccfd2bebfe9321e5e6df8c1e3e3aff16de262af5edddc6f"
+    },
+    {
+      "name": "445_bot_translation_overrides.sql",
+      "sha256": "1c26ed0b9f895f6e08b8e511fd4550adb42cdec9f16346e43e80fd63e7413023"
+    },
+    {
+      "name": "446_payout_accounts_server_only.sql",
+      "sha256": "22a10369127e7147c29c8f76dd521e408a541619440b785f3d4e600f1e670f7f"
+    },
+    {
+      "name": "447_directory_fuzzy_search.sql",
+      "sha256": "e74e2c4cc0f67248bb57b9fba3fd788a9170416e83af9c9d04290ef0406bc529"
+    },
+    {
+      "name": "448_business_bank_accounts_server_only.sql",
+      "sha256": "bd15cf736cdb4082b20a9f7af96829b8ffdf44b580d2f41640f475f60601f13f"
+    },
+    {
+      "name": "449_least_privilege_acl_contracts_channels.sql",
+      "sha256": "c98d12e8a6cd339ec2a2260b76e8acd3fd4f22d671a07d7da06de024fbf3076c"
+    },
+    {
+      "name": "450_contracts_zero_signer_trigger.sql",
+      "sha256": "04830a72b413aba272ab81e59fd6a0a4944812300607907068c5dae90b8119da"
+    },
+    {
+      "name": "451_contract_signers_lock_for_update.sql",
+      "sha256": "e3cb6095dddf76c8bbcf067a7c71f3d8d5fa04b6532262df73f71b2f7cf85927"
+    },
+    {
+      "name": "452_cancellation_intent_charge_gate.sql",
+      "sha256": "b1cc99e2a6ef98a9a00627da87e1d450cfb32d8d18fbbec80e8763dc224c52cd"
+    },
+    {
+      "name": "453_settlement_confirmation.sql",
+      "sha256": "1e98194dc621130682e17bc936a59995f4a8ed891114172f2f77de01cfb7a9f3"
+    },
+    {
+      "name": "454_settlement_force_reconciliation.sql",
+      "sha256": "a07856251b3ddbd7ee35d72a4042f7a68675d393e28bea43bc1ecbe9895e33e6"
+    },
+    {
+      "name": "455_party_slug_updated_at.sql",
+      "sha256": "d675da2d94f0488f4090ef4eda27d1ef7be9312683573b01a584265ce60bc462"
+    },
+    {
+      "name": "456_guest_tags.sql",
+      "sha256": "433417c9dc4e998fb8f11cd24aadec11e33b10426030ad65ef8e799ce8870e66"
+    },
+    {
+      "name": "457_party_tables_seats.sql",
+      "sha256": "4e5c057b105e58d25bae0f0525b71f534177db857de263eae852002694075bae"
+    },
+    {
+      "name": "458_price_lock_correction.sql",
+      "sha256": "21ee6e36af5c949bbc65c90a11194e17ee98c9582bef68a44ae11d3af2295a82"
+    },
+    {
+      "name": "459_expand_business_categories.sql",
+      "sha256": "ea6857df447bf3dd8d654510a1332eb7885d90f155bdb48137d0d68108b17bbe"
+    },
+    {
+      "name": "460_category_sort_order_correction.sql",
+      "sha256": "9bff6a466fc65cc1e10eaaae0ac932d87b828e2e85967ee89c77333b3994b404"
+    },
+    {
+      "name": "461_cross_border_business_country_billing.sql",
+      "sha256": "99a3e0fad630e4a35ba74618cb73ccf55c93534460a685cce0b531fe04f586ba"
+    },
+    {
+      "name": "462_product_gallery_images.sql",
+      "sha256": "16436c4beb1d424b0d4c844aaeefcbd412fe9086145d3f3783bfb7c32e51a2aa"
+    },
+    {
+      "name": "463_secdef_acl_audit_hardening.sql",
+      "sha256": "29442736f245820d41687468066b4ab92915f065c85b8c32a71f6c9f44bd752b"
+    },
+    {
+      "name": "465_trial_one_per_phone_identity.sql",
+      "sha256": "31d97cf51c6eb1870772abcf6b3970b99d9469b652bdc156688d738c9d6313f2"
+    },
+    {
+      "name": "466_payout_currency_authority.sql",
+      "sha256": "a9b1e1d1ff5dd67ec56c5c6cf9f1dde7c7725b0c93747b4ae72143c3d7f72dcb"
+    },
+    {
+      "name": "467_oct25_stripe_price_refresh.sql",
+      "sha256": "6531ab758d7a6e4a0891fbc51f49b08983b9729e323dae4e176ef282574d821b"
+    },
+    {
+      "name": "467b_save_refs_tier_prices_upgrade.sql",
+      "sha256": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0"
+    },
+    {
+      "name": "468_payout_dedup_currency_authority.sql",
+      "sha256": "69f051660c7f77247ab80366dae7736420d58332f8541e5e67dae44b1c4e2763"
+    },
+    {
+      "name": "469_settlement_currency_authority.sql",
+      "sha256": "fcb8dba9e0ba561d1269973979ca33cbd07579da960dcf6cd7687c3a41d7f754"
+    },
+    {
+      "name": "470_ticket_tier_purchase_and_capacity_guards.sql",
+      "sha256": "013b5b622ea8b548622e68a7cec322f63e806dc103603d01970abf1f48dfdc73"
+    },
+    {
+      "name": "471_cancel_pending_booking_navigation.sql",
+      "sha256": "487222e2fd81c46ae7a8814677c1ef2a94c7687fcf006a8e5fd54d727688e50f"
+    },
+    {
+      "name": "472_refund_fee_allocation_period_fix.sql",
+      "sha256": "703edf5b5fdc961e2ab29696d0542525628b0971db45ca1ce3cb2f877d4782c3"
+    },
+    {
+      "name": "474_api_key_atomic_issuance.sql",
+      "sha256": "1e0d564af2a7674e653d7106d7bc7e7017da40d5fd544aa58e6c2491db8979c9"
+    },
+    {
+      "name": "476_seating_resources_table_reservation.sql",
+      "sha256": "38ac0e36272ea3643bd3dbca6c1b55b85a2c2f5ea43983c8a077239d51a63ae3"
+    },
+    {
+      "name": "477_exclude_table_bookings_from_slot_capacity.sql",
+      "sha256": "5f55027b43ecdca109066da3455164bbce4d236e71f2ed73dd7fd5cc87594f17"
+    },
+    {
+      "name": "478_reschedule_table_isolation.sql",
+      "sha256": "df22aaf2ec8e9ed925e79a929293591887e070b6dfece91e051b177a9196ae84"
+    },
+    {
+      "name": "479_offline_merchant_approval.sql",
+      "sha256": "be342d9ce074b1c033f8b3b5a7a1a402f49bf8eb5978333f1a271e1721f4789b"
+    },
+    {
+      "name": "481_event_cancellation_operations.sql",
+      "sha256": "143e0f1e648e4121be44d5f97c00ae87675907262a3a1fee3a53f2aff2708c7d"
+    },
+    {
+      "name": "483_directory_category_text_computed.sql",
+      "sha256": "351fbdc2c2c68e812468a9326c4709525eeaa72f6a3a207eb4cfc7544ab34720"
+    },
+    {
+      "name": "484_fix_loyalty_tier_multiplier.sql",
+      "sha256": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57"
+    },
+    {
+      "name": "485_verified_gateway_fee_claim.sql",
+      "sha256": "ae096b401171e111c0c43874f0449fe7af6235c048c9a1c341a04fadc9a1f66b"
+    },
+    {
+      "name": "486_party_seating_groups_pins_atomic_plans.sql",
+      "sha256": "b4a1e1077fb3c1f296b5f637b53a52ac7a759816cd31a8c748a66916022554af"
+    },
+    {
+      "name": "489_party_rsvp_questions.sql",
+      "sha256": "b6988bc9349140456f024a286dc113d464a7215e1c50b7c40cbd87d72c4fa760"
+    },
+    {
+      "name": "490_party_reminder_delivery.sql",
+      "sha256": "cf55a7700b1bfe2cdfd4b3c2a90e6c797c74ba1a9ab30c0d0626c521ba9251fc"
+    },
+    {
+      "name": "491_private_document_storage.sql",
+      "sha256": "a89883986b2cfe77da04e219777dadbea8e36abaf8114a41462dc4f026fa204a"
+    },
+    {
+      "name": "492_verification_public_upload_guard.sql",
+      "sha256": "18377b0c9e8ebb890a8a5fa1b640781c9ec3894ff3738673a4af8a3d8ba353dc"
+    },
+    {
+      "name": "493_shared_conversation_binding.sql",
+      "sha256": "ff7eb4a064ab69826becc1678231e452f9501a0f9ce130590e86de9d65c088cd"
+    },
+    {
+      "name": "494_business_status_step_up.sql",
+      "sha256": "36481136ec6c2cacd9e6acee6df7369298e04c852d073dbf812b7a976e873141"
+    },
+    {
+      "name": "495_embedded_signup_sessions.sql",
+      "sha256": "56b8e530575c53471b173c0bf83ad99148c2fa185cb3844935327287d538b2de"
+    },
+    {
+      "name": "496_channel_number_continuity.sql",
+      "sha256": "7f6bda04d787fbcef2ae31ed2be42dd09e14c8580ece7eba545064055b8c2f31"
+    },
+    {
+      "name": "498_manual_settlement_rejection_guard.sql",
+      "sha256": "b85404c7423095fb14a279d60c5116fc67e0133291b43b581e76ce66439254a0"
+    },
+    {
+      "name": "500_accounting_hold_preparation.sql",
+      "sha256": "4496189a508616d74bd08c5fd5e80cbcd4bde6ff262c717447ca32ec1200aa1f"
+    },
+    {
+      "name": "501_accounting_cutover_installer.sql",
+      "sha256": "f060d8c2886e91fa151291101bd8378ed83c31359c38de4d0f65577947a25cd6"
+    },
+    {
+      "name": "503_recurring_cancellation_compatibility.sql",
+      "sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67"
+    },
+    {
+      "name": "504_party_slug_foundation.sql",
+      "sha256": "561774893082a84f9cf2e9bb649f0813bddccc678db307d08d8adda102fa48b4"
+    },
+    {
+      "name": "505_owner_subscription_downgrade.sql",
+      "sha256": "8562fa1dce8d984c450cd206bad267ca7d932b171c3c7de0f21bcf4bc34b5ee2"
+    },
+    {
+      "name": "506_full_release_additive_foundation.sql",
+      "sha256": "165732ee47865af9ae2c37e7cb907d7a5c59e5cbe5b9540817b7693b07b66bf5"
+    }
+  ],
+  "migration_reconciliation": [
+    {
+      "name": "292_atomic_payout_claim.sql",
+      "sha256": "30469f60b57a728b41406a55e14799e1c20c4d6b5c785e34eab5c610d417b1d5",
+      "classification": "existing-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "426_staging_payment_setup_parity.sql",
+      "sha256": "d238cd83db4c3a8798c791e8c0d54d0a72f72428f025faad0f5244d3807c3b4b",
+      "classification": "staging-only",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "427_paystack_saved_card_persistence.sql",
+      "sha256": "03a35c8d704ccec30d5dc33d343510ede16bf35c7fa54ab7efd05a8c986a0f87",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "428_customer_preferred_response_language.sql",
+      "sha256": "198c00744087e0d69e2d337413047f242b9e2cdb70fc2f68949ba872a4d7a1e8",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "429_admin_assisted_onboarding.sql",
+      "sha256": "8698c3e7883b6784b8750de813499cadcf361151af12facd86ecb2ea46a635d2",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "430_shared_number_tenant_isolation.sql",
+      "sha256": "04bd1fb7f6d9ca84e4faca94ba5d01a8acf32b67d13c60465a1d66ee6df1a653",
+      "classification": "held-channel-isolation",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "431_engage_segments.sql",
+      "sha256": "c00a105bbfa5bf4ea4cdb5f275604c8f83718aa3b546c198eb75d7c92425b7a5",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "432_engage_segments_acl.sql",
+      "sha256": "ef6d3d08c6d1231c81715ada80a390061a8e7c0c1456dd4aff3982770c32f8cc",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "433_p0_business_members_acl_containment.sql",
+      "sha256": "00274b93d8c50bebc59a745f2c54fb1cd55a00b61ebc590da2721dcbcfd9d5a0",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "434_atomic_loyalty_reward_receipt.sql",
+      "sha256": "78171fce64e1adc4885f97684cc939ce8707450e2b3b606d610abe36704a58be",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "435_ordering_price_authority.sql",
+      "sha256": "39a43ce188b2074de2e790d079276bdd7b2ccc6ffa8d30b4f6faa808b57afc1f",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "437_native_whatsapp_forms.sql",
+      "sha256": "925f6219be9c50f52ae0a511536adc428503e20c7abbe738fc5e032013ad6a30",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "438_business_app_coexistence.sql",
+      "sha256": "15d43b824525fb37dbd308e6e188f522a54047a91d38e85eaac38e293888b7fd",
+      "classification": "preserve-staging-omit-production-unused-disabled-channel-foundation",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "439_admin_mfa_enforcement.sql",
+      "sha256": "75045767e49a5a8039a4615397d076d5ac3898769383997afab4030d6a9e9bd3",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "440_payout_linkage_guard.sql",
+      "sha256": "59aa9bc8258bf8c0c62a0330229de2321c0682e731a0ac634a1851647bce7249",
+      "classification": "superseded-by-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "441_payout_account_atomic_swap.sql",
+      "sha256": "011a123ce56b3fa7ea4921ccbfe1409c122f44b543380481b61311a2758743b7",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "442_business_server_managed_columns.sql",
+      "sha256": "b812c1b94702fd35fcb4561a741d8751932d1831b9b136875a0c6c7432cd0767",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "443_byo_webhook_secret_hash.sql",
+      "sha256": "d1d02593f334aa72cd0aaad26eb249abd0a7602a349ffb3fa6d8ef20adc42a54",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "444_reject_payout_release_adjustments.sql",
+      "sha256": "cb0398b2186a361ddccfd2bebfe9321e5e6df8c1e3e3aff16de262af5edddc6f",
+      "classification": "superseded-by-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "445_bot_translation_overrides.sql",
+      "sha256": "1c26ed0b9f895f6e08b8e511fd4550adb42cdec9f16346e43e80fd63e7413023",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "446_payout_accounts_server_only.sql",
+      "sha256": "22a10369127e7147c29c8f76dd521e408a541619440b785f3d4e600f1e670f7f",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "447_directory_fuzzy_search.sql",
+      "sha256": "e74e2c4cc0f67248bb57b9fba3fd788a9170416e83af9c9d04290ef0406bc529",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "448_business_bank_accounts_server_only.sql",
+      "sha256": "bd15cf736cdb4082b20a9f7af96829b8ffdf44b580d2f41640f475f60601f13f",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "449_least_privilege_acl_contracts_channels.sql",
+      "sha256": "c98d12e8a6cd339ec2a2260b76e8acd3fd4f22d671a07d7da06de024fbf3076c",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "450_contracts_zero_signer_trigger.sql",
+      "sha256": "04830a72b413aba272ab81e59fd6a0a4944812300607907068c5dae90b8119da",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "451_contract_signers_lock_for_update.sql",
+      "sha256": "e3cb6095dddf76c8bbcf067a7c71f3d8d5fa04b6532262df73f71b2f7cf85927",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "452_cancellation_intent_charge_gate.sql",
+      "sha256": "b1cc99e2a6ef98a9a00627da87e1d450cfb32d8d18fbbec80e8763dc224c52cd",
+      "classification": "superseded-by-503",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "453_settlement_confirmation.sql",
+      "sha256": "1e98194dc621130682e17bc936a59995f4a8ed891114172f2f77de01cfb7a9f3",
+      "classification": "superseded-by-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "454_settlement_force_reconciliation.sql",
+      "sha256": "a07856251b3ddbd7ee35d72a4042f7a68675d393e28bea43bc1ecbe9895e33e6",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "455_party_slug_updated_at.sql",
+      "sha256": "d675da2d94f0488f4090ef4eda27d1ef7be9312683573b01a584265ce60bc462",
+      "classification": "excluded-business-backfill-use-504",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "456_guest_tags.sql",
+      "sha256": "433417c9dc4e998fb8f11cd24aadec11e33b10426030ad65ef8e799ce8870e66",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "457_party_tables_seats.sql",
+      "sha256": "4e5c057b105e58d25bae0f0525b71f534177db857de263eae852002694075bae",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "458_price_lock_correction.sql",
+      "sha256": "21ee6e36af5c949bbc65c90a11194e17ee98c9582bef68a44ae11d3af2295a82",
+      "classification": "excluded-historical-price-rewrite",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "459_expand_business_categories.sql",
+      "sha256": "ea6857df447bf3dd8d654510a1332eb7885d90f155bdb48137d0d68108b17bbe",
+      "classification": "reference-exception-only",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "460_category_sort_order_correction.sql",
+      "sha256": "9bff6a466fc65cc1e10eaaae0ac932d87b828e2e85967ee89c77333b3994b404",
+      "classification": "reference-exception-only",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "461_cross_border_business_country_billing.sql",
+      "sha256": "99a3e0fad630e4a35ba74618cb73ccf55c93534460a685cce0b531fe04f586ba",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "462_product_gallery_images.sql",
+      "sha256": "16436c4beb1d424b0d4c844aaeefcbd412fe9086145d3f3783bfb7c32e51a2aa",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "463_secdef_acl_audit_hardening.sql",
+      "sha256": "29442736f245820d41687468066b4ab92915f065c85b8c32a71f6c9f44bd752b",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "465_trial_one_per_phone_identity.sql",
+      "sha256": "31d97cf51c6eb1870772abcf6b3970b99d9469b652bdc156688d738c9d6313f2",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "466_payout_currency_authority.sql",
+      "sha256": "a9b1e1d1ff5dd67ec56c5c6cf9f1dde7c7725b0c93747b4ae72143c3d7f72dcb",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "467_oct25_stripe_price_refresh.sql",
+      "sha256": "6531ab758d7a6e4a0891fbc51f49b08983b9729e323dae4e176ef282574d821b",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "467b_save_refs_tier_prices_upgrade.sql",
+      "sha256": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "468_payout_dedup_currency_authority.sql",
+      "sha256": "69f051660c7f77247ab80366dae7736420d58332f8541e5e67dae44b1c4e2763",
+      "classification": "superseded-by-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "469_settlement_currency_authority.sql",
+      "sha256": "fcb8dba9e0ba561d1269973979ca33cbd07579da960dcf6cd7687c3a41d7f754",
+      "classification": "superseded-by-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "470_ticket_tier_purchase_and_capacity_guards.sql",
+      "sha256": "013b5b622ea8b548622e68a7cec322f63e806dc103603d01970abf1f48dfdc73",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "471_cancel_pending_booking_navigation.sql",
+      "sha256": "487222e2fd81c46ae7a8814677c1ef2a94c7687fcf006a8e5fd54d727688e50f",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "472_refund_fee_allocation_period_fix.sql",
+      "sha256": "703edf5b5fdc961e2ab29696d0542525628b0971db45ca1ce3cb2f877d4782c3",
+      "classification": "superseded-by-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "474_api_key_atomic_issuance.sql",
+      "sha256": "1e0d564af2a7674e653d7106d7bc7e7017da40d5fd544aa58e6c2491db8979c9",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "476_seating_resources_table_reservation.sql",
+      "sha256": "38ac0e36272ea3643bd3dbca6c1b55b85a2c2f5ea43983c8a077239d51a63ae3",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "477_exclude_table_bookings_from_slot_capacity.sql",
+      "sha256": "5f55027b43ecdca109066da3455164bbce4d236e71f2ed73dd7fd5cc87594f17",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "478_reschedule_table_isolation.sql",
+      "sha256": "df22aaf2ec8e9ed925e79a929293591887e070b6dfece91e051b177a9196ae84",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "479_offline_merchant_approval.sql",
+      "sha256": "be342d9ce074b1c033f8b3b5a7a1a402f49bf8eb5978333f1a271e1721f4789b",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "481_event_cancellation_operations.sql",
+      "sha256": "143e0f1e648e4121be44d5f97c00ae87675907262a3a1fee3a53f2aff2708c7d",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "483_directory_category_text_computed.sql",
+      "sha256": "351fbdc2c2c68e812468a9326c4709525eeaa72f6a3a207eb4cfc7544ab34720",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "484_fix_loyalty_tier_multiplier.sql",
+      "sha256": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "485_verified_gateway_fee_claim.sql",
+      "sha256": "ae096b401171e111c0c43874f0449fe7af6235c048c9a1c341a04fadc9a1f66b",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "486_party_seating_groups_pins_atomic_plans.sql",
+      "sha256": "b4a1e1077fb3c1f296b5f637b53a52ac7a759816cd31a8c748a66916022554af",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "489_party_rsvp_questions.sql",
+      "sha256": "b6988bc9349140456f024a286dc113d464a7215e1c50b7c40cbd87d72c4fa760",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "490_party_reminder_delivery.sql",
+      "sha256": "cf55a7700b1bfe2cdfd4b3c2a90e6c797c74ba1a9ab30c0d0626c521ba9251fc",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "491_private_document_storage.sql",
+      "sha256": "a89883986b2cfe77da04e219777dadbea8e36abaf8114a41462dc4f026fa204a",
+      "classification": "existing-storage-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "492_verification_public_upload_guard.sql",
+      "sha256": "18377b0c9e8ebb890a8a5fa1b640781c9ec3894ff3738673a4af8a3d8ba353dc",
+      "classification": "existing-storage-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "493_shared_conversation_binding.sql",
+      "sha256": "ff7eb4a064ab69826becc1678231e452f9501a0f9ce130590e86de9d65c088cd",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "494_business_status_step_up.sql",
+      "sha256": "36481136ec6c2cacd9e6acee6df7369298e04c852d073dbf812b7a976e873141",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "495_embedded_signup_sessions.sql",
+      "sha256": "56b8e530575c53471b173c0bf83ad99148c2fa185cb3844935327287d538b2de",
+      "classification": "environment-specific-final-state-review",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "496_channel_number_continuity.sql",
+      "sha256": "7f6bda04d787fbcef2ae31ed2be42dd09e14c8580ece7eba545064055b8c2f31",
+      "classification": "held-channel-continuity",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "498_manual_settlement_rejection_guard.sql",
+      "sha256": "b85404c7423095fb14a279d60c5116fc67e0133291b43b581e76ce66439254a0",
+      "classification": "existing-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "500_accounting_hold_preparation.sql",
+      "sha256": "4496189a508616d74bd08c5fd5e80cbcd4bde6ff262c717447ca32ec1200aa1f",
+      "classification": "existing-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "501_accounting_cutover_installer.sql",
+      "sha256": "f060d8c2886e91fa151291101bd8378ed83c31359c38de4d0f65577947a25cd6",
+      "classification": "existing-active-accounting-contract",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "503_recurring_cancellation_compatibility.sql",
+      "sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67",
+      "classification": "forward-cumulative-cancellation",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "504_party_slug_foundation.sql",
+      "sha256": "561774893082a84f9cf2e9bb649f0813bddccc678db307d08d8adda102fa48b4",
+      "classification": "forward-nullable-party-slug",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "505_owner_subscription_downgrade.sql",
+      "sha256": "8562fa1dce8d984c450cd206bad267ca7d932b171c3c7de0f21bcf4bc34b5ee2",
+      "classification": "forward-server-authorized-subscription-downgrade",
+      "final_state": "unfrozen"
+    },
+    {
+      "name": "506_full_release_additive_foundation.sql",
+      "sha256": "165732ee47865af9ae2c37e7cb907d7a5c59e5cbe5b9540817b7693b07b66bf5",
+      "classification": "expand-before-app-preserve-legacy-writers-contract-437-446-after-app",
+      "final_state": "unfrozen"
+    }
+  ],
+  "profiles": {
+    "production": {
+      "project_ref": "cxcmiqotkowhxinjbytg",
+      "runtime_controls": {
+        "channel_operations": {
+          "project": false,
+          "build": false,
+          "runtime": false
+        },
+        "scheduled_jobs_paused": true,
+        "signup_open": false
+      },
+      "migration_dispositions": [
+        {
+          "name": "292_atomic_payout_claim.sql",
+          "sha256": "30469f60b57a728b41406a55e14799e1c20c4d6b5c785e34eab5c610d417b1d5",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "426_staging_payment_setup_parity.sql",
+          "sha256": "d238cd83db4c3a8798c791e8c0d54d0a72f72428f025faad0f5244d3807c3b4b",
+          "classification": "OMIT_STAGING_ONLY_HISTORY",
+          "operations": []
+        },
+        {
+          "name": "427_paystack_saved_card_persistence.sql",
+          "sha256": "03a35c8d704ccec30d5dc33d343510ede16bf35c7fa54ab7efd05a8c986a0f87",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "427_paystack_saved_card_persistence",
+              "statement_sha256": "03a35c8d704ccec30d5dc33d343510ede16bf35c7fa54ab7efd05a8c986a0f87"
+            }
+          ]
+        },
+        {
+          "name": "428_customer_preferred_response_language.sql",
+          "sha256": "198c00744087e0d69e2d337413047f242b9e2cdb70fc2f68949ba872a4d7a1e8",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "429_admin_assisted_onboarding.sql",
+          "sha256": "8698c3e7883b6784b8750de813499cadcf361151af12facd86ecb2ea46a635d2",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "430_shared_number_tenant_isolation.sql",
+          "sha256": "04bd1fb7f6d9ca84e4faca94ba5d01a8acf32b67d13c60465a1d66ee6df1a653",
+          "classification": "HELD_CHANNEL_OPERATIONS",
+          "operations": []
+        },
+        {
+          "name": "431_engage_segments.sql",
+          "sha256": "c00a105bbfa5bf4ea4cdb5f275604c8f83718aa3b546c198eb75d7c92425b7a5",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "432_engage_segments_acl.sql",
+          "sha256": "ef6d3d08c6d1231c81715ada80a390061a8e7c0c1456dd4aff3982770c32f8cc",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "433_p0_business_members_acl_containment.sql",
+          "sha256": "00274b93d8c50bebc59a745f2c54fb1cd55a00b61ebc590da2721dcbcfd9d5a0",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "434_atomic_loyalty_reward_receipt.sql",
+          "sha256": "78171fce64e1adc4885f97684cc939ce8707450e2b3b606d610abe36704a58be",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "434_atomic_loyalty_reward_receipt",
+              "statement_sha256": "78171fce64e1adc4885f97684cc939ce8707450e2b3b606d610abe36704a58be"
+            }
+          ]
+        },
+        {
+          "name": "435_ordering_price_authority.sql",
+          "sha256": "39a43ce188b2074de2e790d079276bdd7b2ccc6ffa8d30b4f6faa808b57afc1f",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_post_application_contract_435_437_442_446_449_450_451",
+              "statement_sha256": "9fe338f88ef06e15efa1770b96fa333a74e106d44776b346dbcec41dbc6ec2c9"
+            }
+          ]
+        },
+        {
+          "name": "437_native_whatsapp_forms.sql",
+          "sha256": "925f6219be9c50f52ae0a511536adc428503e20c7abbe738fc5e032013ad6a30",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_post_application_contract_435_437_442_446_449_450_451",
+              "statement_sha256": "9fe338f88ef06e15efa1770b96fa333a74e106d44776b346dbcec41dbc6ec2c9"
+            }
+          ]
+        },
+        {
+          "name": "438_business_app_coexistence.sql",
+          "sha256": "15d43b824525fb37dbd308e6e188f522a54047a91d38e85eaac38e293888b7fd",
+          "classification": "OMIT_UNREACHABLE_COEXISTENCE_NONCE_PATH",
+          "operations": []
+        },
+        {
+          "name": "439_admin_mfa_enforcement.sql",
+          "sha256": "75045767e49a5a8039a4615397d076d5ac3898769383997afab4030d6a9e9bd3",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "440_payout_linkage_guard.sql",
+          "sha256": "59aa9bc8258bf8c0c62a0330229de2321c0682e731a0ac634a1851647bce7249",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "441_payout_account_atomic_swap.sql",
+          "sha256": "011a123ce56b3fa7ea4921ccbfe1409c122f44b543380481b61311a2758743b7",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "full_release_payout_account_expansion_441_506",
+              "statement_sha256": "fb91221cf3f41c46acccbfd64f7f7a2c6cc832d58c26125bbc6301546d92a0d0"
+            }
+          ]
+        },
+        {
+          "name": "442_business_server_managed_columns.sql",
+          "sha256": "b812c1b94702fd35fcb4561a741d8751932d1831b9b136875a0c6c7432cd0767",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_post_application_contract_435_437_442_446_449_450_451",
+              "statement_sha256": "9fe338f88ef06e15efa1770b96fa333a74e106d44776b346dbcec41dbc6ec2c9"
+            }
+          ]
+        },
+        {
+          "name": "443_byo_webhook_secret_hash.sql",
+          "sha256": "d1d02593f334aa72cd0aaad26eb249abd0a7602a349ffb3fa6d8ef20adc42a54",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "443_byo_webhook_secret_hash",
+              "statement_sha256": "d1d02593f334aa72cd0aaad26eb249abd0a7602a349ffb3fa6d8ef20adc42a54"
+            }
+          ]
+        },
+        {
+          "name": "444_reject_payout_release_adjustments.sql",
+          "sha256": "cb0398b2186a361ddccfd2bebfe9321e5e6df8c1e3e3aff16de262af5edddc6f",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "445_bot_translation_overrides.sql",
+          "sha256": "1c26ed0b9f895f6e08b8e511fd4550adb42cdec9f16346e43e80fd63e7413023",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "446_payout_accounts_server_only.sql",
+          "sha256": "22a10369127e7147c29c8f76dd521e408a541619440b785f3d4e600f1e670f7f",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_post_application_contract_435_437_442_446_449_450_451",
+              "statement_sha256": "9fe338f88ef06e15efa1770b96fa333a74e106d44776b346dbcec41dbc6ec2c9"
+            }
+          ]
+        },
+        {
+          "name": "447_directory_fuzzy_search.sql",
+          "sha256": "e74e2c4cc0f67248bb57b9fba3fd788a9170416e83af9c9d04290ef0406bc529",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "447_directory_fuzzy_search",
+              "statement_sha256": "e74e2c4cc0f67248bb57b9fba3fd788a9170416e83af9c9d04290ef0406bc529"
+            }
+          ]
+        },
+        {
+          "name": "448_business_bank_accounts_server_only.sql",
+          "sha256": "bd15cf736cdb4082b20a9f7af96829b8ffdf44b580d2f41640f475f60601f13f",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "448_business_bank_accounts_server_only",
+              "statement_sha256": "bd15cf736cdb4082b20a9f7af96829b8ffdf44b580d2f41640f475f60601f13f"
+            }
+          ]
+        },
+        {
+          "name": "449_least_privilege_acl_contracts_channels.sql",
+          "sha256": "c98d12e8a6cd339ec2a2260b76e8acd3fd4f22d671a07d7da06de024fbf3076c",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_post_application_contract_435_437_442_446_449_450_451",
+              "statement_sha256": "9fe338f88ef06e15efa1770b96fa333a74e106d44776b346dbcec41dbc6ec2c9"
+            }
+          ]
+        },
+        {
+          "name": "450_contracts_zero_signer_trigger.sql",
+          "sha256": "04830a72b413aba272ab81e59fd6a0a4944812300607907068c5dae90b8119da",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_post_application_contract_435_437_442_446_449_450_451",
+              "statement_sha256": "9fe338f88ef06e15efa1770b96fa333a74e106d44776b346dbcec41dbc6ec2c9"
+            }
+          ]
+        },
+        {
+          "name": "451_contract_signers_lock_for_update.sql",
+          "sha256": "e3cb6095dddf76c8bbcf067a7c71f3d8d5fa04b6532262df73f71b2f7cf85927",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_post_application_contract_435_437_442_446_449_450_451",
+              "statement_sha256": "9fe338f88ef06e15efa1770b96fa333a74e106d44776b346dbcec41dbc6ec2c9"
+            }
+          ]
+        },
+        {
+          "name": "452_cancellation_intent_charge_gate.sql",
+          "sha256": "b1cc99e2a6ef98a9a00627da87e1d450cfb32d8d18fbbec80e8763dc224c52cd",
+          "classification": "SUPERSEDED_BY_503_COMPATIBILITY",
+          "operations": []
+        },
+        {
+          "name": "453_settlement_confirmation.sql",
+          "sha256": "1e98194dc621130682e17bc936a59995f4a8ed891114172f2f77de01cfb7a9f3",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "454_settlement_force_reconciliation.sql",
+          "sha256": "a07856251b3ddbd7ee35d72a4042f7a68675d393e28bea43bc1ecbe9895e33e6",
+          "classification": "PRESERVE_OBSERVED_DISABLED_PAYOUT_SCOPE",
+          "operations": []
+        },
+        {
+          "name": "455_party_slug_updated_at.sql",
+          "sha256": "d675da2d94f0488f4090ef4eda27d1ef7be9312683573b01a584265ce60bc462",
+          "classification": "OMIT_UNNEEDED_BACKFILL_TIMESTAMP",
+          "operations": []
+        },
+        {
+          "name": "456_guest_tags.sql",
+          "sha256": "433417c9dc4e998fb8f11cd24aadec11e33b10426030ad65ef8e799ce8870e66",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "456_guest_tags",
+              "statement_sha256": "433417c9dc4e998fb8f11cd24aadec11e33b10426030ad65ef8e799ce8870e66"
+            }
+          ]
+        },
+        {
+          "name": "457_party_tables_seats.sql",
+          "sha256": "4e5c057b105e58d25bae0f0525b71f534177db857de263eae852002694075bae",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "458_price_lock_correction.sql",
+          "sha256": "21ee6e36af5c949bbc65c90a11194e17ee98c9582bef68a44ae11d3af2295a82",
+          "classification": "OMIT_COMMERCIAL_REWRITE_PRESERVE_CURRENT_ROWS",
+          "operations": []
+        },
+        {
+          "name": "459_expand_business_categories.sql",
+          "sha256": "ea6857df447bf3dd8d654510a1332eb7885d90f155bdb48137d0d68108b17bbe",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "full_release_category_reference_459_460",
+              "statement_sha256": "56d8bbbb5e61c9122ceccbdf26ad238682b77e2d0958565f4858eab47ae12f40"
+            }
+          ]
+        },
+        {
+          "name": "460_category_sort_order_correction.sql",
+          "sha256": "9bff6a466fc65cc1e10eaaae0ac932d87b828e2e85967ee89c77333b3994b404",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "full_release_category_reference_459_460",
+              "statement_sha256": "56d8bbbb5e61c9122ceccbdf26ad238682b77e2d0958565f4858eab47ae12f40"
+            }
+          ]
+        },
+        {
+          "name": "461_cross_border_business_country_billing.sql",
+          "sha256": "99a3e0fad630e4a35ba74618cb73ccf55c93534460a685cce0b531fe04f586ba",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "461_cross_border_business_country_billing",
+              "statement_sha256": "99a3e0fad630e4a35ba74618cb73ccf55c93534460a685cce0b531fe04f586ba"
+            }
+          ]
+        },
+        {
+          "name": "462_product_gallery_images.sql",
+          "sha256": "16436c4beb1d424b0d4c844aaeefcbd412fe9086145d3f3783bfb7c32e51a2aa",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "463_secdef_acl_audit_hardening.sql",
+          "sha256": "29442736f245820d41687468066b4ab92915f065c85b8c32a71f6c9f44bd752b",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "463_secdef_acl_audit_hardening",
+              "statement_sha256": "29442736f245820d41687468066b4ab92915f065c85b8c32a71f6c9f44bd752b"
+            }
+          ]
+        },
+        {
+          "name": "465_trial_one_per_phone_identity.sql",
+          "sha256": "31d97cf51c6eb1870772abcf6b3970b99d9469b652bdc156688d738c9d6313f2",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "465_trial_one_per_phone_identity",
+              "statement_sha256": "31d97cf51c6eb1870772abcf6b3970b99d9469b652bdc156688d738c9d6313f2"
+            }
+          ]
+        },
+        {
+          "name": "466_payout_currency_authority.sql",
+          "sha256": "a9b1e1d1ff5dd67ec56c5c6cf9f1dde7c7725b0c93747b4ae72143c3d7f72dcb",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "467_oct25_stripe_price_refresh.sql",
+          "sha256": "6531ab758d7a6e4a0891fbc51f49b08983b9729e323dae4e176ef282574d821b",
+          "classification": "OMIT_COMMERCIAL_REWRITE_PRESERVE_CURRENT_ROWS",
+          "operations": []
+        },
+        {
+          "name": "467b_save_refs_tier_prices_upgrade.sql",
+          "sha256": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "467b_save_refs_tier_prices_upgrade",
+              "statement_sha256": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0"
+            }
+          ]
+        },
+        {
+          "name": "468_payout_dedup_currency_authority.sql",
+          "sha256": "69f051660c7f77247ab80366dae7736420d58332f8541e5e67dae44b1c4e2763",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "469_settlement_currency_authority.sql",
+          "sha256": "fcb8dba9e0ba561d1269973979ca33cbd07579da960dcf6cd7687c3a41d7f754",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "470_ticket_tier_purchase_and_capacity_guards.sql",
+          "sha256": "013b5b622ea8b548622e68a7cec322f63e806dc103603d01970abf1f48dfdc73",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "470_ticket_tier_purchase_and_capacity_guards",
+              "statement_sha256": "013b5b622ea8b548622e68a7cec322f63e806dc103603d01970abf1f48dfdc73"
+            }
+          ]
+        },
+        {
+          "name": "471_cancel_pending_booking_navigation.sql",
+          "sha256": "487222e2fd81c46ae7a8814677c1ef2a94c7687fcf006a8e5fd54d727688e50f",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "471_cancel_pending_booking_navigation",
+              "statement_sha256": "487222e2fd81c46ae7a8814677c1ef2a94c7687fcf006a8e5fd54d727688e50f"
+            }
+          ]
+        },
+        {
+          "name": "472_refund_fee_allocation_period_fix.sql",
+          "sha256": "703edf5b5fdc961e2ab29696d0542525628b0971db45ca1ce3cb2f877d4782c3",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "474_api_key_atomic_issuance.sql",
+          "sha256": "1e0d564af2a7674e653d7106d7bc7e7017da40d5fd544aa58e6c2491db8979c9",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "476_seating_resources_table_reservation.sql",
+          "sha256": "38ac0e36272ea3643bd3dbca6c1b55b85a2c2f5ea43983c8a077239d51a63ae3",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "477_exclude_table_bookings_from_slot_capacity.sql",
+          "sha256": "5f55027b43ecdca109066da3455164bbce4d236e71f2ed73dd7fd5cc87594f17",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "478_reschedule_table_isolation.sql",
+          "sha256": "df22aaf2ec8e9ed925e79a929293591887e070b6dfece91e051b177a9196ae84",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "479_offline_merchant_approval.sql",
+          "sha256": "be342d9ce074b1c033f8b3b5a7a1a402f49bf8eb5978333f1a271e1721f4789b",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "481_event_cancellation_operations.sql",
+          "sha256": "143e0f1e648e4121be44d5f97c00ae87675907262a3a1fee3a53f2aff2708c7d",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "481_event_cancellation_operations",
+              "statement_sha256": "143e0f1e648e4121be44d5f97c00ae87675907262a3a1fee3a53f2aff2708c7d"
+            }
+          ]
+        },
+        {
+          "name": "483_directory_category_text_computed.sql",
+          "sha256": "351fbdc2c2c68e812468a9326c4709525eeaa72f6a3a207eb4cfc7544ab34720",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "484_fix_loyalty_tier_multiplier.sql",
+          "sha256": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "484_fix_loyalty_tier_multiplier",
+              "statement_sha256": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57"
+            }
+          ]
+        },
+        {
+          "name": "485_verified_gateway_fee_claim.sql",
+          "sha256": "ae096b401171e111c0c43874f0449fe7af6235c048c9a1c341a04fadc9a1f66b",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "486_party_seating_groups_pins_atomic_plans.sql",
+          "sha256": "b4a1e1077fb3c1f296b5f637b53a52ac7a759816cd31a8c748a66916022554af",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "489_party_rsvp_questions.sql",
+          "sha256": "b6988bc9349140456f024a286dc113d464a7215e1c50b7c40cbd87d72c4fa760",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "489_party_rsvp_questions",
+              "statement_sha256": "b6988bc9349140456f024a286dc113d464a7215e1c50b7c40cbd87d72c4fa760"
+            }
+          ]
+        },
+        {
+          "name": "490_party_reminder_delivery.sql",
+          "sha256": "cf55a7700b1bfe2cdfd4b3c2a90e6c797c74ba1a9ab30c0d0626c521ba9251fc",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "490_party_reminder_delivery",
+              "statement_sha256": "cf55a7700b1bfe2cdfd4b3c2a90e6c797c74ba1a9ab30c0d0626c521ba9251fc"
+            }
+          ]
+        },
+        {
+          "name": "491_private_document_storage.sql",
+          "sha256": "a89883986b2cfe77da04e219777dadbea8e36abaf8114a41462dc4f026fa204a",
+          "classification": "PRESERVE_INSTALLED_STORAGE_SECURITY",
+          "operations": []
+        },
+        {
+          "name": "492_verification_public_upload_guard.sql",
+          "sha256": "18377b0c9e8ebb890a8a5fa1b640781c9ec3894ff3738673a4af8a3d8ba353dc",
+          "classification": "PRESERVE_INSTALLED_STORAGE_SECURITY",
+          "operations": []
+        },
+        {
+          "name": "493_shared_conversation_binding.sql",
+          "sha256": "ff7eb4a064ab69826becc1678231e452f9501a0f9ce130590e86de9d65c088cd",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "494_business_status_step_up.sql",
+          "sha256": "36481136ec6c2cacd9e6acee6df7369298e04c852d073dbf812b7a976e873141",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "495_embedded_signup_sessions.sql",
+          "sha256": "56b8e530575c53471b173c0bf83ad99148c2fa185cb3844935327287d538b2de",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "496_channel_number_continuity.sql",
+          "sha256": "7f6bda04d787fbcef2ae31ed2be42dd09e14c8580ece7eba545064055b8c2f31",
+          "classification": "HELD_CHANNEL_OPERATIONS",
+          "operations": []
+        },
+        {
+          "name": "498_manual_settlement_rejection_guard.sql",
+          "sha256": "b85404c7423095fb14a279d60c5116fc67e0133291b43b581e76ce66439254a0",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "500_accounting_hold_preparation.sql",
+          "sha256": "4496189a508616d74bd08c5fd5e80cbcd4bde6ff262c717447ca32ec1200aa1f",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "501_accounting_cutover_installer.sql",
+          "sha256": "f060d8c2886e91fa151291101bd8378ed83c31359c38de4d0f65577947a25cd6",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "503_recurring_cancellation_compatibility.sql",
+          "sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "503_recurring_cancellation_compatibility",
+              "statement_sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67"
+            }
+          ]
+        },
+        {
+          "name": "504_party_slug_foundation.sql",
+          "sha256": "561774893082a84f9cf2e9bb649f0813bddccc678db307d08d8adda102fa48b4",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "505_owner_subscription_downgrade.sql",
+          "sha256": "8562fa1dce8d984c450cd206bad267ca7d932b171c3c7de0f21bcf4bc34b5ee2",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "505_owner_subscription_downgrade",
+              "statement_sha256": "8562fa1dce8d984c450cd206bad267ca7d932b171c3c7de0f21bcf4bc34b5ee2"
+            }
+          ]
+        },
+        {
+          "name": "506_full_release_additive_foundation.sql",
+          "sha256": "165732ee47865af9ae2c37e7cb907d7a5c59e5cbe5b9540817b7693b07b66bf5",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "full_release_payout_account_expansion_441_506",
+              "statement_sha256": "fb91221cf3f41c46acccbfd64f7f7a2c6cc832d58c26125bbc6301546d92a0d0"
+            }
+          ]
+        }
+      ],
+      "ledger_additions": [
+        {
+          "name": "427_paystack_saved_card_persistence",
+          "statement_sha256": "03a35c8d704ccec30d5dc33d343510ede16bf35c7fa54ab7efd05a8c986a0f87"
+        },
+        {
+          "name": "434_atomic_loyalty_reward_receipt",
+          "statement_sha256": "78171fce64e1adc4885f97684cc939ce8707450e2b3b606d610abe36704a58be"
+        },
+        {
+          "name": "full_release_payout_account_expansion_441_506",
+          "statement_sha256": "fb91221cf3f41c46acccbfd64f7f7a2c6cc832d58c26125bbc6301546d92a0d0"
+        },
+        {
+          "name": "467b_save_refs_tier_prices_upgrade",
+          "statement_sha256": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0"
+        },
+        {
+          "name": "484_fix_loyalty_tier_multiplier",
+          "statement_sha256": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57"
+        },
+        {
+          "name": "503_recurring_cancellation_compatibility",
+          "statement_sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67"
+        },
+        {
+          "name": "505_owner_subscription_downgrade",
+          "statement_sha256": "8562fa1dce8d984c450cd206bad267ca7d932b171c3c7de0f21bcf4bc34b5ee2"
+        },
+        {
+          "name": "443_byo_webhook_secret_hash",
+          "statement_sha256": "d1d02593f334aa72cd0aaad26eb249abd0a7602a349ffb3fa6d8ef20adc42a54"
+        },
+        {
+          "name": "447_directory_fuzzy_search",
+          "statement_sha256": "e74e2c4cc0f67248bb57b9fba3fd788a9170416e83af9c9d04290ef0406bc529"
+        },
+        {
+          "name": "448_business_bank_accounts_server_only",
+          "statement_sha256": "bd15cf736cdb4082b20a9f7af96829b8ffdf44b580d2f41640f475f60601f13f"
+        },
+        {
+          "name": "456_guest_tags",
+          "statement_sha256": "433417c9dc4e998fb8f11cd24aadec11e33b10426030ad65ef8e799ce8870e66"
+        },
+        {
+          "name": "461_cross_border_business_country_billing",
+          "statement_sha256": "99a3e0fad630e4a35ba74618cb73ccf55c93534460a685cce0b531fe04f586ba"
+        },
+        {
+          "name": "463_secdef_acl_audit_hardening",
+          "statement_sha256": "29442736f245820d41687468066b4ab92915f065c85b8c32a71f6c9f44bd752b"
+        },
+        {
+          "name": "465_trial_one_per_phone_identity",
+          "statement_sha256": "31d97cf51c6eb1870772abcf6b3970b99d9469b652bdc156688d738c9d6313f2"
+        },
+        {
+          "name": "470_ticket_tier_purchase_and_capacity_guards",
+          "statement_sha256": "013b5b622ea8b548622e68a7cec322f63e806dc103603d01970abf1f48dfdc73"
+        },
+        {
+          "name": "471_cancel_pending_booking_navigation",
+          "statement_sha256": "487222e2fd81c46ae7a8814677c1ef2a94c7687fcf006a8e5fd54d727688e50f"
+        },
+        {
+          "name": "481_event_cancellation_operations",
+          "statement_sha256": "143e0f1e648e4121be44d5f97c00ae87675907262a3a1fee3a53f2aff2708c7d"
+        },
+        {
+          "name": "489_party_rsvp_questions",
+          "statement_sha256": "b6988bc9349140456f024a286dc113d464a7215e1c50b7c40cbd87d72c4fa760"
+        },
+        {
+          "name": "490_party_reminder_delivery",
+          "statement_sha256": "cf55a7700b1bfe2cdfd4b3c2a90e6c797c74ba1a9ab30c0d0626c521ba9251fc"
+        },
+        {
+          "name": "full_release_category_reference_459_460",
+          "statement_sha256": "56d8bbbb5e61c9122ceccbdf26ad238682b77e2d0958565f4858eab47ae12f40"
+        }
+      ],
+      "required_phase": "pre_app"
+    },
+    "staging": {
+      "project_ref": "tqjvrzopvtczxfxiwmnz",
+      "runtime_controls": {
+        "channel_operations": {
+          "project": false,
+          "build": false,
+          "runtime": false
+        },
+        "scheduled_jobs_paused": true,
+        "signup_open": false
+      },
+      "migration_dispositions": [
+        {
+          "name": "292_atomic_payout_claim.sql",
+          "sha256": "30469f60b57a728b41406a55e14799e1c20c4d6b5c785e34eab5c610d417b1d5",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "426_staging_payment_setup_parity.sql",
+          "sha256": "d238cd83db4c3a8798c791e8c0d54d0a72f72428f025faad0f5244d3807c3b4b",
+          "classification": "OMIT_STAGING_ONLY_HISTORY",
+          "operations": []
+        },
+        {
+          "name": "427_paystack_saved_card_persistence.sql",
+          "sha256": "03a35c8d704ccec30d5dc33d343510ede16bf35c7fa54ab7efd05a8c986a0f87",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "428_customer_preferred_response_language.sql",
+          "sha256": "198c00744087e0d69e2d337413047f242b9e2cdb70fc2f68949ba872a4d7a1e8",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "429_admin_assisted_onboarding.sql",
+          "sha256": "8698c3e7883b6784b8750de813499cadcf361151af12facd86ecb2ea46a635d2",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "430_shared_number_tenant_isolation.sql",
+          "sha256": "04bd1fb7f6d9ca84e4faca94ba5d01a8acf32b67d13c60465a1d66ee6df1a653",
+          "classification": "HELD_CHANNEL_OPERATIONS",
+          "operations": []
+        },
+        {
+          "name": "431_engage_segments.sql",
+          "sha256": "c00a105bbfa5bf4ea4cdb5f275604c8f83718aa3b546c198eb75d7c92425b7a5",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "432_engage_segments_acl.sql",
+          "sha256": "ef6d3d08c6d1231c81715ada80a390061a8e7c0c1456dd4aff3982770c32f8cc",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "433_p0_business_members_acl_containment.sql",
+          "sha256": "00274b93d8c50bebc59a745f2c54fb1cd55a00b61ebc590da2721dcbcfd9d5a0",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "434_atomic_loyalty_reward_receipt.sql",
+          "sha256": "78171fce64e1adc4885f97684cc939ce8707450e2b3b606d610abe36704a58be",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "435_ordering_price_authority.sql",
+          "sha256": "39a43ce188b2074de2e790d079276bdd7b2ccc6ffa8d30b4f6faa808b57afc1f",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "437_native_whatsapp_forms.sql",
+          "sha256": "925f6219be9c50f52ae0a511536adc428503e20c7abbe738fc5e032013ad6a30",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "438_business_app_coexistence.sql",
+          "sha256": "15d43b824525fb37dbd308e6e188f522a54047a91d38e85eaac38e293888b7fd",
+          "classification": "OMIT_UNREACHABLE_COEXISTENCE_NONCE_PATH",
+          "operations": []
+        },
+        {
+          "name": "439_admin_mfa_enforcement.sql",
+          "sha256": "75045767e49a5a8039a4615397d076d5ac3898769383997afab4030d6a9e9bd3",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "440_payout_linkage_guard.sql",
+          "sha256": "59aa9bc8258bf8c0c62a0330229de2321c0682e731a0ac634a1851647bce7249",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "441_payout_account_atomic_swap.sql",
+          "sha256": "011a123ce56b3fa7ea4921ccbfe1409c122f44b543380481b61311a2758743b7",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "442_business_server_managed_columns.sql",
+          "sha256": "b812c1b94702fd35fcb4561a741d8751932d1831b9b136875a0c6c7432cd0767",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "443_byo_webhook_secret_hash.sql",
+          "sha256": "d1d02593f334aa72cd0aaad26eb249abd0a7602a349ffb3fa6d8ef20adc42a54",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "444_reject_payout_release_adjustments.sql",
+          "sha256": "cb0398b2186a361ddccfd2bebfe9321e5e6df8c1e3e3aff16de262af5edddc6f",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "445_bot_translation_overrides.sql",
+          "sha256": "1c26ed0b9f895f6e08b8e511fd4550adb42cdec9f16346e43e80fd63e7413023",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "446_payout_accounts_server_only.sql",
+          "sha256": "22a10369127e7147c29c8f76dd521e408a541619440b785f3d4e600f1e670f7f",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "447_directory_fuzzy_search.sql",
+          "sha256": "e74e2c4cc0f67248bb57b9fba3fd788a9170416e83af9c9d04290ef0406bc529",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "448_business_bank_accounts_server_only.sql",
+          "sha256": "bd15cf736cdb4082b20a9f7af96829b8ffdf44b580d2f41640f475f60601f13f",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "449_least_privilege_acl_contracts_channels.sql",
+          "sha256": "c98d12e8a6cd339ec2a2260b76e8acd3fd4f22d671a07d7da06de024fbf3076c",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "450_contracts_zero_signer_trigger.sql",
+          "sha256": "04830a72b413aba272ab81e59fd6a0a4944812300607907068c5dae90b8119da",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_contract_finality_450_451",
+              "statement_sha256": "13c00bcaeea4a92def424eb071c51b9050349c5c6701c61bddbbff36de6adadb"
+            }
+          ]
+        },
+        {
+          "name": "451_contract_signers_lock_for_update.sql",
+          "sha256": "e3cb6095dddf76c8bbcf067a7c71f3d8d5fa04b6532262df73f71b2f7cf85927",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "post_app",
+              "operation": "full_release_contract_finality_450_451",
+              "statement_sha256": "13c00bcaeea4a92def424eb071c51b9050349c5c6701c61bddbbff36de6adadb"
+            }
+          ]
+        },
+        {
+          "name": "452_cancellation_intent_charge_gate.sql",
+          "sha256": "b1cc99e2a6ef98a9a00627da87e1d450cfb32d8d18fbbec80e8763dc224c52cd",
+          "classification": "SUPERSEDED_BY_503_COMPATIBILITY",
+          "operations": []
+        },
+        {
+          "name": "453_settlement_confirmation.sql",
+          "sha256": "1e98194dc621130682e17bc936a59995f4a8ed891114172f2f77de01cfb7a9f3",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "454_settlement_force_reconciliation.sql",
+          "sha256": "a07856251b3ddbd7ee35d72a4042f7a68675d393e28bea43bc1ecbe9895e33e6",
+          "classification": "PRESERVE_OBSERVED_DISABLED_PAYOUT_SCOPE",
+          "operations": []
+        },
+        {
+          "name": "455_party_slug_updated_at.sql",
+          "sha256": "d675da2d94f0488f4090ef4eda27d1ef7be9312683573b01a584265ce60bc462",
+          "classification": "OMIT_UNNEEDED_BACKFILL_TIMESTAMP",
+          "operations": []
+        },
+        {
+          "name": "456_guest_tags.sql",
+          "sha256": "433417c9dc4e998fb8f11cd24aadec11e33b10426030ad65ef8e799ce8870e66",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "456_guest_tags",
+              "statement_sha256": "433417c9dc4e998fb8f11cd24aadec11e33b10426030ad65ef8e799ce8870e66"
+            }
+          ]
+        },
+        {
+          "name": "457_party_tables_seats.sql",
+          "sha256": "4e5c057b105e58d25bae0f0525b71f534177db857de263eae852002694075bae",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "458_price_lock_correction.sql",
+          "sha256": "21ee6e36af5c949bbc65c90a11194e17ee98c9582bef68a44ae11d3af2295a82",
+          "classification": "OMIT_COMMERCIAL_REWRITE_PRESERVE_CURRENT_ROWS",
+          "operations": []
+        },
+        {
+          "name": "459_expand_business_categories.sql",
+          "sha256": "ea6857df447bf3dd8d654510a1332eb7885d90f155bdb48137d0d68108b17bbe",
+          "classification": "PRESERVE_STAGE_REFERENCE_PROJECTION",
+          "operations": []
+        },
+        {
+          "name": "460_category_sort_order_correction.sql",
+          "sha256": "9bff6a466fc65cc1e10eaaae0ac932d87b828e2e85967ee89c77333b3994b404",
+          "classification": "PRESERVE_STAGE_REFERENCE_PROJECTION",
+          "operations": []
+        },
+        {
+          "name": "461_cross_border_business_country_billing.sql",
+          "sha256": "99a3e0fad630e4a35ba74618cb73ccf55c93534460a685cce0b531fe04f586ba",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "462_product_gallery_images.sql",
+          "sha256": "16436c4beb1d424b0d4c844aaeefcbd412fe9086145d3f3783bfb7c32e51a2aa",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "463_secdef_acl_audit_hardening.sql",
+          "sha256": "29442736f245820d41687468066b4ab92915f065c85b8c32a71f6c9f44bd752b",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "463_secdef_acl_audit_hardening",
+              "statement_sha256": "29442736f245820d41687468066b4ab92915f065c85b8c32a71f6c9f44bd752b"
+            }
+          ]
+        },
+        {
+          "name": "465_trial_one_per_phone_identity.sql",
+          "sha256": "31d97cf51c6eb1870772abcf6b3970b99d9469b652bdc156688d738c9d6313f2",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "465_trial_one_per_phone_identity",
+              "statement_sha256": "31d97cf51c6eb1870772abcf6b3970b99d9469b652bdc156688d738c9d6313f2"
+            }
+          ]
+        },
+        {
+          "name": "466_payout_currency_authority.sql",
+          "sha256": "a9b1e1d1ff5dd67ec56c5c6cf9f1dde7c7725b0c93747b4ae72143c3d7f72dcb",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "467_oct25_stripe_price_refresh.sql",
+          "sha256": "6531ab758d7a6e4a0891fbc51f49b08983b9729e323dae4e176ef282574d821b",
+          "classification": "OMIT_COMMERCIAL_REWRITE_PRESERVE_CURRENT_ROWS",
+          "operations": []
+        },
+        {
+          "name": "467b_save_refs_tier_prices_upgrade.sql",
+          "sha256": "2f37c5341905f44f8d1729beeaca32d7fe07633f60ae805fc47e0d6f9bf81cc0",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "468_payout_dedup_currency_authority.sql",
+          "sha256": "69f051660c7f77247ab80366dae7736420d58332f8541e5e67dae44b1c4e2763",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "469_settlement_currency_authority.sql",
+          "sha256": "fcb8dba9e0ba561d1269973979ca33cbd07579da960dcf6cd7687c3a41d7f754",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "470_ticket_tier_purchase_and_capacity_guards.sql",
+          "sha256": "013b5b622ea8b548622e68a7cec322f63e806dc103603d01970abf1f48dfdc73",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "471_cancel_pending_booking_navigation.sql",
+          "sha256": "487222e2fd81c46ae7a8814677c1ef2a94c7687fcf006a8e5fd54d727688e50f",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "472_refund_fee_allocation_period_fix.sql",
+          "sha256": "703edf5b5fdc961e2ab29696d0542525628b0971db45ca1ce3cb2f877d4782c3",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "474_api_key_atomic_issuance.sql",
+          "sha256": "1e0d564af2a7674e653d7106d7bc7e7017da40d5fd544aa58e6c2491db8979c9",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "476_seating_resources_table_reservation.sql",
+          "sha256": "38ac0e36272ea3643bd3dbca6c1b55b85a2c2f5ea43983c8a077239d51a63ae3",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "477_exclude_table_bookings_from_slot_capacity.sql",
+          "sha256": "5f55027b43ecdca109066da3455164bbce4d236e71f2ed73dd7fd5cc87594f17",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "478_reschedule_table_isolation.sql",
+          "sha256": "df22aaf2ec8e9ed925e79a929293591887e070b6dfece91e051b177a9196ae84",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "479_offline_merchant_approval.sql",
+          "sha256": "be342d9ce074b1c033f8b3b5a7a1a402f49bf8eb5978333f1a271e1721f4789b",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "481_event_cancellation_operations.sql",
+          "sha256": "143e0f1e648e4121be44d5f97c00ae87675907262a3a1fee3a53f2aff2708c7d",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "481_event_cancellation_operations",
+              "statement_sha256": "143e0f1e648e4121be44d5f97c00ae87675907262a3a1fee3a53f2aff2708c7d"
+            }
+          ]
+        },
+        {
+          "name": "483_directory_category_text_computed.sql",
+          "sha256": "351fbdc2c2c68e812468a9326c4709525eeaa72f6a3a207eb4cfc7544ab34720",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "484_fix_loyalty_tier_multiplier.sql",
+          "sha256": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "484_fix_loyalty_tier_multiplier",
+              "statement_sha256": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57"
+            }
+          ]
+        },
+        {
+          "name": "485_verified_gateway_fee_claim.sql",
+          "sha256": "ae096b401171e111c0c43874f0449fe7af6235c048c9a1c341a04fadc9a1f66b",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "486_party_seating_groups_pins_atomic_plans.sql",
+          "sha256": "b4a1e1077fb3c1f296b5f637b53a52ac7a759816cd31a8c748a66916022554af",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "489_party_rsvp_questions.sql",
+          "sha256": "b6988bc9349140456f024a286dc113d464a7215e1c50b7c40cbd87d72c4fa760",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "490_party_reminder_delivery.sql",
+          "sha256": "cf55a7700b1bfe2cdfd4b3c2a90e6c797c74ba1a9ab30c0d0626c521ba9251fc",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "491_private_document_storage.sql",
+          "sha256": "a89883986b2cfe77da04e219777dadbea8e36abaf8114a41462dc4f026fa204a",
+          "classification": "PRESERVE_INSTALLED_STORAGE_SECURITY",
+          "operations": []
+        },
+        {
+          "name": "492_verification_public_upload_guard.sql",
+          "sha256": "18377b0c9e8ebb890a8a5fa1b640781c9ec3894ff3738673a4af8a3d8ba353dc",
+          "classification": "PRESERVE_INSTALLED_STORAGE_SECURITY",
+          "operations": []
+        },
+        {
+          "name": "493_shared_conversation_binding.sql",
+          "sha256": "ff7eb4a064ab69826becc1678231e452f9501a0f9ce130590e86de9d65c088cd",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "494_business_status_step_up.sql",
+          "sha256": "36481136ec6c2cacd9e6acee6df7369298e04c852d073dbf812b7a976e873141",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "495_embedded_signup_sessions.sql",
+          "sha256": "56b8e530575c53471b173c0bf83ad99148c2fa185cb3844935327287d538b2de",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        },
+        {
+          "name": "496_channel_number_continuity.sql",
+          "sha256": "7f6bda04d787fbcef2ae31ed2be42dd09e14c8580ece7eba545064055b8c2f31",
+          "classification": "HELD_CHANNEL_OPERATIONS",
+          "operations": []
+        },
+        {
+          "name": "498_manual_settlement_rejection_guard.sql",
+          "sha256": "b85404c7423095fb14a279d60c5116fc67e0133291b43b581e76ce66439254a0",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "500_accounting_hold_preparation.sql",
+          "sha256": "4496189a508616d74bd08c5fd5e80cbcd4bde6ff262c717447ca32ec1200aa1f",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "501_accounting_cutover_installer.sql",
+          "sha256": "f060d8c2886e91fa151291101bd8378ed83c31359c38de4d0f65577947a25cd6",
+          "classification": "PRESERVE_CUMULATIVE_ACTIVE_ACCOUNTING",
+          "operations": []
+        },
+        {
+          "name": "503_recurring_cancellation_compatibility.sql",
+          "sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "503_recurring_cancellation_compatibility",
+              "statement_sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67"
+            }
+          ]
+        },
+        {
+          "name": "504_party_slug_foundation.sql",
+          "sha256": "561774893082a84f9cf2e9bb649f0813bddccc678db307d08d8adda102fa48b4",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "504_party_slug_foundation",
+              "statement_sha256": "561774893082a84f9cf2e9bb649f0813bddccc678db307d08d8adda102fa48b4"
+            }
+          ]
+        },
+        {
+          "name": "505_owner_subscription_downgrade.sql",
+          "sha256": "8562fa1dce8d984c450cd206bad267ca7d932b171c3c7de0f21bcf4bc34b5ee2",
+          "classification": "FIXED_OPERATION_PHASE",
+          "operations": [
+            {
+              "phase": "pre_app",
+              "operation": "505_owner_subscription_downgrade",
+              "statement_sha256": "8562fa1dce8d984c450cd206bad267ca7d932b171c3c7de0f21bcf4bc34b5ee2"
+            }
+          ]
+        },
+        {
+          "name": "506_full_release_additive_foundation.sql",
+          "sha256": "165732ee47865af9ae2c37e7cb907d7a5c59e5cbe5b9540817b7693b07b66bf5",
+          "classification": "PRESERVE_OBSERVED_FINAL_STATE",
+          "operations": []
+        }
+      ],
+      "ledger_additions": [
+        {
+          "name": "484_fix_loyalty_tier_multiplier",
+          "statement_sha256": "4ce592265b597f6bb3ca226c71de89afc81fd998ca6a87ba8e5236f49e799f57"
+        },
+        {
+          "name": "503_recurring_cancellation_compatibility",
+          "statement_sha256": "75bd7817728dea3696188e573b94c1a1dbb0869415eebe4172ffcdc935c81c67"
+        },
+        {
+          "name": "505_owner_subscription_downgrade",
+          "statement_sha256": "8562fa1dce8d984c450cd206bad267ca7d932b171c3c7de0f21bcf4bc34b5ee2"
+        },
+        {
+          "name": "456_guest_tags",
+          "statement_sha256": "433417c9dc4e998fb8f11cd24aadec11e33b10426030ad65ef8e799ce8870e66"
+        },
+        {
+          "name": "463_secdef_acl_audit_hardening",
+          "statement_sha256": "29442736f245820d41687468066b4ab92915f065c85b8c32a71f6c9f44bd752b"
+        },
+        {
+          "name": "465_trial_one_per_phone_identity",
+          "statement_sha256": "31d97cf51c6eb1870772abcf6b3970b99d9469b652bdc156688d738c9d6313f2"
+        },
+        {
+          "name": "481_event_cancellation_operations",
+          "statement_sha256": "143e0f1e648e4121be44d5f97c00ae87675907262a3a1fee3a53f2aff2708c7d"
+        },
+        {
+          "name": "504_party_slug_foundation",
+          "statement_sha256": "561774893082a84f9cf2e9bb649f0813bddccc678db307d08d8adda102fa48b4"
+        },
+        {
+          "name": "full_release_contract_finality_450_451",
+          "statement_sha256": "13c00bcaeea4a92def424eb071c51b9050349c5c6701c61bddbbff36de6adadb"
+        }
+      ],
+      "required_phase": "post_app"
+    }
+  },
+  "phase_order": {
+    "pre_app": "reviewed-additive-and-compatible-prerequisites",
+    "post_app_sources": [
+      "435_ordering_price_authority.sql",
+      "437_native_whatsapp_forms.sql",
+      "442_business_server_managed_columns.sql",
+      "446_payout_accounts_server_only.sql",
+      "449_least_privilege_acl_contracts_channels.sql",
+      "450_contracts_zero_signer_trigger.sql",
+      "451_contract_signers_lock_for_update.sql"
+    ]
+  },
+  "catalog_contract_sha256": "8289693b0c09c4dad44934e53af7a0fe1dbe98fded817befd73563a0a77336c4"
+}

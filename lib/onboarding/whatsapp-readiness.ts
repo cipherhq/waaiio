@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 /** Read-only WhatsApp allocation readiness for admin assistance.
  * Never infer readiness from countries.is_active or a requested onboarding method.
  * Treat unrecognized channel types as pending, not an implicit platform fallback.
@@ -107,6 +108,7 @@ export interface SharedChannelAllocationResult {
   idempotent?: boolean;
   repaired?: boolean;
   reason?: string;
+  unavailable?: true;
 }
 
 /**
@@ -126,6 +128,7 @@ export async function allocateSharedChannelWithFallback(
   businessCountry: string | null | undefined,
   options?: { repairStaleSharedChannel?: boolean },
 ): Promise<{ data: SharedChannelAllocationResult | null; error: { message: string } | null }> {
+  if (!channelOperationsEnabled()) return { data: { allocated: false, unavailable: true, reason: CHANNEL_OPERATIONS_UNAVAILABLE.code }, error: null };
   if (!businessCountry) {
     return {
       data: { allocated: false, reason: 'missing_business_country' },

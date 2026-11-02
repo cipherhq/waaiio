@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { CATEGORY_FLOW_MAP, generateBotCode, generateSlug, getPayoutLimit, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
 import { initCapabilities } from '@/lib/capabilities/service';
@@ -43,6 +44,7 @@ async function allocateUnique(service: SupabaseClient, column: 'slug' | 'bot_cod
 }
 
 export async function provisionPendingBusiness(service: SupabaseClient, input: ProvisionBusinessInput) {
+  if (!channelOperationsEnabled()) throw new OnboardingProvisionError(CHANNEL_OPERATIONS_UNAVAILABLE.message, 503);
   const requested = input.customBotCode
     ? input.customBotCode.trim().toUpperCase().replace(/\s+/g, '-').replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').slice(0, 30)
     : generateBotCode(input.name);
