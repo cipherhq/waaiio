@@ -15,6 +15,13 @@ vi.mock('../reduced-payout-policy.mjs', async(importOriginal)=>{
  const bytes='// fixture';
  return {...actual,PAYOUT_EVIDENCE_POLICY:{...actual.PAYOUT_EVIDENCE_POLICY,schema_contracts:{...actual.PAYOUT_EVIDENCE_POLICY.schema_contracts,canonical_sources:[{name:'498_manual_settlement_rejection_guard.sql',sha256:createHash('sha256').update(bytes).digest('hex')}]}}};
 });
+// Manual-alias orchestration uses the same synthetic source/SQL inventory as
+// v2 fixtures; real reviewed source and SQL proofs have their separate suites.
+vi.mock('../reduced-accounting-policy.mjs',async(importOriginal)=>{
+ const actual:any=await importOriginal();const p=await import('../reduced-payout-policy.mjs');const {createHash}=await import('node:crypto');
+ const h=createHash('sha256').update('// fixture').digest('hex');
+ return {...actual,ACCOUNTING_TARGETS:Object.fromEntries(Object.entries(p.PAYOUT_TARGETS).map(([kind,c]:any)=>[kind,{...c,blobs:Object.fromEntries(c.allowed.map(file=>[file,h]))}])),ACCOUNTING_SQL_TESTS:p.INTEGRATION_SQL_TESTS,ACCOUNTING_RUNTIME_SOURCES:p.INTEGRATION_RUNTIME_SOURCES,ACCOUNTING_EVIDENCE_POLICY:{...actual.ACCOUNTING_EVIDENCE_POLICY,schema_contracts:{...actual.ACCOUNTING_EVIDENCE_POLICY.schema_contracts,canonical_sources:p.PAYOUT_EVIDENCE_POLICY.schema_contracts.canonical_sources}}};
+});
 let v2=false;
 const configFor=(kind:string)=>v2?{...TARGETS[kind],...PAYOUT_TARGETS[kind]}:TARGETS[kind];
 const tempParent=resolve('scripts/__tests__/.reduced-integration');
@@ -39,12 +46,12 @@ beforeEach(()=>{
  }
  if(v2){receipts.integration=integrationReceipt();artifacts.integration={id:203,name:'reduced-code-integration-123-1',expired:false,workflow_run:{id:123,head_sha:integration},digest:''};archive('integration');}
  persist();mkdirSync(join(dir,'bin'));
- const program=`#!/usr/bin/env node\nconst fs=require('fs');const p=${JSON.stringify(join(dir,'state.json'))};const s=JSON.parse(fs.readFileSync(p));const kind=process.env.VERCEL_PROJECT_ID===${JSON.stringify(TARGETS.merchant.project)}?'merchant':'admin';fs.appendFileSync(${JSON.stringify(join(dir,'cli.log'))},JSON.stringify({args:process.argv.slice(2),kind,cwd:process.cwd(),sha:process.env.GITHUB_SHA,env:process.env})+'\\n');if(s.failAdmin&&kind==='admin')process.exit(1);s[kind]={id:'dpl_'+kind+'new',sha:process.env.GITHUB_SHA,env:process.env};fs.writeFileSync(p,JSON.stringify(s));console.log('https://'+kind+'-fixture.vercel.app');\n`;
+ const program=`#!/usr/bin/env node\nconst fs=require('fs');const p=${JSON.stringify(join(dir,'state.json'))};const s=JSON.parse(fs.readFileSync(p));const kind=process.env.VERCEL_PROJECT_ID===${JSON.stringify(TARGETS.merchant.project)}?'merchant':'admin';fs.appendFileSync(${JSON.stringify(join(dir,'cli.log'))},JSON.stringify({args:process.argv.slice(2),kind,cwd:process.cwd(),sha:process.env.GITHUB_SHA,env:process.env})+'\\n');if(s.failAdmin&&kind==='admin')process.exit(1);const next={id:'dpl_'+kind+'new',sha:process.env.GITHUB_SHA,env:process.env};if(kind==='admin'&&process.argv.includes('--skip-domain'))s.adminCandidate=next;else s[kind]=next;fs.writeFileSync(p,JSON.stringify(s));console.log('https://'+kind+'-fixture.vercel.app');\n`;
  writeFileSync(join(dir,'bin/vercel'),program);chmodSync(join(dir,'bin/vercel'),0o755);
  env={PATH:join(dir,'bin')+':'+process.env.PATH,HOME:dir,GITHUB_TOKEN:'fixture-github',VERCEL_TOKEN:'fixture-vercel'};
  if(v2) attachPrivateEvidence();
  vi.stubGlobal('fetch',async(url:any,init:any={})=>{
-  const u=String(url);requests.push({url:u,method:init.method||'GET',headers:init.headers});
+  const u=String(url);requests.push({url:u,method:init.method||'GET',headers:init.headers,body:init.body});
   if(options.apiFailure&&u.includes(options.apiFailure))return new Response('{}',{status:503});
   const json=(data:any)=>new Response(JSON.stringify(data),{status:200});
   if(u.includes('/actions/workflows/ci.yml/runs?'))return json({workflow_runs:[{id:1,head_sha:integration,head_branch:'main',event:'push',status:'completed',conclusion:options.badMainCI?'failure':'success'}]});
@@ -53,6 +60,25 @@ beforeEach(()=>{
   if(u.includes('/actions/runs/123/artifacts?')){const list=Object.values(artifacts);return json({total_count:list.length,artifacts:list});}
   if(v2&&u.endsWith('/actions/artifacts/203/zip'))return new Response(null,{status:302,headers:{location:'https://fixture.invalid/integration.zip'}});
   if(v2&&u==='https://fixture.invalid/integration.zip')return new Response(zipBytes.integration);
+  if(options.manual){
+   const disk=JSON.parse(readFileSync(join(dir,'state.json'),'utf8'));
+   if(u.includes('/v2/deployments/')&&u.includes('/aliases?')){
+    if(options.aliasStatus)return new Response('{}',{status:options.aliasStatus});
+    expect(u).toContain('/dpl_adminnew/aliases?');expect(JSON.parse(init.body)).toEqual({alias:TARGETS.admin.alias});
+    disk.admin=disk.adminCandidate;writeFileSync(join(dir,'state.json'),JSON.stringify(disk));return json({alias:TARGETS.admin.alias});
+   }
+   for(const kind of ['merchant','admin']){
+    const c=TARGETS[kind];
+    if(u.includes(`/v9/projects/${c.project}?`))return json({id:c.project,rootDirectory:options.wrongRoot&&(!options.policyKind||options.policyKind===kind)?'wrong':c.root,framework:kind==='admin'?'vite':'nextjs',autoAssignCustomDomains:options.autoAssignDrift&&(!options.policyKind||options.policyKind===kind)?kind==='admin':kind!=='admin',buildCommand:options.buildDrift&&(!options.policyKind||options.policyKind===kind)?'cd admin && npm run build':null,installCommand:null,outputDirectory:null,commandForIgnoringBuildStep:kind==='admin'?null:'exit 0',targets:{production:{id:kind==='admin'?(options.unexpectedLatest?'dpl_unexpected':options.manualLatestNew&&disk.adminCandidate?'dpl_adminnew':'dpl_stale'):disk.merchant.id}}});
+   }
+   if(u.includes('/v13/deployments/dpl_unexpected?'))return json({id:'dpl_unexpected',projectId:TARGETS.admin.project,readyState:'READY',source:'cli',createdAt:250,meta:{githubCommitSha:manifest.projects.admin.target_sha}});
+   if(u.includes('/v13/deployments/dpl_stale?'))return json({id:'dpl_stale',projectId:options.staleProject||TARGETS.admin.project,readyState:options.staleState||'READY',source:'cli',createdAt:options.staleCreated||100,meta:{githubCommitSha:options.staleSha||'9'.repeat(40)}});
+   if(u.includes('/v13/deployments/dpl_adminold?'))return json({id:'dpl_adminold',projectId:TARGETS.admin.project,readyState:'READY',createdAt:200,meta:{githubCommitSha:manifest.projects.admin.baseline_sha}});
+   if(u.includes('/v13/deployments/admin-fixture.vercel.app?')||u.includes('/v13/deployments/dpl_adminnew?')){
+    if(options.expireBeforeAlias&&u.includes('/dpl_adminnew?'))vi.spyOn(Date,'now').mockReturnValue(Date.now()+SCHEMA_MAX_AGE_MS+1);
+    return json({id:u.includes('/dpl_adminnew?')&&options.candidateId?options.candidateId:'dpl_adminnew',projectId:options.candidateProject||TARGETS.admin.project,readyState:options.candidateState||'READY',target:options.candidateTarget||'production',source:options.candidateSource||'cli',createdAt:300,meta:{githubCommitSha:options.candidateSha||manifest.projects.admin.target_sha}});
+   }
+  }
   for(const kind of ['merchant','admin']){
    const config=TARGETS[kind];const current=JSON.parse(readFileSync(join(dir,'state.json'),'utf8'))[kind];
    if(u.endsWith(`/actions/artifacts/${artifacts[kind]?.id}/zip`))return new Response(null,{status:302,headers:{location:`https://fixture.invalid/${kind}.zip`}});
@@ -235,4 +261,37 @@ describe('payout v2 actual deployment orchestration',{timeout:15000},()=>{
   await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('digest');expect(requests).toHaveLength(0);expect(existsSync(join(dir,'cli.log'))).toBe(false);
  });
  it('stops before second mutation when schema snapshot expires after first deployment',async()=>{options.expireAfterMerchant=true;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('stale');const calls=readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(1);expect(calls[0].kind).toBe('merchant');});
+});
+
+function attachManualAdminEvidence(){
+ options.manual=true;const now=Date.now(),H='b'.repeat(64),report=JSON.parse(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
+ manifest.schema_version=3;manifest.policy='accounting-hold-v1';manifest.accounting_activation={};
+ manifest.projects.admin.manual_alias={policy:'canonical-admin-alias-v1',preexisting_target:{id:'dpl_stale',project_id:TARGETS.admin.project,sha:'9'.repeat(40),ready_state:'READY',source:'cli',created_at:100}};
+ report.schema_version=3;report.accounting_activation={};
+ for(const[i,environment]of ['staging','production'].entries()){
+  const profile=ACCOUNTING_SCHEMA_PROFILES[environment];const binding={environment,project_ref:environment==='staging'?ACCOUNTING_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref:ACCOUNTING_EVIDENCE_POLICY.production_project_ref,actor_id:'11111111-1111-1111-1111-111111111111',approved_manifest_sha256:H,executed_envelope_sha256:H,cohort_sha256:H,approval_receipt_sha256:String(i+1).repeat(64),counts:{holds:0,memberships:0,audit_rows:0,preserved_pending_payments:0},preserved_pending_rows_sha256:H};
+  manifest.accounting_activation[environment]=binding;report.accounting_activation[environment]={binding,owner_approval_reference:'fixture',independent_review_reference:'fixture',method:'authorized-connector-read-only',active:true,installation_only:false,schema_contract_sha256:profile.schema_contract_sha256,contracts:profile.schema_contracts,canonical_installers:profile.schema_contracts.canonical_sources.filter(x=>/^50[01]_/.test(x.name)),raw_evidence_sha256:H,audit_rows_sha256:H,hold_rows_sha256:H,membership_rows_sha256:H,existing_financial_rows_changed:0,provider_calls:0,observed_at:new Date(now-1000).toISOString(),committed_at:new Date(now-2000).toISOString(),counts:binding.counts,preserved_pending_rows_sha256:H};
+ }
+ env.REDUCED_RELEASE_MANIFEST=JSON.stringify(manifest);report.binding=manifestBinding(env.REDUCED_RELEASE_MANIFEST,manifest);
+ report.production_schema.contracts=ACCOUNTING_EVIDENCE_POLICY.schema_contracts;report.production_schema.contract_sha256=ACCOUNTING_EVIDENCE_POLICY.schema_contract_sha256;
+ report.staging_acceptance.cases=ACCOUNTING_EVIDENCE_POLICY.acceptance_cases.map(x=>({...x,outcome:'passed',evidence_sha256:H}));report.staging_acceptance.passed=report.staging_acceptance.cases.length;
+ const bytes=JSON.stringify(report);env.PRIVATE_RELEASE_ACCEPTANCE_REPORT=bytes;env.PRIVATE_RELEASE_ACCEPTANCE_SHA256=digest(bytes);
+ const receipt=JSON.parse(env.PRIVATE_RELEASE_RECEIPT);Object.assign(receipt,{schema_version:3,binding:report.binding,acceptance_artifact_sha256:digest(bytes),approved_at:new Date(now).toISOString()});env.PRIVATE_RELEASE_RECEIPT=JSON.stringify(receipt);
+ for(const kind of ['merchant','admin','integration'])archive(kind);
+}
+describe('payout v2 fixture upgraded to manual admin v3 orchestration',{timeout:20000},()=>{
+ beforeEach(()=>attachManualAdminEvidence());
+ it.each([false,true])('assigns only fixed canonical admin alias, pointer advances=%s',async(advance)=>{
+  options.manualLatestNew=advance;await deployReduced(manifest,controlPath,sourcePaths,'123',1,env);
+  const posts=requests.filter(r=>r.method==='POST');expect(posts).toHaveLength(1);expect(posts[0].url).toContain('/v2/deployments/dpl_adminnew/aliases?');expect(JSON.parse(posts[0].body)).toEqual({alias:TARGETS.admin.alias});
+  const calls=readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);expect(calls[1].args).toContain('--skip-domain');expect(calls[1].cwd).toBe(sourcePaths.admin);expect(calls[0].args).not.toContain('--skip-domain');
+ });
+ it.each([['staleProject','other'],['staleSha','8'.repeat(40)],['staleState','BUILDING'],['staleCreated',201],['wrongRoot',true],['autoAssignDrift',true],['buildDrift',true]])('rejects preexisting identity/config drift %s without mutation',async(key,value)=>{options[key]=value;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow();expect(existsSync(join(dir,'cli.log'))).toBe(false);expect(requests.filter(x=>x.method==='POST')).toHaveLength(0);});
+ it.each([['candidateId','dpl_substitute'],['candidateProject','other'],['candidateSha','8'.repeat(40)],['candidateState','BUILDING'],['candidateTarget','preview'],['candidateSource','git']])('rejects candidate substitution %s before alias mutation',async(key,value)=>{options[key]=value;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow();expect(requests.filter(x=>x.method==='POST')).toHaveLength(0);});
+ it.each(['merchant','admin'])('rejects %s auto-assignment drift before either deployment',async(kind)=>{options.policyKind=kind;options.autoAssignDrift=true;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('project policy');expect(existsSync(join(dir,'cli.log'))).toBe(false);});
+ it('rejects another READY target even with current target SHA',async()=>{options.unexpectedLatest=true;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('manual admin latest');expect(existsSync(join(dir,'cli.log'))).toBe(false);});
+ it('rejects current canonical alias drift before either deployment',async()=>{options.wrongAlias=true;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow();expect(existsSync(join(dir,'cli.log'))).toBe(false);expect(requests.filter(x=>x.method==='POST')).toHaveLength(0);});
+ it.each([401,403,409])('stops after one failed alias request (%s), no rollback or retry',async(status)=>{options.aliasStatus=status;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('Admin alias assignment failed');expect(requests.filter(x=>x.method==='POST')).toHaveLength(1);expect(JSON.parse(readFileSync(join(dir,'state.json'),'utf8')).admin.id).toBe('dpl_adminold');expect(readFileSync(join(dir,'cli.log'),'utf8').trim().split('\n')).toHaveLength(2);});
+ it('rechecks fresh evidence immediately before alias mutation',async()=>{options.expireBeforeAlias=true;await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('stale');expect(requests.filter(x=>x.method==='POST')).toHaveLength(0);});
+ it('rejects an unknown manual policy before external calls',async()=>{manifest.projects.admin.manual_alias.policy='unknown';await expect(deployReduced(manifest,controlPath,sourcePaths,'123',1,env)).rejects.toThrow('policy');expect(requests).toHaveLength(0);});
 });
