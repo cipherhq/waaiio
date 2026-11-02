@@ -2654,7 +2654,7 @@ export class BotService {
               await this.messageSender.sendButtons({
                 to: from,
                 body: `Welcome back to ${business.name}! Review your last order (${latestOrder.reference_code}, ${latestOrder.created_at.slice(0, 10)}) again? You'll confirm current items and prices before ordering.`,
-                buttons: [{ id: 'repeat_last_order', title: 'Review last order' }, { id: 'browse_menu', title: 'Merchant menu' },
+                buttons: [{ id: 'repeat_last_order', title: 'Review last order' }, { id: 'browse_menu', title: 'Business menu' },
                   ...(await isSharedConversation(this.supabase, session.session_data) ? [{ id: 'nav_directory', title: 'Search directory' }] : [])],
               });
               return;
@@ -2715,7 +2715,7 @@ export class BotService {
                 body: translatedBody,
                 buttons: [
                   { id: 'quick_rebook', title: truncTitle(buttonLabel) },
-                  { id: 'browse_menu', title: 'Merchant menu' },
+                  { id: 'browse_menu', title: 'Business menu' },
                   ...(await isSharedConversation(this.supabase, session.session_data) ? [{ id: 'nav_directory', title: 'Search directory' }] : []),
                 ],
               });

@@ -187,19 +187,23 @@ describe('#452 homepage simplification — structural integrity', () => {
 });
 
 describe('#452 homepage simplification — navigation CTAs', () => {
-  it('navbar CTA links to /launch not /get-started', () => {
-    expect(navbarSrc).not.toContain('href="/get-started"');
-    expect(navbarSrc).toContain('href="/launch"');
+  it('navbar CTA opens the existing gated signup flow', () => {
+    expect(navbarSrc).toContain('href="/get-started"');
+    expect(navbarSrc).toContain('Get Started');
+    expect(navbarSrc).not.toContain('href="/launch"');
   });
 
-  it('mobile menu CTA links to /launch not /get-started', () => {
-    expect(mobileMenuSrc).not.toContain('href="/get-started"');
-    expect(mobileMenuSrc).toContain('href="/launch"');
+  it('mobile menu CTA opens the existing gated signup flow', () => {
+    expect(mobileMenuSrc).toContain('href="/get-started"');
+    expect(mobileMenuSrc).toContain('Get Started');
+    expect(mobileMenuSrc).not.toContain('href="/launch"');
   });
 
-  it('homepage CTAs do not link to /get-started', () => {
-    // All homepage CTAs should route to /launch or /pricing, not /get-started
-    expect(homeClientSrc).not.toContain('href="/get-started"');
+  it('homepage CTAs link to signup without launch updates', () => {
+    // Owner opened signup; server-side signup authority remains intact.
+    expect(homeClientSrc).toContain('href="/get-started"');
+    expect(homeClientSrc).not.toContain('href="/launch"');
+    expect(homeClientSrc).not.toMatch(/Get (Launch )?Updates|when Waaiio launches/);
   });
 });
 
@@ -317,14 +321,13 @@ describe('#452 homepage simplification — setup wording truth', () => {
   });
 });
 
-describe('#452 homepage simplification — CTA post-launch handoff (#453)', () => {
-  it('navbar documents CTA must switch to /get-started when signup gate opens', () => {
-    expect(navbarSrc).toContain('#453');
-    expect(navbarSrc).toContain('/get-started');
+describe('live homepage navigation retains account access', () => {
+  it('navbar retains sign-in and dashboard links', () => {
+    expect(navbarSrc).toContain('href="/login"');
+    expect(navbarSrc).toContain('href="/dashboard"');
   });
-
-  it('mobile menu documents CTA must switch to /get-started when signup gate opens', () => {
-    expect(mobileMenuSrc).toContain('#453');
-    expect(mobileMenuSrc).toContain('/get-started');
+  it('mobile menu retains sign-in and dashboard links', () => {
+    expect(mobileMenuSrc).toContain('href="/login"');
+    expect(mobileMenuSrc).toContain('href="/dashboard"');
   });
 });
