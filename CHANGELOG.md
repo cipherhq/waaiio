@@ -1,5 +1,7 @@
 ## 2026-11-02 — Explicit manual admin release identity
 
+- Add optional encrypted, read-only release preflight diagnostics without changing deployment gates.
+
 - Add a named, exact manifest-bound admin manual-alias policy. Validate serving baseline, recorded non-serving target, project settings and newly created deployment before assigning only the canonical admin alias.
 - Keep automatic domain assignment settings unchanged, recheck private evidence before alias mutation, and stop without automatic rollback on partial failure. Existing release policies and application sources remain unchanged.
 

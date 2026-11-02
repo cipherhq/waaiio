@@ -1,0 +1,11 @@
+# Encrypted read-only preflight diagnostic
+
+This optional branch-only workflow mode diagnoses the reviewed control revision. Default source verification is unchanged. It is not a deployment, report approval or substitute for normal verification. The runner imports the exact trusted preflight, retaining its Git lineage/source/receipt checks and necessary read-only git/unzip operations. It never calls the deployment entry point or deployment CLI.
+
+Owner dispatch supplies diagnostic=true, an RSA public key of at least3072 bits, and the completed verification run/attempt. The private key stays offline. Validate encryption before secrets/network; use fresh AES256-GCM key/nonce and RSA-OAEP-SHA256 wrapping. Only encrypted JSON is uploaded with one-day retention. Missing keys or encryption failure have no plaintext fallback. No secrets, response bodies, signed URL queries or arbitrary error messages are logged. Unknown errors become generic codes inside the encrypted report.
+
+Network instrumentation permits GET only to the existing scoped GitHub and Vercel APIs. An authenticated GitHub artifact302 may introduce an HTTPS blob.core.windows.net or objects.githubusercontent.com storage URL; it receives no Authorization header and cannot redirect again. Every401/403 stops further network calls. Each request has a30-second deadline. This instrumentation does not test deploy CLI or grant mutation authority; successful preflight leaves CLI compatibility unverified.
+
+Private evidence is checked at current time and separately at the retained failed-run instant, labeled historical diagnostic only. Expired current evidence does not suppress read-only preflight diagnosis. Neither outcome authorizes deployment or adjusts protected gate behavior. Error labels come from fixed trusted source messages, never raw API bodies.
+
+Tests execute crypto roundtrips/tamper denial, transport permission/method/redirect denials, missing-key CLI and exact-control mismatch, plus actual exported preflight with a real disposable Git control repository and mocked403. External services are mocks; no hosted result is claimed. The diagnostic branch must be independently reviewed before push/dispatch; no merge is required or implied.

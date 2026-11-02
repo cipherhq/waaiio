@@ -1,6 +1,22 @@
 name: Verify reduced release source targets
 on:
   workflow_dispatch:
+    inputs:
+      diagnostic:
+        type: boolean
+        default: false
+        description: Read-only encrypted preflight diagnostic
+      diagnostic_public_key:
+        type: string
+        required: false
+        description: Owner RSA public key (never a private key)
+      verify_run_id:
+        type: string
+        required: false
+      verify_run_attempt:
+        type: string
+        default: '1'
+        required: false
 permissions:
   contents: read
   actions: read
@@ -9,6 +25,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   plan:
+    if: ${{ !inputs.diagnostic }}
     name: Verify trusted reduced release plan
     runs-on: ubuntu-24.04
     outputs:
@@ -128,3 +145,61 @@ jobs:
           path: integration-evidence/receipt.json
           if-no-files-found: error
           retention-days: 7
+
+  diagnostic:
+    name: Encrypted read-only preflight diagnostic
+    if: ${{ inputs.diagnostic }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: diagnostic-runner
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+      - name: Validate encryption and exact diagnostic inputs
+        id: diagnostic_plan
+        env:
+          DIAGNOSTIC_PUBLIC_KEY: ${{ inputs.diagnostic_public_key }}
+          REDUCED_RELEASE_MANIFEST: ${{ secrets.REDUCED_RELEASE_MANIFEST }}
+        run: node diagnostic-runner/scripts/release-preflight-diagnostic.mjs plan
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.diagnostic_plan.outputs.integration }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.diagnostic_plan.outputs.merchant }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: merchant-source
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.diagnostic_plan.outputs.admin }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: admin-source
+      - name: Run actual read-only preflight and encrypt diagnostic
+        env:
+          CONTROL_PATH: trusted
+          DIAGNOSTIC_PUBLIC_KEY: ${{ inputs.diagnostic_public_key }}
+          REDUCED_RELEASE_MANIFEST: ${{ secrets.REDUCED_RELEASE_MANIFEST }}
+          GITHUB_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PRIVATE_RELEASE_RECEIPT: ${{ secrets.PRIVATE_RELEASE_RECEIPT }}
+          PRIVATE_RELEASE_ACCEPTANCE_REPORT: ${{ secrets.PRIVATE_RELEASE_ACCEPTANCE_REPORT }}
+          PRIVATE_RELEASE_ACCEPTANCE_SHA256: ${{ secrets.PRIVATE_RELEASE_ACCEPTANCE_SHA256 }}
+          VERIFY_RUN_ID: ${{ inputs.verify_run_id }}
+          VERIFY_RUN_ATTEMPT: ${{ inputs.verify_run_attempt }}
+        run: node diagnostic-runner/scripts/release-preflight-diagnostic.mjs run
+      - name: Upload ciphertext only
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-preflight-diagnostic
+          path: diagnostic-output/report.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
