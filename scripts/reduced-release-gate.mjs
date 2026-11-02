@@ -47,6 +47,29 @@ function targetConfig(manifest, kind) {
 }
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
 const ancestor = (cwd, before, after) => { try { git(cwd, 'merge-base', '--is-ancestor', before, after); return true; } catch { return false; } };
+// Optional, named v3-only manual-admin contract. Operational IDs stay in the
+// private manifest, whose exact bytes are already bound by CI and approval.
+export function manualAdminPolicy(manifest) {
+  if (manifest?.projects?.merchant?.manual_alias !== undefined) fail('Manual alias policy is admin-only');
+  const policy = manifest?.projects?.admin?.manual_alias;
+  if (policy === undefined) return null;
+  const pin = policy?.preexisting_target;
+  if (!accounting(manifest) || policy?.policy !== 'canonical-admin-alias-v1'
+    || Object.keys(policy).sort().join(',') !== 'policy,preexisting_target'
+    || !pin || Object.keys(pin).sort().join(',') !== 'created_at,id,project_id,ready_state,sha,source'
+    || !/^dpl_[A-Za-z0-9]+$/.test(pin.id || '') || pin.id === manifest.projects.admin.baseline_deployment_id
+    || pin.project_id !== TARGETS.admin.project || !SHA.test(pin.sha || '')
+    || pin.ready_state !== 'READY' || pin.source !== 'cli'
+    || !Number.isSafeInteger(pin.created_at) || pin.created_at <= 0) fail('Invalid manual admin alias policy');
+  return policy;
+}
+const deploymentDescriptor = d => ({ id:d.id, project_id:d.projectId, sha:d.meta?.githubCommitSha,
+  ready_state:d.readyState, source:d.source, created_at:d.createdAt });
+function candidateMatches(deployment, candidate, manifest) {
+  return deployment.id === candidate.id && deployment.projectId === TARGETS.admin.project
+    && deployment.meta?.githubCommitSha === manifest.projects.admin.target_sha && deployment.readyState === 'READY'
+    && deployment.createdAt === candidate.createdAt && deployment.target === 'production' && deployment.source === 'cli';
+}
 export function parseManifest(raw, integration) {
   let manifest;
   try { manifest = JSON.parse(raw); } catch { fail('Malformed private reduced manifest'); }
@@ -58,6 +81,7 @@ export function parseManifest(raw, integration) {
       || entry.baseline_sha === entry.target_sha || entry.project_id !== TARGETS[kind].project) fail(`Invalid ${kind} target identity`);
   }
   if (manifest.projects.admin.target_sha === manifest.projects.merchant.target_sha) fail('Project-specific source targets are required');
+  manualAdminPolicy(manifest);
   if (payout(manifest)) manifestBinding(raw, manifest);
   return manifest;
 }
@@ -257,9 +281,14 @@ export function validateLive(kind, evidence, expectedSha, expectedId) {
   if(!evidence||evidence.projectId!==config.project||evidence.sha!==expectedSha||evidence.readyState!=='READY'||!/^dpl_[A-Za-z0-9]+$/.test(evidence.id||'')
     ||evidence.activeId!==evidence.id||evidence.aliasId!==evidence.id||(expectedId&&evidence.id!==expectedId))fail(`Unverified ${kind} live identity`);
 }
-export async function live(kind,token,manifest){
+export async function live(kind,token,manifest,candidate){
   const config=TARGETS[kind],project=await vercel(`/v9/projects/${config.project}`,token);
   if((project.rootDirectory||'')!==config.root)fail('Deployment project root mismatch');
+  const manual=manualAdminPolicy(manifest);
+  if(manual && (project.id!==config.project || project.framework!==(kind==='admin'?'vite':'nextjs')
+    || project.autoAssignCustomDomains!==(kind!=='admin') || project.buildCommand!==null
+    || project.installCommand!==null || project.outputDirectory!==null
+    || project.commandForIgnoringBuildStep!==(kind==='admin'?null:'exit 0'))) fail('Unexpected deployment project policy');
   if (payout(manifest)) {
     const alias = await vercel(`/v4/aliases/${config.alias}`, token);
     const id = alias.deploymentId ?? alias.deployment?.id;
@@ -267,7 +296,18 @@ export async function live(kind,token,manifest){
     const deployment = await vercel(`/v13/deployments/${id}`, token);
     const latestId = project.targets?.production?.id;
     if (!/^dpl_[A-Za-z0-9]+$/.test(latestId || '')) fail('Missing latest production target evidence');
-    if (latestId !== id) {
+    if (manual && kind==='admin') {
+      const entry=manifest.projects.admin, pin=manual.preexisting_target;
+      if (id!==entry.baseline_deployment_id && id!==candidate?.id) fail('Unapproved manual admin serving identity');
+      const baseline=id===entry.baseline_deployment_id?deployment:await vercel(`/v13/deployments/${entry.baseline_deployment_id}`,token);
+      if(baseline.id!==entry.baseline_deployment_id || baseline.projectId!==config.project || baseline.meta?.githubCommitSha!==entry.baseline_sha
+        || baseline.readyState!=='READY' || !Number.isSafeInteger(baseline.createdAt) || pin.created_at>=baseline.createdAt) fail('Invalid manual admin baseline chronology');
+      const latest=latestId===id?deployment:await vercel(`/v13/deployments/${latestId}`,token);
+      if (latestId===pin.id) {
+        if(!isDeepStrictEqual(deploymentDescriptor(latest),pin)) fail('Pinned manual admin target changed');
+      } else if (!candidate || latestId!==candidate.id || !candidateMatches(latest,candidate,manifest)) fail('Unapproved manual admin latest target');
+      if(id===candidate?.id && !candidateMatches(deployment,candidate,manifest)) fail('Manual admin candidate changed');
+    } else if (latestId !== id) {
       const latest = await vercel(`/v13/deployments/${latestId}`, token);
       if (latest.id !== latestId || latest.projectId !== config.project || latest.readyState !== 'CANCELED'
         || latest.source !== 'git' || latest.errorLink !== 'https://vercel.com/docs/project-configuration/git-settings#ignored-build-step') fail('Unapproved latest-target divergence');
@@ -319,21 +359,40 @@ function privateEvidence(manifest, runId, attempt, env) {
 }
 export async function deployReduced(manifest,controlPath,sourcePaths,runId,attempt,env=process.env){
   if(!env.VERCEL_TOKEN)fail('Deployment credential required');
+  const manual=manualAdminPolicy(manifest);
   privateEvidence(manifest,runId,attempt,env);
   const before=await preflight(manifest,controlPath,sourcePaths,runId,attempt,env),deployed={};
+  let adminCandidate;
   for(const kind of Object.keys(TARGETS)){
     // Recheck both projects before each mutation; partial releases never replay
     // by redefining their baseline as the newly deployed target.
-    for(const check of Object.keys(TARGETS)){const current=await live(check,env.VERCEL_TOKEN,manifest);validateLive(check,current,deployed[check]?manifest.projects[check].target_sha:manifest.projects[check].baseline_sha,deployed[check]?.id??before[check].id);}
+    for(const check of Object.keys(TARGETS)){const current=await live(check,env.VERCEL_TOKEN,manifest,check==='admin'?adminCandidate:undefined);validateLive(check,current,deployed[check]?manifest.projects[check].target_sha:manifest.projects[check].baseline_sha,deployed[check]?.id??before[check].id);}
     privateEvidence(manifest,runId,attempt,env);
     const entry=manifest.projects[kind];cleanCheckout(sourcePaths[kind],entry.target_sha,entry.target_tree);
-    const output=execFileSync('vercel',['deploy','--prod','--yes','--token',env.VERCEL_TOKEN,'--meta',`githubCommitSha=${entry.target_sha}`,'--env',`VERCEL_GIT_COMMIT_SHA=${entry.target_sha}`,'--build-env',`VERCEL_GIT_COMMIT_SHA=${entry.target_sha}`],{cwd:sourcePaths[kind],env:payout(manifest)?deploymentEnvironment(env,TARGETS[kind].project,TEAM,entry.target_sha):{...env,VERCEL_ORG_ID:TEAM,VERCEL_PROJECT_ID:TARGETS[kind].project,GITHUB_SHA:entry.target_sha,VERCEL_GIT_COMMIT_SHA:entry.target_sha},encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:10*1024*1024});
+    const output=execFileSync('vercel',['deploy','--prod',...(manual&&kind==='admin'?['--skip-domain']:[]),'--yes','--token',env.VERCEL_TOKEN,'--meta',`githubCommitSha=${entry.target_sha}`,'--env',`VERCEL_GIT_COMMIT_SHA=${entry.target_sha}`,'--build-env',`VERCEL_GIT_COMMIT_SHA=${entry.target_sha}`],{cwd:sourcePaths[kind],env:payout(manifest)?deploymentEnvironment(env,TARGETS[kind].project,TEAM,entry.target_sha):{...env,VERCEL_ORG_ID:TEAM,VERCEL_PROJECT_ID:TARGETS[kind].project,GITHUB_SHA:entry.target_sha,VERCEL_GIT_COMMIT_SHA:entry.target_sha},encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:10*1024*1024});
     const urls=output.match(/https:\/\/[a-zA-Z0-9-]+\.vercel\.app/g);if(!urls?.length)fail('Deployment URL missing; stop for private recovery review');
     const deployment=await vercel(`/v13/deployments/${new URL(urls.at(-1)).hostname}`,env.VERCEL_TOKEN);
     if(deployment.projectId!==TARGETS[kind].project||deployment.meta?.githubCommitSha!==entry.target_sha||deployment.readyState!=='READY'||!/^dpl_[A-Za-z0-9]+$/.test(deployment.id||''))fail('Created deployment identity mismatch');
-    deployed[kind]=await waitForServing(kind,entry.target_sha,deployment.id,env.VERCEL_TOKEN,{read:(k,t)=>live(k,t,manifest)});
+    if(manual && kind==='admin') {
+      if(deployment.target!=='production' || deployment.source!=='cli' || deployment.id===entry.baseline_deployment_id || deployment.id===manual.preexisting_target.id
+        || deployment.id===deployed.merchant?.id || !Number.isSafeInteger(deployment.createdAt)) fail('Admin candidate is not newly identified');
+      adminCandidate={id:deployment.id,createdAt:deployment.createdAt};
+      // Preserve the created candidate on any later failure. No automatic
+      // rollback or mutation retry, including uncertain alias POST outcomes.
+      for(const check of Object.keys(TARGETS)) {
+        const current=await live(check,env.VERCEL_TOKEN,manifest,check==='admin'?adminCandidate:undefined);
+        validateLive(check,current,deployed[check]?manifest.projects[check].target_sha:manifest.projects[check].baseline_sha,deployed[check]?.id??before[check].id);
+      }
+      const currentCandidate=await vercel(`/v13/deployments/${adminCandidate.id}`,env.VERCEL_TOKEN);
+      if(!candidateMatches(currentCandidate,adminCandidate,manifest)) fail('Admin candidate changed before alias assignment');
+      privateEvidence(manifest,runId,attempt,env);
+      const assigned=await fetch(`https://api.vercel.com/v2/deployments/${adminCandidate.id}/aliases?teamId=${TEAM}`,{
+        method:'POST',headers:{Authorization:`Bearer ${env.VERCEL_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({alias:TARGETS.admin.alias})});
+      if(!assigned.ok)fail(`Admin alias assignment failed (${assigned.status}); retain candidate for private recovery review`);
+    }
+    deployed[kind]=await waitForServing(kind,entry.target_sha,deployment.id,env.VERCEL_TOKEN,{read:(k,t)=>live(k,t,manifest,k==='admin'?adminCandidate:undefined)});
   }
-  for(const kind of Object.keys(TARGETS))validateLive(kind,await live(kind,env.VERCEL_TOKEN,manifest),manifest.projects[kind].target_sha,deployed[kind].id);
+  for(const kind of Object.keys(TARGETS))validateLive(kind,await live(kind,env.VERCEL_TOKEN,manifest,kind==='admin'?adminCandidate:undefined),manifest.projects[kind].target_sha,deployed[kind].id);
   console.log('Reduced code release verified for both projects.');return {before,deployed};
 }
 async function main(){
