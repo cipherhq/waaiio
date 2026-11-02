@@ -3,7 +3,8 @@ import { isDeepStrictEqual } from 'node:util';
 
 export const PAYOUT_POLICY = 'admin-payout-mfa-v1';
 export const ACCOUNTING_POLICY = 'accounting-hold-v1';
-const recognized = m => (m?.schema_version === 2 && m.policy === PAYOUT_POLICY) || (m?.schema_version === 3 && m.policy === ACCOUNTING_POLICY);
+export const SECURITY_POLICY = 'security-storage-webhook-v1';
+const recognized = m => (m?.schema_version === 2 && m.policy === PAYOUT_POLICY) || (m?.schema_version === 3 && m.policy === ACCOUNTING_POLICY) || (m?.schema_version === 4 && m.policy === SECURITY_POLICY);
 export const SCHEMA_MAX_AGE_MS = 15 * 60 * 1000;
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;

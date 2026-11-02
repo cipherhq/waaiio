@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
-import { ACCOUNTING_POLICY, digest, SCHEMA_MAX_AGE_MS } from './reduced-release-evidence.mjs';
+import { ACCOUNTING_POLICY, SECURITY_POLICY, digest, SCHEMA_MAX_AGE_MS } from './reduced-release-evidence.mjs';
 import { PAYOUT_TARGETS, PAYOUT_EVIDENCE_POLICY, INTEGRATION_SQL_TESTS, INTEGRATION_RUNTIME_SOURCES } from './reduced-payout-policy.mjs';
 
 const inventory = JSON.parse(readFileSync(new URL('./reduced-accounting-targets.json', import.meta.url), 'utf8'));
@@ -65,7 +65,7 @@ const fail = () => { throw new Error('Accounting activation evidence is absent, 
 // are checked by verifyPrivateEvidence first. These are observed activation
 // receipts, never instructions to CALL a procedure or mutate a cohort.
 export function verifyAccountingActivation(report, manifest, now = Date.now(), approvedAt = now) {
-  if (manifest?.schema_version !== 3 || manifest.policy !== ACCOUNTING_POLICY) fail();
+  if (!((manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY) || (manifest?.schema_version === 4 && manifest.policy === SECURITY_POLICY))) fail();
   const sources = ACCOUNTING_EVIDENCE_POLICY.schema_contracts.canonical_sources.filter(x => /^50[01]_/.test(x.name));
   for (const environment of ['staging', 'production']) {
     const profile = ACCOUNTING_SCHEMA_PROFILES[environment];
