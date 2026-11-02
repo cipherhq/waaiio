@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 export const PAYOUT_POLICY = 'admin-payout-mfa-v1';
+export const ACCOUNTING_POLICY = 'accounting-hold-v1';
+const recognized = m => (m?.schema_version === 2 && m.policy === PAYOUT_POLICY) || (m?.schema_version === 3 && m.policy === ACCOUNTING_POLICY);
 export const SCHEMA_MAX_AGE_MS = 15 * 60 * 1000;
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -14,11 +16,11 @@ const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 // the manifest never contains a report digest (which would be circular).
 export function manifestBinding(raw, manifest) {
   if (!nonempty(raw) || !isDeepStrictEqual(JSON.parse(raw), manifest)
-    || manifest.schema_version !== 2 || manifest.policy !== PAYOUT_POLICY
+    || !recognized(manifest)
     || !SHA.test(manifest.integration_sha || '')
     || 'acceptance_sha256' in manifest || 'acceptance_report_sha256' in manifest) fail('Invalid immutable release manifest');
   return {
-    policy: PAYOUT_POLICY, integration_sha: manifest.integration_sha,
+    policy: manifest.policy, integration_sha: manifest.integration_sha,
     manifest_sha256: digest(raw),
     projects: Object.fromEntries(['merchant', 'admin'].map(kind => {
       const p = manifest.projects?.[kind];
@@ -36,7 +38,7 @@ export function manifestBinding(raw, manifest) {
 // by a manifest, workflow input, or acceptance report.
 export function verifyPrivateEvidence({ rawManifest, manifest, receiptBytes, reportBytes, approvedHash, policy, now = Date.now() }) {
   const binding = manifestBinding(rawManifest, manifest);
-  if (!policy || policy.id !== PAYOUT_POLICY || !HASH.test(policy.schema_contract_sha256 || '')
+  if (!policy || policy.id !== manifest.policy || !HASH.test(policy.schema_contract_sha256 || '')
     || !Array.isArray(policy.acceptance_cases) || !policy.acceptance_cases.length) fail('Reviewed release policy is incomplete');
   if (!nonempty(receiptBytes) || !nonempty(reportBytes) || !HASH.test(approvedHash || '')
     || digest(reportBytes) !== approvedHash) fail('Independent private report digest mismatch');
@@ -44,7 +46,7 @@ export function verifyPrivateEvidence({ rawManifest, manifest, receiptBytes, rep
   try { receipt = JSON.parse(receiptBytes); report = JSON.parse(reportBytes); }
   catch { fail('Malformed private release evidence'); }
   for (const value of [receipt, report]) {
-    if (value.schema_version !== 2 || !isDeepStrictEqual(value.binding, binding)) fail('Private evidence release binding mismatch');
+    if (value.schema_version !== manifest.schema_version || !isDeepStrictEqual(value.binding, binding)) fail('Private evidence release binding mismatch');
   }
   if (receipt.acceptance_artifact_sha256 !== approvedHash
     || !nonempty(receipt.owner_approval_reference)

@@ -110,3 +110,13 @@ boundaries use fake executables. Synthetic test artifacts are never actual CI or
 hosted acceptance evidence. Deployment still requires real exact-target CI and
 normal independent review/Owner authorization; those are not inferred from local
 unit-test results.
+
+### Accounting-hold v3 profile
+
+`schema_version: 3`, `policy: accounting-hold-v1` selects a separate fixed source, test and active-schema contract. V1 and v2 retain their existing rules. Merchant source is the reduced accounting descendant; admin source remains separately pinned. Ordinary ancestry, protected-main CI, exact-target checkout/build and authenticated run/attempt/artifact checks still apply. The workflow's existing `payout_policy` capability output enables required private evidence and isolated PostgreSQL tests for both v2 and v3; it is not a migration bypass.
+
+The v3 manifest additionally binds independent `accounting_activation.staging` and `.production` objects: environment/project, verified audit actor UUID, approved manifest and executed envelope SHA256, cohort and Owner approval receipt SHA256, exact hold/member/audit/preserved-pending counts, and preserved-pending row digest. Do not copy staging counts into production. Bind this immutable manifest before generating the independently reviewed report.
+
+Each report activation record must contain that exact binding, actual commit/read-back timestamps, independently reviewed Owner references, exact fixed schema contracts and source hashes, raw evidence and hold/member/audit row digests, zero existing-financial-row changes and zero provider calls. It must attest active dispatcher/private helpers, recurring definitions, guards/index, ownership/config/ACL and cohort—not merely installer ledger rows. Read-back freshness and disabled payout-cron evidence are rechecked before each deployment mutation. Installer source filenames are provenance, not instructions to replay SQL.
+
+These are code deployment gates only. They never execute DDL, enroll a cohort, reconcile a payment, release a hold or call a provider. Activation and later post-fence restoration require their separately approved operational envelopes. Intercepted hosted UI acceptance is labeled UI-only; actual held server denial is supported by exact-target handler and disposable SQL evidence, not inferred from an intercepted request. No operational report, account identifier, cohort list or approval receipt belongs in public code or Actions output.

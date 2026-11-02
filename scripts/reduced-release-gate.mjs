@@ -6,9 +6,15 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-import { PAYOUT_POLICY, manifestBinding, verifyPrivateEvidence, deploymentEnvironment } from './reduced-release-evidence.mjs';
+import { PAYOUT_POLICY, ACCOUNTING_POLICY, manifestBinding, verifyPrivateEvidence, deploymentEnvironment } from './reduced-release-evidence.mjs';
 import { PAYOUT_TARGETS, PAYOUT_EVIDENCE_POLICY, INTEGRATION_SQL_TESTS, INTEGRATION_RUNTIME_SOURCES } from './reduced-payout-policy.mjs';
 
+import { ACCOUNTING_TARGETS, ACCOUNTING_EVIDENCE_POLICY, ACCOUNTING_SQL_TESTS, ACCOUNTING_RUNTIME_SOURCES, verifyAccountingActivation } from './reduced-accounting-policy.mjs';
+
+const accounting = manifest => manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY;
+const policyFor = manifest => accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
+const sqlTestsFor = manifest => accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
+const runtimeFor = manifest => accounting(manifest) ? ACCOUNTING_RUNTIME_SOURCES : INTEGRATION_RUNTIME_SOURCES;
 const REPO = 'cipherhq/waaiio';
 const TEAM = 'team_AEcg69CktrGEptXDznpae8Rp';
 const OWNER = 'cipherhq';
@@ -31,10 +37,10 @@ export const TARGETS = Object.freeze({
     suites: [{ tz: 'UTC', files: { 'src/__tests__/payout-generation-feedback.test.tsx': 4, 'src/__tests__/payouts-held-review-620.test.tsx': 19 } }],
   },
 });
-const payout = manifest => manifest?.schema_version === 2 && manifest.policy === PAYOUT_POLICY;
+const payout = manifest => (manifest?.schema_version === 2 && manifest.policy === PAYOUT_POLICY) || accounting(manifest);
 function targetConfig(manifest, kind) {
   if (!payout(manifest)) return TARGETS[kind];
-  const config = PAYOUT_TARGETS[kind];
+  const config = (accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
   if (!config?.suites.length) fail('Payout policy execution contract is not frozen');
   return { ...TARGETS[kind], ...config };
 }
@@ -69,6 +75,7 @@ export function inspectTarget(repository, kind, entry, integration, manifest) {
   checkDelta(kind, changed, deleted, manifest);
   if (payout(manifest)) {
     const blobs = Object.fromEntries(changed.map(file => [file, hash(execFileSync('git', ['show', `${entry.target_sha}:${file}`], { cwd: repository }))]));
+    if (accounting(manifest) && !isDeepStrictEqual(blobs, ACCOUNTING_TARGETS[kind].blobs)) fail('Accounting source differs from fixed reviewed blobs');
     if (!isDeepStrictEqual(entry.source_blobs, blobs)) fail('Private manifest source blob mismatch');
   }
   return changed;
@@ -139,20 +146,20 @@ export function validateCodeReceipt(receipt, kind, manifest, runId, attempt, raw
   const suites=config.suites.map(suite=>({tz:suite.tz,files:Object.fromEntries(Object.entries(suite.files).map(([file,count])=>[file,{passed:count,failed:0,skipped:0}]))}));
   if (!isDeepStrictEqual(receipt.suites,suites)) fail('Exact-target per-file test evidence missing or skipped');
 }
-function integrationCommands() {
-  return [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(INTEGRATION_SQL_TESTS), '--no-file-parallelism', '--reporter=json']];
+function integrationCommands(manifest) {
+  return [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(sqlTestsFor(manifest)), '--no-file-parallelism', '--reporter=json']];
 }
-function integrationSources(repository, integration) {
+function integrationSources(repository, integration, manifest) {
   const sql = {};
-  for (const entry of PAYOUT_EVIDENCE_POLICY.schema_contracts.canonical_sources) {
+  for (const entry of policyFor(manifest).schema_contracts.canonical_sources) {
     const file = `supabase/migrations/${entry.name}`;
     const actual = hash(execFileSync('git', ['show', `${integration}:${file}`], { cwd: repository }));
     if (actual !== entry.sha256) fail('Canonical integration SQL differs from reviewed prerequisite');
     sql[file] = actual;
   }
-  const tests = Object.fromEntries(Object.keys(INTEGRATION_SQL_TESTS).map(file =>
+  const tests = Object.fromEntries(Object.keys(sqlTestsFor(manifest)).map(file =>
     [file, hash(execFileSync('git', ['show', `${integration}:${file}`], { cwd: repository }))]));
-  const runtime = Object.fromEntries(INTEGRATION_RUNTIME_SOURCES.map(file => [file, hash(execFileSync('git', ['show', `${integration}:${file}`], { cwd: repository }))]));
+  const runtime = Object.fromEntries(runtimeFor(manifest).map(file => [file, hash(execFileSync('git', ['show', `${integration}:${file}`], { cwd: repository }))]));
   return { sql, tests, runtime };
 }
 export function validateIntegrationReceipt(receipt, manifest, runId, attempt, rawManifest, repository) {
@@ -161,27 +168,27 @@ export function validateIntegrationReceipt(receipt, manifest, runId, attempt, ra
     schema_version: 2, kind: 'integration-sql', manifest_sha256: manifestBinding(rawManifest, manifest).manifest_sha256,
     integration_sha: manifest.integration_sha, merchant_target_sha: manifest.projects.merchant.target_sha,
     merchant_target_tree: manifest.projects.merchant.target_tree, run_id: runId, run_attempt: attempt,
-    commands: integrationCommands(), sources: integrationSources(repository, manifest.integration_sha),
-    files: Object.fromEntries(Object.entries(INTEGRATION_SQL_TESTS).map(([file, count]) => [file, { passed: count, failed: 0, skipped: 0 }])),
+    commands: integrationCommands(manifest), sources: integrationSources(repository, manifest.integration_sha, manifest),
+    files: Object.fromEntries(Object.entries(sqlTestsFor(manifest)).map(([file, count]) => [file, { passed: count, failed: 0, skipped: 0 }])),
   };
   if (!isDeepStrictEqual(receipt, expected)) fail('Integration SQL receipt/source evidence mismatch');
 }
 export async function testIntegration(manifest, sourcePath, outputPath, environment = process.env) {
   if (!payout(manifest) || environment.VERCEL_TOKEN || environment.SUPABASE_SERVICE_ROLE_KEY || environment.STRIPE_SECRET_KEY || environment.PAYSTACK_SECRET_KEY) fail('Isolated integration SQL verification required');
   cleanCheckout(sourcePath, manifest.integration_sha, git(sourcePath, 'rev-parse', `${manifest.integration_sha}^{tree}`));
-  const sources = integrationSources(sourcePath, manifest.integration_sha);
+  const sources = integrationSources(sourcePath, manifest.integration_sha, manifest);
   const env = { PATH:environment.PATH, HOME:environment.HOME, CI:'true', HUSKY:'0', TZ:'UTC', NODE_OPTIONS:'--max-old-space-size=4096' };
   execFileSync('npm', ['ci'], { cwd:sourcePath, env, stdio:'inherit' });
-  const output = execFileSync('npm', integrationCommands()[1].slice(1), { cwd:sourcePath,
+  const output = execFileSync('npm', integrationCommands(manifest)[1].slice(1), { cwd:sourcePath,
     env:{...env, TEST_DATABASE_URL:'postgresql://postgres:postgres@127.0.0.1:5432/postgres', REQUIRE_PG_TESTS:'true'},
     encoding:'utf8', maxBuffer:20*1024*1024, stdio:['ignore','pipe','inherit'] });
   let report; try { report=JSON.parse(output); } catch { fail('Invalid integration SQL test report'); }
-  const files=summarizeTests(report, INTEGRATION_SQL_TESTS, sourcePath);
+  const files=summarizeTests(report, sqlTestsFor(manifest), sourcePath);
   cleanCheckout(sourcePath, manifest.integration_sha, git(sourcePath, 'rev-parse', `${manifest.integration_sha}^{tree}`));
   if (!NUM.test(environment.GITHUB_RUN_ID||'') || !NUM.test(environment.GITHUB_RUN_ATTEMPT||'')) fail('Authenticated integration run identity required');
   const receipt={schema_version:2,kind:'integration-sql',manifest_sha256:manifestBinding(environment.REDUCED_RELEASE_MANIFEST,manifest).manifest_sha256,
     integration_sha:manifest.integration_sha,merchant_target_sha:manifest.projects.merchant.target_sha,merchant_target_tree:manifest.projects.merchant.target_tree,
-    run_id:environment.GITHUB_RUN_ID,run_attempt:Number(environment.GITHUB_RUN_ATTEMPT),commands:integrationCommands(),sources,files};
+    run_id:environment.GITHUB_RUN_ID,run_attempt:Number(environment.GITHUB_RUN_ATTEMPT),commands:integrationCommands(manifest),sources,files};
   mkdirSync(outputPath,{recursive:true});writeFileSync(join(outputPath,'receipt.json'),JSON.stringify(receipt));return receipt;
 }
 export function validateVerificationRun(run, jobs, manifest, runId, attempt) {
@@ -304,7 +311,8 @@ export async function preflight(manifest,controlPath,sourcePaths,runId,attempt,e
 }
 function privateEvidence(manifest, runId, attempt, env) {
   if (!payout(manifest)) return;
-  const evidence = verifyPrivateEvidence({ rawManifest: env.REDUCED_RELEASE_MANIFEST, manifest, receiptBytes: env.PRIVATE_RELEASE_RECEIPT, reportBytes: env.PRIVATE_RELEASE_ACCEPTANCE_REPORT, approvedHash: env.PRIVATE_RELEASE_ACCEPTANCE_SHA256, policy: PAYOUT_EVIDENCE_POLICY });
+  const evidence = verifyPrivateEvidence({ rawManifest: env.REDUCED_RELEASE_MANIFEST, manifest, receiptBytes: env.PRIVATE_RELEASE_RECEIPT, reportBytes: env.PRIVATE_RELEASE_ACCEPTANCE_REPORT, approvedHash: env.PRIVATE_RELEASE_ACCEPTANCE_SHA256, policy: policyFor(manifest) });
+  if (accounting(manifest)) verifyAccountingActivation(JSON.parse(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   if (evidence.verification.run_id !== runId || evidence.verification.run_attempt !== attempt) fail('Approved private evidence refers to a different code verification');
 }
 export async function deployReduced(manifest,controlPath,sourcePaths,runId,attempt,env=process.env){
