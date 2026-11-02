@@ -187,21 +187,21 @@ describe('#452 homepage simplification — structural integrity', () => {
 });
 
 describe('#452 homepage simplification — navigation CTAs', () => {
-  it('navbar CTA explores features while signup remains independently controlled', () => {
-    expect(navbarSrc).not.toContain('href="/get-started"');
-    expect(navbarSrc).toContain('Explore Features');
+  it('navbar CTA opens the existing gated signup flow', () => {
+    expect(navbarSrc).toContain('href="/get-started"');
+    expect(navbarSrc).toContain('Get Started');
     expect(navbarSrc).not.toContain('href="/launch"');
   });
 
-  it('mobile menu CTA explores features', () => {
-    expect(mobileMenuSrc).not.toContain('href="/get-started"');
-    expect(mobileMenuSrc).toContain('Explore Features');
+  it('mobile menu CTA opens the existing gated signup flow', () => {
+    expect(mobileMenuSrc).toContain('href="/get-started"');
+    expect(mobileMenuSrc).toContain('Get Started');
     expect(mobileMenuSrc).not.toContain('href="/launch"');
   });
 
-  it('homepage CTAs do not link to /get-started', () => {
-    // Homepage explores features and pricing without changing signup authority.
-    expect(homeClientSrc).not.toContain('href="/get-started"');
+  it('homepage CTAs link to signup without launch updates', () => {
+    // Owner opened signup; server-side signup authority remains intact.
+    expect(homeClientSrc).toContain('href="/get-started"');
     expect(homeClientSrc).not.toContain('href="/launch"');
     expect(homeClientSrc).not.toMatch(/Get (Launch )?Updates|when Waaiio launches/);
   });

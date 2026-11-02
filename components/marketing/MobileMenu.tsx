@@ -107,11 +107,11 @@ export default function MobileMenu({ isOpen, onClose, links, loggedIn }: MobileM
                     Log In
                   </Link>
                   <Link
-                    href="/features"
+                    href="/get-started"
                     onClick={onClose}
                     className="inline-block rounded-xl bg-accent px-8 py-3 text-center text-lg font-bold text-gray-900 transition hover:bg-accent-400"
                   >
-                    Explore Features
+                    Get Started
                   </Link>
                 </>
               )}

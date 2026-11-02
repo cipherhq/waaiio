@@ -86,10 +86,10 @@ export default function HomeClient({
                 className="mt-10 flex flex-wrap justify-center gap-3 lg:justify-start"
               >
                 <Link
-                  href="/features"
+                  href="/get-started"
                   className="rounded-2xl bg-brand px-7 py-3.5 text-sm font-bold text-white shadow-xl shadow-brand/20 transition hover:bg-brand-500 hover:shadow-brand/30"
                 >
-                  Explore Features
+                  Get Started
                 </Link>
                 <Link
                   href="/pricing"
@@ -466,10 +466,10 @@ export default function HomeClient({
                 </p>
                 <div className="mt-8 flex flex-wrap justify-center gap-3">
                   <Link
-                    href="/features"
+                    href="/get-started"
                     className="rounded-xl bg-accent px-8 py-4 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400"
                   >
-                    Explore Features
+                    Get Started
                   </Link>
                   <Link
                     href="/pricing"
