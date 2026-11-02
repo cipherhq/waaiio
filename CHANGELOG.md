@@ -3,6 +3,12 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-11-02 — Reduced accounting hold compatibility
+
+- Add accounting-hold checks to existing settlement handlers and scheduled generation/release, and show provisional merchant balances while held.
+- Preserve the reduced authorization, calculation and connected-provider behavior; automatic payout scheduling remains disabled.
+- Include canonical M500/M501 installation sources. Runtime exposure requires separately verified activated schema and approved cohort; installation alone is insufficient.
+
 ## 2026-10-02 — M425 export_rate_limits ACL normalization (#313)
 
 ### What changed

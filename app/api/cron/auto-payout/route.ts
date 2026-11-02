@@ -1,3 +1,4 @@
+import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { NextResponse } from 'next/server';
 import { type NextRequest } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
   let transferred = 0;
 
   try {
-    const supabase = createServiceClient();
+    const supabase = createServiceClient({ noStore: true });
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const COOLING_PERIOD_DAYS = settings.payout_cooling_period_days;
     const VELOCITY_THRESHOLD = settings.fraud_velocity_threshold;
@@ -155,6 +156,7 @@ export async function GET(request: NextRequest) {
     }
 
     for (const biz of businesses) {
+      if (await getMerchantAccountingHold(supabase, biz.id)) { held++; continue; }
       // Skip if payout already exists for this period (checked via batch query above)
       if (alreadyHasPayout.has(biz.id)) continue;
 
@@ -450,6 +452,7 @@ export async function GET(request: NextRequest) {
       const heldAccountSet = new Set((heldAccountRows || []).map(r => r.business_id));
 
       for (const hp of heldPayouts) {
+        if (await getMerchantAccountingHold(supabase, hp.business_id)) continue;
         const heldBiz = heldBizMap.get(hp.business_id);
         if (!heldBiz) continue;
 

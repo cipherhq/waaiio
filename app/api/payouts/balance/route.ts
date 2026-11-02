@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 
@@ -28,6 +30,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Read service-only hold state only after ownership is established.
+    const settlementHeld = await getMerchantAccountingHold(createServiceClient({ noStore: true }), businessId);
     // Get total successful payments via bookings and orders
     const [{ data: bookingPayments }, { data: orderPayments }, { data: invoicePayments }] = await Promise.all([
       supabase
@@ -148,6 +152,7 @@ export async function GET(request: NextRequest) {
       .eq('status', 'confirmed');
 
     return NextResponse.json({
+      settlement_held: settlementHeld,
       gross,
       fees: totalFees,
       net_available: netAvailable,
