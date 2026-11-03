@@ -89,6 +89,8 @@ describe('M507 first shared-number assignment (real PostgreSQL)', () => {
         assigned_channel_id uuid REFERENCES whatsapp_channels(id) ON DELETE SET NULL,
         whatsapp_channel_id uuid REFERENCES whatsapp_channels(id) ON DELETE SET NULL,
         updated_at timestamptz DEFAULT now());
+      ALTER TABLE whatsapp_channels ADD CONSTRAINT whatsapp_channels_business_id_fkey
+        FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
       CREATE TABLE bot_sessions(
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(), whatsapp_number text NOT NULL, business_id uuid,
         current_step text, session_data jsonb DEFAULT '{}', is_active boolean DEFAULT true,
@@ -144,6 +146,7 @@ describe('M507 first shared-number assignment (real PostgreSQL)', () => {
     ['owned by a business', { business_id: OTHER_BIZ }],
     ['dedicated', { channel_type: 'dedicated' }],
   ])('skips a %s channel', async (_label, extra) => {
+    await addBusiness(OTHER_BIZ, 'NG'); // owner for the "owned by a business" case (FK)
     await client.query('DELETE FROM whatsapp_channels WHERE id=$1', [NG_CH]);
     await addChannel(NG_CH, 'NG', extra as Record<string, unknown>);
     await addBusiness(NG_BIZ, 'NG');
@@ -152,10 +155,12 @@ describe('M507 first shared-number assignment (real PostgreSQL)', () => {
   });
 
   it('refuses businesses that already have other channel authority, without mutation', async () => {
-    // NG_BIZ: points at its own dedicated channel.
+    // NG_BIZ: points at its own dedicated channel (both FKs; created in one transaction).
     const DED = randomUUID();
+    await client.query('BEGIN');
     await addChannel(DED, 'NG', { channel_type: 'dedicated', business_id: NG_BIZ });
     await addBusiness(NG_BIZ, 'NG', { whatsapp_channel_id: DED });
+    await client.query('COMMIT');
     // US_BIZ: non-shared WhatsApp method.
     await addBusiness(US_BIZ, 'US', { wa_method: 'transfer' });
     // GH_BIZ: no pointer, but an inactive (historical) dedicated channel belongs to it.
@@ -182,6 +187,45 @@ describe('M507 first shared-number assignment (real PostgreSQL)', () => {
     await assign(NG_BIZ);
     expect(await assigned(OTHER_BIZ)).toBeNull();
     expect(await assigned(US_BIZ)).toBe(US_CH);
+  });
+
+  it('assigns regardless of business status (Owner decision: any business with no number)', async () => {
+    await addBusiness(NG_BIZ, 'NG', { status: 'suspended' });
+    await addBusiness(OTHER_BIZ, 'NG', { status: 'active' });
+    expect((await assign(NG_BIZ)).channel_id).toBe(NG_CH);
+    expect((await assign(OTHER_BIZ)).channel_id).toBe(NG_CH);
+  });
+
+  it('a deleted shared channel clears the pointer (FK SET NULL); the business can then get a first number again', async () => {
+    const OLD = randomUUID();
+    await addChannel(OLD, 'NG');
+    await addBusiness(NG_BIZ, 'NG', { assigned_channel_id: OLD });
+    await client.query('DELETE FROM whatsapp_channels WHERE id=$1', [OLD]);
+    expect(await assigned(NG_BIZ)).toBeNull();
+    expect(await assign(NG_BIZ)).toMatchObject({ allocated: true, idempotent: false, channel_id: NG_CH });
+  });
+
+  it('a deactivated assigned channel is reported as the existing assignment, never silently replaced', async () => {
+    await addBusiness(NG_BIZ, 'NG');
+    await assign(NG_BIZ);
+    await client.query('UPDATE whatsapp_channels SET is_active=false WHERE id=$1', [NG_CH]);
+    expect(await assign(NG_BIZ)).toEqual({ allocated: true, idempotent: true, channel_id: NG_CH });
+  });
+
+  it('waits for a concurrent channel deactivation and then picks the next eligible number', async () => {
+    const NG_CH2 = '00000000-0000-4000-b507-000000000009';
+    await addChannel(NG_CH2, 'NG');
+    await addBusiness(NG_BIZ, 'NG');
+    const a = new pg.Client({ connectionString: target.toString(), statement_timeout: 5000 });
+    await a.connect();
+    try {
+      await a.query('BEGIN');
+      await a.query('UPDATE whatsapp_channels SET is_active=false WHERE id=$1', [NG_CH]); // lowest id, normally chosen
+      const pending = assign(NG_BIZ); // FOR SHARE waits on the row lock
+      await new Promise(r => setTimeout(r, 200));
+      await a.query('COMMIT');
+      expect(await pending).toMatchObject({ allocated: true, channel_id: NG_CH2 });
+    } finally { await a.end(); }
   });
 
   it('has no capacity limit (Owner decision): 75 businesses share one number', async () => {

@@ -17,8 +17,8 @@
   - `app/api/onboarding/verify/route.ts` assigns the first number for an unassigned shared business when only the new switch is on, and returns 503 `WHATSAPP_NUMBER_UNAVAILABLE` if none is eligible.
 - Unchanged: reassignment, stale-channel repair, dedicated promotion, Embedded Signup, disconnect, admin channel changes and admin onboarding all stay behind `ENABLE_CHANNEL_ALLOCATION_OPERATIONS`. Staging behavior is unchanged.
 - Tests:
-  - `lib/__tests__/first-shared-assignment-507.pg.test.ts` (real PostgreSQL, 20 tests).
-  - `lib/__tests__/first-shared-assignment-admission.test.ts` (34 tests).
+  - `lib/__tests__/first-shared-assignment-507.pg.test.ts` (real PostgreSQL, 24 tests).
+  - `lib/__tests__/first-shared-assignment-admission.test.ts` (35 tests).
   - `lib/__tests__/onboarding-655-flow-callback-fallback.test.ts`: assertion updated to the new wrapper, with no direct RPC.
 - Could break: nothing while the switch is off. Turning it on in production is a separate Owner-approved environment change, after M507 is applied through the release process.
 
