@@ -1,3 +1,11 @@
+## 2026-11-03 — QR page no longer shows an unrelated WhatsApp number
+
+- `app/dashboard/qr-code/page.tsx`: when a business had no assigned channel, the page picked any active shared number (often another country's), so it looked ready. But the printed QR (`/m/{businessId}`, `app/m/resolve.ts`) only resolves through `assigned_channel_id || whatsapp_channel_id`, so customers got "not connected". The page now mirrors that rule. It reads the assigned channel as a dedicated channel from the base table (allowed by the owner RLS policy) or as a shared channel from `whatsapp_channels_public` (owners cannot read shared channels from the base table). With no usable assigned channel it shows "WhatsApp isn't connected yet". The queue template keeps its own guidance. The unused owner-contact phone state was removed.
+- Tests: `lib/__tests__/issue-496-qr-production.test.tsx` (unassigned → warning; assigned shared via view → no warning), `app/dashboard/queue/__tests__/queue-share-qr.test.tsx` (mocks now follow production RLS: shared rows only through the view; the old any-shared-number fallback case now asserts the queue QR is withheld).
+- Known limitation: the browser cannot see `connection_status` or staging-only fallback countries, so country/connection checks stay server-side. Today 3 Nigerian businesses sit on the US number, and all are in the cleanup scope.
+- Unchanged: the `/m/{businessId}` redirect, the bot, channel assignment.
+- Could break: merchants without an assigned channel now see a warning they did not see before. That is intended.
+
 ## 2026-11-03 — Pricing page shows all five countries again
 
 - Owner direction (2026-11-03): "everything should show in pricing". Reverts the presentation part of #802: `app/(marketing)/pricing/page.tsx` restores the country picker (Nigeria, US, UK, Canada, Ghana) and the five-country feature card; `components/marketing/Footer.tsx` restores all country badges on /pricing; `lib/__tests__/marketing-country-pricing.test.tsx` returns to the multi-country assertions.

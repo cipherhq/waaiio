@@ -54,61 +54,53 @@ export default function QRCodePage() {
     if (param && TEMPLATES.some(t => t.id === param)) return param as TemplateId;
     return 'generic' as TemplateId;
   }, [searchParams]);
-  const [channelPhone, setChannelPhone] = useState('');
   const [channelLoaded, setChannelLoaded] = useState(false);
-  // Track whether the resolved phone is a real bot channel (not just owner contact fallback)
+  // Whether the business's assigned channel is one its /m/{businessId} link can use
   const [hasBotChannel, setHasBotChannel] = useState(false);
   // Track whether the resolved channel is a shared channel (for routing context)
   const [resolvedChannelIsShared, setResolvedChannelIsShared] = useState(false);
 
-  // Load the actual WhatsApp channel phone number (not business.phone which is the owner's contact)
-  // Reset readiness on dependency change so stale results are discarded
+  // Mirror the /m/{businessId} resolver (app/m/resolve.ts): only the business's
+  // assigned channel (assigned_channel_id || whatsapp_channel_id) counts. There is
+  // no "any shared number" fallback, so an unassigned business shows "not connected".
+  // Reset readiness on dependency change so stale results are discarded.
   useEffect(() => {
     let cancelled = false;
     setChannelLoaded(false);
     setHasBotChannel(false);
     setResolvedChannelIsShared(false);
 
-    async function loadChannelPhone() {
+    async function loadAssignedChannel() {
       const supabase = createClient();
       const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
 
-      // Fire all 3 queries in parallel — include channel_type for assigned channel
-      const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
-        channelId
-          ? supabase.from('whatsapp_channels').select('phone_number, channel_type').eq('id', channelId).eq('is_active', true).maybeSingle()
-          : Promise.resolve({ data: null }),
-        supabase.from('whatsapp_channels').select('phone_number')
-          .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-        queryChannelsPublic(supabase, 'phone_number', (q) => q.limit(1).maybeSingle()),
-      ]);
+      // Owners can read their own dedicated channel from the base table (RLS), but
+      // not a shared channel; shared channels are readable via whatsapp_channels_public.
+      const [dedicatedResult, sharedResult] = channelId
+        ? await Promise.all([
+            supabase.from('whatsapp_channels').select('channel_type')
+              .eq('id', channelId).eq('business_id', business.id)
+              .eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
+            queryChannelsPublic(supabase, 'id', (q) => q.eq('id', channelId).maybeSingle()),
+          ])
+        : [{ data: null }, { data: null }];
 
       if (cancelled) return; // Discard obsolete response from prior business context
 
-      // Priority: assigned > dedicated > shared > business.phone fallback
-      // Determine channel type from the actually selected channel
-      const assignedPhone = assignedResult.data?.phone_number;
-      const assignedType = assignedResult.data?.channel_type as string | undefined;
-      const dedicatedPhone = dedicatedResult.data?.phone_number;
-      const sharedPhone = sharedResult.data?.phone_number;
-      const botChannelPhone = assignedPhone || dedicatedPhone || sharedPhone;
-      const resolved = botChannelPhone || business.phone || '';
-      // Resolved channel is shared if: assigned channel has type 'shared',
-      // or dedicated query failed and shared query provided the phone
-      const isResolvedShared = assignedPhone
-        ? assignedType === 'shared'
-        : (!dedicatedPhone && !!sharedPhone);
+      const isDedicatedReady = !!dedicatedResult.data;
+      // The view only lists active shared channels. Country/connection-status
+      // checks stay server-side (app/m/resolve.ts); the browser cannot see
+      // connection_status or the staging-only fallback countries.
+      const isSharedReady = !!sharedResult.data;
 
-      setChannelPhone(resolved.replace(/[^0-9]/g, ''));
-      setHasBotChannel(!!botChannelPhone);
-      setResolvedChannelIsShared(isResolvedShared);
+      setHasBotChannel(isDedicatedReady || isSharedReady);
+      setResolvedChannelIsShared(!isDedicatedReady && isSharedReady);
       setChannelLoaded(true);
     }
-    loadChannelPhone();
+    loadAssignedChannel();
     return () => { cancelled = true; };
-  }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id, business.phone]);
+  }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id]);
 
-  const phone = channelPhone;
 
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>(initialTemplate);
 
@@ -517,9 +509,9 @@ export default function QRCodePage() {
         />
       </div>
 
-      {channelLoaded && !phone && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <strong>No WhatsApp number found.</strong> Please connect a WhatsApp number in{' '}
+      {channelLoaded && !hasBotChannel && !isQueueTemplate && (
+        <div data-testid="no-whatsapp-channel" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>WhatsApp isn&apos;t connected yet.</strong> Customers who scan this QR code or open this link will see &ldquo;not connected&rdquo; until it is. Connect a WhatsApp number in{' '}
           <a href="/dashboard/whatsapp/connect" className="font-medium underline hover:no-underline">WhatsApp Setup</a>{' '}
           to generate a working QR code and link.
         </div>
