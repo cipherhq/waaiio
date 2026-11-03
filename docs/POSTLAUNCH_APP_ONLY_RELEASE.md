@@ -9,3 +9,12 @@ Evidence for both environments must establish the completed post-app catalog thr
 The manual admin alias contract permits a schema6 descriptor for the serving baseline itself only when its complete descriptor and production target match live evidence. The existing older non-serving descriptor path remains strict. Latest and serving pointers may transition only to the candidate created by this invocation; only the fixed canonical admin alias is assigned. Permissions failures and partial-release uncertainty stop rather than trigger retry or rollback.
 
 The target suites retain accounting, security, MFA and payout coverage and add the affected onboarding, marketing and admin cases. Integration SQL tests remain disposable prerequisite verification, not hosted migration execution. New acceptance cases require owner-email Bearer authority, credits views, launch-list rendering with preview writes blocked, signup plan/back/pricing behavior without signup mutation, and marketing navigation. Independent evidence must distinguish real read-only acceptance, rendered fixtures, inherited dependency-equivalent evidence, and any unavailable proof. Synthetic test reports are never release observations or Owner approvals.
+
+## Successor pin (2026-11-03): b741 → 5e3204d9
+
+The same fixed policy now pins baseline `b741c7cf` (the live release) to target `5e3204d9` (main after #833, #834 and #835): 17 changed blobs, no deletions, no SQL. It adds the delta suites `marketing-country-pricing` (1), `issue-496-qr-production` (6), `queue-share-qr` (16) and admin `users-null-email-search-833` (3). It also adds three acceptance cases:
+- pricing lists all active countries from the public API;
+- the admin Users list loads, and search is safe with null emails;
+- the QR page shows "not connected" for an unassigned business and no warning for an assigned shared channel.
+
+All earlier suites and acceptance cases are retained. Migration 507 (#836) is deliberately outside this app-only release.

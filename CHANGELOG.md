@@ -1,3 +1,15 @@
+## 2026-11-03 — App-only release profile pinned to b741 → 5e3204d9
+
+- `scripts/postlaunch-release-targets.json`: baseline `b741c7cf` → target `5e3204d9` (tree `7ef94107`). 17 changed blobs (sha256 of target content), no deletions, no `supabase/` or SQL paths.
+- `scripts/postlaunch-release-policy.mjs`:
+  - new fixed identity;
+  - delta suites for pricing (1), QR (6), queue QR (16) and admin Users (3);
+  - three new acceptance cases (pricing countries, admin Users list, QR assigned channel).
+  - All existing suites and cases are kept.
+- `scripts/__tests__/postlaunch-release-policy.test.ts`: expects 17 blobs.
+- `docs/POSTLAUNCH_APP_ONLY_RELEASE.md`: successor pin documented.
+- Could break: nothing at runtime. This is release verification only. Migration 507 (#836) is not part of this release.
+
 ## 2026-11-03 — Signup works again without M430: first shared WhatsApp number
 
 - **Why:** production has no `ENABLE_CHANNEL_ALLOCATION_OPERATIONS` and no `allocate_shared_channel` (M430 is staging-only, by Owner decision). So `provisionPendingBusiness` threw 503 and nobody could sign up; the newest production business is from 2026-09-27. 38 active shared businesses also have no number.
