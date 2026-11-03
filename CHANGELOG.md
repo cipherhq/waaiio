@@ -1,3 +1,23 @@
+## 2026-11-03 — Release gate: schema 7 first-assignment profile (M507 only)
+
+- Owner decision (2026-11-03): release #836 (first shared WhatsApp number at signup) and #839 through a narrow gate that admits exactly one reviewed migration, M507.
+- New `scripts/first-assignment-release-policy.mjs` (policy `postlaunch-first-assignment-v1`, manifest schema 7):
+  - pins baseline `5e3204d9` → target `73377818` (tree `208b1ba8`): 20 changed blobs, no deletions;
+  - the only SQL is `supabase/migrations/507_first_shared_channel_assignment.sql`, by exact sha256.
+- `scripts/first-assignment-function-contracts.json`: the exact expected contract for `assign_first_shared_channel(uuid)` and `get_bot_context(text,uuid)`. The test ties each body hash to the dollar-quoted body in the pinned migration. Production must have no M430 `allocate_shared_channel` or `reassign_shared_channel` function.
+- Evidence per environment:
+  - every schema 6 rule, through the shared `verifyPostlaunchEnvironment`, which was extracted from `verifyPostlaunchEvidence` with no behavior change;
+  - exactly one ledger addition named `507_first_shared_channel_assignment` with the reviewed statement bytes;
+  - the function contract.
+- Verify run:
+  - adds merchant suites `first-shared-assignment-admission` (35), `onboarding-655-flow-callback-fallback` (3) and `hide-inactive-countries-marketing` (4);
+  - the integration SQL job adds `first-shared-assignment-507.pg` (24) and pins the M507 source.
+- `scripts/reduced-release-gate.mjs`: schema 7 follows every postlaunch branch, with its own identities, targets, policy, SQL tests and evidence verifier. `scripts/reduced-release-evidence.mjs` recognizes schema 7.
+- Tests: `scripts/__tests__/first-assignment-release-policy.test.ts` (29). Existing gate suites are unchanged and passing (postlaunch 40).
+- Docs: `docs/POSTLAUNCH_FIRST_ASSIGNMENT_RELEASE.md`. CI: file-presence guard for the new test.
+- Runs no SQL and changes no setting. Applying M507 and setting `ENABLE_FIRST_SHARED_ASSIGNMENT` remain separate Owner-approved steps.
+- Could break: nothing for schema 2–6 manifests; their code paths and tests are unchanged.
+
 ## 2026-11-03 — Marketing: stop offering Ghana while it is switched off
 
 - Owner decision (2026-11-03): Ghana is not offered for now; it is switched off in admin. Production's country picker already follows the active-country data, but three fixed texts still named Ghana.
