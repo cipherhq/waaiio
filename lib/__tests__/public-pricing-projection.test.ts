@@ -373,24 +373,26 @@ describe('Subscribe Route — runtime proofs', () => {
 // ═══════════════════════════════════════════════════════════
 
 describe('StepPlan CTA Differentiation', () => {
-  it('D7: StepPlan contains "Start Free Trial" text', () => {
+  it('D7: StepPlan contains "Start free — upgrade later" text', () => {
     const source = readFileSync(join(process.cwd(), 'app/get-started/steps/StepPlan.tsx'), 'utf-8');
-    expect(source).toContain('Start Free Trial');
+    expect(source).toContain('Start free — upgrade later');
   });
 
-  it('D8: StepPlan contains "Subscribe" CTA text', () => {
+  it('D8: StepPlan contains "Continue with" CTA text', () => {
     const source = readFileSync(join(process.cwd(), 'app/get-started/steps/StepPlan.tsx'), 'utf-8');
-    expect(source).toContain('Subscribe');
+    expect(source).toContain('Continue with');
   });
 
-  it('D7/D8: StepPlan CTA button does NOT render "Continue"', () => {
+  it('D7/D8: StepPlan CTA button distinguishes free signup from priced paid continuation', () => {
     const source = readFileSync(join(process.cwd(), 'app/get-started/steps/StepPlan.tsx'), 'utf-8');
-    // The disabled={!selectedPlan} button must not have static "Continue" text
-    const ctaButtonMatch = source.match(/disabled=\{!selectedPlan\}[^>]*>([\s\S]*?)<\/button>/);
+    // The disabled={eligibleCapabilities.length === 0} button must not have static "Continue" text
+    const ctaButtonMatch = source.match(/disabled=\{eligibleCapabilities.length === 0\}[^>]*>([\s\S]*?)<\/button>/);
     expect(ctaButtonMatch).not.toBeNull();
     expect(ctaButtonMatch![1]).not.toContain('>Continue<');
-    expect(ctaButtonMatch![1]).toContain('Start Free Trial');
-    expect(ctaButtonMatch![1]).toContain('Subscribe');
+    expect(ctaButtonMatch![1]).toContain('Start free — upgrade later');
+    expect(ctaButtonMatch![1]).toContain('Continue with');
+    expect(ctaButtonMatch![1]).toContain('formatCurrency');
+    expect(ctaButtonMatch![1]).toContain('/mo');
   });
 
   it('D7/D8: StepPlan does NOT import getAnnualDiscountSync', () => {
