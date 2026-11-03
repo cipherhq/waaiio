@@ -46,14 +46,17 @@ export function verifyPostlaunchEvidence(report,manifest,now=Date.now(),approved
 }
 // Shared by schema 6 (no ledger additions) and the schema 7 first-assignment
 // successor, which passes its fixed, source-pinned M507 ledger rule.
-export function verifyPostlaunchEnvironment(env,report,manifest,now,approvedAt,ledgerRules){
+// Schema 9 also passes one extra trusted catalog phase (its M508 changes) from
+// its checked-in contract; schemas 6 and 7 pass none.
+export function verifyPostlaunchEnvironment(env,report,manifest,now,approvedAt,ledgerRules,extraPhases=[]){
   const expected=manifest.postlaunch?.[env],actual=report.postlaunch?.[env];
   const ref=env==='production'?POSTLAUNCH_EVIDENCE_POLICY.production_project_ref:POSTLAUNCH_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref;
   if(!expected||!actual||expected.environment!==env||actual.environment!==env||expected.project_ref!==ref||actual.project_ref!==ref||!equal(actual.binding,expected))fail();
   const at=Date.parse(actual.observed_at);
   if(!Number.isFinite(at)||!Number.isFinite(now)||!Number.isFinite(approvedAt)||at>now||now-at>SCHEMA_MAX_AGE_MS||approvedAt<at||approvedAt>now||actual.method!=='authorized-connector-read-only'||!hash(actual.raw_evidence_sha256)||!text(actual.independent_review_reference)||actual.business_mutations!==0||actual.provider_calls!==0)fail();
   const p=postlaunchCatalogPhases(env);
-  verifyCatalogSequence(actual.catalog,expected.catalog,[p.pre_app,p.post_app]);
+  if(!Array.isArray(extraPhases))fail();
+  verifyCatalogSequence(actual.catalog,expected.catalog,[p.pre_app,p.post_app,...extraPhases]);
   if(!hash(expected.current_catalog_sha256)||catalogObjectsDigest(actual.catalog.after)!==expected.current_catalog_sha256)fail();
   verifyFullKnownComponents(env,actual.components,'post_app');
   // Current complete ledger is the immutable baseline. Schema 6 passes no rules,
