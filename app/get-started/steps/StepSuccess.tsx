@@ -10,6 +10,7 @@ export function StepSuccess({
   successData,
   waMethod,
   waLink,
+  qrLink,
   selectedCapabilities,
   category,
   error,
@@ -24,9 +25,10 @@ export function StepSuccess({
   // URL validation: accepts permanent Waaiio links (/m/{uuid} or short /m/{BOT_CODE}) and wa.me links.
   // Exact known origins only — no arbitrary *.vercel.app or unknown hosts.
   // No credentials, non-standard ports, query strings, or hash fragments on /m/ links.
-  const safeWaLink = (() => {
+  const validLink = (link: string | undefined, allowShort: boolean): string => {
+    if (!link) return '';
     try {
-      const u = new URL(waLink);
+      const u = new URL(link);
       if (u.protocol !== 'https:') return '';
       if (u.port !== '' && u.port !== '443') return '';
       if (u.username || u.password) return '';
@@ -34,7 +36,7 @@ export function StepSuccess({
       // Accept wa.me links (direct WhatsApp — backward compat for pre-registration display)
       if (u.hostname === 'wa.me') {
         if (!/^\/\d+$/.test(u.pathname)) return '';
-        return waLink;
+        return link;
       }
 
       // Accept permanent Waaiio links: exact known hosts, /m/{uuid} or short /m/{BOT_CODE} base path only.
@@ -44,12 +46,16 @@ export function StepSuccess({
       if (u.search || u.hash) return '';
       const UUID_PATH = /^\/m\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       const SHORT_PATH = /^\/m\/(?=[A-Z0-9-]*[A-Z0-9])[A-Z0-9-]{1,30}$/;
-      if (!UUID_PATH.test(u.pathname) && !SHORT_PATH.test(u.pathname)) return '';
-      return waLink;
+      if (!UUID_PATH.test(u.pathname) && !(allowShort && SHORT_PATH.test(u.pathname))) return '';
+      return link;
     } catch {
       return '';
     }
-  })();
+  };
+  const safeWaLink = validLink(waLink, true);
+  // QR codes get printed, so they always encode the permanent /m/{uuid} (or wa.me)
+  // link, never the short /m/{BOT_CODE} text link.
+  const qrValue = validLink(qrLink, false) || validLink(waLink, false);
   const hasValidLink = safeWaLink !== '';
   const promotion = getPromotionGuidance(category, selectedCapabilities, safeWaLink);
 
@@ -137,11 +143,11 @@ export function StepSuccess({
           {/* QR Code hero card — only rendered when the link is valid */}
           {hasValidLink ? (
             <div className="mt-6 rounded-2xl bg-white border border-gray-200 p-8 shadow-lg">
-              {qrLoaded && qrRef.current ? (
+              {qrLoaded && qrRef.current && qrValue ? (
                 <>
                   <div className="flex justify-center">
                     {React.createElement(qrRef.current.SVG, {
-                      value: safeWaLink,
+                      value: qrValue,
                       size: 220,
                       level: 'M',
                     })}
@@ -149,7 +155,7 @@ export function StepSuccess({
                   {/* Hidden canvas for download */}
                   <div id="qr-download-canvas" className="hidden">
                     {React.createElement(qrRef.current.Canvas, {
-                      value: safeWaLink,
+                      value: qrValue,
                       size: 512,
                       level: 'M',
                     })}

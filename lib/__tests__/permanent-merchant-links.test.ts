@@ -97,11 +97,12 @@ describe('URL helpers', () => {
   it('buildMerchantLink generic = base', () => {
     expect(buildMerchantLink(BIZ_ID, 'generic')).toBe(`https://www.waaiio.com/m/${BIZ_ID}`);
   });
-  it('buildShortMerchantLink uses the upper-cased bot code', () => {
-    expect(buildShortMerchantLink('citadel', BIZ_ID)).toBe(`${canonicalPublicOrigin()}/m/CITADEL`);
+  it('buildShortMerchantLink uses a canonical upper-case bot code as stored', () => {
+    expect(buildShortMerchantLink('CITADEL', BIZ_ID)).toBe(`${canonicalPublicOrigin()}/m/CITADEL`);
   });
-  it('buildShortMerchantLink falls back to the permanent id link when the code is missing or unsafe', () => {
-    for (const code of [null, undefined, '', '  ', 'bad code', 'x/y', 'a'.repeat(31)]) {
+  it('buildShortMerchantLink falls back to the permanent id link when the code is missing, non-canonical or unsafe', () => {
+    // Lower-case / padded stored codes would resolve via UPPER(key) to whoever holds the upper-case code.
+    for (const code of [null, undefined, '', '  ', 'citadel', ' CITADEL', 'Citadel', 'bad code', 'x/y', 'A'.repeat(31), '---']) {
       expect(buildShortMerchantLink(code as string | null | undefined, BIZ_ID)).toBe(buildMerchantLink(BIZ_ID));
     }
   });

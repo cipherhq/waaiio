@@ -55,8 +55,10 @@ export function buildMerchantLink(businessId: string, action?: MerchantLinkActio
  * permanent /m/{uuid} link when the bot code is missing or not URL-safe.
  */
 export function buildShortMerchantLink(botCode: string | null | undefined, businessId: string): string {
-  const code = String(botCode || '').trim().toUpperCase();
-  if (/^(?=.*[A-Z0-9])[A-Z0-9-]{1,30}$/.test(code)) return `${canonicalPublicOrigin()}/m/${code}`;
+  // Use the stored code exactly as it is: the resolver matches bot_code = UPPER(key),
+  // so a lower-case or padded stored code must not produce a short link (it could
+  // resolve to a different business holding the upper-case code).
+  if (typeof botCode === 'string' && /^(?=.*[A-Z0-9])[A-Z0-9-]{1,30}$/.test(botCode)) return `${canonicalPublicOrigin()}/m/${botCode}`;
   return buildMerchantLink(businessId);
 }
 

@@ -3,15 +3,15 @@
 - Owner decision (2026-11-03): shorten the shared WhatsApp link, for example `waaiio.com/m/CITADEL` instead of `waaiio.com/m/<uuid>`. Option A: use the business's existing unique bot code.
 - `app/m/resolve.ts`: `parseMerchantKey` accepts either the permanent UUID (looked up by `id`) or a bot code (A-Z/0-9/hyphen, 1–30 characters, upper-cased, looked up by `bot_code`). Anything else returns 400 with no database lookup. Every existing `/m/<uuid>` link keeps working.
 - `app/m/[businessId]/campaign/[campaignId]/route.ts`: the campaign ownership filter now uses the resolved `result.business.id`, never the raw key.
-- `lib/url.ts`: `buildShortMerchantLink(botCode, businessId)`. Falls back to the permanent `/m/<uuid>` link when the code is missing or not URL-safe.
-- Short link shown in: onboarding success share text (`OnboardingWizard`; `StepSuccess` now accepts `/m/{BOT_CODE}`), dashboard home and the WhatsApp settings page.
+- `lib/url.ts`: `buildShortMerchantLink(botCode, businessId)`. It uses the stored code only when it is already canonical (upper-case A-Z/0-9/hyphen); otherwise it falls back to the permanent `/m/<uuid>` link. Production has 22 of 51 lower-case codes, mostly test businesses, and those keep the UUID link.
+- The short link is shown as text in the onboarding success share text (`OnboardingWizard`; `StepSuccess` now accepts `/m/{BOT_CODE}`), on the dashboard home and on the WhatsApp settings page. Every QR code, including the dashboard home QR card and the success-screen QR and download, encodes the permanent `/m/<uuid>` link (`qrLink`).
 - Deliberately unchanged:
-  - QR codes and attendance links stay on the UUID, until bot codes are locked against edits.
+  - All QR codes and attendance links stay on the UUID.
   - The public directory stays on the UUID; its API hides bot codes.
   - The admin onboarding `permanent_link` is unchanged.
-- Tests: `lib/__tests__/permanent-merchant-links.test.ts` and `app/get-started/steps/__tests__/promotionGuidance.test.tsx`. The new short-link cases fail on the previous code.
+- Tests: `lib/__tests__/permanent-merchant-links.test.ts`, `app/get-started/steps/__tests__/promotionGuidance.test.tsx` and `app/get-started/steps/__tests__/success-qr-permanent-link.test.tsx`. The new cases fail on the previous code.
 - Could break:
-  - A business whose bot code changes would break its short links. No current UI changes bot codes; locking them is a follow-up.
+  - Owners can currently change their bot code in Settings, and a changed code breaks that business's short links. Do not release short links until bot codes are locked against edits (tracked privately).
   - Bot codes become guessable link keys. They were already public in every shared `wa.me` link, and `/m/` stays rate-limited at 30 per minute.
 
 ## 2026-11-03 — Release gate: schema 7 first-assignment profile (M507 only)
