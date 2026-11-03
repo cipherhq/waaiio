@@ -7,10 +7,11 @@
   - standard and full lanes (unknown paths go to full);
   - one generated release packet approval, with the deploy job re-checking production itself;
   - a reusable gate instead of a profile per release;
-  - CI on every push, a standard review brief and release trains.
+  - CI on every push (already the case), a standard review brief and release trains;
+  - review-driven precision: one-time, digest-bound packet approval, certified-baseline check, path allowlist for the standard lane, staging-before-production ordering, and the gate 6 rule.
 - `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: records that one release-packet approval covers gates 5, 7 and 9 for that packet. Merge, production migration and live money actions stay separate.
-- `CLAUDE.md`: one pointer line to §9.
-- No code change. Each V3 item applies only after its tooling is merged; until then the current gate profiles apply.
+- `CLAUDE.md`: pointer line to §9. The CI Process section is corrected: CI already runs on every PR push (`synchronize`, since #629), so the draft→ready toggle is only a fallback for a missing or cancelled run.
+- No code change. §9.1 non-negotiables apply now. §9.2–§9.6 apply only after their tooling is merged; until then the current gate profiles apply.
 - Could break: nothing at runtime.
 
 ## 2026-11-03 — Harden server-managed business columns (M508)

@@ -8,7 +8,7 @@
 
 Read and follow both documents before any substantive work. The Operating Order defines roles, evidence hierarchy, the standard change process, review/checkpoint protocol, failure escalation, production certification, and release safety invariants. Release Gate V2 defines the invariant registry, final-state migration checks, golden journeys, provider acceptance criteria, exact-SHA certification, canary rules, and escaped defect policy.
 
-**Release Process V3** (Owner-approved 2026-11-03, Issue #843): lanes, one release approval and the reusable gate are in Release Gate V2 §9, including its non-negotiables. Each part applies once its tooling is merged.
+**Release Process V3** (Owner-approved 2026-11-03, Issue #843) is Release Gate V2 §9. Its non-negotiables (§9.1) apply now. Lanes, one release approval and the reusable gate (§9.2–§9.6) apply once their tooling is merged.
 
 **For migrations, payments, authorization, provider integrations, or cross-cutting changes:** read Release Gate V2 §1 (invariant registry) and §2 (migration checks) before writing code. Verify your change does not violate a registered invariant. If it touches a `SECURITY DEFINER` function, check DB-001/DB-002/DB-006.
 
@@ -302,9 +302,8 @@ npm run test                             # full local test suite
 ```
 
 ### Level 3: Exact-head release CI (before CTO review)
-Launch merge-gate-compatible CI on the exact PR head SHA using draft→ready_for_review:
+Every push to a PR runs full CI on that head (`pull_request: synchronize`). Use the PR's own run for the exact head SHA. Only if that run is missing or was cancelled, re-trigger it with draft→ready_for_review:
 ```bash
-# Convert PR to draft, then immediately back to ready-for-review
 gh pr ready <PR_NUMBER> --undo   # → draft
 gh pr ready <PR_NUMBER>          # → ready-for-review (triggers CI)
 ```
@@ -315,14 +314,14 @@ gh pr checks <PR_NUMBER>
 # Verify merge gate recognizes all checks:
 gh pr view <PR_NUMBER> --json statusCheckRollup
 ```
-**All 7 jobs must be green on the exact head SHA.** If the head changes after the CI run, that evidence is stale and CI must be rerun.
+**All required jobs must be green on the exact head SHA.** If the head changes after the CI run, that evidence is stale and CI must be rerun.
 
-The draft→ready_for_review transition fires a `pull_request: ready_for_review` event that GitHub branch protection recognizes for required status checks. `workflow_dispatch` runs are supplemental evidence only — they do NOT satisfy the protected merge gate.
+GitHub branch protection recognizes required status checks from any `pull_request` run on the exact head SHA (synchronize or ready_for_review). `workflow_dispatch` runs are supplemental evidence only — they do NOT satisfy the protected merge gate.
 
 ### Trigger semantics
 - `push` to `main`: full CI runs automatically (post-merge regression)
 - `pull_request` opened/reopened/ready_for_review: full CI on PR creation or draft→ready transition
-- `pull_request` synchronize: **does NOT trigger CI** (intermediate commits validated locally)
+- `pull_request` synchronize: full CI runs on every push to the PR; superseded PR runs are cancelled
 - `workflow_dispatch`: supplemental full CI for any branch (does NOT satisfy merge gate)
 
 ## Brand
