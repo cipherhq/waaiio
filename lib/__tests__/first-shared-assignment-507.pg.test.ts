@@ -90,7 +90,7 @@ describe('M507 first shared-number assignment (real PostgreSQL)', () => {
         whatsapp_channel_id uuid REFERENCES whatsapp_channels(id) ON DELETE SET NULL,
         updated_at timestamptz DEFAULT now());
       ALTER TABLE whatsapp_channels ADD CONSTRAINT whatsapp_channels_business_id_fkey
-        FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+        FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE SET NULL;
       CREATE TABLE bot_sessions(
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(), whatsapp_number text NOT NULL, business_id uuid,
         current_step text, session_data jsonb DEFAULT '{}', is_active boolean DEFAULT true,
@@ -155,12 +155,11 @@ describe('M507 first shared-number assignment (real PostgreSQL)', () => {
   });
 
   it('refuses businesses that already have other channel authority, without mutation', async () => {
-    // NG_BIZ: points at its own dedicated channel (both FKs; created in one transaction).
+    // NG_BIZ: points at its own dedicated channel (production FKs are not deferrable).
     const DED = randomUUID();
-    await client.query('BEGIN');
+    await addBusiness(NG_BIZ, 'NG');
     await addChannel(DED, 'NG', { channel_type: 'dedicated', business_id: NG_BIZ });
-    await addBusiness(NG_BIZ, 'NG', { whatsapp_channel_id: DED });
-    await client.query('COMMIT');
+    await client.query('UPDATE businesses SET whatsapp_channel_id=$2 WHERE id=$1', [NG_BIZ, DED]);
     // US_BIZ: non-shared WhatsApp method.
     await addBusiness(US_BIZ, 'US', { wa_method: 'transfer' });
     // GH_BIZ: no pointer, but an inactive (historical) dedicated channel belongs to it.

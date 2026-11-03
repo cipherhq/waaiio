@@ -17,7 +17,7 @@ vi.mock('@/lib/supabase/service', () => ({ createServiceClient: m.service }));
 vi.mock('@/lib/admin-auth', () => ({ requirePlatformAdmin: m.admin }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: async () => null, getRateLimitKey: () => 'fixture' }));
 
-import { channelOperationsEnabled, firstSharedAssignmentEnabled } from '@/lib/channels/operation-admission';
+import { channelOperationsEnabled, firstSharedAssignmentEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import {
   allocateSharedChannelWithFallback, assignFirstSharedChannel, allocateSharedChannelForNewBusiness,
 } from '@/lib/onboarding/whatsapp-readiness';
@@ -97,8 +97,12 @@ describe('with only first assignment on, every other channel operation stays una
     expect(m.service).not.toHaveBeenCalled();
   });
   it('WhatsApp Flows onboarding stays unavailable (M507 covers register/verify only)', async () => {
-    const r = await handleOnboardingComplete('token:2348000000000', { email: 'owner@example.com', business_name: 'X' });
-    expect(r.success).toBe(false);
+    // Complete payload, so the only possible refusal is the admission gate.
+    const r = await handleOnboardingComplete('token:2348000000000', {
+      first_name: 'Ada', last_name: 'Lovelace', email: 'owner@example.com', password: 'Fixture-Passw0rd!',
+      business_name: 'Fixture Biz', category: 'salon', country: 'NG',
+    });
+    expect(r).toEqual({ success: false, error: CHANNEL_OPERATIONS_UNAVAILABLE.message });
     expect(m.service).not.toHaveBeenCalled();
     expect(m.from).not.toHaveBeenCalled();
   });
