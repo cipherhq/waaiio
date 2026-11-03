@@ -16,14 +16,20 @@ import { ACCOUNTING_TARGETS, ACCOUNTING_EVIDENCE_POLICY, ACCOUNTING_SQL_TESTS, A
 import { SECURITY_IDENTITIES, SECURITY_TARGETS, SECURITY_EVIDENCE_POLICY, SECURITY_SQL_TESTS, SECURITY_STORAGE_TESTS, SECURITY_RUNTIME_SOURCES, SECURITY_MIGRATIONS, verifySecurityPrerequisites } from './reduced-security-policy.mjs';
 import { isFullRelease as full, FULL_IDENTITIES, FULL_SCHEMA_CONTRACT, fullInventoryDigest, FULL_TARGETS, FULL_EVIDENCE_POLICY, FULL_MAIN_SQL_TESTS, FULL_SQL_TESTS, FULL_RUNTIME_SOURCES, requireFrozenFullRelease } from './full-release-policy.mjs';
 import { verifyFullReleaseEvidence } from './full-release-evidence.mjs';
-import {isPostlaunchRelease as postlaunch,POSTLAUNCH_IDENTITIES,POSTLAUNCH_TARGETS,POSTLAUNCH_EVIDENCE_POLICY,postlaunchInventoryDigest,verifyPostlaunchEvidence,requireFixedPostlaunch} from './postlaunch-release-policy.mjs';
+import {isPostlaunchRelease as appOnly,POSTLAUNCH_IDENTITIES,POSTLAUNCH_TARGETS,POSTLAUNCH_EVIDENCE_POLICY,postlaunchInventoryDigest,verifyPostlaunchEvidence,requireFixedPostlaunch} from './postlaunch-release-policy.mjs';
+import {isFirstAssignmentRelease as firstAssignment,FIRST_ASSIGNMENT_IDENTITIES,FIRST_ASSIGNMENT_TARGETS,FIRST_ASSIGNMENT_EVIDENCE_POLICY,firstAssignmentInventoryDigest,verifyFirstAssignmentEvidence,requireFixedFirstAssignment,FIRST_ASSIGNMENT_MAIN_SQL_TESTS,FIRST_ASSIGNMENT_SQL_TESTS,FIRST_ASSIGNMENT_CANONICAL_SOURCES} from './first-assignment-release-policy.mjs';
+// Schema 7 (first assignment) is the schema 6 postlaunch profile plus one
+// reviewed migration, so every postlaunch rule below applies to both.
+const postlaunch=m=>appOnly(m)||firstAssignment(m);
 const inventoryRelease=m=>full(m)||postlaunch(m);
-const identitiesFor=m=>postlaunch(m)?POSTLAUNCH_IDENTITIES:FULL_IDENTITIES;
-const inventoryDigest=(m,k)=>postlaunch(m)?postlaunchInventoryDigest(k):fullInventoryDigest(k);
+const identitiesFor=m=>firstAssignment(m)?FIRST_ASSIGNMENT_IDENTITIES:appOnly(m)?POSTLAUNCH_IDENTITIES:FULL_IDENTITIES;
+const inventoryDigest=(m,k)=>firstAssignment(m)?firstAssignmentInventoryDigest(k):appOnly(m)?postlaunchInventoryDigest(k):fullInventoryDigest(k);
+const requireFixedProfile=m=>firstAssignment(m)?requireFixedFirstAssignment():requireFixedPostlaunch();
+const mainSqlTestsFor=m=>firstAssignment(m)?FIRST_ASSIGNMENT_MAIN_SQL_TESTS:FULL_MAIN_SQL_TESTS;
 const security = manifest => manifest?.schema_version === 4 && manifest.policy === SECURITY_POLICY;
 const accounting = manifest => (manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY) || security(manifest) || inventoryRelease(manifest);
-const policyFor = manifest => postlaunch(manifest) ? POSTLAUNCH_EVIDENCE_POLICY : full(manifest) ? FULL_EVIDENCE_POLICY : security(manifest) ? SECURITY_EVIDENCE_POLICY : accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
-const sqlTestsFor = manifest => inventoryRelease(manifest) ? FULL_SQL_TESTS : security(manifest) ? SECURITY_SQL_TESTS : accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
+const policyFor = manifest => firstAssignment(manifest) ? FIRST_ASSIGNMENT_EVIDENCE_POLICY : appOnly(manifest) ? POSTLAUNCH_EVIDENCE_POLICY : full(manifest) ? FULL_EVIDENCE_POLICY : security(manifest) ? SECURITY_EVIDENCE_POLICY : accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
+const sqlTestsFor = manifest => firstAssignment(manifest) ? FIRST_ASSIGNMENT_SQL_TESTS : inventoryRelease(manifest) ? FULL_SQL_TESTS : security(manifest) ? SECURITY_SQL_TESTS : accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
 const runtimeFor = manifest => inventoryRelease(manifest) ? FULL_RUNTIME_SOURCES : security(manifest) ? SECURITY_RUNTIME_SOURCES : accounting(manifest) ? ACCOUNTING_RUNTIME_SOURCES : INTEGRATION_RUNTIME_SOURCES;
 const REPO = 'cipherhq/waaiio';
 const TEAM = 'team_AEcg69CktrGEptXDznpae8Rp';
@@ -50,7 +56,7 @@ export const TARGETS = Object.freeze({
 const payout = manifest => (manifest?.schema_version === 2 && manifest.policy === PAYOUT_POLICY) || accounting(manifest);
 function targetConfig(manifest, kind) {
   if (!payout(manifest)) return TARGETS[kind];
-  const config = (postlaunch(manifest) ? POSTLAUNCH_TARGETS : full(manifest) ? FULL_TARGETS : security(manifest) ? SECURITY_TARGETS : accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
+  const config = (firstAssignment(manifest) ? FIRST_ASSIGNMENT_TARGETS : appOnly(manifest) ? POSTLAUNCH_TARGETS : full(manifest) ? FULL_TARGETS : security(manifest) ? SECURITY_TARGETS : accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
   if (!config?.suites.length) fail('Payout policy execution contract is not frozen');
   return { ...TARGETS[kind], ...config };
 }
@@ -104,7 +110,7 @@ export function parseManifest(raw, integration) {
     for (const field of ['baseline_sha', 'target_sha', 'target_tree']) if (manifest.projects[kind][field] !== expected[field]) fail('Security source identity differs from fixed reviewed target');
     if (inventoryRelease(manifest) && manifest.projects[kind].source_inventory_sha256 !== inventoryDigest(manifest,kind)) fail('Full release source inventory binding mismatch');
   }
-  if(postlaunch(manifest)){requireFixedPostlaunch();if(!manualAdminPolicy(manifest))fail('Postlaunch requires fixed manual admin alias policy');}
+  if(postlaunch(manifest)){requireFixedProfile(manifest);if(!manualAdminPolicy(manifest))fail('Postlaunch requires fixed manual admin alias policy');}
   manualAdminPolicy(manifest);
   if (payout(manifest)) manifestBinding(raw, manifest);
   return manifest;
@@ -224,13 +230,13 @@ export function validateCodeReceipt(receipt, kind, manifest, runId, attempt, raw
   if (!isDeepStrictEqual(receipt.suites,suites)) fail('Exact-target per-file test evidence missing or skipped');
 }
 function integrationCommands(manifest) {
-  const commands = [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(inventoryRelease(manifest) ? FULL_MAIN_SQL_TESTS : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest)), '--no-file-parallelism', '--reporter=json']];
+  const commands = [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(inventoryRelease(manifest) ? mainSqlTestsFor(manifest) : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest)), '--no-file-parallelism', '--reporter=json']];
   if (security(manifest) || inventoryRelease(manifest)) commands.push(['node', 'scripts/reduced-security-storage-tests.mjs']);
   return commands;
 }
 function integrationSources(repository, integration, manifest) {
   const sql = {};
-  for (const entry of [...(inventoryRelease(manifest) ? FULL_SCHEMA_CONTRACT : policyFor(manifest).schema_contracts).canonical_sources, ...(security(manifest) ? SECURITY_MIGRATIONS : [])]) {
+  for (const entry of [...(inventoryRelease(manifest) ? FULL_SCHEMA_CONTRACT : policyFor(manifest).schema_contracts).canonical_sources, ...(firstAssignment(manifest) ? FIRST_ASSIGNMENT_CANONICAL_SOURCES : []), ...(security(manifest) ? SECURITY_MIGRATIONS : [])]) {
     const file = `supabase/migrations/${entry.name}`;
     const actual = hash(execFileSync('git', ['show', `${integration}:${file}`], { cwd: repository }));
     if (actual !== entry.sha256) fail('Canonical integration SQL differs from reviewed prerequisite');
@@ -262,7 +268,7 @@ export async function testIntegration(manifest, sourcePath, outputPath, environm
     env:{...env, TEST_DATABASE_URL:'postgresql://postgres:postgres@127.0.0.1:5432/postgres', REQUIRE_PG_TESTS:'true'},
     encoding:'utf8', maxBuffer:20*1024*1024, stdio:['ignore','pipe','inherit'] });
   let report; try { report=JSON.parse(output); } catch { fail('Invalid integration SQL test report'); }
-  const files=summarizeTests(report, inventoryRelease(manifest) ? FULL_MAIN_SQL_TESTS : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest), sourcePath);
+  const files=summarizeTests(report, inventoryRelease(manifest) ? mainSqlTestsFor(manifest) : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest), sourcePath);
   if (security(manifest) || inventoryRelease(manifest)) {
     const storageOutput = execFileSync('node', ['scripts/reduced-security-storage-tests.mjs'], { cwd: sourcePath, env, encoding: 'utf8', maxBuffer: 20*1024*1024, stdio: ['ignore','pipe','inherit'] });
     let storageReport; try { storageReport=JSON.parse(storageOutput); } catch { fail('Invalid storage SQL test report'); }
@@ -409,12 +415,13 @@ export async function preflight(manifest,controlPath,sourcePaths,runId,attempt,e
   return before;
 }
 function privateEvidence(manifest, runId, attempt, env) {
-  if (postlaunch(manifest)) requireFixedPostlaunch();
+  if (postlaunch(manifest)) requireFixedProfile(manifest);
   else if (full(manifest)) requireFrozenFullRelease();
   if (!payout(manifest)) return;
   const reportBytes = inventoryRelease(manifest) ? decodeFullReportTransport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT, env) : decodePrivateReport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
   const evidence = verifyPrivateEvidence({ rawManifest: env.REDUCED_RELEASE_MANIFEST, manifest, receiptBytes: env.PRIVATE_RELEASE_RECEIPT, reportBytes, approvedHash: env.PRIVATE_RELEASE_ACCEPTANCE_SHA256, policy: policyFor(manifest) });
-  if(postlaunch(manifest)) verifyPostlaunchEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  if(firstAssignment(manifest)) verifyFirstAssignmentEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  else if(appOnly(manifest)) verifyPostlaunchEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   else if (full(manifest)) verifyFullReleaseEvidence(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   else if (accounting(manifest)) verifyAccountingActivation(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   if (security(manifest)) verifySecurityPrerequisites(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));

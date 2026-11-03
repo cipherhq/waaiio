@@ -41,7 +41,12 @@ export function requireFixedPostlaunch(){
 }
 export function verifyPostlaunchEvidence(report,manifest,now=Date.now(),approvedAt=now){
  requireFixedPostlaunch();if(!isPostlaunchRelease(manifest))fail();
- for(const env of ['staging','production']){
+ for(const env of ['staging','production'])verifyPostlaunchEnvironment(env,report,manifest,now,approvedAt,[]);
+ return true;
+}
+// Shared by schema 6 (no ledger additions) and the schema 7 first-assignment
+// successor, which passes its fixed, source-pinned M507 ledger rule.
+export function verifyPostlaunchEnvironment(env,report,manifest,now,approvedAt,ledgerRules){
   const expected=manifest.postlaunch?.[env],actual=report.postlaunch?.[env];
   const ref=env==='production'?POSTLAUNCH_EVIDENCE_POLICY.production_project_ref:POSTLAUNCH_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref;
   if(!expected||!actual||expected.environment!==env||actual.environment!==env||expected.project_ref!==ref||actual.project_ref!==ref||!equal(actual.binding,expected))fail();
@@ -51,13 +56,13 @@ export function verifyPostlaunchEvidence(report,manifest,now=Date.now(),approved
   verifyCatalogSequence(actual.catalog,expected.catalog,[p.pre_app,p.post_app]);
   if(!hash(expected.current_catalog_sha256)||catalogObjectsDigest(actual.catalog.after)!==expected.current_catalog_sha256)fail();
   verifyFullKnownComponents(env,actual.components,'post_app');
-  // Current complete ledger is the immutable app-only baseline. No addition,
-  // deletion, schema execution or old financial-row replay is authorized here.
-  verifyFullLedger(actual.ledger_rows,expected,[]);
+  // Current complete ledger is the immutable baseline. Schema 6 passes no rules,
+  // so no addition, deletion, schema execution or old financial-row replay is
+  // authorized; schema 7 passes exactly its fixed M507 rule.
+  verifyFullLedger(actual.ledger_rows,expected,ledgerRules);
   const controls={channel_operations:{project:false,build:false,runtime:false},scheduled_jobs_paused:true,signup_open:env==='production'};
   if(!equal(actual.runtime_controls,controls))fail();
   const storage=actual.storage_closure,baseline=expected.storage_closure;
   if(!storage||!baseline||storage.status!=='existing-legacy-scope-preserved-deferred'||!equal(storage,baseline)||!hash(storage.preserved_object_rows_sha256)||!hash(storage.preserved_reference_rows_sha256)||!Number.isSafeInteger(storage.legacy_verification_references)||storage.legacy_verification_references<0||!Number.isSafeInteger(storage.legacy_verification_objects)||storage.legacy_verification_objects<0)fail();
- }
- return true;
+  return true;
 }
