@@ -12,13 +12,14 @@ import { Users as UsersIcon, UserCheck, UserX, Shield } from 'lucide-react';
 
 interface Profile {
   id: string;
-  email: string;
+  email: string | null;
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
   role: string;
-  country_code: string | null;
-  metadata: Record<string, unknown> | null;
+  // Not columns on public.profiles; kept optional so existing UI reads stay type-safe.
+  country_code?: string | null;
+  metadata?: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -53,7 +54,7 @@ export default function UserManagement() {
     try {
       const { data, error } = await adminDb
         .from('profiles')
-        .select('id, email, first_name, last_name, phone, role, country_code, metadata, created_at')
+        .select('id, email, first_name, last_name, phone, role, created_at')
         .order('created_at', { ascending: false })
         .limit(500);
 
@@ -200,7 +201,7 @@ export default function UserManagement() {
     if (search) {
       const q = search.toLowerCase();
       const fullName = `${p.first_name || ''} ${p.last_name || ''}`.toLowerCase();
-      if (!fullName.includes(q) && !p.email.toLowerCase().includes(q)) return false;
+      if (!fullName.includes(q) && !(p.email ?? '').toLowerCase().includes(q)) return false;
     }
     return true;
   });
@@ -324,7 +325,7 @@ export default function UserManagement() {
       <DetailModal
         open={!!selected}
         onClose={() => setSelected(null)}
-        title={selected ? `${selected.first_name || ''} ${selected.last_name || ''}`.trim() || selected.email : ''}
+        title={selected ? `${selected.first_name || ''} ${selected.last_name || ''}`.trim() || selected.email || '' : ''}
         wide
       >
         {selected && (
