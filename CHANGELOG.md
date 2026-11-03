@@ -1,3 +1,8 @@
+## 2026-11-02 — Fixed app-only successor release verification
+
+- Add a fixed postlaunch application profile with completed-schema preservation, current controls, exact source evidence and unchanged approval gates.
+- Preserve manual admin alias assignment when the reviewed latest pointer is the serving baseline.
+
 ## 2026-11-02 — Function signature replacement verification
 
 - Align the production catalog projection with the canonical removal of a superseded function signature, retaining strict metadata checks.
