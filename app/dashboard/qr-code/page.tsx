@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { buildMerchantLink, type MerchantLinkAction } from '@/lib/url';
@@ -53,55 +54,52 @@ export default function QRCodePage() {
     if (param && TEMPLATES.some(t => t.id === param)) return param as TemplateId;
     return 'generic' as TemplateId;
   }, [searchParams]);
-  const [channelPhone, setChannelPhone] = useState('');
   const [channelLoaded, setChannelLoaded] = useState(false);
-  // Track whether the resolved phone is a real bot channel (not just owner contact fallback)
+  // Whether the business's assigned channel is one its /m/{businessId} link can use
   const [hasBotChannel, setHasBotChannel] = useState(false);
   // Track whether the resolved channel is a shared channel (for routing context)
   const [resolvedChannelIsShared, setResolvedChannelIsShared] = useState(false);
 
-  // Load the actual WhatsApp channel phone number (not business.phone which is the owner's contact)
-  // Reset readiness on dependency change so stale results are discarded
+  // Mirror the /m/{businessId} resolver (app/m/resolve.ts): only the business's
+  // assigned channel (assigned_channel_id || whatsapp_channel_id) counts. There is
+  // no "any shared number" fallback, so an unassigned business shows "not connected".
+  // Reset readiness on dependency change so stale results are discarded.
   useEffect(() => {
     let cancelled = false;
     setChannelLoaded(false);
     setHasBotChannel(false);
     setResolvedChannelIsShared(false);
 
-    async function loadChannelPhone() {
+    async function loadAssignedChannel() {
       const supabase = createClient();
       const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
 
-      // Include channel_type for the assigned channel. No "any shared number"
-      // fallback: the /m/{businessId} link (app/m/resolve.ts) only redirects to
-      // the business's assigned channel, so an unassigned business must show
-      // "not connected" here rather than an unrelated (often other-country) number.
-      const [assignedResult, dedicatedResult] = await Promise.all([
-        channelId
-          ? supabase.from('whatsapp_channels').select('phone_number, channel_type').eq('id', channelId).eq('is_active', true).maybeSingle()
-          : Promise.resolve({ data: null }),
-        supabase.from('whatsapp_channels').select('phone_number')
-          .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-      ]);
+      // Owners can read their own dedicated channel from the base table (RLS), but
+      // not a shared channel; shared channels are readable via whatsapp_channels_public.
+      const [dedicatedResult, sharedResult] = channelId
+        ? await Promise.all([
+            supabase.from('whatsapp_channels').select('channel_type')
+              .eq('id', channelId).eq('business_id', business.id)
+              .eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
+            queryChannelsPublic(supabase, 'id', (q) => q.eq('id', channelId).maybeSingle()),
+          ])
+        : [{ data: null }, { data: null }];
 
       if (cancelled) return; // Discard obsolete response from prior business context
 
-      // Priority: assigned > dedicated > business.phone (owner contact, not a bot channel)
-      const assignedPhone = assignedResult.data?.phone_number;
-      const assignedType = assignedResult.data?.channel_type as string | undefined;
-      const dedicatedPhone = dedicatedResult.data?.phone_number;
-      const botChannelPhone = assignedPhone || dedicatedPhone;
-      const resolved = botChannelPhone || business.phone || '';
-      const isResolvedShared = !!assignedPhone && assignedType === 'shared';
+      const isDedicatedReady = !!dedicatedResult.data;
+      // The view only lists active shared channels. Country/connection-status
+      // checks stay server-side (app/m/resolve.ts); the browser cannot see
+      // connection_status or the staging-only fallback countries.
+      const isSharedReady = !!sharedResult.data;
 
-      setChannelPhone(resolved.replace(/[^0-9]/g, ''));
-      setHasBotChannel(!!botChannelPhone);
-      setResolvedChannelIsShared(isResolvedShared);
+      setHasBotChannel(isDedicatedReady || isSharedReady);
+      setResolvedChannelIsShared(!isDedicatedReady && isSharedReady);
       setChannelLoaded(true);
     }
-    loadChannelPhone();
+    loadAssignedChannel();
     return () => { cancelled = true; };
-  }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id, business.phone]);
+  }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id]);
 
 
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>(initialTemplate);

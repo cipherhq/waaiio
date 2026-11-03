@@ -135,4 +135,13 @@ describe('QR page — no assigned WhatsApp channel', () => {
     expect(warning.textContent).toContain("WhatsApp isn't connected yet");
     expect(document.body.innerHTML).not.toContain('12025550199');
   });
+
+  it('business assigned to a shared channel (readable only via the public view) sees no warning', async () => {
+    // Base-table reads return nothing here (as RLS does for shared channels);
+    // the view mock returns the active shared channel.
+    state.business = { ...state.business, assigned_channel_id: '22222222-2222-4222-8222-222222222222' };
+    render(<QRCodePage />);
+    await waitFor(() => expect(allQrValues().length).toBeGreaterThanOrEqual(1));
+    await waitFor(() => expect(screen.queryByTestId('no-whatsapp-channel')).toBeNull());
+  });
 });

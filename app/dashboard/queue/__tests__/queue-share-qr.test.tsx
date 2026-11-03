@@ -81,9 +81,13 @@ vi.mock('@/lib/supabase/client', () => ({
   },
 }));
 
+// Mirrors production RLS: owners cannot read a shared channel from the base
+// table (dedicated-only owner policy), only through whatsapp_channels_public,
+// which lists active shared channels. The base-table mock above only returns a
+// row for the dedicated query.
 vi.mock('@/lib/supabase/safe-view-query', () => ({
   queryChannelsPublic: async () => ({
-    data: state.hasBotChannel ? { phone_number: state.sharedPhone } : null,
+    data: state.hasBotChannel && state.channelType === 'shared' ? { id: 'ch-shared-default' } : null,
     error: null,
   }),
 }));
