@@ -1,3 +1,20 @@
+## 2026-11-03 — Governance: Release Process V3 (docs only)
+
+- Owner decision (2026-11-03, Issue #843): shorten releases by removing repeated work, without relaxing any safety rule or review.
+- `RELEASE_GATE_V2.md` new §9:
+  - non-negotiables: M430 never in production, payment safety for both custody routes, complete reviews, exact SHA, separate Owner approvals for merge/production migration/live money actions, Owner makes all product decisions, MCP and Graphify evidence required, findings raised immediately;
+  - database first;
+  - standard and full lanes (unknown paths go to full);
+  - one generated release packet approval, with the deploy job re-checking production itself;
+  - a reusable gate instead of a profile per release;
+  - CI on every push (already the case), a standard review brief and release trains;
+  - review-driven precision: one-time, digest-bound packet approval, certified-baseline check, path allowlist for the standard lane, staging-before-production ordering, and the gate 6 rule.
+- `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: records that one release-packet approval covers gates 5, 7 and 9 for that packet. Merge, production migration and live money actions stay separate.
+- `CLAUDE.md`: pointer line to §9. The CI Process section is corrected: CI already runs on every PR push (`synchronize`, since #629), so the draft→ready toggle is only a fallback for a missing or cancelled run.
+- Owner decision (2026-11-03): the reviewer of record (the CTO review role) is an independent Claude reviewer: a separate, read-only, fresh-context Claude session or agent using MCP and Graphify. The two-reviewer gate uses two of them. ChatGPT is optional. Recorded in Operating Order "Roles", CLAUDE.md and Release Gate V2 §5.1.
+- No code change. §9.1 non-negotiables apply now. §9.2–§9.6 apply only after their tooling is merged; until then the current gate profiles apply.
+- Could break: nothing at runtime.
+
 ## 2026-11-03 — Harden server-managed business columns (M508)
 
 - Owner decisions (2026-11-03): bot codes are fixed once set (owners cannot rename them; support or an admin can); WhatsApp channel and status fields on a business are managed by the server only; only the server can create a business.
