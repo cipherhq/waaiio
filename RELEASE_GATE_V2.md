@@ -520,6 +520,7 @@ Owner-approved 2026-11-03 (Issue #843). V3 removes repeated release work. It doe
 1. **M430 never reaches production.**
    - M430 means any object created by `430_shared_number_tenant_isolation.sql`; the gate keeps the list.
    - The gate fails if production contains one, or if a release admits migration 430.
+   - Until the reusable gate exists, each current gate profile checks M430 absence read-only and records the result.
 2. **Payment safety.** Any change touching payment, payout, fee, refund, webhook, provider or settlement paths needs:
    - the §1.2 invariants and the §3 golden journeys;
    - both custody routes proven, per `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`;
@@ -531,14 +532,14 @@ Owner-approved 2026-11-03 (Issue #843). V3 removes repeated release work. It doe
    - High-risk changes keep the two-reviewer gate.
 4. **Exact SHA throughout:** §5 certification, stale-evidence rules (§5.2) and provenance (§5.3).
 5. **Owner approvals stay separate** for merges, production migrations, and live provider or financial actions.
-6. **Migration discipline:** §1.1, §2 final-state checks, and real-PostgreSQL tests.
+6. **Migration discipline:** §1.1, §2 final-state checks, real-PostgreSQL tests, and SECURITY DEFINER functions in private schemas.
 7. **No secrets** in manifests or artifacts. Security details stay in private advisories.
 8. **Only the Owner authorizes a rollback** (§6.3).
 9. **The Owner makes every product decision.** This is the full list in CLAUDE.md "Product decisions": feature behaviour, business rules, edge cases, user-facing wording and flows, merchants' money and the customer experience, security tradeoffs, and any deviation from an Owner, CTO or reviewer instruction.
 10. **MCP and Graphify evidence is required.**
     - Live state is read through the Supabase, GitHub and Vercel MCP connectors, read-only unless a mutation is approved.
     - Blast radius is checked with Graphify (callers, dependents, tests), cross-checked with grep at the exact SHA.
-    - Reviews and release packets record these checks.
+    - Reviews record these checks, and so do release packets once §9.4 applies.
 11. **Findings are raised immediately.** A verified defect found during review, testing or release is raised at once:
     - security findings go to a private advisory;
     - product questions go to the Owner as a decision card.
@@ -573,13 +574,21 @@ Anything else is **full**, including:
 
 Changing the allowlist is itself a full-lane gate change.
 
+**Content check.** A file that matches the allowlist is still full if its diff adds or changes any of:
+- a `'use server'` directive;
+- an import from `lib/supabase/**`, or from payment, provider or bot modules;
+- a `process.env` read;
+- a network or storage call.
+
+The classifier checks both path and content. A reviewer may raise a PR to full, and may never lower it.
+
 **Full lane** adds:
 - the payment regression suites for both custody routes;
 - the applicable golden journeys;
 - the two-reviewer gate;
 - Owner staging acceptance where the Owner's own credentials are required.
 
-**Classification before merge.** The same classifier runs on each PR before merge to set its review requirement. The release gate checks that every included PR has that review recorded. Docs-only PRs are classified separately from the lanes: they need one review, or CTO review where the document requires it (this document does; see Document Maintenance).
+**Classification before merge.** The same classifier runs on each PR before merge to set its review requirement. The release gate checks that every included PR has that review recorded. Docs-only PRs (files under `docs/**` and `*.md`) are classified separately from the lanes: they need one review. Governance and agent-instruction files need CTO review: `CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, this document, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`, `docs/contracts/**`, `.agents/**` and `.claude/**`.
 
 ### 9.4 One release approval
 
@@ -603,7 +612,7 @@ On any difference it stops and deploys nothing further. The one allowed change i
 
 **Staging comes first.**
 - Production deployment runs only after the §6.1 staging evidence is recorded, and for the full lane only after the Owner's staging acceptance.
-- Automated staging checks in the packet are read-only, unless the packet explicitly includes gate 6 (staging test data) for that release. The packet then names the staging-only, test-mode scope, with no live provider calls.
+- Automated staging checks in the packet are read-only, unless the packet explicitly includes gate 6 (staging test data) for that release. The packet then names the staging-only, test-mode scope, with no live provider calls, and approving the packet counts as the Owner's combination of gate 6 for that release.
 - Otherwise the job stops before production.
 
 **Order and pin rules are kept.**
@@ -621,7 +630,7 @@ A gate PR is needed only when the gate's rules change, not for each release.
 
 ### 9.6 CI, review brief, release trains
 
-- Full CI already runs on every PR push (`pull_request: synchronize`), with superseded PR runs cancelled. Exact-head CI from the PR's own `pull_request` run is the evidence; no draft→ready toggle is needed.
+- *(Applies now.)* Full CI already runs on every PR push (`pull_request: synchronize`), with superseded PR runs cancelled. Exact-head CI from the PR's own `pull_request` run is the evidence. Use the draft→ready toggle only as a fallback for a missing or cancelled run.
 - Every independent review starts from a standard brief: contract, changed files and why, invariants touched, MCP and Graphify checks, tests to run.
 - Merged PRs may be batched into one release (a release train). An urgent fix may ship alone.
 

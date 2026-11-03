@@ -57,7 +57,7 @@ Read [`docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`](./docs/MERCHANT_PAYMENT_CUSTODY
 - This repository is public. Never put security vulnerability details in public issues, PRs, or comments. Security issues go in private GitHub security advisories.
 - Before every push, run: `codex exec --sandbox read-only --output-last-message ~/Desktop/codex-review-$(git branch --show-current | tr '/' '-').md "Review the changes on this branch compared to origin/main as an independent security reviewer. Report P0 and P1 issues with file and line. Do not modify files."` Fix every valid P0 and P1 finding before pushing. Always read the review file for the current branch only (the branch name is sanitized with `tr '/' '-'` so concurrent agents do not overwrite each other). Confirm the review file exists and is non-empty before proceeding. If it does not, treat Codex as unavailable.
 - If you judge a Codex P0 or P1 finding invalid, record the finding and your reason in the PR description. Never dismiss a finding silently.
-- If Codex is unavailable (usage limit or error), push so CI runs, state in the PR description that Codex was unavailable, and the independent Claude reviewer is reviewer of record for that exact SHA. The review gate never disappears. No merge without the reviewer's APPROVED on the exact head SHA.
+- If Codex is unavailable (usage limit or error), push so CI runs, state in the PR description that Codex was unavailable, and the independent Claude reviewer, which is always the reviewer of record, also covers the missing Codex security review for that exact SHA. The review gate never disappears. No merge without the reviewer's APPROVED on the exact head SHA.
 - Two-reviewer gate for high-risk changes (money, auth, permissions, data, migrations): a first independent Claude reviewer reviews the report against the code, then a second independent Claude reviewer, with its own fresh context, reviews the corrected SHA, then the Owner merges. Docs-only changes need one review. Each reviewer reviews as if it were the only one.
 - Never claim a test runs in CI without evidence for that specific test: the test file, the CI job and step that runs it (shown in `.github/workflows/ci.yml`), the test count, the skip count (must be zero for that test file), and the exact SHA. Unrelated, intentionally skipped tests elsewhere do not invalidate a run. A green CI run alone does not prove a test ran. A database-level SQL test must never be reported as a completed HTTP route test.
 - Never report a requirement as met by substituting a different test or approach. If the required thing is not feasible, stop and say exactly why.
@@ -284,7 +284,7 @@ NEXT_PUBLIC_POSTHOG_KEY
 
 ## CI Process (three-level)
 
-Full GitHub Actions CI is a **release gate**, not an every-commit loop.
+Full GitHub Actions CI runs on every PR push and is the merge evidence. Validate locally first; do not iterate on CI.
 
 ### Level 1: Changed-area preflight (every commit)
 Run focused tests for the files you changed:
