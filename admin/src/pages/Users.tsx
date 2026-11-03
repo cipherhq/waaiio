@@ -12,7 +12,7 @@ import { Users as UsersIcon, UserCheck, UserX, Shield } from 'lucide-react';
 
 interface Profile {
   id: string;
-  email: string;
+  email: string | null;
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
@@ -201,7 +201,7 @@ export default function UserManagement() {
     if (search) {
       const q = search.toLowerCase();
       const fullName = `${p.first_name || ''} ${p.last_name || ''}`.toLowerCase();
-      if (!fullName.includes(q) && !p.email.toLowerCase().includes(q)) return false;
+      if (!fullName.includes(q) && !(p.email ?? '').toLowerCase().includes(q)) return false;
     }
     return true;
   });
@@ -325,7 +325,7 @@ export default function UserManagement() {
       <DetailModal
         open={!!selected}
         onClose={() => setSelected(null)}
-        title={selected ? `${selected.first_name || ''} ${selected.last_name || ''}`.trim() || selected.email : ''}
+        title={selected ? `${selected.first_name || ''} ${selected.last_name || ''}`.trim() || selected.email || '' : ''}
         wide
       >
         {selected && (
