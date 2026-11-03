@@ -1,3 +1,9 @@
+## 2026-11-03 — Pricing page shows all five countries again
+
+- Owner direction (2026-11-03): "everything should show in pricing". Reverts the presentation part of #802: `app/(marketing)/pricing/page.tsx` restores the country picker (Nigeria, US, UK, Canada, Ghana) and the five-country feature card; `components/marketing/Footer.tsx` restores all country badges on /pricing; `lib/__tests__/marketing-country-pricing.test.tsx` returns to the multi-country assertions.
+- Prices still come only from the canonical `/api/public/pricing` projection (database). No pricing data, API, onboarding or payment change.
+- Could break: nothing functional; marketing copy returns to the pre-#802 wording.
+
 ## 2026-11-03 — Admin Users list loads again
 
 - `admin/src/pages/Users.tsx`: the profiles query requested `country_code` and `metadata`, which are not columns on `public.profiles`; PostgREST returned 400 and the Users list was always empty (staging and production, since the initial deploy). The query now selects only existing columns; the two fields are optional in the type, so Country shows "—" and status shows "active".
