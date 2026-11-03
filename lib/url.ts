@@ -51,6 +51,16 @@ export function buildMerchantLink(businessId: string, action?: MerchantLinkActio
 }
 
 /**
+ * Short shareable link, /m/{BOT_CODE} (e.g. /m/CITADEL). Falls back to the
+ * permanent /m/{uuid} link when the bot code is missing or not URL-safe.
+ */
+export function buildShortMerchantLink(botCode: string | null | undefined, businessId: string): string {
+  const code = String(botCode || '').trim().toUpperCase();
+  if (/^(?=.*[A-Z0-9])[A-Z0-9-]{1,30}$/.test(code)) return `${canonicalPublicOrigin()}/m/${code}`;
+  return buildMerchantLink(businessId);
+}
+
+/**
  * Build a permanent merchant campaign link.
  */
 export function buildMerchantCampaignLink(businessId: string, campaignId: string): string {

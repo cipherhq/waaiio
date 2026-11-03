@@ -20,7 +20,7 @@ import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist'
 import { AISetupCard } from '@/components/dashboard/AISetupCard';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import type { CapabilityId } from '@/lib/capabilities/types';
-import { buildMerchantLink } from '@/lib/url';
+import { buildShortMerchantLink } from '@/lib/url';
 
 interface Stats {
   totalBookings: number;
@@ -84,8 +84,8 @@ export default function DashboardOverview() {
   const country = (business.country_code || 'NG') as CountryCode;
   const categoryTemplate = getCategoryByKey(business.category);
 
-  // Permanent Waaiio link — survives connected number changes
-  const whatsappLink = buildMerchantLink(business.id);
+  // Short Waaiio link (/m/BOT_CODE) — survives connected number changes
+  const whatsappLink = buildShortMerchantLink(business.bot_code, business.id);
 
   // Check if account deletion is scheduled (grace period)
   useEffect(() => {

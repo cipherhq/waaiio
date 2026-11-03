@@ -1,3 +1,19 @@
+## 2026-11-03 — Short merchant links: /m/{BOT_CODE}
+
+- Owner decision (2026-11-03): shorten the shared WhatsApp link, for example `waaiio.com/m/CITADEL` instead of `waaiio.com/m/<uuid>`. Option A: use the business's existing unique bot code.
+- `app/m/resolve.ts`: `parseMerchantKey` accepts either the permanent UUID (looked up by `id`) or a bot code (A-Z/0-9/hyphen, 1–30 characters, upper-cased, looked up by `bot_code`). Anything else returns 400 with no database lookup. Every existing `/m/<uuid>` link keeps working.
+- `app/m/[businessId]/campaign/[campaignId]/route.ts`: the campaign ownership filter now uses the resolved `result.business.id`, never the raw key.
+- `lib/url.ts`: `buildShortMerchantLink(botCode, businessId)`. Falls back to the permanent `/m/<uuid>` link when the code is missing or not URL-safe.
+- Short link shown in: onboarding success share text (`OnboardingWizard`; `StepSuccess` now accepts `/m/{BOT_CODE}`), dashboard home and the WhatsApp settings page.
+- Deliberately unchanged:
+  - QR codes and attendance links stay on the UUID, until bot codes are locked against edits.
+  - The public directory stays on the UUID; its API hides bot codes.
+  - The admin onboarding `permanent_link` is unchanged.
+- Tests: `lib/__tests__/permanent-merchant-links.test.ts` and `app/get-started/steps/__tests__/promotionGuidance.test.tsx`. The new short-link cases fail on the previous code.
+- Could break:
+  - A business whose bot code changes would break its short links. No current UI changes bot codes; locking them is a follow-up.
+  - Bot codes become guessable link keys. They were already public in every shared `wa.me` link, and `/m/` stays rate-limited at 30 per minute.
+
 ## 2026-11-03 — Release gate: schema 7 first-assignment profile (M507 only)
 
 - Owner decision (2026-11-03): release #836 (first shared WhatsApp number at signup) and #839 through a narrow gate that admits exactly one reviewed migration, M507.

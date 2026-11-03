@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { buildMerchantLink, buildMerchantCampaignLink, canonicalPublicOrigin } from '@/lib/url';
+import { buildMerchantLink, buildMerchantCampaignLink, buildShortMerchantLink, canonicalPublicOrigin } from '@/lib/url';
 
 // ── Fixture data ──
 const BIZ_ID = '550e8400-e29b-41d4-a716-446655440000';
@@ -97,6 +97,14 @@ describe('URL helpers', () => {
   it('buildMerchantLink generic = base', () => {
     expect(buildMerchantLink(BIZ_ID, 'generic')).toBe(`https://www.waaiio.com/m/${BIZ_ID}`);
   });
+  it('buildShortMerchantLink uses the upper-cased bot code', () => {
+    expect(buildShortMerchantLink('citadel', BIZ_ID)).toBe(`${canonicalPublicOrigin()}/m/CITADEL`);
+  });
+  it('buildShortMerchantLink falls back to the permanent id link when the code is missing or unsafe', () => {
+    for (const code of [null, undefined, '', '  ', 'bad code', 'x/y', 'a'.repeat(31)]) {
+      expect(buildShortMerchantLink(code as string | null | undefined, BIZ_ID)).toBe(buildMerchantLink(BIZ_ID));
+    }
+  });
   it('buildMerchantCampaignLink', () => {
     expect(buildMerchantCampaignLink(BIZ_ID, CAMP_ID)).toContain(`/m/${BIZ_ID}/campaign/${CAMP_ID}`);
   });
@@ -162,9 +170,35 @@ describe('GET /m/[businessId]', () => {
     expect(chEqs).toContainEqual({ table: 'whatsapp_channels', col: 'id', val: CH_DED });
   });
 
-  it('400 invalid UUID', async () => {
-    const res = await baseGET(req('/m/not-uuid'), ctx({ businessId: 'not-uuid' }));
-    expect(res.status).toBe(400); assertNoStore(res);
+  it('400 malformed key (neither UUID nor bot code) — no DB lookup', async () => {
+    for (const bad of ['bad!code', 'a'.repeat(31), '---', 'with space']) {
+      eqCalls = [];
+      const res = await baseGET(req('/m/x'), ctx({ businessId: bad }));
+      expect(res.status).toBe(400); assertNoStore(res);
+      expect(eqsFor('businesses')).toEqual([]);
+    }
+  });
+
+  // Short links (/m/CITADEL): the bot code is looked up case-insensitively.
+  it('short link: bot code resolves by exact upper-cased bot_code', async () => {
+    mockResults.businesses = { data: mkBusiness(CH_SHARED), error: null };
+    mockResults.whatsapp_channels = { data: sharedCh(), error: null };
+    const res = await baseGET(req('/m/testbot'), ctx({ businessId: 'testbot' }));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://wa.me/12025551234?text=TESTBOT');
+    expect(eqsFor('businesses')).toEqual([{ table: 'businesses', col: 'bot_code', val: 'TESTBOT' }]);
+  });
+
+  it('short link: unknown bot code is 404 like an unknown id', async () => {
+    const res = await baseGET(req('/m/NOPE'), ctx({ businessId: 'NOPE' }));
+    expect(res.status).toBe(404); assertNoStore(res);
+  });
+
+  it('UUID key still filters by id, never by bot_code', async () => {
+    mockResults.businesses = { data: mkBusiness(CH_SHARED), error: null };
+    mockResults.whatsapp_channels = { data: sharedCh(), error: null };
+    await baseGET(req(`/m/${BIZ_ID}`), ctx({ businessId: BIZ_ID }));
+    expect(eqsFor('businesses')).toEqual([{ table: 'businesses', col: 'id', val: BIZ_ID }]);
   });
 
   it('404 nonexistent business', async () => {
@@ -316,6 +350,19 @@ describe('GET /m/[businessId]/[action]', () => {
     expect(res.headers.get('location')).not.toContain('wa.me');
   });
 
+  it('short link + action: bot code resolves and keeps the capability suffix', async () => {
+    mockResults.businesses = { data: mkBusiness(CH_SHARED), error: null };
+    mockResults.whatsapp_channels = { data: sharedCh(), error: null };
+    const res = await actionGET(req('/m/TESTBOT/order'), ctx({ businessId: 'TESTBOT', action: 'order' }));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('text=TESTBOT%3Aordering');
+  });
+
+  it('attendance stays UUID-only (short code rejected)', async () => {
+    const res = await actionGET(req('/m/TESTBOT/attendance'), ctx({ businessId: 'TESTBOT', action: 'attendance' }));
+    expect(res.status).toBe(400);
+  });
+
   it('attendance rejects invalid UUID', async () => {
     const res = await actionGET(req('/m/bad/attendance'), ctx({ businessId: 'bad', action: 'attendance' }));
     expect(res.status).toBe(400);
@@ -376,6 +423,14 @@ describe('GET /m/[businessId]/campaign/[campaignId]', () => {
     const campEqs = eqsFor('keyword_campaigns');
     expect(campEqs).toContainEqual({ table: 'keyword_campaigns', col: 'id', val: CAMP_ID });
     expect(campEqs).toContainEqual({ table: 'keyword_campaigns', col: 'business_id', val: BIZ_ID });
+  });
+
+  it('short-code campaign link filters the campaign by the resolved business id, not the code', async () => {
+    mockResults = { businesses: { data: mkBusiness(CH_DED), error: null }, whatsapp_channels: { data: dedCh(), error: null }, keyword_campaigns: { data: activeCampaign(), error: null } };
+    await campaignGET(req(`/m/TESTBOT/campaign/${CAMP_ID}`), ctx({ businessId: 'TESTBOT', campaignId: CAMP_ID }));
+    const campEqs = eqsFor('keyword_campaigns');
+    expect(campEqs).toContainEqual({ table: 'keyword_campaigns', col: 'business_id', val: BIZ_ID });
+    expect(campEqs).not.toContainEqual({ table: 'keyword_campaigns', col: 'business_id', val: 'TESTBOT' });
   });
 
   it('404 when campaign belongs to different business (mock returns null for wrong tenant)', async () => {

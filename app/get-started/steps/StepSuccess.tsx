@@ -21,7 +21,7 @@ export function StepSuccess({
   const qrRef = useRef<{ SVG: React.ComponentType<any>; Canvas: React.ComponentType<any> } | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<'link' | 'message' | 'error' | null>(null);
 
-  // URL validation: accepts permanent Waaiio links (/m/{uuid}) and wa.me links.
+  // URL validation: accepts permanent Waaiio links (/m/{uuid} or short /m/{BOT_CODE}) and wa.me links.
   // Exact known origins only — no arbitrary *.vercel.app or unknown hosts.
   // No credentials, non-standard ports, query strings, or hash fragments on /m/ links.
   const safeWaLink = (() => {
@@ -37,13 +37,14 @@ export function StepSuccess({
         return waLink;
       }
 
-      // Accept permanent Waaiio links: exact known hosts, /m/{uuid} base path only.
+      // Accept permanent Waaiio links: exact known hosts, /m/{uuid} or short /m/{BOT_CODE} base path only.
       // StepSuccess only receives base permanent links from OnboardingWizard.
       const KNOWN_WAAIIO_HOSTS = new Set(['www.waaiio.com', 'waaiio.com', 'staging.waaiio.com']);
       if (!KNOWN_WAAIIO_HOSTS.has(u.hostname)) return '';
       if (u.search || u.hash) return '';
       const UUID_PATH = /^\/m\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (!UUID_PATH.test(u.pathname)) return '';
+      const SHORT_PATH = /^\/m\/(?=[A-Z0-9-]*[A-Z0-9])[A-Z0-9-]{1,30}$/;
+      if (!UUID_PATH.test(u.pathname) && !SHORT_PATH.test(u.pathname)) return '';
       return waLink;
     } catch {
       return '';

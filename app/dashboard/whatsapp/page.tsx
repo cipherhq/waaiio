@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
 import { CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
 import { getCapabilityLabel } from '@/lib/capabilities/labels';
-import { buildMerchantLink } from '@/lib/url';
+import { buildShortMerchantLink } from '@/lib/url';
 
 const CAP_MAP = new Map(CAPABILITIES.map(c => [c.id, c]));
 
@@ -264,8 +264,8 @@ export default function WhatsAppPage() {
   const [savingButtons, setSavingButtons] = useState(false);
   const [expandedTemplate, setExpandedTemplate] = useState<string | null>(null);
 
-  // Use permanent merchant link — survives number changes
-  const whatsappLink = buildMerchantLink(business.id);
+  // Short merchant link (/m/BOT_CODE) — survives number changes
+  const whatsappLink = buildShortMerchantLink(business.bot_code, business.id);
 
   useEffect(() => {
     async function load() {
