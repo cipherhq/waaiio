@@ -507,6 +507,82 @@ Foundation slice (this document) establishes types, invariant registry, diff eng
 
 ---
 
+## 9. Release Process V3 — lanes, one release approval, reusable gate
+
+Owner-approved 2026-11-03 (Issue #843). V3 removes repeated release work. It does **not** relax any invariant in §1–§8, any review requirement, or any Owner approval for production database, provider or money actions.
+
+**Adoption.** Each item below takes effect only once its tooling is merged under the standard change process. Until then, the existing gate profiles and steps apply unchanged.
+
+### 9.1 Non-negotiables (enforced, never traded for speed)
+
+1. **M430** (`430_shared_number_tenant_isolation.sql`) never reaches production. The gate always fails if production contains an M430 object or a release admits migration 430.
+2. **Payment safety.** Any change touching payment, payout, fee, refund, webhook, provider or settlement paths needs:
+   - the §1.2 invariants and the §3 golden journeys;
+   - both custody routes proven, per `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`;
+   - duplicate-payment, fee, refund and cross-business regression evidence.
+
+   The financial/payout hold stays until a separate Owner decision.
+3. **Reviews are complete.** Every PR gets an independent, dependency-aware review at the exact head (Operating Order). High-risk changes keep the two-reviewer gate.
+4. **Exact SHA throughout:** §5 certification and provenance.
+5. **Owner approvals stay separate** for merges, production migrations, and live provider or financial actions.
+6. **Migration discipline:** §1.1, §2 final-state checks, and real-PostgreSQL tests.
+7. **No secrets** in manifests or artifacts. Security details stay in private advisories.
+8. **Only the Owner authorizes a rollback** (§6.3).
+9. **The Owner makes every product decision:** feature behaviour, business rules, edge cases, user-facing wording and flows, merchants' money, and the customer experience.
+10. **MCP and Graphify evidence is required.**
+    - Live state is read through the Supabase, GitHub and Vercel MCP connectors, read-only unless a mutation is approved.
+    - Blast radius is checked with Graphify (callers, dependents, tests), cross-checked with grep at the exact SHA.
+    - Reviews and release packets record these checks.
+11. **Findings are raised immediately.** A verified defect found during review, testing or release is raised at once:
+    - security findings go to a private advisory;
+    - product questions go to the Owner as a decision card.
+
+### 9.2 Database first
+
+Migrations ship ahead of the app release that depends on them, with their own review and Owner approval. They must be compatible with the app that is live.
+
+An app release admits a migration only if:
+- it is listed by exact sha256 in the private release manifest; and
+- it is already present in the production ledger with a matching stored statement.
+
+App releases perform no DDL.
+
+### 9.3 Lanes
+
+The gate classifies the baseline→target diff by path. Unknown paths always classify as **full**.
+
+- **Standard lane:** UI, copy, marketing and display-only changes, with no migration and no payment, auth, permission, provider, webhook, bot-routing, admin-finance, workflow, release-tooling or dependency changes.
+- **Full lane:** everything else. It adds:
+  - the payment regression suites for both custody routes;
+  - the applicable golden journeys;
+  - the two-reviewer gate;
+  - Owner staging acceptance where the Owner's own credentials are required.
+
+### 9.4 One release approval
+
+The Owner approves one generated release packet: exact SHAs, lane, contents, migration hashes, test evidence and MCP readings.
+
+This approval combines Operating Order gates 5 (staging deployment), 7 (production preflight) and 9 (production deployment).
+
+The deploy job re-reads production state immediately before each deployment operation and refuses on any mismatch. This replaces the human 15-minute freshness window. Order and pin rules are kept: merchant first, then admin; the admin pin comes from the admin project's current production target.
+
+### 9.5 Reusable gate
+
+Release contents are derived, not hand-pinned per release:
+- the baseline is what production serves;
+- the target is a protected-main SHA;
+- the changed files come from git.
+
+A gate PR is needed only when the gate's rules change, not for each release.
+
+### 9.6 CI and evidence
+
+- Full CI runs on every PR push, with superseded runs cancelled. Exact-head CI is the evidence, replacing the draft→ready toggle once enabled.
+- Every independent review starts from a standard brief: contract, changed files and why, invariants touched, MCP and Graphify checks, tests to run.
+- Merged PRs may be batched into one release (a release train). An urgent fix may ship alone.
+
+---
+
 ## Document Maintenance
 
 This document is a living contract. It must be updated when:

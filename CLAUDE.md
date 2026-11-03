@@ -8,6 +8,8 @@
 
 Read and follow both documents before any substantive work. The Operating Order defines roles, evidence hierarchy, the standard change process, review/checkpoint protocol, failure escalation, production certification, and release safety invariants. Release Gate V2 defines the invariant registry, final-state migration checks, golden journeys, provider acceptance criteria, exact-SHA certification, canary rules, and escaped defect policy.
 
+**Release Process V3** (Owner-approved 2026-11-03, Issue #843): lanes, one release approval and the reusable gate are in Release Gate V2 §9, including its non-negotiables. Each part applies once its tooling is merged.
+
 **For migrations, payments, authorization, provider integrations, or cross-cutting changes:** read Release Gate V2 §1 (invariant registry) and §2 (migration checks) before writing code. Verify your change does not violate a registered invariant. If it touches a `SECURITY DEFINER` function, check DB-001/DB-002/DB-006.
 
 **For capability flows, payment-to-fulfillment chains, or WhatsApp bot changes:** read [`docs/contracts/736-capability-e2e-contract.md`](./docs/contracts/736-capability-e2e-contract.md) for the cross-capability lifecycle matrix (Issue #736). Check the capability's entry type, payment eligibility, post-payment fulfillment authority, and dependency status before modifying shared bot routing, payment authority, or channel handling. Binding Owner product contracts: Issues #721 (shared payment parity) and #507 (all-capabilities bot menu).

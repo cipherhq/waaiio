@@ -1,3 +1,18 @@
+## 2026-11-03 — Governance: Release Process V3 (docs only)
+
+- Owner decision (2026-11-03, Issue #843): shorten releases by removing repeated work, without relaxing any safety rule or review.
+- `RELEASE_GATE_V2.md` new §9:
+  - non-negotiables: M430 never in production, payment safety for both custody routes, complete reviews, exact SHA, separate Owner approvals for merge/production migration/live money actions, Owner makes all product decisions, MCP and Graphify evidence required, findings raised immediately;
+  - database first;
+  - standard and full lanes (unknown paths go to full);
+  - one generated release packet approval, with the deploy job re-checking production itself;
+  - a reusable gate instead of a profile per release;
+  - CI on every push, a standard review brief and release trains.
+- `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: records that one release-packet approval covers gates 5, 7 and 9 for that packet. Merge, production migration and live money actions stay separate.
+- `CLAUDE.md`: one pointer line to §9.
+- No code change. Each V3 item applies only after its tooling is merged; until then the current gate profiles apply.
+- Could break: nothing at runtime.
+
 ## 2026-11-03 — Harden server-managed business columns (M508)
 
 - Owner decisions (2026-11-03): bot codes are fixed once set (owners cannot rename them; support or an admin can); WhatsApp channel and status fields on a business are managed by the server only; only the server can create a business.

@@ -409,6 +409,11 @@ The following remain separate gates unless Owner explicitly combines them:
 
 Authorization for one gate does not imply authorization for the next.
 
+**Release Process V3 combination (Owner decision 2026-11-03, Issue #843).** For a release that passes the reusable gate (Release Gate V2 §9), one Owner approval of the generated release packet covers gates 5, 7 and 9 for that exact packet.
+- Gates 3 (merge), 8 (production migration) and 10 (live provider/financial/Meta actions) remain separate Owner approvals.
+- Gates 4 and 6 (staging migration and staging test-data changes) remain separate unless the Owner combines them for a specific release.
+- This takes effect only when the reusable gate is merged; until then each gate stays separately authorized.
+
 ### Required closure evidence
 
 For security-sensitive or shared-infrastructure work, closure evidence should include as applicable:
