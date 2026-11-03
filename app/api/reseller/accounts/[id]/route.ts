@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 
 /**
@@ -121,17 +122,38 @@ export async function PATCH(
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
     }
 
-    const { data: updated, error: updateError } = await supabase
-      .from('businesses')
-      .update(updates)
-      .eq('id', id)
-      .eq('reseller_id', reseller.id)
-      .select()
-      .single();
-
-    if (updateError) {
-      logger.error('[RESELLER_ACCOUNTS] Update error:', updateError.message);
-      return NextResponse.json({ error: 'Failed to update sub-account' }, { status: 500 });
+    // status is server-managed (M508): write it with the service client, scoped to this
+    // reseller's sub-account. Every other field keeps the caller's own client, so the
+    // existing database guards (e.g. on subscription_tier) still apply unchanged.
+    const { status: newStatus, ...ownFields } = updates;
+    let updated: unknown = null;
+    if (Object.keys(ownFields).length > 0) {
+      const { data, error: updateError } = await supabase
+        .from('businesses')
+        .update(ownFields)
+        .eq('id', id)
+        .eq('reseller_id', reseller.id)
+        .select()
+        .single();
+      if (updateError) {
+        logger.error('[RESELLER_ACCOUNTS] Update error:', updateError.message);
+        return NextResponse.json({ error: 'Failed to update sub-account' }, { status: 500 });
+      }
+      updated = data;
+    }
+    if (newStatus !== undefined) {
+      const { data, error: statusError } = await createServiceClient()
+        .from('businesses')
+        .update({ status: newStatus })
+        .eq('id', id)
+        .eq('reseller_id', reseller.id)
+        .select()
+        .single();
+      if (statusError) {
+        logger.error('[RESELLER_ACCOUNTS] Status update error:', statusError.message);
+        return NextResponse.json({ error: 'Failed to update sub-account' }, { status: 500 });
+      }
+      updated = data;
     }
 
     return NextResponse.json({ business: updated });
@@ -154,8 +176,8 @@ export async function DELETE(
     if (!reseller) return NextResponse.json({ error: 'Reseller profile not found' }, { status: 404 });
     if (!business) return NextResponse.json({ error: 'Sub-account not found' }, { status: 404 });
 
-    // Soft-delete: set status to suspended
-    const { error: suspendError } = await supabase
+    // Soft-delete: set status to suspended (server-managed column, M508)
+    const { error: suspendError } = await createServiceClient()
       .from('businesses')
       .update({ status: 'suspended' })
       .eq('id', id)

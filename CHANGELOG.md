@@ -1,3 +1,17 @@
+## 2026-11-03 — Harden server-managed business columns (M508)
+
+- Owner decisions (2026-11-03): bot codes are fixed once set (owners cannot rename them; support or an admin can); WhatsApp channel and status fields on a business are managed by the server only; only the server can create a business.
+- `supabase/migrations/508_business_control_columns_guard.sql`:
+  - extends the 442 update guard (`guard_server_managed_columns`, same allow rule: service_role or the function owner) to also cover `assigned_channel_id`, `whatsapp_channel_id`, `wa_method`, `country_code`, `status`, `bot_code`, `trial_ends_at`, `is_verified`, `verified_at`, `verified_by`, `whatsapp_plan` and `is_whitelabel` (trial dates are set by the trial lifecycle functions, verification by admin review through the server);
+  - adds a BEFORE INSERT guard (`guard_business_insert`, trigger `trg_guard_business_insert`): only service_role or the function owner can create a business. Every app path (signup, admin onboarding, reseller, WhatsApp onboarding) already creates businesses with the service client;
+  - no data change. Server routes, cron jobs and SECURITY DEFINER functions (`assign_first_shared_channel`, channel promotion and transition) are unaffected.
+- `lib/channels/channel-resolver.ts`: `resolveByBusinessId` uses a business's channel pointer only if it is a shared platform number or a channel that business owns; otherwise it falls back as if the pointer were empty and does not cache it.
+- `app/dashboard/settings/tabs/BusinessTab.tsx`: the bot code is shown read-only with a note to contact support for a change.
+- `app/api/reseller/accounts/route.ts` and `[id]/route.ts`: sub-account create and status changes are written by the server client, scoped to the reseller's own sub-account. Every other PATCH field stays on the caller's client, so the existing guards (including the plan) still apply. The create still takes the plan and country the reseller picks, as before.
+- Tests: `lib/__tests__/business-control-columns-508.pg.test.ts` (real PostgreSQL, applies 442 → 507 → 508, with a before-508 control; 36), `lib/channels/__tests__/resolver-owned-channel-pointer.test.ts` (5), `app/dashboard/settings/tabs/__tests__/business-tab-bot-code-locked.test.tsx` (2), `app/api/reseller/accounts/__tests__/reseller-status-server-write.test.ts` (7). CI: file guard and Main App exclude for the new pg test.
+- Applied to staging and then production on 2026-11-03 with Owner approval, from this exact file (sha256 `dcaedb07…9e11`); the stored statements match the file in both environments. The release gate catalog pins the guard function and trigger, so the next release that includes M508 needs a gate update.
+- Could break: any non-server code path that writes those twelve columns, or creates a business, as the signed-in user now gets an error. Searched every write to `businesses` in `app/`, `lib/`, `components/`, `admin/src/` and `supabase/functions/` (35 app/lib files) for all twelve columns: the dashboard bot-code editor (removed here) and the reseller routes (moved to the server client here) were the only user-client writers of these columns or creators of businesses; all others use the service client.
+
 ## 2026-11-03 — Short merchant links: /m/{BOT_CODE}
 
 - Owner decision (2026-11-03): shorten the shared WhatsApp link, for example `waaiio.com/m/CITADEL` instead of `waaiio.com/m/<uuid>`. Option A: use the business's existing unique bot code.

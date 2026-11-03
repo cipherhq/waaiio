@@ -77,7 +77,7 @@ jobs:
           test -f scripts/__tests__/full-release-orchestration.test.ts
           test -f scripts/__tests__/postlaunch-release-policy.test.ts
           test -f scripts/__tests__/first-assignment-release-policy.test.ts
-          npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts --exclude lib/__tests__/legacy-accounting-hold.pg.test.ts --exclude lib/__tests__/recurring-payment-provenance.pg.test.ts --exclude lib/__tests__/accounting-migration-installation.pg.test.ts --exclude lib/__tests__/recurring-cancellation-503.pg.test.ts --exclude lib/__tests__/party-slug-foundation-504.pg.test.ts --exclude lib/__tests__/full-release-additive-506.pg.test.ts --exclude lib/__tests__/subscription-owner-downgrade.pg.test.ts --exclude lib/__tests__/first-shared-assignment-507.pg.test.ts
+          npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts --exclude lib/__tests__/legacy-accounting-hold.pg.test.ts --exclude lib/__tests__/recurring-payment-provenance.pg.test.ts --exclude lib/__tests__/accounting-migration-installation.pg.test.ts --exclude lib/__tests__/recurring-cancellation-503.pg.test.ts --exclude lib/__tests__/party-slug-foundation-504.pg.test.ts --exclude lib/__tests__/full-release-additive-506.pg.test.ts --exclude lib/__tests__/subscription-owner-downgrade.pg.test.ts --exclude lib/__tests__/first-shared-assignment-507.pg.test.ts --exclude lib/__tests__/business-control-columns-508.pg.test.ts
 
       - name: Build
         env:
@@ -4744,6 +4744,7 @@ jobs:
           test -f lib/__tests__/full-release-additive-506.pg.test.ts || exit 1
           test -f lib/__tests__/subscription-owner-downgrade.pg.test.ts || exit 1
           test -f lib/__tests__/first-shared-assignment-507.pg.test.ts || exit 1
+          test -f lib/__tests__/business-control-columns-508.pg.test.ts || exit 1
           PG_COUNT=${#PG_FILES[@]}
           printf '%s\n' "${PG_FILES[@]}" | grep -Fx 'lib/__tests__/legacy-accounting-hold.pg.test.ts' >/dev/null || { echo 'Missing required accounting-hold SQL proof'; exit 1; }
           printf '%s\n' "${PG_FILES[@]}" | grep -Fx 'lib/__tests__/recurring-payment-provenance.pg.test.ts' >/dev/null || { echo 'Missing required recurring payment provenance SQL proof'; exit 1; }
