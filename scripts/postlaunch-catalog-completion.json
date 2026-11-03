@@ -1,0 +1,34 @@
+{
+  "source": "446_payout_accounts_server_only.sql",
+  "source_sha256": "22a10369127e7147c29c8f76dd521e408a541619440b785f3d4e600f1e670f7f",
+  "production_post_app_patches": [
+    {
+      "identity": "policy:public.payout_accounts.Business owners can insert own payout accounts",
+      "operation": "remove-bound",
+      "source_sha256": "22a10369127e7147c29c8f76dd521e408a541619440b785f3d4e600f1e670f7f",
+      "preconditions": {
+        "roles": [
+          "public"
+        ],
+        "using": null,
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "with_check": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))"
+      }
+    },
+    {
+      "identity": "policy:public.payout_accounts.Business owners can update own payout accounts",
+      "operation": "remove-bound",
+      "source_sha256": "22a10369127e7147c29c8f76dd521e408a541619440b785f3d4e600f1e670f7f",
+      "preconditions": {
+        "roles": [
+          "public"
+        ],
+        "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "with_check": null
+      }
+    }
+  ]
+}
