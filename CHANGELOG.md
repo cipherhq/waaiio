@@ -2,11 +2,12 @@
 
 - Owner decision (2026-11-03): Ghana is not offered for now; it is switched off in admin. Production's country picker already follows the active-country data, but three fixed texts still named Ghana.
 - `components/marketing/Footer.tsx`: removed the Ghana country badge.
-- `app/(marketing)/pricing/page.tsx`: the "5 Countries" feature card now shows the count and names of the active countries from the same pricing API as the picker (for example "4 Countries — Nigeria, United States, United Kingdom, and Canada").
+- `app/(marketing)/pricing/page.tsx`: the "5 Countries" feature card now shows the count and names of the active countries from the same pricing API as the picker (for example "4 Countries — Nigeria, United States, United Kingdom, Canada"). A plain comma list, not `Intl.ListFormat`, which older Safari versions lack.
 - `app/(marketing)/pricing/layout.tsx`: the page description no longer names Ghana.
-- Test: `lib/__tests__/hide-inactive-countries-marketing.test.tsx` (3; all fail on the previous code).
+- `public/llms.txt`: the AI-search summary says 4 countries, without Ghana.
+- Test: `lib/__tests__/hide-inactive-countries-marketing.test.tsx` (4; all fail on the previous code).
 - Not changed: legal and policy pages (privacy, DPA, AML/KYC, refund policy) and other marketing pages that mention Ghana. Removing those is a separate Owner decision.
-- Could break: if Ghana is switched back on, the footer badge must be added back by hand. The pricing card follows the data automatically.
+- Could break: if Ghana is switched back on, the footer badge, the pricing description and `llms.txt` must be updated by hand. The pricing card follows the data automatically.
 
 ## 2026-11-03 — Release gate: drop two environment-dependent QR suites
 

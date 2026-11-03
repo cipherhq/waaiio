@@ -333,7 +333,7 @@ export default function PricingPage() {
               {[
                 { icon: '&#x1F4AC;', title: 'WhatsApp Native', desc: 'Customers interact on the app they use daily. No downloads, no links, no friction.' },
                 { icon: '&#x1F3ED;', title: '89+ Business Types', desc: 'Churches, mosques, salons, clinics, schools, shops, NGOs, events — pre-built flows for every category.' },
-                { icon: '&#x1F30D;', title: `${countryList.length} ${countryList.length === 1 ? 'Country' : 'Countries'}`, desc: `${new Intl.ListFormat('en', { type: 'conjunction' }).format(countryList.map((c) => c.name))} with localized pricing and payment gateways.` },
+                { icon: '&#x1F30D;', title: `${countryList.length} ${countryList.length === 1 ? 'Country' : 'Countries'}`, desc: `${countryList.map((c) => c.name).join(', ')} with localized pricing and payment gateways.` },
                 { icon: '&#x1F916;', title: 'AI Intelligence', desc: 'Smart intent detection, auto-upsell, multi-language support including Pidgin.' },
               ].map((f) => (
                 <div key={f.title} className="rounded-2xl border border-gray-100 bg-white p-6">

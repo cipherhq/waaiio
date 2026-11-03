@@ -5,6 +5,7 @@ import { render, screen, cleanup, within } from '@testing-library/react';
 import PricingPage from '@/app/(marketing)/pricing/page';
 import Footer from '@/components/marketing/Footer';
 import { metadata } from '@/app/(marketing)/pricing/layout';
+import { readFileSync } from 'node:fs';
 
 // Owner decision (2026-11-03): Ghana is switched off in admin and must not be
 // offered on the marketing site. The pricing feature card follows the same
@@ -23,7 +24,7 @@ describe('inactive countries are not offered on marketing pages', () => {
     render(<PricingPage />);
     const title = await screen.findByText('4 Countries');
     const card = title.closest('div') as HTMLElement;
-    expect(within(card).getByText('Nigeria, United States, United Kingdom, and Canada with localized pricing and payment gateways.')).toBeTruthy();
+    expect(within(card).getByText('Nigeria, United States, United Kingdom, Canada with localized pricing and payment gateways.')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Ghana/);
     expect(screen.queryByText('5 Countries')).toBeNull();
   });
@@ -38,5 +39,9 @@ describe('inactive countries are not offered on marketing pages', () => {
   it('pricing page description does not offer Ghana', () => {
     expect(String(metadata.description)).not.toMatch(/Ghana/);
     expect(String(metadata.description)).toMatch(/Nigeria/);
+  });
+
+  it('public llms.txt summary does not offer Ghana', () => {
+    expect(readFileSync('public/llms.txt', 'utf8')).not.toMatch(/Ghana/);
   });
 });
