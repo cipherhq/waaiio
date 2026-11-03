@@ -1,4 +1,4 @@
-import { channelOperationsEnabled, firstSharedAssignmentEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initCapabilities } from '@/lib/capabilities/service';
 import { logger } from '@/lib/logger';
@@ -19,7 +19,9 @@ export async function handleOnboardingComplete(
   flowToken: string,
   data: Record<string, unknown>,
 ): Promise<{ success: boolean; error?: string }> {
-  if (!channelOperationsEnabled() && !firstSharedAssignmentEnabled()) return { success: false, error: CHANNEL_OPERATIONS_UNAVAILABLE.message };
+  // Not admitted by ENABLE_FIRST_SHARED_ASSIGNMENT: M507 covers the register/verify
+  // signup path only. This Flow path stays behind the broad switch.
+  if (!channelOperationsEnabled()) return { success: false, error: CHANNEL_OPERATIONS_UNAVAILABLE.message };
   const customerPhone = flowToken.split(':')[1] || '';
 
   const firstName = (data.first_name as string || '').trim();

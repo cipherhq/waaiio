@@ -22,6 +22,7 @@ import {
   allocateSharedChannelWithFallback, assignFirstSharedChannel, allocateSharedChannelForNewBusiness,
 } from '@/lib/onboarding/whatsapp-readiness';
 import { POST as onboardingVerify } from '@/app/api/onboarding/verify/route';
+import { handleOnboardingComplete } from '@/app/api/whatsapp/flow-callback/onboarding';
 import { POST as add } from '@/app/api/whatsapp/add-number/route';
 import { POST as finish } from '@/app/api/whatsapp/add-number/finish/route';
 import { POST as embedded } from '@/app/api/whatsapp/embedded-signup/route';
@@ -94,6 +95,12 @@ describe('with only first assignment on, every other channel operation stays una
   it.each(['create', 'approve', 'refresh', 'execute'] as const)('admin channel change %s stays unavailable', async action => {
     expect((await mutateChannelChange(req(), action, 'approval')).status).toBe(503);
     expect(m.service).not.toHaveBeenCalled();
+  });
+  it('WhatsApp Flows onboarding stays unavailable (M507 covers register/verify only)', async () => {
+    const r = await handleOnboardingComplete('token:2348000000000', { email: 'owner@example.com', business_name: 'X' });
+    expect(r.success).toBe(false);
+    expect(m.service).not.toHaveBeenCalled();
+    expect(m.from).not.toHaveBeenCalled();
   });
   it('the M430 allocation/repair helper stays unavailable', async () => {
     const result = await allocateSharedChannelWithFallback({ rpc: m.rpc } as never, BIZ, 'NG', { repairStaleSharedChannel: true });
