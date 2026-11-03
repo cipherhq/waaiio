@@ -244,7 +244,7 @@ A release SHA is **certified** only when ALL of the following are recorded on Gi
 
 1. **Exact SHA** — the full 40-character commit hash on protected `main`
 2. **CI evidence** — all required jobs green on that exact SHA (not a prior commit)
-3. **CTO review** — ChatGPT posted `READY FOR MERGE` or equivalent on the exact SHA
+3. **CTO review** — the reviewer of record (an independent Claude reviewer; Operating Order "Roles") posted `READY FOR MERGE` or equivalent on the exact SHA
 4. **Owner authorization** — explicit merge authorization recorded
 5. **Migration reconciliation** — all migrations in the SHA are applied to production and verified
 6. **Deployment verification** — Vercel deployment is `READY`, aliases are correct, HTTP smoke check passes

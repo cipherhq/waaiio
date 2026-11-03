@@ -11,6 +11,7 @@
   - review-driven precision: one-time, digest-bound packet approval, certified-baseline check, path allowlist for the standard lane, staging-before-production ordering, and the gate 6 rule.
 - `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: records that one release-packet approval covers gates 5, 7 and 9 for that packet. Merge, production migration and live money actions stay separate.
 - `CLAUDE.md`: pointer line to §9. The CI Process section is corrected: CI already runs on every PR push (`synchronize`, since #629), so the draft→ready toggle is only a fallback for a missing or cancelled run.
+- Owner decision (2026-11-03): the reviewer of record (the CTO review role) is an independent Claude reviewer: a separate, read-only, fresh-context Claude session or agent using MCP and Graphify. The two-reviewer gate uses two of them. ChatGPT is optional. Recorded in Operating Order "Roles", CLAUDE.md and Release Gate V2 §5.1.
 - No code change. §9.1 non-negotiables apply now. §9.2–§9.6 apply only after their tooling is merged; until then the current gate profiles apply.
 - Could break: nothing at runtime.
 

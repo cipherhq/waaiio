@@ -11,6 +11,12 @@
 - **Claude** = primary repository auditor/reviewer/implementer.
 - **ChatGPT** = independent CTO, architecture/security/release gate; not merely a second reviewer.
 
+**Reviewer of record (Owner decision 2026-11-03).** The independent CTO review role is performed by an **independent Claude reviewer**. In this document and in Release Gate V2, "ChatGPT", "CTO" and "ChatGPT/CTO" name that role.
+- **Who:** a separate Claude session or agent, not the implementing Claude. It starts from fresh context.
+- **How:** read-only. It reviews the exact head SHA, uses the Supabase, GitHub and Vercel MCP connectors and Graphify for evidence, and returns **READY FOR MERGE** or **BLOCKED**.
+- **Two-reviewer gate:** two such reviewers, each with its own fresh context.
+- **ChatGPT** may still be used when the Owner asks. It is no longer required.
+
 ## Evidence Hierarchy
 
 Repository/database/runtime/executable-test evidence beats:
