@@ -17,8 +17,9 @@ interface Profile {
   last_name: string | null;
   phone: string | null;
   role: string;
-  country_code: string | null;
-  metadata: Record<string, unknown> | null;
+  // Not columns on public.profiles; kept optional so existing UI reads stay type-safe.
+  country_code?: string | null;
+  metadata?: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -53,7 +54,7 @@ export default function UserManagement() {
     try {
       const { data, error } = await adminDb
         .from('profiles')
-        .select('id, email, first_name, last_name, phone, role, country_code, metadata, created_at')
+        .select('id, email, first_name, last_name, phone, role, created_at')
         .order('created_at', { ascending: false })
         .limit(500);
 
