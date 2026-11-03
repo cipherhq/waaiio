@@ -1,3 +1,9 @@
+## 2026-11-03 — Pricing page shows all five countries again
+
+- Owner direction (2026-11-03): "everything should show in pricing". Reverts the presentation part of #802: `app/(marketing)/pricing/page.tsx` restores the country picker (Nigeria, US, UK, Canada, Ghana) and the five-country feature card; `components/marketing/Footer.tsx` restores all country badges on /pricing; `lib/__tests__/marketing-country-pricing.test.tsx` returns to the multi-country assertions.
+- Prices still come only from the canonical `/api/public/pricing` projection (database). No pricing data, API, onboarding or payment change.
+- Could break: nothing functional; marketing copy returns to the pre-#802 wording.
+
 ## 2026-11-02 — Fixed app-only successor release verification
 
 - Add a fixed postlaunch application profile with completed-schema preservation, current controls, exact source evidence and unchanged approval gates.
