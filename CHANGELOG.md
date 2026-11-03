@@ -4,6 +4,19 @@
 - `app/api/cron/auto-payout/route.ts`: invalid-timezone businesses stay excluded first (fail-closed), then the accounting-hold skip (main) applies.
 - No behavior removed from either side. Could break: response consumers expecting `period` when businesses span several local weeks now receive `periods` (unchanged from #796).
 
+## 2026-11-03 — Pricing page shows all five countries again
+
+- Owner direction (2026-11-03): "everything should show in pricing". Reverts the presentation part of #802: `app/(marketing)/pricing/page.tsx` restores the country picker (Nigeria, US, UK, Canada, Ghana) and the five-country feature card; `components/marketing/Footer.tsx` restores all country badges on /pricing; `lib/__tests__/marketing-country-pricing.test.tsx` returns to the multi-country assertions.
+- Prices still come only from the canonical `/api/public/pricing` projection (database). No pricing data, API, onboarding or payment change.
+- Could break: nothing functional; marketing copy returns to the pre-#802 wording.
+
+## 2026-11-03 — Admin Users list loads again
+
+- `admin/src/pages/Users.tsx`: the profiles query requested `country_code` and `metadata`, which are not columns on `public.profiles`; PostgREST returned 400 and the Users list was always empty (staging and production, since the initial deploy). The query now selects only existing columns; the two fields are optional in the type, so Country shows "—" and status shows "active".
+- Review fix (P1): `profiles.email` is nullable (17 of 108 production profiles have no email). `Profile.email` is now `string | null`, the search filter uses `(p.email ?? '')`, and the detail title falls back to `''`. Without this, typing a search term crashed the page once the list loaded. Regression test: `admin/src/__tests__/users-null-email-search-833.test.tsx`.
+- Unchanged: Suspend/Reactivate still writes `profiles.metadata` and therefore still cannot succeed — kept as-is pending an Owner decision (remove the control, or add the column via a reviewed migration).
+- Could break: nothing that worked before; the list simply loads now.
+
 ## 2026-11-02 — Fixed app-only successor release verification
 
 - Add a fixed postlaunch application profile with completed-schema preservation, current controls, exact source evidence and unchanged approval gates.
