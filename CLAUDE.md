@@ -316,7 +316,7 @@ gh pr view <PR_NUMBER> --json statusCheckRollup
 ```
 **All required jobs must be green on the exact head SHA.** If the head changes after the CI run, that evidence is stale and CI must be rerun.
 
-GitHub branch protection recognizes required status checks from any `pull_request` run on the exact head SHA (synchronize or ready_for_review). `workflow_dispatch` runs are supplemental evidence only — they do NOT satisfy the protected merge gate.
+GitHub branch protection recognizes required status checks from any `pull_request` run on the exact head SHA (synchronize or ready_for_review). `workflow_dispatch` runs are supplemental evidence only and are not accepted as merge-gate evidence.
 
 ### Trigger semantics
 - `push` to `main`: full CI runs automatically (post-merge regression)

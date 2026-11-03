@@ -550,10 +550,10 @@ Migrations ship ahead of the app release that depends on them, with their own re
 - §6.1 ordering still applies: staging migration (gate 4) before production migration (gate 8).
 
 An app release admits a migration only if:
-- it is listed by exact sha256 in the release manifest; and
+- it is listed by exact sha256 in the private release manifest; and
 - it is already present in the production ledger with a matching stored statement.
 
-The gate generates the manifest from the repository and production readings, and the Owner reviews it as part of the release packet. App releases perform no DDL.
+The gate generates the manifest from the repository and production readings. The manifest stays private because it holds operational deployment IDs; the release packet records its digest, and the Owner reviews it as part of the packet. App releases perform no DDL.
 
 ### 9.3 Lanes
 
@@ -579,7 +579,7 @@ Changing the allowlist is itself a full-lane gate change.
 - the two-reviewer gate;
 - Owner staging acceptance where the Owner's own credentials are required.
 
-**Classification before merge.** The same classifier runs on each PR before merge to set its review requirement. The release gate checks that every included PR has that review recorded. Docs-only PRs need one review, except where a document requires more; this document requires CTO review (Document Maintenance).
+**Classification before merge.** The same classifier runs on each PR before merge to set its review requirement. The release gate checks that every included PR has that review recorded. Docs-only PRs are classified separately from the lanes: they need one review, or CTO review where the document requires it (this document does; see Document Maintenance).
 
 ### 9.4 One release approval
 
@@ -599,7 +599,7 @@ This approval combines Operating Order gates 5 (staging deployment), 7 (producti
 - M430 absence;
 - the payout-hold controls (payout cron and payout operations off).
 
-On any difference it stops and deploys nothing further. This replaces today's 15-minute snapshot expiry and the human re-approval that follows it.
+On any difference it stops and deploys nothing further. The one allowed change is a pointer that this same invocation moved to the candidate it just created and verified. This replaces today's 15-minute snapshot expiry and the human re-approval that follows it.
 
 **Staging comes first.**
 - Production deployment runs only after the §6.1 staging evidence is recorded, and for the full lane only after the Owner's staging acceptance.
@@ -613,7 +613,7 @@ On any difference it stops and deploys nothing further. This replaces today's 15
 ### 9.5 Reusable gate
 
 Release contents are derived, not hand-pinned per release.
-- **Baseline:** the deployment production serves. It must equal the last certified release SHA recorded in release control (§5.3), on protected main; otherwise the gate fails.
+- **Baseline:** for each project (merchant and admin), the deployment production serves. It must equal that project's last certified release SHA recorded in release control (§5.3), on protected main; otherwise the gate fails.
 - **Target:** a protected-main SHA with green push CI on that exact SHA (§5.1).
 - **Changed files:** taken from git between the two.
 
