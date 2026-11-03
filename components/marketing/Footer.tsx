@@ -119,7 +119,6 @@ export default function Footer() {
               { flag: '\ud83c\uddfa\ud83c\uddf8', name: 'US' },
               { flag: '\ud83c\uddec\ud83c\udde7', name: 'UK' },
               { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada' },
-              { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana' },
             ].map((c) => (
               <span key={c.name} className="flex items-center gap-1 text-xs text-gray-500">
                 <span>{c.flag}</span> {c.name}
