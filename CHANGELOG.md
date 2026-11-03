@@ -1,3 +1,27 @@
+## 2026-11-03 — Signup works again without M430: first shared WhatsApp number
+
+- **Why:** production has no `ENABLE_CHANNEL_ALLOCATION_OPERATIONS` and no `allocate_shared_channel` (M430 is staging-only, by Owner decision). So `provisionPendingBusiness` threw 503 and nobody could sign up; the newest production business is from 2026-09-27. 38 active shared businesses also have no number.
+- `supabase/migrations/507_first_shared_channel_assignment.sql`:
+  - `assign_first_shared_channel(p_business_id)` (SECURITY DEFINER, `search_path = public, pg_temp`, `service_role` only). It gives a business with no channel at all its own country's active, connection-active, unowned shared number. The only fallback is the approved GH → NG.
+  - It locks the business row, never replaces an existing assignment, and refuses any business with `whatsapp_channel_id`, a non-shared `wa_method`, or any channel row of its own.
+  - No capacity limit (Owner decision 2026-11-03). No backfill, constraint or setting changes.
+  - `get_bot_context`: ports only the #266 R3 ambiguity check, with the body identical to the staging final state. When the business is unresolved and the phone has active sessions with more than one business, it returns `ambiguous: true` and the business list; the bot then shows the picker (`lib/bot/bot.service.ts` ~943). The business-scoped path is unchanged.
+- `lib/channels/operation-admission.ts`:
+  - New server-only switch `ENABLE_FIRST_SHARED_ASSIGNMENT`, off by default.
+  - New `WHATSAPP_NUMBER_UNAVAILABLE` response.
+- `lib/onboarding/whatsapp-readiness.ts`:
+  - `assignFirstSharedChannel`.
+  - `allocateSharedChannelForNewBusiness`: uses the M430 path when broad channel operations are on (staging), otherwise M507.
+- Callers:
+  - `lib/onboarding/provision-business.ts` (register signup; admin-assisted stays closed because its routes are still broad-gated) is admitted by either switch. `app/api/whatsapp/flow-callback/onboarding.ts` uses the new wrapper but is still admitted only by the broad switch; this was review-required.
+  - `app/api/onboarding/verify/route.ts` assigns the first number for an unassigned shared business when only the new switch is on, and returns 503 `WHATSAPP_NUMBER_UNAVAILABLE` if none is eligible.
+- Unchanged: reassignment, stale-channel repair, dedicated promotion, Embedded Signup, disconnect, admin channel changes and admin onboarding all stay behind `ENABLE_CHANNEL_ALLOCATION_OPERATIONS`. Staging behavior is unchanged.
+- Tests:
+  - `lib/__tests__/first-shared-assignment-507.pg.test.ts` (real PostgreSQL, 24 tests).
+  - `lib/__tests__/first-shared-assignment-admission.test.ts` (35 tests).
+  - `lib/__tests__/onboarding-655-flow-callback-fallback.test.ts`: assertion updated to the new wrapper, with no direct RPC.
+- Could break: nothing while the switch is off. Turning it on in production is a separate Owner-approved environment change, after M507 is applied through the release process.
+
 ## 2026-11-03 — QR page no longer shows an unrelated WhatsApp number
 
 - `app/dashboard/qr-code/page.tsx`: when a business had no assigned channel, the page picked any active shared number (often another country's), so it looked ready. But the printed QR (`/m/{businessId}`, `app/m/resolve.ts`) only resolves through `assigned_channel_id || whatsapp_channel_id`, so customers got "not connected". The page now mirrors that rule. It reads the assigned channel as a dedicated channel from the base table (allowed by the owner RLS policy) or as a shared channel from `whatsapp_channels_public` (owners cannot read shared channels from the base table). With no usable assigned channel it shows "WhatsApp isn't connected yet". The queue template keeps its own guidance. The unused owner-contact phone state was removed.
