@@ -126,3 +126,13 @@ describe('#496 QR production routing safety', () => {
     expect(html).not.toContain('+12025550000'); // business.phone
   });
 });
+
+describe('QR page — no assigned WhatsApp channel', () => {
+  it('unassigned shared business sees a not-connected warning, not another number', async () => {
+    // queryChannelsPublic would return a US shared number; it must not be used.
+    render(<QRCodePage />);
+    const warning = await screen.findByTestId('no-whatsapp-channel');
+    expect(warning.textContent).toContain("WhatsApp isn't connected yet");
+    expect(document.body.innerHTML).not.toContain('12025550199');
+  });
+});

@@ -5,7 +5,6 @@ import { useSearchParams } from 'next/navigation';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { buildMerchantLink, type MerchantLinkAction } from '@/lib/url';
@@ -73,31 +72,27 @@ export default function QRCodePage() {
       const supabase = createClient();
       const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
 
-      // Fire all 3 queries in parallel — include channel_type for assigned channel
-      const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
+      // Include channel_type for the assigned channel. No "any shared number"
+      // fallback: the /m/{businessId} link (app/m/resolve.ts) only redirects to
+      // the business's assigned channel, so an unassigned business must show
+      // "not connected" here rather than an unrelated (often other-country) number.
+      const [assignedResult, dedicatedResult] = await Promise.all([
         channelId
           ? supabase.from('whatsapp_channels').select('phone_number, channel_type').eq('id', channelId).eq('is_active', true).maybeSingle()
           : Promise.resolve({ data: null }),
         supabase.from('whatsapp_channels').select('phone_number')
           .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-        queryChannelsPublic(supabase, 'phone_number', (q) => q.limit(1).maybeSingle()),
       ]);
 
       if (cancelled) return; // Discard obsolete response from prior business context
 
-      // Priority: assigned > dedicated > shared > business.phone fallback
-      // Determine channel type from the actually selected channel
+      // Priority: assigned > dedicated > business.phone (owner contact, not a bot channel)
       const assignedPhone = assignedResult.data?.phone_number;
       const assignedType = assignedResult.data?.channel_type as string | undefined;
       const dedicatedPhone = dedicatedResult.data?.phone_number;
-      const sharedPhone = sharedResult.data?.phone_number;
-      const botChannelPhone = assignedPhone || dedicatedPhone || sharedPhone;
+      const botChannelPhone = assignedPhone || dedicatedPhone;
       const resolved = botChannelPhone || business.phone || '';
-      // Resolved channel is shared if: assigned channel has type 'shared',
-      // or dedicated query failed and shared query provided the phone
-      const isResolvedShared = assignedPhone
-        ? assignedType === 'shared'
-        : (!dedicatedPhone && !!sharedPhone);
+      const isResolvedShared = !!assignedPhone && assignedType === 'shared';
 
       setChannelPhone(resolved.replace(/[^0-9]/g, ''));
       setHasBotChannel(!!botChannelPhone);
@@ -108,7 +103,6 @@ export default function QRCodePage() {
     return () => { cancelled = true; };
   }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id, business.phone]);
 
-  const phone = channelPhone;
 
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>(initialTemplate);
 
@@ -517,9 +511,9 @@ export default function QRCodePage() {
         />
       </div>
 
-      {channelLoaded && !phone && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <strong>No WhatsApp number found.</strong> Please connect a WhatsApp number in{' '}
+      {channelLoaded && !hasBotChannel && !isQueueTemplate && (
+        <div data-testid="no-whatsapp-channel" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>WhatsApp isn&apos;t connected yet.</strong> Customers who scan this QR code or open this link will see &ldquo;not connected&rdquo; until it is. Connect a WhatsApp number in{' '}
           <a href="/dashboard/whatsapp/connect" className="font-medium underline hover:no-underline">WhatsApp Setup</a>{' '}
           to generate a working QR code and link.
         </div>
