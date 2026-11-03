@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
 import { CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
 import { getCapabilityLabel } from '@/lib/capabilities/labels';
+import { buildMerchantLink } from '@/lib/url';
 
 const CAP_MAP = new Map(CAPABILITIES.map(c => [c.id, c]));
 
@@ -263,63 +264,8 @@ export default function WhatsAppPage() {
   const [savingButtons, setSavingButtons] = useState(false);
   const [expandedTemplate, setExpandedTemplate] = useState<string | null>(null);
 
-  const [whatsappLink, setWhatsappLink] = useState('');
-
-  // Load correct WhatsApp number from DB (not hardcoded env var)
-  useEffect(() => {
-    async function loadWhatsAppLink() {
-      const supabase = createClient();
-      const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
-
-      // 1. Check assigned/linked channel
-      if (channelId) {
-        const { data: ch } = await supabase
-          .from('whatsapp_channels')
-          .select('phone_number, channel_type')
-          .eq('id', channelId)
-          .maybeSingle();
-        if (ch?.phone_number) {
-          const num = ch.phone_number.replace(/[^0-9]/g, '');
-          setWhatsappLink(
-            ch.channel_type !== 'dedicated' && business.bot_code
-              ? `https://wa.me/${num}?text=${encodeURIComponent(business.bot_code)}`
-              : `https://wa.me/${num}`,
-          );
-          return;
-        }
-      }
-
-      // 2. Check dedicated channel
-      const { data: dedicated } = await supabase
-        .from('whatsapp_channels')
-        .select('phone_number')
-        .eq('business_id', business.id)
-        .eq('channel_type', 'dedicated')
-        .eq('is_active', true)
-        .maybeSingle();
-      if (dedicated?.phone_number) {
-        const num = dedicated.phone_number.replace(/[^0-9]/g, '');
-        setWhatsappLink(`https://wa.me/${num}`);
-        return;
-      }
-
-      // 3. Shared channel — use bot code
-      const { data: shared } = await supabase
-        .from('whatsapp_channels')
-        .select('phone_number')
-        .eq('channel_type', 'shared')
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
-      const num = shared?.phone_number?.replace(/[^0-9]/g, '') || '';
-      if (num && business.bot_code) {
-        setWhatsappLink(`https://wa.me/${num}?text=${encodeURIComponent(business.bot_code)}`);
-      } else if (num) {
-        setWhatsappLink(`https://wa.me/${num}`);
-      }
-    }
-    loadWhatsAppLink();
-  }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id, business.bot_code]);
+  // Use permanent merchant link — survives number changes
+  const whatsappLink = buildMerchantLink(business.id);
 
   useEffect(() => {
     async function load() {
@@ -429,7 +375,8 @@ export default function WhatsAppPage() {
             </div>
             {whatsappLink && (
               <div className="mt-4">
-                <p className="text-xs text-gray-500">WhatsApp Link</p>
+                <p className="text-xs font-medium text-gray-700">Permanent Waaiio Link</p>
+                <p className="mt-0.5 text-[10px] text-gray-400">This link stays the same even if your connected WhatsApp number changes.</p>
                 <a
                   href={whatsappLink}
                   target="_blank"

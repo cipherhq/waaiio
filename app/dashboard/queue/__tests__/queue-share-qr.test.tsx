@@ -150,9 +150,9 @@ describe('QR Code page — queue template pre-selection', () => {
     await waitFor(() => {
       const qrValues = screen.getAllByTestId('qr-value');
       expect(qrValues.length).toBeGreaterThanOrEqual(1);
-      // Shared number: routing code + :queue suffix
+      // QR encodes permanent Waaiio link with /queue action suffix
       const value = qrValues[0].getAttribute('data-value');
-      expect(value).toBe('https://wa.me/12025550199?text=QTEST%3Aqueue');
+      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}/queue`);
     });
 
     // Queue join guidance visible
@@ -196,8 +196,8 @@ describe('QR Code page — queue template pre-selection', () => {
     await waitFor(() => {
       const qrValues = screen.getAllByTestId('qr-value');
       const value = qrValues[0].getAttribute('data-value');
-      // Dedicated: no routing code, sends Hi
-      expect(value).toBe('https://wa.me/12025550199?text=Hi');
+      // Permanent Waaiio link with /queue action suffix
+      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}/queue`);
     });
 
     // Guidance explains menu selection path
@@ -214,9 +214,9 @@ describe('QR Code page — existing behavior preserved', () => {
 
     await waitFor(() => {
       const qrValues = screen.getAllByTestId('qr-value');
-      // Generic: routing code only, no suffix
+      // Permanent Waaiio link — same for all templates
       const value = qrValues[0].getAttribute('data-value');
-      expect(value).toBe('https://wa.me/12025550199?text=QTEST');
+      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}`);
     });
 
     // No queue guidance for generic template
@@ -232,7 +232,7 @@ describe('QR Code page — existing behavior preserved', () => {
     await waitFor(() => {
       const qrValues = screen.getAllByTestId('qr-value');
       const value = qrValues[0].getAttribute('data-value');
-      expect(value).toBe('https://wa.me/12025550199?text=QTEST');
+      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}`);
     });
   });
 
@@ -315,78 +315,60 @@ describe('QR Code page — queue artifact guards', () => {
     expect(clipboardContent).toBe(qrValue);
   });
 
-  it('shared-channel fallback: dedicated business gets shared routing for queue', async () => {
+  it('shared-channel fallback: dedicated business gets queue permanent link', async () => {
     state.searchParams = new URLSearchParams('template=queue');
-    // Business says dedicated, but only a shared channel resolves
     state.business = { ...state.business, wa_method: 'dedicated', bot_code: 'QTEST' };
-    state.channelType = 'shared'; // resolved channel is shared (fallback)
+    state.channelType = 'shared';
 
     render(<QRCodePage />);
 
     await waitFor(() => {
-      const qrValues = screen.getAllByTestId('qr-value');
-      expect(qrValues.length).toBeGreaterThanOrEqual(1);
-      // Shared fallback: routing code + :queue suffix applied
-      const value = qrValues[0].getAttribute('data-value');
-      expect(value).toBe('https://wa.me/12025550199?text=QTEST%3Aqueue');
+      const value = screen.getAllByTestId('qr-value')[0].getAttribute('data-value');
+      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}/queue`);
     });
   });
 
-  it('assigned dedicated channel + shared business preference → queue uses dedicated (no routing code)', async () => {
+  it('assigned dedicated channel + shared preference → queue permanent link', async () => {
     state.searchParams = new URLSearchParams('template=queue');
-    // Business preference says shared, but assigned channel is dedicated
     state.business = { ...state.business, wa_method: 'shared', bot_code: 'QTEST', assigned_channel_id: 'ch-ded-1' };
-    state.channelType = 'dedicated'; // assigned channel's actual type
+    state.channelType = 'dedicated';
 
     render(<QRCodePage />);
 
     await waitFor(() => {
-      const qrValues = screen.getAllByTestId('qr-value');
-      expect(qrValues.length).toBeGreaterThanOrEqual(1);
-      // Dedicated channel: no routing code, sends Hi
-      const value = qrValues[0].getAttribute('data-value');
-      expect(value).toBe('https://wa.me/12025550199?text=Hi');
+      const value = screen.getAllByTestId('qr-value')[0].getAttribute('data-value');
+      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}/queue`);
     });
 
-    // Join guidance shows menu path for dedicated
     const guidance = screen.getByTestId('queue-join-guidance');
     expect(guidance.textContent).toContain('selects "Join Queue" from your menu');
   });
 
-  it('assigned dedicated channel + shared preference + no bot code → queue artifacts available (Hi path)', async () => {
+  it('assigned dedicated channel + no bot code → queue permanent link', async () => {
     state.searchParams = new URLSearchParams('template=queue');
-    // Shared preference with bot code, but assigned channel is dedicated → code unused
     state.business = { ...state.business, wa_method: 'shared', bot_code: '', assigned_channel_id: 'ch-ded-2' };
     state.channelType = 'dedicated';
 
     render(<QRCodePage />);
 
     await waitFor(() => {
-      const qrValues = screen.getAllByTestId('qr-value');
-      expect(qrValues.length).toBeGreaterThanOrEqual(1);
-      const value = qrValues[0].getAttribute('data-value');
-      // Dedicated channel without code: Hi greeting
-      expect(value).toBe('https://wa.me/12025550199?text=Hi');
+      const value = screen.getAllByTestId('qr-value')[0].getAttribute('data-value');
+      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}/queue`);
     });
 
-    // No setup guidance — dedicated channel is valid even without routing code
     expect(screen.queryByTestId('queue-setup-guidance')).toBeNull();
   });
 
-  it('assigned shared channel + non-shared preference → queue uses shared routing', async () => {
+  it('assigned shared channel + non-shared preference → queue permanent link', async () => {
     state.searchParams = new URLSearchParams('template=queue');
-    // Business says dedicated, but assigned channel metadata says shared
     state.business = { ...state.business, wa_method: 'dedicated', bot_code: 'QBIZ', assigned_channel_id: 'ch-shared-1' };
-    state.channelType = 'shared'; // assigned channel's actual type is shared
+    state.channelType = 'shared';
 
     render(<QRCodePage />);
 
     await waitFor(() => {
-      const qrValues = screen.getAllByTestId('qr-value');
-      expect(qrValues.length).toBeGreaterThanOrEqual(1);
-      // Shared channel: routing code + :queue suffix
-      const value = qrValues[0].getAttribute('data-value');
-      expect(value).toBe('https://wa.me/12025550199?text=QBIZ%3Aqueue');
+      const value = screen.getAllByTestId('qr-value')[0].getAttribute('data-value');
+      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}/queue`);
     });
   });
 });

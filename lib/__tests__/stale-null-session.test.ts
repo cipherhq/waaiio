@@ -16,7 +16,7 @@ vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: vi.fn().mockRes
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 vi.mock('@/lib/bot/translate', () => ({ translateBotResponse: vi.fn(async (t: string) => t), detectLanguage: vi.fn(async () => 'en'), getLanguageName: vi.fn(() => 'English') }));
 vi.mock('@/lib/bot/handlers/global-queries', () => ({ handleGlobalQuery: vi.fn(async (opts: { session: unknown }) => ({ handled: false, session: opts.session })), isOrdersQuery: vi.fn(() => false) }));
-vi.mock('@/lib/bot/handlers/escape-hatches', () => ({ HOME_PATTERN: /^home$/i, handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }) }));
+vi.mock('@/lib/bot/handlers/escape-hatches', async (importOriginal) => ({ ...await importOriginal<typeof import('@/lib/bot/handlers/escape-hatches')>(), handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }) }));
 vi.mock('@/lib/bot/keyword-service', () => ({ loadBotCustomConfig: vi.fn().mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null }), matchQuickReply: vi.fn(() => null), loadUnifiedKeywords: vi.fn().mockResolvedValue([]), matchUnifiedKeyword: vi.fn(() => null) }));
 vi.mock('@/lib/circuit-breaker', () => ({ isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(), CircuitBreakerOpenError: class extends Error {} }));
 vi.mock('@/lib/bot/customer-intelligence', () => ({
@@ -919,6 +919,7 @@ describe('Stale null-business session fix', () => {
     });
     const supabase = {
       from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'whatsapp_channels') return makeChain({ id: 'shared-channel', channel_type: 'shared' });
         if (table === 'platform_settings') return makeChain({ value: false });
         if (table === 'bot_sessions') {
           const chain = makeChain(null);
@@ -929,13 +930,17 @@ describe('Stale null-business session fix', () => {
         if (table === 'blocked_phones') { const c = makeChain(null); c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) }); return c; }
         return makeChain(null);
       }),
-      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+      rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+        data: name === 'get_shared_conversation' ? { session: sessionA, version: 1 } : { success: true, version: 1 }, error: null,
+      })),
     };
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
+    const deactivate = vi.spyOn(bot as any, 'deactivateSession');
+
     // switch_biz while in suspended business A
     sender.bindBusiness('biz-A');
-    await bot.handleMessage('+234800', 'switch_biz', 'text');
+    await bot.handleMessage('+234800', 'switch_biz', 'text', 'shared-phone-id');
     // Picker delivered (platform-scoped, not blocked by A's suspension)
     expect(spyPB.mock.calls.length).toBeGreaterThan(0);
     // Sender transitioned to platform discovery (not bound to A)
@@ -944,9 +949,12 @@ describe('Stale null-business session fix', () => {
     const totalCloud = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length + cloud.sendList.mock.calls.length + cloud.sendTemplate.mock.calls.length;
     const platformCalls = spyPT.mock.calls.length + spyPB.mock.calls.length;
     expect(totalCloud - platformCalls).toBe(0);
-    // Session A was deactivated (update called on bot_sessions)
-    const botSessionCalls = supabase.from.mock.calls.filter((c: any[]) => c[0] === 'bot_sessions');
-    expect(botSessionCalls.length).toBeGreaterThan(0);
+    expect(deactivate).toHaveBeenCalledExactlyOnceWith('sess-A');
+    expect(sharedInsert).toHaveBeenCalledWith(expect.objectContaining({
+      business_id: null, current_step: 'directory_search',
+      session_data: expect.objectContaining({ _inbound_channel_id: 'shared-channel' }),
+    }));
+    expect(spyPT.mock.calls.some((c: any[]) => c[0]?.text?.includes('restaurants in Ikoyi'))).toBe(true);
   });
 
   // ── Localization: suggestion-step replies must be platform-scoped AND translated ──
@@ -1114,7 +1122,7 @@ describe('Stale null-business session fix', () => {
 
   it('19. SB helper CAS race: CAS returns 0 rows → renewed session returned from helper, no re-insert, 1 reply', async () => {
     // Site (b): expiry deactivation inside createNullBizSuggestionSession.
-    // Triggered via switch_biz → recentBiz.length > 1 → helper called.
+    // Triggered via fuzzy business search → suggestion helper called.
     // Expected: NO retry insert, helper returns renewed session, caller sends 1 platform reply.
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
@@ -1146,7 +1154,7 @@ describe('Stale null-business session fix', () => {
     let botSessionsN = 0;
     let insertCallCount = 0;
 
-    // Make findReturningCustomerBusinesses return 2 businesses so switch_biz calls the helper.
+    // Keep returning-history fixture available; fuzzy detection below exercises the helper.
     const { findReturningCustomerBusinesses } = await import('@/lib/bot/handlers/bot-code-detection');
     vi.mocked(findReturningCustomerBusinesses).mockResolvedValueOnce([
       { id: 'biz-x', name: 'Biz X', bot_code: 'bizx' } as any,
@@ -1214,7 +1222,12 @@ describe('Stale null-business session fix', () => {
     };
 
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-    await bot.handleMessage('+234800', 'switch_biz', 'text');
+    // Exercise the still-supported suggestion picker through business search.
+    mockDetectionResult = { businessId: null, suggestions: [
+      { id: 'biz-x', name: 'Biz X', bot_code: 'bizx' },
+      { id: 'biz-y', name: 'Biz Y', bot_code: 'bizy' },
+    ] };
+    await bot.handleMessage('+234800', 'find business', 'text');
 
     // Assert 1: only 1 insert (the original that hit 23505) — no retry after CAS race
     expect(insertCallCount).toBe(1);
@@ -1319,8 +1332,13 @@ describe('Stale null-business session fix', () => {
     };
 
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-    // Trigger the exact early switch_biz path; 'switch alpha' is ordinary search text.
-    await bot.handleMessage('+234800', 'switch_biz', 'text');
+    // Exercise the helper through its current business-search caller.
+    // Exercise the still-supported suggestion picker through business search.
+    mockDetectionResult = { businessId: null, suggestions: [
+      { id: 'biz-x', name: 'Biz X', bot_code: 'bizx' },
+      { id: 'biz-y', name: 'Biz Y', bot_code: 'bizy' },
+    ] };
+    await bot.handleMessage('+234800', 'find business', 'text');
 
     // Assert: in-place update payload includes version = existingSession.version + 1 = 4
     expect(updatePayload).not.toBeNull();
@@ -1417,7 +1435,12 @@ describe('Stale null-business session fix', () => {
     };
 
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-    await bot.handleMessage('+234800', 'switch_biz', 'text');
+    // Exercise the still-supported suggestion picker through business search.
+    mockDetectionResult = { businessId: null, suggestions: [
+      { id: 'biz-x', name: 'Biz X', bot_code: 'bizx' },
+      { id: 'biz-y', name: 'Biz Y', bot_code: 'bizy' },
+    ] };
+    await bot.handleMessage('+234800', 'find business', 'text');
 
     // 1 insert (no retry on 0-rows path)
     expect(insertCount21).toBe(1);
@@ -1434,7 +1457,7 @@ describe('Stale null-business session fix', () => {
   });
 
   it('22. (c) site B CAS success → retry insert succeeds → caller sends picker buttons, no error reply', async () => {
-    // Site B: switch_biz → createNullBizSuggestionSession → first insert 23505 → existing expired →
+    // Site B: business search → createNullBizSuggestionSession → first insert 23505 → existing expired →
     // CAS deactivation succeeds → retry insert succeeds → caller receives session → buttons sent.
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
@@ -1528,7 +1551,12 @@ describe('Stale null-business session fix', () => {
     };
 
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-    await bot.handleMessage('+234800', 'switch_biz', 'text');
+    // Exercise the still-supported suggestion picker through business search.
+    mockDetectionResult = { businessId: null, suggestions: [
+      { id: 'biz-x', name: 'Biz X', bot_code: 'bizx' },
+      { id: 'biz-y', name: 'Biz Y', bot_code: 'bizy' },
+    ] };
+    await bot.handleMessage('+234800', 'find business', 'text');
 
     // 2 inserts: original 23505 + retry
     expect(insertCount22).toBe(2);
@@ -1538,7 +1566,7 @@ describe('Stale null-business session fix', () => {
   });
 
   it('23. (d) site B CAS success → retry insert fails (23505) → exactly one error reply, no buttons', async () => {
-    // Site B: switch_biz → createNullBizSuggestionSession → first insert 23505 → existing expired →
+    // Site B: business search → createNullBizSuggestionSession → first insert 23505 → existing expired →
     // CAS deactivation succeeds → retry insert also fails (23505) → helper returns null →
     // caller sends exactly one "Something went wrong" reply.
     const cloud = createMockCloud();
@@ -1623,7 +1651,12 @@ describe('Stale null-business session fix', () => {
     };
 
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-    await bot.handleMessage('+234800', 'switch_biz', 'text');
+    // Exercise the still-supported suggestion picker through business search.
+    mockDetectionResult = { businessId: null, suggestions: [
+      { id: 'biz-x', name: 'Biz X', bot_code: 'bizx' },
+      { id: 'biz-y', name: 'Biz Y', bot_code: 'bizy' },
+    ] };
+    await bot.handleMessage('+234800', 'find business', 'text');
 
     // Exactly 2 insert attempts: original + one retry (no more)
     expect(insertCount23).toBe(2);

@@ -1,3 +1,4 @@
+import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { NextResponse } from 'next/server';
 import { type NextRequest } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
@@ -371,6 +372,8 @@ export async function GET(request: NextRequest) {
       // Skip businesses with invalid timezones (already logged above)
       if (invalidTimezoneBizIds.has(biz.id)) continue;
 
+      if (await getMerchantAccountingHold(supabase, biz.id)) { held++; continue; }
+      // Skip if payout already exists for this period (checked via batch query above)
       if (reconciliationRequired.has(biz.id)) {
         logger.warn('[AUTO-PAYOUT] Historical currency requires reconciliation', { business_id: biz.id });
         continue;
@@ -449,7 +452,7 @@ export async function GET(request: NextRequest) {
 
       // Check monthly verification-tier limit
       const payoutMinor = Math.round(net * 100);
-      const limitCheck = await checkVerificationLimit(supabase, biz.id, payoutMinor);
+      const limitCheck = await checkVerificationLimit(supabase, biz.id, payoutMinor, undefined, currency);
       const withinLimit = limitCheck.allowed;
 
       // Auto-approval: Nigeria only. Ghana requires explicit Owner approval for
@@ -689,6 +692,7 @@ export async function GET(request: NextRequest) {
       const heldAccountSet = new Set((heldAccountRows || []).map(r => r.business_id));
 
       for (const hp of heldPayouts) {
+        if (await getMerchantAccountingHold(supabase, hp.business_id)) continue;
         const heldBiz = heldBizMap.get(hp.business_id);
         if (!heldBiz || !hp.currency || reconciliationRequired.has(hp.business_id)) continue;
 

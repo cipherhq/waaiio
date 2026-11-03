@@ -70,14 +70,19 @@ export const paymentFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const exactRepeat = ctx.session.session_data._repeat_selection_id === input;
+        delete ctx.session.session_data._repeat_selection_id;
         // First try exact ID match (list postback)
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name, billing_type, recurring_interval, price')
+          .select('id, name, billing_type, recurring_interval, price, service_type, is_active')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .maybeSingle();
 
+        if (exactRepeat && (!service?.is_active || (ctx.session.session_data.active_capability === 'giving' && service.service_type !== 'giving'))) {
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'invalidSelection') };
+        }
         if (service) {
           return {
             valid: true,

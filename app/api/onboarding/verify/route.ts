@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -262,7 +263,7 @@ export async function POST(request: NextRequest) {
 
     const { data: ownerCheck } = await supabase
       .from('businesses')
-      .select('owner_id, subscription_tier')
+      .select('owner_id, subscription_tier, wa_method, assigned_channel_id')
       .eq('id', businessId)
       .single();
 
@@ -271,6 +272,10 @@ export async function POST(request: NextRequest) {
         { message: 'Business not found or not owned by you' },
         { status: 403 },
       );
+    }
+
+    if (!channelOperationsEnabled() && (!ownerCheck.wa_method || ownerCheck.wa_method === 'shared') && !ownerCheck.assigned_channel_id) {
+      return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
     }
 
     const service = createServiceClient();

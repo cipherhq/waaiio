@@ -131,8 +131,8 @@ const PAY = { id: 'pay-camp-1', amount: 5000, booking_id: null, invoice_id: null
 describe('campaign donation confirmation (#736)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockResolveByChForBiz.mockResolvedValue({ sender: campaignSender });
-    mockResolveByBiz.mockResolvedValue({ sender: campaignSender });
+    mockResolveByChForBiz.mockResolvedValue({ channel: { id: 'ch-shared', channel_type: 'shared' }, sender: campaignSender });
+    mockResolveByBiz.mockResolvedValue({ channel: { id: 'ch-shared', channel_type: 'shared' }, sender: campaignSender });
   });
 
   // ── Success path ──

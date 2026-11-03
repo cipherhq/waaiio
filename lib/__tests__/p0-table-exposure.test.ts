@@ -259,10 +259,14 @@ describe('P0: Application code uses safe view fallback helpers', () => {
     expect(source).toContain("from '@/lib/supabase/safe-view-query'");
   });
 
-  it('dashboard and qr-code pages use queryChannelsPublic helper', () => {
+  it('dashboard uses permanent link (no direct channel query)', () => {
     const dashboard = fs.readFileSync(path.resolve('app/dashboard/page.tsx'), 'utf-8');
+    expect(dashboard).toContain('buildMerchantLink');
+    expect(dashboard).not.toContain('queryChannelsPublic');
+  });
+
+  it('qr-code page uses queryChannelsPublic helper (queue readiness)', () => {
     const qrCode = fs.readFileSync(path.resolve('app/dashboard/qr-code/page.tsx'), 'utf-8');
-    expect(dashboard).toContain('queryChannelsPublic');
     expect(qrCode).toContain('queryChannelsPublic');
   });
 

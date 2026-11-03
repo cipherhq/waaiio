@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import {
   formatCurrency,
   getLocale,
@@ -21,6 +20,7 @@ import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist'
 import { AISetupCard } from '@/components/dashboard/AISetupCard';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { buildMerchantLink } from '@/lib/url';
 
 interface Stats {
   totalBookings: number;
@@ -84,43 +84,8 @@ export default function DashboardOverview() {
   const country = (business.country_code || 'NG') as CountryCode;
   const categoryTemplate = getCategoryByKey(business.category);
 
-  const [whatsappLink, setWhatsappLink] = useState('');
-  const [whatsappDisplayNumber, setWhatsappDisplayNumber] = useState('');
-
-  // Load the correct WhatsApp number for this business (parallel queries, priority pick)
-  useEffect(() => {
-    async function loadWhatsAppLink() {
-      const supabase = createClient();
-      const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
-
-      // Fire all 3 queries in parallel instead of sequential waterfall
-      const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
-        channelId
-          ? supabase.from('whatsapp_channels').select('phone_number, channel_type').eq('id', channelId).eq('is_active', true).maybeSingle()
-          : Promise.resolve({ data: null }),
-        supabase.from('whatsapp_channels').select('phone_number')
-          .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-        queryChannelsPublic(supabase, 'phone_number', (q) => q.limit(1).maybeSingle()),
-      ]);
-
-      // Priority: assigned > dedicated > shared
-      const phone = assignedResult.data?.phone_number
-        || dedicatedResult.data?.phone_number
-        || sharedResult.data?.phone_number;
-
-      const num = phone?.replace(/[^0-9]/g, '') || '12029226251';
-      setWhatsappDisplayNumber(num);
-
-      // Shared channels need bot code prefix
-      const isShared = assignedResult.data?.phone_number
-        ? assignedResult.data.channel_type !== 'dedicated'
-        : !dedicatedResult.data?.phone_number;
-      setWhatsappLink(isShared && business.bot_code
-        ? `https://wa.me/${num}?text=${encodeURIComponent(business.bot_code)}`
-        : `https://wa.me/${num}`);
-    }
-    loadWhatsAppLink();
-  }, [business.id]);
+  // Permanent Waaiio link — survives connected number changes
+  const whatsappLink = buildMerchantLink(business.id);
 
   // Check if account deletion is scheduled (grace period)
   useEffect(() => {

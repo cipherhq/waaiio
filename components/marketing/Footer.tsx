@@ -1,8 +1,12 @@
+'use client';
+
+import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { WaaiioMark, WaaiioWordmark } from './WaaiioLogo';
 import PrivacyChoicesButton from './PrivacyChoicesButton';
 
 export default function Footer() {
+  const pathname = usePathname();
   return (
     <footer className="bg-gradient-to-b from-gray-900 to-black text-white">
       <div className="h-px bg-gradient-to-r from-transparent via-brand/40 to-transparent" />
@@ -120,7 +124,7 @@ export default function Footer() {
               { flag: '\ud83c\uddec\ud83c\udde7', name: 'UK' },
               { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada' },
               { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana' },
-            ].map((c) => (
+            ].filter((c) => pathname !== '/pricing' || c.name === 'Nigeria').map((c) => (
               <span key={c.name} className="flex items-center gap-1 text-xs text-gray-500">
                 <span>{c.flag}</span> {c.name}
               </span>

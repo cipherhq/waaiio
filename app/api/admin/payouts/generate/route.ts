@@ -1,3 +1,4 @@
+import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -66,12 +67,17 @@ export async function POST(request: NextRequest) {
     let skipped = 0;
     let held = 0;
     let failed = 0;
+    let accountingHeld = 0;
     const needsAttention: string[] = [];
     let custodyUnclassifiedCount = 0;
     let custodyUnclassifiedAmount = 0;
     const processedPeriods = new Set<string>();
 
     for (const biz of businesses) {
+      try {
+        if (await getMerchantAccountingHold(supabase, biz.id)) { accountingHeld++; skipped++; continue; }
+      } catch { failed++; continue; }
+
       // Compute per-business merchant-local preceding completed week
       const periodResult = getPrecedingCompletedWeek(now, biz.timezone);
       if (!periodResult.success) {
@@ -491,6 +497,7 @@ export async function POST(request: NextRequest) {
         skipped,
         needs_attention: needsAttention.length > 0 ? needsAttention : undefined,
         failed,
+        accounting_held: accountingHeld,
         ...periodMeta,
         ...(custodyUnclassifiedCount > 0 ? {
           custody_warning: `${custodyUnclassifiedCount} fee rows excluded: custody unknown`,
@@ -506,8 +513,9 @@ export async function POST(request: NextRequest) {
         held: 0,
         skipped,
         failed: 0,
+        accounting_held: accountingHeld,
         ...periodMeta,
-        message: 'No eligible payouts for this period',
+        message: accountingHeld > 0 ? `${accountingHeld} businesses awaiting accounting reconciliation` : 'No eligible payouts for this period',
       });
     }
 
@@ -517,6 +525,7 @@ export async function POST(request: NextRequest) {
       held,
       skipped,
       failed: 0,
+      accounting_held: accountingHeld,
       ...periodMeta,
       ...(custodyUnclassifiedCount > 0 ? {
         custody_warning: `${custodyUnclassifiedCount} fee rows excluded: custody unknown`,

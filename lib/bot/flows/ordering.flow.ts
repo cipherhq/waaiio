@@ -1,3 +1,4 @@
+import { isSharedConversation, transactionNextSteps } from './shared/navigation';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
@@ -3250,11 +3251,13 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const orderTips = getFlowCopy(ctx.copyLang, 'ordering.free_order_tips');
+        const navigation = transactionNextSteps('ordering', await isSharedConversation(ctx.supabase, d));
 
         return [
           {
             type: 'text',
             text: getOrderConfirmationMessage({
+              countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
               businessName: ctx.business?.name || 'Shop',
               items: cart,
               totalAmount: total,
@@ -3267,7 +3270,7 @@ export const orderingFlow: FlowDefinition = {
               volumeDiscountAmount: volumeDiscountTotal || undefined,
               subscriptionTier: ctx.business?.subscription_tier,
               lang: ctx.copyLang,
-            }) + orderTips,
+            }) + orderTips + '\n\n' + navigation,
           },
           {
             type: 'buttons',

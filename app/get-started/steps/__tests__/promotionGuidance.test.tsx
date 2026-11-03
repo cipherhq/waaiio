@@ -12,12 +12,13 @@ vi.mock('qrcode.react', () => ({
 }));
 
 const link = 'https://wa.me/15551234567?text=SHOP-NOW';
+const permanentLink = 'https://www.waaiio.com/m/123e4567-e89b-12d3-a456-426614174000';
 
 const props: StepSuccessProps = {
   loading: false,
-  successData: { bot_code: 'SHOP-NOW', business_id: 'test-business' },
+  successData: { bot_code: 'SHOP-NOW', business_id: '123e4567-e89b-12d3-a456-426614174000' },
   waMethod: 'shared',
-  waLink: link,
+  waLink: permanentLink,
   category: 'shop',
   selectedCapabilities: ['ordering'],
   error: '',
@@ -58,7 +59,8 @@ describe('Signup success promotion guidance', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     render(<StepSuccess {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
-    expect(writeText).toHaveBeenCalledWith('Shop with us on WhatsApp: ' + link);
+    // Permanent links are used for promotion captions
+    expect(writeText).toHaveBeenCalledWith('Shop with us on WhatsApp: ' + permanentLink);
     expect(screen.queryByText('Message copied!')).toBeNull();
     finishCopy();
     await waitFor(() => expect(screen.getByText('Message copied!')).toBeTruthy());
@@ -73,8 +75,11 @@ describe('Signup success promotion guidance', () => {
     expect(screen.queryByText('Message copied!')).toBeNull();
   });
 
-  it('keeps the existing QR, WhatsApp test, and setup actions', () => {
+  it('shows account created (not live), QR, test link, and setup actions', () => {
     render(<StepSuccess {...props} />);
+    expect(screen.getByText('Account created')).toBeTruthy();
+    expect(screen.getByText(/permanent Waaiio link is ready/i)).toBeTruthy();
+    expect(screen.queryByText("You're live!")).toBeNull();
     expect(screen.getByRole('button', { name: 'Download QR Code' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
     expect(screen.getByRole('link', { name: /Connect WhatsApp Number/ })).toBeTruthy();
@@ -95,6 +100,33 @@ describe('URL safety guard', () => {
   it('accepts a plain wa.me link without query parameters', () => {
     render(<StepSuccess {...props} waLink="https://wa.me/15551234567" />);
     expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
+  });
+
+  it('accepts a permanent Waaiio merchant link (base UUID only)', () => {
+    const permanentMerchantLink = 'https://www.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000';
+    render(<StepSuccess {...props} waLink={permanentMerchantLink} />);
+    expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy Link' })).toBeTruthy();
+    expect(screen.queryByText(/link is being set up/i)).toBeNull();
+  });
+
+  it('accepts staging Waaiio permanent links', () => {
+    const stagingLink = 'https://staging.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000';
+    render(<StepSuccess {...props} waLink={stagingLink} />);
+    expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
+  });
+
+  it.each([
+    ['https://www.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000/book', 'action suffix not accepted by StepSuccess'],
+    ['https://www.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000?redirect=x', 'query string'],
+    ['https://www.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000#frag', 'hash fragment'],
+    ['https://evil-preview.vercel.app/m/550e8400-e29b-41d4-a716-446655440000', 'arbitrary vercel.app'],
+    ['https://user:pass@www.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000', 'credentials'],
+    ['https://www.waaiio.com:8080/m/550e8400-e29b-41d4-a716-446655440000', 'non-standard port'],
+  ])('rejects %s (%s)', (url) => {
+    render(<StepSuccess {...props} waLink={url} />);
+    expect(screen.queryByRole('link', { name: 'Test on WhatsApp' })).toBeNull();
+    expect(screen.getByText(/link is being set up/i)).toBeTruthy();
   });
 
   it.each([
@@ -132,5 +164,36 @@ describe('URL safety guard', () => {
     render(<StepSuccess {...props} waLink={encoded} />);
     fireEvent.click(screen.getByRole('button', { name: 'Copy Link' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(encoded));
+  });
+});
+
+describe('Resumed onboarding success — no raw phone fallback', () => {
+  it('empty waLink (no business_id yet) shows pending, no raw phone or sharing', () => {
+    render(<StepSuccess {...props} successData={null} waLink="" />);
+    // No sharing content — successData is null shows error/pending branch
+    expect(screen.queryByRole('link', { name: 'Test on WhatsApp' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy Link' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Download QR Code' })).toBeNull();
+    // No raw phone numbers in output
+    const html = document.body.innerHTML;
+    expect(html).not.toContain('wa.me');
+    expect(html).not.toContain('12029226251');
+  });
+
+  it('loading state shows verifying spinner, not share content', () => {
+    render(<StepSuccess {...props} loading={true} successData={null} waLink="" />);
+    expect(screen.getByText(/Verifying payment/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Copy Link' })).toBeNull();
+  });
+
+  it('confirmed permanent link shows QR and copy with exact UUID URL', () => {
+    render(<StepSuccess {...props} />);
+    expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy Link' })).toBeTruthy();
+    // The displayed link is the permanent Waaiio URL
+    const html = document.body.innerHTML;
+    expect(html).toContain(permanentLink);
+    expect(html).not.toContain('wa.me/1202');
+    expect(html).not.toContain('12029226251');
   });
 });
