@@ -1,3 +1,27 @@
+## 2026-11-03 — Signup works again without M430: first shared WhatsApp number
+
+- **Why:** production has no `ENABLE_CHANNEL_ALLOCATION_OPERATIONS` and no `allocate_shared_channel` (M430 is staging-only, by Owner decision). So `provisionPendingBusiness` threw 503 and nobody could sign up; the newest production business is from 2026-09-27. 38 active shared businesses also have no number.
+- `supabase/migrations/507_first_shared_channel_assignment.sql`:
+  - `assign_first_shared_channel(p_business_id)` (SECURITY DEFINER, `search_path = public, pg_temp`, `service_role` only). It gives a business with no channel at all its own country's active, connection-active, unowned shared number. The only fallback is the approved GH → NG.
+  - It locks the business row, never replaces an existing assignment, and refuses any business with `whatsapp_channel_id`, a non-shared `wa_method`, or any channel row of its own.
+  - No capacity limit (Owner decision 2026-11-03). No backfill, constraint or setting changes.
+  - `get_bot_context`: ports only the #266 R3 ambiguity check, with the body identical to the staging final state. When the business is unresolved and the phone has active sessions with more than one business, it returns `ambiguous: true` and the business list; the bot then shows the picker (`lib/bot/bot.service.ts` ~943). The business-scoped path is unchanged.
+- `lib/channels/operation-admission.ts`:
+  - New server-only switch `ENABLE_FIRST_SHARED_ASSIGNMENT`, off by default.
+  - New `WHATSAPP_NUMBER_UNAVAILABLE` response.
+- `lib/onboarding/whatsapp-readiness.ts`:
+  - `assignFirstSharedChannel`.
+  - `allocateSharedChannelForNewBusiness`: uses the M430 path when broad channel operations are on (staging), otherwise M507.
+- Callers:
+  - `lib/onboarding/provision-business.ts` (signup and admin-assisted) and `app/api/whatsapp/flow-callback/onboarding.ts` are admitted by either switch.
+  - `app/api/onboarding/verify/route.ts` assigns the first number for an unassigned shared business when only the new switch is on, and returns 503 `WHATSAPP_NUMBER_UNAVAILABLE` if none is eligible.
+- Unchanged: reassignment, stale-channel repair, dedicated promotion, Embedded Signup, disconnect, admin channel changes and admin onboarding all stay behind `ENABLE_CHANNEL_ALLOCATION_OPERATIONS`. Staging behavior is unchanged.
+- Tests:
+  - `lib/__tests__/first-shared-assignment-507.pg.test.ts` (real PostgreSQL, 20 tests).
+  - `lib/__tests__/first-shared-assignment-admission.test.ts` (34 tests).
+  - `lib/__tests__/onboarding-655-flow-callback-fallback.test.ts`: assertion updated to the new wrapper, with no direct RPC.
+- Could break: nothing while the switch is off. Turning it on in production is a separate Owner-approved environment change, after M507 is applied through the release process.
+
 ## 2026-11-03 — Pricing page shows all five countries again
 
 - Owner direction (2026-11-03): "everything should show in pricing". Reverts the presentation part of #802: `app/(marketing)/pricing/page.tsx` restores the country picker (Nigeria, US, UK, Canada, Ghana) and the five-country feature card; `components/marketing/Footer.tsx` restores all country badges on /pricing; `lib/__tests__/marketing-country-pricing.test.tsx` returns to the multi-country assertions.
