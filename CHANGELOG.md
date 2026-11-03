@@ -4,6 +4,11 @@
 - `app/api/cron/auto-payout/route.ts`: invalid-timezone businesses stay excluded first (fail-closed), then the accounting-hold skip (main) applies.
 - No behavior removed from either side. Could break: response consumers expecting `period` when businesses span several local weeks now receive `periods` (unchanged from #796).
 
+## 2026-11-02 — Fixed app-only successor release verification
+
+- Add a fixed postlaunch application profile with completed-schema preservation, current controls, exact source evidence and unchanged approval gates.
+- Preserve manual admin alias assignment when the reviewed latest pointer is the serving baseline.
+
 ## 2026-11-02 — Function signature replacement verification
 
 - Align the production catalog projection with the canonical removal of a superseded function signature, retaining strict metadata checks.
