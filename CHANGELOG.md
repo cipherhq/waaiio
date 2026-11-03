@@ -1,3 +1,13 @@
+## 2026-11-03 — Marketing: stop offering Ghana while it is switched off
+
+- Owner decision (2026-11-03): Ghana is not offered for now; it is switched off in admin. Production's country picker already follows the active-country data, but three fixed texts still named Ghana.
+- `components/marketing/Footer.tsx`: removed the Ghana country badge.
+- `app/(marketing)/pricing/page.tsx`: the "5 Countries" feature card now shows the count and names of the active countries from the same pricing API as the picker (for example "4 Countries — Nigeria, United States, United Kingdom, and Canada").
+- `app/(marketing)/pricing/layout.tsx`: the page description no longer names Ghana.
+- Test: `lib/__tests__/hide-inactive-countries-marketing.test.tsx` (3; all fail on the previous code).
+- Not changed: legal and policy pages (privacy, DPA, AML/KYC, refund policy) and other marketing pages that mention Ghana. Removing those is a separate Owner decision.
+- Could break: if Ghana is switched back on, the footer badge must be added back by hand. The pricing card follows the data automatically.
+
 ## 2026-11-03 — Release gate: drop two environment-dependent QR suites
 
 - `scripts/postlaunch-release-policy.mjs`: removed `lib/__tests__/issue-496-qr-production.test.tsx` and `app/dashboard/queue/__tests__/queue-share-qr.test.tsx` from the pinned merchant delta suites. They hard-code the production app URL, and the gate's test environment sets `NEXT_PUBLIC_APP_URL=https://example.invalid`, so verify run 41680254404 failed (4/6 and 7/16) although the code is correct. Owner decision, 2026-11-03.
