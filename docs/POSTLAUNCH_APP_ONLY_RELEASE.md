@@ -18,3 +18,7 @@ The same fixed policy now pins baseline `b741c7cf` (the live release) to target 
 - the QR page shows "not connected" for an unassigned business and no warning for an assigned shared channel.
 
 All earlier suites and acceptance cases are retained. Migration 507 (#836) is deliberately outside this app-only release.
+
+### Correction (2026-11-03): QR suites are not gate suites
+
+`issue-496-qr-production` and `queue-share-qr` hard-code `https://www.waaiio.com/m/...`, but the gate runs tests with `NEXT_PUBLIC_APP_URL=https://example.invalid`. Under that environment they fail (verify run 41680254404) even though the code is correct. Main CI runs them without that variable, and they pass at `5e3204d9`. They are removed from the pinned delta suites. QR acceptance evidence cites main CI at the exact target and the staging read-only RLS proof. The tests' environment dependence will be fixed separately.

@@ -1,3 +1,9 @@
+## 2026-11-03 — Release gate: drop two environment-dependent QR suites
+
+- `scripts/postlaunch-release-policy.mjs`: removed `lib/__tests__/issue-496-qr-production.test.tsx` and `app/dashboard/queue/__tests__/queue-share-qr.test.tsx` from the pinned merchant delta suites. They hard-code the production app URL, and the gate's test environment sets `NEXT_PUBLIC_APP_URL=https://example.invalid`, so verify run 41680254404 failed (4/6 and 7/16) although the code is correct. Owner decision, 2026-11-03.
+- The other pinned suites are unchanged, and all pass under the gate environment at `5e3204d9`. Both QR files still run in Main App CI.
+- Follow-up: make both tests derive the expected URL from the configured app URL.
+
 ## 2026-11-03 — App-only release profile pinned to b741 → 5e3204d9
 
 - `scripts/postlaunch-release-targets.json`: baseline `b741c7cf` → target `5e3204d9` (tree `7ef94107`). 17 changed blobs (sha256 of target content), no deletions, no `supabase/` or SQL paths.
