@@ -3,7 +3,7 @@
 - Owner decision (2026-11-03): shorten the shared WhatsApp link, for example `waaiio.com/m/CITADEL` instead of `waaiio.com/m/<uuid>`. Option A: use the business's existing unique bot code.
 - `app/m/resolve.ts`: `parseMerchantKey` accepts either the permanent UUID (looked up by `id`) or a bot code (A-Z/0-9/hyphen, 1–30 characters, upper-cased, looked up by `bot_code`). Anything else returns 400 with no database lookup. Every existing `/m/<uuid>` link keeps working.
 - `app/m/[businessId]/campaign/[campaignId]/route.ts`: the campaign ownership filter now uses the resolved `result.business.id`, never the raw key.
-- `lib/url.ts`: `buildShortMerchantLink(botCode, businessId)`. It uses the stored code only when it is already canonical (upper-case A-Z/0-9/hyphen); otherwise it falls back to the permanent `/m/<uuid>` link. Production has 22 of 51 lower-case codes, mostly test businesses, and those keep the UUID link.
+- `lib/url.ts`: `buildShortMerchantLink(botCode, businessId)`. It uses the stored code only when it is already canonical (upper-case A-Z/0-9/hyphen); otherwise it falls back to the permanent `/m/<uuid>` link.
 - The short link is shown as text in the onboarding success share text (`OnboardingWizard`; `StepSuccess` now accepts `/m/{BOT_CODE}`), on the dashboard home and on the WhatsApp settings page. Every QR code, including the dashboard home QR card and the success-screen QR and download, encodes the permanent `/m/<uuid>` link (`qrLink`).
 - Deliberately unchanged:
   - All QR codes and attendance links stay on the UUID.

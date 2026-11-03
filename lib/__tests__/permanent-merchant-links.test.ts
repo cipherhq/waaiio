@@ -101,7 +101,6 @@ describe('URL helpers', () => {
     expect(buildShortMerchantLink('CITADEL', BIZ_ID)).toBe(`${canonicalPublicOrigin()}/m/CITADEL`);
   });
   it('buildShortMerchantLink falls back to the permanent id link when the code is missing, non-canonical or unsafe', () => {
-    // Lower-case / padded stored codes would resolve via UPPER(key) to whoever holds the upper-case code.
     for (const code of [null, undefined, '', '  ', 'citadel', ' CITADEL', 'Citadel', 'bad code', 'x/y', 'A'.repeat(31), '---']) {
       expect(buildShortMerchantLink(code as string | null | undefined, BIZ_ID)).toBe(buildMerchantLink(BIZ_ID));
     }
