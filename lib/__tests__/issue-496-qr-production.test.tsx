@@ -126,3 +126,22 @@ describe('#496 QR production routing safety', () => {
     expect(html).not.toContain('+12025550000'); // business.phone
   });
 });
+
+describe('QR page — no assigned WhatsApp channel', () => {
+  it('unassigned shared business sees a not-connected warning, not another number', async () => {
+    // queryChannelsPublic would return a US shared number; it must not be used.
+    render(<QRCodePage />);
+    const warning = await screen.findByTestId('no-whatsapp-channel');
+    expect(warning.textContent).toContain("WhatsApp isn't connected yet");
+    expect(document.body.innerHTML).not.toContain('12025550199');
+  });
+
+  it('business assigned to a shared channel (readable only via the public view) sees no warning', async () => {
+    // Base-table reads return nothing here (as RLS does for shared channels);
+    // the view mock returns the active shared channel.
+    state.business = { ...state.business, assigned_channel_id: '22222222-2222-4222-8222-222222222222' };
+    render(<QRCodePage />);
+    await waitFor(() => expect(allQrValues().length).toBeGreaterThanOrEqual(1));
+    await waitFor(() => expect(screen.queryByTestId('no-whatsapp-channel')).toBeNull());
+  });
+});
