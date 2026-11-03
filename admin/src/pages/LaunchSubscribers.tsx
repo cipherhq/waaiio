@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { adminApiFetch } from '@/lib/adminApi';
+import { adminApiFetch, adminApiGet } from '@/lib/adminApi';
 import { downloadCSV } from '@/lib/csv';
 import { Rocket, Download, Users, Globe, QrCode, TrendingUp, Send, RefreshCw } from 'lucide-react';
 
@@ -69,16 +69,8 @@ export default function LaunchSubscribers() {
     setSendError(null);
     setRetryMode(retry);
     try {
-      const { getAdminApiBase } = await import('@/lib/adminApi');
-      const base = getAdminApiBase();
-      const { data: session } = await import('@/lib/supabase').then(m => m.supabase.auth.getSession());
-      const token = session?.session?.access_token;
-      if (!token) throw new Error('Not authenticated');
-
       const params = new URLSearchParams({ retryOnly: String(retry), limit: '50' });
-      const res = await fetch(`${base}/api/admin/launch-notify?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await adminApiGet(`/api/admin/launch-notify?${params}`);
       const data = await res.json();
       if (!res.ok) {
         setSendError(data.error || 'Preview failed');
