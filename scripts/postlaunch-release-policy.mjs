@@ -31,6 +31,7 @@ export const POSTLAUNCH_EVIDENCE_POLICY={...FULL_EVIDENCE_POLICY,id:POSTLAUNCH_P
 ]};
 const fail=()=>{throw Error('Postlaunch app-only evidence is incomplete, stale, or differs from fixed policy');};
 const hash=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
+const text=x=>typeof x==='string'&&x.trim().length>0;
 export function requireFixedPostlaunch(){
  requireFrozenFullRelease();
  for(const x of Object.values(POSTLAUNCH_IDENTITIES))if(x.baseline_sha!=='7a9a0e071c103805132370fa2a4fe5ea52a112f9'||x.target_sha!=='b741c7cf9e2f969520f8d4ca1aa05a6582d16fac'||x.target_tree!=='3c5dcba685de4c2ddf76fac61672380d4c2d5b11'||Object.keys(x.deleted_blobs).length||Object.keys(x.blobs).some(p=>(p.endsWith('.sql')&&p!=='scripts/full-release-catalog-query.sql')||p.startsWith('supabase/')))fail();
@@ -42,7 +43,7 @@ export function verifyPostlaunchEvidence(report,manifest,now=Date.now(),approved
   const ref=env==='production'?POSTLAUNCH_EVIDENCE_POLICY.production_project_ref:POSTLAUNCH_EVIDENCE_POLICY.staging_projects.merchant.supabase_project_ref;
   if(!expected||!actual||expected.environment!==env||actual.environment!==env||expected.project_ref!==ref||actual.project_ref!==ref||!equal(actual.binding,expected))fail();
   const at=Date.parse(actual.observed_at);
-  if(!Number.isFinite(at)||!Number.isFinite(now)||!Number.isFinite(approvedAt)||at>now||now-at>SCHEMA_MAX_AGE_MS||approvedAt<at||approvedAt>now||actual.method!=='authorized-connector-read-only'||!hash(actual.raw_evidence_sha256)||!actual.independent_review_reference||actual.business_mutations!==0||actual.provider_calls!==0)fail();
+  if(!Number.isFinite(at)||!Number.isFinite(now)||!Number.isFinite(approvedAt)||at>now||now-at>SCHEMA_MAX_AGE_MS||approvedAt<at||approvedAt>now||actual.method!=='authorized-connector-read-only'||!hash(actual.raw_evidence_sha256)||!text(actual.independent_review_reference)||actual.business_mutations!==0||actual.provider_calls!==0)fail();
   const p=postlaunchCatalogPhases(env);
   verifyCatalogSequence(actual.catalog,expected.catalog,[p.pre_app,p.post_app]);
   if(!hash(expected.current_catalog_sha256)||catalogObjectsDigest(actual.catalog.after)!==expected.current_catalog_sha256)fail();
