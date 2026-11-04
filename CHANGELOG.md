@@ -13,6 +13,17 @@
   - the ordering flow, which uses its own cart add-on keys.
 - Could break: a customer who taps the saved-card "Menu" button and books again must re-pick add-ons. They were for the earlier booking.
 
+## 2026-11-04 — Table reservations: "back" onto an old add-ons step no longer crashes
+
+- `lib/bot/flows/scheduling.flow.ts`, `select_addons` (review finding P2-1 on PR #850):
+  - The executor's "back" command re-shows a step's prompt without running its `skipIf`, and a keyword capability switch keeps `_step_history`. A customer who reached add-ons in an ordinary booking, switched to a table reservation and pressed "back" onto that old entry hit a TypeError (`_available_addons` had been cleared by the table skip), so the bot sent a generic error.
+  - For a table reservation the prompt now clears add-on state and shows the party-size prompt, with `nextAfterPrompt` → `select_quantity`. This is the same pattern `apply_promo` and `enter_promo_code` already use for tables. Tables stay add-on-free (Owner decision of 2026-10-27).
+  - For other bookings, a missing add-on list now defaults to empty (only "No add-ons" is shown) instead of crashing.
+  - A merchant step override with `action = 'require'` on `select_addons` also bypasses `skipIf`; a table now gets the party-size prompt there too, and moves on to `select_quantity`. `validate` also accepts any reply for a table, so after "back" with that override the customer is not stuck re-asked for an add-on (review r1 P2-A).
+- Test: `lib/__tests__/table-reservation-addons-back-navigation.test.ts` (8, four through the real `FlowExecutor`; 5 fail on the previous code with the TypeError, a missing `nextAfterPrompt`, or the add-on loop).
+- Not changed: the executor, `book_table_atomic`, deposits, payment, the add-on list for ordinary bookings, `clearStaleCapabilityState` (review P2-2, reported separately).
+- Could break: after "back" lands on the old add-ons step, a table customer sees the party-size question. Their next reply re-asks party size once (the back command does not apply `nextAfterPrompt`), the same as the existing promo steps.
+
 ## 2026-11-04 — Release V3: replica freshness limit 65 minutes; template1 is setup step 0
 
 - Owner decision (2026-11-04): the production read replica's last replayed commit may be at most 65 minutes old (was 15). Production commits at least hourly, so a healthy replica is not refused at night; a stall is still caught within about an hour. The receive LSN = replay LSN check is unchanged.
