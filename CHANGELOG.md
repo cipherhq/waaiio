@@ -1,3 +1,12 @@
+## 2026-11-04 — Table reservations: no phantom add-ons; confirmation names the table
+
+- `lib/bot/flows/scheduling.flow.ts`:
+  - `select_addons` is skipped for table reservations, and any carried-over add-on state is cleared. Add-ons were offered and listed in the confirmation, but `book_table_atomic` stores no add-ons and the total is the flat deposit, so they were never saved or charged.
+  - The confirmation summary shows the chosen table ("🪑 <table>") for table reservations, instead of `service_name`, which is only set from the table after booking and could hold a stale keyword-matched service.
+- Test: `lib/__tests__/table-reservation-addons-and-summary.test.ts` (4; the two table cases fail on the previous code).
+- Not changed: deposits, payment, `book_table_atomic`, other bookings. Findings needing Owner decisions (same-day reservations, the restaurant "Book a Table" label, the substring 'table' keyword, seating setup prompt) are tracked separately.
+- Could break: a table booking that previously showed add-ons no longer does. Those add-ons were never charged.
+
 ## 2026-11-04 — Admin Support: replies saved and shown again
 
 - `admin/src/pages/Support.tsx`: replies were written to a `body` column that does not exist; the real column is `message`. PostgREST rejected every admin reply (400, PGRST204, seen in staging edge logs) and the page showed "Failed to send message". The thread also rendered `body`, so every message appeared blank to admins. The insert, the type and the render now use `message`. No migration, RLS or permission change: the `admin_all_ticket_messages` / `is_admin()` gate is unchanged.
