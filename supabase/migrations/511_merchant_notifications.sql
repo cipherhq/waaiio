@@ -201,22 +201,22 @@ BEGIN
   'public.finish_merchant_notification(uuid,uuid,text,text,text)'
  ] LOOP
   function_id:=to_regprocedure(signature);
-  IF function_id IS NULL THEN RAISE EXCEPTION 'M499 verification FAILED: missing function %',signature; END IF;
+  IF function_id IS NULL THEN RAISE EXCEPTION 'M511 verification FAILED: missing function %',signature; END IF;
   SELECT p.prosecdef,p.proconfig,p.proacl,p.proowner INTO definition FROM pg_proc p WHERE p.oid=function_id;
   IF NOT definition.prosecdef OR NOT COALESCE('search_path=public, extensions'=ANY(definition.proconfig),false) THEN
-   RAISE EXCEPTION 'M499 verification FAILED: security/search_path for %',signature;
+   RAISE EXCEPTION 'M511 verification FAILED: security/search_path for %',signature;
   END IF;
   IF EXISTS(SELECT 1 FROM aclexplode(COALESCE(definition.proacl,acldefault('f',definition.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')
    OR has_function_privilege('anon',function_id,'EXECUTE') OR has_function_privilege('authenticated',function_id,'EXECUTE') THEN
-   RAISE EXCEPTION 'M499 verification FAILED: public execution for %',signature;
+   RAISE EXCEPTION 'M511 verification FAILED: public execution for %',signature;
   END IF;
   IF signature<>'public.capture_merchant_notification()' AND NOT has_function_privilege('service_role',function_id,'EXECUTE') THEN
-   RAISE EXCEPTION 'M499 verification FAILED: service execution for %',signature;
+   RAISE EXCEPTION 'M511 verification FAILED: service execution for %',signature;
   END IF;
  END LOOP;
  FOREACH table_name IN ARRAY ARRAY['merchant_notification_recipients','merchant_notification_invitations','merchant_notification_deliveries'] LOOP
   IF NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=table_name AND c.relrowsecurity) THEN
-   RAISE EXCEPTION 'M499 verification FAILED: RLS for %',table_name;
+   RAISE EXCEPTION 'M511 verification FAILED: RLS for %',table_name;
   END IF;
  END LOOP;
 END $verify_merchant_notifications$;

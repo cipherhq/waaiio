@@ -12,7 +12,17 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 **Decision:** Continue sequential naming. Use an explicit reservation process to prevent collisions.
 
-## Merchant notification invitation lifetime
+## Merchant notifications renumbered above the Release V3 lock (PR #813)
+
+Owner decisions 2026-11-04: option A (renumber above the lock) and staging plan S1 (undo and re-apply). The old numbers 499, 502 and 510 are no longer used by #813.
+
+| Version | Name | Status | Notes |
+|---------|------|--------|-------|
+| 511 | `merchant_notifications` | Reserved by PR #813 (was 499) | Staging's earlier 499 is removed by `scripts/release-v3/staging-813-teardown.sql` (#872) before release. |
+| 512 | `merchant_notification_invitation_lifetime` | Reserved by PR #813 (was 502) | Staging's earlier 502 is removed the same way. |
+| 513 | `merchant_notification_pre_emission_recovery` | Reserved by PR #813 (was 510, earlier 507) | Never applied to a hosted environment. |
+
+## Merchant notification invitation lifetime (superseded: now 512, see above)
 
 | Version | Name | Status | Notes |
 |---------|------|--------|-------|

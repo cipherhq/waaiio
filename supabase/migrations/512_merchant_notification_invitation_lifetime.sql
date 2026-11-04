@@ -1,5 +1,5 @@
 -- Owner-approved 48-hour lifetime for NEW email and WhatsApp invitations (#811 / PR #813).
--- M499 has already been applied in staging: preserve migration history.
+-- Applied after M511 (renumbered from M499; Owner decision 2026-11-04). Kept as its own migration.
 -- Existing invitation timestamps are deliberately unchanged, including expired/replaced tokens.
 -- Only issuance expiry changes; token binding, throttling, replacement and consumption stay intact.
 BEGIN;
@@ -21,20 +21,20 @@ GRANT EXECUTE ON FUNCTION public.issue_merchant_notification_invitation(uuid,uui
 DO $verify_invitation_lifetime$
 DECLARE function_id oid := to_regprocedure('public.issue_merchant_notification_invitation(uuid,uuid,text,uuid)'); definition record;
 BEGIN
- IF function_id IS NULL THEN RAISE EXCEPTION 'M502 verification FAILED: missing function'; END IF;
+ IF function_id IS NULL THEN RAISE EXCEPTION 'M512 verification FAILED: missing function'; END IF;
  SELECT p.prosecdef,p.proconfig,p.proacl,p.proowner,p.prosrc INTO definition FROM pg_proc p WHERE p.oid=function_id;
  IF NOT definition.prosecdef OR NOT COALESCE('search_path=public, extensions'=ANY(definition.proconfig),false) THEN
-  RAISE EXCEPTION 'M502 verification FAILED: security/search_path';
+  RAISE EXCEPTION 'M512 verification FAILED: security/search_path';
  END IF;
  IF EXISTS(SELECT 1 FROM aclexplode(COALESCE(definition.proacl,acldefault('f',definition.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')
   OR has_function_privilege('anon',function_id,'EXECUTE') OR has_function_privilege('authenticated',function_id,'EXECUTE') THEN
-  RAISE EXCEPTION 'M502 verification FAILED: public execution';
+  RAISE EXCEPTION 'M512 verification FAILED: public execution';
  END IF;
  IF NOT has_function_privilege('service_role',function_id,'EXECUTE') THEN
-  RAISE EXCEPTION 'M502 verification FAILED: service execution';
+  RAISE EXCEPTION 'M512 verification FAILED: service execution';
  END IF;
  IF position('interval ''48 hours''' IN definition.prosrc)=0 THEN
-  RAISE EXCEPTION 'M502 verification FAILED: invitation lifetime';
+  RAISE EXCEPTION 'M512 verification FAILED: invitation lifetime';
  END IF;
 END $verify_invitation_lifetime$;
 COMMIT;

@@ -16,7 +16,7 @@ async function verify(id:string) {await sql(`UPDATE merchant_notification_recipi
 async function order(status='confirmed') {return (await sql(`INSERT INTO orders(business_id,status,reference_code) VALUES($1,$2,'ORDER-1') RETURNING id`,[B,status])).rows[0].id;}
 async function claim() {return (await sql('SELECT claim_merchant_notification() d')).rows[0].d;}
 async function fence(d:{id:string;claim_token:string}) {return (await sql('SELECT fence_merchant_notification($1,$2) ok',[d.id,d.claim_token])).rows[0].ok;}
-suite('M499 merchant notification transaction and tenant boundaries',()=>{
+suite('M511 merchant notification transaction and tenant boundaries',()=>{
  beforeAll(async()=>{
   db=new Client({connectionString:url});await db.connect();
   // The designated job gives this file its own database cloned from the ACL fixture.
@@ -37,14 +37,14 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
   GRANT SELECT ON businesses TO authenticated;
   INSERT INTO businesses(id,owner_id) VALUES('${B}','${OWNER}'),('${OTHER}','20000000-0000-0000-0000-000000000002');
   INSERT INTO whatsapp_channels(id) VALUES('${CHANNEL}');`);
-  await sql(readFileSync('supabase/migrations/499_merchant_notifications.sql','utf8'));
-  await sql(readFileSync('supabase/migrations/502_merchant_notification_invitation_lifetime.sql','utf8'));
-  await sql(readFileSync('supabase/migrations/510_merchant_notification_pre_emission_recovery.sql','utf8'));
+  await sql(readFileSync('supabase/migrations/511_merchant_notifications.sql','utf8'));
+  await sql(readFileSync('supabase/migrations/512_merchant_notification_invitation_lifetime.sql','utf8'));
+  await sql(readFileSync('supabase/migrations/513_merchant_notification_pre_emission_recovery.sql','utf8'));
  },30000);
  beforeEach(async()=>{await sql('RESET ROLE; TRUNCATE merchant_notification_recipients,orders,bookings,reservations,payments,whatsapp_config CASCADE');});
  afterAll(async()=>{await db?.end();});
- it('M502 preserves existing expiry timestamps and cannot revive expired invitations',async()=>{
-  const original=readFileSync('supabase/migrations/499_merchant_notifications.sql','utf8')
+ it('M512 preserves existing expiry timestamps and cannot revive expired invitations',async()=>{
+  const original=readFileSync('supabase/migrations/511_merchant_notifications.sql','utf8')
    .match(/CREATE FUNCTION public\.issue_merchant_notification_invitation[\s\S]*?END \$\$;/)?.[0];
   expect(original).toBeTruthy();
   await sql(original!.replace('CREATE FUNCTION','CREATE OR REPLACE FUNCTION'));
@@ -54,7 +54,7 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
   expect((await sql('SELECT bool_and(expires_at-created_at=interval \'30 minutes\') ok FROM merchant_notification_invitations')).rows[0].ok).toBe(true);
   await sql("UPDATE merchant_notification_invitations SET expires_at=now()-interval '1 second' WHERE recipient_id=$1",[expired]);
   const before=(await sql('SELECT id,expires_at,consumed_at FROM merchant_notification_invitations ORDER BY id')).rows;
-  await sql(readFileSync('supabase/migrations/502_merchant_notification_invitation_lifetime.sql','utf8'));
+  await sql(readFileSync('supabase/migrations/512_merchant_notification_invitation_lifetime.sql','utf8'));
   expect((await sql('SELECT id,expires_at,consumed_at FROM merchant_notification_invitations ORDER BY id')).rows).toEqual(before);
   expect((await sql("SELECT consume_merchant_notification_invitation($1,'email') r",['1'.repeat(64)])).rows[0].r.verified).toBe(false);
   expect((await sql("SELECT consume_merchant_notification_invitation($1,'email') r",['2'.repeat(64)])).rows[0].r.verified).toBe(true);
@@ -91,11 +91,11 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
   ['search_path', 'ALTER FUNCTION public.issue_merchant_notification_invitation(uuid,uuid,text,uuid) RESET search_path', 'security/search_path'],
   ['PUBLIC execute', 'GRANT EXECUTE ON FUNCTION public.issue_merchant_notification_invitation(uuid,uuid,text,uuid) TO PUBLIC', 'public execution'],
   ['service execute', 'REVOKE EXECUTE ON FUNCTION public.issue_merchant_notification_invitation(uuid,uuid,text,uuid) FROM service_role', 'service execution'],
- ])('M502 verifier rejects and rolls back changed %s',async(_name,tamper,reason)=>{
-  const verifier=readFileSync('supabase/migrations/502_merchant_notification_invitation_lifetime.sql','utf8')
+ ])('M512 verifier rejects and rolls back changed %s',async(_name,tamper,reason)=>{
+  const verifier=readFileSync('supabase/migrations/512_merchant_notification_invitation_lifetime.sql','utf8')
    .match(/DO \$verify_invitation_lifetime\$[\s\S]*?END \$verify_invitation_lifetime\$;/)?.[0];
   expect(verifier).toBeTruthy();await sql('BEGIN');
-  try {await sql(tamper);await expect(sql(verifier!)).rejects.toThrow(`M502 verification FAILED: ${reason}`);await expect(sql('SELECT 1')).rejects.toMatchObject({code:'25P02'});}
+  try {await sql(tamper);await expect(sql(verifier!)).rejects.toThrow(`M512 verification FAILED: ${reason}`);await expect(sql('SELECT 1')).rejects.toMatchObject({code:'25P02'});}
   finally {await sql('ROLLBACK');}
   await expect(sql(verifier!)).resolves.toBeDefined();
  });
@@ -110,14 +110,14 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
   ['missing function', 'DROP FUNCTION public.claim_merchant_notification()', 'missing function'],
   ['disabled RLS', 'ALTER TABLE public.merchant_notification_invitations DISABLE ROW LEVEL SECURITY', 'RLS'],
  ])('migration verifier aborts and rolls back %s',async(_name,tamper,reason)=>{
-  const migration=readFileSync('supabase/migrations/499_merchant_notifications.sql','utf8');
+  const migration=readFileSync('supabase/migrations/511_merchant_notifications.sql','utf8');
   const verifier=migration.match(/DO \$verify_merchant_notifications\$[\s\S]*?END \$verify_merchant_notifications\$;/)?.[0];
   expect(verifier).toBeTruthy();
   // Execute the actual migration block, not a duplicated test-only catalog check.
   await sql('BEGIN');
   try {
    await sql(tamper);
-   await expect(sql(verifier!)).rejects.toThrow(`M499 verification FAILED: ${reason}`);
+   await expect(sql(verifier!)).rejects.toThrow(`M511 verification FAILED: ${reason}`);
    await expect(sql('SELECT 1')).rejects.toMatchObject({code:'25P02'});
   } finally {await sql('ROLLBACK');}
   // Successful re-verification proves rollback restored the original security state.

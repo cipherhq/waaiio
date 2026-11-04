@@ -1,5 +1,7 @@
 # Merchant operational notifications — #811
 
+> **Renumbered 2026-11-04 (Owner decisions: option A, staging plan S1).** M499, M502 and M510 (earlier M507) are now M511, M512 and M513, above the Release V3 lock. Evidence below that names the old numbers describes the same SQL under its old file name.
+
 Base: `d02a4139bafd673c21de2119a277b48b326e8a04`. Implementation authorized by Owner; no merge, hosted migration, deployment or live provider send authorized.
 
 ## Accepted design
