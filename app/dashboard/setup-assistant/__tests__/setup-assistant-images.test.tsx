@@ -114,7 +114,7 @@ describe('items without a visible price', () => {
 
     const priceInput = screen.getByLabelText('Price for Zobo') as HTMLInputElement;
     expect(priceInput.getAttribute('aria-invalid')).toBe('true');
-    expect(screen.getByText(/couldn.t see a price for 1 item/i)).toBeTruthy();
+    expect(screen.getByText(/1 item needs a price\. Type a price in the highlighted box \(0 if it.s free\) before you confirm\./)).toBeTruthy();
 
     goToReview();
     expect(screen.getByText('Price needed')).toBeTruthy();
@@ -170,6 +170,31 @@ describe('clearing a price Ace found (Owner decision 2026-11-04)', () => {
     await waitFor(() => expect(screen.getByText('Setup Complete!')).toBeTruthy());
     const payload = JSON.parse(callsTo('/api/ai-setup/apply')[0][1].body as string);
     expect(payload.products).toEqual([{ name: 'Chapman', price: 0, description: '', category: '' }]);
+  });
+});
+
+describe('price-needed message and highlight', () => {
+  it('says how many items need a price and that 0 means free, after the owner clears an Ace price', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [
+      { kind: 'product', name: 'Chapman', price: 800 },
+      { kind: 'product', name: 'Zobo', price: null },
+    ] }));
+    await chooseType(/We sell products/);
+    await uploadMenu();
+    fireEvent.change(screen.getByLabelText('Price for Chapman'), { target: { value: '' } });
+    expect(screen.getByText(/2 items need a price\. Type a price in the highlighted boxes \(0 if it.s free\) before you confirm\./)).toBeTruthy();
+    expect(screen.queryByText(/couldn.t see a price/i)).toBeNull();
+  });
+
+  it('does not highlight a row with no name, since it will not be created', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ kind: 'product', name: 'Zobo', price: null }] }));
+    await chooseType(/We sell products/);
+    await uploadMenu();
+    expect(screen.getByLabelText('Price for Zobo').getAttribute('aria-invalid')).toBe('true');
+    fireEvent.change(screen.getByDisplayValue('Zobo'), { target: { value: '' } });
+    // Unnamed rows are skipped on save, so no red box and no "price needed" message
+    expect(screen.getByLabelText('Price for product').getAttribute('aria-invalid')).toBe('false');
+    expect(screen.queryByText(/need(s)? a price/)).toBeNull();
   });
 });
 
