@@ -62,7 +62,7 @@ So the standard lane keeps a human check:
 - that reviewer confirms the change is display-only and raises the lane when unsure (§9.3: a reviewer may raise, never lower);
 - anything the reviewer cannot confirm goes full.
 
-Accepting this residual limit is an Owner security decision (2026-11-04, pending). The alternative is a real parser or type-checker gate, which is heavier.
+**Owner decision (2026-11-04): accepted.** The classifier stays a fail-closed filter against accidental drift, and the independent standard-lane reviewer is the backstop against deliberate obfuscation. A parser or type-checker gate was the alternative and was not chosen.
 
 ## Read-only database login
 
