@@ -49,7 +49,7 @@
      }
     ],
     "arguments": "",
-    "body_sha256": "935c43afe0914c116c50685b984d326f5a77093d0c63bf6d1a97c669df31c8cb",
+    "body_sha256": "320d32ce79402871ddbb5519535c5672388b8953f6f795de6106d05e37b60191",
     "config": [
      "search_path=pg_catalog"
     ],
@@ -63,7 +63,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "b2820c102c35ec64b6dd6cb1f25cf7fc20faf316fc66c986a272ca105c163ddc",
+   "after_sha256": "e362a440391f92c90d1bedd4f297b77b09cee44023192d8ff31ab29e89d3081c",
    "identity": "function:private.party_answer_tag_514()",
    "operation": "add"
   },
@@ -78,7 +78,7 @@
      }
     ],
     "arguments": "defs jsonb, answers jsonb, tags text[], answer_tag text, pinned boolean, OUT next_tags text[], OUT next_answer_tag text",
-    "body_sha256": "5802e021106245712fdf2cf653998a72aa706036e24a94fa5308b0af88da6781",
+    "body_sha256": "8736d38209441fe4ffea770accbb0b69b94bbcf7b9f25a13945cf38f75823060",
     "config": [
      "search_path=pg_catalog"
     ],
@@ -92,7 +92,7 @@
     "strict": false,
     "volatility": "i"
    },
-   "after_sha256": "f6b7b1b7f7ba7abe5719cd8041c295c37559c25e6b6627b2415cb51b30378b8f",
+   "after_sha256": "1a00189502fedbca2ed5bab1814cf3434cdfc80a016a29f227e4da94aaf82704",
    "identity": "function:private.party_answer_tags_514(defs jsonb, answers jsonb, tags text[], answer_tag text, pinned boolean, OUT next_tags text[], OUT next_answer_tag text)",
    "operation": "add"
   },
@@ -142,7 +142,7 @@
      }
     ],
     "arguments": "",
-    "body_sha256": "9cb869b1612ee4303a28fee29d2e00f2e9624b1f2f53182248aa795a3b2e2707",
+    "body_sha256": "911f10f493b608cf7f28d5e32d100ce90e2fb2f4ec5724d9e71e3c5bb50cf960",
     "config": [
      "search_path=pg_catalog"
     ],
@@ -156,7 +156,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "b2dbb80d3b93ab4cae5af412af62bbc4108347eb5dade0281dd6ea86069471ed",
+   "after_sha256": "ab063b04158bd669be9da2bad51befb6aa692b820ecb6ad241d7dd60d92c2f43",
    "identity": "function:private.party_reserved_table_514()",
    "operation": "add"
   },
@@ -226,10 +226,10 @@
   },
   {
    "after": {
-    "definition": "CREATE TRIGGER party_answer_tag_514 BEFORE INSERT OR UPDATE OF custom_answers, saved_question_snapshot ON event_invites FOR EACH ROW EXECUTE FUNCTION private.party_answer_tag_514()",
+    "definition": "CREATE TRIGGER party_answer_tag_514 BEFORE INSERT OR UPDATE OF custom_answers, saved_question_snapshot, answer_tag ON event_invites FOR EACH ROW EXECUTE FUNCTION private.party_answer_tag_514()",
     "enabled": "O"
    },
-   "after_sha256": "fa6aefc3b15d13b3120f615333760ce9fc437af3598a183da895dbeee36a8bc7",
+   "after_sha256": "95f64b94a101a4583856914514c3fdfec27366c0b30df4211ee452e448649388",
    "identity": "trigger:public.event_invites.party_answer_tag_514",
    "operation": "add"
   },
@@ -244,7 +244,7 @@
   }
  ],
  "migration": "514_party_seating_by_tag.sql",
- "migration_sha256": "41ccd0571cccdbdf45f9a7353c60c32ca50ae0e324e4a998c369d9ce9241a8e2",
+ "migration_sha256": "d787ee1abaacccebf3e101ef1a2ef99dc3d68316a33bae3814eb1a91763ffffd",
  "postgres_major": 17,
  "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
  "schema_version": 1
