@@ -5,6 +5,8 @@
 -- approval per environment (staging first, then production).
 --
 -- How to apply (Owner-approved, per environment):
+--  * Production: only after setup step 0 in docs/RELEASE_V3_GATE.md
+--    (Supabase confirms the template1 gap is closed).
 --  * Run it as one statement through the SQL editor or an approved read-write
 --    execution. Do NOT apply it with `apply_migration`: that would add a ledger
 --    row and break the release lock's ledger digest. It is not an app migration
