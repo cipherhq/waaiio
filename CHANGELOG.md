@@ -21,6 +21,7 @@ Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashbo
   - If the timezone is unknown, tables keep the tomorrow-first rule. Appointments, classes and other scheduling are untouched and never read the timezone.
   - `book_table_atomic` (M476) does not reject past dates or times. A new disposable-PG case proves it accepts 00:00 today, so the bot guard is what stops past slots.
 - **Keyword** (`supabase/migrations/509_table_keyword_whole_word.sql`, data-only, idempotent, self-check, NOT applied). The seeded category `table` keyword (041/164, `contains`) becomes the regex `\btables?\b`, so "vegetable"/"comfortable"/"timetable" no longer start a reservation while "table for 4"/"tables" do. Scoped to category rows (restaurant/cafe/bar/lounge, `start_capability`). `dine-in` is unchanged. keyword-service `contains` semantics are unchanged.
+  - Release V3 catalog delta: `supabase/catalog-deltas/509_table_keyword_whole_word.json` has `changes: []` (data-only, no catalog object changes). `catalog-oracle.mjs check` matched all 3 committed oracle files on local PostgreSQL 16; the PostgreSQL 17 CI job is authoritative.
 - **Tests:**
   - `lib/__tests__/tables-and-sections.test.ts` (27): labels, menu, defaults, same-day select_date/select_time on the real steps with a frozen clock and business timezone, plus appointment controls;
   - `lib/__tests__/tables-and-sections-ui.test.tsx` (7): rendered checklist nudge, and the signup option for every business type;
