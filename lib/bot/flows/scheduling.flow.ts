@@ -1513,6 +1513,8 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Reached for a table only via a 'require' override after "back": move on, never loop.
+        if (ctx.session.session_data._is_table_reservation === true) return { valid: true };
         if (input === 'skip_addons') return { valid: true };
         const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number }>;
         const found = addons?.find(a => a.id === input);

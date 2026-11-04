@@ -159,6 +159,25 @@ describe('table reservation: back onto an old add-ons step (real executor)', () 
     // nextAfterPrompt moves the session on, so the reply is read as party size.
     expect(casCalls.at(-1)?.p_current_step).toBe('select_quantity');
   });
+
+  it("'require' override + back + reply: a table moves on to party size instead of looping on add-ons", async () => {
+    const overrides = [{ step_id: 'select_addons', action: 'require', custom_prompt: null, custom_options: null, branch_conditions: null }];
+    const executor = new FlowExecutor(buildExecutorSupabase(overrides) as any, buildSender() as any, {} as any, {} as any);
+    const requireBusiness = { ...business, id: 'biz-table-require-back' };
+    const session = tableSessionBackOntoOldAddons();
+    session.business_id = 'biz-table-require-back';
+    // Back left current_step on select_addons (back does not apply nextAfterPrompt).
+    session.current_step = 'select_addons';
+    session.session_data._step_history = ['select_service', 'select_date', 'select_time', 'select_addons'];
+
+    await executor.execute('+2348000000001', '4', session as any, requireBusiness as any);
+
+    const all = textOf(sent);
+    expect(all).not.toMatch(GENERIC_ERROR);
+    expect(all).not.toMatch(/select an add-on/i);
+    expect(all).toContain('How many guests will be dining?');
+    expect(casCalls.at(-1)?.p_current_step).toBe('select_quantity');
+  });
 });
 
 describe('select_addons prompt guards', () => {
