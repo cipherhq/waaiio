@@ -11,8 +11,19 @@
 --  * Run once, as one execution, through the SQL editor or an approved
 --    execution on project tqjvrzopvtczxfxiwmnz. Not with `apply_migration`
 --    (that would add a ledger row). It lives outside supabase/migrations.
---  * Before running it, export the rows of the three tables read-only
---    (staging test data only).
+--  * Before running it, export read-only (staging test data only):
+--    - the rows of the three tables;
+--    - both ledger rows in full: SELECT to_jsonb(m) FROM
+--      supabase_migrations.schema_migrations m WHERE version IN
+--      ('20261101181612','20261102002152');
+--  * Run it in a fresh session. If it fails, the session is left in an
+--    aborted transaction: run ROLLBACK or close the session.
+--  * Undo (only if #872 is rejected after this ran): re-run the exact 499 and
+--    502 file bytes from #813's history as the same role, then re-insert the
+--    two exported ledger rows exactly. Staging then equals the previous lock
+--    again (catalog 6400 80f4ec20..., ledger 444 adcdf3e9...).
+--  * Releases cannot pass the gate between this teardown and the merge of
+--    #872 (staging no longer matches main's lock), so do the two back to back.
 --  * Afterwards, a read-only reading of staging must equal the updated
 --    staging lock in lock.json plus the 509 and 510 deltas.
 --
@@ -23,13 +34,17 @@
 --  * every DROP is explicit and RESTRICT, so an unexpected dependency aborts;
 --  * the final check requires that no #813 object or ledger row remains.
 BEGIN;
+-- Do not queue behind long transactions while holding locks on orders,
+-- bookings, reservations and payments.
+SET LOCAL lock_timeout = '5s';
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM supabase_migrations.schema_migrations
+  IF (SELECT count(*) FROM (SELECT 1 FROM supabase_migrations.schema_migrations
       WHERE (version, name, cardinality(statements), encode(sha256(convert_to(statements[1], 'UTF8')), 'hex')) IN (
         ('20261101181612', '499_merchant_notifications', 1, '86a31b70e2b806c762eea63face8a11c2ac1f38818a0e032f98d5bf48710c06e'),
-        ('20261102002152', '502_merchant_notification_invitation_lifetime', 1, '9f6bad33195ca00744038b02491b8f2b8d1b7b407eebf9a1cf30e0560c49f2d6'))) <> 2 THEN
+        ('20261102002152', '502_merchant_notification_invitation_lifetime', 1, '9f6bad33195ca00744038b02491b8f2b8d1b7b407eebf9a1cf30e0560c49f2d6'))
+      FOR UPDATE) reviewed) <> 2 THEN
     RAISE EXCEPTION '813 teardown: the two reviewed staging ledger rows are not present; this is not the expected staging database';
   END IF;
 END $$;
@@ -55,14 +70,17 @@ DROP TABLE public.merchant_notification_invitations RESTRICT;
 DROP TABLE public.merchant_notification_recipients RESTRICT;
 
 DELETE FROM supabase_migrations.schema_migrations
-WHERE (version, name) IN (('20261101181612', '499_merchant_notifications'),
-                          ('20261102002152', '502_merchant_notification_invitation_lifetime'));
+WHERE (version, name, cardinality(statements), encode(sha256(convert_to(statements[1], 'UTF8')), 'hex')) IN (
+  ('20261101181612', '499_merchant_notifications', 1, '86a31b70e2b806c762eea63face8a11c2ac1f38818a0e032f98d5bf48710c06e'),
+  ('20261102002152', '502_merchant_notification_invitation_lifetime', 1, '9f6bad33195ca00744038b02491b8f2b8d1b7b407eebf9a1cf30e0560c49f2d6'));
 
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname LIKE 'merchant_notification%')
      OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname LIKE '%merchant_notification%')
-     OR EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('merchant_order_alert', 'merchant_booking_alert', 'merchant_reservation_alert', 'merchant_payment_alert'))
+     OR EXISTS (SELECT 1 FROM pg_trigger t WHERE NOT t.tgisinternal
+                AND t.tgrelid IN ('public.orders'::regclass, 'public.bookings'::regclass, 'public.reservations'::regclass, 'public.payments'::regclass)
+                AND t.tgname IN ('merchant_order_alert', 'merchant_booking_alert', 'merchant_reservation_alert', 'merchant_payment_alert'))
      OR EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations WHERE name LIKE '%merchant_notification%') THEN
     RAISE EXCEPTION '813 teardown: #813 objects or ledger rows remain';
   END IF;

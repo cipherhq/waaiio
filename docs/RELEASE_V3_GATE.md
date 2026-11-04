@@ -136,7 +136,7 @@ The lock is tied to the Owner-approved schema 9 bot-code-lock release (manifest 
 - **Verification:**
   - before the update, live staging minus those objects already read exactly the predicted values (read-only);
   - after the teardown, a read-only reading must equal this lock plus the 509 and 510 deltas.
-- **Merge order:** the update merges only after both checks pass.
+- **Merge order:** the update merges only after both checks pass. Between the teardown and the merge no release can pass the gate (staging matches neither lock), so the two happen back to back. To undo the teardown, re-run #813's 499 and 502 bytes and re-insert the two ledger rows exported beforehand.
 
 To re-bootstrap the lock later (a reviewed gate change), dispatch prepare with `mode: lock-map`. It writes fresh maps only while the live catalog still equals the lock.
 
