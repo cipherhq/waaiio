@@ -3,7 +3,8 @@
  * Runs the real script functions against a temporary repo layout.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, copyFileSync, symlinkSync, unlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error — plain .mjs module without types
@@ -26,8 +27,9 @@ afterEach(() => {
 });
 
 describe('check', () => {
-  it('passes with no fragments and ignores .gitkeep / README.md', () => {
+  it('passes with no fragments and ignores .gitkeep, .DS_Store and README.md', () => {
     writeFileSync(join(dir(), 'README.md'), 'not a fragment');
+    writeFileSync(join(dir(), '.DS_Store'), 'x');
     expect(run(root, ['check'])).toBe(0);
   });
 
@@ -51,6 +53,49 @@ describe('check', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(msg);
     expect(run(root, ['check'])).toBe(1);
+  });
+});
+
+describe('non-files', () => {
+  it('rejects a folder and a symlink named like a fragment, without throwing', () => {
+    mkdirSync(join(dir(), '2026-11-04-a-folder.md'));
+    writeFileSync(join(root, 'elsewhere.md'), '## 2026-11-04 — X\n\n- y');
+    symlinkSync(join(root, 'elsewhere.md'), join(dir(), '2026-11-04-a-link.md'));
+    const { errors } = readFragments(root);
+    expect(errors).toEqual([
+      '2026-11-04-a-folder.md: must be a regular file (not a folder or symlink)',
+      '2026-11-04-a-link.md: must be a regular file (not a folder or symlink)',
+    ]);
+    expect(run(root, ['check'])).toBe(1);
+  });
+});
+
+describe('command line (real node process)', () => {
+  // The script must run its check even from a path with spaces, unicode or a symlink.
+  function cliRoot(name: string) {
+    const base = mkdtempSync(join(tmpdir(), name));
+    mkdirSync(join(base, 'scripts', 'changelog'), { recursive: true });
+    copyFileSync(join(process.cwd(), 'scripts', 'changelog', 'collect.mjs'), join(base, 'scripts', 'changelog', 'collect.mjs'));
+    mkdirSync(join(base, 'changelog', 'unreleased'), { recursive: true });
+    writeFileSync(join(base, 'changelog', 'unreleased', 'bad.md'), 'nope');
+    return base;
+  }
+  it.each([['with space '], ['ünïcode-']])('fails on a bad fragment when the repo path has %s', (prefix) => {
+    const base = cliRoot(prefix);
+    try {
+      const r = spawnSync(process.execPath, [join(base, 'scripts', 'changelog', 'collect.mjs'), 'check'], { cwd: base, encoding: 'utf8' });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('bad.md');
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+  it('fails on a bad fragment when run through a symlinked path', () => {
+    const base = cliRoot('real-');
+    const link = `${base}-link`;
+    symlinkSync(base, link);
+    try {
+      const r = spawnSync(process.execPath, [join(link, 'scripts', 'changelog', 'collect.mjs'), 'check'], { cwd: link, encoding: 'utf8' });
+      expect(r.status).toBe(1);
+    } finally { unlinkSync(link); rmSync(base, { recursive: true, force: true }); }
   });
 });
 

@@ -12,16 +12,19 @@
  *   node scripts/changelog/collect.mjs collect --dry-run   print, change nothing
  *
  * Fragment rules:
- *   - file name: YYYY-MM-DD-<slug>.md, slug = lowercase letters, digits, '-'
+ *   - file name: YYYY-MM-DD-<slug>.md, slug = the branch name with '/' as '-'
+ *     (lowercase letters, digits, '-'), so two PRs never pick the same file
+ *   - a regular file (not a symlink or folder); dotfiles such as .DS_Store are ignored
  *   - first line: "## YYYY-MM-DD — <title>" with the same date as the file name
  *   - at least one non-empty line after the heading
  */
-import { readdirSync, readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, unlinkSync, existsSync, lstatSync, renameSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export const FRAGMENT_NAME = /^(\d{4}-\d{2}-\d{2})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
 const HEADING = /^## (\d{4}-\d{2}-\d{2}) — \S.*$/;
-const IGNORED = new Set(['.gitkeep', 'README.md']);
+const IGNORED = new Set(['README.md']);
 
 function isRealDate(ymd) {
   const d = new Date(`${ymd}T00:00:00Z`);
@@ -35,7 +38,11 @@ export function readFragments(root) {
   const fragments = [];
   if (!existsSync(dir)) return { fragments, errors };
   for (const file of readdirSync(dir).sort()) {
-    if (IGNORED.has(file)) continue;
+    if (IGNORED.has(file) || file.startsWith('.')) continue;
+    if (!lstatSync(join(dir, file)).isFile()) {
+      errors.push(`${file}: must be a regular file (not a folder or symlink)`);
+      continue;
+    }
     const m = FRAGMENT_NAME.exec(file);
     if (!m) {
       errors.push(`${file}: name must be YYYY-MM-DD-<slug>.md (lowercase letters, digits, '-')`);
@@ -66,7 +73,7 @@ export function readFragments(root) {
   return { fragments, errors };
 }
 
-/** Newest first: date descending, then file name descending (stable for one day). */
+/** By fragment date, newest first; on the same date, by file name (descending). */
 export function orderFragments(fragments) {
   return [...fragments].sort((a, b) => (a.date === b.date ? b.file.localeCompare(a.file) : b.date.localeCompare(a.date)));
 }
@@ -105,7 +112,11 @@ export function run(root, args) {
       console.log(next.slice(0, next.length - existing.replace(/^\s+/, '').length));
       return 0;
     }
-    writeFileSync(path, next);
+    // Write the new changelog atomically, then delete the fragments it now holds.
+    // If a delete fails, recover with: git checkout -- CHANGELOG.md changelog/
+    const tmp = `${path}.collect-tmp`;
+    writeFileSync(tmp, next);
+    renameSync(tmp, path);
     for (const f of fragments) unlinkSync(join(root, 'changelog', 'unreleased', f.file));
     console.log(`Collected ${fragments.length} fragment(s) into CHANGELOG.md`);
     return 0;
@@ -114,6 +125,8 @@ export function run(root, args) {
   return 2;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare as file URLs of the real path, so a path with spaces, unicode or a
+// symlink still runs the CLI (a mismatch would silently skip the check).
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   process.exit(run(process.cwd(), process.argv.slice(2)));
 }
