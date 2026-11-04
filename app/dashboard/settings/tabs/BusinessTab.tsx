@@ -80,6 +80,11 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
   );
 
   async function handleSave() {
+    // businesses.city is NOT NULL: never send null; ask for it instead (#867).
+    if (!form.city.trim()) {
+      setSaveError('Enter your city or area before saving.');
+      return;
+    }
     setSaving(true);
     setSaveError('');
     const supabase = createClient();
@@ -94,7 +99,7 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
         deposit_per_guest: form.deposit_per_guest,
         latitude: form.latitude,
         longitude: form.longitude,
-        city: form.city.trim() || null,
+        city: form.city.trim(),
         state: form.state.trim() || null,
       })
       .eq('id', business.id);
@@ -298,9 +303,10 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                           city: placeData.city || prev.city,
                           state: placeData.state || prev.state,
                         }));
+                        // A manual edit (below) clears everything derived from the old place (#485),
+                        // including City and State, which the owner can see and re-enter (#867).
                       } else {
-                        // Typed text: keep City and State, which the owner can see and edit below (#867).
-                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null }));
+                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null, city: '', state: '' }));
                       }
                     }}
                     placeholder="Enter your business address"
@@ -314,6 +320,8 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                       id="business-city"
                       type="text"
                       value={form.city}
+                      maxLength={50}
+                      aria-describedby="business-location-help"
                       onChange={(e) => setForm({ ...form, city: e.target.value })}
                       placeholder="e.g. Ikoyi"
                       className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
@@ -325,12 +333,14 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                       id="business-state"
                       type="text"
                       value={form.state}
+                      maxLength={100}
+                      aria-describedby="business-location-help"
                       onChange={(e) => setForm({ ...form, state: e.target.value })}
                       placeholder="e.g. Lagos"
                       className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />
                   </div>
-                  <p className="text-xs text-gray-500 sm:col-span-2">Customers searching the WhatsApp directory by location find you through these. They fill in from the address; correct them if they are wrong.</p>
+                  <p id="business-location-help" className="text-xs text-gray-500 sm:col-span-2">Customers searching the WhatsApp directory by location find you through these. They fill in when you pick an address suggestion; typing the address by hand clears them. City is required.</p>
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5 mb-1">

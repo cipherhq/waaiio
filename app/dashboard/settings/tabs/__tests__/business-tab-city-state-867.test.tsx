@@ -68,20 +68,22 @@ describe('#867 Settings: City and State', () => {
   it('saves a corrected state and city', async () => {
     renderTab({ city: 'Lekki', state: 'Maryland', address: 'Lekki Phase 1, Lagos' });
     fireEvent.change(screen.getByLabelText('State'), { target: { value: 'Lagos' } });
-    fireEvent.change(screen.getByLabelText('City or area'), { target: { value: ' Lekki Phase 1 ' } });
+    fireEvent.change(screen.getByLabelText('City or area'), { target: { value: 'Lekki Phase 1' } });
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(lastBusinessWrite()).toBeTruthy());
     expect(lastBusinessWrite()).toMatchObject({ state: 'Lagos', city: 'Lekki Phase 1' });
   });
 
-  it('typing an address keeps the existing city and state (no silent blanking)', async () => {
+  it('typing an address clears the derived city and state (#485), and the owner can re-enter them', async () => {
     renderTab({ city: 'Ikoyi', state: 'Lagos', address: '7 Example Drive' });
     fireEvent.change(screen.getByLabelText('Address'), { target: { value: '8 Example Drive' } });
-    expect((screen.getByLabelText('City or area') as HTMLInputElement).value).toBe('Ikoyi');
-    expect((screen.getByLabelText('State') as HTMLInputElement).value).toBe('Lagos');
+    expect((screen.getByLabelText('City or area') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('State') as HTMLInputElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText('City or area'), { target: { value: 'Ikoyi' } });
+    fireEvent.change(screen.getByLabelText('State'), { target: { value: 'Lagos' } });
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(lastBusinessWrite()).toBeTruthy());
-    expect(lastBusinessWrite()).toMatchObject({ address: '8 Example Drive', city: 'Ikoyi', state: 'Lagos' });
+    expect(lastBusinessWrite()).toMatchObject({ address: '8 Example Drive', city: 'Ikoyi', state: 'Lagos', latitude: null, longitude: null });
   });
 
   it('picking an address suggestion fills city and state from it', () => {
@@ -91,10 +93,20 @@ describe('#867 Settings: City and State', () => {
     expect((screen.getByLabelText('State') as HTMLInputElement).value).toBe('Lagos');
   });
 
-  it('empty city and state save as null, not empty strings', async () => {
+  it('a blank city blocks the save with a message (city is NOT NULL); a blank state saves as null', async () => {
     renderTab({ city: '', state: null, address: 'Somewhere' });
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(await screen.findByText('Enter your city or area before saving.')).toBeTruthy();
+    expect(lastBusinessWrite()).toBeUndefined();
+    fireEvent.change(screen.getByLabelText('City or area'), { target: { value: ' Ikoyi ' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(lastBusinessWrite()).toBeTruthy());
-    expect(lastBusinessWrite()).toMatchObject({ city: null, state: null });
+    expect(lastBusinessWrite()).toMatchObject({ city: 'Ikoyi', state: null });
+  });
+
+  it('limits City and State to the column lengths', () => {
+    renderTab({ city: 'Ikoyi', state: 'Lagos' });
+    expect((screen.getByLabelText('City or area') as HTMLInputElement).maxLength).toBe(50);
+    expect((screen.getByLabelText('State') as HTMLInputElement).maxLength).toBe(100);
   });
 });

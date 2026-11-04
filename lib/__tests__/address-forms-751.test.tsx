@@ -219,9 +219,15 @@ describe('#751 preserves #485 coordinate contracts', () => {
     await waitFor(() => expect(state.writes).toHaveLength(1));
     expect(state.writes[0].payload).toMatchObject({ address: '10 Main Street, Lagos', city: 'Lagos', latitude: 6.5, longitude: 3.4 });
     fireEvent.change(screen.getByLabelText('Physical address'), { target: { value: 'Manual street' } });
+    // #485: a manual edit invalidates the derived coordinates and city. #867: businesses.city is
+    // NOT NULL, so saving is blocked with a message until the owner enters the city again.
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    expect(await screen.findByText('Enter your city or area before saving.')).toBeTruthy();
+    expect(state.writes).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText('City or area'), { target: { value: 'Manual city' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
     await waitFor(() => expect(state.writes).toHaveLength(2));
-    expect(state.writes[1].payload).toMatchObject({ address: 'Manual street', city: null, latitude: null, longitude: null });
+    expect(state.writes[1].payload).toMatchObject({ address: 'Manual street', city: 'Manual city', latitude: null, longitude: null });
   });
 
   it('discovery selection persists coordinates and manual edits clear them', async () => {
