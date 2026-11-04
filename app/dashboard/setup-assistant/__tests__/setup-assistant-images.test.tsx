@@ -140,6 +140,39 @@ describe('items without a visible price', () => {
   });
 });
 
+describe('clearing a price Ace found (Owner decision 2026-11-04)', () => {
+  it('a cleared Ace price becomes "price needed" and blocks Confirm; typing 0 saves it as Free', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ kind: 'product', name: 'Chapman', price: 800 }] }));
+    await chooseType(/We sell products/);
+    await uploadMenu();
+
+    const box = screen.getByLabelText('Price for Chapman') as HTMLInputElement;
+    expect(box.value).toBe('800');
+    fireEvent.change(box, { target: { value: '' } });
+    expect(screen.getByLabelText('Price for Chapman').getAttribute('aria-invalid')).toBe('true');
+
+    goToReview();
+    const blocked = screen.getByRole('button', { name: 'Confirm & Create' }) as HTMLButtonElement;
+    expect(blocked.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.change(screen.getByLabelText('Price for Chapman'), { target: { value: '0' } });
+    // Free is shown as 0, not as an empty box
+    expect((screen.getByLabelText('Price for Chapman') as HTMLInputElement).value).toBe('0');
+    goToReview();
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, results: { products: { created: 1, skipped: 0 } } }));
+    const confirm = screen.getByRole('button', { name: 'Confirm & Create' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(screen.getByText('Setup Complete!')).toBeTruthy());
+    const payload = JSON.parse(callsTo('/api/ai-setup/apply')[0][1].body as string);
+    expect(payload.products).toEqual([{ name: 'Chapman', price: 0, description: '', category: '' }]);
+  });
+});
+
 describe('pasted text', () => {
   it('marks text items without a price as "price needed" instead of Free; keeps 0 and real prices', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { suggestion: { products: [
