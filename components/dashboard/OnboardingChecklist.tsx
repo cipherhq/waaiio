@@ -5,6 +5,10 @@ import Link from 'next/link';
 import { useBusiness, useCapabilities } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import type { BusinessCategoryKey } from '@/lib/constants';
+
+/** Food & drink categories that get the "Add your tables & sections" nudge. */
+const TABLE_NUDGE_CATEGORIES: readonly BusinessCategoryKey[] = ['restaurant', 'cafe', 'bar', 'lounge', 'bakery', 'catering', 'food_truck'];
 
 interface ChecklistItem {
   key: string;
@@ -109,9 +113,12 @@ function BusinessOnboardingChecklist() {
     };
   };
 
-  // Owner decision 2026-11-04: nudge Tables & Sections businesses that have
-  // not added a table yet. Hidden once one active seating resource exists.
-  const tablesStep: ChecklistItem[] = hasCapability('table_reservation') ? [{
+  // Owner decisions 2026-11-04: nudge Tables & Sections businesses that have
+  // not added a table yet, food & drink categories only. Hidden once one
+  // active seating resource exists.
+  const showTablesStep = hasCapability('table_reservation')
+    && (TABLE_NUDGE_CATEGORIES as readonly string[]).includes(String(business.category ?? ''));
+  const tablesStep: ChecklistItem[] = showTablesStep ? [{
     key: 'tables',
     label: 'Add your tables & sections',
     description: 'Add the tables, booths, VIP areas or sections customers can reserve.',
