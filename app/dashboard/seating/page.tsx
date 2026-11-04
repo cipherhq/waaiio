@@ -300,12 +300,12 @@ export default function SeatingPage() {
     <div className="p-6">
       <PageHelp
         pageKey="seating"
-        title="Seating & Tables"
-        description="Part of Table Reservations for restaurants and lounges. Configure tables, booths, and seating areas customers can reserve via WhatsApp, with capacity, timing, and availability for each."
+        title="Tables & Sections"
+        description="Configure the tables, booths, VIP areas and sections customers can reserve via WhatsApp, with capacity, timing, and availability for each."
       />
 
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Seating & Tables</h1>
+        <h1 className="text-2xl font-bold">Tables & Sections</h1>
         <button onClick={openAdd}
           className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium">
           + Add Seating

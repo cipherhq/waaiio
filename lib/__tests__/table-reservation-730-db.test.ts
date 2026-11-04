@@ -231,6 +231,19 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
     expect(parseInt(booking.metadata.duration_minutes)).toBe(90);
   });
 
+  // Same-day tables (Owner decision 2026-11-04): the RPC accepts today, and it does
+  // NOT reject a time that has already passed today — so the bot must never offer one.
+  it('accepts a same-day reservation and does not itself reject a past time today', async () => {
+    const { bizId, userId } = await setupTestData();
+    const { rows: [anyDay] } = await sql(client, `
+      INSERT INTO seating_resources (business_id, name, capacity, min_party_size, deposit_amount, reservation_duration_minutes)
+      VALUES ($1, 'Any Day', 4, 1, 0, 90) RETURNING id
+    `, [bizId]);
+    // 00:00 local today has always passed (or is exactly now)
+    const { rows } = await sql(client, `SELECT * FROM book_table_atomic(NULL, $1, $2, $3, (now() AT TIME ZONE 'Africa/Lagos')::date, '00:00', 2, 90, 'Late', '+1', NULL, NULL, 0, 'none', 'confirmed', 0, 0, 90)`, [bizId, userId, anyDay.id]);
+    expect(rows[0].slot_available).toBe(true);
+  });
+
   it('rejects overlapping bookings on same resource', async () => {
     const { bizId, userId, resourceId } = await setupTestData();
     // First booking: 19:00-20:30 (resource deposit=5000, pass expected=5000)
