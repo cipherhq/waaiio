@@ -8,8 +8,9 @@
 -- refuses release_observer whenever the server is not in recovery.
 --
 -- How to apply (separate Owner approval):
---  * Production only, after release-observer-role.sql, as one statement through
---    the SQL editor or an approved execution. Not with `apply_migration` (no
+--  * Production only, after release-observer-role.sql, in one execution through
+--    the SQL editor or an approved execution. Set the role's password only
+--    after this guard is applied and verified. Not with `apply_migration` (no
 --    ledger row). It lives outside supabase/migrations and outside the V3
 --    catalog scope (schema release_ops, an event trigger), so the release lock
 --    is unaffected.
@@ -18,6 +19,13 @@
 --      DROP SCHEMA release_ops CASCADE;
 --  * The release gate refuses a production observation unless it runs on a
 --    replica and this trigger is present and enabled.
+--
+-- Limit: event triggers belong to one database. This guard is created in the
+-- `postgres` database; Supabase's `template1` accepts connections from PUBLIC
+-- and is Supabase-owned, so the guard cannot be installed there. A credential
+-- holder could still log in to `template1` on the primary (no app data, no
+-- pg_net there). Closing that needs Supabase (revoke PUBLIC CONNECT on
+-- template1) or an explicit Owner acceptance; see docs/RELEASE_V3_GATE.md.
 --
 -- Safety: the function touches only the release_observer login, has no table
 -- access, and pins search_path. Supabase skips event triggers for its reserved
@@ -42,3 +50,5 @@ REVOKE ALL ON FUNCTION release_ops.release_observer_replica_only() FROM PUBLIC;
 DROP EVENT TRIGGER IF EXISTS release_observer_replica_only;
 CREATE EVENT TRIGGER release_observer_replica_only ON login
   EXECUTE FUNCTION release_ops.release_observer_replica_only();
+-- Fire in every session_replication_role, not only 'origin'.
+ALTER EVENT TRIGGER release_observer_replica_only ENABLE ALWAYS;

@@ -113,18 +113,27 @@ describe.runIf(major >= 17)('replica-only login guard (release-observer-replica-
     await expect(c.connect()).rejects.toThrow('release_observer may only connect to a read replica');
     await c.end().catch(() => {});
   });
-  it('leaves every other login alone', async () => {
+  it('leaves every other login alone, including an ordinary non-superuser role', async () => {
     const u = new URL(url!); u.pathname = `/${guardDb}`;
     const c = new pg.Client({ connectionString: u.toString() });
     await c.connect();
     expect((await c.query('SELECT 1 AS ok')).rows[0].ok).toBe(1);
     await c.end();
+    const ordinary = `v3_ordinary_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+    await admin.query(`CREATE ROLE ${ordinary} LOGIN PASSWORD '${password}'`);
+    try {
+      const o = new pg.Client({ host: parsed.hostname, port: Number(parsed.port || 5432), user: ordinary, password, database: guardDb });
+      await o.connect();
+      expect((await o.query('SELECT current_user AS u')).rows[0].u).toBe(ordinary);
+      await o.end();
+    } finally { await admin.query(`DROP ROLE ${ordinary}`); }
   });
   it('the installed guard is enabled, on login, with exactly the body the gate pins', async () => {
-    const r = await guarded.query(`SELECT t.evtenabled AS enabled, t.evtevent AS event, encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') AS body
-      FROM pg_event_trigger t JOIN pg_proc p ON p.oid = t.evtfoid JOIN pg_namespace n ON n.oid = p.pronamespace
+    const r = await guarded.query(`SELECT t.evtenabled AS enabled, t.evtevent AS event, encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') AS body,
+        l.lanname AS language, p.prosecdef AS definer, p.proconfig AS config
+      FROM pg_event_trigger t JOIN pg_proc p ON p.oid = t.evtfoid JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang
       WHERE t.evtname = 'release_observer_replica_only' AND n.nspname = 'release_ops'`);
-    expect(r.rows).toEqual([{ enabled: 'O', event: 'login', body: GUARD_BODY_SHA256 }]);
+    expect(r.rows).toEqual([{ enabled: 'A', event: 'login', body: GUARD_BODY_SHA256, language: 'plpgsql', definer: false, config: ['search_path=pg_catalog'] }]);
   });
   it('the guard function is not executable by PUBLIC and the schema is closed', async () => {
     const r = await guarded.query(`SELECT has_function_privilege('release_observer', 'release_ops.release_observer_replica_only()', 'EXECUTE') AS fn,

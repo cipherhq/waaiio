@@ -8,7 +8,8 @@ import { loadLock, loadLockMap, ledgerSnapshot, verifyLedger, verifyCatalog, ver
 import { catalogMap, catalogAggregate, applyDeltas, validateDelta, compareCatalogs, diffCatalog, CATALOG_QUERY_SHA256, ORACLE } from '../release-v3/catalog-oracle.mjs';
 import { canonicalJson } from '../release-v3/common.mjs';
 import { GUARD_BODY_SHA256 } from '../release-v3/db-observe.mjs';
-const REPLICA = { in_recovery: true, replica_guard: { enabled: 'O', event: 'login', body_sha256: GUARD_BODY_SHA256 } };
+const GUARD = { enabled: 'A', event: 'login', body_sha256: GUARD_BODY_SHA256, owner: 'postgres', language: 'plpgsql', definer: false, config: ['search_path=pg_catalog'] };
+const REPLICA = { in_recovery: true, replica_guard: GUARD, replica_freshness: { receive_lsn: '0/5000060', replay_lsn: '0/5000060', replay_age_seconds: 12 } };
 
 const sha = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
 const h = (n: number) => sha(String(n));
@@ -169,9 +170,17 @@ describe('production is observed only on a guarded read replica', () => {
   it.each([
     [{ in_recovery: false }, 'must run on a read replica'],
     [{ replica_guard: null }, 'replica-only login guard is missing'],
-    [{ replica_guard: { enabled: 'D', event: 'login', body_sha256: GUARD_BODY_SHA256 } }, 'replica-only login guard is missing, disabled'],
-    [{ replica_guard: { enabled: 'O', event: 'login', body_sha256: 'f'.repeat(64) } }, 'not the reviewed version'],
-    [{ replica_guard: { enabled: 'O', event: 'ddl_command_start', body_sha256: GUARD_BODY_SHA256 } }, 'replica-only login guard'],
+    [{ replica_guard: { ...GUARD, enabled: 'D' } }, 'replica-only login guard is missing, disabled'],
+    [{ replica_guard: { ...GUARD, enabled: 'O' } }, 'replica-only login guard is missing, disabled'],
+    [{ replica_guard: { ...GUARD, body_sha256: 'f'.repeat(64) } }, 'not the reviewed version'],
+    [{ replica_guard: { ...GUARD, event: 'ddl_command_start' } }, 'replica-only login guard'],
+    [{ replica_guard: { ...GUARD, owner: 'release_observer' } }, 'not the reviewed version'],
+    [{ replica_guard: { ...GUARD, definer: true } }, 'not the reviewed version'],
+    [{ replica_guard: { ...GUARD, config: null } }, 'not the reviewed version'],
+    [{ replica_freshness: null }, 'replica is not caught up'],
+    [{ replica_freshness: { receive_lsn: '0/6000000', replay_lsn: '0/5000060', replay_age_seconds: 12 } }, 'replica is not caught up'],
+    [{ replica_freshness: { receive_lsn: '0/5000060', replay_lsn: '0/5000060', replay_age_seconds: 16 * 60 } }, 'replica is not caught up'],
+    [{ replica_freshness: { receive_lsn: null, replay_lsn: null, replay_age_seconds: null } }, 'replica is not caught up'],
   ])('refuses %j', (over, message) => expect(() => admitDatabase({ observation: obs(over), lock, migrations: [], lockMap: null, m430: { added_identities: [] } })).toThrow(message));
   it('staging needs no replica', () => {
     const stagingLock = { environments: { staging: { ...lockEnv(), project_ref: 'tqjvrzopvtczxfxiwmnz' } } };

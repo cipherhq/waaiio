@@ -6,7 +6,13 @@
 - Tests:
   - unit and end-to-end cases (on the primary, guard missing, disabled, different body, wrong event);
   - 4 real-PostgreSQL 17 proofs in the "Catalog oracle (PostgreSQL 17)" job: the login is refused on a primary, other logins work, the installed guard matches the pinned body, and the guard function and schema are closed to PUBLIC. The CI count check is now 10 passed, 0 skipped.
-- Docs: production setup order (Owner creates the replica, staging rehearsal, apply role then guard, secret points at the replica).
+- Docs: production setup order (Owner creates the replica, staging rehearsal, apply role then guard, password only after the guard, secret points at the replica).
+- Review fixes:
+  - the guard is enabled ALWAYS, and the gate also pins its owner, language, security mode and `search_path`;
+  - production observations must come from a caught-up replica: receive LSN equals replay LSN, and the last replay is at most 15 minutes old;
+  - replica endpoint formats (`<ref>-rr-…`) are accepted;
+  - an ordinary non-superuser login is tested.
+- Known limit, documented, Owner decision pending: the guard cannot cover Supabase's `template1` database.
 - Runs no SQL and changes no setting.
 - Could break: nothing yet. A production observation made on the primary, or without the guard, now stops the gate (intended).
 

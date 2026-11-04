@@ -37,8 +37,11 @@ SELECT json_build_object(
  'role_flags', (SELECT json_build_object('super', rolsuper, 'bypassrls', rolbypassrls, 'createrole', rolcreaterole, 'createdb', rolcreatedb, 'replication', rolreplication) FROM pg_roles WHERE rolname = current_user),
  'role_memberships', (SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member WHERE r.rolname = current_user),
  'in_recovery', pg_is_in_recovery(),
- 'replica_guard', (SELECT json_build_object('enabled', t.evtenabled, 'event', t.evtevent, 'body_sha256', encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex'))
-   FROM pg_event_trigger t JOIN pg_proc p ON p.oid = t.evtfoid JOIN pg_namespace n ON n.oid = p.pronamespace
+ 'replica_freshness', json_build_object('receive_lsn', pg_last_wal_receive_lsn()::text, 'replay_lsn', pg_last_wal_replay_lsn()::text,
+   'replay_age_seconds', extract(epoch FROM clock_timestamp() - pg_last_xact_replay_timestamp())),
+ 'replica_guard', (SELECT json_build_object('enabled', t.evtenabled, 'event', t.evtevent, 'body_sha256', encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex'),
+   'owner', pg_get_userbyid(p.proowner), 'language', l.lanname, 'definer', p.prosecdef, 'config', p.proconfig)
+   FROM pg_event_trigger t JOIN pg_proc p ON p.oid = t.evtfoid JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang
    WHERE t.evtname = 'release_observer_replica_only' AND n.nspname = 'release_ops' AND p.proname = 'release_observer_replica_only'),
  'server_version_num', current_setting('server_version_num'),
  'observed_at', clock_timestamp(),
@@ -54,9 +57,12 @@ export function connectionEnvironment(url, projectRef, base = process.env) {
   if (!['postgres:', 'postgresql:'].includes(parsed.protocol) || !parsed.hostname || !parsed.username || !parsed.password) fail('Observer connection URL is incomplete');
   const user = decodeURIComponent(parsed.username);
   // Supabase's pooler names the login "<role>.<project ref>".
-  if (user !== OBSERVER_ROLE && user !== `${OBSERVER_ROLE}.${projectRef}`) fail('Observer connection must use the release_observer login');
   // Bind the secret to its environment: a swapped staging/production URL stops here.
-  if (user !== `${OBSERVER_ROLE}.${projectRef}` && !parsed.hostname.split('.').includes(projectRef)) fail('Observer connection is not for the expected project');
+  if (user !== OBSERVER_ROLE && user !== `${OBSERVER_ROLE}.${projectRef}` && !user.startsWith(`${OBSERVER_ROLE}.${projectRef}-rr-`)) fail('Observer connection must use the release_observer login');
+  // Replica endpoints carry the project ref as `<ref>-rr-…` (confirm when the
+  // replica is created; anything else fails closed).
+  if (user !== `${OBSERVER_ROLE}.${projectRef}` && !parsed.hostname.split('.').some(label => label === projectRef || label.startsWith(`${projectRef}-rr-`))
+    && !user.startsWith(`${OBSERVER_ROLE}.${projectRef}-rr-`)) fail('Observer connection is not for the expected project');
   const ssl = parsed.searchParams.get('sslmode') || 'require';
   if (!['require', 'verify-ca', 'verify-full'].includes(ssl)) fail('Observer connection must use TLS');
   return { PATH: base.PATH, HOME: base.HOME, PGHOST: parsed.hostname, PGPORT: parsed.port || '5432', PGUSER: user,
@@ -85,15 +91,26 @@ export function parseObservation(text, { major = 17 } = {}) {
     versions.add(row.version);
   }
   if (typeof doc.in_recovery !== 'boolean') fail('Database observation has no recovery state');
-  return { observed_at: doc.observed_at, catalog, ledger: doc.ledger, in_recovery: doc.in_recovery, replica_guard: doc.replica_guard ?? null };
+  return { observed_at: doc.observed_at, catalog, ledger: doc.ledger, in_recovery: doc.in_recovery, replica_guard: doc.replica_guard ?? null,
+    replica_freshness: doc.replica_freshness ?? null };
 }
 
+// Longest accepted gap since the replica last replayed a primary commit. The
+// production primary commits at least hourly (pg_cron); quiet periods make
+// prepare stop until the next commit, which is fail-closed. Owner-set value.
+export const REPLICA_MAX_REPLAY_AGE_SECONDS = 15 * 60;
 // Production must be observed on a replica that carries the reviewed guard.
 export function requireReplica(environment, observation) {
   if (!ENVIRONMENTS[environment]?.replica) return true;
   const guard = observation.replica_guard;
   if (observation.in_recovery !== true) fail(`${environment} observation must run on a read replica`);
-  if (!guard || guard.event !== 'login' || !['O', 'A'].includes(guard.enabled) || guard.body_sha256 !== GUARD_BODY_SHA256) fail(`${environment} replica-only login guard is missing, disabled or not the reviewed version`);
+  if (!guard || guard.event !== 'login' || guard.enabled !== 'A' || guard.body_sha256 !== GUARD_BODY_SHA256 || guard.owner !== 'postgres'
+    || guard.language !== 'plpgsql' || guard.definer !== false || JSON.stringify(guard.config) !== '["search_path=pg_catalog"]') fail(`${environment} replica-only login guard is missing, disabled or not the reviewed version`);
+  // A stalled or lagging replica would show the same old state on every read.
+  // Require that it has replayed everything it received, recently.
+  const fresh = observation.replica_freshness;
+  if (!fresh || typeof fresh.receive_lsn !== 'string' || fresh.receive_lsn !== fresh.replay_lsn
+    || typeof fresh.replay_age_seconds !== 'number' || !(fresh.replay_age_seconds >= 0) || fresh.replay_age_seconds > REPLICA_MAX_REPLAY_AGE_SECONDS) fail(`${environment} replica is not caught up (replay lag or stall)`);
   return true;
 }
 

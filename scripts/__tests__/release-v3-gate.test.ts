@@ -147,6 +147,10 @@ describe('read-only observer session', () => {
     expect(() => connectionEnvironment('postgresql://postgres.cxcmiqotkowhxinjbytg:pw@h:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow('release_observer');
     expect(() => connectionEnvironment('postgresql://release_observer.tqjvrzopvtczxfxiwmnz:pw@h:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow('Observer connection must use the release_observer login');
     expect(() => connectionEnvironment('postgresql://release_observer.cxcmiqotkowhxinjbytg:pw@h:5432/postgres?sslmode=disable', 'cxcmiqotkowhxinjbytg')).toThrow('TLS');
+    // Read-replica endpoints carry the ref as `<ref>-rr-…`.
+    expect(connectionEnvironment('postgresql://release_observer:pw@db.cxcmiqotkowhxinjbytg-rr-us-east-1-abcde.supabase.co:5432/postgres', 'cxcmiqotkowhxinjbytg').PGUSER).toBe('release_observer');
+    expect(connectionEnvironment('postgresql://release_observer.cxcmiqotkowhxinjbytg-rr-us-east-1-abcde:pw@aws-0-x.pooler.supabase.com:5432/postgres', 'cxcmiqotkowhxinjbytg').PGUSER).toBe('release_observer.cxcmiqotkowhxinjbytg-rr-us-east-1-abcde');
+    expect(() => connectionEnvironment('postgresql://release_observer:pw@db.tqjvrzopvtczxfxiwmnz-rr-us-east-1-abcde.supabase.co:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow('not for the expected project');
   });
   it('psql gets the credentials through the environment and errors are not echoed', () => {
     let seen: { args: string[]; env: Json } | null = null;
@@ -274,7 +278,7 @@ function world(repo: Repo, over: Partial<{ reviews: string[]; prodServingSha: st
   return { state, fetchImpl, run };
 }
 const observeWith = (prod = prodCatalog(), rows = prodRows) => (environment: string) => environment === 'production'
-  ? { environment, project_ref: 'cxcmiqotkowhxinjbytg', observed_at: '2026-11-04T00:00:00Z', catalog: prod, ledger: rows, in_recovery: true, replica_guard: { enabled: 'O', event: 'login', body_sha256: GUARD_BODY_SHA256 } }
+  ? { environment, project_ref: 'cxcmiqotkowhxinjbytg', observed_at: '2026-11-04T00:00:00Z', catalog: prod, ledger: rows, in_recovery: true, replica_guard: { enabled: 'A', event: 'login', body_sha256: GUARD_BODY_SHA256, owner: 'postgres', language: 'plpgsql', definer: false, config: ['search_path=pg_catalog'] }, replica_freshness: { receive_lsn: '0/5000060', replay_lsn: '0/5000060', replay_age_seconds: 12 } }
   : { environment, project_ref: 'tqjvrzopvtczxfxiwmnz', observed_at: '2026-11-04T00:00:00Z', catalog: stagingCatalog(), ledger: stagingRows, in_recovery: false, replica_guard: null };
 const baseEnv = (repo: Repo, over: Json = {}) => ({ GITHUB_ACTOR: 'cipherhq', GITHUB_TRIGGERING_ACTOR: 'cipherhq', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'cipherhq/waaiio',
   GITHUB_REF: 'refs/heads/main', GITHUB_SHA: repo.G, GITHUB_TOKEN: 'gh', VERCEL_TOKEN: 'vt', GITHUB_RUN_ID: '55', GITHUB_RUN_ATTEMPT: '1', TARGET_SHA: repo.T, PATH: process.env.PATH, HOME: process.env.HOME, ...over });
