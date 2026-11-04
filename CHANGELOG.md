@@ -31,6 +31,15 @@
 - Runs no SQL in any environment and changes no setting. Schema 2–7 and 9 profiles are untouched until the first successful schema 8 release.
 - Could break: Migration validation now also needs the PG17 oracle job. A future migration PR must commit its catalog delta.
 
+## 2026-11-04 — Table reservations: no phantom add-ons; confirmation names the table
+
+- `lib/bot/flows/scheduling.flow.ts`:
+  - `select_addons` is skipped for table reservations, and any carried-over add-on state is cleared. Add-ons were offered and listed in the confirmation, but `book_table_atomic` stores no add-ons and the total is the flat deposit, so they were never saved or charged.
+  - The confirmation summary shows the chosen table ("🪑 <table>") for table reservations, instead of `service_name`, which is only set from the table after booking and could hold a stale keyword-matched service.
+- Test: `lib/__tests__/table-reservation-addons-and-summary.test.ts` (4; the two table cases fail on the previous code).
+- Not changed: deposits, payment, `book_table_atomic`, other bookings. Findings needing Owner decisions (same-day reservations, the restaurant "Book a Table" label, the substring 'table' keyword, seating setup prompt) are tracked separately.
+- Could break: a table booking that previously showed add-ons no longer does. Those add-ons were never charged.
+
 ## 2026-11-04 — WhatsApp link on the overview, and the own-number rule in plain words
 
 - Owner decisions (2026-11-04):

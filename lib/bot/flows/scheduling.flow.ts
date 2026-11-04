@@ -1457,6 +1457,14 @@ export const schedulingFlow: FlowDefinition = {
       id: 'select_addons',
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
+        // Table reservations are a flat per-reservation deposit and book_table_atomic
+        // stores no add-ons, so offering them would show items that are never saved
+        // or charged. Clear any add-on state carried over from an earlier selection.
+        if (ctx.session.session_data._is_table_reservation === true) {
+          delete ctx.session.session_data._available_addons;
+          delete ctx.session.session_data._selected_addons;
+          return true;
+        }
         const serviceId = ctx.session.session_data.service_id as string | undefined;
         const { data: addons } = await ctx.supabase
           .from('service_addons')
@@ -2246,7 +2254,10 @@ export const schedulingFlow: FlowDefinition = {
           '',
           `${labels.confirmationEmoji} ${ctx.business?.name || 'Business'}`,
         ];
-        if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
+        // Table reservations show the table the customer chose (service_name is only
+        // set from the table after booking, and may hold a stale keyword-matched service).
+        if (d._is_table_reservation === true && d.seating_resource_name) lines.push(`🪑 ${d.seating_resource_name as string}`);
+        else if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
         if (d._location_name) lines.push(`📍 Location: ${d._location_name as string}`);
         if (d.staff_name) lines.push(`👤 With: ${d.staff_name as string}`);
 
