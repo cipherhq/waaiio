@@ -20,6 +20,12 @@
 - Runs no SQL in any environment and changes no setting. Schema 2–7 and 9 profiles are untouched until the first successful schema 8 release.
 - Could break: Migration validation now also needs the PG17 oracle job. A future migration PR must commit its catalog delta.
 
+## 2026-11-04 — Admin Support: replies saved and shown again
+
+- `admin/src/pages/Support.tsx`: replies were written to a `body` column that does not exist; the real column is `message`. PostgREST rejected every admin reply (400, PGRST204, seen in staging edge logs) and the page showed "Failed to send message". The thread also rendered `body`, so every message appeared blank to admins. The insert, the type and the render now use `message`. No migration, RLS or permission change: the `admin_all_ticket_messages` / `is_admin()` gate is unchanged.
+- Test: `admin/src/__tests__/support-send-message.test.tsx` (3): existing messages render; a reply is sent as `{ ticket_id, sender_id, message, is_internal }` with no `body` key; a rejected insert keeps the draft and shows the failure. The first two fail on the previous code.
+- Could break: nothing; the merchant support page already used `message`.
+
 ## 2026-11-03 — Release gate: schema 9 bot-code-lock profile (M508 only)
 
 - Owner decision (2026-11-03): ship #841 (short merchant links) and #842 (app side of M508) now through one last per-release profile, while Release Process V3 (#843) builds the reusable gate.
