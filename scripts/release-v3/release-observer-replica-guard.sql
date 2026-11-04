@@ -24,8 +24,9 @@
 -- `postgres` database; Supabase's `template1` accepts connections from PUBLIC
 -- and is Supabase-owned, so the guard cannot be installed there. A credential
 -- holder could still log in to `template1` on the primary (no app data, no
--- pg_net there). Closing that needs Supabase (revoke PUBLIC CONNECT on
--- template1) or an explicit Owner acceptance; see docs/RELEASE_V3_GATE.md.
+-- pg_net there). Owner decision 2026-11-04: Supabase is asked to revoke PUBLIC
+-- CONNECT on template1 (or confirm it is blocked); this file is not applied to
+-- production until they confirm. See docs/RELEASE_V3_GATE.md, setup step 0.
 --
 -- Safety: the function touches only the release_observer login, has no table
 -- access, and pins search_path. Supabase skips event triggers for its reserved

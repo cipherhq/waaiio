@@ -1,3 +1,12 @@
+## 2026-11-04 — Release V3: replica freshness limit 65 minutes; template1 is setup step 0
+
+- Owner decision (2026-11-04): the production read replica's last replayed commit may be at most 65 minutes old (was 15). Production commits at least hourly, so a healthy replica is not refused at night; a stall is still caught within about an hour. The receive LSN = replay LSN check is unchanged.
+- Owner decision (2026-11-04): Supabase is asked to close the `template1` gap. It is now setup step 0 in `docs/RELEASE_V3_GATE.md`: nothing is applied to production before Supabase confirms.
+- Files: `scripts/release-v3/db-observe.mjs` (one constant), `scripts/__tests__/release-v3-admission.test.ts` (boundary tests at 60 min and 65 min + 1 s), `docs/RELEASE_V3_GATE.md`, the guard SQL comment.
+- The guard function body is unchanged, so its pinned hash is unchanged.
+- Runs no SQL and changes no setting.
+- Could break: nothing. A replica more than 65 minutes behind stops the gate, as intended.
+
 ## 2026-11-04 — Dashboard calendar: show bookings for businesses open past midnight
 
 - Bug: the calendar's week and day grids ran from the earliest opening hour to the latest closing hour. A closing time after midnight (e.g. 02:00) counted as "earlier", so a business open 18:00–02:00 got a one-row grid (6pm) and bookings from 7pm onwards were invisible. A read-only production query on 2026-11-04 found 2 businesses with such hours: an events business (16:00–00:00, 18:00–04:00, 20:00–06:00) and a restaurant (22:00–06:00).
