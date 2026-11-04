@@ -1,0 +1,23 @@
+## 2026-11-04 — Per-PR changelog fragments (no more CHANGELOG.md conflicts)
+
+- Owner decision (2026-11-04): each PR records its changelog entry as its own file, `changelog/unreleased/YYYY-MM-DD-<short-name>.md`, instead of editing the top of `CHANGELOG.md`.
+  - Before, every PR edited the same lines of `CHANGELOG.md`, so each merge made the other open PRs conflict.
+  - Each fix then changed their heads and invalidated their exact-head review approvals. On 2026-11-04 alone that forced extra review rounds on #851, #854, #855, #858, #860, #861, #862 and #853.
+- `scripts/changelog/collect.mjs`, with two commands:
+  - `check` validates fragments: the name pattern, a real date, `## YYYY-MM-DD — title` matching the file name, and some entry text.
+  - `collect` prepends the fragments to `CHANGELOG.md`, newest first, and deletes them. If any fragment is malformed, it changes nothing. `--dry-run` previews without changing anything.
+- `.github/workflows/ci.yml`: the "Engineering governance" job runs `collect.mjs check`.
+- `scripts/filter-secret-scan-false-positives.mjs`: fragments may contain SHA-256 values in prose, as `CHANGELOG.md` already may.
+- Docs now point to fragments and say to check `changelog/unreleased/` as well as `CHANGELOG.md`:
+  - `CLAUDE.md` rule 16
+  - `.github/PULL_REQUEST_TEMPLATE.md`
+  - `changelog/README.md` (new)
+  - `docs/ENGINEERING_WORKFLOW.md`
+  - `.agents/skills/waaiio-dev/SKILL.md`
+  - `.agents/skills/TEAM-PROTOCOL.md`
+- Tests: `scripts/__tests__/changelog-collect.test.ts` (17).
+- Not changed:
+  - existing `CHANGELOG.md` history;
+  - old release-target JSON files that pin a `CHANGELOG.md` hash (retired release profiles).
+- Open PRs that already edit `CHANGELOG.md` can still merge. Their entries stay as they are.
+- Could break: a malformed fragment fails the "Engineering governance" check until it is fixed.
