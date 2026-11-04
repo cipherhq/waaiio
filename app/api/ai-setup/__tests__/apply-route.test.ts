@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   ownedBusinessId: 'biz-1',
   existing: {} as Record<string, string[]>,
   insertError: {} as Record<string, string | undefined>,
+  selectError: {} as Record<string, string | undefined>,
   inserts: {} as Record<string, Array<Record<string, unknown>>>,
   serviceFromCalls: 0,
 }));
@@ -59,6 +60,8 @@ vi.mock('@/lib/supabase/service', () => ({
           result = err ? { data: null, error: { message: err } } : { data: rows.map((r, i) => ({ id: `id-${i}`, name: r.name })), error: null };
         } else if (op === 'update') {
           result = { data: null, error: null };
+        } else if (h.selectError[table]) {
+          result = { data: null, error: { message: h.selectError[table] } };
         } else {
           result = { data: (h.existing[table] || []).map((name) => ({ name })), error: null };
         }
@@ -93,6 +96,7 @@ beforeEach(() => {
   h.user = { id: 'user-1' };
   h.existing = {};
   h.insertError = {};
+  h.selectError = {};
   h.inserts = {};
   h.serviceFromCalls = 0;
 });
@@ -124,7 +128,7 @@ describe('products', () => {
       products: [
         { name: 'N'.repeat(300), price: 12.5, category: 'C'.repeat(150), description: 'D'.repeat(2000) },
         { name: 'Huge', price: 1e12 },
-        { name: 'Negative', price: -4 },
+        { name: 'Free', price: 0 },
         { name: 'Three decimals', price: 9.999 },
         { name: 'Cents', price: 4.75 },
       ],
@@ -141,6 +145,32 @@ describe('products', () => {
     expect(a.business_id).toBe('biz-1');
     expect(b.price).toBe(99999999);
     expect(c.price).toBe(0);
+  });
+
+  it.each([
+    ['a negative price', -4, 'Price cannot be negative.'],
+    ['a hex string', '0x10', 'Price must be a number.'],
+    ['an exponent string', '1e3', 'Price must be a number.'],
+  ])('rejects %s instead of saving a different price', async (_label, price, message) => {
+    const res = await post({ products: [{ name: 'Bad', price }, { name: 'Good', price: '12.50' }] });
+    expect(res.status).toBe(207);
+    const body = await res.json();
+    expect(body.results.products.errors).toEqual([{ name: 'Bad', error: message }]);
+    expect(h.inserts.products.map((r) => [r.name, r.price])).toEqual([['Good', 12.5]]);
+  });
+
+  it('saves nothing when the duplicate check cannot read (fail closed)', async () => {
+    h.selectError.products = 'URI too long';
+    h.selectError.services = 'URI too long';
+    const res = await post({ products: [{ name: 'Fried Rice', price: 2500 }], services: [{ name: 'Haircut', price: 15 }] });
+    expect(res.status).toBe(207);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+    expect(body.results.products).toMatchObject({ created: 0, error: expect.stringMatching(/nothing was saved/) });
+    expect(body.results.services).toMatchObject({ created: 0, error: expect.stringMatching(/nothing was saved/) });
+    expect(JSON.stringify(body)).not.toContain('URI too long');
+    expect(h.inserts.products).toBeUndefined();
+    expect(h.inserts.services).toBeUndefined();
   });
 
   it('rejects a product with no price but still creates the others (success:false)', async () => {
@@ -176,6 +206,9 @@ describe('products', () => {
     ['path traversal', `${SUPABASE_URL}/storage/v1/object/public/business-documents/biz-1/products/../../biz-2/products/1.jpg`],
     ['a different folder', `${SUPABASE_URL}/storage/v1/object/public/business-documents/biz-1/documents/1.jpg`],
     ['a query string', `${ownImage}?x=1`],
+    ['an HTML file', `${SUPABASE_URL}/storage/v1/object/public/business-documents/biz-1/products/1.html`],
+    ['an SVG file', `${SUPABASE_URL}/storage/v1/object/public/business-documents/biz-1/products/1.svg`],
+    ['no file extension', `${SUPABASE_URL}/storage/v1/object/public/business-documents/biz-1/products/photo`],
   ])('rejects a product photo from %s', async (_label, url) => {
     const res = await post({ products: [{ name: 'Sneakers', price: 30, image_url: url }] });
     expect(res.status).toBe(207);

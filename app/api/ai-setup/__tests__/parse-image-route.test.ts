@@ -184,23 +184,45 @@ describe('model call', () => {
     expect(Math.max(meta.width!, meta.height!)).toBeLessThanOrEqual(1568);
   });
 
-  it('502 and no usage increment when the model call fails', async () => {
+  it('502 when the model call fails; the checked image still counts (Owner decision)', async () => {
     h.create.mockRejectedValue(new Error('overloaded'));
     const res = await POST(request());
     expect(res.status).toBe(502);
+    expect(h.incrementAIUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts the image before the model is called', async () => {
+    const order: string[] = [];
+    h.incrementAIUsage.mockImplementation(async () => { order.push('count'); });
+    h.create.mockImplementation(async () => { order.push('model'); return modelReply({ items: [] }); });
+    await POST(request());
+    expect(order).toEqual(['count', 'model']);
+  });
+
+  it('does not count an image that fails the byte checks', async () => {
+    const res = await POST(request({ bytes: 'not an image', type: 'image/png' }));
+    expect(res.status).toBe(400);
     expect(h.incrementAIUsage).not.toHaveBeenCalled();
+    expect(h.create).not.toHaveBeenCalled();
   });
 });
 
 describe('output validation', () => {
-  it('malformed JSON → empty items with a message, usage not incremented', async () => {
+  it('malformed JSON → empty items with a message; the image still counts', async () => {
     h.create.mockResolvedValue(modelReply('Sure! Here are the items: {items: [oops'));
     const res = await POST(request());
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.items).toEqual([]);
     expect(body.message).toBeTruthy();
-    expect(h.incrementAIUsage).not.toHaveBeenCalled();
+    expect(h.incrementAIUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('output cut off at max_tokens → no items and a "too long, split it" message', async () => {
+    h.create.mockResolvedValue({ ...modelReply('{"items":[{"kind":"product","name":"A","price":1}'), stop_reason: 'max_tokens' });
+    const body = await (await POST(request())).json();
+    expect(body.items).toEqual([]);
+    expect(body.message).toMatch(/too long/i);
   });
 
   it('parses JSON wrapped in a ```json fence', async () => {
@@ -236,7 +258,8 @@ describe('output validation', () => {
     expect(injected.description).toBe('click');
     expect(injected.price).toBeNull();
     expect(stringPrice.price).toBeNull();
-    expect(huge.price).toBe(99999999);
+    // Implausible prices (e.g. a misread phone number) need the owner to type one
+    expect(huge.price).toBeNull();
   });
 
   it('caps a menu at 100 items', async () => {
@@ -280,7 +303,7 @@ describe('output validation', () => {
     expect(h.create.mock.calls[0][0].system).toMatch(/ONE product/);
   });
 
-  it('increments Ace usage exactly once on success', async () => {
+  it('increments Ace usage exactly once per image', async () => {
     const res = await POST(request());
     expect(res.status).toBe(200);
     expect(h.incrementAIUsage).toHaveBeenCalledTimes(1);

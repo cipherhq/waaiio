@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
     if (services?.length) {
       // Check for existing services with same names
       const validServices = services.filter((s) => s.name && String(s.name).trim().length > 0 && String(s.name).length <= 200);
-      const { data: existingServices } = await service
+      const { data: existingServices, error: existingServicesError } = await service
         .from('services')
         .select('name')
         .eq('business_id', business_id)
@@ -103,7 +103,11 @@ export async function POST(request: NextRequest) {
       const newServices = validServices.filter(s => !existingServiceNames.has(String(s.name).trim().toLowerCase()));
       const skippedServices = validServices.length - newServices.length;
 
-      if (newServices.length > 0) {
+      if (existingServicesError) {
+        // Fail closed: without the duplicate check, saving could create copies.
+        logger.error('[AI-SETUP] Services duplicate check error:', existingServicesError.message);
+        results.services = { created: 0, skipped: 0, error: 'Could not check for items you already have, so nothing was saved. Please try again.' };
+      } else if (newServices.length > 0) {
         // Get current max sort_order
         const { data: lastService } = await service
           .from('services')
@@ -143,7 +147,7 @@ export async function POST(request: NextRequest) {
     // 2. Create products (with duplicate detection)
     if (products?.length) {
       const validProducts = products.filter(p => p.name && String(p.name).trim().length > 0);
-      const { data: existingProducts } = await service
+      const { data: existingProducts, error: existingProductsError } = await service
         .from('products')
         .select('name')
         .eq('business_id', business_id)
@@ -153,7 +157,11 @@ export async function POST(request: NextRequest) {
       const newProducts = validProducts.filter(p => !existingProductNames.has(String(p.name).trim().toLowerCase()));
       const skippedProducts = validProducts.length - newProducts.length;
 
-      if (newProducts.length > 0) {
+      if (existingProductsError) {
+        // Fail closed: without the duplicate check, saving could create copies.
+        logger.error('[AI-SETUP] Products duplicate check error:', existingProductsError.message);
+        results.products = { created: 0, skipped: 0, error: 'Could not check for items you already have, so nothing was saved. Please try again.' };
+      } else if (newProducts.length > 0) {
         const { data: lastProduct } = await service
           .from('products')
           .select('sort_order')

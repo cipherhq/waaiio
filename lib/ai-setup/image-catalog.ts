@@ -143,8 +143,10 @@ export function cleanCatalogText(value: unknown, max: number): string {
  * whole numbers only when their row is built (services.price is INTEGER).
  */
 export function normalizeCatalogPrice(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
-  return Math.round(Math.min(value, MAX_PRICE) * 100) / 100;
+  // Unusable or implausible (e.g. a misread phone number) → null, so the
+  // owner must type the price instead of saving a wrong one.
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > MAX_PRICE) return null;
+  return Math.round(value * 100) / 100;
 }
 
 export function normalizeAceImageItems(parsed: unknown, mode: AceImageMode): AceImageItem[] {

@@ -13,6 +13,16 @@
 - Tests: `app/api/ai-setup/__tests__/parse-image-route.test.ts` (20), `app/api/ai-setup/__tests__/apply-route.test.ts` (19; includes the same 12.50 price staying 12.5 as a product and becoming 13 as a service), `app/dashboard/setup-assistant/__tests__/setup-assistant-images.test.tsx` (10; includes the rounding note shown only for services).
 - Unchanged: payment, fee, payout and capability-gating code; `sanitizeImage` and `validateFileSignature` defaults; the upload-image route; churches/NGOs still have no image upload.
 - Could break: a service price with decimals (e.g. 12.50) is now saved as 13 instead of failing; the review screen says so for services only. Product prices with decimals are saved to 2 decimal places, which relies on `products.price` being `numeric` (true in production; a database built only from repo migrations has INTEGER and would reject a decimal product price). AI Setup items sent without a price are now rejected instead of saved as 0 (the page always sends a number for typed/manual items). A photo uploaded at Confirm stays in storage if the apply step then fails. Browsers that cannot decode HEIC (most non-Safari) ask for a JPEG/PNG instead.
+- Review 1 follow-ups:
+  - The usage count now follows Owner decision 3. A checked image counts before Ace is called, even if nothing is read or the call fails. Images that fail the file checks don't count.
+  - A cut-off reply from Ace (output limit reached) gets a "menu too long, split it" message. The Ace client is bounded to a 50s timeout and 1 retry, so calls finish inside the 60s limit.
+  - Prices:
+    - Ace prices above 99,999,999 come back blank ("price needed") instead of capped.
+    - At save time, negative prices and non-plain text prices (for example "0x10" or "1e3") are rejected per item instead of saved as 0 or as a different number.
+    - The existing 99,999,999 cap is unchanged.
+  - Product photo URLs must end in .jpg, .jpeg, .png or .webp, which are the only types the upload route writes.
+  - Transparent images get a white background before conversion to JPEG instead of black.
+  - If the duplicate check can't read existing items, that section saves nothing and reports an error, instead of risking duplicates.
 
 ## 2026-11-04 — Admin Support: replies saved and shown again
 

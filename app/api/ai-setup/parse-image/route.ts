@@ -23,7 +23,8 @@ export const maxDuration = 60;
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic {
-  if (!client) client = new Anthropic();
+  // Bounded so a slow call (plus one retry) finishes inside maxDuration.
+  if (!client) client = new Anthropic({ timeout: 50_000, maxRetries: 1 });
   return client;
 }
 
@@ -32,7 +33,11 @@ function getClient(): Anthropic {
  * the Ace usage counter. The owner reviews and confirms via /api/ai-setup/apply.
  *
  * Order: auth → owner check → rate limit (business+user) → Ace quota →
- * real-bytes validation → re-encode → Sonnet → strict output validation.
+ * real-bytes validation → re-encode → count usage → Sonnet → strict output
+ * validation.
+ *
+ * Owner decision: each image counts toward the Ace allowance. A checked image
+ * is counted before the model call, whether or not Ace finds any items.
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -71,7 +76,6 @@ export async function POST(request: NextRequest) {
   const rateLimited = await rateLimitResponseAsync(`ai-parse:${businessId}:${user.id}`, 10, 3600_000);
   if (rateLimited) return rateLimited;
 
-  // Each image counts toward the Ace allowance (same as text chat)
   const tier = (biz.subscription_tier || 'free') as string;
   const { allowed, reason } = await checkAIFeature(supabase, businessId, tier, 'ace_setup');
   if (!allowed) {
@@ -107,7 +111,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'That file is not a readable image. Please try another photo.' }, { status: 400 });
   }
 
+  // Owner decision: every checked image counts, even if nothing is read.
+  await incrementAIUsage(supabase, businessId, 'ace_setup');
+
   let text: string;
+  let truncated = false;
   try {
     // No tools: the model can only return text, which is validated below.
     const response = await getClient().messages.create({
@@ -126,9 +134,18 @@ export async function POST(request: NextRequest) {
     });
     const textBlock = response.content.find((b) => b.type === 'text');
     text = textBlock && textBlock.type === 'text' ? textBlock.text : '';
+    truncated = response.stop_reason === 'max_tokens';
   } catch (error) {
     logger.error('[AI-SETUP] Image parse error:', (error as Error).message);
     return NextResponse.json({ error: 'Ace could not read that image right now. Please try again.' }, { status: 502 });
+  }
+
+  if (truncated) {
+    return NextResponse.json({
+      items: [],
+      mode,
+      message: 'This menu is too long for one photo. Take separate photos of each page or section and upload them one at a time.',
+    });
   }
 
   const items = normalizeAceImageItems(extractJsonObject(text), mode);
@@ -142,9 +159,6 @@ export async function POST(request: NextRequest) {
         : 'Could not read the image clearly. Try uploading a clearer photo with visible text and prices, or add items manually.',
     });
   }
-
-  // Count usage only when Ace produced a usable proposal
-  await incrementAIUsage(supabase, businessId, 'ace_setup');
 
   return NextResponse.json({ items, mode });
 }

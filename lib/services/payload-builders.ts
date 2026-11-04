@@ -136,8 +136,10 @@ export interface AiSetupServiceInput {
 const AI_SETUP_MAX_PRICE = 99999999;
 
 /**
- * Shared AI Setup price rule: a price must be present and numeric; it is
- * clamped to [0, 99999999]. Rounding is per table: services.price and
+ * Shared AI Setup price rule: a price must be present, numeric (a plain
+ * decimal when sent as text) and not negative; anything else is rejected so
+ * the owner fixes it rather than a wrong price being saved. It is capped at
+ * 99999999 (existing #167 bound). Rounding is per table: services.price and
  * services.deposit_amount are INTEGER (whole numbers); products.price is
  * numeric in production (kept to 2 decimal places).
  * Throws RangeError when no usable price was supplied.
@@ -146,11 +148,13 @@ function resolveAiSetupPrice(value: unknown, decimals: 0 | 2): number {
   if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
     throw new RangeError('Price is required.');
   }
+  if (typeof value === 'string' && !/^\s*\d+(\.\d+)?\s*$/.test(value)) throw new RangeError('Price must be a number.');
   if (typeof value !== 'number' && typeof value !== 'string') throw new RangeError('Price must be a number.');
   const n = Number(value);
   if (!Number.isFinite(n)) throw new RangeError('Price must be a number.');
+  if (n < 0) throw new RangeError('Price cannot be negative.');
   const factor = decimals === 2 ? 100 : 1;
-  return Math.round(Math.max(0, Math.min(n, AI_SETUP_MAX_PRICE)) * factor) / factor;
+  return Math.round(Math.min(n, AI_SETUP_MAX_PRICE) * factor) / factor;
 }
 
 function requireAiSetupName(value: unknown): string {
@@ -209,7 +213,8 @@ export function isAiSetupProductImageUrl(url: unknown, businessId: string, supab
   const prefix = `${base}/storage/v1/object/public/business-documents/${businessId}/products/`;
   if (!url.startsWith(prefix)) return false;
   const fileName = url.slice(prefix.length);
-  return /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/.test(fileName) && !fileName.includes('..');
+  // Only the image types /api/products/upload-image writes.
+  return /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}\.(jpe?g|png|webp)$/i.test(fileName) && !fileName.includes('..');
 }
 
 export function buildAiSetupProductRow(input: AiSetupProductInput) {
