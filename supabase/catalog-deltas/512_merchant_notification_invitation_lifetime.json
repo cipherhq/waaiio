@@ -1,0 +1,45 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_recipient_id uuid, p_business_id uuid, p_token_hash text, p_channel_id uuid DEFAULT NULL::uuid",
+    "body_sha256": "3001fe3411c756688cf5c0b8bc6cbdbe4285993d65003901245247d99694e56c",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "bc832d3671bceff0c0aee7920b0459f92e9c40ce4e094b169c67a8ab8711f2ca",
+   "identity": "function:public.issue_merchant_notification_invitation(p_recipient_id uuid, p_business_id uuid, p_token_hash text, p_channel_id uuid)",
+   "operation": "modify"
+  }
+ ],
+ "migration": "512_merchant_notification_invitation_lifetime.sql",
+ "migration_sha256": "42270e4383aea5056e9e154663c361f0eff6555abc5f3123e273e36de1d0179b",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}
