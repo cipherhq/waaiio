@@ -74,3 +74,29 @@ describe('hoursIncludingEntries (show every booking, Owner decision 2026-11-04)'
     expect(hoursIncludingEntries(calendarHourRange({ friday: { open: '18:00', close: '02:00' } }), ['01:00', '23:00'])).toHaveLength(24);
   });
 });
+
+describe('closed days are not opening hours', () => {
+  it('a 22:00–06:00 restaurant with closed days stored as 00:00–00:00 opens at 22 (production shape, 2026-11-04)', () => {
+    const r = calendarHourRange({
+      monday: { open: '00:00', close: '00:00', closed: true },
+      tuesday: { open: '00:00', close: '00:00', closed: true },
+      wednesday: { open: '22:00', close: '06:00', closed: false },
+      friday: { open: '22:00', close: '06:00' },
+    });
+    expect(r).toMatchObject({ openHour: 22, overnight: true, start: 0, end: 24 });
+  });
+
+  it('is_open: false days are skipped too', () => {
+    expect(calendarHourRange({ monday: { open: '00:00', close: '00:00', is_open: false }, friday: { open: '09:00', close: '17:00', is_open: true } }))
+      .toMatchObject({ openHour: 9, overnight: false, start: 9, end: 17 });
+  });
+
+  it('a daytime business with a closed day stored as 00:00–00:00 keeps its daytime grid', () => {
+    expect(calendarHourRange({ sunday: { open: '00:00', close: '00:00', closed: true }, monday: { open: '09:00', close: '17:00' } }))
+      .toMatchObject({ start: 9, end: 17, overnight: false });
+  });
+
+  it('all days closed falls back to the default grid', () => {
+    expect(calendarHourRange({ monday: { open: '09:00', close: '17:00', closed: true } })).toMatchObject({ start: 8, end: 20, openHour: null });
+  });
+});

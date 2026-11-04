@@ -11,7 +11,8 @@ Owner decisions (2026-11-04), from the #863 reviews.
   - hour rows carry `data-hour`;
   - the scroll boxes have refs, and an effect sets the scroll position after loading.
   - Month view is unchanged.
-- Tests: 6 new `hour-range` cases (show-all stretching, malformed times, HH:MM:SS, openHour/overnight). 54/54 with the existing calendar tests.
+- Review fix: `calendarHourRange()` now skips days marked closed (`closed: true` or `is_open: false`). Before, a 22:00–06:00 restaurant whose closed days are stored as 00:00–00:00 got opening hour 0, so its grid still opened at 12AM. A read-only production check on 2026-11-04 found that only that restaurant's opening hour changes (0 → 22); no daytime business's grid changes.
+- Tests: 10 new `hour-range` cases: show-all stretching, malformed times, HH:MM:SS, openHour/overnight, and closed days including the production restaurant's hours. 58/58 pass with the existing calendar tests.
 - Could break: nothing in data. Calendars with out-of-hours bookings show more rows.
 
 ## 2026-11-04 — Dashboard calendar: show bookings for businesses open past midnight

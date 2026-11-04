@@ -5,6 +5,7 @@
  * - Default 08:00–20:00 when no usable hours exist.
  * - The grid runs from the earliest opening hour to the latest closing hour,
  *   rounding a part-hour close up (17:30 keeps the 17:00 row).
+ * - Days marked closed (closed: true or is_open: false) are skipped.
  * - If any day closes at or before it opens (e.g. 18:00–02:00, or a 00:00
  *   close), the business is open past midnight. The grid then covers the
  *   whole day (00:00–24:00), so late-evening and after-midnight bookings
@@ -39,7 +40,9 @@ export function calendarHourRange(operatingHours: unknown): CalendarHourRange {
   if (operatingHours && typeof operatingHours === 'object') {
     for (const slot of Object.values(operatingHours as Record<string, unknown>)) {
       if (!slot || typeof slot !== 'object') continue;
-      const { open, close } = slot as { open?: unknown; close?: unknown };
+      const { open, close, closed, is_open: isOpen } = slot as { open?: unknown; close?: unknown; closed?: unknown; is_open?: unknown };
+      // A closed day's stored times (often 00:00–00:00) are not opening hours.
+      if (closed === true || isOpen === false) continue;
       const openMin = toMinutes(open);
       const closeMin = toMinutes(close);
       if (openMin === null || closeMin === null) continue;
