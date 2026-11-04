@@ -10,6 +10,8 @@ interface ServiceItem {
   /** null = Ace could not see a price; the owner must type one before Confirm. */
   price: number | null;
   needsPrice?: boolean;
+  /** Suggested by Ace (image or pasted text): a cleared price means "price needed", never Free. */
+  fromAce?: boolean;
   duration_minutes: number;
   deposit_amount: number;
   description: string;
@@ -20,6 +22,8 @@ interface ProductItem {
   /** null = Ace could not see a price; the owner must type one before Confirm. */
   price: number | null;
   needsPrice?: boolean;
+  /** Suggested by Ace (image or pasted text): a cleared price means "price needed", never Free. */
+  fromAce?: boolean;
   description: string;
   category: string;
   /** Product photo kept in the browser until the owner confirms. */
@@ -50,14 +54,20 @@ function aceItemPrice(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-/** Price input → state. Clearing an Ace item that had no price keeps it unpriced. */
-function priceFromInput(value: string, needsPrice?: boolean): number | null {
-  if (value === '') return needsPrice ? null : 0;
+/**
+ * Price input → state. Owner decision (2026-11-04): clearing the price of an
+ * Ace item makes it "price needed" (blocks Confirm); typing 0 means Free.
+ * Items the owner added by hand keep the old behaviour (empty = 0).
+ */
+function priceFromInput(value: string, fromAce?: boolean): number | null {
+  if (value === '') return fromAce ? null : 0;
   return Number(value);
 }
 
-function priceInputValue(price: number | null): number | '' {
-  return price === null ? '' : (price || '');
+/** Ace items show 0 explicitly, so "Free" never looks like an empty, unpriced box. */
+function priceInputValue(price: number | null, fromAce?: boolean): number | '' {
+  if (price === null) return '';
+  return fromAce ? price : (price || '');
 }
 
 const MISSING_PRICE_CLASS = 'border-red-500 bg-red-50 dark:border-red-500 dark:bg-red-900/20';
@@ -226,7 +236,7 @@ export default function SetupAssistantPage() {
           setServices(prev => [...prev, ...data.suggestion.services.map((s: ServiceItem) => {
             const price = aceItemPrice(s.price);
             return {
-              name: s.name || '', price, needsPrice: price === null, duration_minutes: s.duration_minutes || 30,
+              name: s.name || '', price, needsPrice: price === null, fromAce: true, duration_minutes: s.duration_minutes || 30,
               deposit_amount: s.deposit_amount || 0, description: s.description || '',
             };
           })]);
@@ -234,7 +244,7 @@ export default function SetupAssistantPage() {
         if (data.suggestion?.products?.length) {
           setProducts(prev => [...prev, ...data.suggestion.products.map((p: ProductItem) => {
             const price = aceItemPrice(p.price);
-            return { name: p.name || '', price, needsPrice: price === null, description: p.description || '', category: p.category || '' };
+            return { name: p.name || '', price, needsPrice: price === null, fromAce: true, description: p.description || '', category: p.category || '' };
           })]);
         }
         setFreeTextItems('');
@@ -296,7 +306,7 @@ export default function SetupAssistantPage() {
           const price = aceItemPrice(item.price);
           if (mode === 'product_photo' || routeToProducts(item.kind)) {
             const product: ProductItem = {
-              name: item.name || '', price, needsPrice: price === null,
+              name: item.name || '', price, needsPrice: price === null, fromAce: true,
               description: item.description || '', category: item.category || '',
             };
             if (mode === 'product_photo') {
@@ -306,7 +316,7 @@ export default function SetupAssistantPage() {
             newProducts.push(product);
           } else {
             newServices.push({
-              name: item.name || '', price, needsPrice: price === null,
+              name: item.name || '', price, needsPrice: price === null, fromAce: true,
               duration_minutes: item.duration_minutes || 30, deposit_amount: 0,
               description: item.description || '',
             });
@@ -482,8 +492,8 @@ export default function SetupAssistantPage() {
               {services.map((s, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input value={s.name} onChange={e => { const c = [...services]; c[i] = { ...c[i], name: e.target.value }; setServices(c); }}
-                    placeholder={config.itemLabel} className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
-                  <input type="number" min={0} value={priceInputValue(s.price)} onChange={e => { const c = [...services]; c[i] = { ...c[i], price: priceFromInput(e.target.value, c[i].needsPrice) }; setServices(c); }}
+                    placeholder={config.itemLabel} maxLength={200} className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                  <input type="number" min={0} value={priceInputValue(s.price, s.fromAce)} onChange={e => { const c = [...services]; c[i] = { ...c[i], price: priceFromInput(e.target.value, c[i].fromAce || c[i].needsPrice) }; setServices(c); }}
                     aria-label={`${config.priceLabel} for ${s.name || config.itemLabel}`} aria-invalid={s.price === null}
                     placeholder={s.price === null ? 'Add price' : config.priceLabel}
                     className={`w-20 text-sm border rounded px-2 py-1.5 dark:bg-gray-700 dark:text-gray-100 ${s.price === null ? MISSING_PRICE_CLASS : 'border-gray-200 dark:border-gray-600'}`} />
@@ -513,8 +523,8 @@ export default function SetupAssistantPage() {
                       <img src={p.photoPreview || p.imageUrl} alt={`Photo of ${p.name || 'product'}`} className="h-9 w-9 rounded object-cover flex-shrink-0" />
                     )}
                     <input value={p.name} onChange={e => { const c = [...products]; c[i] = { ...c[i], name: e.target.value }; setProducts(c); }}
-                      placeholder="Product name" className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
-                    <input type="number" min={0} value={priceInputValue(p.price)} onChange={e => { const c = [...products]; c[i] = { ...c[i], price: priceFromInput(e.target.value, c[i].needsPrice) }; setProducts(c); }}
+                      placeholder="Product name" maxLength={200} className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                    <input type="number" min={0} value={priceInputValue(p.price, p.fromAce)} onChange={e => { const c = [...products]; c[i] = { ...c[i], price: priceFromInput(e.target.value, c[i].fromAce || c[i].needsPrice) }; setProducts(c); }}
                       aria-label={`Price for ${p.name || 'product'}`} aria-invalid={p.price === null}
                       placeholder={p.price === null ? 'Add price' : 'Price'}
                       className={`w-20 text-sm border rounded px-2 py-1.5 dark:bg-gray-700 dark:text-gray-100 ${p.price === null ? MISSING_PRICE_CLASS : 'border-gray-200 dark:border-gray-600'}`} />
