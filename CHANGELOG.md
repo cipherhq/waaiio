@@ -1,3 +1,28 @@
+## 2026-11-04 — M510: late-night table bookings (database only)
+
+Owner decisions (2026-11-04), table bookings only:
+- A closing time earlier than or equal to the opening time means the business closes the next day.
+- A late booking belongs to its start date. It must start before midnight and end at or before closing. Example: Fri 23:00–00:30 with Fri hours 18:00–02:00 is allowed and stored as Friday 23:00.
+- The database enforces this. Seating resources' own windows stay non-overnight (`seating_no_overnight` unchanged). Max duration stays 1–480.
+
+What changed (`supabase/migrations/510_table_overnight_reservations.sql`, `CREATE OR REPLACE` of `public.book_table_atomic`, M476 body otherwise verbatim):
+- Reads `businesses.operating_hours -> <weekday of p_date>`. The day is overnight only when the entry is an object, `closed` is absent or JSON `false`, `is_open` is absent or JSON `true`, and `open`/`close` are both `HH:MM` strings matching `^([01]\d|2[0-3]):[0-5]\d$` with close ≤ open (a 00:00 close counts). Anything else is "not overnight" (fail closed).
+- An end past 24:00 is allowed only on an overnight day, with a start before 24:00, ending at or before close + 24h. Rejections:
+  - not an overnight day, or a start of `24:00` → `past_midnight` (unchanged M476 check);
+  - overnight day but ending after closing → `after_closing` ("past closing time 02:00").
+- Advisory lock is per (business, resource), no longer per date, so bookings on neighbouring dates of the same table serialise.
+- Overlap uses one minute axis over `b.date` from D-1 to D+1, so D 23:30–01:00 and D+1 00:15 block each other in either order.
+- `supabase/catalog-deltas/510_table_overnight_reservations.json`: exactly one `modify` of `book_table_atomic` (new body hash; ACL, owner, INVOKER, no config unchanged). The replay's pre-510 digest of this function equals the production and staging lock digest.
+- `lib/__tests__/table-overnight-510.pg.test.ts` (43 cases, real PostgreSQL) and the matching `ci.yml` guard and unit-job exclude.
+
+Unchanged: the 18-argument signature, return shape, SECURITY INVOKER, no SET/proconfig, grants (restated: service_role only), idempotency, deposit and duration revalidation, payments and deposits, `day_unavailable` / `before_opening` / `after_closing` from the table's own window, insert columns, error codes, `book_slot_atomic`, `reschedule_booking_atomic`, `seating_no_overnight`.
+
+Could break:
+- The RPC now reads `businesses` (service_role already has it). If that read is denied it errors, so the booking is refused.
+- All bookings for one table now queue on one lock instead of one per date; a busy table's bookings wait for each other briefly.
+- A start before the business opens is still not checked by the database (as in M476); only the table's own `available_from` is. The bot does not offer overnight slots yet; that is a separate app change.
+- Not applied anywhere. Staging and production need their own Owner approvals.
+
 ## 2026-11-04 — Dashboard calendar: show bookings for businesses open past midnight
 
 - Bug: the calendar's week and day grids ran from the earliest opening hour to the latest closing hour. A closing time after midnight (e.g. 02:00) counted as "earlier", so a business open 18:00–02:00 got a one-row grid (6pm) and bookings from 7pm onwards were invisible. A read-only production query on 2026-11-04 found 2 businesses with such hours: an events business (16:00–00:00, 18:00–04:00, 20:00–06:00) and a restaurant (22:00–06:00).

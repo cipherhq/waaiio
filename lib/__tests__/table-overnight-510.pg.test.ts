@@ -1,0 +1,436 @@
+/**
+ * M510 — late-night (overnight) table reservations. Real PostgreSQL proof
+ * (disposable local database, created and dropped by this file).
+ *
+ * Applies M476, M477 and M510 from disk on a minimal fixture and calls the real
+ * book_table_atomic. Owner decisions 2026-11-04:
+ *   - closing <= opening in businesses.operating_hours means the day closes the
+ *     next day (table bookings only);
+ *   - a late booking belongs to its start date, starts before midnight and ends
+ *     at or before closing;
+ *   - every other day keeps the past_midnight rejection; seating resources'
+ *     own windows stay non-overnight.
+ */
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import pg from 'pg';
+import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+
+const url = process.env.TEST_DATABASE_URL;
+if (process.env.REQUIRE_PG_TESTS === 'true' && !url) throw new Error('Disposable PostgreSQL is required for the M510 proof');
+if (url && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname)) throw new Error('Disposable local PostgreSQL required');
+const suite = url ? describe : describe.skip;
+
+const m476 = readFileSync('supabase/migrations/476_seating_resources_table_reservation.sql', 'utf8');
+const m477 = readFileSync('supabase/migrations/477_exclude_table_bookings_from_slot_capacity.sql', 'utf8');
+const m510 = readFileSync('supabase/migrations/510_table_overnight_reservations.sql', 'utf8');
+const database = `m510_${randomUUID().replaceAll('-', '')}`;
+const SIGNATURE = 'public.book_table_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,text,integer,integer,integer)';
+
+// 2026-11-06 is a Friday (D); D-1 Thursday, D+1 Saturday.
+const THU = '2026-11-05';
+const FRI = '2026-11-06';
+const SAT = '2026-11-07';
+const MON = '2026-11-09';
+const TUE = '2026-11-10';
+const LATE = { open: '18:00', close: '02:00' };
+const HOURS = {
+  thursday: LATE,
+  friday: LATE,
+  saturday: { ...LATE, closed: false },
+  monday: { open: '09:00', close: '17:00' }, // daytime
+  tuesday: { open: '09:00', close: '00:00', is_open: true }, // closes at midnight
+  wednesday: { closed: true },
+};
+
+type Resource = { id: string; duration: number; deposit: number };
+
+suite('M510 overnight table reservations (real PostgreSQL)', () => {
+  let control: pg.Client;
+  let client: pg.Client;
+  let targetUrl: string;
+  let userId: string;
+  let slotSrcBefore: string;
+
+  const q = (text: string, params?: unknown[]) => client.query(text, params);
+
+  async function business(hours: unknown = HOURS): Promise<string> {
+    const { rows: [b] } = await q(`INSERT INTO businesses (name, operating_hours) VALUES ('Lounge', $1::jsonb) RETURNING id`, [JSON.stringify(hours)]);
+    return b.id;
+  }
+  async function resource(biz: string, opts: { duration?: number; deposit?: number; from?: string | null; to?: string | null } = {}): Promise<Resource> {
+    const duration = opts.duration ?? 90, deposit = opts.deposit ?? 0;
+    const { rows: [r] } = await q(
+      `INSERT INTO seating_resources (business_id, name, capacity, min_party_size, deposit_amount, reservation_duration_minutes, available_from, available_to)
+       VALUES ($1, 'Booth', 6, 1, $2, $3, $4::time, $5::time) RETURNING id`,
+      [biz, deposit, duration, opts.from ?? null, opts.to ?? null],
+    );
+    return { id: r.id, duration, deposit };
+  }
+  // The app path: expected deposit/duration equal the resource's (M383 pattern).
+  async function book(db: pg.Client, biz: string, res: Resource, date: string, time: string, session: string | null = null) {
+    const { rows: [row] } = await db.query(
+      `SELECT * FROM public.book_table_atomic($1::uuid, $2, $3, $4, $5::date, $6, 2, $7,
+         'Guest', '+2340000', NULL, NULL, $8, 'none', 'confirmed', $8, $8, $7)`,
+      [session, biz, userId, res.id, date, time, res.duration, res.deposit],
+    );
+    return row as { booking_id: string | null; reference_code: string | null; slot_available: boolean };
+  }
+  const bookErr = (biz: string, res: Resource, date: string, time: string) => book(client, biz, res, date, time);
+
+  beforeAll(async () => {
+    control = new pg.Client({ connectionString: url }); await control.connect();
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      await control.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${role} NOLOGIN; END IF; END $$`);
+    }
+    await control.query(`CREATE DATABASE ${database}`);
+    const target = new URL(url!); target.pathname = `/${database}`;
+    targetUrl = target.toString();
+    client = new pg.Client({ connectionString: targetUrl }); await client.connect();
+
+    // Minimal final-state fixture for M476/M477 (as in table-reservation-730-db),
+    // plus businesses.operating_hours (001: JSONB NOT NULL DEFAULT '{}').
+    await q(`
+      CREATE EXTENSION IF NOT EXISTS pgcrypto;
+      CREATE OR REPLACE FUNCTION update_updated_at() RETURNS TRIGGER AS $$
+      BEGIN NEW.updated_at = NOW(); RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TYPE flow_type AS ENUM ('scheduling', 'payment', 'ordering', 'ticketing', 'reservation', 'appointment', 'queue');
+      CREATE TYPE reservation_status AS ENUM ('pending', 'confirmed', 'in_progress', 'checked_in', 'checked_out', 'cancelled', 'no_show', 'completed');
+      CREATE TYPE booking_channel AS ENUM ('whatsapp', 'dashboard', 'api');
+      CREATE TYPE deposit_status AS ENUM ('none', 'pending', 'paid');
+      CREATE TABLE businesses (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id UUID,
+        name TEXT NOT NULL DEFAULT 'Test Business',
+        timezone TEXT NOT NULL DEFAULT 'Africa/Lagos',
+        operating_hours JSONB NOT NULL DEFAULT '{}'::jsonb,
+        metadata JSONB NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE profiles (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+      CREATE TABLE bookings (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reference_code VARCHAR(10) UNIQUE,
+        business_id UUID NOT NULL REFERENCES businesses(id),
+        user_id UUID NOT NULL REFERENCES profiles(id),
+        service_id UUID, appointment_id UUID, staff_id UUID, staff_name TEXT,
+        date DATE NOT NULL,
+        time TIME NOT NULL,
+        party_size INTEGER NOT NULL DEFAULT 1,
+        flow_type flow_type,
+        channel booking_channel NOT NULL DEFAULT 'whatsapp',
+        deposit_amount INTEGER NOT NULL DEFAULT 0,
+        deposit_status deposit_status NOT NULL DEFAULT 'none',
+        status reservation_status NOT NULL DEFAULT 'pending',
+        total_amount INTEGER NOT NULL DEFAULT 0,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        guest_name TEXT, guest_phone TEXT, guest_email TEXT, special_requests TEXT,
+        venue_address TEXT, end_date DATE, addons_snapshot JSONB, promo_code_id UUID,
+        location_id UUID, class_session_id UUID, original_date DATE, original_time TEXT,
+        rescheduled_at TIMESTAMPTZ,
+        metadata JSONB DEFAULT '{}'::jsonb,
+        bot_session_id UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE OR REPLACE FUNCTION public.generate_reference_code() RETURNS TRIGGER AS $$
+      BEGIN NEW.reference_code := 'BW-' || substr(md5(random()::text), 1, 7); RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER set_reference_code BEFORE INSERT ON bookings FOR EACH ROW
+        WHEN (NEW.reference_code IS NULL) EXECUTE FUNCTION generate_reference_code();
+      CREATE TABLE services (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id),
+        name TEXT, price INTEGER DEFAULT 0, deposit_amount INTEGER DEFAULT 0, is_active BOOLEAN DEFAULT true,
+        max_capacity INTEGER DEFAULT 1, duration_minutes INTEGER DEFAULT 30, is_class BOOLEAN DEFAULT false,
+        requires_staff BOOLEAN DEFAULT false, staff_ids TEXT[], metadata JSONB DEFAULT '{}', class_schedule JSONB,
+        auto_approve BOOLEAN DEFAULT true
+      );
+      CREATE TABLE appointments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id),
+        name TEXT, requires_staff BOOLEAN DEFAULT false, available_days TEXT[], available_from TIME, available_to TIME
+      );
+      CREATE TABLE business_staff (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id),
+        name TEXT, is_active BOOLEAN DEFAULT true, schedule JSONB DEFAULT '{}'
+      );
+      CREATE TABLE class_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id),
+        service_id UUID REFERENCES services(id), date DATE, start_time TIME, capacity INTEGER DEFAULT 10,
+        status TEXT DEFAULT 'scheduled', staff_id UUID, location_id UUID
+      );
+      CREATE OR REPLACE FUNCTION check_staff_availability(p_staff_id UUID, p_biz UUID, p_date DATE, p_time TEXT, p_dur INTEGER DEFAULT 30)
+        RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ BEGIN RETURN QUERY SELECT true, 'ok'; END $$ LANGUAGE plpgsql;
+      CREATE OR REPLACE FUNCTION check_appointment_schedule(p_appt UUID, p_biz UUID, p_date DATE, p_time TEXT)
+        RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ BEGIN RETURN QUERY SELECT true, 'ok'; END $$ LANGUAGE plpgsql;
+      CREATE OR REPLACE FUNCTION public.has_admin_role(roles TEXT[]) RETURNS BOOLEAN AS $$ BEGIN RETURN false; END $$ LANGUAGE plpgsql;
+      CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ BEGIN RETURN NULL; END $$ LANGUAGE plpgsql;
+      CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ BEGIN RETURN 'service_role'; END $$ LANGUAGE plpgsql;
+    `);
+    await q(m476);
+    await q(m477);
+    // Earlier-migration grants the SECURITY INVOKER RPC relies on (M293, M415).
+    await q(`
+      GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+      GRANT ALL ON public.businesses TO service_role;
+      GRANT SELECT, UPDATE ON public.bookings TO service_role;
+    `);
+    slotSrcBefore = (await q(`SELECT md5(prosrc) AS h FROM pg_proc WHERE proname = 'book_slot_atomic'`)).rows[0].h;
+    const { rows: [u] } = await q(`INSERT INTO profiles DEFAULT VALUES RETURNING id`);
+    userId = u.id;
+  }, 60000);
+
+  afterAll(async () => {
+    await client?.end();
+    await control?.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    await control?.end();
+  });
+
+  it('before 510: M476 rejects a late booking on an overnight day with past_midnight', async () => {
+    const biz = await business();
+    const res = await resource(biz);
+    await expect(bookErr(biz, res, FRI, '23:30')).rejects.toThrow(/^past_midnight:/);
+  });
+
+  it('applies 510 (self-check passes) and re-applies cleanly', async () => {
+    await q(m510);
+    await q(m510);
+    const { rows: [fn] } = await q(`SELECT prosecdef, proconfig, pg_get_function_result(oid) AS result FROM pg_proc WHERE oid = $1::regprocedure`, [SIGNATURE]);
+    expect(fn.prosecdef).toBe(false); // SECURITY INVOKER
+    expect(fn.proconfig).toBeNull(); // no SET
+    expect(fn.result).toBe('TABLE(booking_id uuid, reference_code text, slot_available boolean)');
+    expect((await q(`SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'book_table_atomic'`)).rows[0].n).toBe(1);
+  });
+
+  it('ACL is service_role only (catalog)', async () => {
+    const { rows: [p] } = await q(`SELECT
+      has_function_privilege('service_role', $1, 'EXECUTE') AS svc,
+      has_function_privilege('anon', $1, 'EXECUTE') AS anon,
+      has_function_privilege('authenticated', $1, 'EXECUTE') AS auth`, [SIGNATURE]);
+    expect(p).toEqual({ svc: true, anon: false, auth: false });
+  });
+
+  it('self-check fails (and rolls back) if the function were SECURITY DEFINER', async () => {
+    await q('BEGIN');
+    try {
+      await q(`ALTER FUNCTION ${SIGNATURE} SECURITY DEFINER`);
+      // CREATE OR REPLACE without SECURITY DEFINER restores INVOKER, so drive the check block alone.
+      const check = m510.slice(m510.lastIndexOf('DO $$'));
+      await expect(q(check)).rejects.toThrow(/510 SELF-CHECK FAILED: book_table_atomic must be SECURITY INVOKER/);
+    } finally { await q('ROLLBACK'); }
+  });
+
+  describe('Friday 18:00-02:00', () => {
+    it('23:30 + 90 min (ends 01:00) is allowed and stored on Friday 23:30; deposit unchanged', async () => {
+      const biz = await business();
+      const res = await resource(biz, { deposit: 5000 });
+      const r = await book(client, biz, res, FRI, '23:30');
+      expect(r.slot_available).toBe(true);
+      const { rows: [b] } = await q(`SELECT date::text, time::text, deposit_amount, deposit_status::text, status::text, total_amount, metadata FROM bookings WHERE id = $1`, [r.booking_id]);
+      expect(b).toEqual({ date: FRI, time: '23:30:00', deposit_amount: 5000, deposit_status: 'pending', status: 'pending', total_amount: 5000, metadata: { duration_minutes: 90 } });
+    });
+
+    it('Owner example: 23:00 + 90 min (ends 00:30) is allowed', async () => {
+      const biz = await business();
+      expect((await book(client, biz, await resource(biz), FRI, '23:00')).slot_available).toBe(true);
+    });
+
+    it('22:00 + 90 min (ends 23:30) is allowed', async () => {
+      const biz = await business();
+      expect((await book(client, biz, await resource(biz), FRI, '22:00')).slot_available).toBe(true);
+    });
+
+    it('ending exactly at closing (23:30 + 150 = 02:00) is allowed', async () => {
+      const biz = await business();
+      expect((await book(client, biz, await resource(biz, { duration: 150 }), FRI, '23:30')).slot_available).toBe(true);
+    });
+
+    it('23:30 + 180 min (ends 02:30, past the 02:00 close) is rejected with after_closing', async () => {
+      const biz = await business();
+      await expect(bookErr(biz, await resource(biz, { duration: 180 }), FRI, '23:30'))
+        .rejects.toThrow(/^after_closing:Reservation would extend past closing time 02:00$/);
+    });
+
+    it('01:00 start is rejected with before_opening when the table opens at 18:00', async () => {
+      const biz = await business();
+      await expect(bookErr(biz, await resource(biz, { from: '18:00' }), FRI, '01:00')).rejects.toThrow(/^before_opening:/);
+    });
+
+    it('unchanged from M476: with no table window the RPC does not check business opening for the start (01:00 + 90 on Friday)', async () => {
+      // Ends 02:30 on the same calendar day, so no midnight crossing; this path is exactly M476's.
+      const biz = await business();
+      expect((await book(client, biz, await resource(biz), FRI, '01:00')).slot_available).toBe(true);
+    });
+
+    it('a start of 24:00 is not before midnight and keeps past_midnight', async () => {
+      const biz = await business();
+      await expect(bookErr(biz, await resource(biz, { duration: 60 }), FRI, '24:00')).rejects.toThrow(/^past_midnight:/);
+    });
+
+    it("the table's own available_to is still enforced (after_closing)", async () => {
+      const biz = await business();
+      await expect(bookErr(biz, await resource(biz, { from: '18:00', to: '23:59' }), FRI, '23:30'))
+        .rejects.toThrow(/^after_closing:Reservation would extend past closing time 23:59:00$/);
+    });
+
+    it('seating_no_overnight is unchanged: a table window of 18:00-02:00 is still refused', async () => {
+      const biz = await business();
+      await expect(resource(biz, { from: '18:00', to: '02:00' })).rejects.toThrow(/seating_no_overnight/);
+    });
+  });
+
+  it('daytime day (Monday 09:00-17:00): 23:30 + 90 keeps past_midnight', async () => {
+    const biz = await business();
+    await expect(bookErr(biz, await resource(biz), MON, '23:30')).rejects.toThrow(/^past_midnight:/);
+  });
+
+  it('00:00 close (Tuesday 09:00-00:00): an end of exactly 24:00 is allowed, one minute more is not', async () => {
+    const biz = await business();
+    expect((await book(client, biz, await resource(biz, { duration: 60 }), TUE, '23:00')).slot_available).toBe(true);
+    await expect(bookErr(biz, await resource(biz, { duration: 61 }), TUE, '23:00')).rejects.toThrow(/^after_closing:/);
+  });
+
+  describe('closed or malformed hours keep past_midnight (fail closed)', () => {
+    const cases: Array<[string, unknown]> = [
+      ['closed day {closed:true}', { friday: { closed: true } }],
+      ['{open, close, closed:true}', { friday: { ...LATE, closed: true } }],
+      ['{open, close, is_open:false}', { friday: { ...LATE, is_open: false } }],
+      ['closed as string "false"', { friday: { ...LATE, closed: 'false' } }],
+      ['is_open as string "true"', { friday: { ...LATE, is_open: 'true' } }],
+      ['12-hour strings', { friday: { open: '6pm', close: '2am' } }],
+      ['single-digit hour', { friday: { open: '18:00', close: '2:00' } }],
+      ['24:00 close', { friday: { open: '18:00', close: '24:00' } }],
+      ['seconds included', { friday: { open: '18:00:00', close: '02:00:00' } }],
+      ['numbers', { friday: { open: 18, close: 2 } }],
+      ['missing close', { friday: { open: '18:00' } }],
+      ['day missing', { saturday: LATE }],
+      ['empty hours', {}],
+      ['day is a string', { friday: '18:00-02:00' }],
+      ['day is an array', { friday: ['18:00', '02:00'] }],
+      ['hours is an array', [LATE]],
+    ];
+    for (const [name, hours] of cases) {
+      it(name, async () => {
+        const biz = await business(hours);
+        await expect(bookErr(biz, await resource(biz), FRI, '23:30')).rejects.toThrow(/^past_midnight:/);
+      });
+    }
+  });
+
+  describe('overlap across D and D+1', () => {
+    it('D 23:30-01:00 booked first blocks D+1 00:15', async () => {
+      const biz = await business();
+      const res = await resource(biz);
+      expect((await book(client, biz, res, FRI, '23:30')).slot_available).toBe(true);
+      expect(await book(client, biz, res, SAT, '00:15')).toEqual({ booking_id: null, reference_code: null, slot_available: false });
+    });
+
+    it('D+1 00:15 booked first blocks D 23:30-01:00', async () => {
+      const biz = await business();
+      const res = await resource(biz);
+      expect((await book(client, biz, res, SAT, '00:15')).slot_available).toBe(true);
+      expect((await book(client, biz, res, FRI, '23:30')).slot_available).toBe(false);
+    });
+
+    it('D-1 direction: Thursday 23:30-01:00 blocks Friday 00:30', async () => {
+      const biz = await business();
+      const res = await resource(biz);
+      expect((await book(client, biz, res, THU, '23:30')).slot_available).toBe(true);
+      expect((await book(client, biz, res, FRI, '00:30')).slot_available).toBe(false);
+    });
+
+    it('back-to-back across midnight is allowed (D 23:30-01:00 then D+1 01:00)', async () => {
+      const biz = await business();
+      const res = await resource(biz);
+      expect((await book(client, biz, res, FRI, '23:30')).slot_available).toBe(true);
+      expect((await book(client, biz, res, SAT, '01:00')).slot_available).toBe(true);
+    });
+
+    it('a cancelled late booking does not block, and another table is independent', async () => {
+      const biz = await business();
+      const res = await resource(biz), other = await resource(biz);
+      const first = await book(client, biz, res, FRI, '23:30');
+      expect((await book(client, biz, other, SAT, '00:15')).slot_available).toBe(true);
+      await q(`UPDATE bookings SET status = 'cancelled' WHERE id = $1`, [first.booking_id]);
+      expect((await book(client, biz, res, SAT, '00:15')).slot_available).toBe(true);
+    });
+  });
+
+  it('concurrency: D 23:30 and D+1 00:15 on the same table in two sessions — exactly one wins', async () => {
+    const biz = await business();
+    const res = await resource(biz);
+    const a = new pg.Client({ connectionString: targetUrl }); await a.connect();
+    const b = new pg.Client({ connectionString: targetUrl }); await b.connect();
+    try {
+      await a.query('BEGIN'); await b.query('BEGIN');
+      const first = await book(a, biz, res, FRI, '23:30'); // holds the (business, resource) lock
+      expect(first.slot_available).toBe(true);
+      const bPid = (await b.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      const second = book(b, biz, res, SAT, '00:15');
+      // B must be waiting on the advisory lock even though its date differs
+      let waiting = false;
+      for (let i = 0; i < 50 && !waiting; i++) {
+        const { rows } = await q(`SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = $1`, [bPid]);
+        waiting = rows[0]?.wait_event_type === 'Lock' && rows[0]?.wait_event === 'advisory';
+        if (!waiting) await new Promise(r => setTimeout(r, 20));
+      }
+      expect(waiting).toBe(true);
+      await a.query('COMMIT');
+      expect((await second).slot_available).toBe(false);
+      await b.query('COMMIT');
+      const { rows } = await q(`SELECT date::text, time::text FROM bookings WHERE seating_resource_id = $1 AND status IN ('pending','confirmed','in_progress')`, [res.id]);
+      expect(rows).toEqual([{ date: FRI, time: '23:30:00' }]);
+    } finally {
+      await a.end(); await b.end();
+    }
+  });
+
+  it('idempotency: a retry of the same late selection returns the same booking', async () => {
+    const biz = await business();
+    const res = await resource(biz, { deposit: 2500 });
+    const session = randomUUID();
+    const first = await book(client, biz, res, FRI, '23:30', session);
+    const retry = await book(client, biz, res, FRI, '23:30', session);
+    expect(first.slot_available).toBe(true);
+    expect(retry).toEqual(first);
+    expect((await q(`SELECT count(*)::int AS n FROM bookings WHERE bot_session_id = $1`, [session])).rows[0].n).toBe(1);
+  });
+
+  it('service_role executes a late booking (INVOKER reads operating_hours with its own grants)', async () => {
+    const biz = await business();
+    const res = await resource(biz);
+    await q('BEGIN');
+    try {
+      await q('SET LOCAL ROLE service_role');
+      expect((await q('SELECT current_user AS u')).rows[0].u).toBe('service_role');
+      expect((await book(client, biz, res, FRI, '23:30')).slot_available).toBe(true);
+    } finally { await q('ROLLBACK'); }
+  });
+
+  for (const role of ['anon', 'authenticated']) {
+    it(`${role} is denied EXECUTE (SQLSTATE 42501)`, async () => {
+      const biz = await business();
+      const res = await resource(biz);
+      let code: string | undefined, message = '';
+      await q('BEGIN');
+      try {
+        await q(`SET LOCAL ROLE ${role}`);
+        expect((await q('SELECT current_user AS u')).rows[0].u).toBe(role);
+        await book(client, biz, res, FRI, '23:30');
+      } catch (err) {
+        code = (err as { code?: string }).code; message = (err as Error).message;
+      } finally { await q('ROLLBACK'); }
+      expect(code).toBe('42501');
+      expect(message).toMatch(/permission denied for function book_table_atomic/);
+    });
+  }
+
+  it('book_slot_atomic is untouched by 510 and still books (smoke)', async () => {
+    expect((await q(`SELECT md5(prosrc) AS h FROM pg_proc WHERE proname = 'book_slot_atomic'`)).rows[0].h).toBe(slotSrcBefore);
+    const biz = await business();
+    const { rows: [r] } = await q(
+      `SELECT * FROM book_slot_atomic($1, $2, NULL, NULL, $3::date, '19:00', 1, 1, 'scheduling', 0, 'none', 'confirmed', 'Svc', '+1', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)`,
+      [biz, userId, FRI],
+    );
+    expect(r.slot_available).toBe(true);
+    expect(r.booking_id).toBeTruthy();
+  });
+});
