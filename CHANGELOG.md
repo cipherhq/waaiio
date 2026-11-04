@@ -1,19 +1,17 @@
-## 2026-11-04 — Dashboard calendar: show every booking; full-day grids open at opening time
+## 2026-11-04 — Bot: add-on choices no longer carry across a capability switch (#859)
 
-Owner decisions (2026-11-04), from the #863 reviews.
-
-- **Show every booking.** The week and day views now stretch their hour rows to include every timed entry in view, even outside business hours (e.g. a 06:00 or 20:00 booking on the default 08:00–20:00 grid).
-  - Before: those entries were silently left out. A read-only production query on 2026-11-04 found 73 timed entries hidden across 9 businesses; one church had dozens of 06:00 and 20:00 bookings.
-  - New: `lib/calendar/hour-range.ts` `hoursIncludingEntries()`.
-- **Full-day grids open at opening time.** When the grid covers the whole day (some day runs past midnight), the week and day views open scrolled to the earliest opening hour instead of 12AM. `calendarHourRange()` now also returns `openHour` and `overnight`.
-- `app/dashboard/calendar/page.tsx`:
-  - the week view uses `weekHours`, built from the 7 days in view, and the day view uses `dayHours`;
-  - hour rows carry `data-hour`;
-  - the scroll boxes have refs, and an effect sets the scroll position after loading.
-  - Month view is unchanged.
-- Review fix: `calendarHourRange()` now skips days marked closed (`closed: true` or `is_open: false`). Before, a 22:00–06:00 restaurant whose closed days are stored as 00:00–00:00 got opening hour 0, so its grid still opened at 12AM. A read-only production check on 2026-11-04 found that only that restaurant's opening hour changes (0 → 22); no daytime business's grid changes.
-- Tests: 10 new `hour-range` cases: show-all stretching, malformed times, HH:MM:SS, openHour/overnight, and closed days including the production restaurant's hours. 58/58 pass with the existing calendar tests.
-- Could break: nothing in data. Calendars with out-of-hours bookings show more rows.
+- `lib/bot/flows/shared/capability-transition.ts`, `clearStaleCapabilityState`:
+  - Problem: it did not clear `_available_addons` or `_selected_addons`, and it did nothing when the previous capability was unknown. The saved-card "Menu" button sets `active_capability` to undefined. If the next service had no add-ons, `select_addons.skipIf` left the old choice in place, so the confirmation listed an add-on the customer had picked for an earlier booking (e.g. "➕ Add-ons: Cake") and `bookings.addons_snapshot` saved it.
+  - Fix: both add-on keys are now cleared on every capability switch, including when the previous capability is unknown. Only `select_addons` ever writes them, so a fresh session loses nothing.
+- Test: `lib/__tests__/capability-switch-addon-state.test.ts` (5; 4 fail on the previous code). The real `select_addons` and `confirmation` steps show no stale add-on after a switch.
+- Not changed:
+  - the fresh-session rule: with no previous capability, pre-filled service, date, time and party size are kept;
+  - same-capability calls (no-op);
+  - `_step_history` and back navigation;
+  - amounts: add-ons were never part of the charged total;
+  - payment and custody routes;
+  - the ordering flow, which uses its own cart add-on keys.
+- Could break: a customer who taps the saved-card "Menu" button and books again must re-pick add-ons. They were for the earlier booking.
 
 ## 2026-11-04 — Table reservations: "back" onto an old add-ons step no longer crashes
 
