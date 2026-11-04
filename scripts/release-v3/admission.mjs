@@ -12,7 +12,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fail, sha256, byteCompare, exactKeys, HASH, SHA } from './common.mjs';
 import { CATALOG_QUERY_SHA256, ORACLE, catalogMap, catalogAggregate, validateDelta, applyDeltas, compareCatalogs } from './catalog-oracle.mjs';
-import { LEDGER_QUERY_SHA256, ENVIRONMENTS } from './db-observe.mjs';
+import { LEDGER_QUERY_SHA256, ENVIRONMENTS, requireReplica } from './db-observe.mjs';
 
 const here = file => new URL(file, import.meta.url);
 const M430_NAMES = ['430_shared_number_tenant_isolation', 'shared_number_tenant_isolation'];
@@ -125,6 +125,7 @@ export function verifyM430Absent(observed, m430) {
 export function admitDatabase({ observation, lock, migrations, lockMap, m430 }) {
   const environment = observation.environment, lockEnv = lock.environments[environment];
   if (!lockEnv || observation.project_ref !== lockEnv.project_ref) fail('Observation is for the wrong project');
+  requireReplica(environment, observation);
   const ledger = verifyLedger(observation.ledger, lockEnv, migrations, environment);
   const catalog = verifyCatalog(observation.catalog, lockEnv, migrations, environment, lockMap);
   const result = { environment, project_ref: lockEnv.project_ref, ledger, catalog };
