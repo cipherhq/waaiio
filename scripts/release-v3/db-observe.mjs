@@ -95,10 +95,12 @@ export function parseObservation(text, { major = 17 } = {}) {
     replica_freshness: doc.replica_freshness ?? null };
 }
 
-// Longest accepted gap since the replica last replayed a primary commit. The
-// production primary commits at least hourly (pg_cron); quiet periods make
-// prepare stop until the next commit, which is fail-closed. Owner-set value.
-export const REPLICA_MAX_REPLAY_AGE_SECONDS = 15 * 60;
+// Longest accepted gap since the replica last replayed a primary commit.
+// Owner decision 2026-11-04: 65 minutes. The production primary commits at
+// least hourly (pg_cron), so a healthy replica is never refused in quiet
+// periods; a stall is caught within about an hour. The receive = replay check
+// still applies on every read.
+export const REPLICA_MAX_REPLAY_AGE_SECONDS = 65 * 60;
 // Production must be observed on a replica that carries the reviewed guard.
 export function requireReplica(environment, observation) {
   if (!ENVIRONMENTS[environment]?.replica) return true;
