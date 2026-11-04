@@ -10,6 +10,54 @@
 - Runs no SQL and changes no setting.
 - Could break: nothing yet. A production observation made on the primary, or without the guard, now stops the gate (intended).
 
+## 2026-11-04 — Ace reads menus and product photos (Setup Guide)
+
+- Owner decisions (2026-11-04):
+  1. Ace reads menus / price lists into items, and a photo of a single product becomes that product's picture with a suggested name, description and category (price only if visible). The owner reviews everything; nothing is written until Confirm.
+  2. Claude Sonnet reads images.
+  3. Each image counts toward the Ace allowance (`ace_setup`), like a text message.
+  4. An item with no visible price cannot be created until the owner types a price.
+- `lib/ai-setup/image-catalog.ts` (new): pinned model `ACE_IMAGE_MODEL = 'claude-sonnet-4-5-20250929'` (the old id `claude-sonnet-4-5-20241022` does not exist in the SDK's model list), prompts for `menu` and `product_photo` modes (image text is treated as data), and strict output validation: ≤100 items (1 for a product photo), name ≤200, category ≤100, description ≤1000, URLs/markup/control characters stripped, `kind` is `product` or `service`, price a finite number ≥0 kept to 2 decimal places (e.g. 12.5 stays 12.5) or `null` when not visible.
+- `app/api/ai-setup/parse-image/route.ts`: order is now auth → owner check → rate limit (`ai-parse:{business}:{user}`, 10/hour; previously keyed by business only and consumed before the owner check) → Ace quota (`checkAIFeature`, 403 with the reason when used up) → real-bytes check (`validateFileSignature`) → `sanitizeImage` re-encode to JPEG, long edge ≤1568 → Sonnet (no tools). Upload cap 4MB (under Vercel's body limit). Usage counting: see the review follow-ups below (every checked image counts, using the service client). `maxDuration = 60`. Model failures return 502.
+- `lib/services/payload-builders.ts`: new `buildAiSetupProductRow` and `isAiSetupProductImageUrl`. AI Setup service and product rows now require a price (missing/null → rejected). **Services only**: price and deposit are rounded to whole numbers, because `services.price` and `services.deposit_amount` are INTEGER (a decimal previously failed the whole insert). **Products** keep decimals, rounded to 2 decimal places (12.50 stays 12.5), because `products.price` is `numeric` in production (read-only `information_schema` check by the coordinator, 2026-11-04). Schema drift: the repo's migrations still say `products.price INTEGER` (migration 002, never altered in `supabase/migrations`), so the repo does not match production for this column. Clamping (0–99,999,999, name 200, category 100, description 1000) and the #376 deposit ≤ price rule are unchanged.
+- `app/api/ai-setup/apply/route.ts`: each item is built separately, so one bad item no longer sinks the batch (or, for a deposit above price, the whole request with a 500). Item errors and failed inserts are returned per section with `success: false` (HTTP 207); raw database messages stay in the server log. `image_url` is accepted only for `{SUPABASE_URL}/storage/v1/object/public/business-documents/{business_id}/products/{file}` (other businesses' files, other hosts, other folders, traversal and query strings are rejected).
+- `app/dashboard/setup-assistant/page.tsx`: photos are downscaled in the browser (canvas → JPEG, long edge ≤1600, `lib/ai-setup/client-image.ts`); explicit accept list; several photos at once, read one at a time; new "Photo of a product" option (shown when the business sells products) that keeps the photo in the browser and uploads it through `/api/products/upload-image` only after Confirm (menu photos are never stored); items routed by `kind` when the business offers both; server error messages shown; items without a price are highlighted and Confirm stays disabled until priced; any apply error is shown and "Setup Complete!" appears only on full success. Retrying is safe: created names are skipped as duplicates and an uploaded photo is not re-uploaded.
+- Tests: `app/api/ai-setup/__tests__/parse-image-route.test.ts` (20), `app/api/ai-setup/__tests__/apply-route.test.ts` (19; includes the same 12.50 price staying 12.5 as a product and becoming 13 as a service), `app/dashboard/setup-assistant/__tests__/setup-assistant-images.test.tsx` (10; includes the rounding note shown only for services).
+- Unchanged: payment, fee, payout and capability-gating code; `sanitizeImage` and `validateFileSignature` defaults; the upload-image route; churches/NGOs still have no image upload.
+- Could break: a service price with decimals (e.g. 12.50) is now saved as 13 instead of failing; the review screen says so for services only. Product prices with decimals are saved to 2 decimal places, which relies on `products.price` being `numeric` (true in production; a database built only from repo migrations has INTEGER and would reject a decimal product price). AI Setup items sent without a price are now rejected instead of saved as 0 (the page always sends a number for typed/manual items). A photo uploaded at Confirm stays in storage if the apply step then fails. Browsers that cannot decode HEIC (most non-Safari) ask for a JPEG/PNG instead.
+- Review 1 follow-ups:
+  - The usage count now follows Owner decision 3. A checked image counts before Ace is called, even if nothing is read or the call fails. Images that fail the file checks don't count.
+  - A cut-off reply from Ace (output limit reached) gets a "menu too long, split it" message. The Ace client is bounded to a 50s timeout and 1 retry, so calls finish inside the 60s limit.
+  - Prices:
+    - Ace prices above 99,999,999 come back blank ("price needed") instead of capped.
+    - At save time, negative prices and non-plain text prices (for example "0x10" or "1e3") are rejected per item instead of saved as 0 or as a different number.
+    - The existing 99,999,999 cap is unchanged.
+  - Product photo URLs must end in .jpg, .jpeg, .png or .webp, which are the only types the upload route writes.
+  - Transparent images get a white background before conversion to JPEG instead of black.
+  - If the duplicate check can't read existing items, that section saves nothing and reports an error, instead of risking duplicates.
+- Review 2 follow-ups:
+  - Ace image usage is now recorded.
+    - Before: `incrementAIUsage` ran with the signed-in user's client. `ai_usage` writes and `increment_ai_usage` are service-role only (migration 351), and the error was ignored, so nothing was counted (production `ace_setup_count` was 0 in every month).
+    - Now: parse-image counts with the service client.
+    - `incrementAIUsage` now calls the atomic RPC directly and returns whether the count was saved; voice and translation callers ignore the result as before.
+    - If an image can't be counted, it is refused (503) and not read.
+  - The Ace chat route has the same counting problem and is unchanged here, pending an Owner decision.
+  - The Ace client makes one attempt with a 55s timeout. The SDK timeout applies per attempt, so the earlier 50s plus 1 retry could exceed `maxDuration` 60.
+  - `sanitizeImage` has a new optional `flattenBackground` option, off by default. parse-image uses white, so transparent images aren't black even when the browser can't prepare the photo.
+  - The duplicate check now reads the business's existing names page by page and compares them ignoring case. Names with quote marks, brackets or commas no longer break it, and the same name twice in one batch is skipped.
+  - Opening-hours and greeting save errors return generic messages; the database detail stays in the server log.
+  - Test: `lib/bot/__tests__/ai-usage-increment.test.ts` (3).
+- Review 3 follow-ups:
+  - The duplicate check compares names as they will be saved: trimmed, cut to 200 characters, and ignoring case. A product name over 200 characters is no longer saved twice on retry.
+  - Paging moves on by the number of rows returned and stops on an empty page, so a lower server row cap can't end the read early.
+  - Tests cover more than 1000 existing names and the over-200-character name.
+- Owner decisions (2026-11-04, after review 2):
+  - Chat-route counting goes in a separate PR, after the limits are decided.
+  - An image that can't be counted is refused, with a retry message.
+  - Pasted-text items need a price, the same as photos.
+- `app/dashboard/setup-assistant/page.tsx`: pasted-text items from Ace without a price (missing, blank or not a number) are marked "price needed" and block Confirm, instead of being saved as Free. A price of 0 from Ace is kept. Image and text items share `aceItemPrice`. Test: 1 new rendered case.
+- Could break: until the chat route is decided, only images count. Free plans allow 3 Ace uses a month, so a free business can read 3 images a month.
+
 ## 2026-11-03 — Release Process V3: reusable release gate (schema 8)
 
 - Owner-approved plan (Issue #843, `RELEASE_GATE_V2.md` §9). One reusable gate replaces a new gate profile per release. Docs: `docs/RELEASE_V3_GATE.md`.
