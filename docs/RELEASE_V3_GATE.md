@@ -6,7 +6,7 @@ The §9.1 non-negotiables are unchanged and enforced. This gate never applies SQ
 
 ## How a release runs
 
-0. **Collect changelog fragments.** If `changelog/unreleased/` has fragments, the orchestrating session opens a collect PR (`node scripts/changelog/collect.mjs collect`). It is docs-only, needs one review, and merges before prepare. Skip this step when there are no fragments (see `changelog/README.md`).
+0. **Collect changelog fragments.** After the last PR for this release has merged, and immediately before prepare: if `changelog/unreleased/` has fragments, the orchestrating session opens a collect PR (`node scripts/changelog/collect.mjs collect`). It is docs-only and needs one review. Its merge commit becomes the prepare target, so wait for green push-to-main CI and for staging to serve it. Skip this step when there are no fragments (see `changelog/README.md`).
 1. **Merge.** PRs merge to `main` as today: exact-head CI, the independent review(s) at the exact head, Owner merge approval. Each reviewer's comment must contain one record line (format below), and records the MCP and Graphify checks it ran (§9.1.10). For governance or agent-instruction files the reviewer of record is the CTO review (§9.3). Staging auto-deploys `main`.
 2. **Database first.** A migration ships in its own PR with its catalog delta (see "Migrations"). It is applied to staging, then production, each with its own Owner approval, as one statement holding the whole file, so the ledger row's single statement is the exact file bytes.
 3. **Prepare.** The Owner dispatches **Release V3 prepare** (`release-prepare.yml`) on `main`. Optional inputs: `target_sha` (default: this `main` commit) and `raise_lane: full`. It deploys nothing. It:

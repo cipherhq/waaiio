@@ -47,6 +47,9 @@ describe('check', () => {
     ['hyphen instead of em dash', '2026-11-04-x.md', '## 2026-11-04 - X\n\n- y', /first line must be/],
     ['date mismatch', '2026-11-04-x.md', '## 2026-11-03 — X\n\n- y', /does not match/],
     ['heading only', '2026-11-04-x.md', '## 2026-11-04 — X\n\n', /no entry text/],
+    ['leftover ======= line', '2026-11-04-x.md', '## 2026-11-04 — X\n\n- y\n=======\n', /merge-conflict/],
+    ['leftover <<<<<<< line', '2026-11-04-x.md', '## 2026-11-04 — X\n\n<<<<<<< HEAD\n- y', /merge-conflict/],
+    ['leftover >>>>>>> line', '2026-11-04-x.md', '## 2026-11-04 — X\n\n- y\n>>>>>>> origin/main', /merge-conflict/],
   ])('fails for %s', (_label, name, text, msg) => {
     frag(name, text);
     const { errors } = readFragments(root);
@@ -87,6 +90,18 @@ describe('command line (real node process)', () => {
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('bad.md');
     } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+  it('checks the repo it lives in even when run from a subfolder', () => {
+    const base = cliRoot('subdir-');
+    try {
+      const r = spawnSync(process.execPath, [join('changelog', 'collect.mjs'), 'check'], { cwd: join(base, 'scripts'), encoding: 'utf8' });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('bad.md');
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+  it('a markdown horizontal rule that is not a conflict line is fine', () => {
+    frag('2026-11-04-x.md', '## 2026-11-04 — X\n\n- y\n\n---\n\n- z');
+    expect(readFragments(root).errors).toEqual([]);
   });
   it('fails on a bad fragment when run through a symlinked path', () => {
     const base = cliRoot('real-');

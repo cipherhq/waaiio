@@ -8,7 +8,7 @@ head and invalidated its exact-head review approvals.
 
 ## Adding an entry (every PR)
 
-Create `changelog/unreleased/YYYY-MM-DD-<branch-name>.md`. Use the PR's branch name with `/` replaced by `-`, in lowercase. For example, for branch `claude/calendar-fix` the file is `2026-11-04-claude-calendar-fix.md`. Branch names are unique, so two PRs never add the same file.
+Create `changelog/unreleased/YYYY-MM-DD-<branch-name>.md`. Use the PR's branch name in lowercase, with every character other than letters, digits and `-` (for example `/`, `_` or `.`) replaced by `-`. For example, for branch `claude/calendar-fix` the file is `2026-11-04-claude-calendar-fix.md`. Branch names are unique, so two PRs never add the same file.
 
 ```markdown
 ## 2026-11-04 — Short title of the change
@@ -24,6 +24,7 @@ The rules, checked in CI by `node scripts/changelog/collect.mjs check` (job
 
 - The file name is `YYYY-MM-DD-<slug>.md`, where the slug uses lowercase
   letters, digits and `-`.
+- It has no leftover merge-conflict lines (`<<<<<<<`, `=======`, `>>>>>>>`).
 - It is a regular file, not a folder or a symlink. Dotfiles such as
   `.DS_Store` are ignored.
 - The first line is `## YYYY-MM-DD — <title>`, using an em dash, with the same
@@ -34,7 +35,7 @@ Do not edit `CHANGELOG.md` directly in a feature PR.
 
 ## Collecting (before every Release V3 prepare)
 
-The orchestrating session opens a small collect PR as step 0 of every release.
+After the last PR for a release has merged, and immediately before prepare, the orchestrating session opens a small collect PR (release step 0).
 It merges before prepare, because nothing may merge between prepare and deploy.
 It is skipped when `changelog/unreleased/` has no fragments. The collect PR is
 docs-only, so it needs one review.

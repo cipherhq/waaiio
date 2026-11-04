@@ -17,14 +17,16 @@
  *   - a regular file (not a symlink or folder); dotfiles such as .DS_Store are ignored
  *   - first line: "## YYYY-MM-DD — <title>" with the same date as the file name
  *   - at least one non-empty line after the heading
+ *   - no leftover merge-conflict lines (<<<<<<<, =======, >>>>>>>)
  */
 import { readdirSync, readFileSync, writeFileSync, unlinkSync, existsSync, lstatSync, renameSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 export const FRAGMENT_NAME = /^(\d{4}-\d{2}-\d{2})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
 const HEADING = /^## (\d{4}-\d{2}-\d{2}) — \S.*$/;
 const IGNORED = new Set(['README.md']);
+const CONFLICT_MARKER = /^(<<<<<<<|=======|>>>>>>>)( |$)/m;
 
 function isRealDate(ymd) {
   const d = new Date(`${ymd}T00:00:00Z`);
@@ -66,6 +68,10 @@ export function readFragments(root) {
     }
     if (!rest.some((line) => line.trim() !== '')) {
       errors.push(`${file}: has a heading but no entry text`);
+      continue;
+    }
+    if (CONFLICT_MARKER.test(text)) {
+      errors.push(`${file}: contains a leftover merge-conflict line (<<<<<<<, ======= or >>>>>>>)`);
       continue;
     }
     fragments.push({ file, date, text });
@@ -128,5 +134,6 @@ export function run(root, args) {
 // Compare as file URLs of the real path, so a path with spaces, unicode or a
 // symlink still runs the CLI (a mismatch would silently skip the check).
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
-  process.exit(run(process.cwd(), process.argv.slice(2)));
+  // The repo root is two folders up from this script, wherever it is run from.
+  process.exit(run(fileURLToPath(new URL('../..', import.meta.url)), process.argv.slice(2)));
 }
