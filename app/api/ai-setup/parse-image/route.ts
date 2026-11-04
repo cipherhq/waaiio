@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import Anthropic from '@anthropic-ai/sdk';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -23,8 +24,8 @@ export const maxDuration = 60;
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic {
-  // Bounded so a slow call (plus one retry) finishes inside maxDuration.
-  if (!client) client = new Anthropic({ timeout: 50_000, maxRetries: 1 });
+  // One attempt, bounded so it finishes inside maxDuration (the SDK timeout is per attempt).
+  if (!client) client = new Anthropic({ timeout: 55_000, maxRetries: 0 });
   return client;
 }
 
@@ -105,6 +106,8 @@ export async function POST(request: NextRequest) {
       maxHeight: ACE_IMAGE_MAX_EDGE,
       format: 'jpeg',
       quality: 85,
+      // JPEG has no transparency: transparent areas become white, not black.
+      flattenBackground: '#ffffff',
     });
     jpegBase64 = sanitized.buffer.toString('base64');
   } catch {
@@ -112,7 +115,12 @@ export async function POST(request: NextRequest) {
   }
 
   // Owner decision: every checked image counts, even if nothing is read.
-  await incrementAIUsage(supabase, businessId, 'ace_setup');
+  // ai_usage is written with the service client (service-role only). If the
+  // count cannot be saved, the image is not read, so no image goes uncounted.
+  const counted = await incrementAIUsage(createServiceClient(), businessId, 'ace_setup');
+  if (!counted) {
+    return NextResponse.json({ error: 'Ace is unavailable right now. Please try again in a moment.' }, { status: 503 });
+  }
 
   let text: string;
   let truncated = false;

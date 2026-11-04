@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   selectError: {} as Record<string, string | undefined>,
   inserts: {} as Record<string, Array<Record<string, unknown>>>,
   serviceFromCalls: 0,
+  ranges: [] as Array<[string, number, number]>,
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -45,6 +46,7 @@ vi.mock('@/lib/supabase/service', () => ({
       let rows: Array<Record<string, unknown>> = [];
       const b: Record<string, unknown> = {};
       for (const m of ['select', 'eq', 'in', 'order', 'limit']) b[m] = () => b;
+      b.range = (from: number, to: number) => { h.ranges.push([table, from, to]); return b; };
       b.insert = (r: Array<Record<string, unknown>>) => {
         op = 'insert';
         rows = r;
@@ -99,6 +101,7 @@ beforeEach(() => {
   h.selectError = {};
   h.inserts = {};
   h.serviceFromCalls = 0;
+  h.ranges = [];
 });
 
 afterEach(() => {
@@ -192,6 +195,20 @@ describe('products', () => {
     expect(body.success).toBe(true);
     expect(body.results.products).toEqual({ created: 1, skipped: 1 });
     expect(h.inserts.products.map((r) => r.name)).toEqual(['Fried Rice']);
+  });
+
+  it('treats names with quotes, brackets and commas as ordinary names, case-insensitively', async () => {
+    h.existing.products = ['Pizza (12")'];
+    const body = await (await post({ products: [
+      { name: 'pizza (12")', price: 15 },
+      { name: 'Wings, spicy', price: 9 },
+      { name: 'WINGS, SPICY', price: 9 },
+    ] })).json();
+    expect(body.success).toBe(true);
+    expect(body.results.products).toEqual({ created: 1, skipped: 2 });
+    expect(h.inserts.products.map((r) => r.name)).toEqual(['Wings, spicy']);
+    // Existing names are read by business and page, not by a name filter
+    expect(h.ranges).toEqual([['products', 0, 999]]);
   });
 
   it("accepts this business's own uploaded product photo", async () => {

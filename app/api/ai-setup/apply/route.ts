@@ -26,6 +26,45 @@ interface ItemError { name: string; error: string }
 const MAX_ITEMS_PER_SECTION = 500;
 
 /** Build each row independently so one bad item never sinks the batch. */
+/**
+ * Lower-cased names this business already has, read page by page so any
+ * name (quotes, commas, brackets) and any catalog size works. null when a
+ * page cannot be read; the caller then saves nothing (fail closed).
+ */
+async function loadExistingNames(
+  service: ReturnType<typeof createServiceClient>,
+  table: 'services' | 'products',
+  businessId: string,
+): Promise<Set<string> | null> {
+  const names = new Set<string>();
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await service
+      .from(table)
+      .select('id, name')
+      .eq('business_id', businessId)
+      .order('id')
+      .range(from, from + pageSize - 1);
+    if (error) {
+      logger.error(`[AI-SETUP] ${table} duplicate check error:`, error.message);
+      return null;
+    }
+    for (const row of data || []) names.add(String(row.name ?? '').trim().toLowerCase());
+    if (!data || data.length < pageSize) return names;
+  }
+}
+
+/** Items whose name is not already saved and not repeated earlier in this batch (case-insensitive). */
+function keepNewNames<T extends { name?: unknown }>(items: T[], existing: Set<string>): T[] {
+  const seen = new Set(existing);
+  return items.filter((item) => {
+    const key = String(item.name).trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function buildRows<T, R>(items: T[], nameOf: (item: T) => string, build: (item: T) => R) {
   const rows: R[] = [];
   const errors: ItemError[] = [];
@@ -93,19 +132,12 @@ export async function POST(request: NextRequest) {
     if (services?.length) {
       // Check for existing services with same names
       const validServices = services.filter((s) => s.name && String(s.name).trim().length > 0 && String(s.name).length <= 200);
-      const { data: existingServices, error: existingServicesError } = await service
-        .from('services')
-        .select('name')
-        .eq('business_id', business_id)
-        .in('name', validServices.map(s => String(s.name).trim()));
-
-      const existingServiceNames = new Set((existingServices || []).map(s => s.name.toLowerCase()));
-      const newServices = validServices.filter(s => !existingServiceNames.has(String(s.name).trim().toLowerCase()));
+      const existingServiceNames = await loadExistingNames(service, 'services', business_id);
+      const newServices = existingServiceNames ? keepNewNames(validServices, existingServiceNames) : [];
       const skippedServices = validServices.length - newServices.length;
 
-      if (existingServicesError) {
+      if (!existingServiceNames) {
         // Fail closed: without the duplicate check, saving could create copies.
-        logger.error('[AI-SETUP] Services duplicate check error:', existingServicesError.message);
         results.services = { created: 0, skipped: 0, error: 'Could not check for items you already have, so nothing was saved. Please try again.' };
       } else if (newServices.length > 0) {
         // Get current max sort_order
@@ -147,19 +179,12 @@ export async function POST(request: NextRequest) {
     // 2. Create products (with duplicate detection)
     if (products?.length) {
       const validProducts = products.filter(p => p.name && String(p.name).trim().length > 0);
-      const { data: existingProducts, error: existingProductsError } = await service
-        .from('products')
-        .select('name')
-        .eq('business_id', business_id)
-        .in('name', validProducts.map(p => String(p.name).trim()));
-
-      const existingProductNames = new Set((existingProducts || []).map(p => p.name.toLowerCase()));
-      const newProducts = validProducts.filter(p => !existingProductNames.has(String(p.name).trim().toLowerCase()));
+      const existingProductNames = await loadExistingNames(service, 'products', business_id);
+      const newProducts = existingProductNames ? keepNewNames(validProducts, existingProductNames) : [];
       const skippedProducts = validProducts.length - newProducts.length;
 
-      if (existingProductsError) {
+      if (!existingProductNames) {
         // Fail closed: without the duplicate check, saving could create copies.
-        logger.error('[AI-SETUP] Products duplicate check error:', existingProductsError.message);
         results.products = { created: 0, skipped: 0, error: 'Could not check for items you already have, so nothing was saved. Please try again.' };
       } else if (newProducts.length > 0) {
         const { data: lastProduct } = await service
@@ -205,7 +230,7 @@ export async function POST(request: NextRequest) {
         .update({ operating_hours })
         .eq('id', business_id);
       if (error) logger.error('[AI-SETUP] Hours update error:', error.message);
-      results.operating_hours = { updated: !error, error: error?.message };
+      results.operating_hours = { updated: !error, ...(error ? { error: 'Could not save opening hours. Please try again.' } : {}) };
     }
 
     // 4. Update bot greeting
@@ -215,7 +240,7 @@ export async function POST(request: NextRequest) {
         .update({ bot_greeting: greeting })
         .eq('business_id', business_id);
       if (error) logger.error('[AI-SETUP] Greeting update error:', error.message);
-      results.greeting = { updated: !error, error: error?.message };
+      results.greeting = { updated: !error, ...(error ? { error: 'Could not save the greeting. Please try again.' } : {}) };
     }
 
     // 5. Update capabilities — enforce tier gating

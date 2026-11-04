@@ -2,7 +2,8 @@
  * Ace image reading — executable handler tests for POST /api/ai-setup/parse-image.
  *
  * Invokes the real route handler. Anthropic, Supabase auth/ownership, rate
- * limiting and the Ace quota helpers are mocked; file-signature validation and
+ * limiting and the Ace quota helpers are mocked (incrementAIUsage itself is
+ * tested in lib/bot/__tests__/ai-usage-increment.test.ts); file-signature validation and
  * the sharp re-encode (sanitizeImage) run for real.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +18,11 @@ const h = vi.hoisted(() => ({
   checkAIFeature: vi.fn(),
   incrementAIUsage: vi.fn(),
   create: vi.fn(),
+  serviceClient: { kind: 'service-client' },
+}));
+
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: () => h.serviceClient,
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -87,7 +93,7 @@ beforeEach(async () => {
   h.ownerLookups = [];
   h.rateLimit.mockReset().mockResolvedValue(null);
   h.checkAIFeature.mockReset().mockResolvedValue({ allowed: true });
-  h.incrementAIUsage.mockReset().mockResolvedValue(undefined);
+  h.incrementAIUsage.mockReset().mockResolvedValue(true);
   h.create.mockReset().mockResolvedValue(modelReply({ items: [{ kind: 'product', name: 'Jollof Rice', price: 2500 }] }));
 });
 
@@ -184,6 +190,14 @@ describe('model call', () => {
     expect(Math.max(meta.width!, meta.height!)).toBeLessThanOrEqual(1568);
   });
 
+  it('turns transparent areas white, not black', async () => {
+    const transparent = await sharp({ create: { width: 20, height: 20, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
+    await POST(request({ bytes: transparent }));
+    const sent = Buffer.from(h.create.mock.calls[0][0].messages[0].content[0].source.data, 'base64');
+    const { data } = await sharp(sent).raw().toBuffer({ resolveWithObject: true });
+    expect(Math.min(data[0], data[1], data[2])).toBeGreaterThan(240);
+  });
+
   it('502 when the model call fails; the checked image still counts (Owner decision)', async () => {
     h.create.mockRejectedValue(new Error('overloaded'));
     const res = await POST(request());
@@ -193,10 +207,23 @@ describe('model call', () => {
 
   it('counts the image before the model is called', async () => {
     const order: string[] = [];
-    h.incrementAIUsage.mockImplementation(async () => { order.push('count'); });
+    h.incrementAIUsage.mockImplementation(async () => { order.push('count'); return true; });
     h.create.mockImplementation(async () => { order.push('model'); return modelReply({ items: [] }); });
     await POST(request());
     expect(order).toEqual(['count', 'model']);
+  });
+
+  it('counts with the service client (ai_usage writes are service-role only)', async () => {
+    await POST(request());
+    expect(h.incrementAIUsage).toHaveBeenCalledWith(h.serviceClient, 'biz-1', 'ace_setup');
+  });
+
+  it('503 and no model call when the image cannot be counted', async () => {
+    h.incrementAIUsage.mockResolvedValue(false);
+    const res = await POST(request());
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/try again/i);
+    expect(h.create).not.toHaveBeenCalled();
   });
 
   it('does not count an image that fails the byte checks', async () => {

@@ -23,6 +23,19 @@
   - Product photo URLs must end in .jpg, .jpeg, .png or .webp, which are the only types the upload route writes.
   - Transparent images get a white background before conversion to JPEG instead of black.
   - If the duplicate check can't read existing items, that section saves nothing and reports an error, instead of risking duplicates.
+- Review 2 follow-ups:
+  - Ace image usage is now recorded.
+    - Before: `incrementAIUsage` ran with the signed-in user's client. `ai_usage` writes and `increment_ai_usage` are service-role only (migration 351), and the error was ignored, so nothing was counted (production `ace_setup_count` was 0 in every month).
+    - Now: parse-image counts with the service client.
+    - `incrementAIUsage` now calls the atomic RPC directly and returns whether the count was saved; voice and translation callers ignore the result as before.
+    - If an image can't be counted, it is refused (503) and not read.
+  - The Ace chat route has the same counting problem and is unchanged here, pending an Owner decision.
+  - The Ace client makes one attempt with a 55s timeout. The SDK timeout applies per attempt, so the earlier 50s plus 1 retry could exceed `maxDuration` 60.
+  - `sanitizeImage` has a new optional `flattenBackground` option, off by default. parse-image uses white, so transparent images aren't black even when the browser can't prepare the photo.
+  - The duplicate check now reads the business's existing names page by page and compares them ignoring case. Names with quote marks, brackets or commas no longer break it, and the same name twice in one batch is skipped.
+  - Opening-hours and greeting save errors return generic messages; the database detail stays in the server log.
+  - Test: `lib/bot/__tests__/ai-usage-increment.test.ts` (3).
+- Could break: until the chat route is decided, only images count. Free plans allow 3 Ace uses a month, so a free business can read 3 images a month.
 
 ## 2026-11-04 — WhatsApp link on the overview, and the own-number rule in plain words
 
