@@ -182,7 +182,10 @@ BEGIN
  RETURN FOUND;
 END $$;
 -- Explicit allowlist for every new privileged function; trigger function is not a public API.
-REVOKE ALL ON FUNCTION public.capture_merchant_notification() FROM PUBLIC,anon,authenticated;
+-- service_role is revoked explicitly too (Owner decision 2026-11-04, option A): the final ACL is
+-- postgres-only whatever the database's default privileges are, so staging and production match.
+-- Triggers still fire for every role: EXECUTE is checked when the trigger is created, not when it fires.
+REVOKE ALL ON FUNCTION public.capture_merchant_notification() FROM PUBLIC,anon,authenticated,service_role;
 REVOKE ALL ON FUNCTION public.create_merchant_notification_recipient(uuid,text,text,text,text[]),public.issue_merchant_notification_invitation(uuid,uuid,text,uuid),public.consume_merchant_notification_invitation(text,text,text,uuid),public.revoke_merchant_notification_whatsapp(text,uuid),public.claim_merchant_notification(),public.reserve_merchant_notification_allowance(uuid),public.fence_merchant_notification(uuid,uuid),public.finish_merchant_notification(uuid,uuid,text,text,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.create_merchant_notification_recipient(uuid,text,text,text,text[]),public.issue_merchant_notification_invitation(uuid,uuid,text,uuid),public.consume_merchant_notification_invitation(text,text,text,uuid),public.revoke_merchant_notification_whatsapp(text,uuid),public.claim_merchant_notification(),public.reserve_merchant_notification_allowance(uuid),public.fence_merchant_notification(uuid,uuid),public.finish_merchant_notification(uuid,uuid,text,text,text) TO service_role;
 -- Verify the final catalog state before committing any migration changes.
@@ -212,6 +215,9 @@ BEGIN
   END IF;
   IF signature<>'public.capture_merchant_notification()' AND NOT has_function_privilege('service_role',function_id,'EXECUTE') THEN
    RAISE EXCEPTION 'M511 verification FAILED: service execution for %',signature;
+  END IF;
+  IF signature='public.capture_merchant_notification()' AND has_function_privilege('service_role',function_id,'EXECUTE') THEN
+   RAISE EXCEPTION 'M511 verification FAILED: trigger function executable by service_role %',signature;
   END IF;
  END LOOP;
  FOREACH table_name IN ARRAY ARRAY['merchant_notification_recipients','merchant_notification_invitations','merchant_notification_deliveries'] LOOP

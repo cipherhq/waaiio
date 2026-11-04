@@ -37,6 +37,10 @@ suite('M511 merchant notification transaction and tenant boundaries',()=>{
   GRANT SELECT ON businesses TO authenticated;
   INSERT INTO businesses(id,owner_id) VALUES('${B}','${OWNER}'),('${OTHER}','20000000-0000-0000-0000-000000000002');
   INSERT INTO whatsapp_channels(id) VALUES('${CHANNEL}');`);
+  // Production's default privileges (scripts/release-v3/oracle-supabase-defaults.sql): every new
+  // function in public is executable by anon, authenticated and service_role unless revoked.
+  // Applying 511-513 under them proves each final ACL comes from explicit grants, not defaults.
+  await sql('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon,authenticated,service_role');
   await sql(readFileSync('supabase/migrations/511_merchant_notifications.sql','utf8'));
   await sql(readFileSync('supabase/migrations/512_merchant_notification_invitation_lifetime.sql','utf8'));
   await sql(readFileSync('supabase/migrations/513_merchant_notification_pre_emission_recovery.sql','utf8'));
@@ -107,6 +111,7 @@ suite('M511 merchant notification transaction and tenant boundaries',()=>{
   ['anon execution', 'GRANT EXECUTE ON FUNCTION public.claim_merchant_notification() TO anon', 'public execution'],
   ['authenticated execution', 'GRANT EXECUTE ON FUNCTION public.claim_merchant_notification() TO authenticated', 'public execution'],
   ['missing service execution', 'REVOKE EXECUTE ON FUNCTION public.claim_merchant_notification() FROM service_role', 'service execution'],
+  ['service_role on the trigger function', 'GRANT EXECUTE ON FUNCTION public.capture_merchant_notification() TO service_role', 'trigger function executable by service_role'],
   ['missing function', 'DROP FUNCTION public.claim_merchant_notification()', 'missing function'],
   ['disabled RLS', 'ALTER TABLE public.merchant_notification_invitations DISABLE ROW LEVEL SECURITY', 'RLS'],
  ])('migration verifier aborts and rolls back %s',async(_name,tamper,reason)=>{
@@ -155,6 +160,16 @@ suite('M511 merchant notification transaction and tenant boundaries',()=>{
   await sql("UPDATE merchant_notification_invitations SET expires_at=now()+interval '1 hour'");
   await sql("UPDATE merchant_notification_recipients SET address='changed@example.com' WHERE id=$1",[id]);
   expect((await sql("SELECT consume_merchant_notification_invitation($1,'email') r",[h])).rows[0].r.verified).toBe(false);
+ });
+ it('capture trigger function is postgres-only (Owner option A) and still fires for service_role writes',async()=>{
+  const acl=await sql(`SELECT has_function_privilege('service_role','capture_merchant_notification()','EXECUTE') s,has_function_privilege('anon','capture_merchant_notification()','EXECUTE') a,has_function_privilege('authenticated','capture_merchant_notification()','EXECUTE') u,(SELECT proacl::text FROM pg_proc WHERE oid='public.capture_merchant_notification()'::regprocedure) acl`);
+  expect(acl.rows[0]).toMatchObject({s:false,a:false,u:false});
+  expect(acl.rows[0].acl).not.toMatch(/service_role|anon|authenticated|^\{=|,=/);
+  await verify(await recipient());
+  await sql('GRANT INSERT,SELECT ON orders TO service_role');
+  try {await sql('SET ROLE service_role');await order();}
+  finally {await sql('RESET ROLE');await sql('REVOKE INSERT,SELECT ON orders FROM service_role');}
+  expect((await sql('SELECT count(*)::int n FROM merchant_notification_deliveries')).rows[0].n).toBe(1);
  });
  it('future-only transaction capture, rollback and duplicate transitions',async()=>{
   const id=await recipient();await order();await verify(id);
