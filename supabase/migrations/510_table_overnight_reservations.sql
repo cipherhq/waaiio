@@ -19,16 +19,19 @@
 --
 -- Changes to book_table_atomic (M476 body otherwise copied verbatim):
 --   1. Advisory lock is per (business, resource), without the date, so bookings
---      on neighbouring dates of the same resource serialise.
+--      on neighbouring dates of the same resource serialise. The key is
+--      abs(hashtext(...)::bigint), safe when hashtext returns -2147483648.
 --   2. Reads that weekday's businesses.operating_hours: closed (closed = true or
 --      is_open = false), usable (closed absent/false, is_open absent/true, open
 --      and close both match ^([01]\d|2[0-3]):[0-5]\d$; overnight when
 --      close <= open), or no usable hours. Only usable overnight hours allow an
 --      end past midnight (fail closed).
---   3. Business hours: closed day -> day_unavailable; usable hours -> start must
---      be >= open and < 24:00 (before_opening), and on a daytime day the end
---      must be <= close (after_closing). These run after the midnight checks
---      and in addition to the table's own available_days/from/to checks.
+--   3. Business hours: a closed day -> day_unavailable, raised before the
+--      midnight checks (so a late booking on a closed day also gets it).
+--      Usable hours -> start must be >= open and < 24:00 (before_opening), and
+--      on a daytime day the end must be <= close (after_closing); these run
+--      after the midnight checks. All apply in addition to the table's own
+--      available_days/from/to checks.
 --   4. Overlap check uses an absolute-minute axis over b.date in
 --      [p_date - 1, p_date + 1], so a late booking on D blocks D+1 00:xx and
 --      vice versa.
@@ -88,15 +91,16 @@ DECLARE
   v_close_min INTEGER;
   v_overnight BOOLEAN := false;
   v_hours_usable BOOLEAN := false;
-  v_day_closed BOOLEAN := false;
 BEGIN
   -- ── Advisory lock FIRST: serialize ALL reservations for the same resource ──
   -- M510: no date in the key — a late booking on D and an early booking on D+1
   -- can overlap, so neighbouring dates must serialise too.
   -- Must precede idempotency lookup so concurrent retries see each other's inserts.
+  -- ::bigint before abs(): abs() of int4 -2147483648 raises "integer out of range",
+  -- and with a per-table key one unlucky table would then always fail.
   v_lock_key := abs(hashtext(
     p_business_id::text || '|sr|' || p_seating_resource_id::text
-  ));
+  )::bigint);
   PERFORM pg_advisory_xact_lock(v_lock_key);
 
   -- ── Bot session idempotency (full selection match, AFTER lock) ──
@@ -203,7 +207,9 @@ BEGIN
 
   IF jsonb_typeof(v_day_hours) = 'object' THEN
     IF v_day_hours -> 'closed' = 'true'::jsonb OR v_day_hours -> 'is_open' = 'false'::jsonb THEN
-      v_day_closed := true;
+      -- Closed: refused here, before any midnight check, so a late booking on a
+      -- closed day gets day_unavailable, not past_midnight.
+      RAISE EXCEPTION 'day_unavailable:The business is closed on %', initcap(v_day_name);
     ELSIF (NOT (v_day_hours ? 'closed') OR v_day_hours -> 'closed' = 'false'::jsonb)
       AND (NOT (v_day_hours ? 'is_open') OR v_day_hours -> 'is_open' = 'true'::jsonb)
     THEN
@@ -233,9 +239,6 @@ BEGIN
 
   -- ── M510: the start must fall inside the business's opening hours ──
   -- Applies in addition to the table's own window. No check without usable hours.
-  IF v_day_closed THEN
-    RAISE EXCEPTION 'day_unavailable:The business is closed on %', initcap(v_day_name);
-  END IF;
   IF v_hours_usable THEN
     -- Overnight and daytime days alike: start at or after opening, before 24:00.
     IF v_req_start_min < v_open_min OR v_req_start_min >= 1440 THEN
@@ -355,7 +358,9 @@ BEGIN
     RAISE EXCEPTION '510 SELF-CHECK FAILED: book_table_atomic must carry no SET/proconfig, found %', v_config;
   END IF;
   IF v_src NOT LIKE '%v_overnight%' OR v_src NOT LIKE '%p_date - 1 AND p_date + 1%'
-     OR v_src NOT LIKE '%v_hours_usable%' OR v_src NOT LIKE '%The business is closed on%' THEN
+     OR v_src NOT LIKE '%v_hours_usable%' OR v_src NOT LIKE '%The business is closed on%'
+     OR v_src NOT LIKE '%p_seating_resource_id::text
+  )::bigint);%' THEN
     RAISE EXCEPTION '510 SELF-CHECK FAILED: book_table_atomic body is not the M510 overnight version';
   END IF;
 

@@ -18,7 +18,7 @@
      }
     ],
     "arguments": "p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_seating_resource_id uuid, p_date date, p_time text, p_party_size integer, p_duration_minutes integer DEFAULT 90, p_guest_name text DEFAULT NULL::text, p_guest_phone text DEFAULT NULL::text, p_guest_email text DEFAULT NULL::text, p_special_requests text DEFAULT NULL::text, p_deposit_amount integer DEFAULT 0, p_deposit_status text DEFAULT 'none'::text, p_status text DEFAULT 'confirmed'::text, p_total_amount integer DEFAULT 0, p_expected_deposit integer DEFAULT NULL::integer, p_expected_duration integer DEFAULT NULL::integer",
-    "body_sha256": "7af76169f690aa260189be09d21ca9387e0f370a2ae3b19d34d33bbb4f86c7a2",
+    "body_sha256": "898b5f5e42cddbd01d842882b1e803d46459863373287c40407621507c0b1dac",
     "config": null,
     "definer": false,
     "kind": "f",
@@ -30,13 +30,13 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "bda0466a567545dd56fce3df6dbacf5f25fd0bee5e8c4aabfd5576c4730aeab0",
+   "after_sha256": "2dfdbbf7fef1abf09fd14fc50ffd01e9e3ccd59538479c73461f1bfe3e6234ef",
    "identity": "function:public.book_table_atomic(p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_seating_resource_id uuid, p_date date, p_time text, p_party_size integer, p_duration_minutes integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_deposit_amount integer, p_deposit_status text, p_status text, p_total_amount integer, p_expected_deposit integer, p_expected_duration integer)",
    "operation": "modify"
   }
  ],
  "migration": "510_table_overnight_reservations.sql",
- "migration_sha256": "e3ea92de61de89e5d56544a28645aa1e22c695d2b8abb8020e205bcfd0cd0cd4",
+ "migration_sha256": "171a9412ac84b01345cd2b6a669b422f6fdb0590641f97e9bb6b0d823e8ffd3d",
  "postgres_major": 17,
  "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
  "schema_version": 1

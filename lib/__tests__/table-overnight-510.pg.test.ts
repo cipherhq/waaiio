@@ -297,11 +297,70 @@ suite('M510 overnight table reservations (real PostgreSQL)', () => {
     await expect(bookErr(biz, await resource(biz, { duration: 61 }), TUE, '23:00')).rejects.toThrow(/^after_closing:/);
   });
 
-  describe('closed or malformed hours keep past_midnight (fail closed)', () => {
-    const cases: Array<[string, unknown]> = [
+  // P2-2: a closed day is refused before the midnight checks, so a late booking
+  // on a closed day gets day_unavailable (the bot's "time not available"), not
+  // past_midnight. These three cases previously expected past_midnight.
+  describe('closed day plus a late booking gives day_unavailable', () => {
+    const closed: Array<[string, unknown]> = [
       ['closed day {closed:true}', { friday: { closed: true } }],
       ['{open, close, closed:true}', { friday: { ...LATE, closed: true } }],
       ['{open, close, is_open:false}', { friday: { ...LATE, is_open: false } }],
+    ];
+    for (const [name, hours] of closed) {
+      it(name, async () => {
+        const biz = await business(hours);
+        await expect(bookErr(biz, await resource(biz), FRI, '23:30'))
+          .rejects.toThrow(/^day_unavailable:The business is closed on Friday$/);
+      });
+    }
+  });
+
+  describe('equal or 00:00 opening and closing (close <= open)', () => {
+    it('00:00/00:00 without closed closes at midnight: 23:00 + 60 ok, 23:30 + 90 after_closing', async () => {
+      const biz = await business({ friday: { open: '00:00', close: '00:00' } });
+      expect((await book(client, biz, await resource(biz, { duration: 60 }), FRI, '23:00')).slot_available).toBe(true);
+      await expect(bookErr(biz, await resource(biz), FRI, '23:30'))
+        .rejects.toThrow(/^after_closing:Reservation would extend past closing time 00:00$/);
+    });
+
+    it('18:00/18:00 is 24 hours from 18:00: 17:59 before_opening, 23:30 + 480 ok, end exactly 18:00 next day ok, one minute more not', async () => {
+      const biz = await business({ friday: { open: '18:00', close: '18:00' } });
+      await expect(bookErr(biz, await resource(biz), FRI, '17:59')).rejects.toThrow(/^before_opening:Earliest reservation time is 18:00$/);
+      expect((await book(client, biz, await resource(biz, { duration: 480 }), FRI, '23:30')).slot_available).toBe(true);
+      // Table durations stop at 480, so the 24-hour bound is shown through M476's
+      // caller-duration path (p_expected_duration NULL), unchanged by M510.
+      const raw = async (minutes: number) => {
+        const res = await resource(biz);
+        return q(`SELECT * FROM public.book_table_atomic(NULL, $1, $2, $3, $4::date, '18:00', 2, $5,
+          'Guest', '+2340000', NULL, NULL, 0, 'none', 'confirmed', 0, NULL, NULL)`, [biz, userId, res.id, FRI, minutes]);
+      };
+      expect((await raw(1440)).rows[0].slot_available).toBe(true); // ends Saturday 18:00
+      await expect(raw(1441)).rejects.toThrow(/^after_closing:Reservation would extend past closing time 18:00$/);
+    });
+  });
+
+  describe('booking statuses across midnight (same statuses as M476)', () => {
+    for (const [status, blocks] of [['pending', true], ['in_progress', true], ['completed', false], ['no_show', false]] as const) {
+      it(`${status} D 23:30-01:00 ${blocks ? 'blocks' : 'does not block'} D+1 00:15`, async () => {
+        const biz = await business();
+        const res = await resource(biz);
+        const first = await book(client, biz, res, FRI, '23:30');
+        await q(`UPDATE bookings SET status = $2::reservation_status WHERE id = $1`, [first.booking_id, status]);
+        expect((await book(client, biz, res, SAT, '00:15')).slot_available).toBe(!blocks);
+      });
+    }
+  });
+
+  it('lock key is bigint-safe: abs(int4 -2147483648) errors, the ::bigint form used by 510 does not', async () => {
+    await expect(q(`SELECT abs((-2147483648)::int4)`)).rejects.toThrow(/integer out of range/);
+    expect((await q(`SELECT abs((-2147483648)::int4::bigint) AS k`)).rows[0].k).toBe('2147483648');
+    const { rows: [fn] } = await q(`SELECT prosrc FROM pg_proc WHERE oid = $1::regprocedure`, [SIGNATURE]);
+    expect(fn.prosrc).toMatch(/v_lock_key := abs\(hashtext\(\s*p_business_id::text \|\| '\|sr\|' \|\| p_seating_resource_id::text\s*\)::bigint\);/);
+    expect(fn.prosrc).toContain('pg_advisory_xact_lock(v_lock_key)');
+  });
+
+  describe('malformed hours keep past_midnight (fail closed)', () => {
+    const cases: Array<[string, unknown]> = [
       ['closed as string "false"', { friday: { ...LATE, closed: 'false' } }],
       ['is_open as string "true"', { friday: { ...LATE, is_open: 'true' } }],
       ['12-hour strings', { friday: { open: '6pm', close: '2am' } }],

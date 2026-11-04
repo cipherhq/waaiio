@@ -13,19 +13,20 @@ What changed (`supabase/migrations/510_table_overnight_reservations.sql`, `CREAT
   - **no usable hours**: anything else (`{}` hours, day missing, missing keys, malformed values, a business row not found).
 - Only usable overnight hours allow an end past midnight (fail closed).
 - Business-hours checks (new):
-  - closed day → `day_unavailable` ("The business is closed on Wednesday");
+  - closed day → `day_unavailable` ("The business is closed on Wednesday"). This is checked before the midnight checks, so a late booking on a closed day also gets `day_unavailable`, not `past_midnight` (review finding P2-2);
   - usable hours, overnight or daytime: the start must be ≥ open and before 24:00, else `before_opening` ("Earliest reservation time is 18:00"). Friday 18:00–02:00 rejects 01:00 and 15:00 and accepts 18:00;
   - usable daytime hours: the end must be ≤ close, else `after_closing`. M476 had no business-hours end check, only the table's `available_to`.
-  - These run after the midnight checks below. So a booking that crosses midnight on a closed or daytime day still gets `past_midnight`, as before.
+  - The start and daytime-end checks run after the midnight checks below. So a booking that crosses midnight on a daytime day, or on a day with no usable hours, still gets `past_midnight`, as before.
   - The table's own `available_days` / `available_from` / `available_to` checks are unchanged and apply in addition.
 - **No usable hours: no business-hours check, exactly as M476.** Many businesses have `{}` hours, and the Owner has not decided to block them, so their tables can still be booked at any time of day (within the table's own window).
 - An end past 24:00 is allowed only on an overnight day, with a start before 24:00, ending at or before close + 24h. Rejections:
   - not an overnight day, or a start of `24:00` → `past_midnight` (unchanged M476 check);
   - overnight day but ending after closing → `after_closing` ("past closing time 02:00").
-- Advisory lock is per (business, resource), no longer per date, so bookings on neighbouring dates of the same table serialise.
+  - Edge shapes, left as they behave: `00:00`/`00:00` (without `closed`) counts as overnight closing at midnight, so 23:30 + 90 → `after_closing`. Equal open and close (`18:00`/`18:00`) is 24 hours from 18:00: starts from 18:00, ending by 18:00 next day.
+- Advisory lock is per (business, resource), no longer per date, so bookings on neighbouring dates of the same table serialise. The key is `abs(hashtext(...)::bigint)`: `abs()` of the int4 value -2147483648 raises "integer out of range", and with a per-table key one unlucky table would always fail (review finding P2-4). `pg_advisory_xact_lock(bigint)` is unchanged.
 - Overlap uses one minute axis over `b.date` from D-1 to D+1, so D 23:30–01:00 and D+1 00:15 block each other in either order.
 - `supabase/catalog-deltas/510_table_overnight_reservations.json`: exactly one `modify` of `book_table_atomic` (new body hash; ACL, owner, INVOKER, no config unchanged). The replay's pre-510 digest of this function equals the production and staging lock digest.
-- `lib/__tests__/table-overnight-510.pg.test.ts` (56 cases, real PostgreSQL) and the matching `ci.yml` guard and unit-job exclude.
+- `lib/__tests__/table-overnight-510.pg.test.ts` (63 cases, real PostgreSQL; includes pending/in_progress blocking and completed/no_show not blocking across midnight) and the matching `ci.yml` guard and unit-job exclude.
 
 Unchanged: the 18-argument signature, return shape, SECURITY INVOKER, no SET/proconfig, grants (restated: service_role only), idempotency, deposit and duration revalidation, payments and deposits, `day_unavailable` / `before_opening` / `after_closing` from the table's own window, insert columns, the set of error codes (no new code), `book_slot_atomic`, `reschedule_booking_atomic`, `seating_no_overnight`.
 
