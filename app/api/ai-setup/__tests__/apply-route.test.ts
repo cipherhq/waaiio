@@ -46,7 +46,8 @@ vi.mock('@/lib/supabase/service', () => ({
       let rows: Array<Record<string, unknown>> = [];
       const b: Record<string, unknown> = {};
       for (const m of ['select', 'eq', 'in', 'order', 'limit']) b[m] = () => b;
-      b.range = (from: number, to: number) => { h.ranges.push([table, from, to]); return b; };
+      let range: [number, number] | null = null;
+      b.range = (from: number, to: number) => { h.ranges.push([table, from, to]); range = [from, to]; return b; };
       b.insert = (r: Array<Record<string, unknown>>) => {
         op = 'insert';
         rows = r;
@@ -65,7 +66,8 @@ vi.mock('@/lib/supabase/service', () => ({
         } else if (h.selectError[table]) {
           result = { data: null, error: { message: h.selectError[table] } };
         } else {
-          result = { data: (h.existing[table] || []).map((name) => ({ name })), error: null };
+          const all = (h.existing[table] || []).map((name) => ({ name }));
+          result = { data: range ? all.slice(range[0], range[1] + 1) : all, error: null };
         }
         return Promise.resolve(result).then(resolve, reject);
       };
@@ -207,8 +209,23 @@ describe('products', () => {
     expect(body.success).toBe(true);
     expect(body.results.products).toEqual({ created: 1, skipped: 2 });
     expect(h.inserts.products.map((r) => r.name)).toEqual(['Wings, spicy']);
-    // Existing names are read by business and page, not by a name filter
-    expect(h.ranges).toEqual([['products', 0, 999]]);
+    // Existing names are read by business and page (ending on an empty page), not by a name filter
+    expect(h.ranges).toEqual([['products', 0, 999], ['products', 1, 1000]]);
+  });
+
+  it('reads every page of existing names, even past 1000', async () => {
+    h.existing.products = Array.from({ length: 1500 }, (_, i) => `Item ${i}`);
+    const body = await (await post({ products: [{ name: 'item 1400', price: 5 }, { name: 'Brand new', price: 5 }] })).json();
+    expect(body.results.products).toEqual({ created: 1, skipped: 1 });
+    expect(h.ranges.filter(([t]) => t === 'products').map(([, f]) => f)).toEqual([0, 1000, 1500]);
+  });
+
+  it('a product name over 200 characters matches its saved (cut) form, so a retry does not duplicate it', async () => {
+    const long = 'L'.repeat(250);
+    h.existing.products = ['L'.repeat(200)];
+    const body = await (await post({ products: [{ name: long, price: 5 }] })).json();
+    expect(body.results.products).toEqual({ created: 0, skipped: 1 });
+    expect(h.inserts.products).toBeUndefined();
   });
 
   it("accepts this business's own uploaded product photo", async () => {

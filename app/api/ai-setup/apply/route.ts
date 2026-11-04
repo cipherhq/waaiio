@@ -25,7 +25,11 @@ interface ItemError { name: string; error: string }
 
 const MAX_ITEMS_PER_SECTION = 500;
 
-/** Build each row independently so one bad item never sinks the batch. */
+/** Duplicate key: the name exactly as it will be saved (trimmed, ≤200 chars), lower-cased. */
+function nameKey(value: unknown): string {
+  return String(value ?? '').trim().slice(0, 200).trim().toLowerCase();
+}
+
 /**
  * Lower-cased names this business already has, read page by page so any
  * name (quotes, commas, brackets) and any catalog size works. null when a
@@ -38,7 +42,9 @@ async function loadExistingNames(
 ): Promise<Set<string> | null> {
   const names = new Set<string>();
   const pageSize = 1000;
-  for (let from = 0; ; from += pageSize) {
+  // Advance by rows actually returned and stop on an empty page, so a lower
+  // server row cap cannot end the read early.
+  for (let from = 0; ; ) {
     const { data, error } = await service
       .from(table)
       .select('id, name')
@@ -49,8 +55,9 @@ async function loadExistingNames(
       logger.error(`[AI-SETUP] ${table} duplicate check error:`, error.message);
       return null;
     }
-    for (const row of data || []) names.add(String(row.name ?? '').trim().toLowerCase());
-    if (!data || data.length < pageSize) return names;
+    if (!data || data.length === 0) return names;
+    for (const row of data) names.add(nameKey(row.name));
+    from += data.length;
   }
 }
 
@@ -58,13 +65,14 @@ async function loadExistingNames(
 function keepNewNames<T extends { name?: unknown }>(items: T[], existing: Set<string>): T[] {
   const seen = new Set(existing);
   return items.filter((item) => {
-    const key = String(item.name).trim().toLowerCase();
+    const key = nameKey(item.name);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 }
 
+/** Build each row independently so one bad item never sinks the batch. */
 function buildRows<T, R>(items: T[], nameOf: (item: T) => string, build: (item: T) => R) {
   const rows: R[] = [];
   const errors: ItemError[] = [];
