@@ -1,3 +1,25 @@
+## 2026-11-03 — Release Process V3: reusable release gate (schema 8)
+
+- Owner-approved plan (Issue #843, `RELEASE_GATE_V2.md` §9). One reusable gate replaces a new gate profile per release. Docs: `docs/RELEASE_V3_GATE.md`.
+- New `scripts/release-gate-v3.mjs` with `scripts/release-v3/`:
+  - lane classifier (path allowlist plus content check; unknown or payment paths go to full);
+  - read-only DB observer (psql, `release_observer` login);
+  - admission against an Owner-approved lock: ledger complete set, exact statements, catalog = lock + deltas, M430 absence;
+  - Vercel/GitHub reads: admin pin always from `targets.production.id`;
+  - packet: 24h, single use, bound by sha256 to a recorded Owner approval.
+- Workflows `release-prepare.yml` (reads only, writes the packet) and `release-deploy.yml` (re-checks production before every mutation; merchant then admin; one alias POST; no retry; no automatic rollback).
+- Catalog oracle (`scripts/release-v3/catalog-oracle.mjs`, `catalog-v3.sql`) builds the catalog delta of each migration in disposable PostgreSQL 17. Committed: `supabase/catalog-deltas/508_business_control_columns_guard.json` (equals the change measured in production) and `scripts/release-v3/m430-identities.json`.
+- `scripts/release-v3/lock.json`: production and staging catalog and ledger digests after M508 (read-only connector, 2026-11-03); certified `bdc007a8`.
+- `scripts/release-v3/release-observer-role.sql`: reviewed, not applied. Applying it needs Owner approval per environment, and the Owner sets the password.
+- CI:
+  - new job "Catalog oracle (PostgreSQL 17)" (regenerates deltas; real-PG proof of the observer role, 6 tests), required through the existing "Migration validation" aggregator;
+  - advisory PR lane summary in the release-gate job;
+  - file-presence guards for the new tests.
+- `scripts/ci-bootstrap-test-db.sh`: optional `CI_BOOTSTRAP_PREREQUISITES_ONLY=1` (default behaviour unchanged).
+- Tests: `scripts/__tests__/release-v3-{classify,admission,gate}.test.ts` (unit and end-to-end prepare/deploy with faked platforms), plus `release-v3-observer.pg.test.ts`.
+- Runs no SQL in any environment and changes no setting. Schema 2–7 and 9 profiles are untouched until the first successful schema 8 release.
+- Could break: Migration validation now also needs the PG17 oracle job. A future migration PR must commit its catalog delta.
+
 ## 2026-11-03 — Release gate: schema 9 bot-code-lock profile (M508 only)
 
 - Owner decision (2026-11-03): ship #841 (short merchant links) and #842 (app side of M508) now through one last per-release profile, while Release Process V3 (#843) builds the reusable gate.

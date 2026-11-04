@@ -1,0 +1,46 @@
+{
+ "bootstrap_migration": "508_business_control_columns_guard.sql",
+ "catalog_query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "certified": {
+  "admin": "bdc007a8f93febeee8ce054d075d48894afd37bb",
+  "merchant": "bdc007a8f93febeee8ce054d075d48894afd37bb"
+ },
+ "environments": {
+  "production": {
+   "catalog": {
+    "count": 6288,
+    "sha256": "21d2db2a7c68ddcd6027b4a6bf142685b001b136e248aa9aa0e7fe5ae36ee72c"
+   },
+   "catalog_map": null,
+   "ledger": {
+    "count": 406,
+    "sha256": "e310d352abe48988c500472532e2ec3690e4d7b16caf160e35eae09868aa31d0"
+   },
+   "project_ref": "cxcmiqotkowhxinjbytg"
+  },
+  "staging": {
+   "catalog": {
+    "count": 6400,
+    "sha256": "80f4ec206aa8cd301e76a46b0095e05c395ef3ea7f9b4b22db0a91425111354f"
+   },
+   "catalog_map": null,
+   "ledger": {
+    "count": 444,
+    "sha256": "adcdf3e9893b6ea4fd5940a66375af4a96ba963ba4efaad9f1ad38fe17ab9be5"
+   },
+   "project_ref": "tqjvrzopvtczxfxiwmnz"
+  }
+ },
+ "ledger_query_sha256": "342b70fe7982e7ee22f7a5858aea8f721ddc35edf477e332aa3869417ba0292b",
+ "observed": {
+  "at": "2026-11-04T01:20:00Z",
+  "method": "authorized Supabase connector, read-only SELECT of scripts/release-v3/catalog-v3.sql and ledger-v3.sql aggregates",
+  "note": "catalog_map is null until the one-time lock-map bootstrap; until then any release with catalog changes fails closed",
+  "state": "after M508 applied in staging and production; no app migration after 508"
+ },
+ "reviewed_prs": {
+  "844": "2a91ec57404aac66144ac209da122fdfaaeee883",
+  "846": "6b3488b95895d57c31a961b8cecdb57b8b21ec6c"
+ },
+ "schema_version": 1
+}
