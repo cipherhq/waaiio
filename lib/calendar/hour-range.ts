@@ -14,6 +14,10 @@ export interface CalendarHourRange {
   start: number;
   end: number;
   hours: number[];
+  /** Earliest opening hour across days, or null when no usable hours exist. */
+  openHour: number | null;
+  /** True when some day runs past midnight, so the grid covers the whole day. */
+  overnight: boolean;
 }
 
 function toMinutes(value: unknown): number | null {
@@ -53,11 +57,33 @@ export function calendarHourRange(operatingHours: unknown): CalendarHourRange {
     }
   }
 
+  const firstOpenHour = found ? earliest : null;
   if (overnight) {
     earliest = 0;
     latest = 24;
   }
   earliest = Math.max(0, Math.min(23, earliest));
   latest = Math.max(earliest + 1, Math.min(24, latest));
-  return { start: earliest, end: latest, hours: Array.from({ length: latest - earliest }, (_, i) => earliest + i) };
+  return { start: earliest, end: latest, hours: Array.from({ length: latest - earliest }, (_, i) => earliest + i), openHour: firstOpenHour, overnight };
+}
+
+/**
+ * Hour rows for a view: the business-hours rows, stretched so that every
+ * timed entry in the view (e.g. a 06:00 or 20:00 booking outside the set
+ * hours) has a row. Owner decision 2026-11-04: show all bookings.
+ * Entry times are "HH:MM" (or "HH:MM:SS"); anything else is ignored.
+ */
+export function hoursIncludingEntries(range: CalendarHourRange, entryTimes: Array<string | undefined | null>): number[] {
+  let first = range.start;
+  let last = range.end - 1;
+  for (const t of entryTimes) {
+    if (typeof t !== 'string') continue;
+    const m = /^(\d{1,2}):\d{2}/.exec(t);
+    if (!m) continue;
+    const h = Number(m[1]);
+    if (h < 0 || h > 23) continue;
+    if (h < first) first = h;
+    if (h > last) last = h;
+  }
+  return Array.from({ length: last - first + 1 }, (_, i) => first + i);
 }

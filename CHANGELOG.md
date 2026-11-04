@@ -1,3 +1,19 @@
+## 2026-11-04 — Dashboard calendar: show every booking; full-day grids open at opening time
+
+Owner decisions (2026-11-04), from the #863 reviews.
+
+- **Show every booking.** The week and day views now stretch their hour rows to include every timed entry in view, even outside business hours (e.g. a 06:00 or 20:00 booking on the default 08:00–20:00 grid).
+  - Before: those entries were silently left out. A read-only production query on 2026-11-04 found 73 timed entries hidden across 9 businesses; one church had dozens of 06:00 and 20:00 bookings.
+  - New: `lib/calendar/hour-range.ts` `hoursIncludingEntries()`.
+- **Full-day grids open at opening time.** When the grid covers the whole day (some day runs past midnight), the week and day views open scrolled to the earliest opening hour instead of 12AM. `calendarHourRange()` now also returns `openHour` and `overnight`.
+- `app/dashboard/calendar/page.tsx`:
+  - the week view uses `weekHours`, built from the 7 days in view, and the day view uses `dayHours`;
+  - hour rows carry `data-hour`;
+  - the scroll boxes have refs, and an effect sets the scroll position after loading.
+  - Month view is unchanged.
+- Tests: 6 new `hour-range` cases (show-all stretching, malformed times, HH:MM:SS, openHour/overnight). 54/54 with the existing calendar tests.
+- Could break: nothing in data. Calendars with out-of-hours bookings show more rows.
+
 ## 2026-11-04 — Dashboard calendar: show bookings for businesses open past midnight
 
 - Bug: the calendar's week and day grids ran from the earliest opening hour to the latest closing hour. A closing time after midnight (e.g. 02:00) counted as "earlier", so a business open 18:00–02:00 got a one-row grid (6pm) and bookings from 7pm onwards were invisible. A read-only production query on 2026-11-04 found 2 businesses with such hours: an events business (16:00–00:00, 18:00–04:00, 20:00–06:00) and a restaurant (22:00–06:00).

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calendarHourRange } from '../hour-range';
+import { calendarHourRange, hoursIncludingEntries } from '../hour-range';
 
 describe('calendarHourRange', () => {
   it('defaults to 08:00–20:00 without usable hours', () => {
@@ -37,5 +37,40 @@ describe('calendarHourRange', () => {
   it('matches the two production shapes found on 2026-11-04 (events 16:00–00:00 / 18:00–04:00, restaurant 22:00–06:00)', () => {
     expect(calendarHourRange({ friday: { open: '16:00', close: '00:00' }, saturday: { open: '18:00', close: '04:00', closed: false } }).hours).toHaveLength(24);
     expect(calendarHourRange({ monday: { open: '22:00', close: '06:00', is_open: true } }).hours).toHaveLength(24);
+  });
+});
+
+describe('openHour and overnight', () => {
+  it('reports the earliest opening hour and whether a day runs past midnight', () => {
+    expect(calendarHourRange({ friday: { open: '18:00', close: '02:00' }, saturday: { open: '16:00', close: '00:00' } })).toMatchObject({ openHour: 16, overnight: true, start: 0, end: 24 });
+    expect(calendarHourRange({ monday: { open: '09:00', close: '17:00' } })).toMatchObject({ openHour: 9, overnight: false });
+    expect(calendarHourRange({})).toMatchObject({ openHour: null, overnight: false });
+  });
+});
+
+describe('hoursIncludingEntries (show every booking, Owner decision 2026-11-04)', () => {
+  const defaults = calendarHourRange({}); // 08:00–20:00 → rows 8..19
+
+  it('keeps business-hour rows when every entry is inside them', () => {
+    expect(hoursIncludingEntries(defaults, ['09:00', '19:30', undefined])).toEqual(defaults.hours);
+  });
+
+  it('stretches earlier and later so 06:00 and 20:00 bookings get a row', () => {
+    const rows = hoursIncludingEntries(defaults, ['06:00', '20:00', '12:15']);
+    expect(rows[0]).toBe(6);
+    expect(rows.at(-1)).toBe(20);
+    expect(rows).toEqual(Array.from({ length: 15 }, (_, i) => 6 + i));
+  });
+
+  it('shows a 02:00 entry and accepts HH:MM:SS', () => {
+    expect(hoursIncludingEntries(defaults, ['02:00:00'])[0]).toBe(2);
+  });
+
+  it('ignores missing and malformed times', () => {
+    expect(hoursIncludingEntries(defaults, [null, '', 'later', '25:00', '7pm'])).toEqual(defaults.hours);
+  });
+
+  it('a full-day grid stays 0..23', () => {
+    expect(hoursIncludingEntries(calendarHourRange({ friday: { open: '18:00', close: '02:00' } }), ['01:00', '23:00'])).toHaveLength(24);
   });
 });
