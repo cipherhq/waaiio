@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readdirSync, readFileSyn
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { classifyChanges, collectChanges, classifyRange, resolveSpecifier, TOOLING_READ_DOCS } from '../release-v3/classify.mjs';
+import { CHANGELOG_TOOL_DOCS, classifyChanges, collectChanges, classifyRange, resolveSpecifier, TOOLING_READ_DOCS } from '../release-v3/classify.mjs';
 
 // Repository files visible at the target for import resolution.
 const REPO: Record<string, string> = {
@@ -163,11 +163,29 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
   });
   it('every docs path that tooling source names is on the tooling-read list (no drift)', () => {
     const files = [...readdirSync('scripts').filter(f => /\.(mjs|sh)$/.test(f)).map(f => `scripts/${f}`), ...readdirSync('scripts/release-v3').filter(f => f.endsWith('.mjs')).map(f => `scripts/release-v3/${f}`),
+      ...readdirSync('scripts/changelog').filter(f => f.endsWith('.mjs')).map(f => `scripts/changelog/${f}`),
       ...readdirSync('lib/release-gate').filter(f => f.endsWith('.ts')).map(f => `lib/release-gate/${f}`), ...readdirSync('.github/workflows').map(f => `.github/workflows/${f}`)];
-    const named = new Set<string>();
-    for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(/['"`](docs\/[A-Za-z0-9_./-]+\.md|[A-Za-z0-9_-]+\.md)['"`]/g)) named.add(m[1]);
-    const docsNamed = [...named].filter(p => /^docs\/(?!contracts\/)/.test(p) || !p.includes('/'));
-    expect(docsNamed.filter(p => !TOOLING_READ_DOCS.includes(p))).toEqual([]);
+    // scripts/changelog/collect.mjs is the changelog format checker: names only it uses are
+    // the documented carve-out (CHANGELOG_TOOL_DOCS); every other tooling-named doc must be listed.
+    const namedBy = (fs: string[]) => { const out = new Set<string>(); for (const f of fs) for (const m of readFileSync(f, 'utf8').matchAll(/['"`](docs\/[A-Za-z0-9_./-]+\.md|[A-Za-z0-9_-]+\.md)['"`]/g)) out.add(m[1]); return out; };
+    const isDocsPath = (p: string) => /^docs\/(?!contracts\/)/.test(p) || !p.includes('/');
+    // The collector and the classifier (which declares the carve-out list) may name them; nothing else may.
+    const carveOutFiles = ['scripts/changelog/collect.mjs', 'scripts/release-v3/classify.mjs'];
+    expect([...namedBy(files.filter(f => !carveOutFiles.includes(f)))].filter(isDocsPath).filter(p => !TOOLING_READ_DOCS.includes(p))).toEqual([]);
+    expect([...namedBy(carveOutFiles)].filter(isDocsPath).filter(p => !TOOLING_READ_DOCS.includes(p) && !CHANGELOG_TOOL_DOCS.includes(p))).toEqual([]);
+  });
+  it('changelog fragments are docs: a docs-only PR with its fragment, and the collect PR, need one review', () => {
+    const frag = 'changelog/unreleased/2026-11-04-claude-calendar-fix.md';
+    expect(lane(change(frag, '', 'A'))).toMatchObject({ lane: 'standard', docs_only: true, required_reviews: 1 });
+    expect(lane(change('docs/guide.md'), change(frag, '', 'A'))).toMatchObject({ lane: 'standard', docs_only: true, required_reviews: 1 });
+    expect(lane(change('CHANGELOG.md'), change(frag, '', 'D'))).toMatchObject({ lane: 'standard', docs_only: true, required_reviews: 1 });
+    expect(lane(change('changelog/README.md'))).toMatchObject({ lane: 'standard', docs_only: true });
+    // A code change with its fragment is still classified by the code
+    expect(lane(change('lib/x.ts'), change(frag, '', 'A'))).toMatchObject({ lane: 'full' });
+  });
+  it('only correctly named fragments are docs; anything else under changelog/ is full', () => {
+    for (const path of ['changelog/unreleased/notes.md', 'changelog/unreleased/2026-11-04-Bad_Name.md', 'changelog/unreleased/sub/2026-11-04-x.md', 'changelog/unreleased/2026-11-04-x.txt', 'changelog/other.md'])
+      expect(lane(change(path, '', 'A'))).toMatchObject({ lane: 'full', docs_only: false });
   });
   it('an empty change list and malformed entries fail closed', () => {
     expect(lane().lane).toBe('full');
