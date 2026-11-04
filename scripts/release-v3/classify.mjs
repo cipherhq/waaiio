@@ -35,12 +35,15 @@ const PAYMENT_PATH = /payment|payout|(^|[^a-z])fees?([^a-z]|$)|refund|webhook|se
 // camelCase is split first, so `PricingFees.tsx` matches as `Pricing-Fees.tsx`.
 export const isPaymentPath = path => PAYMENT_PATH.test(path.replace(/([a-z0-9])([A-Z])/g, '$1-$2'));
 const CODE = /\.(tsx?|jsx?|mjs|cjs)$/;
+// Anything that can run script in an SVG served same-origin: any `script` (also
+// namespaced, e.g. <x:script>), event handlers, javascript:, foreignObject,
+// entities (which can encode any of these), DTDs, and links that leave the file.
+const ACTIVE_SVG = /script|\son[a-z]+\s*=|foreignObject|&#|&[a-z][a-z0-9]*;|<!ENTITY|<!DOCTYPE|\b(xlink:)?href\s*=\s*["']\s*(?!#)/i;
 const ASSET = /\.(png|jpe?g|gif|svg|webp|ico|avif|woff2?)$/;
 const STANDARD_CODE_ROOTS = ['app/(marketing)/', 'components/marketing/', 'components/ui/'];
 const STANDARD_ASSET_ROOTS = ['public/', ...STANDARD_CODE_ROOTS];
 // Repository modules a display-only file may import (if they are display-only too).
 const IMPORTABLE_ROOTS = ['components/marketing/', 'components/ui/'];
-const IMPORTABLE_FILES = ['lib/utils.ts'];
 // Route handlers, middleware-like and metadata files are never display-only.
 const NEVER_STANDARD = [/(^|\/)route\.(t|j)sx?$/, /(^|\/)(middleware|instrumentation)\.(t|j)s$/, /(^|\/)actions?\.(t|j)sx?$/,
   /(^|\/)(sitemap|robots|manifest|opengraph-image|twitter-image|icon|apple-icon)\.(t|j)sx?$/];
@@ -57,6 +60,10 @@ const RISKY = [
   [/\bdangerouslySetInnerHTML\b|\beval\b|\bFunction\s*\(|<script\b|\bsrcdoc\b/i, 'raw HTML or script execution'],
   [/\b(window|self|top|parent|frames|globalThis|document)\s*(\?\.\s*)?\[|\batob\b|\bReflect\b|\bProxy\b/, 'computed global access'],
   [/\brequire\s*\(/, 'require call'],
+  // A \u or \x escape can spell an identifier (e.g. process.env) past every
+  // pattern above, so any escape sequence makes the file full.
+  [/\\u|\\x/, 'escape sequence'],
+  [/\b(action|formAction)\s*=\s*\{?\s*["'`]\s*(https?:)?\/\//i, 'form posting to another site'],
 ];
 const SPACE = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*`;
 // Specifiers after `from` / `import` / `import(`, allowing comments and line breaks.
@@ -121,7 +128,7 @@ export function scanText(path, text, readTarget, seen = new Set()) {
     const spec = match[2];
     if (matchesAny(spec, SAFE_PACKAGES) || isTypeOnly(text, match)) continue;
     const resolved = resolveSpecifier(path, spec);
-    if (!resolved || !(under(resolved, IMPORTABLE_ROOTS) || under(resolved, STANDARD_CODE_ROOTS) || CANDIDATES(resolved).some(c => IMPORTABLE_FILES.includes(c)))) {
+    if (!resolved || !(under(resolved, IMPORTABLE_ROOTS) || under(resolved, STANDARD_CODE_ROOTS))) {
       reasons.push(`${path}: imports ${spec}`); continue;
     }
     const file = CANDIDATES(resolved).find(c => readTarget?.(c) != null);
@@ -154,7 +161,7 @@ export function classifyChanges(changes, { raiseTo, readTarget = () => null } = 
     if (isPaymentPath(path)) { reasons.push(`${path}: payment path`); continue; }
     if (matchesAny(path, NEVER_STANDARD)) { reasons.push(`${path}: not display-only`); continue; }
     if (ASSET.test(path) && under(path, STANDARD_ASSET_ROOTS)) {
-      if (path.endsWith('.svg') && texts.some(t => /<script\b|\son[a-z]+\s*=|javascript:|<foreignObject\b/i.test(t))) reasons.push(`${path}: active SVG content`);
+      if (path.endsWith('.svg') && texts.some(t => ACTIVE_SVG.test(t))) reasons.push(`${path}: active SVG content`);
       continue;
     }
     if (!(CODE.test(path) && under(path, STANDARD_CODE_ROOTS))) { reasons.push(`${path}: not on the standard allowlist`); continue; }

@@ -27,6 +27,7 @@ SELECT json_build_object(
  'default_transaction_read_only', current_setting('default_transaction_read_only'),
  'statement_timeout', current_setting('statement_timeout'),
  'role_flags', (SELECT json_build_object('super', rolsuper, 'bypassrls', rolbypassrls, 'createrole', rolcreaterole, 'createdb', rolcreatedb, 'replication', rolreplication) FROM pg_roles WHERE rolname = current_user),
+ 'role_memberships', (SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member WHERE r.rolname = current_user),
  'server_version_num', current_setting('server_version_num'),
  'observed_at', clock_timestamp(),
  'catalog', (SELECT coalesce(json_agg(json_build_object('identity', identity, 'digest', digest) ORDER BY identity COLLATE "C"), '[]'::json) FROM (${strip(CATALOG_QUERY)}) catalog),
@@ -58,7 +59,7 @@ export function parseObservation(text, { major = 17 } = {}) {
   try { doc = JSON.parse(String(text).trim().split('\n').filter(Boolean).at(-1)); } catch { fail('Database observation is not valid JSON'); }
   const flags = doc?.role_flags;
   if (doc?.current_user !== OBSERVER_ROLE || doc.transaction_read_only !== 'on' || doc.default_transaction_read_only !== 'on'
-    || !flags || Object.values(flags).some(v => v !== false)) fail('Database observation was not made by a forced read-only release_observer session');
+    || !flags || Object.values(flags).some(v => v !== false) || doc.role_memberships !== 0) fail('Database observation was not made by a forced read-only release_observer session');
   const version = Number(doc.server_version_num);
   if (!Number.isSafeInteger(version) || Math.floor(version / 10000) !== major) fail(`Database observation is not PostgreSQL ${major}`);
   if (!Number.isFinite(Date.parse(doc.observed_at))) fail('Database observation has no time');

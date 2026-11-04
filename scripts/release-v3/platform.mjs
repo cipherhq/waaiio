@@ -7,11 +7,11 @@ import { fail, sha256, DEPLOYMENT_ID, SHA, REPO } from './common.mjs';
 export const TEAM = 'team_AEcg69CktrGEptXDznpae8Rp';
 export const PROJECTS = Object.freeze({
   production: {
-    merchant: { project: 'prj_QkvBTiDA905GHTwX5DQCJVyZzd9d', alias: 'www.waaiio.com', root: '', framework: 'nextjs', health: 'api/health', identity: true },
+    merchant: { project: 'prj_QkvBTiDA905GHTwX5DQCJVyZzd9d', alias: 'www.waaiio.com', root: '', framework: 'nextjs', health: 'api/health', identity: true, supabase: 'cxcmiqotkowhxinjbytg' },
     admin: { project: 'prj_jr7l0grIW2xE6FxVTy5RwRec1rFt', alias: 'admin.waaiio.com', root: 'admin', framework: 'vite', health: 'login', identity: false },
   },
   staging: {
-    merchant: { project: 'prj_h7YmC4fvpxhn429znCy34OjLZ6se', alias: 'staging.waaiio.com', root: '', framework: 'nextjs', health: 'api/health', identity: true },
+    merchant: { project: 'prj_h7YmC4fvpxhn429znCy34OjLZ6se', alias: 'staging.waaiio.com', root: '', framework: 'nextjs', health: 'api/health', identity: true, supabase: 'tqjvrzopvtczxfxiwmnz' },
     admin: { project: 'prj_wLF7TDNN7BrjGFyIlen2IR8SvorM', alias: 'admin-staging.waaiio.com', root: 'admin', framework: 'vite', health: 'login', identity: false },
   },
 });
@@ -111,7 +111,10 @@ export async function checkServing(environment, kind, expected, fetchImpl = fetc
   const response = await fetchImpl(`https://${config.alias}/api/release-identity`, { redirect: 'error', cache: 'no-store' });
   if (response.status !== 200) fail(`${environment} ${kind} runtime identity unavailable (${response.status})`);
   const identity = await response.json();
-  if (identity.sha !== expected.sha || identity.projectId !== config.project || identity.deploymentId !== expected.id || identity.vercelEnv !== 'production') fail(`${environment} ${kind} runtime identity mismatch`);
+  // The database project too: a production build pointed at staging (or the
+  // reverse) stops here.
+  if (identity.sha !== expected.sha || identity.projectId !== config.project || identity.deploymentId !== expected.id || identity.vercelEnv !== 'production'
+    || identity.supabaseProjectRef !== config.supabase) fail(`${environment} ${kind} runtime identity mismatch`);
   return true;
 }
 

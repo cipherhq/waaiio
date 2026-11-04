@@ -131,13 +131,14 @@ describe('packet approval binding', () => {
 
 describe('read-only observer session', () => {
   const doc = (over: Json = {}) => JSON.stringify({ current_user: 'release_observer', transaction_read_only: 'on', default_transaction_read_only: 'on', statement_timeout: '1min',
-    role_flags: { super: false, bypassrls: false, createrole: false, createdb: false, replication: false }, server_version_num: '170006', observed_at: '2026-11-04T00:00:00Z',
+    role_flags: { super: false, bypassrls: false, createrole: false, createdb: false, replication: false }, role_memberships: 0, server_version_num: '170006', observed_at: '2026-11-04T00:00:00Z',
     catalog: [{ identity: 'table:public.t', digest: 'a'.repeat(64) }], ledger: [{ version: '1', name: 'x', statement_count: 1, statement_sha256: 'b'.repeat(64), row_sha256: 'c'.repeat(64) }], ...over });
   it('accepts a forced read-only, unprivileged PostgreSQL 17 release_observer session', () => expect(parseObservation(doc()).catalog.size).toBe(1));
   it.each([
     [{ current_user: 'postgres' }, 'not made by a forced read-only release_observer session'], [{ default_transaction_read_only: 'off' }, 'forced read-only'],
     [{ transaction_read_only: 'off' }, 'forced read-only'], [{ role_flags: { super: true, bypassrls: false, createrole: false, createdb: false, replication: false } }, 'forced read-only'],
     [{ server_version_num: '160013' }, 'not PostgreSQL 17'],
+    [{ role_memberships: 1 }, 'forced read-only'],
   ])('rejects %j', (over, message) => expect(() => parseObservation(doc(over))).toThrow(message));
   it('connection settings: release_observer login only, bound to its project, TLS required, password never on the command line', () => {
     const env = connectionEnvironment('postgresql://release_observer.cxcmiqotkowhxinjbytg:pw%40x@aws-0-x.pooler.supabase.com:5432/postgres?sslmode=require', 'cxcmiqotkowhxinjbytg', { PATH: '/bin' });
@@ -255,7 +256,7 @@ function world(repo: Repo, over: Partial<{ reviews: string[]; prodServingSha: st
     const k = kindOf(u.host);
     if (k && u.pathname === '/api/release-identity') {
       const id = k[0] === 'production' ? state.merchant.serving : 'dpl_s1', d = state.deployments[id] as { meta: { githubCommitSha: string }; projectId: string };
-      return response(200, { sha: d.meta.githubCommitSha, projectId: d.projectId, deploymentId: id, vercelEnv: 'production' });
+      return response(200, { sha: d.meta.githubCommitSha, projectId: d.projectId, deploymentId: id, vercelEnv: 'production', supabaseProjectRef: k[0] === 'production' ? 'cxcmiqotkowhxinjbytg' : 'tqjvrzopvtczxfxiwmnz' });
     }
     if (k) return response(200, 'ok');
     throw new Error(`unexpected ${url}`);
@@ -391,6 +392,16 @@ describe('deploy (end to end, faked platforms)', { timeout: 60_000 }, () => {
     Object.assign(reused.state, { artifacts: w.state.artifacts, artifactMeta: w.state.artifactMeta, comments: w.state.comments });
     await expect(go(deployEnv(digest), NOW + 3600_000, reused)).rejects.toThrow('already used');
     expect(w.state.aliasPosts).toBe(0);
+  });
+  it('stops when a deployment reports the wrong database project (runtime identity)', async () => {
+    const w = world(repo);
+    const original = w.fetchImpl;
+    const swapped = async (url: string, opts?: Record<string, unknown>) => {
+      const res = await original(url, opts as never);
+      if (url === 'https://staging.waaiio.com/api/release-identity') { const body = await res.json() as Json; return response(200, { ...body, supabaseProjectRef: 'cxcmiqotkowhxinjbytg' }); }
+      return res;
+    };
+    await expect(prepare({ env: baseEnv(repo), control: repo.dir, now: NOW, fetchImpl: swapped as never, observe: observeWith() as never })).rejects.toThrow('staging merchant runtime identity mismatch');
   });
   it('a full-lane packet needs a recorded Owner staging acceptance for that packet', async () => {
     const full = buildRepo({ 'lib/payments/x.ts': 'export const x = 9;\n' });

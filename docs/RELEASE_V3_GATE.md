@@ -36,9 +36,10 @@ One approval covers Operating Order gates 5, 7 and 9 for that packet (§9.4). It
 | Baseline | merchant and admin serve the same SHA, equal to the last certified release (record of the last successful deploy run; before any, the lock's `certified`) |
 | Admin pin | always the admin project's `targets.production.id`, never the newest deployment in a list (regression for run 41706465115); a production target newer than the serving deployment stops the gate |
 | Merchant target | equal to serving, or a newer canceled ignored-build-step Git attempt |
+| Runtime identity | merchant `/api/release-identity` must report the exact SHA, project, deployment and the environment's Supabase project (production `cxcmiqotkowhxinjbytg`, staging `tqjvrzopvtczxfxiwmnz`) |
 | Project policy | production framework, root and build settings unchanged |
 | Lane | docs-only Markdown (under `docs/` or the root, not read by tooling) counts as standard; otherwise standard only if every file is on the allowlist and no allowlisted code file adds a server action, non-display import, env read, network/storage/data call or raw HTML; anything else is full; a reviewer may raise, never lower |
-| Lane detail | both the before and after versions of every allowlisted code file are scanned in full, imports are followed into repository modules at the target, payment-named paths, symlinks and submodules are full. The scan is deliberately strict: some marketing pages with prose such as "cookies" or "Supabase" classify as full |
+| Lane detail | both the before and after versions of every allowlisted code file are scanned in full, imports are followed into repository modules at the target, payment-named paths, symlinks and submodules are full. Any `\u`/`\x` escape, a form posting to another site, or an SVG with any `script`, entity, event handler, DTD or non-fragment link is full. The scan is deliberately strict: some marketing pages with prose such as "cookies" or "Supabase" classify as full |
 | Reviews | every included PR: two distinct review records on its exact merged head for the full lane, one otherwise (PRs merged before records existed are listed in `lock.reviewed_prs`) |
 | Migrations | every migration after the lock is applied as one ledger row whose single statement is the exact file bytes; merged but not applied stops the gate; 430 is never admitted; files inside the lock may not change |
 | Ledger | live ledger minus admitted rows equals the lock digest (no unknown or changed row) |
@@ -73,7 +74,7 @@ Applying it is a separate Owner approval per environment, staging first. Run it 
 - `RELEASE_OBSERVER_STAGING_URL`: the same, for `tqjvrzopvtczxfxiwmnz`;
 - optional `RELEASE_OBSERVER_CA_PEM`: the Supabase CA certificate. When set, the gate requires `verify-full` (certificate and host name). Recommended.
 
-The gate refuses a URL whose login or project does not match its environment, a session that is not read-only, a privileged role, or a server other than PostgreSQL 17.
+The gate refuses a URL whose login or project does not match its environment, a session that is not read-only, a privileged role or one that is a member of any other role, or a server other than PostgreSQL 17.
 
 ## The lock and the catalog oracle
 
@@ -119,6 +120,10 @@ Release-Review-Record: v1 verdict=APPROVED head=<40-char PR head SHA> reviewer=<
 ```
 
 The full lane needs two distinct reviewer ids on the merged head. GitHub cannot tell the Owner from Claude here (both use `cipherhq`), so approval, acceptance and review lines are records, not enforcement. The gate requires they exist and name the exact packet or head.
+
+## Certified baseline record
+
+Each successful deploy uploads a release record (kept 90 days). The next prepare reads the newest one to know the certified baseline. If no release happens for 90 days, the record expires and prepare fails closed; the Owner then approves a reviewed lock update with the current certified SHA.
 
 ## Recovery
 
