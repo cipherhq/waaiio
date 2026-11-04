@@ -1,3 +1,21 @@
+## 2026-11-04 — Release V3: production observer reads a read replica
+
+- Owner decision (2026-11-04): the production read-only login (`release_observer`) connects to a Supabase read replica instead of narrowing pg_net's PUBLIC grants (Supabase owns those objects; two active cron jobs rely on them; details in a private advisory).
+- New `scripts/release-v3/release-observer-replica-guard.sql` (production only, not applied): a PostgreSQL 17 login event trigger in schema `release_ops` that refuses `release_observer` on any server that is not a replica.
+- Gate: the observation now records `pg_is_in_recovery()` and the guard (enabled, event, body sha256). Production admission requires a replica and the reviewed, enabled guard. Staging is unchanged.
+- Tests:
+  - unit and end-to-end cases (on the primary, guard missing, disabled, different body, wrong event);
+  - 4 real-PostgreSQL 17 proofs in the "Catalog oracle (PostgreSQL 17)" job: the login is refused on a primary, other logins work, the installed guard matches the pinned body, and the guard function and schema are closed to PUBLIC. The CI count check is now 10 passed, 0 skipped.
+- Docs: production setup order (Owner creates the replica, staging rehearsal, apply role then guard, password only after the guard, secret points at the replica).
+- Review fixes:
+  - the guard is enabled ALWAYS, and the gate also pins its owner, language, security mode and `search_path`;
+  - production observations must come from a caught-up replica: receive LSN equals replay LSN, and the last replay is at most 15 minutes old;
+  - replica endpoint formats (`<ref>-rr-…`) are accepted;
+  - an ordinary non-superuser login is tested.
+- Known limit, documented, Owner decision pending: the guard cannot cover Supabase's `template1` database.
+- Runs no SQL and changes no setting.
+- Could break: nothing yet. A production observation made on the primary, or without the guard, now stops the gate (intended).
+
 ## 2026-11-04 — Ace review screen: clearer "price needed" message
 
 - Owner decision (2026-11-04): the items-step message now reads "N item(s) need(s) a price. Type a price in the highlighted box(es) (0 if it's free) before you confirm." The old "Ace couldn't see a price…" was wrong when the owner had cleared a price Ace found, and gave no hint that 0 means Free.

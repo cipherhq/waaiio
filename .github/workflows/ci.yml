@@ -4489,7 +4489,7 @@ jobs:
           set -euo pipefail
           test -f scripts/__tests__/release-v3-observer.pg.test.ts
           npx vitest run scripts/__tests__/release-v3-observer.pg.test.ts --reporter=json --outputFile=observer.json
-          node -e "const r=require('./observer.json');if(r.numTotalTests!==6||r.numPassedTests!==6||r.numPendingTests||r.numTodoTests||r.numFailedTests){console.error('Expected 6 passed, 0 skipped');process.exit(1)}console.log('release_observer proof: 6 passed, 0 skipped')"
+          node -e "const r=require('./observer.json');if(r.numTotalTests!==10||r.numPassedTests!==10||r.numPendingTests||r.numTodoTests||r.numFailedTests){console.error('Expected 10 passed, 0 skipped');process.exit(1)}console.log('release_observer proof: 10 passed, 0 skipped (incl. replica-only guard)')"
       - name: Upload generated oracle files
         if: failure()
         uses: actions/upload-artifact@v4
