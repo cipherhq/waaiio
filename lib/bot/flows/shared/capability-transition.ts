@@ -60,6 +60,12 @@ const SHARED_SELECTION_KEYS = [
 ] as const;
 
 /**
+ * Add-on choices (written only by scheduling's select_addons). Never pre-filled,
+ * so they are cleared even when the previous capability is unknown (#859).
+ */
+const ADDON_KEYS = ['_available_addons', '_selected_addons'] as const;
+
+/**
  * Clear stale transactional state when switching capabilities.
  *
  * Call this BEFORE setting the new active_capability.
@@ -71,8 +77,16 @@ export function clearStaleCapabilityState(
   fromCapability: string | undefined,
   toCapability: string,
 ): void {
-  // No prior capability (fresh session) or same capability → no cleanup needed
-  if (!fromCapability || fromCapability === toCapability) return;
+  if (fromCapability === toCapability) return;
+
+  // Add-ons belong to the earlier booking. Clear them even with no known prior
+  // capability (e.g. the saved-card "Menu" button clears active_capability).
+  for (const key of ADDON_KEYS) {
+    delete sessionData[key];
+  }
+
+  // No prior capability (fresh session): keep smart-prefilled booking data
+  if (!fromCapability) return;
 
   // Clear table-reservation-specific keys when leaving table_reservation
   if (fromCapability === 'table_reservation') {

@@ -1,40 +1,17 @@
-## 2026-11-04 — M510: late-night table bookings (database only)
+## 2026-11-04 — Bot: add-on choices no longer carry across a capability switch (#859)
 
-Owner decisions (2026-11-04), table bookings only:
-- A closing time earlier than or equal to the opening time means the business closes the next day.
-- A late booking belongs to its start date. It must start before midnight and end at or before closing. Example: Fri 23:00–00:30 with Fri hours 18:00–02:00 is allowed and stored as Friday 23:00.
-- The database enforces this. Seating resources' own windows stay non-overnight (`seating_no_overnight` unchanged). Max duration stays 1–480.
-- Second decision, same day: the database rejects a table booking whose start falls outside the business's opening hours, even when the table has no window of its own. A closed day is rejected. A day with no usable hours is not checked (see "No usable hours" below).
-
-What changed (`supabase/migrations/510_table_overnight_reservations.sql`, `CREATE OR REPLACE` of `public.book_table_atomic`, M476 body otherwise verbatim):
-- Reads `businesses.operating_hours -> <weekday of p_date>` and sorts the day into one of three cases:
-  - **closed**: the entry is an object with `closed` = JSON `true` or `is_open` = JSON `false`;
-  - **usable hours**: an object, `closed` absent or JSON `false`, `is_open` absent or JSON `true`, and `open`/`close` both match `^([01]\d|2[0-3]):[0-5]\d$`. The day is overnight when close ≤ open (a 00:00 close counts);
-  - **no usable hours**: anything else (`{}` hours, day missing, missing keys, malformed values, a business row not found).
-- Only usable overnight hours allow an end past midnight (fail closed).
-- Business-hours checks (new):
-  - closed day → `day_unavailable` ("The business is closed on Wednesday"). This is checked before the midnight checks, so a late booking on a closed day also gets `day_unavailable`, not `past_midnight` (review finding P2-2);
-  - usable hours, overnight or daytime: the start must be ≥ open and before 24:00, else `before_opening` ("Earliest reservation time is 18:00"). Friday 18:00–02:00 rejects 01:00 and 15:00 and accepts 18:00;
-  - usable daytime hours: the end must be ≤ close, else `after_closing`. M476 had no business-hours end check, only the table's `available_to`.
-  - The start and daytime-end checks run after the midnight checks below. So a booking that crosses midnight on a daytime day, or on a day with no usable hours, still gets `past_midnight`, as before.
-  - The table's own `available_days` / `available_from` / `available_to` checks are unchanged and apply in addition.
-- **No usable hours: no business-hours check, exactly as M476.** Many businesses have `{}` hours, and the Owner has not decided to block them, so their tables can still be booked at any time of day (within the table's own window).
-- An end past 24:00 is allowed only on an overnight day, with a start before 24:00, ending at or before close + 24h. Rejections:
-  - not an overnight day, or a start of `24:00` → `past_midnight` (unchanged M476 check);
-  - overnight day but ending after closing → `after_closing` ("past closing time 02:00").
-  - Edge shapes, left as they behave: `00:00`/`00:00` (without `closed`) counts as overnight closing at midnight, so 23:30 + 90 → `after_closing`. Equal open and close (`18:00`/`18:00`) is 24 hours from 18:00: starts from 18:00, ending by 18:00 next day.
-- Advisory lock is per (business, resource), no longer per date, so bookings on neighbouring dates of the same table serialise. The key is `abs(hashtext(...)::bigint)`: `abs()` of the int4 value -2147483648 raises "integer out of range", and with a per-table key one unlucky table would always fail (review finding P2-4). `pg_advisory_xact_lock(bigint)` is unchanged.
-- Overlap uses one minute axis over `b.date` from D-1 to D+1, so D 23:30–01:00 and D+1 00:15 block each other in either order.
-- `supabase/catalog-deltas/510_table_overnight_reservations.json`: exactly one `modify` of `book_table_atomic` (new body hash; ACL, owner, INVOKER, no config unchanged). The replay's pre-510 digest of this function equals the production and staging lock digest.
-- `lib/__tests__/table-overnight-510.pg.test.ts` (63 cases, real PostgreSQL; includes pending/in_progress blocking and completed/no_show not blocking across midnight) and the matching `ci.yml` guard and unit-job exclude.
-
-Unchanged: the 18-argument signature, return shape, SECURITY INVOKER, no SET/proconfig, grants (restated: service_role only), idempotency, deposit and duration revalidation, payments and deposits, `day_unavailable` / `before_opening` / `after_closing` from the table's own window, insert columns, the set of error codes (no new code), `book_slot_atomic`, `reschedule_booking_atomic`, `seating_no_overnight`.
-
-Could break:
-- The RPC now reads `businesses` (service_role already has it). If that read is denied it errors, so the booking is refused.
-- All bookings for one table now queue on one lock instead of one per date; a busy table's bookings wait for each other briefly.
-- Businesses with usable hours now get table bookings refused outside those hours, on closed days, or (daytime) past closing, even if the table has no window. Any app path that offers such times now gets an error. The bot builds table slots from the table's own window when it has one, otherwise from these business hours (`lib/bot/flows/shared/table-same-day.ts`). So a table whose window reaches outside the business hours (for example a table open 12:00–23:00 at a lounge open 18:00) can be offered a time the database now refuses with `before_opening`. The bot shows its "time not available" message for that code. The bot does not offer overnight slots yet; that is a separate app change.
-- Not applied anywhere. Staging and production need their own Owner approvals.
+- `lib/bot/flows/shared/capability-transition.ts`, `clearStaleCapabilityState`:
+  - Problem: it did not clear `_available_addons` or `_selected_addons`, and it did nothing when the previous capability was unknown. The saved-card "Menu" button sets `active_capability` to undefined. If the next service had no add-ons, `select_addons.skipIf` left the old choice in place, so the confirmation listed an add-on the customer had picked for an earlier booking (e.g. "➕ Add-ons: Cake") and `bookings.addons_snapshot` saved it.
+  - Fix: both add-on keys are now cleared on every capability switch, including when the previous capability is unknown. Only `select_addons` ever writes them, so a fresh session loses nothing.
+- Test: `lib/__tests__/capability-switch-addon-state.test.ts` (5; 4 fail on the previous code). The real `select_addons` and `confirmation` steps show no stale add-on after a switch.
+- Not changed:
+  - the fresh-session rule: with no previous capability, pre-filled service, date, time and party size are kept;
+  - same-capability calls (no-op);
+  - `_step_history` and back navigation;
+  - amounts: add-ons were never part of the charged total;
+  - payment and custody routes;
+  - the ordering flow, which uses its own cart add-on keys.
+- Could break: a customer who taps the saved-card "Menu" button and books again must re-pick add-ons. They were for the earlier booking.
 
 ## 2026-11-04 — Table reservations: "back" onto an old add-ons step no longer crashes
 

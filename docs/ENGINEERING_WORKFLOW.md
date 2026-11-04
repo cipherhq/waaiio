@@ -10,7 +10,7 @@ Permanent engineering process for Waaiio.
 4. **GitHub Issues** — planned and tracked milestones
 5. **Engineering status ledger** (`docs/engineering-status.json`)
 6. **Migration registry** (`docs/MIGRATION_REGISTRY.md`)
-7. **Changelog** (`CHANGELOG.md`)
+7. **Changelog** (`CHANGELOG.md`, plus not-yet-collected per-PR entries in `changelog/unreleased/`)
 8. **Chat handoffs** (`docs/CHAT_HANDOFF_TEMPLATE.md`)
 
 **Chat memory and pasted summaries are never authoritative over GitHub.** If a chat session claims work is complete but `git merge-base --is-ancestor <sha> origin/main` fails, the work is not on main.
@@ -130,7 +130,7 @@ Every new conversation must begin by reading:
 3. `docs/MIGRATION_REGISTRY.md`
 4. The active GitHub Issue
 5. The active pull request
-6. `CHANGELOG.md`
+6. `CHANGELOG.md` and `changelog/unreleased/`
 
 Then confirm current `origin/main` SHA before proposing or changing anything.
 
