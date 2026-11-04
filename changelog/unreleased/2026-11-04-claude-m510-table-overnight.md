@@ -19,12 +19,13 @@ What changed (`supabase/migrations/510_table_overnight_reservations.sql`, `CREAT
   - starts inside open time but ends after it → `after_closing` ("…past closing time 06:00");
   - starts outside open time while the business still opens later that day → `before_opening` ("Earliest reservation time is 22:00");
   - starts outside open time with no later opening that day → `day_unavailable` ("The business is closed on Tuesday" when D is closed, otherwise "The business is not open at that time on Tuesday");
-  - a start of `24:00` → `past_midnight` (it is not a time on D).
+  - a start of `24:00` → `past_midnight` (it is not a time on D);
+  - an end after 2880 minutes (D+2 00:00) → `after_closing` ("…past closing time 00:00 (end of the next day)"), even inside joined open time. The overlap check only reads D-1..D+1, so a longer booking could otherwise be double-booked (review finding: Fri 18:00/18:00 + Sat 18:00–06:00, a direct 1800-minute call at Fri 23:00 ran to Sun 05:00 and a Sun 01:00 booking was also accepted). The bot cannot reach this, because table durations are 1–480. Not added for days with no usable hours, where an end past 1440 is already `past_midnight`.
 - **Order of checks.** Business hours are checked after the table's own `available_from` and before its `available_to`. The table's own `available_days` / `available_from` / `available_to` checks are unchanged. Table windows stay non-overnight (`seating_no_overnight` unchanged), so a table with `available_to` cannot take a booking that crosses midnight.
 - **Lock.** The advisory lock is per (business, table), not per date, so bookings on neighbouring dates of the same table serialise. The key is `abs(hashtext(...)::bigint)`: `abs()` of the int4 value -2147483648 raised "integer out of range", and one unlucky table would always have failed.
 - **Overlap.** Overlap uses one minute axis over `b.date` from D-1 to D+1, with the same statuses as M476 (`pending`, `confirmed`, `in_progress`). A booking running past midnight blocks the next day's early bookings, and the other way round.
 - **Catalog delta.** `supabase/catalog-deltas/510_table_overnight_reservations.json` has exactly one `modify`, of `book_table_atomic`: new body hash; ACL, owner, INVOKER and no config unchanged. The replay's pre-510 digest of this function equals the production and staging lock digest.
-- **Tests.** `lib/__tests__/table-overnight-510.pg.test.ts` has 73 cases on real PostgreSQL. `ci.yml` has the pg-file guard and the unit-job exclude.
+- **Tests.** `lib/__tests__/table-overnight-510.pg.test.ts` has 75 cases on real PostgreSQL, including that reproduction and the exact-2880 boundary. `ci.yml` has the pg-file guard and the unit-job exclude.
 
 Unchanged: the 18-argument signature, return shape, SECURITY INVOKER, no SET/proconfig, grants (restated: service_role only), idempotency, deposit and duration revalidation, payments and deposits, insert columns, `book_slot_atomic`, `reschedule_booking_atomic`, `seating_no_overnight`, the 1–480 duration CHECK.
 

@@ -25,6 +25,8 @@
 --      to p_date, joined where it touches. The booking [start, end] must lie
 --      inside one stretch. Errors (no new codes):
 --        - start inside a stretch, end after it        -> after_closing
+--        - end after 2880 (D+2 00:00), which the D-1..D+1
+--          overlap check could not see                 -> after_closing
 --        - start outside open time, the business opens
 --          later on p_date                             -> before_opening
 --        - otherwise (closed day, or nothing later)    -> day_unavailable
@@ -272,6 +274,11 @@ BEGIN
             lpad((v_ends[v_i] % 1440 / 60)::text, 2, '0') || ':'
             || lpad((v_ends[v_i] % 60)::text, 2, '0');
         END IF;
+        -- Joined stretches can run past the end of D+1, but the overlap check
+        -- only reads D-1..D+1: nothing may end after 2880 (D+2 00:00).
+        IF v_req_end_min > 2880 THEN
+          RAISE EXCEPTION 'after_closing:Reservation would extend past closing time 00:00 (end of the next day)';
+        END IF;
       END IF;
     END LOOP;
     IF NOT v_inside THEN
@@ -399,6 +406,7 @@ BEGIN
   END IF;
   IF v_src NOT LIKE '%v_day_state%' OR v_src NOT LIKE '%p_date - 1 AND p_date + 1%'
      OR v_src NOT LIKE '%FOR v_k IN -1..1 LOOP%' OR v_src NOT LIKE '%The business is closed on%'
+     OR v_src NOT LIKE '%IF v_req_end_min > 2880 THEN%'
      OR v_src NOT LIKE '%p_seating_resource_id::text
   )::bigint);%' THEN
     RAISE EXCEPTION '510 SELF-CHECK FAILED: book_table_atomic body is not the M510 overnight version';

@@ -508,6 +508,36 @@ suite('M510 overnight table reservations (real PostgreSQL)', () => {
       await expect(bookErr(biz, await resource(biz), SAT, '02:30')).rejects.toThrow(/^before_opening:Earliest reservation time is 03:00$/);
     });
 
+    // Reviewer 1 P2: joined stretches (Fri 18:00/18:00 + Sat 18:00-06:00 run to
+    // Sun 06:00) let a long direct call (p_expected_duration NULL) end in D+2,
+    // which the D-1..D+1 overlap check cannot see. Nothing may end after 2880.
+    describe('no booking may end after the end of D+1 (2880)', () => {
+      const SUN = '2026-11-08';
+      const hours = { friday: { open: '18:00', close: '18:00' }, saturday: { open: '18:00', close: '06:00' } };
+      const raw = (biz: string, resId: string, date: string, time: string, minutes: number) => q(
+        `SELECT * FROM public.book_table_atomic(NULL, $1, $2, $3, $4::date, $5, 2, $6,
+           'Guest', '+2340000', NULL, NULL, 0, 'none', 'confirmed', 0, NULL, NULL)`,
+        [biz, userId, resId, date, time, minutes],
+      );
+
+      it('reproduction: Fri 23:00 + 1800 (to Sun 05:00) is refused, then Sun 01:00 on the same table succeeds', async () => {
+        const biz = await business(hours);
+        const res = await resource(biz);
+        await expect(raw(biz, res.id, FRI, '23:00', 1800))
+          .rejects.toThrow(/^after_closing:Reservation would extend past closing time 00:00 \(end of the next day\)$/);
+        expect((await book(client, biz, res, SUN, '01:00')).slot_available).toBe(true);
+        const { rows } = await q(`SELECT date::text, time::text FROM bookings WHERE seating_resource_id = $1`, [res.id]);
+        expect(rows).toEqual([{ date: SUN, time: '01:00:00' }]);
+      });
+
+      it('boundary: Fri 23:00 + 1500 ends exactly at 2880 (Sun 00:00) and is allowed; + 1501 is refused', async () => {
+        const biz = await business(hours);
+        expect((await raw(biz, (await resource(biz)).id, FRI, '23:00', 1500)).rows[0].slot_available).toBe(true);
+        await expect(raw(biz, (await resource(biz)).id, FRI, '23:00', 1501))
+          .rejects.toThrow(/^after_closing:Reservation would extend past closing time 00:00 \(end of the next day\)$/);
+      });
+    });
+
     it("no usable hours for the booking's own date means no check, even after an overnight day (Mon 22:00-06:00, Tue missing: Tue 12:00 allowed)", async () => {
       const biz = await business({ monday: NIGHT });
       expect((await book(client, biz, await resource(biz), TUE, '12:00')).slot_available).toBe(true);
