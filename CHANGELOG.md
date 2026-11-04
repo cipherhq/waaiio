@@ -20,6 +20,7 @@
   - payment-named paths, symlinks and submodules are always full;
   - an import counts as type-only only if its clause is exactly `type { names }` (no comments), and only when its `import`/`export` keyword starts a line, so comments cannot hide a real import (no hand-written lexing); computed global lookups are full.
 - Review 2 fixes: any `\u`/`\x` escape, external form posts and active SVG content (namespaced script, entities, DTDs, external links) are full; runtime identity also checks the Supabase project; the observer role must have no role memberships; 90-day release-record retention documented.
+- Review 2, round 7: code construction and reflection (`constructor`, `prototype`, `global`, property descriptors), timers not given an inline function, workers, beacons and string-assembled computed lookups are full. The docs state the classifier's limit: a fail-closed filter against accidental drift, not an adversarial sandbox; the standard-lane reviewer stays the backstop (Owner decision pending).
 - Prepare requires the 15 named CI jobs, including the payment suites. Optional `verify-full` TLS for the observer (`RELEASE_OBSERVER_CA_PEM`).
 - The observer role's claims are corrected: it inherits PUBLIC grants, and read-only is a session default. Production needs an Owner decision before the role is applied (private advisory). The `release-observer` environment must be restricted to `main`.
 - `scripts/release-v3/release-observer-role.sql`: reviewed, not applied. Applying it needs Owner approval per environment, and the Owner sets the password.

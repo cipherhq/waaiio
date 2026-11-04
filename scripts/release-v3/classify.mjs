@@ -64,6 +64,14 @@ const RISKY = [
   // pattern above, so any escape sequence makes the file full.
   [/\\u|\\x/, 'escape sequence'],
   [/\b(action|formAction)\s*=\s*\{?\s*["'`]\s*(https?:)?\/\//i, 'form posting to another site'],
+  // Code construction and reflection can rebuild any name from string pieces.
+  [/\bconstructor\b|\bprototype\b|__proto__|\bglobal\b|getOwnPropertyDescriptor|defineProperty|__lookupGetter__|__defineGetter__/, 'code construction or reflection'],
+  // Timers are fine with an inline function; anything else (a string of code,
+  // or a value that could hold one) is not display-only.
+  [/\bset(Timeout|Interval|Immediate)\s*\(\s*(?!\(|async\b|function\b)|\b(Shared)?Worker\b|\bserviceWorker\b|\bBlob\b|createObjectURL|importScripts|\bnew\s+Image\b|\bsrcset\b/, 'timer, worker or beacon'],
+  // A computed member lookup (not an array literal) whose key is assembled
+  // from strings: obj['a' + 'b'].
+  [/(?<=[\w$)\]]\s*)\[[^\]\n]*["'`][^\]\n]*\+[^\]\n]*\]|(?<=[\w$)\]]\s*)\[[^\]\n]*\+[^\]\n]*["'`][^\]\n]*\]/, 'assembled computed lookup'],
 ];
 const SPACE = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*`;
 // Specifiers after `from` / `import` / `import(`, allowing comments and line breaks.

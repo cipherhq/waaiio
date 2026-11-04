@@ -53,6 +53,17 @@ One approval covers Operating Order gates 5, 7 and 9 for that packet (§9.4). It
 
 The packet holds no secrets and no raw deployment IDs (only sha256 values of the prefixed IDs).
 
+## What the lane classifier is, and is not
+
+The classifier is a fail-closed filter against *accidental* drift: a data call, server code, environment read or payment path landing in the standard lane. It reads text with patterns; it does not execute or type-check code. A deliberately obfuscated change can be written to look display-only, and no pattern list can rule that out completely for JavaScript.
+
+So the standard lane keeps a human check:
+- every standard-lane PR still gets an independent review at its exact head;
+- that reviewer confirms the change is display-only and raises the lane when unsure (§9.3: a reviewer may raise, never lower);
+- anything the reviewer cannot confirm goes full.
+
+Accepting this residual limit is an Owner security decision (2026-11-04, pending). The alternative is a real parser or type-checker gate, which is heavier.
+
 ## Read-only database login
 
 `scripts/release-v3/release-observer-role.sql` creates `release_observer`:
