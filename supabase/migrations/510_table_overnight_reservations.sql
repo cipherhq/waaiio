@@ -1,46 +1,45 @@
 -- ═══════════════════════════════════════════════════════
 -- Migration 510: late-night (overnight) table reservations
 --
--- Owner decisions 2026-11-04 (table bookings only):
---   * A business day whose closing time is earlier than or equal to its opening
---     time (businesses.operating_hours) closes on the next calendar day.
---   * A late booking belongs to its start date: it must start before midnight
---     and end at or before closing. Example: Fri 23:00-00:30 with Fri hours
---     18:00-02:00 is allowed and stored as Friday 23:00.
---   * The database enforces this. An end past 1440 minutes is allowed only when
---     the start date's hours cross midnight AND end <= close + 1440 AND the
---     start is before 24:00. Every other day keeps the past_midnight rejection.
+-- Owner decision 2026-11-04 (revised; table bookings only): a table booking is
+-- allowed when it fits completely inside the business's open time.
+--   * Open time comes from businesses.operating_hours. A closing time earlier
+--     than or equal to the opening time closes the next day; open == close
+--     (e.g. 00:00/00:00) is open 24 hours from that time.
+--   * Bookings are stored on their real calendar date and time. Starts after
+--     midnight are allowed when the business is open then: open Mon 22:00 to
+--     Tue 06:00 accepts Tue 01:00-02:30 (p_date = Tue, p_time = 01:00).
+--   * Back-to-back open days join up (Fri 18:00-02:00 + Sat 02:00-06:00 is one
+--     stretch to Sat 06:00). A closed day (closed = true / is_open = false)
+--     contributes no open time.
+--   * No usable hours for p_date ({} hours, missing or malformed entry): no
+--     business-hours check, and an end past 24:00 is past_midnight, as M476.
 --   * Seating resources' own windows stay non-overnight (seating_no_overnight
 --     is unchanged) and the 1-480 minute duration CHECK is unchanged.
---   * (Second decision, same day.) The database rejects a start outside the
---     business's opening hours even when the table has no window of its own.
---     A closed day is rejected. A day without usable hours ({} hours, missing
---     or malformed entries) gets no business-hours check, exactly as M476.
 --
 -- Changes to book_table_atomic (M476 body otherwise copied verbatim):
 --   1. Advisory lock is per (business, resource), without the date, so bookings
 --      on neighbouring dates of the same resource serialise. The key is
 --      abs(hashtext(...)::bigint), safe when hashtext returns -2147483648.
---   2. Reads that weekday's businesses.operating_hours: closed (closed = true or
---      is_open = false), usable (closed absent/false, is_open absent/true, open
---      and close both match ^([01]\d|2[0-3]):[0-5]\d$; overnight when
---      close <= open), or no usable hours. Only usable overnight hours allow an
---      end past midnight (fail closed).
---   3. Business hours: a closed day -> day_unavailable, raised before the
---      midnight checks (so a late booking on a closed day also gets it).
---      Usable hours -> start must be >= open and < 24:00 (before_opening), and
---      on a daytime day the end must be <= close (after_closing); these run
---      after the midnight checks. All apply in addition to the table's own
---      available_days/from/to checks.
---   4. Overlap check uses an absolute-minute axis over b.date in
---      [p_date - 1, p_date + 1], so a late booking on D blocks D+1 00:xx and
---      vice versa.
+--   2. Business hours: open time of D-1, D and D+1 on one minute axis relative
+--      to p_date, joined where it touches. The booking [start, end] must lie
+--      inside one stretch. Errors (no new codes):
+--        - start inside a stretch, end after it        -> after_closing
+--        - start outside open time, the business opens
+--          later on p_date                             -> before_opening
+--        - otherwise (closed day, or nothing later)    -> day_unavailable
+--        - start of '24:00' (not a time on p_date)     -> past_midnight
+--      Checked after the table's available_from and before its available_to;
+--      the table's available_days/from/to checks are unchanged.
+--   3. Overlap check uses an absolute-minute axis over b.date in
+--      [p_date - 1, p_date + 1], so a booking on D running past midnight
+--      blocks D+1 00:xx and vice versa.
 --
 -- Unchanged: signature, return shape, SECURITY INVOKER, no SET/proconfig,
 -- idempotency, resource validation, deposit/duration revalidation, party size,
 -- day_unavailable / before_opening / after_closing (resource window), insert
--- columns, error codes (no new code). Payments and deposits are not touched. ACL is restated
--- exactly as in M476 (service_role only). book_slot_atomic and
+-- columns, error codes (no new code). Payments and deposits are not touched.
+-- ACL is restated exactly as in M476 (service_role only). book_slot_atomic and
 -- reschedule_booking_atomic are not touched.
 -- ═══════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.book_table_atomic(
@@ -83,14 +82,23 @@ DECLARE
   v_to_min INTEGER;
   v_b_start_min INTEGER;
   v_b_end_min INTEGER;
-  -- M510: overnight business hours for p_date's weekday
-  v_day_hours JSONB;
+  -- M510: business open time on one minute axis relative to p_date
+  v_hours JSONB;
+  v_entry JSONB;
   v_open_text TEXT;
   v_close_text TEXT;
   v_open_min INTEGER;
   v_close_min INTEGER;
-  v_overnight BOOLEAN := false;
-  v_hours_usable BOOLEAN := false;
+  v_state TEXT;
+  v_day_state TEXT := 'unknown';  -- p_date's own entry: open | closed | unknown
+  v_k INTEGER;
+  v_i INTEGER;
+  v_iv_start INTEGER;
+  v_iv_end INTEGER;
+  v_starts INTEGER[] := '{}';     -- joined stretches of open time
+  v_ends INTEGER[] := '{}';
+  v_inside BOOLEAN := false;
+  v_next_open INTEGER;
 BEGIN
   -- ── Advisory lock FIRST: serialize ALL reservations for the same resource ──
   -- M510: no date in the key — a late booking on D and an early booking on D+1
@@ -194,59 +202,91 @@ BEGIN
     END IF;
   END IF;
 
-  -- ── M510: p_date's business hours (weekday entry of operating_hours) ──
-  -- Three outcomes:
-  --   closed: the entry is an object with closed = true or is_open = false;
-  --   usable: an object, closed absent/false, is_open absent/true, and both
-  --           open/close are "HH:MM" (overnight when close <= open);
-  --   anything else (missing business, {} hours, missing keys, bad shapes):
-  --           no business-hours check and NOT overnight, exactly as M476.
-  SELECT b.operating_hours -> v_day_name INTO v_day_hours
+  -- ── M510: business opening hours (Owner decision 2026-11-04, revised) ──
+  -- A booking is allowed when [start, end] lies inside one stretch of open time.
+  -- Each weekday entry of operating_hours is one of:
+  --   closed:  an object with closed = true or is_open = false (no open time);
+  --   open:    an object, closed absent/false, is_open absent/true, and open and
+  --            close both "HH:MM". Open time is [open, close], with close + 24h
+  --            when close <= open (so open == close is 24 hours from open);
+  --   unknown: anything else ({} hours, missing day or keys, bad shapes).
+  -- The open time of D-1, D and D+1 is placed on one minute axis relative to
+  -- p_date (shifted by -1440 / 0 / +1440), and stretches that touch or overlap
+  -- are joined, so back-to-back open days join up. If p_date's own entry is
+  -- unknown there is no business-hours check, exactly as M476.
+
+  -- '24:00' parses as TIME but is not a time on p_date (it is D+1 00:00).
+  IF v_req_start_min >= 1440 THEN
+    RAISE EXCEPTION 'past_midnight:Reservation would extend past midnight';
+  END IF;
+
+  SELECT b.operating_hours INTO v_hours
   FROM businesses b
   WHERE b.id = p_business_id;
 
-  IF jsonb_typeof(v_day_hours) = 'object' THEN
-    IF v_day_hours -> 'closed' = 'true'::jsonb OR v_day_hours -> 'is_open' = 'false'::jsonb THEN
-      -- Closed: refused here, before any midnight check, so a late booking on a
-      -- closed day gets day_unavailable, not past_midnight.
-      RAISE EXCEPTION 'day_unavailable:The business is closed on %', initcap(v_day_name);
-    ELSIF (NOT (v_day_hours ? 'closed') OR v_day_hours -> 'closed' = 'false'::jsonb)
-      AND (NOT (v_day_hours ? 'is_open') OR v_day_hours -> 'is_open' = 'true'::jsonb)
-    THEN
-      -- (A non-string open/close can never match the HH:MM pattern below.)
-      v_open_text := v_day_hours ->> 'open';
-      v_close_text := v_day_hours ->> 'close';
-      IF v_open_text ~ '^([01]\d|2[0-3]):[0-5]\d$' AND v_close_text ~ '^([01]\d|2[0-3]):[0-5]\d$' THEN
-        v_open_min := split_part(v_open_text, ':', 1)::int * 60 + split_part(v_open_text, ':', 2)::int;
-        v_close_min := split_part(v_close_text, ':', 1)::int * 60 + split_part(v_close_text, ':', 2)::int;
-        v_hours_usable := true;
-        v_overnight := v_close_min <= v_open_min;
+  FOR v_k IN -1..1 LOOP
+    v_entry := v_hours -> lower(to_char(p_date + v_k, 'fmday'));
+    v_state := 'unknown';
+    IF jsonb_typeof(v_entry) = 'object' THEN
+      IF v_entry -> 'closed' = 'true'::jsonb OR v_entry -> 'is_open' = 'false'::jsonb THEN
+        v_state := 'closed';
+      ELSIF (NOT (v_entry ? 'closed') OR v_entry -> 'closed' = 'false'::jsonb)
+        AND (NOT (v_entry ? 'is_open') OR v_entry -> 'is_open' = 'true'::jsonb)
+      THEN
+        -- (A non-string open/close can never match the HH:MM pattern below.)
+        v_open_text := v_entry ->> 'open';
+        v_close_text := v_entry ->> 'close';
+        IF v_open_text ~ '^([01]\d|2[0-3]):[0-5]\d$' AND v_close_text ~ '^([01]\d|2[0-3]):[0-5]\d$' THEN
+          v_state := 'open';
+          v_open_min := split_part(v_open_text, ':', 1)::int * 60 + split_part(v_open_text, ':', 2)::int;
+          v_close_min := split_part(v_close_text, ':', 1)::int * 60 + split_part(v_close_text, ':', 2)::int;
+          v_iv_start := v_open_min + v_k * 1440;
+          v_iv_end := CASE WHEN v_close_min <= v_open_min THEN v_close_min + 1440 ELSE v_close_min END + v_k * 1440;
+          -- Starts increase with v_k, so joining with the previous stretch is enough.
+          v_i := cardinality(v_starts);
+          IF v_i > 0 AND v_iv_start <= v_ends[v_i] THEN
+            v_ends[v_i] := greatest(v_ends[v_i], v_iv_end);
+          ELSE
+            v_starts := v_starts || v_iv_start;
+            v_ends := v_ends || v_iv_end;
+          END IF;
+        END IF;
       END IF;
     END IF;
-  END IF;
+    IF v_k = 0 THEN
+      v_day_state := v_state;
+    END IF;
+  END LOOP;
 
-  IF v_req_end_min > 1440 THEN
-    -- Not an overnight day, or the start is not before midnight ('24:00' parses
-    -- as TIME): the existing M476 rejection, unchanged.
-    IF NOT v_overnight OR v_req_start_min >= 1440 THEN
+  IF v_day_state = 'unknown' THEN
+    -- No usable hours for p_date: the existing M476 rejection, unchanged.
+    IF v_req_end_min > 1440 THEN
       RAISE EXCEPTION 'past_midnight:Reservation would extend past midnight';
     END IF;
-    -- Overnight day: the booking must end at or before the next-day closing.
-    IF v_req_end_min > v_close_min + 1440 THEN
-      RAISE EXCEPTION 'after_closing:Reservation would extend past closing time %', v_close_text;
-    END IF;
-  END IF;
-
-  -- ── M510: the start must fall inside the business's opening hours ──
-  -- Applies in addition to the table's own window. No check without usable hours.
-  IF v_hours_usable THEN
-    -- Overnight and daytime days alike: start at or after opening, before 24:00.
-    IF v_req_start_min < v_open_min OR v_req_start_min >= 1440 THEN
-      RAISE EXCEPTION 'before_opening:Earliest reservation time is %', v_open_text;
-    END IF;
-    -- Daytime day: end at or before closing (overnight ends are checked above).
-    IF NOT v_overnight AND v_req_end_min > v_close_min THEN
-      RAISE EXCEPTION 'after_closing:Reservation would extend past closing time %', v_close_text;
+  ELSE
+    FOR v_i IN 1..cardinality(v_starts) LOOP
+      IF v_starts[v_i] <= v_req_start_min AND v_req_start_min < v_ends[v_i] THEN
+        v_inside := true;
+        IF v_req_end_min > v_ends[v_i] THEN
+          RAISE EXCEPTION 'after_closing:Reservation would extend past closing time %',
+            lpad((v_ends[v_i] % 1440 / 60)::text, 2, '0') || ':'
+            || lpad((v_ends[v_i] % 60)::text, 2, '0');
+        END IF;
+      END IF;
+    END LOOP;
+    IF NOT v_inside THEN
+      -- Starts outside any open time: before_opening when the business still
+      -- opens later on p_date, otherwise day_unavailable.
+      SELECT min(s) INTO v_next_open FROM unnest(v_starts) AS s
+      WHERE s > v_req_start_min AND s < 1440;
+      IF v_next_open IS NOT NULL THEN
+        RAISE EXCEPTION 'before_opening:Earliest reservation time is %',
+          lpad((v_next_open / 60)::text, 2, '0') || ':' || lpad((v_next_open % 60)::text, 2, '0');
+      ELSIF v_day_state = 'closed' THEN
+        RAISE EXCEPTION 'day_unavailable:The business is closed on %', initcap(v_day_name);
+      ELSE
+        RAISE EXCEPTION 'day_unavailable:The business is not open at that time on %', initcap(v_day_name);
+      END IF;
     END IF;
   END IF;
 
@@ -357,8 +397,8 @@ BEGIN
   IF v_config IS NOT NULL THEN
     RAISE EXCEPTION '510 SELF-CHECK FAILED: book_table_atomic must carry no SET/proconfig, found %', v_config;
   END IF;
-  IF v_src NOT LIKE '%v_overnight%' OR v_src NOT LIKE '%p_date - 1 AND p_date + 1%'
-     OR v_src NOT LIKE '%v_hours_usable%' OR v_src NOT LIKE '%The business is closed on%'
+  IF v_src NOT LIKE '%v_day_state%' OR v_src NOT LIKE '%p_date - 1 AND p_date + 1%'
+     OR v_src NOT LIKE '%FOR v_k IN -1..1 LOOP%' OR v_src NOT LIKE '%The business is closed on%'
      OR v_src NOT LIKE '%p_seating_resource_id::text
   )::bigint);%' THEN
     RAISE EXCEPTION '510 SELF-CHECK FAILED: book_table_atomic body is not the M510 overnight version';
