@@ -204,7 +204,7 @@ function getDefaultWelcomeButtons(category: BusinessCategoryKey): Array<{ label:
     case 'catering':
       return [
         { label: 'Place Order', action: 'start_flow' },
-        { label: 'Book a Table', action: 'quick_reply', payload: 'book' },
+        { label: 'Book Table / Section', action: 'quick_reply', payload: 'book' },
       ];
     case 'church':
     case 'mosque':

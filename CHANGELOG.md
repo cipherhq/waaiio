@@ -1,3 +1,23 @@
+## 2026-11-04 — Tables & Sections: reminder for food & drink only; last labels renamed
+
+Owner decisions (2026-11-04), following the #854 reviews.
+
+- `components/dashboard/OnboardingChecklist.tsx`: the "Add your tables & sections" reminder now shows only when both of these are true:
+  - Tables & Sections is on;
+  - the business is restaurant, cafe, bar, lounge, bakery, catering or food_truck.
+
+  Other businesses with the feature on no longer see the reminder, and their checklist no longer queries tables. In production that is a church, 5 shops, a tailor, an events business and a spa, none of which has tables.
+- `app/dashboard/reservations/page.tsx` and `components/dashboard/BookingPresentation.tsx`: the "Table Reservations" tab is now "Tables & Sections". The tab id is unchanged.
+- `app/api/onboarding/register/route.ts`: the restaurant, food_delivery and catering welcome button "Book a Table" is now "Book Table / Section" (20 characters, so it fits a WhatsApp button). It sends the same `book` payload as before.
+- Notes the #854 reviews asked to record:
+  - For tables at a business whose stored timezone doesn't fit its country, a pre-filled "today" is now dropped and the tomorrow-first date picker is shown.
+  - While the tables reminder is open, the checklist does not auto-dismiss.
+- Tests:
+  - 2 new checklist cases: a non-food business sees no reminder and its checklist sends no tables query, and each food & drink category sees the reminder.
+  - The dashboard tab tests now expect the new label.
+  - 10 cases fail on the previous code.
+- Could break: nothing in data or the bot. Text, and who sees the reminder, only.
+
 ## 2026-11-04 — Tables & Sections: rename, setup nudge, same-day tables (app only)
 
 Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashboard/seating` URL are unchanged. This PR has no migration: the whole-word "table" keyword fix (M509) is its own PR, and this code works with or without it.

@@ -58,7 +58,7 @@ async function settled() {
 }
 
 beforeEach(() => {
-  state.business = { id: 'own', bot_code: '' };
+  state.business = { id: 'own', bot_code: '', category: 'lounge' };
   state.capabilities = [];
   state.rows = {};
   state.errors.clear();
@@ -94,6 +94,24 @@ describe('Checklist nudge: Add your tables & sections', () => {
     state.capabilities = ['table_reservation'];
     add('seating_resources', { is_active: false });
     add('seating_resources', { business_id: 'other', is_active: true });
+    render(<OnboardingChecklist />);
+    await settled();
+    expect(screen.getByText(NUDGE)).toBeTruthy();
+  });
+
+  it('does not show for a non-food business that has table_reservation on (and does not query seating)', async () => {
+    state.business = { id: 'own', bot_code: '', category: 'church' };
+    state.capabilities = ['table_reservation'];
+    render(<OnboardingChecklist />);
+    await settled();
+    expect(screen.queryByText(NUDGE)).toBeNull();
+    expect(state.queries.some(q => q.table === 'seating_resources')).toBe(false);
+    expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
+  });
+
+  it.each(['restaurant', 'cafe', 'bar', 'lounge', 'bakery', 'catering', 'food_truck'])('shows for food & drink category %s', async (category) => {
+    state.business = { id: 'own', bot_code: '', category };
+    state.capabilities = ['table_reservation'];
     render(<OnboardingChecklist />);
     await settled();
     expect(screen.getByText(NUDGE)).toBeTruthy();
