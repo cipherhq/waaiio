@@ -287,6 +287,13 @@ describe('services', () => {
     expect(h.inserts.services.map((r) => r.name)).toEqual(['Haircut']);
   });
 
+  it('a service name over 200 characters is saved cut to 200, not dropped with a false success', async () => {
+    const body = await (await post({ services: [{ name: 'S'.repeat(250), price: 15 }] })).json();
+    expect(body.success).toBe(true);
+    expect(body.results.services).toMatchObject({ created: 1, skipped: 0 });
+    expect(h.inserts.services[0].name).toBe('S'.repeat(200));
+  });
+
   it('keeps price 0 (free services) valid', async () => {
     const body = await (await post({ services: [{ name: 'Sunday Worship', price: 0 }] })).json();
     expect(body.success).toBe(true);

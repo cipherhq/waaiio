@@ -16,6 +16,20 @@
 - Runs no SQL and changes no setting.
 - Could break: nothing yet. A production observation made on the primary, or without the guard, now stops the gate (intended).
 
+## 2026-11-04 — Ace review screen: a cleared price means "price needed"; long service names saved
+
+- Owner decision (2026-11-04): if Ace found a price and the owner clears the box, the item is "price needed" and blocks Confirm, instead of being saved as Free. Typing 0 still means Free.
+- `app/dashboard/setup-assistant/page.tsx`:
+  - Ace items (from images and from pasted text) are marked `fromAce`. Clearing their price gives `null`, and a price of 0 is shown as "0" rather than an empty box.
+  - Items the owner adds by hand are unchanged: an empty box still means 0.
+  - Name inputs are capped at 200 characters.
+- `app/api/ai-setup/apply/route.ts`: a service name over 200 characters is now saved cut to 200, as products already were. Before, it was silently dropped while the page still showed "Setup Complete".
+- Tests:
+  - 1 rendered case: clearing blocks Confirm, typing 0 saves Free;
+  - 1 route case: long service name.
+  - Both fail on the previous code.
+- Could break: an owner who clears an Ace price expecting Free must now type 0.
+
 ## 2026-11-04 — Ace reads menus and product photos (Setup Guide)
 
 - Owner decisions (2026-11-04):
