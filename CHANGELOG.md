@@ -24,6 +24,30 @@
   - Transparent images get a white background before conversion to JPEG instead of black.
   - If the duplicate check can't read existing items, that section saves nothing and reports an error, instead of risking duplicates.
 
+## 2026-11-04 — WhatsApp link on the overview, and the own-number rule in plain words
+
+- Owner decisions (2026-11-04):
+  - show the direct WhatsApp link on the overview, display-only, with why the Waaiio link is the one to share;
+  - tell owners that only a brand-new number that has never had WhatsApp can be connected;
+  - own number is available on any plan;
+  - the coexistence pilot stays shown as unavailable.
+- `app/api/whatsapp/direct-link/route.ts` (new): owner-only GET that returns the business's `wa.me` link, using the same server readiness check as the public `/m/` links (`resolveBusinessChannel`). It returns `null` when that link would not work, and sends `Cache-Control: no-store`. The dashboard home still makes no direct channel query (existing safety tests unchanged).
+- `components/dashboard/DirectWhatsAppLink.tsx` (new), used in `app/dashboard/page.tsx`: shows "Direct WhatsApp link" as plain, non-selectable text under the short link, with the approved note. Shown only when the server returns a link.
+- Own-number wording: "Use a brand-new number that has never had WhatsApp — for example a new SIM. This is the only way we support. A number that already has WhatsApp or WhatsApp Business on it will not connect." Added to:
+  - the signup details step, whose subtitle no longer says "existing business or personal number";
+  - the success screen;
+  - the dashboard Connect page, shown above both connection options (including the recommended "Enter Phone Number").
+- Review follow-ups, so no visible page contradicts the decisions:
+  - the homepage FAQ no longer says an existing business WhatsApp number works;
+  - both help pages say own number is available on every plan (not Pro/Premium only) and repeat the brand-new-number rule;
+  - the route test now asserts the owner filter.
+- The signup plans panel now says "Connect your own WhatsApp number on any plan" instead of "Pro & Premium". Unused `WA_OPTIONS` code in the wizard is unchanged and not rendered.
+- Tests:
+  - `app/api/whatsapp/direct-link/__tests__/direct-link-route.test.ts` (5);
+  - `components/dashboard/__tests__/direct-whatsapp-link.test.tsx` (3);
+  - `app/get-started/steps/__tests__/own-number-warning.test.tsx` (3).
+- Could break: nothing; no database or permission change. The extra request on the dashboard home is one owner-checked GET.
+
 ## 2026-11-04 — Admin Support: replies saved and shown again
 
 - `admin/src/pages/Support.tsx`: replies were written to a `body` column that does not exist; the real column is `message`. PostgREST rejected every admin reply (400, PGRST204, seen in staging edge logs) and the page showed "Failed to send message". The thread also rendered `body`, so every message appeared blank to admins. The insert, the type and the render now use `message`. No migration, RLS or permission change: the `admin_all_ticket_messages` / `is_admin()` gate is unchanged.

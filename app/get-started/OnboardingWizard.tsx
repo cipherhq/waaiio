@@ -88,7 +88,7 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
   plan: {
     title: 'Choose your plan',
     subtitle: 'Start free. Your QR code works on every plan.',
-    bullets: ['Free trial included', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Pro & Premium: connect your own WhatsApp number'],
+    bullets: ['Free trial included', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Connect your own WhatsApp number on any plan'],
     visual: '\u{1F4B3}',
   },
   details: {
