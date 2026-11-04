@@ -1,3 +1,11 @@
+## 2026-11-04 — Release V3 docs: setup step 0 in the role file; 65-minute residual risk stated precisely
+
+- Follow-up to the #860 review notes (P2, optional). Comments and docs only; no code behavior changes.
+- `scripts/release-v3/release-observer-role.sql`: the "How to apply" header now says production is only after setup step 0 (Supabase confirms the template1 gap is closed).
+- `docs/RELEASE_V3_GATE.md` and the comment above `REPLICA_MAX_REPLAY_AGE_SECONDS` in `scripts/release-v3/db-observe.mjs`: replace "a stall is caught within about an hour". If the replica loses its connection to the primary, the receive = replay check still passes, so the gate refuses it only once its last replayed commit is more than 65 minutes old. This is the residual risk the Owner accepted.
+- The guard SQL is untouched, so its pinned hash is unchanged. The role SQL changes only in a comment, and the CI observer proof still runs it.
+- Could break: nothing.
+
 ## 2026-11-04 — Bot: add-on choices no longer carry across a capability switch (#859)
 
 - `lib/bot/flows/shared/capability-transition.ts`, `clearStaleCapabilityState`:
