@@ -4,7 +4,6 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import PartiesPage from '@/app/dashboard/parties/page';
-import { plainTextCell } from '@/lib/parties/csv-cell';
 
 const mocks = vi.hoisted(() => ({ client: vi.fn(), fetch: vi.fn() }));
 vi.mock('@/lib/supabase/client', () => ({ createClient: mocks.client }));
@@ -56,22 +55,23 @@ async function exportCsv(): Promise<string[]> {
 
 describe('Parties guest-list export: free text is plain text', () => {
   it('prefixes name, tags and dietary notes that a spreadsheet would run as formulas', async () => {
-    invites = [invite('=HYPERLINK("x","y")', { tags: ['+VIP'], dietary_notes: '@SUM(1)' })];
+    invites = [
+      invite('=HYPERLINK("x","y")', { tags: ['+VIP'], dietary_notes: '@SUM(1)' }),
+      invite('|calc', { tags: ['-Family'], dietary_notes: ' \t=1+1' }),
+    ];
     const lines = await exportCsv();
     expect(lines[0]).toBe('"Name","Phone","Status","Plus Ones","Tags","Dietary Notes","Responded At"');
     expect(lines[1]).toBe(`"'=HYPERLINK(""x"",""y"")","+15550000001","accepted","0","'+VIP","'@SUM(1)",""`);
+    expect(lines[2]).toBe(`"'|calc","+15550000001","accepted","0","'-Family","' \t=1+1",""`);
   });
 
   it('leaves ordinary values and the phone column exactly as before', async () => {
-    invites = [invite('Ada Lovelace', { tags: ['Family', 'VIP'], dietary_notes: 'No nuts - thanks', status: 'declined', plus_ones: 2 })];
+    invites = [invite('Ada Lovelace', { tags: ['Family', 'VIP'], dietary_notes: 'No nuts - thanks', status: 'declined', plus_ones: 2 }),
+      invite('Table -2', { tags: ['-5'], dietary_notes: '' })];
     const lines = await exportCsv();
     expect(lines[1]).toBe('"Ada Lovelace","+15550000001","declined","0","Family; VIP","No nuts - thanks",""');
+    // Pure numbers stay as they are (shared #713 rule).
+    expect(lines[2]).toBe('"Table -2","+15550000001","accepted","0","-5","",""');
   });
 
-  it('covers every formula start character, and only at the start', () => {
-    for (const start of ['=', '+', '-', '@', '\t', '\r']) expect(plainTextCell(`${start}1`)).toBe(`'${start}1`);
-    expect(plainTextCell('')).toBe('');
-    expect(plainTextCell('a=1')).toBe('a=1');
-    expect(plainTextCell(' =1')).toBe(' =1');
-  });
 });
