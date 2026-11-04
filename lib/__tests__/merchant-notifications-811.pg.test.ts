@@ -39,7 +39,7 @@ suite('M499 merchant notification transaction and tenant boundaries',()=>{
   INSERT INTO whatsapp_channels(id) VALUES('${CHANNEL}');`);
   await sql(readFileSync('supabase/migrations/499_merchant_notifications.sql','utf8'));
   await sql(readFileSync('supabase/migrations/502_merchant_notification_invitation_lifetime.sql','utf8'));
-  await sql(readFileSync('supabase/migrations/507_merchant_notification_pre_emission_recovery.sql','utf8'));
+  await sql(readFileSync('supabase/migrations/510_merchant_notification_pre_emission_recovery.sql','utf8'));
  },30000);
  beforeEach(async()=>{await sql('RESET ROLE; TRUNCATE merchant_notification_recipients,orders,bookings,reservations,payments,whatsapp_config CASCADE');});
  afterAll(async()=>{await db?.end();});
