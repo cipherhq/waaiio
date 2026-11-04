@@ -4,13 +4,13 @@
  * Behavioural tests on the real flow steps (scheduling select_date /
  * select_time with the table-reservation flag) and the real capability
  * resolvers:
- *   1. Bot menu label "Reserve a Table / Section"; capability "Tables & Sections".
+ *   1. Bot menu label "Book Table / Section" (20 chars); capability "Tables & Sections".
  *   2. New-business defaults: on for bar/lounge only; existing (zero-row legacy)
  *      fallback unchanged.
  *   5. Same-day bookings for tables only, in the business timezone; today's
  *      slots start after now; appointments keep the tomorrow-first rule.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowContext, PromptButtons, PromptList } from '@/lib/bot/flows/types';
 
 // ── Mock database: chainable, thenable, records every query ──
@@ -86,6 +86,9 @@ async function steps() {
 
 const businessesQueried = (db: ReturnType<typeof mockDb>) => db.calls.some(c => c.table === 'businesses');
 
+// The flow registry imports every flow; load it once up front so a cold import under load
+// does not count against the first test's 5s timeout.
+beforeAll(async () => { await import('@/lib/bot/flows/registry'); }, 60_000);
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -93,14 +96,27 @@ afterEach(() => { vi.useRealTimers(); });
 // 1. Labels
 // ═══════════════════════════════════════════════════════
 describe('Tables & Sections labels', () => {
-  it('bot menu label is "Reserve a Table/Section" (en, fits the 24-char list limit) and the pcm equivalent', async () => {
+  it('bot menu label is "Book Table / Section" (en and pcm)', async () => {
     const { getCapabilityLabel } = await import('@/lib/capabilities/labels');
-    expect(getCapabilityLabel('table_reservation', 'bar', null, 'en')).toBe('Reserve a Table/Section');
-    expect(getCapabilityLabel('table_reservation', 'restaurant', null, 'pcm')).toBe('Reserve Table / Section');
+    expect(getCapabilityLabel('table_reservation', 'bar', null, 'en')).toBe('Book Table / Section');
+    expect(getCapabilityLabel('table_reservation', 'restaurant', null, 'pcm')).toBe('Book Table / Section');
     // Restaurants' appointment capability keeps its own label
     expect(getCapabilityLabel('appointment', 'restaurant', null, 'en')).toBe('Book a Table');
     // A merchant custom label still wins
     expect(getCapabilityLabel('table_reservation', 'bar', 'Book VIP', 'en')).toBe('Book VIP');
+  });
+
+  it('every certified-language cap.table_reservation label is 20 chars or fewer (WhatsApp button limit)', async () => {
+    const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/languages');
+    const { _FLOW_COPY_FOR_TESTS } = await import('@/lib/bot/flows/flow-localization');
+    expect(CERTIFIED_LANGUAGES.length).toBeGreaterThan(0);
+    for (const lang of CERTIFIED_LANGUAGES) {
+      const label = _FLOW_COPY_FOR_TESTS[lang]['cap.table_reservation'];
+      expect(label, `${lang} label missing`).toBeTruthy();
+      expect(label.length, `${lang}.cap.table_reservation = "${label}" (${label.length} chars)`).toBeLessThanOrEqual(20);
+    }
+    // Uncertified locales also fit, so they are safe if certified later
+    for (const lang of ['fr', 'es']) expect(_FLOW_COPY_FOR_TESTS[lang]['cap.table_reservation'].length).toBeLessThanOrEqual(20);
   });
 
   it('capability keeps id table_reservation, is free, and is named "Tables & Sections"', async () => {
@@ -130,7 +146,7 @@ describe('Tables & Sections labels', () => {
     const msgs = await step.prompt(ctx);
     const titles = msgs.flatMap(m => m.type === 'list' ? (m as PromptList).items.map(i => i.title)
       : m.type === 'buttons' ? (m as PromptButtons).buttons.map(b => b.title) : []);
-    expect(titles).toContain('Reserve a Table/Section');
+    expect(titles).toContain('Book Table / Section');
     expect(titles).not.toContain('Make a Reservation');
   });
 });

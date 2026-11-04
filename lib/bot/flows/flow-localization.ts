@@ -772,9 +772,8 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.ordering': 'Place an Order',
     'cap.ticketing': 'Buy Tickets',
     'cap.reservation': 'Book a Stay',
-    // Owner asked for 'Reserve a Table / Section' (25 chars); WhatsApp list rows cut at 24,
-    // so the spaces around '/' are dropped. Owner decision pending on final wording.
-    'cap.table_reservation': 'Reserve a Table/Section',
+    // Owner decision 2026-11-04: 20 chars or fewer, so it fits WhatsApp buttons (20) and list rows (24).
+    'cap.table_reservation': 'Book Table / Section',
     'cap.crowdfunding': 'Support a Campaign',
     'cap.reminders': 'My Reminders',
     'cap.chat': 'Chat with Us',
@@ -1582,7 +1581,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.ordering': 'Place Order',
     'cap.ticketing': 'Buy Ticket',
     'cap.reservation': 'Book Stay',
-    'cap.table_reservation': 'Reserve Table / Section',
+    'cap.table_reservation': 'Book Table / Section',
     'cap.crowdfunding': 'Support Campaign',
     'cap.reminders': "My Reminders",
     'cap.chat': 'Follow us talk',
@@ -5294,7 +5293,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.ordering': 'Commander',
     'cap.ticketing': 'Acheter des billets',
     'cap.reservation': 'Réserver un séjour',
-    'cap.table_reservation': 'Réserver table / espace',
+    'cap.table_reservation': 'Réserver table/salle',
     'cap.crowdfunding': 'Soutenir une campagne',
     'cap.reminders': 'Mes rappels',
     'cap.chat': 'Nous contacter',
@@ -6036,7 +6035,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'cap.ordering': 'Hacer pedido',
     'cap.ticketing': 'Comprar entradas',
     'cap.reservation': 'Reservar alojamiento',
-    'cap.table_reservation': 'Reservar mesa / zona',
+    'cap.table_reservation': 'Reservar mesa/zona',
     'cap.crowdfunding': 'Apoyar campaña',
     'cap.reminders': 'Mis recordatorios',
     'cap.chat': 'Habla con nosotros',
@@ -6148,12 +6147,13 @@ export const OWNER_REVIEW_ITEMS: ReadonlyArray<{
   { locale: 'fr', key: 'payment.accept_confirm', issue: 'May exceed 20-char button limit', suggestion: "Use 'Accepter & confirmer' (20 chars)" },
   // Spanish
   { locale: 'es', key: 'account.instant_win', issue: 'May exceed 24-char list title limit', suggestion: "Use 'Historial ganador' (17 chars)" },
-  // Owner decision 2026-11-04: en label renamed to 'Reserve a Table / Section'.
+  // Owner decision 2026-11-04: en label renamed to 'Book Table / Section' (20 chars or fewer).
   // These locales keep their existing "make a reservation" wording until a native speaker translates the new label.
-  { locale: 'yo', key: 'cap.table_reservation', issue: "Still the old 'Make a Reservation' meaning; needs native translation of 'Reserve a Table / Section'" },
-  { locale: 'ig', key: 'cap.table_reservation', issue: "Still the old 'Make a Reservation' meaning; needs native translation of 'Reserve a Table / Section'" },
-  { locale: 'ha', key: 'cap.table_reservation', issue: "Still the old 'Make a Reservation' meaning; needs native translation of 'Reserve a Table / Section'" },
-  { locale: 'tw', key: 'cap.table_reservation', issue: "Still the old 'Make a Reservation' meaning; needs native translation of 'Reserve a Table / Section'" },
+  { locale: 'yo', key: 'cap.table_reservation', issue: "Still the old 'Make a Reservation' meaning; needs native translation of 'Book Table / Section'" },
+  { locale: 'ig', key: 'cap.table_reservation', issue: "Still the old 'Make a Reservation' meaning; needs native translation of 'Book Table / Section'" },
+  { locale: 'ha', key: 'cap.table_reservation', issue: "Still the old 'Make a Reservation' meaning; needs native translation of 'Book Table / Section'" },
+  { locale: 'fr', key: 'cap.table_reservation', issue: "'Réserver table/salle' (20 chars): 'salle' means room/hall, not 'space'; 'Réserver table/espace' is 21 chars", suggestion: 'Native review: keep within 20 chars' },
+  { locale: 'tw', key: 'cap.table_reservation', issue: "Still the old 'Make a Reservation' meaning; needs native translation of 'Book Table / Section'" },
 ];
 
 // ═══════════════════════════════════════════════════════════════

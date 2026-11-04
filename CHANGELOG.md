@@ -3,7 +3,7 @@
 Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashboard/seating` URL are unchanged.
 
 - **Rename.**
-  - Bot menu (`lib/bot/flows/flow-localization.ts`): en `Reserve a Table/Section`, pcm `Reserve Table / Section`, fr `Réserver table / espace`, es `Reservar mesa / zona`. The Owner's wording `Reserve a Table / Section` is 25 characters; WhatsApp list rows stop at 24 and `slice-561g` enforces that, so the spaces around `/` are dropped (Owner to confirm). yo/ig/ha/tw keep their existing "make a reservation" text and are listed in `OWNER_REVIEW_ITEMS` for a native translation. Those four locales are not certified, so customers see English.
+  - Bot menu (`lib/bot/flows/flow-localization.ts`): en and pcm `Book Table / Section`, es `Reservar mesa/zona`, fr `Réserver table/salle`. Owner decision (2026-11-04): the first wording, `Reserve a Table / Section`, is 25 characters. WhatsApp cuts list rows at 24 (`slice-561g` enforces this) and buttons at 20, and a menu with 3 or fewer options uses buttons. So the label is 20 characters or fewer. A test now pins every certified-language label at 20 or fewer. fr `salle` means room/hall rather than space (`espace` would be 21 characters), so it is listed in `OWNER_REVIEW_ITEMS`. yo/ig/ha/tw keep their existing "make a reservation" text and are listed there too, for a native translation. fr, es, yo, ig, ha and tw are not certified, so customers see English.
   - `app/dashboard/translations/message-presentation.ts`: same en label.
   - `shared/capabilities.ts`: label `Tables & Sections`, new description.
   - `components/dashboard/Sidebar.tsx` and `app/dashboard/seating/page.tsx`: title `Tables & Sections`.
@@ -30,7 +30,6 @@ Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashbo
   - `lib/__tests__/table-reservation-730.test.ts`: label assertion updated to the rename, and the legacy-defaults test renamed (assertion unchanged).
 - **Could break:**
   - a restaurant/cafe/bakery/catering/food_truck signing up no longer gets Tables & Sections pre-selected (by design);
-  - the en menu label can still be cut to 20 characters when a business has 3 or fewer menu options (WhatsApp buttons);
   - after M509, a merchant's own business-scope `table` keyword no longer shadows the category row by text (the keys now differ), so the category regex can win on priority;
   - same-day depends on `businesses.timezone` being correct (default `Africa/Lagos`);
   - the confirm step does not re-check the time, so a slot that passes between choosing and confirming can still be booked (same as before for pre-filled times).
