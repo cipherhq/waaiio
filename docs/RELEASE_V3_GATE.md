@@ -131,6 +131,14 @@ The lock is tied to the Owner-approved schema 9 bot-code-lock release (manifest 
 
 To re-bootstrap the lock later (a reviewed gate change), dispatch prepare with `mode: lock-map`. It writes fresh maps only while the live catalog still equals the lock.
 
+**Staging `public` schema access (Owner decision 2026-11-04, option A).**
+- **Why:** staging revoked PUBLIC `USAGE` on schema `public`; production keeps it. Without `USAGE`, `release_observer` sees `public` types schema-qualified (`public.reservation_status`), so about 928 catalog digests differed from the lock. That made the first prepare stop.
+- **Fix, on staging only:** `GRANT USAGE ON SCHEMA public TO release_observer;`. This lets it resolve names, not read tables.
+- **Lock update:** the staging lock records the one changed object, `schema:public` (`070c88e2…` → `a895bb3a…`), for a staging catalog of 6400 objects, `12ff1745…`.
+- **Verification (read-only):** live staging read as `postgres` and as `release_observer` gives the same fingerprint, `c0d2774c…`, equal to this lock plus the 509 and 510 deltas.
+- **Production:** do not grant this there. Production already gives `USAGE` to PUBLIC, and a grant would change its `schema:public` digest.
+- **Recreating the staging login:** repeat this grant.
+
 ## Migrations (authors)
 
 A new migration PR must include `supabase/catalog-deltas/<name>.json`. To get it:
