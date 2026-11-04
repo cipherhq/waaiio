@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { prepare, deploy, captureLockMaps, validateDispatchRun } from '../release-gate-v3.mjs';
-import { observeProject, checkProductionConsistency, observeHoldFlags, validateMainCI, validateJobs, hashId, PROJECTS } from '../release-v3/platform.mjs';
+import { observeProject, checkProductionConsistency, observeHoldFlags, validateMainCI, validateJobs, hashId, PROJECTS, REQUIRED_CI_JOBS } from '../release-v3/platform.mjs';
 import { buildPacket, packetBytes, packetDigest, acceptPacket, verifySingleUse, verifyRecordComment, verifyPullRequestReviews, APPROVAL_LINE, parseCommentUrl, PACKET_TTL_MS } from '../release-v3/packet.mjs';
 import { parseObservation, connectionEnvironment, OBSERVATION_SQL, observeDatabase } from '../release-v3/db-observe.mjs';
 import { ledgerSnapshot } from '../release-v3/admission.mjs';
@@ -70,7 +70,11 @@ describe('admin pin and production consistency (carried-over rules)', () => {
     const T = 'c'.repeat(40), r = (id: number, conclusion: string | null, status = 'completed') => ({ id, head_sha: T, head_branch: 'main', event: 'push', path: '.github/workflows/ci.yml', status, conclusion, run_attempt: 1 });
     expect(validateMainCI({ workflow_runs: [r(1, 'success')] }, T)).toEqual({ run_id: 1, run_attempt: 1 });
     expect(() => validateMainCI({ workflow_runs: [r(1, 'success'), r(2, null, 'in_progress')] }, T)).toThrow('Green exact');
-    expect(() => validateJobs({ total_count: 2, jobs: [{ name: 'A', conclusion: 'success' }, { name: 'B', conclusion: 'skipped' }] })).toThrow('B');
+    expect(() => validateJobs({ total_count: 2, jobs: [{ name: 'A', conclusion: 'success' }, { name: 'B', conclusion: 'skipped' }] })).toThrow('CI jobs not successful: B');
+    const all = REQUIRED_CI_JOBS.map(name => ({ name, conclusion: 'success' }));
+    expect(validateJobs({ total_count: all.length, jobs: all })).toHaveLength(15);
+    const noPaymentShard = all.filter(j => j.name !== 'Migration validation (shard b)');
+    expect(() => validateJobs({ total_count: noPaymentShard.length, jobs: noPaymentShard })).toThrow('Required CI jobs missing: Migration validation (shard b)');
   });
   it('dispatch runs must be Owner workflow_dispatch runs of the exact workflow on main', () => {
     const run = { repository: { full_name: 'cipherhq/waaiio' }, path: '.github/workflows/release-prepare.yml', event: 'workflow_dispatch', head_branch: 'main', actor: { login: 'cipherhq' }, triggering_actor: { login: 'cipherhq' }, status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40) };
@@ -150,6 +154,14 @@ describe('read-only observer session', () => {
     expect(seen!.env.PGPASSWORD).toBe('pw');
   });
   it('the observation SQL runs inside one READ ONLY transaction', () => expect(OBSERVATION_SQL.startsWith('BEGIN TRANSACTION READ ONLY;')).toBe(true));
+  it('with the CA configured, the connection must verify the certificate and host name', () => {
+    let seen: Json | null = null;
+    const run = (_: string, __: string[], opts: { env: Json }) => { seen = { ...opts.env, ca: readFileSync(String(opts.env.PGSSLROOTCERT), 'utf8') }; throw new Error('x'); };
+    const pem = '-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n';
+    expect(() => observeDatabase('production', { RELEASE_OBSERVER_PRODUCTION_URL: 'postgresql://release_observer.cxcmiqotkowhxinjbytg:pw@h:5432/postgres', RELEASE_OBSERVER_CA_PEM: pem }, run as never)).toThrow('read-only observation failed');
+    expect(seen).toMatchObject({ PGSSLMODE: 'verify-full', ca: pem });
+    expect(() => observeDatabase('production', { RELEASE_OBSERVER_PRODUCTION_URL: 'postgresql://release_observer.cxcmiqotkowhxinjbytg:pw@h:5432/postgres', RELEASE_OBSERVER_CA_PEM: 'nope' }, run as never)).toThrow('Observer CA certificate is malformed');
+  });
 });
 
 // ---------------- end to end: prepare and deploy ----------------
@@ -225,7 +237,7 @@ function world(repo: Repo, over: Partial<{ reviews: string[]; prodServingSha: st
     if (u.host === 'api.github.com') {
       const p = u.pathname.replace('/repos/cipherhq/waaiio', ''), q = u.search;
       if (p === '/actions/workflows/ci.yml/runs') return response(200, { workflow_runs: [{ id: 11, head_sha: repo.T, head_branch: 'main', event: 'push', path: '.github/workflows/ci.yml', status: 'completed', conclusion: over.ciConclusion ?? 'success', run_attempt: 1 }] });
-      if (p === '/actions/runs/11/attempts/1/jobs') return response(200, { total_count: 1, jobs: [{ name: 'Main App (lint, test, build)', conclusion: 'success' }] });
+      if (p === '/actions/runs/11/attempts/1/jobs') return response(200, { total_count: REQUIRED_CI_JOBS.length, jobs: REQUIRED_CI_JOBS.map(name => ({ name, conclusion: 'success' })) });
       if (p === '/actions/workflows/release-deploy.yml/runs') return response(200, q.includes('status=success') ? { total_count: 0, workflow_runs: [] } : { total_count: (over.deployRuns ?? []).length, workflow_runs: over.deployRuns ?? [] });
       if (p === `/commits/${repo.T}/pulls`) return response(200, [{ number: 900, merge_commit_sha: repo.T, base: { ref: 'main' }, merged_at: 'x', head: { sha: '9'.repeat(40) } }]);
       if (p === '/issues/900/comments') return response(200, reviewers.map(r => ({ user: { login: 'cipherhq' }, body: `Release-Review-Record: v1 verdict=APPROVED head=${'9'.repeat(40)} reviewer=${r}` })));

@@ -2,7 +2,9 @@
 // Uses the psql client (no npm dependency in credential-bearing jobs). The
 // connection URL is passed to psql through PG* environment variables, never
 // on the command line, and is never logged.
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fail, sha256, HASH } from './common.mjs';
 import { catalogMap, CATALOG_QUERY } from './catalog-oracle.mjs';
@@ -77,13 +79,23 @@ export function observeDatabase(environment, env = process.env, run = execFileSy
   if (!config) fail('Unknown environment');
   const url = env[config.secret];
   if (!url) fail(`${config.secret} is not configured`);
+  const pgEnv = connectionEnvironment(url, config.project_ref, env);
+  // Optional server-certificate verification: with the provider CA configured,
+  // the connection must verify the certificate and host name.
+  let caDir = null;
+  if (env.RELEASE_OBSERVER_CA_PEM) {
+    if (!/-----BEGIN CERTIFICATE-----/.test(env.RELEASE_OBSERVER_CA_PEM)) fail('Observer CA certificate is malformed');
+    caDir = mkdtempSync(join(tmpdir(), 'release-observer-ca-'));
+    writeFileSync(join(caDir, 'ca.pem'), env.RELEASE_OBSERVER_CA_PEM, { mode: 0o600 });
+    Object.assign(pgEnv, { PGSSLROOTCERT: join(caDir, 'ca.pem'), PGSSLMODE: 'verify-full' });
+  }
   let output;
   try {
     output = run('psql', ['-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: OBSERVATION_SQL,
-      env: connectionEnvironment(url, config.project_ref, env), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
+      env: pgEnv, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
   } catch {
     // Never echo psql's error text: it can include connection details.
     fail(`${environment} read-only observation failed; no retry with any other credential`);
-  }
+  } finally { if (caDir) rmSync(caDir, { recursive: true, force: true }); }
   return { environment, project_ref: config.project_ref, ...parseObservation(output) };
 }

@@ -121,9 +121,21 @@ export function validateMainCI(payload, sha) {
   if (!runs.length || runs[0].status !== 'completed' || runs[0].conclusion !== 'success') fail('Green exact push-to-main CI is required for the target');
   return { run_id: runs[0].id, run_attempt: runs[0].run_attempt };
 }
+// Every push-main CI job must succeed, and these must be present by name. The
+// migration shards and the security ACL job run the payment-authority, payment
+// confirmation and staging-payment-parity suites for both custody routes.
+export const REQUIRED_CI_JOBS = Object.freeze([
+  'Admin App (install, build)', 'Admin business saves (disposable PG)', 'Catalog oracle (PostgreSQL 17)', 'Dependency audit',
+  'Engage segments ACL tests (disposable PG)', 'Engineering governance', 'Main App (lint, test, build)', 'Migration validation',
+  'Migration validation (shard a)', 'Migration validation (shard b)', 'P0 security ACL tests (disposable PG)', 'Playwright smoke tests',
+  'Private storage authorization (disposable PG)', 'Release Gate V2 Phase 1 — Tooling Self-Test', 'Secret scanning',
+]);
 export function validateJobs(payload) {
   if (!Array.isArray(payload?.jobs) || payload.total_count !== payload.jobs.length || !payload.jobs.length) fail('CI job evidence incomplete');
   const bad = payload.jobs.filter(j => j.conclusion !== 'success');
   if (bad.length) fail(`CI jobs not successful: ${bad.map(j => j.name).sort().join(', ')}`);
-  return payload.jobs.map(j => j.name).sort();
+  const names = payload.jobs.map(j => j.name);
+  const missing = REQUIRED_CI_JOBS.filter(name => names.filter(n => n === name).length !== 1);
+  if (missing.length) fail(`Required CI jobs missing: ${missing.join(', ')}`);
+  return names.sort();
 }

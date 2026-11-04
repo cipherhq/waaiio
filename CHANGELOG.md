@@ -13,6 +13,13 @@
   - Tied to the approved schema 9 release: re-read with the schema 9 query and ledger recipe, both environments equal its approved values exactly.
   - Per-object maps in `lock-catalog-{production,staging}.json`.
 - Classifier: a document is docs-only only if no tooling reads it and it matches no full-lane path (the stricter class wins). `RELEASE_GATE_V2.md` §9.3 and the §9 adoption line are worded to match (#844 review follow-ups).
+- Review 1 fixes:
+  - the classifier scans the whole before and after version of every allowlisted code file;
+  - it follows imports into repository modules at the target;
+  - it parses imports across lines and comments, and rejects `..` in aliases;
+  - payment-named paths, symlinks and submodules are always full.
+- Prepare requires the 15 named CI jobs, including the payment suites. Optional `verify-full` TLS for the observer (`RELEASE_OBSERVER_CA_PEM`).
+- The observer role's claims are corrected: it inherits PUBLIC grants, and read-only is a session default. Production needs an Owner decision before the role is applied (private advisory). The `release-observer` environment must be restricted to `main`.
 - `scripts/release-v3/release-observer-role.sql`: reviewed, not applied. Applying it needs Owner approval per environment, and the Owner sets the password.
 - CI:
   - new job "Catalog oracle (PostgreSQL 17)" (regenerates deltas; real-PG proof of the observer role, 6 tests), required through the existing "Migration validation" aggregator;

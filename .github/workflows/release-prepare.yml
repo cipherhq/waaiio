@@ -54,6 +54,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           RELEASE_OBSERVER_PRODUCTION_URL: ${{ secrets.RELEASE_OBSERVER_PRODUCTION_URL }}
           RELEASE_OBSERVER_STAGING_URL: ${{ secrets.RELEASE_OBSERVER_STAGING_URL }}
+          RELEASE_OBSERVER_CA_PEM: ${{ secrets.RELEASE_OBSERVER_CA_PEM }}
           TARGET_SHA: ${{ inputs.target_sha }}
           RAISE_LANE: ${{ inputs.raise_lane }}
           MODE: ${{ inputs.mode }}

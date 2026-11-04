@@ -6,7 +6,7 @@ The §9.1 non-negotiables are unchanged and enforced. This gate never applies SQ
 
 ## How a release runs
 
-1. **Merge.** PRs merge to `main` as today: exact-head CI, the independent review(s) at the exact head, Owner merge approval. Each reviewer's comment must contain one record line (format below). Staging auto-deploys `main`.
+1. **Merge.** PRs merge to `main` as today: exact-head CI, the independent review(s) at the exact head, Owner merge approval. Each reviewer's comment must contain one record line (format below), and records the MCP and Graphify checks it ran (§9.1.10). For governance or agent-instruction files the reviewer of record is the CTO review (§9.3). Staging auto-deploys `main`.
 2. **Database first.** A migration ships in its own PR with its catalog delta (see "Migrations"). It is applied to staging, then production, each with its own Owner approval, as one statement holding the whole file, so the ledger row's single statement is the exact file bytes.
 3. **Prepare.** The Owner dispatches **Release V3 prepare** (`release-prepare.yml`) on `main`. Optional inputs: `target_sha` (default: this `main` commit) and `raise_lane: full`. It deploys nothing. It:
    - requires green push-to-main CI on the exact target, with every job successful;
@@ -32,12 +32,13 @@ One approval covers Operating Order gates 5, 7 and 9 for that packet (§9.4). It
 | Check | Rule |
 |---|---|
 | Owner dispatch | `workflow_dispatch` by `cipherhq` on `refs/heads/main`, trusted clean checkout |
-| Target | protected-main commit; newest exact push-main CI run green and every job successful (a random red from the flaky pg test, issue #845, stops prepare; re-run that CI run, never bypass it) |
+| Target | protected-main commit; newest exact push-main CI run green, every job successful and the 15 required jobs present by name (they include the payment suites for both custody routes) (a random red from the flaky pg test, issue #845, stops prepare; re-run that CI run, never bypass it) |
 | Baseline | merchant and admin serve the same SHA, equal to the last certified release (record of the last successful deploy run; before any, the lock's `certified`) |
 | Admin pin | always the admin project's `targets.production.id`, never the newest deployment in a list (regression for run 41706465115); a production target newer than the serving deployment stops the gate |
 | Merchant target | equal to serving, or a newer canceled ignored-build-step Git attempt |
 | Project policy | production framework, root and build settings unchanged |
 | Lane | docs-only Markdown (under `docs/` or the root, not read by tooling) counts as standard; otherwise standard only if every file is on the allowlist and no allowlisted code file adds a server action, non-display import, env read, network/storage/data call or raw HTML; anything else is full; a reviewer may raise, never lower |
+| Lane detail | both the before and after versions of every allowlisted code file are scanned in full, imports are followed into repository modules at the target, payment-named paths, symlinks and submodules are full. The scan is deliberately strict: some marketing pages with prose such as "cookies" or "Supabase" classify as full |
 | Reviews | every included PR: two distinct review records on its exact merged head for the full lane, one otherwise (PRs merged before records existed are listed in `lock.reviewed_prs`) |
 | Migrations | every migration after the lock is applied as one ledger row whose single statement is the exact file bytes; merged but not applied stops the gate; 430 is never admitted; files inside the lock may not change |
 | Ledger | live ledger minus admitted rows equals the lock digest (no unknown or changed row) |
@@ -49,22 +50,30 @@ One approval covers Operating Order gates 5, 7 and 9 for that packet (§9.4). It
 | Deploy | re-check before merchant deploy, before admin deploy and before the admin alias; created deployments must be new, exact-target, production, `cli`; pinned `vercel@60.1.3`; `VERCEL_GIT_COMMIT_SHA` in env and build env; `production-deploy` concurrency |
 | Permissions | a 401/403 is never retried or switched to another credential |
 
-The packet holds no secrets and no raw deployment IDs (only salted sha256 values).
+The packet holds no secrets and no raw deployment IDs (only sha256 values of the prefixed IDs).
 
 ## Read-only database login
 
 `scripts/release-v3/release-observer-role.sql` creates `release_observer`:
 - `LOGIN`, `NOINHERIT`, no elevated attributes, 3 connections;
-- forced `default_transaction_read_only`, 60s statement timeout;
+- `default_transaction_read_only` on, 60s statement timeout (session defaults);
 - `SELECT` on `supabase_migrations.schema_migrations` only.
 
-It gets no grant in any app schema, so applying it does not change the catalog reading. CI proves on real PostgreSQL 17 that it cannot write, even after turning read-only off, and cannot read app tables (`scripts/__tests__/release-v3-observer.pg.test.ts`).
+It gets no grant in any app schema, so applying it does not change the catalog reading. CI proves on real PostgreSQL 17 that, without extra PUBLIC grants, it cannot write even after turning read-only off and cannot read app tables (`scripts/__tests__/release-v3-observer.pg.test.ts`).
 
-Applying it is a separate Owner approval per environment, staging first. Run it as one statement, **not** with `apply_migration`: a ledger row would break the lock's ledger digest. The file creates the role without a password. The Owner then sets the password and stores the connection URL as GitHub environment secrets in the `release-observer` environment. Nobody else handles it:
+**Owner decision needed before applying it in production.** Like every login it inherits PUBLIC's existing grants, and production has PUBLIC grants outside the app schemas that a direct login can use. The read-only setting is a default, not a hard limit. Details are in a private advisory, not here. Options: narrow those PUBLIC grants first (a separate reviewed change with its own approval), or accept the residual risk with the compensating controls below.
+
+Compensating controls, required in every case:
+- the connection URLs live only in the GitHub environment **`release-observer`**, which the Owner creates with **deployment branches restricted to `main`** (otherwise a workflow on any pushed branch could name the environment and read the secrets);
+- `CONNECTION LIMIT 3`, statement timeout, no app-schema grants;
+- the Owner rotates the password after any suspected exposure and whenever the environment's access changes.
+
+Applying it is a separate Owner approval per environment, staging first. Run it as one statement, **not** with `apply_migration`: a ledger row would break the lock's ledger digest. The file creates the role without a password. The Owner then sets the password and stores the connection URLs as secrets in `release-observer`. Nobody else handles them:
 - `RELEASE_OBSERVER_PRODUCTION_URL`: Supabase session pooler, user `release_observer.cxcmiqotkowhxinjbytg`, `sslmode=require`;
-- `RELEASE_OBSERVER_STAGING_URL`: the same, for `tqjvrzopvtczxfxiwmnz`.
+- `RELEASE_OBSERVER_STAGING_URL`: the same, for `tqjvrzopvtczxfxiwmnz`;
+- optional `RELEASE_OBSERVER_CA_PEM`: the Supabase CA certificate. When set, the gate requires `verify-full` (certificate and host name). Recommended.
 
-The gate refuses a URL whose login or project does not match its environment, a session that is not forced read-only, a privileged role, or a server other than PostgreSQL 17.
+The gate refuses a URL whose login or project does not match its environment, a session that is not read-only, a privileged role, or a server other than PostgreSQL 17.
 
 ## The lock and the catalog oracle
 

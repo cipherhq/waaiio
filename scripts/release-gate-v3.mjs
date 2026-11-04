@@ -14,11 +14,11 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { fail, sha256, canonicalJson, canonicalDigest, byteCompare, GateError, SHA, HASH, OWNER, REPO } from './release-v3/common.mjs';
 import { catalogAggregate } from './release-v3/catalog-oracle.mjs';
-import { classifyChanges, collectChanges } from './release-v3/classify.mjs';
+import { classifyChanges, collectChanges, targetReader, isPaymentPath } from './release-v3/classify.mjs';
 import { observeDatabase } from './release-v3/db-observe.mjs';
 import { loadLock, loadLockMap, loadM430, postBootstrapMigrations, admitDatabase } from './release-v3/admission.mjs';
 import { PROJECTS, TEAM, vercelClient, githubClient, observeProject, checkProductionConsistency, observeHoldFlags, checkServing,
-  validateMainCI, validateJobs, hashId, descriptor } from './release-v3/platform.mjs';
+  validateMainCI, validateJobs, hashId, descriptor, REQUIRED_CI_JOBS } from './release-v3/platform.mjs';
 import { buildPacket, packetBytes, packetDigest, acceptPacket, parseCommentUrl, verifyRecordComment, APPROVAL_LINE, STAGING_ACCEPTANCE_LINE,
   verifyPullRequestReviews, verifySingleUse } from './release-v3/packet.mjs';
 import { deploymentEnvironment } from './reduced-release-evidence.mjs';
@@ -29,8 +29,6 @@ const DEPLOY_WORKFLOW = '.github/workflows/release-deploy.yml';
 // Gate rules: deploy refuses to run if any of these differ from the prepare run.
 export const GATE_PATHS = ['scripts/release-gate-v3.mjs', 'scripts/release-v3', 'scripts/reduced-release-evidence.mjs',
   'supabase/catalog-deltas', PREPARE_WORKFLOW, DEPLOY_WORKFLOW];
-// Payment-safety paths (§9.1.2): recorded in the packet; they are never standard.
-const PAYMENT_PATHS = /(^|\/)(payments?|payouts?|fees?|refunds?|webhooks?|settlements?|billing|checkout|stripe|paystack|flutterwave|square|paypal)(\/|[._-]|$)/i;
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 export const isAncestor = (cwd, a, b) => { try { git(cwd, 'merge-base', '--is-ancestor', a, b); return true; } catch { return false; } };
@@ -106,7 +104,7 @@ async function includedPullRequests(gh, control, baseline, target, reviewedPrs) 
   for (const sha of commits) {
     const pulls = (await gh(`/commits/${sha}/pulls`)).filter(p => p.merge_commit_sha === sha && p.base?.ref === 'main' && p.merged_at);
     if (pulls.length !== 1) fail(`Commit ${sha} on main has no single merged pull request`);
-    const lane = classifyChanges(collectChanges(control, git(control, 'rev-parse', `${sha}^1`), sha));
+    const lane = classifyChanges(collectChanges(control, git(control, 'rev-parse', `${sha}^1`), sha), { readTarget: targetReader(control, sha) });
     const pr = { number: pulls[0].number, merge_sha: sha, head_sha: pulls[0].head.sha, lane: lane.lane, governance: lane.governance, required_reviews: lane.required_reviews };
     const comments = [];
     for (let page = 1; page <= 10; page++) {
@@ -149,7 +147,7 @@ export async function prepare({ env = process.env, control, now = Date.now(), fe
   if (baseline === target) fail('Target is already in production');
 
   const changes = collectChanges(control, baseline, target);
-  const lane = classifyChanges(changes, { raiseTo: env.RAISE_LANE || '' });
+  const lane = classifyChanges(changes, { raiseTo: env.RAISE_LANE || '', readTarget: targetReader(control, target) });
   const changedPaths = changes.map(c => c.path);
   const pullRequests = await includedPullRequests(gh, control, baseline, target, lock.reviewed_prs);
   if (lane.lane === 'standard' && pullRequests.some(pr => pr.lane !== 'standard')) fail('Lane mismatch between the release and its pull requests');
@@ -181,12 +179,12 @@ export async function prepare({ env = process.env, control, now = Date.now(), fe
     baseline: Object.fromEntries(KINDS.map(k => [k, { sha: production[k].serving.sha, deployment_sha256: hashId(production[k].serving.id), certified_by: certified.source }])),
     admin_pin: { deployment_sha256: hashId(production.admin.target.id), descriptor_sha256: canonicalDigest(production.admin.target) },
     lane: { ...lane, raised_by_reviewer: env.RAISE_LANE === 'full' },
-    changes: { count: changedPaths.length, files_sha256: sha256(changedPaths.join('\n')), files: changedPaths, payment_paths: changedPaths.filter(p => PAYMENT_PATHS.test(p)) },
+    changes: { count: changedPaths.length, files_sha256: sha256(changedPaths.join('\n')), files: changedPaths, payment_paths: changedPaths.filter(isPaymentPath) },
     pull_requests: pullRequests,
     migrations: migrations.map(m => ({ name: m.name, sha256: m.sha256, delta_changes: m.delta.changes.length })),
     database, staging,
     permanent_checks: { m430_absent: database.production.m430.present === 0, m430_identities_checked: database.production.m430.checked, hold_flags_absent: true,
-      hold_flags: holds, payment_regression: lane.lane === 'full' ? 'exact-SHA push CI: all jobs green (both custody-route suites run in CI)' : 'not applicable' },
+      hold_flags: holds, payment_regression: { required_ci_jobs: [...REQUIRED_CI_JOBS], all_successful_on_target: true, payment_paths_changed: changedPaths.some(isPaymentPath) } },
     lock_sha256: sha256(readFileSync(join(control, 'scripts/release-v3/lock.json'))),
   }, now);
   return packet;
