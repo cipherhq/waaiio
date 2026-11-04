@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readdirSync, readFileSyn
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { classifyChanges, collectChanges, classifyRange, resolveSpecifier, maskComments, TOOLING_READ_DOCS } from '../release-v3/classify.mjs';
+import { classifyChanges, collectChanges, classifyRange, resolveSpecifier, TOOLING_READ_DOCS } from '../release-v3/classify.mjs';
 
 // Repository files visible at the target for import resolution.
 const REPO: Record<string, string> = {
@@ -78,6 +78,13 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
     ["import { x } // export type { A }\nfrom '@/lib/bot/x';", 'imports @/lib/bot/x'],
     ["import { x } /* export type { A } */ from '@/lib/bot/x';", 'imports @/lib/bot/x'],
     ["const s = '// not a comment'; import { x } // import type { A }\nfrom 'stripe';", 'imports stripe'],
+    // Review 1, round 4: layouts that confused a hand-written comment mask.
+    ["const r = /'/;\nimport { x } // export type { A }\nfrom '@/lib/bot/x';", 'imports @/lib/bot/x'],
+    ["export const B = () => <p>Don't</p>;\nimport { x } // export type { A }\nfrom '@/lib/bot/x';", 'imports @/lib/bot/x'],
+    ["const t = `${'`'}`;\nimport { x } // export type { A }\nfrom '@/lib/bot/x';", 'imports @/lib/bot/x'],
+    ["export const B = () => <p>Don't</p>;\nimport { x } from '@/lib/bot/x';", 'imports @/lib/bot/x'],
+    ["import { x } /*\nexport type { A }\n*/ from '@/lib/bot/x';", 'imports @/lib/bot/x'],
+    ["export type { A }\nfrom('@/lib/bot/x');", 'imports @/lib/bot/x'],
     ["self[atob('ZmV0Y2g=')]('/x');", 'computed global access'],
     ["globalThis['fe' + 'tch']('/x');", 'environment or global access'],
   ])('an allowlisted file containing %j is full', (text, reason) => {
@@ -95,12 +102,6 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
   it('genuine type-only imports and re-exports are ignored, whatever module they name', () => {
     for (const text of ["import type { Metadata } from 'next';", "import type Stripe from 'stripe';", "export type { A, B } from '@/lib/payments/types';", "import type * as T from '@/lib/supabase/types';"])
       expect(lane(change(page, `${text}\nexport const x = 1;`, 'A')).reasons.filter(r => r.includes('imports'))).toEqual([]);
-  });
-  it('comment masking keeps length and newlines, and leaves strings alone', () => {
-    const text = "a // x\nb /* y\nz */ c 'd // e' \"f /* g\" `h // i`";
-    const masked = maskComments(text);
-    expect(masked).toHaveLength(text.length);
-    expect(masked).toBe("a     \nb     \n     c 'd // e' \"f /* g\" `h // i`");
   });
   it('a reviewer-style alias with .. never resolves', () => {
     expect(resolveSpecifier('app/(marketing)/a.tsx', '@/components/ui/../../lib/supabase/service')).toBeNull();
