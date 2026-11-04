@@ -10,7 +10,11 @@
 - Own-number wording: "Use a brand-new number that has never had WhatsApp — for example a new SIM. This is the only way we support. A number that already has WhatsApp or WhatsApp Business on it will not connect." Added to:
   - the signup details step, whose subtitle no longer says "existing business or personal number";
   - the success screen;
-  - the dashboard Connect page.
+  - the dashboard Connect page, shown above both connection options (including the recommended "Enter Phone Number").
+- Review follow-ups, so no visible page contradicts the decisions:
+  - the homepage FAQ no longer says an existing business WhatsApp number works;
+  - both help pages say own number is available on every plan (not Pro/Premium only) and repeat the brand-new-number rule;
+  - the route test now asserts the owner filter.
 - The signup plans panel now says "Connect your own WhatsApp number on any plan" instead of "Pro & Premium". Unused `WA_OPTIONS` code in the wizard is unchanged and not rendered.
 - Tests:
   - `app/api/whatsapp/direct-link/__tests__/direct-link-route.test.ts` (5);
