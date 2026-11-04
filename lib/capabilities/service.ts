@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { type CapabilityId, CATEGORY_DEFAULT_CAPABILITIES, getNewBusinessDefaultCapabilities } from './types';
+import { type CapabilityId, CATEGORY_DEFAULT_CAPABILITIES } from './types';
 import { getCategoryDefaultCapabilities } from '@/lib/categoryConfig';
 
 /** Result of reading configured capabilities — distinguishes genuine zero rows from DB errors. */
@@ -163,8 +163,7 @@ export async function initCapabilities(
   overrides?: CapabilityId[],
 ): Promise<void> {
   const dbCaps = getCategoryDefaultCapabilities(category);
-  // New business: static fallback uses the new-business defaults (Owner decision 2026-11-04).
-  const capabilities = overrides || (dbCaps as CapabilityId[]) || getNewBusinessDefaultCapabilities(category) || ['scheduling'];
+  const capabilities = overrides || (dbCaps as CapabilityId[]) || CATEGORY_DEFAULT_CAPABILITIES[category] || ['scheduling'];
 
   const rows = capabilities.map(cap => ({
     business_id: businessId,

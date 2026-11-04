@@ -9,9 +9,12 @@
  * book_table_atomic (M476) does not reject past dates or past times, so the bot
  * is the only place that stops a past slot today from being offered or accepted.
  *
- * If the timezone cannot be read, callers fall back to the existing
- * tomorrow-first behaviour — never guess a timezone and risk offering a time
- * that has already passed.
+ * Same-day is offered only when the stored timezone fits the business's
+ * country (Owner decision 2026-11-04). businesses.timezone defaults to
+ * Africa/Lagos and the app never sets it, so many US/GB businesses still carry
+ * the Lagos default. If the timezone is missing, invalid or does not fit the
+ * country, callers keep the existing tomorrow-first behaviour — never guess a
+ * timezone and risk offering a time that has already passed.
  */
 import type { FlowContext } from '../types';
 import { generateTimeSlots } from '@/lib/constants';
@@ -42,17 +45,38 @@ export function getLocalNow(timezone: string | null | undefined, now: Date = new
   }
 }
 
-/** Read the business timezone and return its local "now". Null on any failure. */
+/**
+ * True only when `timezone` is a plausible zone for the business's country.
+ * Explicit list (Owner decision 2026-11-04); an unknown country never fits.
+ */
+export function timezoneFitsCountry(timezone: string | null | undefined, countryCode: string | null | undefined): boolean {
+  if (!timezone) return false;
+  switch ((countryCode || '').toUpperCase()) {
+    case 'NG': return timezone === 'Africa/Lagos';
+    case 'GH': return timezone === 'Africa/Accra';
+    case 'GB': return timezone === 'Europe/London';
+    case 'US':
+    case 'CA': return timezone.startsWith('America/') || timezone === 'Pacific/Honolulu';
+    default: return false;
+  }
+}
+
+/**
+ * Read the business timezone and country and return its local "now".
+ * Null on any failure, or when the timezone does not fit the country.
+ */
 export async function resolveBusinessLocalNow(ctx: FlowContext): Promise<BusinessLocalNow | null> {
   if (!ctx.business?.id) return null;
   try {
     const { data, error } = await ctx.supabase
       .from('businesses')
-      .select('timezone')
+      .select('timezone, country_code')
       .eq('id', ctx.business.id)
       .maybeSingle();
-    if (error) return null;
-    return getLocalNow((data as { timezone?: string | null } | null)?.timezone);
+    if (error || !data) return null;
+    const row = data as { timezone?: string | null; country_code?: string | null };
+    if (!timezoneFitsCountry(row.timezone, row.country_code ?? ctx.business.country_code)) return null;
+    return getLocalNow(row.timezone);
   } catch {
     return null;
   }

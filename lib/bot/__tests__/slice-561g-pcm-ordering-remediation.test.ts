@@ -339,11 +339,12 @@ describe('561-G: capability menu labels', () => {
   });
 
   it('appointment label varies by category', () => {
-    expect(getCapabilityLabel('appointment', 'restaurant', null, 'en')).toBe('Book a Table');
+    // Owner decision 2026-11-04: renamed from 'Book a Table'
+    expect(getCapabilityLabel('appointment', 'restaurant', null, 'en')).toBe('Book Appointment');
     expect(getCapabilityLabel('appointment', 'photographer', null, 'en')).toBe('Book a Session');
     expect(getCapabilityLabel('appointment', 'barber', null, 'en')).toBe('Book Appointment');
     // PCM
-    expect(getCapabilityLabel('appointment', 'restaurant', null, 'pcm')).toBe('Book Table');
+    expect(getCapabilityLabel('appointment', 'restaurant', null, 'pcm')).toBe('Book Appointment');
     expect(getCapabilityLabel('appointment', 'barber', null, 'pcm')).toBe('Book Appointment');
   });
 

@@ -1,9 +1,0 @@
-{
- "applied_as": "one-whole-file-statement",
- "changes": [],
- "migration": "509_table_keyword_whole_word.sql",
- "migration_sha256": "9061cba48c344fb22ae680909265c913ab5331378312face96b2a42bc894be97",
- "postgres_major": 17,
- "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
- "schema_version": 1
-}

@@ -5,17 +5,18 @@
  * select_time with the table-reservation flag) and the real capability
  * resolvers:
  *   1. Bot menu label "Book Table / Section" (20 chars); capability "Tables & Sections".
- *   2. New-business defaults: on for bar/lounge only; existing (zero-row legacy)
- *      fallback unchanged.
- *   5. Same-day bookings for tables only, in the business timezone; today's
- *      slots start after now; appointments keep the tomorrow-first rule.
+ *   2. Defaults unchanged from main: Tables & Sections on for every food and
+ *      drink category (signup, initCapabilities, WhatsApp onboarding).
+ *   5. Same-day bookings for tables only, and only when the stored timezone
+ *      fits the business's country; today's slots start after now;
+ *      appointments keep the tomorrow-first rule.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowContext, PromptButtons, PromptList } from '@/lib/bot/flows/types';
 
 // ── Mock database: chainable, thenable, records every query ──
 type Row = { date: string; time: string; metadata?: Record<string, unknown> | null };
-interface DbOpts { timezone?: string | null; bookings?: Row[]; tzError?: boolean }
+interface DbOpts { timezone?: string | null; country?: string | null; bookings?: Row[]; tzError?: boolean }
 
 function mockDb(opts: DbOpts) {
   const calls: Array<{ table: string; ops: Array<[string, ...unknown[]]> }> = [];
@@ -29,7 +30,7 @@ function mockDb(opts: DbOpts) {
     chain.maybeSingle = vi.fn(async () => {
       if (table !== 'businesses') return { data: null, error: null };
       if (opts.tzError) return { data: null, error: { message: 'fixture error' } };
-      return { data: opts.timezone === undefined ? null : { timezone: opts.timezone }, error: null };
+      return { data: opts.timezone === undefined ? null : { timezone: opts.timezone, country_code: opts.country ?? null }, error: null };
     });
     chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
       let rows: Row[] = table === 'bookings' ? (opts.bookings || []) : [];
@@ -100,8 +101,9 @@ describe('Tables & Sections labels', () => {
     const { getCapabilityLabel } = await import('@/lib/capabilities/labels');
     expect(getCapabilityLabel('table_reservation', 'bar', null, 'en')).toBe('Book Table / Section');
     expect(getCapabilityLabel('table_reservation', 'restaurant', null, 'pcm')).toBe('Book Table / Section');
-    // Restaurants' appointment capability keeps its own label
-    expect(getCapabilityLabel('appointment', 'restaurant', null, 'en')).toBe('Book a Table');
+    // Owner decision 2026-11-04: restaurants' appointment option is 'Book Appointment' (was 'Book a Table')
+    expect(getCapabilityLabel('appointment', 'restaurant', null, 'en')).toBe('Book Appointment');
+    expect(getCapabilityLabel('appointment', 'restaurant', null, 'pcm')).toBe('Book Appointment');
     // A merchant custom label still wins
     expect(getCapabilityLabel('table_reservation', 'bar', 'Book VIP', 'en')).toBe('Book VIP');
   });
@@ -152,64 +154,64 @@ describe('Tables & Sections labels', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 2. Defaults for new businesses
+// Routing: lounge works like bar; restaurants' "book a table" (Owner decisions 2026-11-04)
 // ═══════════════════════════════════════════════════════
-describe('Tables & Sections defaults', () => {
-  it('new bar and lounge businesses get table_reservation by default', async () => {
-    const { getNewBusinessDefaultCapabilities, getOnboardingDefaultCapabilities } = await import('@/lib/capabilities/types');
-    for (const cat of ['bar', 'lounge']) {
-      expect(getNewBusinessDefaultCapabilities(cat)).toContain('table_reservation');
-      expect(getOnboardingDefaultCapabilities(cat)).toContain('table_reservation');
-    }
+describe('Tables & Sections routing', () => {
+  async function selectCapability(category: string, capabilities: string[], input: string) {
+    const { capabilitySelectionFlow } = await import('@/lib/bot/flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
+    const { createMockContext } = await import('@/lib/bot/flows/__tests__/helpers');
+    const ctx = createMockContext({
+      session: {
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
+        session_data: { capabilities, _filtered_capabilities: capabilities },
+      },
+      business: { id: 'b1', name: 'Test', slug: 'test', category: category as never, flow_type: 'scheduling' as never, subscription_tier: 'growth', trial_ends_at: '', metadata: {} },
+    });
+    ctx.copyLang = 'en';
+    return step.validate(input, ctx);
+  }
+
+  it('generic booking at a lounge resolves to table_reservation, like bar', async () => {
+    const { disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
+    expect(disambiguateByCategory('lounge', ['table_reservation', 'ordering'] as never)).toBe('table_reservation');
+    expect(disambiguateByCategory('bar', ['table_reservation', 'ordering'] as never)).toBe('table_reservation');
+    // Same zero-silent-guessing rule as bar when Tables & Sections is off
+    expect(disambiguateByCategory('lounge', ['appointment'] as never)).toBe(disambiguateByCategory('bar', ['appointment'] as never));
   });
 
-  it('new restaurant, cafe, bakery, catering and food_truck businesses do not', async () => {
-    const { getNewBusinessDefaultCapabilities, getOnboardingDefaultCapabilities, CATEGORY_DEFAULT_CAPABILITIES } = await import('@/lib/capabilities/types');
-    for (const cat of ['restaurant', 'cafe', 'bakery', 'catering', 'food_truck']) {
-      expect(getNewBusinessDefaultCapabilities(cat)).not.toContain('table_reservation');
-      expect(getOnboardingDefaultCapabilities(cat)).not.toContain('table_reservation');
-      // The rest of the food set is unchanged, in order
-      expect(getNewBusinessDefaultCapabilities(cat)).toEqual(CATEGORY_DEFAULT_CAPABILITIES[cat].filter(c => c !== 'table_reservation'));
-    }
+  it.each(['book', 'I want to reserve', 'I want to book'])('lounge: "%s" starts Tables & Sections', async input => {
+    const result = await selectCapability('lounge', ['table_reservation', 'ordering', 'chat'], input);
+    expect(result).toMatchObject({ valid: true, data: { active_capability: 'table_reservation' } });
   });
 
-  it('other categories are unchanged', async () => {
-    const { getNewBusinessDefaultCapabilities, CATEGORY_DEFAULT_CAPABILITIES } = await import('@/lib/capabilities/types');
-    for (const [cat, caps] of Object.entries(CATEGORY_DEFAULT_CAPABILITIES)) {
-      if (['restaurant', 'cafe', 'bakery', 'catering', 'food_truck'].includes(cat)) continue;
-      expect(getNewBusinessDefaultCapabilities(cat)).toEqual(caps);
-    }
-    expect(getNewBusinessDefaultCapabilities('not_a_category')).toBeUndefined();
+  it('restaurant: "book a table" reaches Tables & Sections, "Book Appointment" reaches appointments', async () => {
+    const caps = ['appointment', 'table_reservation', 'ordering'];
+    expect(await selectCapability('restaurant', caps, 'book a table')).toMatchObject({ valid: true, data: { active_capability: 'table_reservation' } });
+    expect(await selectCapability('restaurant', caps, 'Book Table / Section')).toMatchObject({ valid: true, data: { active_capability: 'table_reservation' } });
+    expect(await selectCapability('restaurant', caps, 'Book Appointment')).toMatchObject({ valid: true, data: { active_capability: 'appointment' } });
   });
+});
 
-  it('existing businesses are untouched: the zero-row legacy fallback still includes table_reservation for food categories', async () => {
-    const { CATEGORY_DEFAULT_CAPABILITIES } = await import('@/lib/capabilities/types');
+// ═══════════════════════════════════════════════════════
+// 2. Defaults — unchanged from main (Owner decision 2026-11-04)
+// ═══════════════════════════════════════════════════════
+const FOOD = ['restaurant', 'cafe', 'bar', 'lounge', 'bakery', 'catering', 'food_truck'];
+
+describe('Tables & Sections defaults (same as main)', () => {
+  it('every food and drink category has table_reservation on by default (signup and legacy fallback)', async () => {
+    const { CATEGORY_DEFAULT_CAPABILITIES, getOnboardingDefaultCapabilities } = await import('@/lib/capabilities/types');
     const { getLegacyDefaultCapabilities } = await import('@/lib/capabilities/legacy-defaults');
-    for (const cat of ['restaurant', 'cafe', 'bar', 'lounge', 'bakery', 'catering', 'food_truck']) {
+    for (const cat of FOOD) {
       expect(CATEGORY_DEFAULT_CAPABILITIES[cat]).toContain('table_reservation');
+      expect(getOnboardingDefaultCapabilities(cat)).toContain('table_reservation');
       expect(getLegacyDefaultCapabilities(cat)).toContain('table_reservation');
     }
+    // No new-business override helper exists any more
+    expect('getNewBusinessDefaultCapabilities' in (await import('@/lib/capabilities/types'))).toBe(false);
   });
 
-  it('existing businesses with capability rows keep exactly their rows (no auto-merge)', async () => {
-    const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
-    const supabase = {
-      from: () => {
-        const q: Record<string, unknown> = {};
-        q.select = () => q; q.eq = () => q;
-        q.order = vi.fn()
-          .mockReturnValueOnce(q)
-          .mockResolvedValueOnce({ data: [
-            { capability: 'table_reservation', is_enabled: true, sort_order: 0 },
-            { capability: 'ordering', is_enabled: true, sort_order: 1 },
-          ], error: null });
-        return q;
-      },
-    };
-    expect(await getEnabledCapabilities(supabase as never, 'biz', 'restaurant')).toEqual(['table_reservation', 'ordering']);
-  });
-
-  it('initCapabilities without an explicit selection uses the new-business defaults', async () => {
+  it('initCapabilities without a selection turns it on for every food category; an explicit selection is honoured', async () => {
     const { initCapabilities } = await import('@/lib/capabilities/service');
     const upserts: Array<Array<{ capability: string }>> = [];
     const supabase = {
@@ -221,13 +223,43 @@ describe('Tables & Sections defaults', () => {
         return q;
       },
     };
-    await initCapabilities(supabase as never, 'new-cafe', 'cafe');
-    await initCapabilities(supabase as never, 'new-bar', 'bar');
-    expect(upserts[0].map(r => r.capability)).not.toContain('table_reservation');
-    expect(upserts[1].map(r => r.capability)).toContain('table_reservation');
-    // An explicit selection (signup choice) is honoured for any category
-    await initCapabilities(supabase as never, 'new-restaurant', 'restaurant', ['table_reservation', 'ordering']);
-    expect(upserts[2].map(r => r.capability)).toEqual(['table_reservation', 'ordering']);
+    for (const cat of ['cafe', 'bakery', 'catering', 'food_truck', 'bar', 'lounge']) {
+      await initCapabilities(supabase as never, `new-${cat}`, cat);
+      expect(upserts[upserts.length - 1].map(r => r.capability)).toContain('table_reservation');
+    }
+    await initCapabilities(supabase as never, 'new-salon', 'salon', ['table_reservation', 'appointment']);
+    expect(upserts[upserts.length - 1].map(r => r.capability)).toEqual(['table_reservation', 'appointment']);
+  });
+
+  it('WhatsApp-native onboarding offers it for food categories, named "Tables & Sections"', async () => {
+    const { handleOnboardingDataExchange } = await import('@/app/api/whatsapp/flow-data/onboarding');
+    for (const cat of FOOD) {
+      const res = handleOnboardingDataExchange('data_exchange', 'BUSINESS_DETAILS', { category: cat }) as {
+        data: { capabilities: Array<{ id: string; title: string }> };
+      };
+      expect(res.data.capabilities).toContainEqual({ id: 'table_reservation', title: 'Tables & Sections' });
+    }
+    const salon = handleOnboardingDataExchange('data_exchange', 'BUSINESS_DETAILS', { category: 'salon' }) as {
+      data: { capabilities: Array<{ id: string; title: string }> };
+    };
+    expect(salon.data.capabilities.map(c => c.id)).not.toContain('table_reservation');
+    // Other generated titles are unchanged
+    expect(salon.data.capabilities).toContainEqual({ id: 'appointment', title: 'Appointment' });
+  });
+
+  it('existing businesses with capability rows keep exactly their rows (no auto-merge)', async () => {
+    const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+    const supabase = {
+      from: () => {
+        const q: Record<string, unknown> = {};
+        q.select = () => q; q.eq = () => q;
+        q.order = vi.fn()
+          .mockReturnValueOnce(q)
+          .mockResolvedValueOnce({ data: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }], error: null });
+        return q;
+      },
+    };
+    expect(await getEnabledCapabilities(supabase as never, 'biz', 'restaurant')).toEqual(['ordering']);
   });
 });
 
@@ -299,7 +331,7 @@ describe('select_date — same-day for tables', () => {
     // 01:30 UTC on Thu 5 Nov = 20:30 Wed 4 Nov in New York (EST).
     vi.setSystemTime(new Date('2026-11-05T01:30:00Z'));
     const { date } = await steps();
-    const db = mockDb({ timezone: 'America/New_York' });
+    const db = mockDb({ timezone: 'America/New_York', country: 'US' });
     const msgs = await date.prompt(ctxFor({
       table: true, db,
       sessionData: { service_duration: 60, _seating_duration: 60, _show_full_date_list: true },
@@ -435,6 +467,103 @@ describe('select_time — today only offers times after now (tables)', () => {
     const { time } = await steps();
     const db = mockDb({ timezone: 'Africa/Lagos' });
     await time.prompt(ctxFor({ table: false, db, category: 'salon', sessionData: { date: '2026-11-05' } }));
+    expect(businessesQueried(db)).toBe(false);
+  });
+});
+
+describe('same-day only when the stored timezone fits the country', () => {
+  it('a US business still on the Africa/Lagos default gets tomorrow-first', async () => {
+    vi.setSystemTime(LAGOS_1830);
+    const { date, time } = await steps();
+    const db = mockDb({ timezone: 'Africa/Lagos', country: 'US' });
+    const msgs = await date.prompt(ctxFor({ table: true, db, sessionData: { _show_full_date_list: true } }));
+    expect(listDates(msgs)[0]).toBe('2026-11-05');
+    expect(shortcutIds(await date.prompt(ctxFor({ table: true, db: mockDb({ timezone: 'Africa/Lagos', country: 'US' }) })))).not.toContain('date_2026-11-04');
+    const today = await date.validate('today', ctxFor({ table: true, db: mockDb({ timezone: 'Africa/Lagos', country: 'US' }) }));
+    expect(today.valid).toBe(false);
+    expect(today.errorMessage).toContain('That date has passed');
+    // No past-time filtering either: the list for a future date is the full list
+    const t = await time.prompt(ctxFor({ table: true, db: mockDb({ timezone: 'Africa/Lagos', country: 'US' }), sessionData: { date: '2026-11-05' } }));
+    expect(listDates(t)).toContain('08:00');
+  });
+
+  it('the country on the business record is used when the DB row has none', async () => {
+    vi.setSystemTime(LAGOS_1830);
+    const { date } = await steps();
+    // ctxFor() business is NG; row has no country_code → NG + Africa/Lagos fits
+    const ok = await date.validate('today', ctxFor({ table: true, db: mockDb({ timezone: 'Africa/Lagos' }) }));
+    expect(ok.valid).toBe(true);
+  });
+
+  it.each([
+    ['NG', 'Africa/Lagos', true], ['NG', 'America/New_York', false],
+    ['GH', 'Africa/Accra', true], ['GH', 'Africa/Lagos', false],
+    ['GB', 'Europe/London', true], ['GB', 'Africa/Lagos', false],
+    ['US', 'America/New_York', true], ['US', 'America/Los_Angeles', true], ['US', 'Pacific/Honolulu', true], ['US', 'Africa/Lagos', false],
+    ['CA', 'America/Toronto', true], ['CA', 'Europe/London', false],
+    ['ZA', 'Africa/Johannesburg', false], [null, 'Africa/Lagos', false], ['NG', null, false], ['us', 'America/Chicago', true],
+  ])('timezoneFitsCountry(%s, %s) = %s', async (country, tz, expected) => {
+    const { timezoneFitsCountry } = await import('@/lib/bot/flows/shared/table-same-day');
+    expect(timezoneFitsCountry(tz, country)).toBe(expected);
+  });
+
+  it('GB on Europe/London gets same-day in London time', async () => {
+    vi.setSystemTime(new Date('2026-11-04T19:00:00Z')); // 19:00 London (GMT); 20:00 slot left
+    const { date } = await steps();
+    const result = await date.validate('today', ctxFor({ table: true, db: mockDb({ timezone: 'Europe/London', country: 'GB' }) }));
+    expect(result).toEqual({ valid: true, data: { date: '2026-11-04' } });
+  });
+
+  it('an unknown country never gets same-day', async () => {
+    vi.setSystemTime(LAGOS_1830);
+    const { date } = await steps();
+    const result = await date.validate('today', ctxFor({ table: true, db: mockDb({ timezone: 'Africa/Johannesburg', country: 'ZA' }) }));
+    expect(result.valid).toBe(false);
+  });
+});
+
+describe('select_date.skipIf — pre-filled dates for tables', () => {
+  it('keeps a pre-filled today when the timezone fits and a slot is left', async () => {
+    vi.setSystemTime(LAGOS_1830);
+    const { date } = await steps();
+    const ctx = ctxFor({ table: true, db: mockDb({ timezone: 'Africa/Lagos', country: 'NG' }), sessionData: { date: '2026-11-04' } });
+    expect(await date.skipIf!(ctx)).toBe(true);
+    expect(ctx.session.session_data.date).toBe('2026-11-04');
+  });
+
+  it('drops a pre-filled today when no slot is left today (no empty time list)', async () => {
+    vi.setSystemTime(new Date('2026-11-04T20:30:00Z')); // 21:30 Lagos
+    const { date } = await steps();
+    const ctx = ctxFor({ table: true, db: mockDb({ timezone: 'Africa/Lagos', country: 'NG' }), sessionData: { date: '2026-11-04' } });
+    expect(await date.skipIf!(ctx)).toBe(false);
+    expect(ctx.session.session_data.date).toBeUndefined();
+  });
+
+  it('drops a pre-filled today when the timezone does not fit the country (tomorrow-first)', async () => {
+    vi.setSystemTime(LAGOS_1830);
+    const { date } = await steps();
+    const today = new Date().toISOString().split('T')[0];
+    const ctx = ctxFor({ table: true, db: mockDb({ timezone: 'Africa/Lagos', country: 'US' }), sessionData: { date: today } });
+    expect(await date.skipIf!(ctx)).toBe(false);
+    expect(ctx.session.session_data.date).toBeUndefined();
+  });
+
+  it('keeps a pre-filled future date in every case', async () => {
+    vi.setSystemTime(LAGOS_1830);
+    const { date } = await steps();
+    for (const db of [mockDb({ timezone: 'Africa/Lagos', country: 'NG' }), mockDb({ timezone: 'Africa/Lagos', country: 'US' })]) {
+      const ctx = ctxFor({ table: true, db, sessionData: { date: '2026-11-07' } });
+      expect(await date.skipIf!(ctx)).toBe(true);
+    }
+  });
+
+  it('appointments keep the existing pre-fill rule and never read the timezone', async () => {
+    vi.setSystemTime(LAGOS_1830);
+    const { date } = await steps();
+    const db = mockDb({ timezone: 'Africa/Lagos', country: 'NG' });
+    const today = new Date(); const todayLocal = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const ctx = ctxFor({ table: false, db, category: 'salon', sessionData: { date: todayLocal } });
+    expect(await date.skipIf!(ctx)).toBe(true);
     expect(businessesQueried(db)).toBe(false);
   });
 });

@@ -838,7 +838,24 @@ export const schedulingFlow: FlowDefinition = {
         // Validate: must be in the future, business must be open, not fully booked
         const selected = new Date(preDate + 'T00:00');
         const today = new Date(); today.setHours(0, 0, 0, 0);
-        if (selected < today) { delete ctx.session.session_data.date; return false; }
+
+        // Tables: a pre-filled date follows the same-day rule, in the business's local
+        // calendar. Today is kept only when the business timezone fits its country and a
+        // slot is still free today; otherwise the tomorrow-first rule applies and the
+        // picker is shown. Other flows keep the existing server-date check.
+        if (ctx.session.session_data._is_table_reservation !== true) {
+          if (selected < today) { delete ctx.session.session_data.date; return false; }
+        } else {
+          const local = await resolveBusinessLocalNow(ctx);
+          if (local) {
+            if (preDate < local.date || (preDate === local.date && !(await hasTableSlotLeftToday(ctx, local)))) {
+              delete ctx.session.session_data.date; return false;
+            }
+          } else {
+            const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(0, 0, 0, 0);
+            if (selected < tomorrow) { delete ctx.session.session_data.date; return false; }
+          }
+        }
 
         // Check business is open on this day
         const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
