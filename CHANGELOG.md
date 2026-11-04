@@ -1,23 +1,10 @@
-## 2026-11-04 — Settings: owners can see and correct City and State (#867, part 2)
+## 2026-11-04 — Release V3 docs: setup step 0 in the role file; 65-minute residual risk stated precisely
 
-- Problem: Settings → Business showed only one Address field. `city` was set silently from address autocomplete, and typing an address blanked it. `state` was never editable outside onboarding, so wrong values such as a Lagos business stored as state "Maryland" could not be fixed. Directory location search reads these columns.
-- `app/dashboard/settings/tabs/BusinessTab.tsx`:
-  - new editable "City or area" (max 50) and "State" (max 100) fields under Address, with help text linked to both;
-  - picking an address suggestion fills both;
-  - typing an address by hand still clears City and State, along with the coordinates (#485 kept), and the owner re-enters them;
-  - `businesses.city` is NOT NULL, so saving with City empty now shows "Enter your city or area before saving." instead of a failed save. On main, a manual address edit followed by save sent `city: null` and failed;
-  - State saves trimmed, or null when empty.
-- `components/ui/PlacesAutocomplete.tsx`: place data now also carries `state` (Google `administrative_area_level_1`). It is optional, so other users of the component are unchanged.
-- `components/dashboard/DashboardProvider.tsx`: `Business` type gains optional `state` (the row was already loaded with `select('*')`).
-- Tests:
-  - `app/dashboard/settings/tabs/__tests__/business-tab-city-state-867.test.tsx` (6, rendered).
-  - `address-forms-751`, `discovery-settings-wiring-485` and `places-autocomplete-751` were updated to the required-City rule and the extra `state` field. Their #485 intent, that a manual edit invalidates coordinates and city, is kept.
-- Not changed:
-  - the Discovery Profile page (still writes city only; follow-up);
-  - onboarding;
-  - the guarded server-only columns (`city` and `state` are owner-writable today);
-  - State is free text, not a dropdown, because the code has no complete state list per country.
-- Could break: owners now see City and State values that autocomplete chose and may edit them; directory location search uses what they save.
+- Follow-up to the #860 review notes (P2, optional). Comments and docs only; no code behavior changes.
+- `scripts/release-v3/release-observer-role.sql`: the "How to apply" header now says production is only after setup step 0 (Supabase confirms the template1 gap is closed).
+- `docs/RELEASE_V3_GATE.md` and the comment above `REPLICA_MAX_REPLAY_AGE_SECONDS` in `scripts/release-v3/db-observe.mjs`: replace "a stall is caught within about an hour". If the replica loses its connection to the primary, the receive = replay check still passes, so the gate refuses it only once its last replayed commit is more than 65 minutes old. This is the residual risk the Owner accepted.
+- The guard SQL is untouched, so its pinned hash is unchanged. The role SQL changes only in a comment, and the CI observer proof still runs it.
+- Could break: nothing.
 
 ## 2026-11-04 — Bot: add-on choices no longer carry across a capability switch (#859)
 

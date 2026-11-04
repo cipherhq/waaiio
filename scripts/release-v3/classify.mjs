@@ -23,7 +23,17 @@ export const LANES = Object.freeze(['standard', 'full']);
 // A file is docs-only only if it is Markdown under docs/ or at the root, matches
 // no full-lane path, and no CI, release or gate tooling reads it. When classes
 // overlap, the stricter class wins (it is then classified as code: full).
-const DOCS = [/^docs\/(?!contracts\/).+\.md$/, /^[^/]+\.md$/];
+// Per-PR changelog fragments and the folder's README (Owner decision 2026-11-04).
+// They are docs like CHANGELOG.md. scripts/changelog/collect.mjs reads them, and
+// CHANGELOG.md, but it only checks their format and fails closed, and its output
+// is never deployed, so this narrow carve-out from "read by tooling" keeps a
+// docs-only PR with its fragment at one review. Only files whose names match the
+// fragment rule qualify; anything else under changelog/ stays full lane.
+const CHANGELOG_DOCS = [/^changelog\/unreleased\/\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/, /^changelog\/README\.md$/];
+// Names that only scripts/changelog/collect.mjs uses; it is the format checker
+// above, so the drift test below does not count them as tooling-read docs.
+export const CHANGELOG_TOOL_DOCS = Object.freeze(['CHANGELOG.md', 'README.md']);
+const DOCS = [/^docs\/(?!contracts\/).+\.md$/, /^[^/]+\.md$/, ...CHANGELOG_DOCS];
 // Markdown that tooling reads (scripts/verify-engineering-governance.mjs,
 // scripts/reduced-payout-policy.mjs). A test fails if tooling source names a
 // docs/*.md or root *.md path that is missing here.

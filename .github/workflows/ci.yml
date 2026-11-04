@@ -4536,6 +4536,9 @@ jobs:
       - name: Validate governance artifacts
         run: node scripts/verify-engineering-governance.mjs
 
+      - name: Validate changelog fragments
+        run: node scripts/changelog/collect.mjs check
+
       - name: Validate migration repair plan
         run: npm run verify:migration-repair-plan
 
