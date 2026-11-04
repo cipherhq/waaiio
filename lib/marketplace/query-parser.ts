@@ -219,6 +219,25 @@ export function parseDirectoryQuery(
 
   // ── No preposition found — entire input is one thing ──
 
+  // "shops Ikoyi" / "Ikoyi shop": a category (or generic noun) next to a known
+  // place reads as "X in Y" (#867). One side must be a category or generic word
+  // and the other a curated place (tier 1 or 2); anything else is unchanged.
+  const words = trimmed.split(/\s+/);
+  if (words.length >= 2) {
+    const isCategoryPart = (part: string) =>
+      GENERIC_NOUNS.has(part.toLowerCase()) || detectCategoryIntent(part).length > 0;
+    for (let i = 1; i < words.length; i++) {
+      const head = words.slice(0, i).join(' ');
+      const tail = words.slice(i).join(' ');
+      if (isCategoryPart(head) && resolveLocation(tail).tier < 3) {
+        return parseDirectoryQuery(`${head} in ${tail}`, phoneCountryCode);
+      }
+      if (resolveLocation(head).tier < 3 && isCategoryPart(tail)) {
+        return parseDirectoryQuery(`${tail} in ${head}`, phoneCountryCode);
+      }
+    }
+  }
+
   // Generic nouns with no location → all businesses, ask for location
   if (GENERIC_NOUNS.has(trimmed.toLowerCase())) {
     return {

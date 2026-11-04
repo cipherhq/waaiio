@@ -182,4 +182,32 @@ describe('parseDirectoryQuery', () => {
     expect(result.categories).toContain('spa');
     expect(result.locationText).toBe('Lagos');
   });
+
+  // ── #867: category next to a place, without a preposition ──
+
+  it.each(['shops Ikoyi', 'Ikoyi shop', 'shop Ikoyi', 'Ikoyi shops'])(
+    '#867 "%s" keeps Ikoyi as the location (same as "shop in Ikoyi")',
+    (text) => {
+      const result = parseDirectoryQuery(text, 'NG');
+      expect(result.locationText).toBe('Ikoyi');
+      expect(result.resolvedLocation!.tier).toBe(2);
+      expect(result.resolvedLocation!.city).toBe('Lagos');
+      expect(result.resolvedLocation!.addressHint).toBe('Ikoyi');
+      expect(result.needsLocation).toBe(false);
+    },
+  );
+
+  it('#867 "salon Lagos" reads as a category in a city', () => {
+    const result = parseDirectoryQuery('salon Lagos', 'NG');
+    expect(result.categories.length).toBeGreaterThan(0);
+    expect(result.locationText).toBe('Lagos');
+    expect(result.resolvedLocation!.tier).toBe(1);
+  });
+
+  it('#867 a two-word business name without a place is unchanged (name search)', () => {
+    const result = parseDirectoryQuery('Citadel Ventures', 'NG');
+    expect(result.locationText).toBeNull();
+    expect(result.categories).toEqual([]);
+    expect(result.nameQuery).toBe('Citadel Ventures');
+  });
 });
