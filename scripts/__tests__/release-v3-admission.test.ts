@@ -179,9 +179,15 @@ describe('production is observed only on a guarded read replica', () => {
     [{ replica_guard: { ...GUARD, config: null } }, 'not the reviewed version'],
     [{ replica_freshness: null }, 'replica is not caught up'],
     [{ replica_freshness: { receive_lsn: '0/6000000', replay_lsn: '0/5000060', replay_age_seconds: 12 } }, 'replica is not caught up'],
-    [{ replica_freshness: { receive_lsn: '0/5000060', replay_lsn: '0/5000060', replay_age_seconds: 16 * 60 } }, 'replica is not caught up'],
+    [{ replica_freshness: { receive_lsn: '0/5000060', replay_lsn: '0/5000060', replay_age_seconds: 66 * 60 } }, 'replica is not caught up'],
     [{ replica_freshness: { receive_lsn: null, replay_lsn: null, replay_age_seconds: null } }, 'replica is not caught up'],
   ])('refuses %j', (over, message) => expect(() => admitDatabase({ observation: obs(over), lock, migrations: [], lockMap: null, m430: { added_identities: [] } })).toThrow(message));
+  it('the freshness limit is the Owner-set 65 minutes: an hour-old replay passes, 65 min + 1 s does not', () => {
+    const ok = obs({ replica_freshness: { receive_lsn: '0/5000060', replay_lsn: '0/5000060', replay_age_seconds: 60 * 60 } });
+    expect(admitDatabase({ observation: ok, lock, migrations: [], lockMap: null, m430: { added_identities: [] } }).environment).toBe('production');
+    const late = obs({ replica_freshness: { receive_lsn: '0/5000060', replay_lsn: '0/5000060', replay_age_seconds: 65 * 60 + 1 } });
+    expect(() => admitDatabase({ observation: late, lock, migrations: [], lockMap: null, m430: { added_identities: [] } })).toThrow('replica is not caught up');
+  });
   it('staging needs no replica', () => {
     const stagingLock = { environments: { staging: { ...lockEnv(), project_ref: 'tqjvrzopvtczxfxiwmnz' } } };
     expect(admitDatabase({ observation: { environment: 'staging', project_ref: 'tqjvrzopvtczxfxiwmnz', ledger: baseRows, catalog: baseCatalog, in_recovery: false, replica_guard: null }, lock: stagingLock, migrations: [], lockMap: null, m430: { added_identities: [] } }).environment).toBe('staging');
