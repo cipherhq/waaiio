@@ -1,3 +1,61 @@
+## 2026-11-04 — Tables & Sections: rename, setup nudge, same-day tables (app only)
+
+Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashboard/seating` URL are unchanged. This PR has no migration: the whole-word "table" keyword fix (M509) is its own PR, and this code works with or without it.
+
+- **Rename.**
+  - Bot menu (`lib/bot/flows/flow-localization.ts`): en and pcm `Book Table / Section`, es `Reservar mesa/zona`, fr `Réserver table/salle`.
+  - Why 20 characters (Owner decision 2026-11-04): the first wording, `Reserve a Table / Section`, is 25 characters. WhatsApp cuts list rows at 24 (`slice-561g` enforces this) and buttons at 20, and a menu with 3 or fewer options uses buttons. A test pins every certified-language label at 20 or fewer.
+  - fr `salle` means room/hall rather than space (`espace` would be 21 characters), so it is listed in `OWNER_REVIEW_ITEMS`. yo/ig/ha/tw keep their existing "make a reservation" text and are listed there too, for a native translation. fr, es, yo, ig, ha and tw are not certified, so customers see English.
+  - `app/dashboard/translations/message-presentation.ts`: same en label.
+  - `shared/capabilities.ts`: label `Tables & Sections`, new description.
+  - `components/dashboard/Sidebar.tsx` and `app/dashboard/seating/page.tsx`: title `Tables & Sections`.
+  - WhatsApp-native onboarding (`app/api/whatsapp/flow-data/onboarding.ts`): the feature option reads "Tables & Sections"; other generated titles are unchanged.
+  - Restaurants' appointment option is renamed from "Book a Table" to "Book Appointment" (Owner decision 2026-11-04). This is `cap.appointment.restaurant`, which now uses each locale's own `cap.appointment` text: en/pcm `Book Appointment`, fr `Prendre rendez-vous`, es `Reservar cita`, and the existing yo/ig/ha/tw appointment strings. All are 20 characters or fewer. The dashboard translation label is `Book Appointment (restaurants)`. Typed "book a table" at a restaurant used to match the old appointment label exactly; it now falls through to generic-booking disambiguation, which routes restaurants to Tables & Sections.
+- **Defaults: no change.** Bars and lounges were already on. Every food and drink category (restaurant, cafe, bar, lounge, bakery, catering, food_truck) keeps Tables & Sections on by default, exactly as on main (Owner decision 2026-11-04). Signup, `initCapabilities()`, the WhatsApp onboarding list and existing businesses are untouched, and `lib/capabilities/*` has no diff.
+- **Lounge works like bar** (`lib/bot/semantic-resolver.ts`, Owner decision 2026-11-04). A plain "book" or "I want to reserve" at a lounge starts Tables & Sections. If Tables & Sections is off, the bot asks rather than guessing, the same as for bars.
+- **A merchant's own keyword still wins** (`lib/bot/keyword-service.ts` `loadUnifiedKeywords`, Owner decision 2026-11-04).
+  - A business-scope keyword already overrides a category row with the same text.
+  - It now also overrides a category *regex* that matches the merchant's keyword as a whole: for example their `table` against M509's `\btables?\b`. This keeps today's precedence whether or not M509 is applied.
+  - A longer or different merchant keyword ("table tennis", "vegetable") does not hide the built-in one.
+  - The generic match types (`contains` etc.) are unchanged.
+- **Signup** (`app/get-started/steps/StepFeatures.tsx`). The option, already shown for every business type, is renamed "Reserve tables & sections", with new copy. It is free tier and needs no logic change.
+- **Setup nudge** (`components/dashboard/OnboardingChecklist.tsx`). "Add your tables & sections" links to `/dashboard/seating`.
+  - It shows when `table_reservation` is on and the business has no active `seating_resources` row (RLS owner-select, own `business_id`, `is_active = true`). A query error counts as "none".
+  - Once a row exists it disappears rather than being ticked off, and it is left out of the step count.
+- **Same-day tables** (`lib/bot/flows/shared/table-same-day.ts` new; `lib/bot/flows/scheduling.flow.ts` select_date/select_time).
+  - When it applies: table reservations only, and only when `businesses.timezone` fits the business's country (Owner decision 2026-11-04). The fit list:
+    - NG: Africa/Lagos
+    - GH: Africa/Accra
+    - GB: Europe/London
+    - US and CA: America/* or Pacific/Honolulu
+    - any other country: never
+  - Why: production has 24 US and 1 GB business still on the Africa/Lagos default, and the app never sets the timezone. Those businesses keep the tomorrow-first rule.
+  - When it applies:
+    - the date list starts at local today while a slot after the current local time is still free on that table;
+    - a "Today" shortcut appears (Today / Tomorrow / Pick a Date);
+    - typed "today"/"tomorrow" use the local date;
+    - today's time list and typed times exclude times at or before now;
+    - a pre-filled past time is cleared.
+  - A pre-filled date (`select_date` skipIf) follows the same rule for tables. Today is kept only when the timezone fits and a slot is left; otherwise it is dropped and the picker shows. A pre-filled "today" therefore never leads to an empty time list.
+  - Not changed in `bot.service.ts`: the generic entity pre-fill there runs before the capability is chosen, so it cannot know the booking is a table. The skipIf is where the table rule applies.
+  - Slot interval, duration and `available_to` trimming are as before. There is no lead time; none exists elsewhere.
+  - Appointments, classes and other scheduling are untouched and never read the timezone.
+  - `book_table_atomic` (M476) does not reject past dates or times. A new disposable-PG case proves it accepts 00:00 today, so the bot guard is what stops past slots.
+  - Left in English: the new "Today (…)" button and the two same-day error messages. They match the existing hardcoded "Tomorrow (…)" and "That date has passed" strings. Moving them to `getFlowCopy` keys needs reviewed translations for all 8 locales.
+  - Not in this PR: bookings that run past midnight (late bar/lounge hours). That is a separate follow-up.
+- **Tests:**
+  - `lib/__tests__/tables-and-sections.test.ts` (56): labels and the 20-character rule, lounge and restaurant routing, the menu, defaults equal to main (signup, `initCapabilities`, WhatsApp onboarding), same-day select_date/select_time on the real steps with a frozen clock, the country/timezone fit (including a US business on the Lagos default getting tomorrow-first), pre-fill skipIf, and appointment controls;
+  - `lib/__tests__/tables-and-sections-ui.test.tsx` (7): rendered checklist nudge, and the signup option for every business type;
+  - `lib/__tests__/table-reservation-730-db.test.ts` (+1 same-day RPC case);
+  - `lib/__tests__/table-reservation-730.test.ts`: label assertion updated to the rename;
+  - `lib/__tests__/keyword-merchant-precedence.test.ts` (7): through the real `loadUnifiedKeywords` and `matchUnifiedKeyword`, with the category row both before M509 (`table`/contains) and after it (`\btables?\b`/regex);
+  - `lib/bot/__tests__/slice-561g-pcm-ordering-remediation.test.ts`: restaurant appointment label assertions updated to "Book Appointment".
+- **Could break:**
+  - customers who typed "book a table" at a restaurant with appointments, but without Tables & Sections, used to reach appointments. Now they get the menu or a clarifying question;
+  - a lounge with only appointments now gets a clarifying question for a plain "book", as bars already did;
+  - same-day is off for any business whose stored timezone does not fit its country, until the timezone is corrected;
+  - the confirm step does not re-check the time, so a slot that passes between choosing and confirming can still be booked (same as before for pre-filled times).
+
 ## 2026-11-04 — M509: the restaurant "table" keyword matches whole words only
 
 - Owner decision (2026-11-04). Release V3 rule: a migration ships in its own PR with its catalog delta. This PR was split out of #854, which is now app-only and works with or without M509.

@@ -54,7 +54,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
 
   // ── PRO (Growth) ──
   { id: 'reservation', label: 'Reservations', description: 'Property bookings with check-in/out dates. For hotels, Airbnb, shortlets, and car rentals.', icon: '🏘️' },
-  { id: 'table_reservation', label: 'Table Reservations', description: 'Let customers reserve tables for dining with date, time, and party size.', icon: '🍽️' },
+  { id: 'table_reservation', label: 'Tables & Sections', description: 'Let customers reserve tables, booths, VIP areas and sections, with date, time and party size.', icon: '🍽️' },
   { id: 'recurring', label: 'Subscriptions', description: 'Auto-charge customers weekly or monthly. They can manage their own subscriptions via WhatsApp.', icon: '🔄' },
   { id: 'broadcast', label: 'Broadcasts', description: 'Send promotions, updates, and announcements to all your customers at once via WhatsApp.', icon: '📢' },
   { id: 'membership', label: 'Loyalty Tiers', description: 'Create Bronze/Silver/Gold tiers. Customers auto-upgrade based on spending and get discounts.', icon: '🏅' },

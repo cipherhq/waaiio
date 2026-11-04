@@ -82,6 +82,12 @@ function getCompiledRegex(pattern: string): RegExp | null {
   }
 }
 
+/** True when `pattern` (a keyword regex) matches the whole of `text`, not just part of it. */
+function regexMatchesWhole(pattern: string, text: string): boolean {
+  const re = getCompiledRegex(`^(?:${pattern})$`);
+  return !!re && re.test(text);
+}
+
 function pruneCache<T>(cache: Map<string, { data: T; ts: number }>, ttl: number) {
   if (cache.size > 500) {
     const cutoff = Date.now() - ttl;
@@ -188,7 +194,12 @@ export async function loadUnifiedKeywords(
 
   for (const kw of catKws) {
     const key = kw.keyword.toLowerCase();
-    if (!seen.has(key)) {
+    // A merchant's own keyword also overrides a category regex that matches that same
+    // keyword as a whole (e.g. their 'table' vs the built-in \btables?\b), exactly as it
+    // overrides a plain-text category row with the same text (Owner decision 2026-11-04).
+    const shadowedByBusiness = kw.match_type === 'regex'
+      && bizKws.some(b => regexMatchesWhole(kw.keyword, b.keyword.toLowerCase().trim()));
+    if (!seen.has(key) && !shadowedByBusiness) {
       seen.add(key);
       merged.push(kw);
     }
