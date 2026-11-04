@@ -109,6 +109,15 @@ describe('Checklist nudge: Add your tables & sections', () => {
     expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
   });
 
+  it.each([['food_delivery'], [null], [undefined]])('does not show for category %s, even with table_reservation on', async (category) => {
+    state.business = { id: 'own', bot_code: '', category };
+    state.capabilities = ['table_reservation'];
+    render(<OnboardingChecklist />);
+    await settled();
+    expect(screen.queryByText(NUDGE)).toBeNull();
+    expect(state.queries.some(q => q.table === 'seating_resources')).toBe(false);
+  });
+
   it.each(['restaurant', 'cafe', 'bar', 'lounge', 'bakery', 'catering', 'food_truck'])('shows for food & drink category %s', async (category) => {
     state.business = { id: 'own', bot_code: '', category };
     state.capabilities = ['table_reservation'];

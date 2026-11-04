@@ -1,4 +1,4 @@
-## 2026-11-04 — Tables & Sections: reminder for food & drink only; last labels renamed
+## 2026-11-04 — Tables & Sections: reminder for food & drink only; reservations tab renamed
 
 Owner decisions (2026-11-04), following the #854 reviews.
 
@@ -6,14 +6,14 @@ Owner decisions (2026-11-04), following the #854 reviews.
   - Tables & Sections is on;
   - the business is restaurant, cafe, bar, lounge, bakery, catering or food_truck.
 
-  Other businesses with the feature on no longer see the reminder, and their checklist no longer queries tables. In production that is a church, 5 shops, a tailor, an events business and a spa, none of which has tables.
+  Other businesses with the feature on no longer see the reminder, and their checklist no longer queries tables. A read-only production query on 2026-11-04 found 9 such businesses (a church, 5 shops, a tailor, an events business and a spa), none of which has tables. 2 restaurants keep the reminder.
 - `app/dashboard/reservations/page.tsx` and `components/dashboard/BookingPresentation.tsx`: the "Table Reservations" tab is now "Tables & Sections". The tab id is unchanged.
-- `app/api/onboarding/register/route.ts`: the restaurant, food_delivery and catering welcome button "Book a Table" is now "Book Table / Section" (20 characters, so it fits a WhatsApp button). It sends the same `book` payload as before.
+- The welcome button "Book a Table" is NOT changed here. Its default list (`getDefaultWelcomeButtons` in `app/api/onboarding/register/route.ts`) has had no caller since #553: onboarding now goes through `lib/onboarding/provision-business.ts`, which saves no welcome buttons. So editing it would have had no effect. Customers already see "Book Table / Section" in the bot menu. Older businesses may still have "Book a Table" saved as a welcome button. A read-only production query on 2026-11-04 found 1 restaurant, and its welcome buttons are not sent today because it has several features. Changing saved buttons would be a separate, Owner-approved data change.
 - Notes the #854 reviews asked to record:
   - For tables at a business whose stored timezone doesn't fit its country, a pre-filled "today" is now dropped and the tomorrow-first date picker is shown.
   - While the tables reminder is open, the checklist does not auto-dismiss.
 - Tests:
-  - 2 new checklist cases: a non-food business sees no reminder and its checklist sends no tables query, and each food & drink category sees the reminder.
+  - New checklist cases: a non-food business, a food_delivery business and a business with no category see no reminder, and their checklists send no tables query; each food & drink category sees the reminder.
   - The dashboard tab tests now expect the new label.
   - 10 cases fail on the previous code.
 - Could break: nothing in data or the bot. Text, and who sees the reminder, only.
