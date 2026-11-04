@@ -494,9 +494,9 @@ export default function SetupAssistantPage() {
                   <input value={s.name} onChange={e => { const c = [...services]; c[i] = { ...c[i], name: e.target.value }; setServices(c); }}
                     placeholder={config.itemLabel} maxLength={200} className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
                   <input type="number" min={0} value={priceInputValue(s.price, s.fromAce)} onChange={e => { const c = [...services]; c[i] = { ...c[i], price: priceFromInput(e.target.value, c[i].fromAce || c[i].needsPrice) }; setServices(c); }}
-                    aria-label={`${config.priceLabel} for ${s.name || config.itemLabel}`} aria-invalid={s.price === null}
+                    aria-label={`${config.priceLabel} for ${s.name || config.itemLabel}`} aria-invalid={!!s.name.trim() && s.price === null}
                     placeholder={s.price === null ? 'Add price' : config.priceLabel}
-                    className={`w-20 text-sm border rounded px-2 py-1.5 dark:bg-gray-700 dark:text-gray-100 ${s.price === null ? MISSING_PRICE_CLASS : 'border-gray-200 dark:border-gray-600'}`} />
+                    className={`w-20 text-sm border rounded px-2 py-1.5 dark:bg-gray-700 dark:text-gray-100 ${s.name.trim() && s.price === null ? MISSING_PRICE_CLASS : 'border-gray-200 dark:border-gray-600'}`} />
                   <input type="number" value={s.duration_minutes || ''} onChange={e => { const c = [...services]; c[i] = { ...c[i], duration_minutes: Number(e.target.value) }; setServices(c); }}
                     placeholder="Min" title={config.durationLabel} className="w-16 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
                   <button onClick={() => setServices(services.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
@@ -525,9 +525,9 @@ export default function SetupAssistantPage() {
                     <input value={p.name} onChange={e => { const c = [...products]; c[i] = { ...c[i], name: e.target.value }; setProducts(c); }}
                       placeholder="Product name" maxLength={200} className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
                     <input type="number" min={0} value={priceInputValue(p.price, p.fromAce)} onChange={e => { const c = [...products]; c[i] = { ...c[i], price: priceFromInput(e.target.value, c[i].fromAce || c[i].needsPrice) }; setProducts(c); }}
-                      aria-label={`Price for ${p.name || 'product'}`} aria-invalid={p.price === null}
+                      aria-label={`Price for ${p.name || 'product'}`} aria-invalid={!!p.name.trim() && p.price === null}
                       placeholder={p.price === null ? 'Add price' : 'Price'}
-                      className={`w-20 text-sm border rounded px-2 py-1.5 dark:bg-gray-700 dark:text-gray-100 ${p.price === null ? MISSING_PRICE_CLASS : 'border-gray-200 dark:border-gray-600'}`} />
+                      className={`w-20 text-sm border rounded px-2 py-1.5 dark:bg-gray-700 dark:text-gray-100 ${p.name.trim() && p.price === null ? MISSING_PRICE_CLASS : 'border-gray-200 dark:border-gray-600'}`} />
                     <button onClick={() => {
                       if (p.photoPreview && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(p.photoPreview);
                       setProducts(products.filter((_, j) => j !== i));
@@ -552,7 +552,7 @@ export default function SetupAssistantPage() {
 
           {unpricedCount > 0 && (
             <p className="text-xs text-red-600 dark:text-red-400">
-              Ace couldn&apos;t see a price for {unpricedCount} item{unpricedCount !== 1 ? 's' : ''}. Type a price in the highlighted box{unpricedCount !== 1 ? 'es' : ''} before you confirm.
+              {unpricedCount} item{unpricedCount !== 1 ? 's need' : ' needs'} a price. Type a price in the highlighted box{unpricedCount !== 1 ? 'es' : ''} (0 if it&apos;s free) before you confirm.
             </p>
           )}
 
