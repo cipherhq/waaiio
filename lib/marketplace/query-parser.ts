@@ -13,6 +13,14 @@
 
 import { detectCategoryIntent, CATEGORY_KEYWORDS, levenshtein } from '@/lib/bot/fuzzy-match';
 import { resolveLocation, type LocationResolution } from './location-resolver';
+import { COUNTRIES } from '@/lib/constants';
+
+/** Exact curated city and area names (lower-case), for the no-preposition re-parse (#867). */
+const CURATED_PLACE_NAMES = new Set<string>(
+  Object.values(COUNTRIES).flatMap((country) =>
+    Object.values(country.cities).flatMap((city) => [city.name, ...city.neighborhoods]),
+  ).map((name) => name.toLowerCase()).filter((name) => name.length >= 3),
+);
 
 // ── Types ──────────────────────────────────────────────
 
@@ -132,6 +140,8 @@ function correctCategory(word: string): { category: string; original: string } |
 export function parseDirectoryQuery(
   rawQuery: string,
   phoneCountryCode?: string | null,
+  /** Internal: allow the one-step "X Y" → "X in Y" re-parse (#867). */
+  allowReorder = true,
 ): DirectoryQueryResult {
   const trimmed = rawQuery.trim();
 
@@ -220,20 +230,27 @@ export function parseDirectoryQuery(
   // ── No preposition found — entire input is one thing ──
 
   // "shops Ikoyi" / "Ikoyi shop": a category (or generic noun) next to a known
-  // place reads as "X in Y" (#867). One side must be a category or generic word
-  // and the other a curated place (tier 1 or 2); anything else is unchanged.
+  // place reads as "X in Y" (#867). Only short messages (2-5 words) are tried,
+  // and the place must exactly name a curated city or area: no substrings, so
+  // "shop a" or "Salon East" are left alone.
   const words = trimmed.split(/\s+/);
-  if (words.length >= 2) {
+  // Never when any preposition word is present (leading or trailing), and only
+  // one step: the rebuilt query cannot re-parse again.
+  const hasPrepositionWord = SPLIT_PREPOSITIONS.some((p) =>
+    new RegExp(`(^|\\s)${p}(\\s|$)`, 'i').test(trimmed));
+  if (allowReorder && !hasPrepositionWord && words.length >= 2 && words.length <= 5) {
     const isCategoryPart = (part: string) =>
       GENERIC_NOUNS.has(part.toLowerCase()) || detectCategoryIntent(part).length > 0;
+    const isExactPlace = (part: string) =>
+      CURATED_PLACE_NAMES.has(part.toLowerCase()) && resolveLocation(part).tier < 3;
     for (let i = 1; i < words.length; i++) {
       const head = words.slice(0, i).join(' ');
       const tail = words.slice(i).join(' ');
-      if (isCategoryPart(head) && resolveLocation(tail).tier < 3) {
-        return parseDirectoryQuery(`${head} in ${tail}`, phoneCountryCode);
+      if (isCategoryPart(head) && isExactPlace(tail)) {
+        return parseDirectoryQuery(`${head} in ${tail}`, phoneCountryCode, false);
       }
-      if (resolveLocation(head).tier < 3 && isCategoryPart(tail)) {
-        return parseDirectoryQuery(`${tail} in ${head}`, phoneCountryCode);
+      if (isExactPlace(head) && isCategoryPart(tail)) {
+        return parseDirectoryQuery(`${tail} in ${head}`, phoneCountryCode, false);
       }
     }
   }

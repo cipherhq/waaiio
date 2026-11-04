@@ -115,14 +115,15 @@ export async function sendReturningGreeting(
 // ── Search ────────────────────────────────────────────────
 
 /**
- * Free text for a search without a category (#867). A generic word with a place
- * ("businesses in Ikoyi") searches the place only. A category synonym ("shop in
- * Ikoyi") keeps the raw text so the synonym still filters. Without a place the
- * raw text is always kept, so a bare generic word never lists the whole directory.
+ * Free text for a search without a category (#867). A generic word with a city or
+ * area ("businesses in Ikoyi") searches that place only. A category synonym ("shop
+ * in Ikoyi") keeps the raw text so the synonym still filters. Without a resolved
+ * city or area (no place, or only a state or country, which apply no location
+ * filter) the raw text is kept, so a search never lists a whole country.
  */
 function freeTextQuery(parsed: ReturnType<typeof parseDirectoryQuery>, text: string): string | undefined {
   if (parsed.nameQuery) return parsed.nameQuery;
-  if (!parsed.locationText || detectCategoryIntent(text).length > 0) return text;
+  if (!parsed.resolvedLocation?.city || detectCategoryIntent(text).length > 0) return text;
   return undefined;
 }
 

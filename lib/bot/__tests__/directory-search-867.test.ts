@@ -76,4 +76,14 @@ describe('#867 directory search criteria', () => {
     const c = await criteriaFor('businesses');
     expect(c.query).toBe('businesses');
   });
+
+  // Review r2 P1-1: a state or country applies no location filter, so the text
+  // must be kept or the whole country would be listed.
+  it.each(['Oyo', 'businesses in Oyo', 'Nigeria', 'businesses in Nigeria'])(
+    '"%s" keeps its text (a state or country never lists the whole directory)',
+    async (text) => {
+      const c = await criteriaFor(text);
+      expect(c.query).toBe(text);
+    },
+  );
 });

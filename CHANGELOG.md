@@ -5,8 +5,8 @@
   - An area search now matches when city or address names the parent city and the address names the area, or when the city field is the area and state or address names the parent city.
   - State is never used on its own, so a business with only a wrong state stays excluded, as #584 required.
   - A city search ("shop in Lagos") also matches the address.
-- `lib/marketplace/query-parser.ts`: "shops Ikoyi" and "Ikoyi shop" now read like "shop in Ikoyi". This applies only when one side is a category or generic word and the other a known place.
-- `lib/bot/handlers/directory-search.ts`: "businesses in Ikoyi" and "Ikoyi" search the place instead of looking for that literal phrase in names. "boutique in Ikoyi" searches the name "boutique". A bare generic word with no place still keeps its text, so the whole directory is never listed.
+- `lib/marketplace/query-parser.ts`: "shops Ikoyi" and "Ikoyi shop" now read like "shop in Ikoyi". This applies only to messages of 2-5 words, where one side is a category or generic word and the other exactly names a curated city or area. Substrings such as "shop a" or "Salon East" are left alone.
+- `lib/bot/handlers/directory-search.ts`: "businesses in Ikoyi" and "Ikoyi" search the place instead of looking for that literal phrase in names. "boutique in Ikoyi" searches the name "boutique". Text is dropped only when the place is a city or area. A bare word, a state ("Oyo") or a country ("Nigeria") keeps its text, so a search never lists a whole country (review r2 P1-1).
 - Tests:
   - `lib/bot/__tests__/directory-search-867.test.ts` (new, 8);
   - new cases in `query-parser.test.ts` and `discovery-search-query.test.ts`. The test double now evaluates nested `and(...)` filters, and the real-client test checks the serialized filter.
