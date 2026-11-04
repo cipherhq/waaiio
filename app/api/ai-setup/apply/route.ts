@@ -139,7 +139,8 @@ export async function POST(request: NextRequest) {
     // 1. Create services (with duplicate detection)
     if (services?.length) {
       // Check for existing services with same names
-      const validServices = services.filter((s) => s.name && String(s.name).trim().length > 0 && String(s.name).length <= 200);
+      // Names over 200 characters are cut to 200 when saved (as for products), not silently dropped.
+      const validServices = services.filter((s) => s.name && String(s.name).trim().length > 0);
       const existingServiceNames = await loadExistingNames(service, 'services', business_id);
       const newServices = existingServiceNames ? keepNewNames(validServices, existingServiceNames) : [];
       const skippedServices = validServices.length - newServices.length;
