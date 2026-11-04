@@ -20,13 +20,13 @@
   },
   "staging": {
    "catalog": {
-    "count": 6400,
-    "sha256": "80f4ec206aa8cd301e76a46b0095e05c395ef3ea7f9b4b22db0a91425111354f"
+    "count": 6309,
+    "sha256": "49dc33bc643ee985f38556f907b1856a9c9c79d202d2d772ba828a63d4b3012b"
    },
    "catalog_map": "scripts/release-v3/lock-catalog-staging.json",
    "ledger": {
-    "count": 444,
-    "sha256": "adcdf3e9893b6ea4fd5940a66375af4a96ba963ba4efaad9f1ad38fe17ab9be5"
+    "count": 442,
+    "sha256": "dca1b4e090e9876be8f73d210771c905234c2d473f4b98fa15aa7966e74fe5b6"
    },
    "project_ref": "tqjvrzopvtczxfxiwmnz"
   }
@@ -41,6 +41,28 @@
    "report_sha256": "f220ec749a14271d5b836044c1023dd584171bbf6e95494b4bcaaa42175aa40f"
   },
   "method": "authorized Supabase connector, read-only SELECT",
+  "staging_813_teardown": {
+   "decision": "Owner 2026-11-04: #813 option A (renumber above the lock to 511-513), staging plan S1 (undo and re-apply)",
+   "method": "staging lock = previous lock minus #813 objects and ledger rows; prediction verified read-only 2026-11-04 against live staging minus the same objects (catalog 6309 9b58418e... after the 509 and 510 deltas; ledger baseline 442 dca1b4e0...)",
+   "previous": {
+    "catalog": {
+     "count": 6400,
+     "sha256": "80f4ec206aa8cd301e76a46b0095e05c395ef3ea7f9b4b22db0a91425111354f"
+    },
+    "ledger": {
+     "count": 444,
+     "sha256": "adcdf3e9893b6ea4fd5940a66375af4a96ba963ba4efaad9f1ad38fe17ab9be5"
+    }
+   },
+   "removed": {
+    "catalog_objects": 91,
+    "ledger_rows": [
+     "20261101181612 499_merchant_notifications",
+     "20261102002152 502_merchant_notification_invitation_lifetime"
+    ]
+   },
+   "teardown_file": "scripts/release-v3/staging-813-teardown.sql"
+  },
   "state": "Owner-approved schema 9 bot-code-lock release state (M508 applied; production serves bdc007a8)",
   "tie_out": {
    "note": "Re-read live with the schema 9 query and ledger recipe: both environments equal the approved schema 9 values exactly, so the V3 digests above describe that approved state.",
