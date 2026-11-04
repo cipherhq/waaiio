@@ -71,13 +71,34 @@ const DYNAMIC_LITERAL = new RegExp(String.raw`\bimport${SPACE}\(${SPACE}['"][^'"
 // must be exactly a type clause (names only, no comments). Anything else is
 // treated as a runtime import and checked.
 const TYPE_CLAUSE = /^\s+type\s+(\{[\s\w$,]*\}|[A-Za-z_$][\w$]*|\*\s+as\s+[A-Za-z_$][\w$]*)\s+$/;
-function isTypeOnly(text, fromIndex) {
+// Blanks comments to spaces (same length, newlines kept) so a keyword written
+// inside a comment is never taken as the statement keyword. A wrong mask can
+// only make an import look like a runtime import (stricter), never type-only.
+export function maskComments(text) {
+  const out = text.split('');
+  let i = 0, quote = null;
+  while (i < text.length) {
+    const c = text[i], n = text[i + 1];
+    if (quote) { if (c === '\\') i += 2; else { if (c === quote) quote = null; i++; } continue; }
+    if (c === "'" || c === '"' || c === '`') { quote = c; i++; continue; }
+    if (c === '/' && n === '/') { while (i < text.length && text[i] !== '\n') out[i++] = ' '; continue; }
+    if (c === '/' && n === '*') {
+      const end = text.indexOf('*/', i + 2), stop = end < 0 ? text.length : end + 2;
+      for (; i < stop; i++) if (text[i] !== '\n') out[i] = ' ';
+      continue;
+    }
+    i++;
+  }
+  return out.join('');
+}
+function isTypeOnly(text, fromIndex, masked) {
   if (!/^from\b/.test(text.slice(fromIndex))) return false;
-  const before = text.slice(Math.max(0, fromIndex - 2000), fromIndex);
-  const keywords = [...before.matchAll(/\b(import|export)\b/g)];
+  const start = Math.max(0, fromIndex - 2000);
+  const keywords = [...masked.slice(start, fromIndex).matchAll(/\b(import|export)\b/g)];
   if (!keywords.length) return false;
   const last = keywords.at(-1);
-  return TYPE_CLAUSE.test(before.slice(last.index + last[0].length));
+  // The RAW clause must be exactly a type clause: any comment inside it fails.
+  return TYPE_CLAUSE.test(text.slice(start + last.index + last[0].length, fromIndex));
 }
 
 const matchesAny = (path, patterns) => patterns.some(p => p.test(path));
@@ -107,9 +128,10 @@ export function scanText(path, text, readTarget, seen = new Set()) {
   for (const [pattern, label] of RISKY) if (pattern.test(text)) reasons.push(`${path}: ${label}`);
   const dynamic = (text.match(DYNAMIC) || []).length, literal = (text.match(DYNAMIC_LITERAL) || []).length;
   if (dynamic !== literal) reasons.push(`${path}: dynamic import with computed specifier`);
+  const masked = maskComments(text);
   for (const match of text.matchAll(SPECIFIER)) {
     const spec = match[2];
-    if (matchesAny(spec, SAFE_PACKAGES) || isTypeOnly(text, match.index)) continue;
+    if (matchesAny(spec, SAFE_PACKAGES) || isTypeOnly(text, match.index, masked)) continue;
     const resolved = resolveSpecifier(path, spec);
     if (!resolved || !(under(resolved, IMPORTABLE_ROOTS) || under(resolved, STANDARD_CODE_ROOTS) || CANDIDATES(resolved).some(c => IMPORTABLE_FILES.includes(c)))) {
       reasons.push(`${path}: imports ${spec}`); continue;
