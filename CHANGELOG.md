@@ -1,3 +1,18 @@
+## 2026-11-04 — Bot: add-on choices no longer carry across a capability switch (#859)
+
+- `lib/bot/flows/shared/capability-transition.ts`, `clearStaleCapabilityState`:
+  - Problem: it did not clear `_available_addons` or `_selected_addons`, and it did nothing when the previous capability was unknown. The saved-card "Menu" button sets `active_capability` to undefined. If the next service had no add-ons, `select_addons.skipIf` left the old choice in place, so the confirmation listed an add-on the customer had picked for an earlier booking (e.g. "➕ Add-ons: Cake") and `bookings.addons_snapshot` saved it.
+  - Fix: both add-on keys are now cleared on every capability switch, including when the previous capability is unknown. Only `select_addons` ever writes them, so a fresh session loses nothing.
+- Test: `lib/__tests__/capability-switch-addon-state.test.ts` (5; 4 fail on the previous code). The real `select_addons` and `confirmation` steps show no stale add-on after a switch.
+- Not changed:
+  - the fresh-session rule: with no previous capability, pre-filled service, date, time and party size are kept;
+  - same-capability calls (no-op);
+  - `_step_history` and back navigation;
+  - amounts: add-ons were never part of the charged total;
+  - payment and custody routes;
+  - the ordering flow, which uses its own cart add-on keys.
+- Could break: a customer who taps the saved-card "Menu" button and books again must re-pick add-ons. They were for the earlier booking.
+
 ## 2026-11-04 — Ace review screen: clearer "price needed" message
 
 - Owner decision (2026-11-04): the items-step message now reads "N item(s) need(s) a price. Type a price in the highlighted box(es) (0 if it's free) before you confirm." The old "Ace couldn't see a price…" was wrong when the owner had cleared a price Ace found, and gave no hint that 0 means Free.
