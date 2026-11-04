@@ -10,6 +10,9 @@
 - Workflows `release-prepare.yml` (reads only, writes the packet) and `release-deploy.yml` (re-checks production before every mutation; merchant then admin; one alias POST; no retry; no automatic rollback).
 - Catalog oracle (`scripts/release-v3/catalog-oracle.mjs`, `catalog-v3.sql`) builds the catalog delta of each migration in disposable PostgreSQL 17. Committed: `supabase/catalog-deltas/508_business_control_columns_guard.json` (equals the change measured in production) and `scripts/release-v3/m430-identities.json`.
 - `scripts/release-v3/lock.json`: production and staging catalog and ledger digests after M508 (read-only connector, 2026-11-03); certified `bdc007a8`.
+  - Tied to the approved schema 9 release: re-read with the schema 9 query and ledger recipe, both environments equal its approved values exactly.
+  - Per-object maps in `lock-catalog-{production,staging}.json`.
+- Classifier: a document is docs-only only if no tooling reads it and it matches no full-lane path (the stricter class wins). `RELEASE_GATE_V2.md` §9.3 and the §9 adoption line are worded to match (#844 review follow-ups).
 - `scripts/release-v3/release-observer-role.sql`: reviewed, not applied. Applying it needs Owner approval per environment, and the Owner sets the password.
 - CI:
   - new job "Catalog oracle (PostgreSQL 17)" (regenerates deltas; real-PG proof of the observer role, 6 tests), required through the existing "Migration validation" aggregator;
@@ -43,6 +46,18 @@
 - Docs: `docs/POSTLAUNCH_BOT_CODE_LOCK_RELEASE.md`. CI: file-presence guard for the new test.
 - Runs no SQL and changes no setting.
 - Could break: nothing for schema 2–7 manifests; their code paths and tests are unchanged.
+
+## 2026-11-03 — Governance: Release Process V3 final review fixes (#844, docs only)
+
+- The final #844 delta (`2a91ec57`, reviewer-of-record fixes) on top of the entry below:
+  - `RELEASE_GATE_V2.md` §9.1: until the reusable gate exists, each gate profile checks M430 absence read-only and records it.
+  - Migration discipline now names SECURITY DEFINER functions in private schemas.
+  - Release packets record MCP and Graphify checks once §9.4 applies.
+  - §9.3 adds the content check (`'use server'`, data/payment/provider imports, env reads, network/storage calls make an allowlisted file full); a reviewer may raise a lane, never lower it.
+  - §9.3 lists governance and agent-instruction files that need CTO review.
+- `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: "ChatGPT" / "ChatGPT/CTO" wording replaced by the CTO reviewer of record (an independent Claude reviewer, every time).
+- `CLAUDE.md`: CI Process wording (CI runs on every PR push and is the merge evidence).
+- Could break: nothing at runtime.
 
 ## 2026-11-03 — Governance: Release Process V3 (docs only)
 

@@ -14,7 +14,14 @@ export const LANES = Object.freeze(['standard', 'full']);
 
 // Docs are not deployed code. They are standard for release purposes and need
 // one review (§9.3); governance and agent-instruction files also need CTO review.
-const DOCS = [/^docs\/.+/, /^[^/]+\.md$/, /^(?!.*\/node_modules\/).+\/[^/]+\.md$/];
+// A file is docs-only only if it is Markdown under docs/ or at the root, matches
+// no full-lane path, and no CI, release or gate tooling reads it. When classes
+// overlap, the stricter class wins (it is then classified as code: full).
+const DOCS = [/^docs\/(?!contracts\/).+\.md$/, /^[^/]+\.md$/];
+// Markdown that tooling reads (scripts/verify-engineering-governance.mjs,
+// scripts/reduced-payout-policy.mjs). A test fails if tooling source names a
+// docs/*.md or root *.md path that is missing here.
+export const TOOLING_READ_DOCS = Object.freeze(['docs/CHAT_HANDOFF_TEMPLATE.md', 'docs/ENGINEERING_STATUS.md', 'docs/ENGINEERING_WORKFLOW.md', 'docs/MIGRATION_REGISTRY.md']);
 const GOVERNANCE = [/^CLAUDE\.md$/, /^WAAIIO_ENGINEERING_OPERATING_ORDER\.md$/, /^RELEASE_GATE_V2\.md$/,
   /^docs\/MERCHANT_PAYMENT_CUSTODY_POLICY\.md$/, /^docs\/contracts\//, /^\.agents\//, /^\.claude\//];
 // Display-only code and static assets.
@@ -70,8 +77,9 @@ export function classifyChanges(changes, { raiseTo } = {}) {
     const { path, status, added } = change || {};
     if (typeof path !== 'string' || !path || /[\r\n]/.test(path) || !['A', 'M', 'D', 'T'].includes(status) || !Array.isArray(added)) fail('Invalid change entry');
     if (isGovernance(path)) governance = true;
-    if (isDocs(path)) continue;
+    if (isDocs(path) && !TOOLING_READ_DOCS.includes(path)) continue;
     docsOnly = false;
+    if (isDocs(path)) { reasons.push(`${path}: read by CI, release or gate tooling`); continue; }
     if (matchesAny(path, NEVER_STANDARD)) { reasons.push(`${path}: not display-only`); continue; }
     if (ASSET.test(path) && under(path, STANDARD_ASSET_ROOTS)) {
       if (path.endsWith('.svg') && added.some(line => /<script\b|\son[a-z]+\s*=|javascript:/i.test(line))) reasons.push(`${path}: active SVG content`);

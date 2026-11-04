@@ -32,12 +32,12 @@ One approval covers Operating Order gates 5, 7 and 9 for that packet (§9.4). It
 | Check | Rule |
 |---|---|
 | Owner dispatch | `workflow_dispatch` by `cipherhq` on `refs/heads/main`, trusted clean checkout |
-| Target | protected-main commit; newest exact push-main CI run green and every job successful |
+| Target | protected-main commit; newest exact push-main CI run green and every job successful (a random red from the flaky pg test, issue #845, stops prepare; re-run that CI run, never bypass it) |
 | Baseline | merchant and admin serve the same SHA, equal to the last certified release (record of the last successful deploy run; before any, the lock's `certified`) |
 | Admin pin | always the admin project's `targets.production.id`, never the newest deployment in a list (regression for run 41706465115); a production target newer than the serving deployment stops the gate |
 | Merchant target | equal to serving, or a newer canceled ignored-build-step Git attempt |
 | Project policy | production framework, root and build settings unchanged |
-| Lane | standard only if every file is on the allowlist and no allowlisted code file adds a server action, non-display import, env read, network/storage/data call or raw HTML; anything else is full; a reviewer may raise, never lower |
+| Lane | docs-only Markdown (under `docs/` or the root, not read by tooling) counts as standard; otherwise standard only if every file is on the allowlist and no allowlisted code file adds a server action, non-display import, env read, network/storage/data call or raw HTML; anything else is full; a reviewer may raise, never lower |
 | Reviews | every included PR: two distinct review records on its exact merged head for the full lane, one otherwise (PRs merged before records existed are listed in `lock.reviewed_prs`) |
 | Migrations | every migration after the lock is applied as one ledger row whose single statement is the exact file bytes; merged but not applied stops the gate; 430 is never admitted; files inside the lock may not change |
 | Ledger | live ledger minus admitted rows equals the lock digest (no unknown or changed row) |
@@ -78,14 +78,20 @@ A wrong replay can only cause a false failure, never a silent pass, because the 
 
 Reviewers can check the lock with one read-only query: the aggregate is `sha256(string_agg(identity || E'\t' || digest || E'\n', '' ORDER BY identity COLLATE "C"))` over `catalog-v3.sql`. For the ledger it is the same over `version`, `row_sha256` from `ledger-v3.sql`.
 
-### One-time lock map (ordering matters)
+### Lock maps and the approved schema 9 state
 
-Releases with no catalog change need only the lock digests. To apply a delta, the gate needs each object's digest in the lock (`catalog_map`). Capture it **before the first migration after 508 reaches production or staging**:
-1. dispatch **Release V3 prepare** with `mode: lock-map`;
-2. it reads both environments and requires them to equal the lock exactly;
-3. commit the two `lock-catalog-*.json` artifacts and set `catalog_map` in `lock.json`, in a reviewed PR.
+`scripts/release-v3/lock-catalog-production.json` and `lock-catalog-staging.json` hold each object's digest in the lock state, so the gate can apply deltas. Both were read on 2026-11-04 (read-only connector) and verified against the lock digests.
 
-Until then, any release that admits a migration with catalog changes fails closed.
+The lock is tied to the Owner-approved schema 9 bot-code-lock release (manifest `efd245eb…`, report `f220ec74…`, deploy run 41749354633). Re-read with the schema 9 catalog query and ledger recipe, both environments equal that release's approved values exactly:
+
+| Environment | Catalog | Ledger |
+|---|---|---|
+| Production | 2346 objects, `644792df…` | 406 rows, `9115c832…` |
+| Staging | 2367 objects, `f8ca0898…` | 444 rows, `cc4aae69…` |
+
+`lock.json` records this under `observed`.
+
+To re-bootstrap the lock later (a reviewed gate change), dispatch prepare with `mode: lock-map`. It writes fresh maps only while the live catalog still equals the lock.
 
 ## Migrations (authors)
 

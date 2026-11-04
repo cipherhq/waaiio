@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { loadLock, ledgerSnapshot, verifyLedger, verifyCatalog, verifyM430Absent, loadM430, postBootstrapMigrations, admitDatabase } from '../release-v3/admission.mjs';
+import { loadLock, loadLockMap, ledgerSnapshot, verifyLedger, verifyCatalog, verifyM430Absent, loadM430, postBootstrapMigrations, admitDatabase } from '../release-v3/admission.mjs';
 import { catalogMap, catalogAggregate, applyDeltas, validateDelta, compareCatalogs, diffCatalog, CATALOG_QUERY_SHA256, ORACLE } from '../release-v3/catalog-oracle.mjs';
 import { canonicalJson } from '../release-v3/common.mjs';
 
@@ -34,7 +34,7 @@ describe('committed lock, oracle outputs and the M508 spike regression', () => {
     const text = readFileSync('scripts/release-v3/lock.json', 'utf8');
     expect(() => loadLock(text.replace(CATALOG_QUERY_SHA256, 'f'.repeat(64)))).toThrow('different query');
     const extra = JSON.parse(text); extra.override = true;
-    expect(() => loadLock(JSON.stringify(extra))).toThrow();
+    expect(() => loadLock(JSON.stringify(extra))).toThrow('Release lock is invalid or was made with a different query');
   });
   it('the PG17 oracle delta for M508 equals the change measured in production (bot-code-lock contract)', () => {
     const file = readFileSync('supabase/migrations/508_business_control_columns_guard.sql');
@@ -52,6 +52,20 @@ describe('committed lock, oracle outputs and the M508 spike regression', () => {
       'function:public.guard_business_insert()': '42e8833707aeafe9e6f638f052fbdc52af0f096ad58028a2620b5b63358d05e2',
       'function:public.guard_server_managed_columns()': 'c1e52d9ad3a8a245ba792ab05396be0c3c7e38214f6e8a0b09235824d164cf56',
       'trigger:public.businesses.trg_guard_business_insert': '29acb85b9591345154320d177574878b3199ad2362f6e06597672559ca1554e4' });
+  });
+  it('the lock maps match the approved lock digests, and the lock records the schema 9 tie-out', () => {
+    expect(loadLockMap(lock.environments.production).size).toBe(6288);
+    expect(loadLockMap(lock.environments.staging).size).toBe(6400);
+    expect(lock.observed.bootstrap_release).toMatchObject({ manifest_sha256: 'efd245eba525d00d561621d43b0be513e984e7626e95498b365f97ac46206a50', deploy_run_id: 41749354633 });
+    const edited = JSON.parse(readFileSync('scripts/release-v3/lock-catalog-production.json', 'utf8'));
+    edited.objects['table:public.businesses'] = 'f'.repeat(64);
+    const dir = mkdtempSync(join(tmpdir(), 'v3-map-')); mkdirSync(join(dir, 'scripts/release-v3'), { recursive: true });
+    writeFileSync(join(dir, 'scripts/release-v3/lock-catalog-production.json'), JSON.stringify(edited));
+    expect(() => loadLockMap(lock.environments.production, new URL(`file://${dir}/`))).toThrow('Lock catalog map does not match the approved lock digest');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  it('the M430 list is bound to the exact bytes of the 430 file', () => {
+    expect(() => loadM430(readFileSync('scripts/release-v3/m430-identities.json', 'utf8'), Buffer.from('edited 430'))).toThrow('M430 identity list is invalid');
   });
   it('the generated M430 list covers the known shared-number objects', () => {
     const m430 = loadM430();

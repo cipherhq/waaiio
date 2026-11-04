@@ -3,7 +3,8 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { classifyChanges, collectChanges } from '../release-v3/classify.mjs';
+import { classifyChanges, collectChanges, TOOLING_READ_DOCS } from '../release-v3/classify.mjs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 const change = (path: string, added: string[] = ['export const x = 1;'], status = 'M') => ({ path, status, added });
 const lane = (...changes: ReturnType<typeof change>[]) => classifyChanges(changes);
@@ -65,10 +66,24 @@ describe('Release V3 lane classifier: content', () => {
     expect(lane(change('CLAUDE.md'))).toMatchObject({ docs_only: true, governance: true });
     expect(lane(change('RELEASE_GATE_V2.md'), change('lib/x.ts'))).toMatchObject({ lane: 'full', governance: true, required_reviews: 2 });
   });
+  it('a document is docs-only only if no tooling reads it and it matches no full-lane path; the stricter class wins', () => {
+    expect(lane(change('docs/MIGRATION_REGISTRY.md'))).toMatchObject({ lane: 'full', docs_only: false, reasons: ['docs/MIGRATION_REGISTRY.md: read by CI, release or gate tooling'] });
+    for (const path of ['docs/sql/verify-production-321-322-postconditions.sql', 'scripts/reduced-release-gate.md', '.github/PULL_REQUEST_TEMPLATE.md', 'supabase/README.md', 'docs/contracts/736-capability-e2e-contract.md'])
+      expect(lane(change(path))).toMatchObject({ lane: 'full', docs_only: false });
+    expect(lane(change('docs/contracts/736-capability-e2e-contract.md')).governance).toBe(true);
+  });
+  it('every docs path that tooling source names is on the tooling-read list (no drift)', () => {
+    const files = [...readdirSync('scripts').filter(f => /\.(mjs|sh)$/.test(f)).map(f => `scripts/${f}`), ...readdirSync('scripts/release-v3').filter(f => f.endsWith('.mjs')).map(f => `scripts/release-v3/${f}`),
+      ...readdirSync('lib/release-gate').filter(f => f.endsWith('.ts')).map(f => `lib/release-gate/${f}`), ...readdirSync('.github/workflows').map(f => `.github/workflows/${f}`)];
+    const named = new Set<string>();
+    for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(/['"`](docs\/[A-Za-z0-9_./-]+\.md|[A-Za-z0-9_-]+\.md)['"`]/g)) named.add(m[1]);
+    const docsNamed = [...named].filter(p => /^docs\/(?!contracts\/)/.test(p) || !p.includes('/'));
+    expect(docsNamed.filter(p => !TOOLING_READ_DOCS.includes(p))).toEqual([]);
+  });
   it('an empty change list and malformed entries fail closed', () => {
     expect(lane().lane).toBe('full');
-    expect(() => classifyChanges([{ path: 'a\nb', status: 'M', added: [] }] as never)).toThrow();
-    expect(() => classifyChanges([{ path: 'a', status: 'R', added: [] }] as never)).toThrow();
+    expect(() => classifyChanges([{ path: 'a\nb', status: 'M', added: [] }] as never)).toThrow('Invalid change entry');
+    expect(() => classifyChanges([{ path: 'a', status: 'R', added: [] }] as never)).toThrow('Invalid change entry');
   });
 });
 

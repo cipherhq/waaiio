@@ -107,10 +107,12 @@ export function verifyCatalog(observed, lockEnv, migrations, environment, lockMa
   return { count: observed.size, sha256: catalogAggregate(observed) };
 }
 
-export function loadM430(text = readFileSync(here('./m430-identities.json'), 'utf8')) {
+// The list is bound to the exact bytes of the 430 file it was generated from.
+export function loadM430(text = readFileSync(here('./m430-identities.json'), 'utf8'), m430File = readFileSync(here(`../../supabase/migrations/${ORACLE.m430_file}`))) {
   const doc = JSON.parse(text);
   if (!exactKeys(doc, ['schema_version', 'source', 'source_sha256', 'query_sha256', 'added_identities']) || doc.schema_version !== 1
-    || doc.source !== ORACLE.m430_file || doc.query_sha256 !== CATALOG_QUERY_SHA256 || !Array.isArray(doc.added_identities) || !doc.added_identities.length) fail('M430 identity list is invalid');
+    || doc.source !== ORACLE.m430_file || doc.source_sha256 !== sha256(m430File) || doc.query_sha256 !== CATALOG_QUERY_SHA256
+    || !Array.isArray(doc.added_identities) || !doc.added_identities.length) fail('M430 identity list is invalid');
   return doc;
 }
 export function verifyM430Absent(observed, m430) {

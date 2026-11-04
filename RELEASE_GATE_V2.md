@@ -513,7 +513,7 @@ Owner-approved 2026-11-03 (Issue #843). V3 removes repeated release work. It doe
 
 **Adoption.**
 - §9.1 applies immediately and permanently, in addition to the existing rules.
-- §9.2–§9.6 each take effect only once their tooling is merged under the standard change process. Until then, the existing gate profiles and steps apply unchanged.
+- §9.2–§9.6 each take effect only once their tooling is merged under the standard change process, except the §9.6 CI bullet, which applies now. Until then, the existing gate profiles and steps apply unchanged.
 
 ### 9.1 Non-negotiables (never traded for speed)
 
@@ -588,7 +588,7 @@ The classifier checks both path and content. A reviewer may raise a PR to full, 
 - the two-reviewer gate;
 - Owner staging acceptance where the Owner's own credentials are required.
 
-**Classification before merge.** The same classifier runs on each PR before merge to set its review requirement. The release gate checks that every included PR has that review recorded. Docs-only PRs (files under `docs/**` and `*.md`) are classified separately from the lanes: they need one review. Governance and agent-instruction files need CTO review: `CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, this document, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`, `docs/contracts/**`, `.agents/**` and `.claude/**`.
+**Classification before merge.** The same classifier runs on each PR before merge to set its review requirement. The release gate checks that every included PR has that review recorded. Docs-only PRs (files under `docs/**` and `*.md`) are classified separately from the lanes: they need one review. A file is docs-only only if it matches no full-lane path and no CI, release or gate tooling reads it. When classes overlap, the stricter class wins. Governance and agent-instruction files need CTO review: `CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, this document, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`, `docs/contracts/**`, `.agents/**` and `.claude/**`.
 
 ### 9.4 One release approval
 

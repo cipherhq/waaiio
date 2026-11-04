@@ -97,7 +97,7 @@ describe('packet approval binding', () => {
     expect(() => acceptPacket(loose, sha(loose), Date.parse('2026-11-04T01:00:00Z'))).toThrow('canonical');
   });
   it('a packet without M430 absence or hold flags cannot be built', () => {
-    expect(() => buildPacket({ ...packet(), permanent_checks: { m430_absent: false, hold_flags_absent: true } } as never)).toThrow();
+    expect(() => buildPacket({ ...packet(), permanent_checks: { m430_absent: false, hold_flags_absent: true } } as never)).toThrow('Release packet is incomplete');
   });
   it('an approval is single-use, including re-runs of the same deploy', () => {
     const d = 'a'.repeat(64);
@@ -109,7 +109,7 @@ describe('packet approval binding', () => {
   it('approval records must name this packet and come from the repository account', () => {
     const d = 'a'.repeat(64);
     expect(parseCommentUrl('https://github.com/cipherhq/waaiio/issues/221#issuecomment-123')).toBe('123');
-    expect(() => parseCommentUrl('https://github.com/other/repo/issues/1#issuecomment-1')).toThrow();
+    expect(() => parseCommentUrl('https://github.com/other/repo/issues/1#issuecomment-1')).toThrow('A GitHub comment URL in cipherhq/waaiio is required');
     expect(verifyRecordComment({ id: 1, created_at: 'x', user: { login: 'cipherhq' }, body: `Owner said yes.\nRelease-Approval: v1 packet=${d} decision=APPROVED` }, APPROVAL_LINE, d, 'x').comment_id).toBe(1);
     expect(() => verifyRecordComment({ user: { login: 'cipherhq' }, body: `Release-Approval: v1 packet=${'b'.repeat(64)} decision=APPROVED` }, APPROVAL_LINE, d, 'x')).toThrow('not found');
     expect(() => verifyRecordComment({ user: { login: 'someone' }, body: `Release-Approval: v1 packet=${d} decision=APPROVED` }, APPROVAL_LINE, d, 'x')).toThrow('not found');
@@ -131,14 +131,15 @@ describe('read-only observer session', () => {
     catalog: [{ identity: 'table:public.t', digest: 'a'.repeat(64) }], ledger: [{ version: '1', name: 'x', statement_count: 1, statement_sha256: 'b'.repeat(64), row_sha256: 'c'.repeat(64) }], ...over });
   it('accepts a forced read-only, unprivileged PostgreSQL 17 release_observer session', () => expect(parseObservation(doc()).catalog.size).toBe(1));
   it.each([
-    [{ current_user: 'postgres' }], [{ default_transaction_read_only: 'off' }], [{ transaction_read_only: 'off' }],
-    [{ role_flags: { super: true, bypassrls: false, createrole: false, createdb: false, replication: false } }], [{ server_version_num: '160013' }],
-  ])('rejects %j', over => expect(() => parseObservation(doc(over))).toThrow());
+    [{ current_user: 'postgres' }, 'not made by a forced read-only release_observer session'], [{ default_transaction_read_only: 'off' }, 'forced read-only'],
+    [{ transaction_read_only: 'off' }, 'forced read-only'], [{ role_flags: { super: true, bypassrls: false, createrole: false, createdb: false, replication: false } }, 'forced read-only'],
+    [{ server_version_num: '160013' }, 'not PostgreSQL 17'],
+  ])('rejects %j', (over, message) => expect(() => parseObservation(doc(over))).toThrow(message));
   it('connection settings: release_observer login only, bound to its project, TLS required, password never on the command line', () => {
     const env = connectionEnvironment('postgresql://release_observer.cxcmiqotkowhxinjbytg:pw%40x@aws-0-x.pooler.supabase.com:5432/postgres?sslmode=require', 'cxcmiqotkowhxinjbytg', { PATH: '/bin' });
     expect(env).toMatchObject({ PGUSER: 'release_observer.cxcmiqotkowhxinjbytg', PGPASSWORD: 'pw@x', PGSSLMODE: 'require', PGDATABASE: 'postgres' });
     expect(() => connectionEnvironment('postgresql://postgres.cxcmiqotkowhxinjbytg:pw@h:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow('release_observer');
-    expect(() => connectionEnvironment('postgresql://release_observer.tqjvrzopvtczxfxiwmnz:pw@h:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow();
+    expect(() => connectionEnvironment('postgresql://release_observer.tqjvrzopvtczxfxiwmnz:pw@h:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow('Observer connection must use the release_observer login');
     expect(() => connectionEnvironment('postgresql://release_observer.cxcmiqotkowhxinjbytg:pw@h:5432/postgres?sslmode=disable', 'cxcmiqotkowhxinjbytg')).toThrow('TLS');
   });
   it('psql gets the credentials through the environment and errors are not echoed', () => {
@@ -153,14 +154,14 @@ describe('read-only observer session', () => {
 
 // ---------------- end to end: prepare and deploy ----------------
 const B_FILES: Record<string, string> = {
-  'supabase/migrations/430_shared_number_tenant_isolation.sql': 'm430',
+  'supabase/migrations/430_shared_number_tenant_isolation.sql': readFileSync('supabase/migrations/430_shared_number_tenant_isolation.sql', 'utf8'),
   'supabase/migrations/508_business_control_columns_guard.sql': 'm508',
   'components/ui/A.tsx': 'export const A = 1;\n',
   'lib/payments/x.ts': 'export const x = 1;\n',
 };
 const M430_ID = 'function:public.allocate_shared_channel(p_business_id uuid, p_country_code text)';
 const prodRows = [{ version: '1', name: 'one', statement_count: 1, statement_sha256: sha('1'), row_sha256: sha('r1') }, { version: '2', name: '508_business_control_columns_guard', statement_count: 1, statement_sha256: sha('m508'), row_sha256: sha('r2') }];
-const stagingRows = [...prodRows, { version: '3', name: '430_shared_number_tenant_isolation', statement_count: 1, statement_sha256: sha('m430'), row_sha256: sha('r3') }];
+const stagingRows = [...prodRows, { version: '3', name: '430_shared_number_tenant_isolation', statement_count: 1, statement_sha256: sha('m430-bytes'), row_sha256: sha('r3') }];
 const prodCatalog = () => catalogMap([{ identity: 'table:public.t', digest: sha('t') }]);
 const stagingCatalog = () => catalogMap([{ identity: 'table:public.t', digest: sha('t') }, { identity: M430_ID, digest: sha('m') }]);
 
@@ -395,6 +396,19 @@ describe('deploy (end to end, faked platforms)', { timeout: 60_000 }, () => {
     const record = await deploy({ env: { ...env, STAGING_ACCEPTANCE_COMMENT_URL: 'https://github.com/cipherhq/waaiio/issues/221#issuecomment-124' }, control: full.dir, sources: src, now: NOW + 3600_000, fetchImpl: w.fetchImpl as never, observe: observeWith() as never, run: w.run as never, pause: async () => {} });
     expect(record.target_sha).toBe(full.T);
     for (const d of [full.dir, src.merchant, src.admin]) rmSync(d, { recursive: true, force: true });
+  });
+  it('stops when a gate contract file (the lock) changed after the packet was prepared', async () => {
+    const w = world(repo);
+    const { digest } = await approved(w);
+    const g = (...a: string[]) => execFileSync('git', a, { cwd: repo.dir, encoding: 'utf8' }).trim();
+    const lock = JSON.parse(readFileSync(join(repo.dir, 'scripts/release-v3/lock.json'), 'utf8'));
+    lock.reviewed_prs = { 999: 'a'.repeat(40) };
+    writeFileSync(join(repo.dir, 'scripts/release-v3/lock.json'), canonicalJson(lock));
+    g('commit', '-qam', 'lock edit'); const G2 = g('rev-parse', 'HEAD'); g('update-ref', 'refs/remotes/origin/main', G2);
+    try {
+      await expect(deploy({ env: deployEnv(digest, { GITHUB_SHA: G2 }), control: repo.dir, sources, now: NOW + 3600_000, fetchImpl: w.fetchImpl as never, observe: observeWith() as never, run: w.run as never, pause: async () => {} }))
+        .rejects.toThrow('Gate rules changed since the packet was prepared');
+    } finally { g('reset', '-q', '--hard', repo.G); g('update-ref', 'refs/remotes/origin/main', repo.G); }
   });
   it('stops before the admin alias when the admin production target moved unexpectedly', async () => {
     const w = world(repo);

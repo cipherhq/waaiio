@@ -156,7 +156,7 @@ export async function prepare({ env = process.env, control, now = Date.now(), fe
 
   // Database: production and staging, read-only, against lock + reviewed deltas.
   const migrations = postBootstrapMigrations(control, target, lock, changedPaths);
-  const m430 = loadM430(readFileSync(join(control, 'scripts/release-v3/m430-identities.json'), 'utf8'));
+  const m430 = loadM430(readFileSync(join(control, 'scripts/release-v3/m430-identities.json'), 'utf8'), readFileSync(join(control, 'supabase/migrations/430_shared_number_tenant_isolation.sql')));
   const database = {};
   for (const environment of ['production', 'staging']) {
     const observation = observe(environment, env);
@@ -276,7 +276,7 @@ export async function deploy({ env = process.env, control, sources, now = Date.n
 
   const lock = loadLock(readFileSync(join(control, 'scripts/release-v3/lock.json'), 'utf8'));
   const migrations = postBootstrapMigrations(control, packet.target.sha, lock, packet.changes.files);
-  const m430 = loadM430(readFileSync(join(control, 'scripts/release-v3/m430-identities.json'), 'utf8'));
+  const m430 = loadM430(readFileSync(join(control, 'scripts/release-v3/m430-identities.json'), 'utf8'), readFileSync(join(control, 'supabase/migrations/430_shared_number_tenant_isolation.sql')));
   for (const kind of KINDS) requireCleanSource(sources[kind], packet.target.sha, packet.target.tree);
 
   // Staging first: still serving the exact target, database still admitted.
