@@ -21,7 +21,7 @@
   "staging": {
    "catalog": {
     "count": 6400,
-    "sha256": "80f4ec206aa8cd301e76a46b0095e05c395ef3ea7f9b4b22db0a91425111354f"
+    "sha256": "12ff1745a19c0fda57d11971782d58cca353c0fd9f73b438786de899d69df463"
    },
    "catalog_map": "scripts/release-v3/lock-catalog-staging.json",
    "ledger": {
@@ -41,6 +41,17 @@
    "report_sha256": "f220ec749a14271d5b836044c1023dd584171bbf6e95494b4bcaaa42175aa40f"
   },
   "method": "authorized Supabase connector, read-only SELECT",
+  "staging_public_usage": {
+   "changed_identity": "schema:public",
+   "decision": "Owner 2026-11-04: option A. Staging revoked PUBLIC USAGE on schema public (production keeps it), so release_observer saw public types schema-qualified and ~928 digests differed. Fix: GRANT USAGE ON SCHEMA public TO release_observer on staging only.",
+   "new_digest": "a895bb3ae86a9e04638d702d3b81c31efe1cb633fc434372a367cf3037a59f2f",
+   "previous_catalog": {
+    "count": 6400,
+    "sha256": "80f4ec206aa8cd301e76a46b0095e05c395ef3ea7f9b4b22db0a91425111354f"
+   },
+   "previous_digest": "070c88e2814f7ad1e4866a6498450d699904a0ba6fc4dcf9808f521beda0fe62",
+   "verified": "2026-11-04 read-only: live staging as postgres and as release_observer both read 6400 c0d2774c..., equal to this lock plus the 509 and 510 deltas"
+  },
   "state": "Owner-approved schema 9 bot-code-lock release state (M508 applied; production serves bdc007a8)",
   "tie_out": {
    "note": "Re-read live with the schema 9 query and ledger recipe: both environments equal the approved schema 9 values exactly, so the V3 digests above describe that approved state.",
