@@ -18,6 +18,7 @@ import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
 import { AISetupCard } from '@/components/dashboard/AISetupCard';
+import { DirectWhatsAppLink } from '@/components/dashboard/DirectWhatsAppLink';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { buildMerchantLink, buildShortMerchantLink } from '@/lib/url';
@@ -536,6 +537,7 @@ export default function DashboardOverview() {
                     </button>
                   </div>
                 )}
+                <DirectWhatsAppLink businessId={business.id} />
               </div>
             )}
           </div>
