@@ -73,10 +73,13 @@ export function planSeating(snapshot: SeatingSnapshot, seed: number): SeatingPla
   const candidates = shuffle(guests.filter(g => !g.seating_pinned && seatingEligible(g)));
   const ownTags = new Map(candidates.map(g => [g.id, reservedTagsFor(g, tables)]));
   const tagged = (g: SeatingGuest) => ownTags.get(g.id)!.length > 0;
-  // Guests with reserved tables have the fewest choices, so they go first. With no
-  // reserved tables this key is constant and the order is exactly as before.
+  // Among guests with reserved tables, those with fewer reserved tags have fewer choices,
+  // so they go first: a guest who may use two tags' tables must not take the only seat a
+  // one-tag guest could use (D5). With no reserved tables these keys are constant and the
+  // order is exactly as before.
   candidates.sort((a, b) =>
     Number(tagged(b)) - Number(tagged(a)) ||
+    ownTags.get(a.id)!.length - ownTags.get(b.id)!.length ||
     Number(!!b.seating_group_id) - Number(!!a.seating_group_id) ||
     b.plus_ones - a.plus_ones);
   // Each tag's tables in one random order: a tag fills one table before the next (D6).

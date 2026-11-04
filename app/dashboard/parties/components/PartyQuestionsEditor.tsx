@@ -1,12 +1,16 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { parseQuestions, type PartyQuestion, type PartyAnswers } from '@/lib/parties/rsvp-questions';
 type Snapshot = { questions: PartyQuestion[]; revision: number; responses: { id: string; guest_name: string; status: string; answers: PartyAnswers; revision: number | null; questions: PartyQuestion[] }[] };
-export default function PartyQuestionsEditor({ partyId, onSaved }: { partyId: string; onSaved?: (questions: PartyQuestion[]) => void }) {
+/** onQuestions reports the current questions after a load (saved=false) or a save (saved=true). */
+export default function PartyQuestionsEditor({ partyId, onQuestions }: { partyId: string; onQuestions?: (questions: PartyQuestion[], saved: boolean) => void }) {
   const [saved, setSaved] = useState<Snapshot | null>(null);
   const [questions, setQuestions] = useState<PartyQuestion[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // The page remounts this editor per party; a reply that lands after that belongs to the old party.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   async function load() {
     setBusy(true);
     try {
@@ -16,7 +20,7 @@ export default function PartyQuestionsEditor({ partyId, onSaved }: { partyId: st
       parseQuestions(data.questions);
       if (!Array.isArray(data.responses)) throw new Error('Questions unavailable.');
       setSaved(data); setQuestions(data.questions); setError('');
-      onSaved?.(data.questions);
+      if (mounted.current) onQuestions?.(data.questions, false);
     } catch (e) { setError(e instanceof Error ? e.message : 'Questions unavailable.'); }
     finally { setBusy(false); }
   }
@@ -32,7 +36,7 @@ export default function PartyQuestionsEditor({ partyId, onSaved }: { partyId: st
       if (!Array.isArray(data.responses)) throw new Error('Questions unavailable.');
       setSaved(data); setQuestions(data.questions);
       // Saving re-tags guests from their answers, so the guest list must reload.
-      onSaved?.(data.questions);
+      if (mounted.current) onQuestions?.(data.questions, true);
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to save questions.'); }
     finally { setBusy(false); }
   }

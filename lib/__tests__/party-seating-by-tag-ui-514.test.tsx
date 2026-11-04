@@ -28,9 +28,10 @@ let questions: PartyQuestion[];
 let updates: { table: string; values: Record<string, unknown>; id: unknown }[];
 let savedQuestions: PartyQuestion[] | null;
 let answers: Record<string, Record<string, string>>;
+let inviteReads: number;
 
 beforeEach(() => {
-  vi.clearAllMocks(); updates = []; savedQuestions = null;
+  vi.clearAllMocks(); updates = []; savedQuestions = null; inviteReads = 0;
   questions = [sideQuestion(true), mealQuestion];
   answers = { ada: { side: 'groom', meal: '=SUM(1)' }, ben: { side: 'bride' } };
   snapshot = {
@@ -58,6 +59,7 @@ beforeEach(() => {
           if (table === 'party_tables') snapshot = { ...snapshot, tables: snapshot.tables.map(t => t.id === filters.id ? { ...t, ...pending } : t) };
           return { data: null, error: null };
         }
+        if (table === 'event_invites' && columns !== 'plus_ones') inviteReads++;
         if (table === 'event_invites' && columns === 'plus_ones')
           return { data: snapshot.guests.filter(g => g.table_id === filters.table_id).map(g => ({ plus_ones: g.plus_ones })), error: null };
         const data = table === 'parties' ? [party] : table === 'party_tables' ? snapshot.tables.map(t => ({ ...t, sort_order: 0 })) :
@@ -104,6 +106,31 @@ describe('rendered Parties dashboard: seating by tag #874', () => {
     await waitFor(() => expect(savedQuestions).not.toBeNull());
     expect(savedQuestions!.map(q => q.tag_answers)).toEqual([undefined, true, undefined]);
     expect(Object.keys(savedQuestions![0])).not.toContain('tag_answers');
+  });
+
+  it('questions editor: saving reloads the re-tagged guest list once; a type change drops the flag', async () => {
+    await open();
+    await waitFor(() => expect(inviteReads).toBeGreaterThan(0));
+    const before = inviteReads;
+    // The database re-tags guests on save (M514 D3); the reloaded list must show it.
+    mocks.fetch.mockImplementationOnce(async (_url: string, init?: RequestInit) => {
+      savedQuestions = JSON.parse(String(init!.body)).questions;
+      snapshot = { ...snapshot, guests: snapshot.guests.map(g => g.id === 'cy' ? { ...g, tags: ['Friends'] } : g) };
+      return new Response(JSON.stringify({ questions: savedQuestions, revision: 2, responses: [] }));
+    });
+    fireEvent.change(screen.getByLabelText('Question 1 type'), { target: { value: 'short_text' } });
+    expect(screen.queryAllByLabelText('Tag guests with their answer')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Save questions' }));
+    await waitFor(() => expect(inviteReads).toBe(before + 1));
+    expect(savedQuestions![0]).not.toHaveProperty('tag_answers');
+    const cyRow = await waitFor(() => {
+      const row = screen.getByLabelText('RSVP answers for Cy').closest('tr') as HTMLElement;
+      expect(within(row).getByText('Friends')).toBeTruthy();
+      return row;
+    });
+    expect(cyRow).toBeTruthy();
+    await new Promise(r => setTimeout(r, 50));
+    expect(inviteReads).toBe(before + 1);
   });
 
   it('tables: "Reserved for" offers the question options and tags, saves the choice, and limits "+ tag"', async () => {

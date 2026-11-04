@@ -143,6 +143,17 @@ describe('T2 planner: overflow, D4, D5, D6 and groups', () => {
     }
   });
 
+  it('D5: a two-tag guest leaves the only seat a one-tag guest can use, whatever the tag names', () => {
+    const s: SeatingSnapshot = { fingerprint: 'f', groups: [], tables: [table('t1', 1, GROOM), table('t2', 1, 'Work')],
+      guests: [guest('a', { tags: [GROOM] }), guest('both', { tags: [GROOM, 'Work'] })] };
+    for (let seed = 0; seed < 200; seed++) {
+      const p = planSeating(s, (Date.now() + seed * 7919) >>> 0);
+      expect(p.overflow).toEqual([]);
+      expect(tableOf(p, 'a')).toBe('t1');
+      expect(tableOf(p, 'both')).toBe('t2');
+    }
+  });
+
   it('D6: a tag fills one table before starting the next', () => {
     const s: SeatingSnapshot = { fingerprint: 'f', groups: [],
       tables: [table('t1', 4, GROOM), table('t2', 4, GROOM), table('t3', 4, GROOM)],
@@ -203,6 +214,7 @@ describe('guest answers and CSV', () => {
     expect(head).toBe('"Name","Phone","Status","Plus Ones","Tags","Dietary Notes","Responded At","Which side?","Meal?"');
     expect(row).toBe(`"Ada","+1555","accepted","1","${GROOM}; VIP","","","${GROOM}","'=HYPERLINK(""x"")"`);
     for (const start of ['=', '+', '-', '@', '\t', '\r']) expect(plainTextCell(`${start}1`)).toBe(`'${start}1`);
+    expect(guestListCsv([], [{ ...meal, label: '=cmd()' }]).split(',').pop()).toBe(`"'=cmd()"`);
     expect(plainTextCell('Fish')).toBe('Fish');
   });
   it('keeps the existing columns unchanged when there are no questions', () => {

@@ -494,8 +494,9 @@ export default function PartiesPage() {
   // All unique tags across current guest list
   const allTags = [...new Set(invites.flatMap(i => i.tags || []))].sort();
   // Tables can be reserved before anyone answers: offer the tagging question's options too.
+  // Labels are trimmed of spaces only, exactly as M514's btrim() makes the guests' auto-tags.
   const tagQuestion = partyQuestions.find(q => q.type === 'single_choice' && q.tag_answers);
-  const reservableTags = [...new Set([...(tagQuestion?.options || []).map(o => o.label.trim()).filter(Boolean), ...allTags])].sort();
+  const reservableTags = [...new Set([...(tagQuestion?.options || []).map(o => o.label.replace(/^ +| +$/g, '')).filter(Boolean), ...allTags])].sort();
 
   // Loading
   if (loading) {
@@ -1090,7 +1091,7 @@ export default function PartiesPage() {
           <PartyReminderPreview key={`reminders:${selectedParty.id}`} partyId={selectedParty.id} onSaved={() => loadInvites(selectedParty.id)} />
 
           <PartyQuestionsEditor key={`questions:${selectedParty.id}`} partyId={selectedParty.id}
-            onSaved={questions => { setPartyQuestions(questions); loadInvites(selectedParty.id); }} />
+            onQuestions={(questions, saved) => { setPartyQuestions(questions); if (saved) loadInvites(selectedParty.id); }} />
 
           <PartySeatingEditor
             key={selectedParty.id}
