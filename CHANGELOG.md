@@ -11,7 +11,7 @@
   - `lib/__tests__/table-keyword-whole-word.test.ts` (18): the real keyword-service matcher with the exact stored pattern.
   - `lib/__tests__/table-keyword-whole-word-509.pg.test.ts` (5, real PostgreSQL): applies the 041 restaurant seed and 164, then 509 twice. Proves "vegetable soup" no longer matches while "table for 4" and "tables" still do, the other rows are untouched, and the self-check fails when it should.
 - CI (`.github/workflows/ci.yml`): the 509 PostgreSQL test gets a `test -f` guard in the PostgreSQL job and is excluded from the unit job, the same as M503–M508.
-- Could break: after M509, a merchant's own business-scope `table` keyword no longer overrides the category row by text, because the keyword texts now differ. Priority decides which one fires. Production has 0 such rows.
+- Could break: until #854's keyword-service change is merged, a merchant's own business-scope `table` keyword would no longer override the category row, because the keyword texts now differ. #854 restores that precedence (Owner decision 2026-11-04: the merchant keyword wins). Production has 0 such rows today.
 
 ## 2026-11-04 — Ace review screen: a cleared price means "price needed"; long service names saved
 
