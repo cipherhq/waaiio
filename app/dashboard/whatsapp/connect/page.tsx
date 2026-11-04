@@ -581,6 +581,9 @@ export default function ConnectWhatsAppPage() {
       {/* ── Choose method ── */}
       {step === 'choose' && (
         <div className="space-y-3">
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200" data-testid="own-number-warning">
+            Use a brand-new number that has never had WhatsApp — for example a new SIM. This is the only way we support. A number that already has WhatsApp or WhatsApp Business on it will not connect.
+          </p>
           {directOnboardingEnabled && <button
             onClick={() => setStep('enter-phone')}
             className="w-full rounded-lg border-2 border-brand bg-brand/5 p-4 text-left transition hover:bg-brand/10"
@@ -603,7 +606,7 @@ export default function ConnectWhatsAppPage() {
               <span className="text-2xl">🔗</span>
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Connect via Facebook</p>
-                <p className="text-xs text-gray-500 mt-0.5">Add or connect your own number using Meta Embedded Signup.</p>
+                <p className="text-xs text-gray-500 mt-0.5">Connect your own number using Meta Embedded Signup.</p>
               </div>
             </div>
           </button>
