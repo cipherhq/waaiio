@@ -812,12 +812,6 @@
       "grantee": "postgres",
       "grantor": "postgres",
       "privilege": "EXECUTE"
-     },
-     {
-      "grantable": false,
-      "grantee": "service_role",
-      "grantor": "postgres",
-      "privilege": "EXECUTE"
      }
     ],
     "arguments": "",
@@ -835,7 +829,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "4b3295b9ba4ff26412800d0129f4c845febd05a7d1bc6a61f4d906a9d3636b1a",
+   "after_sha256": "a6320e7cd1de45b80580cde27e8bee2e1088f217cda27da720558919f124425a",
    "identity": "function:public.capture_merchant_notification()",
    "operation": "add"
   },
@@ -1631,7 +1625,7 @@
   }
  ],
  "migration": "511_merchant_notifications.sql",
- "migration_sha256": "98069d34ee0b47f332199ac3e7eccf11791233883c8e454e9a5b0503cced0b7d",
+ "migration_sha256": "70c5657bed78836398aafed989eafffca629034a519a934264e522a6342cadbf",
  "postgres_major": 17,
  "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
  "schema_version": 1
