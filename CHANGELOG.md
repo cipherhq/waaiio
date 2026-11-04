@@ -1,3 +1,21 @@
+## 2026-11-03 — Release gate: schema 9 bot-code-lock profile (M508 only)
+
+- Owner decision (2026-11-03): ship #841 (short merchant links) and #842 (app side of M508) now through one last per-release profile, while Release Process V3 (#843) builds the reusable gate.
+- New `scripts/bot-code-lock-release-policy.mjs` (policy `postlaunch-bot-code-lock-v1`, manifest schema 9):
+  - pins baseline `73377818` → target `bdc007a8` (tree `45d2cfe5`): 32 changed blobs, no deletions;
+  - the only SQL is M508, by exact sha256.
+- Evidence per environment:
+  - every schema 7 rule, including the M507 function contract and M430 absence in production;
+  - exactly one ledger addition `508_business_control_columns_guard` with the reviewed statement bytes;
+  - one extra trusted catalog phase (`scripts/bot-code-lock-contracts.json`) with exactly the three M508 catalog changes, measured before and after in both environments (identical in both).
+- `scripts/postlaunch-release-policy.mjs`: `verifyPostlaunchEnvironment` takes optional extra trusted catalog phases. Schemas 6 and 7 pass none, so their behaviour is unchanged.
+- `scripts/reduced-release-evidence.mjs` recognizes schema 9. `scripts/reduced-release-gate.mjs` routes schema 9 through every postlaunch branch with its own identities, targets, suites, SQL tests and evidence verifier.
+- Merchant delta suites (7). `permanent-merchant-links` is not pinned: it expects the production app URL, and the gate uses `https://example.invalid` (same Owner decision as #838). It still runs in Main App CI.
+- Tests: `scripts/__tests__/bot-code-lock-release-policy.test.ts` (33). The schema 6 and 7 suites are unchanged and passing.
+- Docs: `docs/POSTLAUNCH_BOT_CODE_LOCK_RELEASE.md`. CI: file-presence guard for the new test.
+- Runs no SQL and changes no setting.
+- Could break: nothing for schema 2–7 manifests; their code paths and tests are unchanged.
+
 ## 2026-11-03 — Governance: Release Process V3 (docs only)
 
 - Owner decision (2026-11-03, Issue #843): shorten releases by removing repeated work, without relaxing any safety rule or review.

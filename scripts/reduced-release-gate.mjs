@@ -18,18 +18,20 @@ import { isFullRelease as full, FULL_IDENTITIES, FULL_SCHEMA_CONTRACT, fullInven
 import { verifyFullReleaseEvidence } from './full-release-evidence.mjs';
 import {isPostlaunchRelease as appOnly,POSTLAUNCH_IDENTITIES,POSTLAUNCH_TARGETS,POSTLAUNCH_EVIDENCE_POLICY,postlaunchInventoryDigest,verifyPostlaunchEvidence,requireFixedPostlaunch} from './postlaunch-release-policy.mjs';
 import {isFirstAssignmentRelease as firstAssignment,FIRST_ASSIGNMENT_IDENTITIES,FIRST_ASSIGNMENT_TARGETS,FIRST_ASSIGNMENT_EVIDENCE_POLICY,firstAssignmentInventoryDigest,verifyFirstAssignmentEvidence,requireFixedFirstAssignment,FIRST_ASSIGNMENT_MAIN_SQL_TESTS,FIRST_ASSIGNMENT_SQL_TESTS,FIRST_ASSIGNMENT_CANONICAL_SOURCES} from './first-assignment-release-policy.mjs';
-// Schema 7 (first assignment) is the schema 6 postlaunch profile plus one
-// reviewed migration, so every postlaunch rule below applies to both.
-const postlaunch=m=>appOnly(m)||firstAssignment(m);
+import {isBotCodeLockRelease as botCodeLock,BOT_CODE_LOCK_IDENTITIES,BOT_CODE_LOCK_TARGETS,BOT_CODE_LOCK_EVIDENCE_POLICY,botCodeLockInventoryDigest,verifyBotCodeLockEvidence,requireFixedBotCodeLock,BOT_CODE_LOCK_MAIN_SQL_TESTS,BOT_CODE_LOCK_SQL_TESTS,BOT_CODE_LOCK_CANONICAL_SOURCES} from './bot-code-lock-release-policy.mjs';
+// Schema 7 (first assignment) and schema 9 (bot-code lock) are the schema 6
+// postlaunch profile plus one reviewed, already-applied migration each, so every
+// postlaunch rule below applies to all three.
+const postlaunch=m=>appOnly(m)||firstAssignment(m)||botCodeLock(m);
 const inventoryRelease=m=>full(m)||postlaunch(m);
-const identitiesFor=m=>firstAssignment(m)?FIRST_ASSIGNMENT_IDENTITIES:appOnly(m)?POSTLAUNCH_IDENTITIES:FULL_IDENTITIES;
-const inventoryDigest=(m,k)=>firstAssignment(m)?firstAssignmentInventoryDigest(k):appOnly(m)?postlaunchInventoryDigest(k):fullInventoryDigest(k);
-const requireFixedProfile=m=>firstAssignment(m)?requireFixedFirstAssignment():requireFixedPostlaunch();
-const mainSqlTestsFor=m=>firstAssignment(m)?FIRST_ASSIGNMENT_MAIN_SQL_TESTS:FULL_MAIN_SQL_TESTS;
+const identitiesFor=m=>botCodeLock(m)?BOT_CODE_LOCK_IDENTITIES:firstAssignment(m)?FIRST_ASSIGNMENT_IDENTITIES:appOnly(m)?POSTLAUNCH_IDENTITIES:FULL_IDENTITIES;
+const inventoryDigest=(m,k)=>botCodeLock(m)?botCodeLockInventoryDigest(k):firstAssignment(m)?firstAssignmentInventoryDigest(k):appOnly(m)?postlaunchInventoryDigest(k):fullInventoryDigest(k);
+const requireFixedProfile=m=>botCodeLock(m)?requireFixedBotCodeLock():firstAssignment(m)?requireFixedFirstAssignment():requireFixedPostlaunch();
+const mainSqlTestsFor=m=>botCodeLock(m)?BOT_CODE_LOCK_MAIN_SQL_TESTS:firstAssignment(m)?FIRST_ASSIGNMENT_MAIN_SQL_TESTS:FULL_MAIN_SQL_TESTS;
 const security = manifest => manifest?.schema_version === 4 && manifest.policy === SECURITY_POLICY;
 const accounting = manifest => (manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY) || security(manifest) || inventoryRelease(manifest);
-const policyFor = manifest => firstAssignment(manifest) ? FIRST_ASSIGNMENT_EVIDENCE_POLICY : appOnly(manifest) ? POSTLAUNCH_EVIDENCE_POLICY : full(manifest) ? FULL_EVIDENCE_POLICY : security(manifest) ? SECURITY_EVIDENCE_POLICY : accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
-const sqlTestsFor = manifest => firstAssignment(manifest) ? FIRST_ASSIGNMENT_SQL_TESTS : inventoryRelease(manifest) ? FULL_SQL_TESTS : security(manifest) ? SECURITY_SQL_TESTS : accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
+const policyFor = manifest => botCodeLock(manifest) ? BOT_CODE_LOCK_EVIDENCE_POLICY : firstAssignment(manifest) ? FIRST_ASSIGNMENT_EVIDENCE_POLICY : appOnly(manifest) ? POSTLAUNCH_EVIDENCE_POLICY : full(manifest) ? FULL_EVIDENCE_POLICY : security(manifest) ? SECURITY_EVIDENCE_POLICY : accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
+const sqlTestsFor = manifest => botCodeLock(manifest) ? BOT_CODE_LOCK_SQL_TESTS : firstAssignment(manifest) ? FIRST_ASSIGNMENT_SQL_TESTS : inventoryRelease(manifest) ? FULL_SQL_TESTS : security(manifest) ? SECURITY_SQL_TESTS : accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
 const runtimeFor = manifest => inventoryRelease(manifest) ? FULL_RUNTIME_SOURCES : security(manifest) ? SECURITY_RUNTIME_SOURCES : accounting(manifest) ? ACCOUNTING_RUNTIME_SOURCES : INTEGRATION_RUNTIME_SOURCES;
 const REPO = 'cipherhq/waaiio';
 const TEAM = 'team_AEcg69CktrGEptXDznpae8Rp';
@@ -56,7 +58,7 @@ export const TARGETS = Object.freeze({
 const payout = manifest => (manifest?.schema_version === 2 && manifest.policy === PAYOUT_POLICY) || accounting(manifest);
 function targetConfig(manifest, kind) {
   if (!payout(manifest)) return TARGETS[kind];
-  const config = (firstAssignment(manifest) ? FIRST_ASSIGNMENT_TARGETS : appOnly(manifest) ? POSTLAUNCH_TARGETS : full(manifest) ? FULL_TARGETS : security(manifest) ? SECURITY_TARGETS : accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
+  const config = (botCodeLock(manifest) ? BOT_CODE_LOCK_TARGETS : firstAssignment(manifest) ? FIRST_ASSIGNMENT_TARGETS : appOnly(manifest) ? POSTLAUNCH_TARGETS : full(manifest) ? FULL_TARGETS : security(manifest) ? SECURITY_TARGETS : accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
   if (!config?.suites.length) fail('Payout policy execution contract is not frozen');
   return { ...TARGETS[kind], ...config };
 }
@@ -236,7 +238,7 @@ function integrationCommands(manifest) {
 }
 function integrationSources(repository, integration, manifest) {
   const sql = {};
-  for (const entry of [...(inventoryRelease(manifest) ? FULL_SCHEMA_CONTRACT : policyFor(manifest).schema_contracts).canonical_sources, ...(firstAssignment(manifest) ? FIRST_ASSIGNMENT_CANONICAL_SOURCES : []), ...(security(manifest) ? SECURITY_MIGRATIONS : [])]) {
+  for (const entry of [...(inventoryRelease(manifest) ? FULL_SCHEMA_CONTRACT : policyFor(manifest).schema_contracts).canonical_sources, ...(botCodeLock(manifest) ? BOT_CODE_LOCK_CANONICAL_SOURCES : firstAssignment(manifest) ? FIRST_ASSIGNMENT_CANONICAL_SOURCES : []), ...(security(manifest) ? SECURITY_MIGRATIONS : [])]) {
     const file = `supabase/migrations/${entry.name}`;
     const actual = hash(execFileSync('git', ['show', `${integration}:${file}`], { cwd: repository }));
     if (actual !== entry.sha256) fail('Canonical integration SQL differs from reviewed prerequisite');
@@ -420,7 +422,8 @@ function privateEvidence(manifest, runId, attempt, env) {
   if (!payout(manifest)) return;
   const reportBytes = inventoryRelease(manifest) ? decodeFullReportTransport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT, env) : decodePrivateReport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
   const evidence = verifyPrivateEvidence({ rawManifest: env.REDUCED_RELEASE_MANIFEST, manifest, receiptBytes: env.PRIVATE_RELEASE_RECEIPT, reportBytes, approvedHash: env.PRIVATE_RELEASE_ACCEPTANCE_SHA256, policy: policyFor(manifest) });
-  if(firstAssignment(manifest)) verifyFirstAssignmentEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  if(botCodeLock(manifest)) verifyBotCodeLockEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  else if(firstAssignment(manifest)) verifyFirstAssignmentEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   else if(appOnly(manifest)) verifyPostlaunchEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   else if (full(manifest)) verifyFullReleaseEvidence(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   else if (accounting(manifest)) verifyAccountingActivation(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
