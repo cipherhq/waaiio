@@ -69,6 +69,13 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
     ["export * from 'stripe';", 'imports stripe'],
     ["import { Inner } from '@/components/ui/Inner';", 'components/ui/Fetcher.tsx: network call'],
     ["import { Gone } from '@/components/ui/Missing';", 'cannot be resolved at the target'],
+    // Review 1, round 2: comments must not turn a real import into a type-only one.
+    ["// import type {\nimport { send } /* } from 'react' */ from '@/lib/bot/x';", 'imports @/lib/bot/x'],
+    ["/* import type { */ import { send } from '@/lib/channels/send';", 'imports @/lib/channels/send'],
+    ["import type /* x */ { A } from 'stripe';", 'imports stripe'],
+    ["import { type A } from 'stripe';", 'imports stripe'],
+    ["self[atob('ZmV0Y2g=')]('/x');", 'computed global access'],
+    ["globalThis['fe' + 'tch']('/x');", 'environment or global access'],
   ])('an allowlisted file containing %j is full', (text, reason) => {
     const r = lane(change(page, text, 'A'));
     expect(r.lane).toBe('full');
@@ -80,6 +87,10 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
     const r = lane(change('app/(marketing)/directory/page.tsx', after, 'M', before));
     expect(r.lane).toBe('full');
     expect(r.reasons.join('\n')).toContain('data client access');
+  });
+  it('genuine type-only imports and re-exports are ignored, whatever module they name', () => {
+    for (const text of ["import type { Metadata } from 'next';", "import type Stripe from 'stripe';", "export type { A, B } from '@/lib/payments/types';", "import type * as T from '@/lib/supabase/types';"])
+      expect(lane(change(page, `${text}\nexport const x = 1;`, 'A')).reasons.filter(r => r.includes('imports'))).toEqual([]);
   });
   it('a reviewer-style alias with .. never resolves', () => {
     expect(resolveSpecifier('app/(marketing)/a.tsx', '@/components/ui/../../lib/supabase/service')).toBeNull();

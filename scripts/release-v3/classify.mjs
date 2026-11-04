@@ -54,7 +54,8 @@ const RISKY = [
   [/\bfetch\b|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b|\bsendBeacon\b|\baxios\b/, 'network call'],
   [/\b(localStorage|sessionStorage|indexedDB|caches)\b|\bdocument\s*\.\s*cookie|\bcookies\s*\(|\bheaders\s*\(/, 'storage or request-state access'],
   [/\.\s*(from|rpc)\s*\(\s*['"`]|\.\s*storage\b|\.\s*channel\s*\(|\bcreate(Service|Server|Browser)?Client\b|\bsupabase\b/i, 'data client access'],
-  [/\bdangerouslySetInnerHTML\b|\beval\b|\bFunction\s*\(|<script\b|\bwindow\s*\[|\bsrcdoc\b/i, 'raw HTML or script execution'],
+  [/\bdangerouslySetInnerHTML\b|\beval\b|\bFunction\s*\(|<script\b|\bsrcdoc\b/i, 'raw HTML or script execution'],
+  [/\b(window|self|top|parent|frames|globalThis|document)\s*(\?\.\s*)?\[|\batob\b|\bReflect\b|\bProxy\b/, 'computed global access'],
   [/\brequire\s*\(/, 'require call'],
 ];
 const SPACE = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*`;
@@ -64,7 +65,20 @@ const SPECIFIER = new RegExp(String.raw`\b(?:from|import)${SPACE}(?:\(${SPACE})?
 const DYNAMIC = new RegExp(String.raw`\bimport${SPACE}\(`, 'g');
 const DYNAMIC_LITERAL = new RegExp(String.raw`\bimport${SPACE}\(${SPACE}['"][^'"\n]*['"]${SPACE}\)`, 'g');
 
-const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${SPACE}type${SPACE}(?:\{[^}]*\}|[A-Za-z_$][\w$]*|\*${SPACE}as${SPACE}[A-Za-z_$][\w$]*)${SPACE}from${SPACE}(['"])[^'"\n]*\1`, 'g');
+
+// `import type X from` / `export type { A, B } from` are erased at compile
+// time. Strict: the text between the nearest import/export keyword and `from`
+// must be exactly a type clause (names only, no comments). Anything else is
+// treated as a runtime import and checked.
+const TYPE_CLAUSE = /^\s+type\s+(\{[\s\w$,]*\}|[A-Za-z_$][\w$]*|\*\s+as\s+[A-Za-z_$][\w$]*)\s+$/;
+function isTypeOnly(text, fromIndex) {
+  if (!/^from\b/.test(text.slice(fromIndex))) return false;
+  const before = text.slice(Math.max(0, fromIndex - 2000), fromIndex);
+  const keywords = [...before.matchAll(/\b(import|export)\b/g)];
+  if (!keywords.length) return false;
+  const last = keywords.at(-1);
+  return TYPE_CLAUSE.test(before.slice(last.index + last[0].length));
+}
 
 const matchesAny = (path, patterns) => patterns.some(p => p.test(path));
 const under = (path, roots) => roots.some(root => path.startsWith(root));
@@ -93,11 +107,9 @@ export function scanText(path, text, readTarget, seen = new Set()) {
   for (const [pattern, label] of RISKY) if (pattern.test(text)) reasons.push(`${path}: ${label}`);
   const dynamic = (text.match(DYNAMIC) || []).length, literal = (text.match(DYNAMIC_LITERAL) || []).length;
   if (dynamic !== literal) reasons.push(`${path}: dynamic import with computed specifier`);
-  // Type-only imports and re-exports are erased at compile time.
-  const runtime = text.replace(TYPE_ONLY, ' ');
-  for (const match of runtime.matchAll(SPECIFIER)) {
+  for (const match of text.matchAll(SPECIFIER)) {
     const spec = match[2];
-    if (matchesAny(spec, SAFE_PACKAGES)) continue;
+    if (matchesAny(spec, SAFE_PACKAGES) || isTypeOnly(text, match.index)) continue;
     const resolved = resolveSpecifier(path, spec);
     if (!resolved || !(under(resolved, IMPORTABLE_ROOTS) || under(resolved, STANDARD_CODE_ROOTS) || CANDIDATES(resolved).some(c => IMPORTABLE_FILES.includes(c)))) {
       reasons.push(`${path}: imports ${spec}`); continue;

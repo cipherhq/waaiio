@@ -17,7 +17,8 @@
   - the classifier scans the whole before and after version of every allowlisted code file;
   - it follows imports into repository modules at the target;
   - it parses imports across lines and comments, and rejects `..` in aliases;
-  - payment-named paths, symlinks and submodules are always full.
+  - payment-named paths, symlinks and submodules are always full;
+  - an import counts as type-only only if its clause is exactly `type { names }` (no comments), so comments cannot hide a real import; computed global lookups are full.
 - Prepare requires the 15 named CI jobs, including the payment suites. Optional `verify-full` TLS for the observer (`RELEASE_OBSERVER_CA_PEM`).
 - The observer role's claims are corrected: it inherits PUBLIC grants, and read-only is a session default. Production needs an Owner decision before the role is applied (private advisory). The `release-observer` environment must be restricted to `main`.
 - `scripts/release-v3/release-observer-role.sql`: reviewed, not applied. Applying it needs Owner approval per environment, and the Owner sets the password.
